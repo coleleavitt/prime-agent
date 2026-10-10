@@ -1,9 +1,6 @@
-//! Lexical primitives the guards share: how shell text reads (quotes,
-//! escapes, substitutions, continuations, heredocs), the Python string and
-//! path semantics the guards were specified in, and the guards' regular
-//! expressions.
+//! The shell syntax every check reads: one parser turning a script into a
+//! typed tree ([`ast`]), and the walks over it.
 
-pub(crate) mod chars;
-pub(crate) mod lines;
-pub(crate) mod mention;
-pub(crate) mod pyre;
+pub(crate) mod ast;
+pub(crate) mod parse;
+pub(crate) mod walk;

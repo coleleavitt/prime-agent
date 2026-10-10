@@ -261,17 +261,20 @@ class ForcePushScanCostTest(guard_safety.RefusalSafe, unittest.TestCase):
         )
 
     def test_nested_substitutions_are_refused_quickly(self):
-        # The scan walks substitution interiors recursively, so these shapes used to cost 13.8s (depth 5) up to
-        # more than 30s (depth 6+) and could wedge kernel bash() before it spawned anything. The scan budget now
-        # refuses them in milliseconds.
-        for name, command in [
-            ("sub depth4 fanout3", _substitution_chain(4, 3)),
-            ("sub depth5 fanout3", _substitution_chain(5, 3)),
-            ("sub depth6 fanout3", _substitution_chain(6, 3)),
-            ("sub depth8 fanout2", _substitution_chain(8, 2)),
-            ("sub depth6 fanout3 benign", _substitution_chain(6, 3, "git status")),
-            ("backtick depth6 fanout3", _substitution_chain(6, 3, delimiter="`")),
-            ("backtick depth7 fanout3", _substitution_chain(7, 3, delimiter="`")),
+        # The guard parses the text once and walks each substitution once, so these shapes (which once cost
+        # 13.8s to 30s, and 18s in an early version of the walker that copied nested words) are judged in
+        # milliseconds: the force pushes they hold are refused, and the benign one is allowed.
+        for name, command, refused in [
+            ("sub depth4 fanout3", _substitution_chain(4, 3), True),
+            ("sub depth5 fanout3", _substitution_chain(5, 3), True),
+            ("sub depth6 fanout3", _substitution_chain(6, 3), True),
+            ("sub depth8 fanout2", _substitution_chain(8, 2), True),
+            ("sub depth6 fanout3 benign", _substitution_chain(6, 3, "git status"), False),
+            ("backtick depth6 fanout3", _substitution_chain(6, 3, delimiter="`"), True),
+            ("backtick depth7 fanout3", _substitution_chain(7, 3, delimiter="`"), True),
+            ("bare depth4", _nested_substitutions(4, 3), True),
+            ("bare depth6", _nested_substitutions(6, 3), True),
+            ("wide", " ".join("$(a)" for _ in range(6000)), False),
         ]:
             with self.subTest(shape=name, length=len(command)):
                 elapsed, outcome = self._probe_guard(command)
@@ -280,25 +283,7 @@ class ForcePushScanCostTest(guard_safety.RefusalSafe, unittest.TestCase):
                     SCAN_BUDGET_SECONDS,
                     f"{elapsed:.3f}s for {name} ({len(command)} bytes)",
                 )
-                # Fail closed, and say why: these shapes are refused either by the scan budget or by the payload
-                # rule that a payload holding an expansion is unresolvable, both in milliseconds.
-                self.assertIn("refused", outcome, outcome)
-                self.assertTrue(
-                    "scan budget" in outcome or "Refusing to run" in outcome, outcome
-                )
-        # Deep nesting has its own reason and message: the cap, not the budget.
-        for depth in (4, 6):
-            command = _nested_substitutions(depth, 3)
-            with self.subTest(shape=f"bare depth{depth}", length=len(command)):
-                elapsed, outcome = self._probe_guard(command)
-                self.assertLess(elapsed, SCAN_BUDGET_SECONDS)
-                self.assertIn("nest more than", outcome, outcome)
-        # The budget itself is a backstop for recursive blowup within the cap: thousands of sibling re-scans,
-        # which is not something an agent writes.
-        wide = " ".join("$(a)" for _ in range(6000))
-        elapsed, outcome = self._probe_guard(wide)
-        self.assertLess(elapsed, SCAN_BUDGET_SECONDS)
-        self.assertIn("scan budget", outcome)
+                self.assertEqual(outcome.startswith("refused: Refusing to run"), refused, outcome)
 
     def test_large_benign_command_is_allowed_and_linear(self):
         # The word scan used to test every word against every later word, so a multi-line command cost seconds
@@ -636,11 +621,11 @@ names its vector."""
         repo = self._enter("repo-unresolvable")
         await self._refused_all(
             ["git push -f origin $BRANCH", "git push -f origin 'main*'",
-             # An expansion can also add `--no-dry-run`, which turns a visible dry run back into a real push
-             # (`X='--no-dry-run -f origin main'; git push --dry-run $X` really force-updated main).
-             "git push --dry-run $X", "git push -n $REMOTE origin main"],
-            ("cannot be verified statically",),
+             # An expansion can also add `--no-dry-run`, which turns a visible dry run back into a real push.
+             "X='--no-dry-run -f origin main'; git push --dry-run $X"],
         )
+        # With X and REMOTE unset these stay dry runs.
+        self._verdicts_clean(["git push --dry-run $X", "git push -n $REMOTE origin main"])
 
     async def test_refuses_explicit_upstream_refspecs(self):
         repo = self._enter("repo-at-u")
@@ -718,10 +703,11 @@ names its vector."""
         # root, which is not a repository, so git fails open and the push errors out.
         result = await self._run(f"(cd {repo_b.name}; echo ok) && git push -f || echo no-upstream")
         self.assertEqual(result.exit_code, 0, result.output)
-        # A multi-statement subshell the resolver cannot replay stays refused: conservative in the safe
-        # direction.
+        # There is no `sub` here, so the first `cd` fails and stops the subshell; inside an existing
+        # directory the subshell's own `cd` is followed.
+        self.assertIsNone(self._guard_verdict(f"cd sub && (cd {repo_b.name}; ls; git push -f)"))
         with self.assertRaises(ForcePushRefusalError):
-            bash(f"cd sub && (cd {repo_b.name}; ls; git push -f)")
+            bash(f"cd . && (cd {repo_b.name}; ls; git push -f)")
 
     async def test_quoted_parens_do_not_open_replay_groups(self):
         """A paren inside quotes is data (`echo "("`), so the cd replay must not read it as a subshell frame:
@@ -777,8 +763,9 @@ before this rule."""
                     os.environ, {"PRIME_AGENT_BASH_COMMAND_PREFIX": prefix}
                 ),
             ):
-                message = await self._refused("git push -f origin HEAD")
-                self.assertIn("relocates the repository", message)
+                # The probe replays the prefix's export, so HEAD resolves to the
+                # repository's own branch (feature) and the push is allowed.
+                self.assertIsNone(self._guard_verdict("git push -f origin HEAD"))
         # An explicit unprotected target still runs under the same prefix.
         with mock.patch.dict(
             os.environ,
@@ -843,16 +830,13 @@ too."""
              "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.mirror"
              " GIT_CONFIG_VALUE_0=true git push origin",
              'GIT_CONFIG_PARAMETERS="\'remote.origin.push=+main:main\'" git push origin',
-             "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K"
-             " GIT_CONFIG_VALUE_0=+main:main git push origin",
              # The same write behind an inline config option: a literal value the command assigns to the
              # variable is read, and a key the guard cannot read is refused rather than trusted.
              "CFG='remote.origin.push=+main:main'; git -c $CFG push origin",
              "CFG='remote.origin.mirror=true'; git -c $CFG push origin",
-             "git -c $CFG push origin feature", "git --config-env=remote.origin.push=CFG push origin",
+             "git --config-env=remote.origin.push=CFG push origin",
              # A --config-env value from an env var this command does not set is unreadable whatever its key
              # looks like, and a payload runs the same commands a top-level line does.
-             "git --config-env=color.ui=CFG push origin feature",
              "sh -c 'git --config-env=remote.origin.push=CFG push origin'",
              "eval 'git --config-env=remote.origin.push=CFG push origin'"],
             ("Refusing to run this force-push command",),
@@ -865,7 +849,11 @@ too."""
              "git -c color.ui=always push origin feature", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=color.ui"
              " GIT_CONFIG_VALUE_0=always git push origin feature",
              "CFG='color.ui=auto'; git -c $CFG push origin feature", 'git -c "user.email=$USER" push origin feature',
-             "CFG='+main:main'; git --config-env=color.ui=CFG push origin feature"],
+             "CFG='+main:main'; git --config-env=color.ui=CFG push origin feature",
+             # K and CFG are unset here: the key is empty and git rejects it, `-c push` takes `push` as the
+             # config operand, and color.ui is no push setting.
+             "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K GIT_CONFIG_VALUE_0=+main:main git push origin",
+             "git -c $CFG push origin feature", "git --config-env=color.ui=CFG push origin feature"],
         )
 
 
@@ -915,22 +903,25 @@ too."""
         repo = self._enter("repo-dynamic")
         await self._refused_all(
             ["f=-f; git push $f origin main", "f='-f origin'; git push $f",
-             "BRANCH=+main; git push origin $BRANCH", "git push origin $BRANCH",
-             "git push --force-with-lease origin $BRANCH"],
-            ("cannot be verified statically",),
+             "BRANCH=+main; git push origin $BRANCH"],
         )
+        # BRANCH is unset, so these push the current branch (feature): no force to a protected branch.
+        self._verdicts_clean(["git push origin $BRANCH", "git push --force-with-lease origin $BRANCH"])
 
     async def test_refuses_aliased_force_push(self):
         repo = self._enter("repo-alias")
         await self._refused_all(
             ["git -c alias.p='push -f origin main' p", "git -c alias.a=p -c alias.p='push -f origin main' a",
-             "git -c alias.p='push -f origin main' -C . p"],
+             "git -c alias.p='push -f origin main' -C . p",
+             "BODY='push -f origin main' git --config-env=alias.p=BODY p"],
             ("main",),
         )
+        # With BODY unset git stops at the missing variable and runs nothing.
+        self._verdicts_clean(["git --config-env=alias.p=BODY p"])
         # A shell-alias body, a body from the environment, and a chain longer than the guard follows are refused
         # rather than guessed at.
         await self._refused_all(
-            ["git -c alias.p='!git push -f origin main' p", "git --config-env=alias.p=BODY p",
+            ["git -c alias.p='!git push -f origin main' p",
              "git -c alias.a=b -c alias.b=c -c alias.c=d -c alias.d=e" " -c alias.e=f -c alias.f=g -c alias.g=h -c alias.h=i -c alias.i=j" " -c alias.j=k -c alias.k='push -f origin main' a"],
             ('alias',)
         )
@@ -953,7 +944,7 @@ too."""
         os.chdir(repo)
         before = self._git("rev-parse", "main", cwd=bare).stdout
         message = await self._refused("git p")
-        self.assertIn("alias", message)
+        self.assertIn('"main"', message)
         self.assertEqual(self._git("rev-parse", "main", cwd=bare).stdout, before)
         # A global alias is just as invisible.
         message = await self._refused("git -c alias.q='push -f origin main' q")
@@ -983,16 +974,16 @@ too."""
     async def test_refuses_env_relocation_and_split_string(self):
         repo, _bare = self._make_repo("repo-env")
         os.chdir(self.test_dir)  # not a repository: git fails the push itself
-        message = await self._refused(f"env -C {repo} git push -f origin")
-        self.assertIn("changes directory", message)
-        message = await self._refused(f"env --chdir={repo} git push -f origin")
-        self.assertIn("changes directory", message)
-        message = await self._refused(f"env --chdir {repo} git push -f origin")
-        self.assertIn("changes directory", message)
+        # The guard follows env's directory change and probes the branch there.
+        for command in (f"env -C {repo} git push -f origin", f"env --chdir={repo} git push -f origin",
+                        f"env --chdir {repo} git push -f origin"):
+            with self.subTest(command=command):
+                message = await self._refused(command)
+                self.assertIn("feature", message)
         await self._refused_all(
             ["env -S 'git push -f origin main'", "env -iS'git push -f origin main'",
              "env --split-string='git push -f origin main'"],
-            ("env -S",),
+            ('"main"',),
         )
 
     async def test_env_wrappers_without_a_hidden_push_stay_allowed(self):
@@ -1122,15 +1113,14 @@ too."""
         with mock.patch.dict(os.environ, {"CDPATH": str(other)}):
             await self._refused_all(
                 ["cd repo && git push -f origin HEAD", "cd repo && git push -f origin"],
-                ("changes directory",),
             )
         # A CDPATH or HOME the command sets is the value its own `cd` reads: `export HOME=<repo on main>; cd &&
         # ...` really force-updated main.
         await self._refused_all(
-            [f"export CDPATH={other}; cd repo && git push -f origin HEAD",
-             "export HOME=$UNKNOWN; cd && git push -f origin HEAD"],
-            ("changes directory",),
+            [f"export CDPATH={other}; cd repo && git push -f origin HEAD"],
         )
+        # An empty HOME leaves `cd` where it is (no repository here), so git fails on its own.
+        self.assertIsNone(self._guard_verdict("export HOME=$UNKNOWN; cd && git push -f origin HEAD"))
         # HOME at a repository on main is replayed there.
         await self._refused_all(
             [f"export HOME={diverged}; cd && git push -f origin HEAD"],
@@ -1140,15 +1130,14 @@ too."""
         # pushd cannot describe that pushd.
         await self._refused_all(
             [f"pushd ~ && export HOME={diverged}; pushd ~ && git push -f origin HEAD"],
-            ("changes directory",),
         )
         # One snapshot cannot describe every cd, so a repeated or later assignment, or a value the shell would
         # tilde-expand, is refused.
         await self._refused_all(
-            [f"cd . && export HOME={diverged}; cd && git push -f origin HEAD",
-             "export HOME=~/repo; cd && git push -f origin HEAD"],
-            ("changes directory",),
+            [f"cd . && export HOME={diverged}; cd && git push -f origin HEAD"],
         )
+        # `~/repo` names the old HOME's repo, which does not exist here: the `cd` fails and stops the push.
+        self.assertIsNone(self._guard_verdict("export HOME=~/repo; cd && git push -f origin HEAD"))
         self.assertIsNone(
             self._guard_verdict(f"export HOME={diverged}; git push -f origin feature")
         )
@@ -1185,9 +1174,11 @@ too."""
              """echo $(c=git; $c push -f origin main)""", """x=$(c=git; $c push -f origin main)""",
              # The interior's own prefix walk steps over assignments and wrappers the way a top-level run does
              # (each of these really ran the push with `c=git` set before this rule).
-             """echo $(FOO=1 $c push -f origin main)""", """echo $(command $c push -f origin main)""", """echo $(env -i $c push -f origin main)""", """x=$(env -u FOO $c push -f origin main)"""],
+             """echo $(c=git; FOO=1 $c push -f origin main)""", """echo $(c=git; command $c push -f origin main)""", """echo $(c=git; env -i $c push -f origin main)""", """x=$(c=git; env -u FOO $c push -f origin main)"""],
             ('Refusing to run this force-push command',)
         )
+        # With `c` unset the word is gone and `push` is the command, which is no git.
+        self._verdicts_clean(["""echo $(FOO=1 $c push -f origin main)""", """x=$(env -u FOO $c push -f origin main)"""])
         self.assertIsNone(self._guard_verdict("echo $(FOO=1 git status)"))
         # The backtick analogue with a trailing backtick is not a bypass: bash ends the substitution at the
         # first unescaped backtick, so the single quote inside it is unterminated and bash reports "unexpected
@@ -1225,7 +1216,7 @@ too."""
             ["$(printf git) push -f origin main", "$(which git) push -f origin main",
              "c='git push -f origin main'; X=1 $c", "{git,-c} user.email=x push -f origin main",
              "{git,-c,user.name=z} push -f origin main"],
-            ('command word is argv the guard cannot resolve',)
+            ('Refusing to run this force-push command',)
         )
         # An unresolvable command word with no force-push pattern next to it stays inert, and a quoted brace is
         # data. An env-assignment prefix is not the command word, so the visible git word decides and these run.
@@ -1260,13 +1251,12 @@ too."""
              f"echo x | xargs -I{{}} sh -c {quote}git push -f origin main{quote}",
              f"sh < {here}", f"ssh build-box {quote}git push -f origin main{quote}"]
         )
-        # The implicit-refspec form behind each wrapper: the guard cannot know where the wrapper really ran, so
-        # it refuses instead of probing the kernel cwd (a non-repository, where it would fail open).
-        await self._refused_all(
-            [f"{w} {repo} git push -f" for w in
-             ["chroot", "timeout", "parallel", "ssh", "docker", "sudo", "nsenter"]],
-            ("wrapper",),
-        )
+        # The implicit-refspec form behind a wrapper: chroot runs it in the repository it names (main), and ssh
+        # runs it on a remote host whose branch the guard cannot read.
+        await self._refused_all([f"{w} {repo} git push -f" for w in ["chroot", "ssh"]])
+        # The others take the path as their own operand (a duration, a program, a docker command), so it is no
+        # wrapper option and nothing runs git: each fails on its own.
+        self._verdicts_clean([f"{w} {repo} git push -f" for w in ["timeout", "parallel", "docker", "sudo", "nsenter"]])
 
     async def test_refuses_the_family_spellings_review_found_open(self):
         """Spellings of the family that force-updated a protected main before this round: a path-qualified shell, a
@@ -1331,14 +1321,10 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
              # An empty attached operand is still an operand (`env --argv0=` sets argv0 to the empty string), so
              # the next word is the command.
              "c=git; env --argv0= $c push -f origin main", "c=git; env --split-string= $c push -f origin main"],
-            ("cannot resolve",),
+            ('"main"',),
         )
-        # An ambiguous prefix matches more than one of env's options, so whether it takes a value cannot be
-        # told: refused like env refuses it.
-        await self._refused_all(
-            ["env --i $c push -f origin main", "env --d $c push -f origin main"],
-            ("abbreviation",),
-        )
+        # An ambiguous prefix matches more than one of env's options: env rejects it and runs nothing.
+        self._verdicts_clean(["c=git; env --i $c push -f origin main", "c=git; env --d $c push -f origin main"])
         # The walk still resolves the visible git word after env's options, and a valueless prefix hands nothing
         # to the next word.
         self._verdicts_clean(
@@ -1357,20 +1343,19 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
              'echo "$(git rev-parse HEAD)" | cut -c1-7', "git status --short",
              "git log --oneline -3", "git push origin feature", 'echo "git push -f origin main"']
         )
-        # Already refused before this round and still refused: an unresolvable refspec.
-        self.assertIsNotNone(self._guard_verdict("BR=feature; git push origin $BR"))
+        # The variable is resolved, so the refspec is the plain push of feature it spells.
+        self.assertIsNone(self._guard_verdict("BR=feature; git push origin $BR"))
 
     async def test_refuses_payloads_that_hold_an_expansion(self):
         repo = self._enter("repo-payload-expansion", branch="main")
         # `cmd='git push -f origin main'; sh -c "$cmd"` runs the value of $cmd, not the literal text, so the
         # payload cannot be scanned statically.
         await self._refused_all(
-            ['cmd=\'git push -f origin main\'; sh -c "$cmd"', 'cmd=\'git push -f origin main\'; eval "$cmd"', 'cmd=\'git push -f origin main\'; env -S "$cmd"', 'cmd=\'git push -f origin main\'; sh -c $cmd']
+            ['cmd=\'git push -f origin main\'; sh -c "$cmd"', 'cmd=\'git push -f origin main\'; eval "$cmd"', 'cmd=\'git push -f origin main\'; env -S "$cmd"']
         )
-        # Declared consequence: a payload holding an expansion is refused even when the expansion looks
-        # harmless, because the expansion decides what runs and the guard cannot see it. These two were allowed
-        # before this rule and are asserted REFUSED on purpose.
-        await self._refused_all(['eval "$(echo hi)"', 'sh -c "$(echo hi)"'])
+        # The guard resolves the expansion: unquoted, `$cmd` splits so `sh -c` runs a bare `git` (its usage
+        # text), and `$(echo hi)` evaluates to `hi`.
+        self._verdicts_clean(["cmd='git push -f origin main'; sh -c $cmd", 'eval "$(echo hi)"', 'sh -c "$(echo hi)"'])
         # A literal payload without an expansion is still scanned normally.
         self._verdicts_clean(
             ['eval "echo hi"', 'sh -c "echo hi"', """sh -c 'sh -c "git status"'""", """env -S 'git status'"""],
@@ -1385,15 +1370,16 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
         script.write_text(f"cd {protected}\n")
         os.chdir(repo)
         # A quoted dot in command position is the same source builtin: the whitespace the pattern needs sits
-        # after the quote. A sourced dot with no operand is refused too: bash errors on it (".: usage: . [-p
-        # path] filename"), so there is nothing to resolve and the shell cannot be replayed.
+        # after the quote. The guard reads the sourced script and probes the clone it moves to (on main).
         await self._refused_all(
             ["eval '. move.sh' && git push -f origin HEAD",
              "builtin source move.sh && git push -f origin HEAD", ". move.sh && git push -f origin HEAD", "command source move.sh && git push -f origin HEAD",
              '"." ./move.sh && git push -f origin HEAD', "'.' ./move.sh && git push -f origin HEAD", '"." move.sh && git push -f origin HEAD',
-             '"." ./move.sh; git push -f origin HEAD', '"." && git push -f origin HEAD'],
-            ('changes directory',)
+             '"." ./move.sh; git push -f origin HEAD'],
+            ('HEAD names the current branch "main"',)
         )
+        # A dot with no operand is a usage error (status 2), so `&&` stops the push.
+        self.assertIsNone(self._guard_verdict('"." && git push -f origin HEAD'))
         # A child shell never relocates the parent, `cd .` is not a source, and a dot that is only an argument
         # is not one either.
         (repo / "move.sh").chmod(0o755)
@@ -1433,7 +1419,7 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
         repo = self._enter("repo-upper-env")
         await self._refused_all(
             ["ENV -S 'git push -f origin main'", "Env --split-string 'git push -f origin main'"],
-            ('env -S',)
+            ('"main"',)
         )
         # The same names without a hidden push stay inert.
         self.assertIsNone(self._guard_verdict("ENV -S 'git status'"))
@@ -1444,11 +1430,11 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
         # is refused inside it too: a repository alias would otherwise run unchecked.
         self._git("config", "alias.p", "push -f origin main", cwd=repo)
         await self._refused_all(
-            ['sh -c "git p"', "eval 'git p'", 'sh -c "git lfs push"', "env -S 'git p'", 'sh -c "sh -c \\"git p\\"" ']
+            ['sh -c "git p"', "eval 'git p'", "env -S 'git p'", 'sh -c "sh -c \\"git p\\"" ']
         )
         # Benign payloads keep working, including nested chains and commands git resolves itself.
         self._verdicts_clean(
-            ['sh -c "git status"', 'sh -c "sh -c \\"git status\\"" ', 'eval "git submodule status"']
+            ['sh -c "git status"', 'sh -c "sh -c \\"git status\\"" ', 'eval "git submodule status"', 'sh -c "git lfs push"']
         )
 
     async def test_at_brace_refspecs_are_not_unresolvable_words(self):
@@ -1463,24 +1449,19 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
         # unresolvable again (git rejects these as refspecs, so they cannot rewrite anything, but the guard
         # should not be the reason they look inert).
         self._refusal_all(
-            ["""git push origin @{u}$(printf " -f main")""",
-             'X="-f main"; git push origin @{u}$X', "git push origin @{u}`printf ' -f main'`"],
+            ["""git push origin @{u}$(printf " -f main")""", "git push origin @{u}`printf ' -f main'`"],
             'Refusing to run this force-push command'
         )
+        # An expansion the guard resolves is judged as what it splits into: `@{u}-f` and `main`, no force.
+        self._verdicts_clean(['X="-f main"; git push origin @{u}$X'])
         self._refusal_all(
             ["git push -f origin @{u}", "git push -f origin HEAD:@{u}"], 'Refusing to run this force-push command'
         )
 
     async def test_self_referencing_alias_is_not_reported_as_unresolvable(self):
         repo = self._enter("repo-alias-self")
-        # `alias.a=a` never expands (git refuses the loop), so the guard must report the unknown subcommand, not
-        # an unresolvable alias.
-        message = await self._refused("git -c alias.a=a a")
-        self.assertIn(
-            "outside the git command set this guard was calibrated against",
-            message,
-        )
-        self.assertNotIn("defines a git alias", message)
+        # `alias.a=a` never expands: git stops at the loop and runs nothing.
+        self.assertIsNone(self._guard_verdict("git -c alias.a=a a"))
 
     def test_direct_handle_construction_is_guarded(self):
         """BashHandle is importable, so building one without a pre-validated script must pay the scan."""
@@ -1500,11 +1481,13 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
 
 
 class ForcePushGitCommandNameTest(guard_safety.RefusalSafe, unittest.TestCase):
-    """A git subcommand git does not resolve itself is refused.
+    """A git subcommand git does not resolve itself is judged by the alias behind it.
 
-    The guard cannot see what an alias or an external `git-<name>` program
-    runs, so a name outside git's own command table is refused even when it
-    looks harmless. Calling the guard directly keeps these vectors spawn-free."""
+    The guard reads `alias.<name>` from git's configuration where the command
+    runs (`git config --get`) and judges what the alias runs; with no alias the
+    name is a command of a newer git, an external `git-<name>` program, or an
+    error, and none of those is a force push. Calling the guard directly keeps
+    these vectors spawn-free."""
 
     def setUp(self):
         frozen = mock.patch.object(
@@ -1546,25 +1529,26 @@ class ForcePushGitCommandNameTest(guard_safety.RefusalSafe, unittest.TestCase):
 
     def test_commands_newer_git_knows_are_refused(self):
         # history, repo, url-parse, format-rev, last-modified, and instaweb are commands only in newer git than
-        # the baseline this set is calibrated to (Apple git 2.50.1), so the guard refuses them by design rather
-        # than trusting a name the running git might not have.
+        # the table the guard carries; no alias of those names is configured here, so they are allowed.
         self._outside_table(
             [
                 "git history", "git repo", "git url-parse", "git format-rev", "git last-modified", "git instaweb", "git cvsserver --help",
             ],
-            refused=True,
+            refused=False,
         )
 
     def test_names_git_does_not_own_are_refused(self):
-        # `lfs` is an external `git-lfs` program with no external program on PATH in every environment:
-        # `alias.lfs` hijacks it where git-lfs is absent, so it stays refused.
-        self._outside_table(["git lfs version", "git p", "git co", "git st"], refused=True)
+        # No alias of these names is configured here: `lfs` is the external git-lfs program (or an error),
+        # and the others are errors. An inline alias is judged by its body.
+        self._outside_table(["git lfs version", "git p", "git co", "git st"], refused=False)
+        self.assertIsNotNone(self._refusal("git -c alias.p='push -f origin main' p"))
 
     def test_refusal_points_at_the_real_subcommand_first(self):
-        message = self._refusal("git lfs version")
+        message = self._refusal("git -c alias.p='!git push -f origin main' p")
         self.assertIsNotNone(message)
+        assert message is not None
         self.assertLess(
-            message.index("Spell out the real subcommand"),
+            message.index("Run the push directly with the aliased name spelled out"),
             message.index("allow_force_push=True"),
         )
 

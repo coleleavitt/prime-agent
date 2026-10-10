@@ -1,13 +1,14 @@
 //! The guard parity harness: replays `tests/corpus/guards.jsonl` (every input
-//! the Python guard suites fed the guards, judged by all six Python guards in a
-//! neutral context, captured from the Python guards before the port deleted
-//! them) against the Rust guards in the same neutral context, and requires the
-//! same verdict, error class and message for every input and every guard.
+//! the Python guard suites fed the guards, judged by all six Python guards in
+//! a neutral context before the port deleted them) against the rules in the
+//! same neutral context.
 //!
-//! `PA_BASH_CORPUS_LIMIT` bounds how many mismatches are printed per guard
-//! (default 20).
+//! The rules were redesigned to refuse on evidence, so a verdict may differ
+//! from the Python one only where `tests/corpus/deltas.jsonl` records the
+//! difference and its justification ([`Category`]). Messages were rewritten
+//! to name the evidence; the harness compares verdicts and error classes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -16,15 +17,44 @@ use crate::context::GuardContext;
 use crate::script::Script;
 use crate::verdict::GuardKind;
 
-/// The guard's key in the corpus files.
-fn corpus_key(guard: GuardKind) -> &'static str {
-    match guard {
-        GuardKind::DestructiveGit => "destructive_git",
-        GuardKind::DestructiveChmod => "destructive_chmod",
-        GuardKind::ForcePush => "force_push",
-        GuardKind::SecretEcho => "secret_echo",
-        GuardKind::PipeToShell => "pipe_to_shell",
-        GuardKind::Sudo => "sudo",
+/// Why a verdict differs from the Python oracle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Category {
+    /// The Python guard refused code it could not read (a script file, a
+    /// shell reading a pipe, a login shell, `eval "$x"`) whose visible text
+    /// does not show this guard's danger.
+    NoEvidence,
+    /// The model resolves the construct the Python guard gave up on (a `cd`,
+    /// an `eval` or `sh -c` payload, a variable, an alias, a function), and
+    /// what runs is not the danger here: the neutral context has no
+    /// repository, and its paths stay in the workspace.
+    Resolved,
+    /// A variable the kernel environment does not set expands to nothing.
+    UnsetVariable,
+    /// Bash does not run the text as a command: a syntax error, an argument
+    /// of another program, a positional parameter, an option the program
+    /// rejects.
+    NotRun,
+    /// A deliberate narrowing of the policy: output that never reaches the
+    /// transcript, a non-secret file, a dry run, a setting that cannot arm a
+    /// force push, a `PATH` shadow, xargs handing a download to `sh` as file
+    /// names.
+    Narrowed,
+    /// Refused now, allowed by the Python guard.
+    New,
+}
+
+impl Category {
+    fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "no-evidence" => Category::NoEvidence,
+            "resolved" => Category::Resolved,
+            "unset-variable" => Category::UnsetVariable,
+            "not-run" => Category::NotRun,
+            "narrowed" => Category::Narrowed,
+            "new" => Category::New,
+            _ => return None,
+        })
     }
 }
 
@@ -32,20 +62,15 @@ struct Record {
     script: String,
     command: Option<String>,
     prefix: Option<String>,
-    refused: BTreeMap<String, (String, usize)>,
+    refused: BTreeMap<String, String>,
 }
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
 }
 
-fn load() -> (Vec<Record>, Vec<String>) {
-    let dir = corpus_dir();
-    let messages: Vec<String> = serde_json::from_str(
-        &std::fs::read_to_string(dir.join("messages.json")).expect("messages.json"),
-    )
-    .expect("messages.json parses");
-    let records = std::fs::read_to_string(dir.join("guards.jsonl"))
+fn load() -> Vec<Record> {
+    std::fs::read_to_string(corpus_dir().join("guards.jsonl"))
         .expect("guards.jsonl")
         .lines()
         .map(|line| {
@@ -56,11 +81,15 @@ fn load() -> (Vec<Record>, Vec<String>) {
                 .expect("refused map")
                 .iter()
                 .map(|(guard, verdict)| {
-                    let error = verdict[0].as_str().expect("error name").to_string();
-                    let message = usize::try_from(verdict[1].as_u64().expect("message id"))
-                        .expect("message id fits");
-                    (guard.clone(), (error, message))
+                    (
+                        guard.clone(),
+                        verdict[0].as_str().expect("error name").to_string(),
+                    )
                 })
+                // A Python verdict that is not a refusal class is the Python
+                // guard crashing (`OverflowError` from `chr()` on
+                // `$'\UFFFFFFFF'`): the escape stays literal here.
+                .filter(|(_, error)| error.ends_with("RefusalError"))
                 .collect();
             Record {
                 script: text("script").expect("script"),
@@ -69,19 +98,31 @@ fn load() -> (Vec<Record>, Vec<String>) {
                 refused,
             }
         })
-        .collect();
-    (records, messages)
+        .collect()
+}
+
+/// `(record index, guard key)` → (refused now, category).
+fn deltas() -> BTreeMap<(usize, String), (bool, Category)> {
+    std::fs::read_to_string(corpus_dir().join("deltas.jsonl"))
+        .expect("deltas.jsonl")
+        .lines()
+        .map(|line| {
+            let value: Value = serde_json::from_str(line).expect("delta parses");
+            let index = usize::try_from(value["i"].as_u64().expect("index")).expect("index fits");
+            let guard = value["guard"].as_str().expect("guard").to_string();
+            let refused = value["refused"].as_bool().expect("refused");
+            let category = value["category"]
+                .as_str()
+                .and_then(Category::parse)
+                .unwrap_or_else(|| panic!("delta {index}/{guard} has no known category"));
+            ((index, guard), (refused, category))
+        })
+        .collect()
 }
 
 /// The neutral context the corpus was judged in: an empty, non-git working
 /// directory, an empty HOME, `PATH=/usr/bin:/bin`, no CDPATH.
-struct Neutral {
-    _root: tempfile::TempDir,
-    root: String,
-    context: GuardContext,
-}
-
-fn neutral() -> Neutral {
+fn neutral() -> (tempfile::TempDir, GuardContext) {
     let root = tempfile::Builder::new()
         .prefix("pa-bash-corpus-")
         .tempdir()
@@ -96,143 +137,91 @@ fn neutral() -> Neutral {
         ("PATH".to_string(), "/usr/bin:/bin".to_string()),
         ("LANG".to_string(), "C.UTF-8".to_string()),
     ]);
-    Neutral {
-        _root: root,
-        root: real.display().to_string(),
-        context: GuardContext::new(work, env),
-    }
+    (root, GuardContext::new(work, env))
 }
 
-fn shorten(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return format!("{text:?}");
-    }
-    let head: String = text.chars().take(limit).collect();
-    format!("{head:?}... ({} chars)", text.chars().count())
-}
+/// The guards the Python oracle judged.
+const ORACLE_GUARDS: [GuardKind; 6] = [
+    GuardKind::DestructiveGit,
+    GuardKind::DestructiveChmod,
+    GuardKind::ForcePush,
+    GuardKind::SecretEcho,
+    GuardKind::PipeToShell,
+    GuardKind::Sudo,
+];
 
 #[test]
-fn every_guard_matches_the_python_verdicts() {
-    let (records, messages) = load();
-    let neutral = neutral();
-    let limit: usize = std::env::var("PA_BASH_CORPUS_LIMIT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(20);
-    let mut report = String::new();
-    let mut total = 0usize;
-    for guard in GuardKind::ALL {
-        let key = corpus_key(guard);
-        let mut mismatches = 0usize;
-        for record in &records {
-            let script = Script {
-                command: record.command.as_deref().unwrap_or(&record.script),
-                script: &record.script,
-                prefix: record.prefix.as_deref(),
-            };
-            // A Python verdict that is not a refusal class is the Python guard
-            // crashing (`OverflowError` from `chr()` on `$'\UFFFFFFFF'` in the
-            // chmod and secret-echo decoders). The port fixes the crash: the
-            // escape stays literal and the command is judged like any other.
-            let expected = record
-                .refused
-                .get(key)
-                .filter(|(error, _)| error.ends_with("RefusalError"))
-                .map(|(error, id)| {
-                    (
-                        error.clone(),
-                        messages[*id].replace("<ROOT>", &neutral.root),
-                    )
-                });
-            let actual = super::check(guard, &script, &neutral.context)
+fn every_verdict_matches_the_oracle_or_a_recorded_delta() {
+    let records = load();
+    let deltas = deltas();
+    let (_root, context) = neutral();
+    let mut report = Vec::new();
+    let mut used = BTreeSet::new();
+    for (index, record) in records.iter().enumerate() {
+        let script = Script {
+            command: record.command.as_deref().unwrap_or(&record.script),
+            script: &record.script,
+            prefix: record.prefix.as_deref(),
+        };
+        for guard in ORACLE_GUARDS {
+            let key = (index, guard.key().to_string());
+            let actual = super::check(guard, &script, &context)
                 .err()
-                .map(|refusal| (refusal.guard.error_name().to_string(), refusal.message));
-            if expected != actual {
-                mismatches += 1;
-                if mismatches <= limit {
-                    use std::fmt::Write as _;
-                    let _ = writeln!(
-                        report,
-                        "[{key}] {}\n    expected: {}\n    actual:   {}",
-                        shorten(&record.script, 160),
-                        expected.map_or_else(
-                            || "allowed".to_string(),
-                            |(e, m)| format!("{e}: {}", shorten(&m, 240))
-                        ),
-                        actual.map_or_else(
-                            || "allowed".to_string(),
-                            |(e, m)| format!("{e}: {}", shorten(&m, 240))
-                        ),
-                    );
+                .map(|refusal| refusal.guard.error_name().to_string());
+            let oracle = record.refused.get(guard.key()).cloned();
+            let expected = match deltas.get(&key) {
+                Some((refused, _)) => {
+                    used.insert(key.clone());
+                    refused.then(|| guard.error_name().to_string())
                 }
+                None => oracle.clone(),
+            };
+            if actual != expected {
+                report.push(format!(
+                    "#{index} [{}] {:?}\n    oracle: {oracle:?}, expected: {expected:?}, actual: {actual:?}",
+                    guard.key(),
+                    record.script.chars().take(160).collect::<String>()
+                ));
             }
         }
-        if mismatches > 0 {
-            use std::fmt::Write as _;
-            let _ = writeln!(
-                report,
-                "[{key}] {mismatches} of {} inputs differ",
-                records.len()
-            );
-        }
-        total += mismatches;
     }
-    assert!(total == 0, "guard corpus mismatches:\n{report}");
+    let stale: Vec<_> = deltas.keys().filter(|key| !used.contains(*key)).collect();
+    assert!(
+        report.is_empty(),
+        "{} verdicts differ:\n{}",
+        report.len(),
+        report.join("\n")
+    );
+    assert!(stale.is_empty(), "deltas for unknown records: {stale:?}");
+}
+
+/// A delta records a real difference: the oracle's verdict is the other
+/// one, and a loss of a refusal is never `New`.
+#[test]
+fn every_delta_flips_the_oracle_verdict() {
+    let records = load();
+    for ((index, guard), (refused, category)) in deltas() {
+        let oracle = records[index].refused.contains_key(&guard);
+        assert_ne!(oracle, refused, "#{index} [{guard}] repeats the oracle");
+        assert_eq!(
+            category == Category::New,
+            refused,
+            "#{index} [{guard}] {category:?}"
+        );
+    }
 }
 
 #[test]
 fn every_guard_judges_every_corpus_input_without_panicking() {
-    let (records, _) = load();
-    let neutral = neutral();
-    for record in &records {
+    let (_root, context) = neutral();
+    for record in load() {
         let script = Script {
             command: record.command.as_deref().unwrap_or(&record.script),
             script: &record.script,
             prefix: record.prefix.as_deref(),
         };
         for guard in GuardKind::ALL {
-            let _ = super::check(guard, &script, &neutral.context);
+            let _ = super::check(guard, &script, &context);
         }
     }
-}
-
-/// A named input family, its builder, and the small size measured.
-type Shape = (&'static str, fn(usize) -> String, usize);
-
-/// The fastest of three runs of `guard` on `text`.
-fn best_time(guard: GuardKind, text: &str, context: &GuardContext) -> f64 {
-    let script = Script::bare(text);
-    (0..3)
-        .map(|_| {
-            let start = std::time::Instant::now();
-            let _ = super::check(guard, &script, context);
-            start.elapsed().as_secs_f64()
-        })
-        .fold(f64::MAX, f64::min)
-}
-
-/// Here-document shapes the Python guards scanned in linear time (their
-/// cost-lock tests): a line of thousands of openers, and thousands of
-/// openers whose delimiter never comes. Eight times the input must cost
-/// about eight times the time, not sixty-four (the ratio bound is loose so
-/// scheduling noise cannot trip it; a quadratic scan measured 45-70).
-#[test]
-fn heredoc_shapes_scan_in_linear_time() {
-    let neutral = neutral();
-    let shapes: [Shape; 2] = [
-        ("openers", |n| format!("cat {}body", "<<A ".repeat(n)), 1000),
-        ("unterminated", |n| "cat <<'EOF'\nenv\n".repeat(n), 500),
-    ];
-    let mut slow = Vec::new();
-    for (name, make, n) in shapes {
-        for guard in GuardKind::ALL {
-            let small = best_time(guard, &make(n), &neutral.context);
-            let large = best_time(guard, &make(n * 8), &neutral.context);
-            let ratio = large / small.max(1e-4);
-            if ratio > 24.0 {
-                slow.push(format!("{name} {}: {ratio:.1}", corpus_key(guard)));
-            }
-        }
-    }
-    assert_eq!(slow, Vec::<String>::new());
 }

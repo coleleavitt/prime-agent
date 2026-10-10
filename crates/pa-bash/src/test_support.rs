@@ -108,12 +108,7 @@ mod tests {
         let git_dir = repo.join(".git");
         let before = sentinel_state(&git_dir);
         let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([
-                "guards::force_push::tests::",
-                "guards::destructive_git::tests::",
-                "--test-threads",
-                "4",
-            ])
+            .args(["guards::tests::", "--test-threads", "4"])
             .env("GIT_DIR", &git_dir)
             .env("GIT_WORK_TREE", &repo)
             .output()

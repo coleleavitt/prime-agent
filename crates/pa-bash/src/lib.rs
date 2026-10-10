@@ -11,6 +11,7 @@
 
 mod context;
 mod guards;
+mod model;
 mod pipeline;
 mod platform;
 mod probe;

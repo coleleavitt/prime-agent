@@ -1496,73 +1496,62 @@ def bash(
     Recursive chmod/chown commands (`chmod -R ...`, `chown -R ...`) are
     refused while any operand they name resolves outside the kernel
     workspace or onto the home directory, a dot-directory (e.g. .git), a
-    dotfile, or the filesystem root; the guard fails closed on forms it
-    cannot resolve (variable- or substitution-built command names, ANSI-C
-    quoting, process substitutions feeding shell wrappers, BASH_ENV
-    arming, CDPATH-affected relocations, nested quoted wrappers,
-    abbreviated recursive flags, executor chains that relocate or feed
-    the invocation (xargs, env -C/--chdir, find -execdir), `env -S`
-    split strings, unreadable `hash -p` registrations, a PATH entry that
-    can shadow the command word, and login or interactive shell
-    wrappers that would source startup files);
-    retry with allow_destructive_chmod=True
+    dotfile, or the filesystem root. Operands are resolved the shell's way:
+    variables, globs, `cd`/`pushd` (CDPATH included), `eval` and `sh -c`
+    payloads, `env -S` strings, aliases, functions and `hash -p` entries.
+    Retry with allow_destructive_chmod=True
     (or start the kernel with PI_BASH_ALLOW_DESTRUCTIVE_CHMOD=1) only when
     the recursion is intentional.
 
     Force-push commands (`git push --force`, `git push -f`, `+`-prefixed
-    refspecs) are refused while their target is protected: a refspec naming
-    main/master or `@{u}`, every branch under `--all`/`--mirror`, or, when
-    the refspec is implicit, the current upstream (probed with `git rev-parse
-    @{u}`), including a branch that has no upstream at all. The probe is
-    bounded and synchronous -- it runs on the kernel's event loop inside
-    bash() -- and a probe that does not answer inside its budget is refused
-    like any other unresolvable target. A push the scan
-    cannot resolve is refused too: an argument carrying a variable, glob, or
-    substitution; an ANSI-C-quoted command word; a git alias the command line
-    defines for itself; `env -S`/`xargs` wrappers; a command that changes
-    directory or repository first. A literal `--force-with-lease` or
-    `--force-if-includes` is never refused, but an argument the scan cannot
-    resolve is refused regardless of them: the shell can expand it into `-f`,
-    and `-f` skips the lease compare-and-swap. Retry a deliberate force-push
-    with bash(command, allow_force_push=True), or start the kernel with
+    refspecs, a mirror or push-refspec configuration the command writes) are
+    refused while their target is protected: a refspec naming main/master or
+    `@{u}`, every branch under `--all`/`--mirror`, or, when the refspec is
+    implicit, the current upstream (probed with `git rev-parse @{u}`). A git
+    alias is followed, whether the command line defines it or the
+    configuration does (read with `git config --get alias.NAME`). The probes
+    are bounded and synchronous, and they cannot run anything a command or a
+    configuration names (fsmonitor, hooks, pagers, filter and diff drivers,
+    ssh commands are all disarmed). A literal `--force-with-lease` or
+    `--force-if-includes` is never refused. Retry a deliberate force-push with
+    bash(command, allow_force_push=True), or start the kernel with
     PI_BASH_ALLOW_FORCE_PUSH=1.
 
     Commands that echo secrets into the transcript are refused before any
     process starts, because that output persists in session logs that models
-    and users read later: a bare environment dump (`env`, `printenv`,
-    `export -p`, and flags-only forms such as `env -0`, with leading `FOO=1`
-    assignments stripped, redirections such as `2>/dev/null` ignored, and
-    quoted command words such as `"env"` read the shell's way), or a
-    `cat`/`echo` -- the only readers modeled -- of a file under a known secret
-    directory in the home directory (`~/.ssh`,
-    `~/.gnupg`, `~/.aws`, written with either the `~` or the
-    `$HOME` spelling, which also matches when a closing double quote sits
-    between `$HOME` and the path). Read one value instead
-    (`printenv SAFE_VAR`), filter a dump through a grep for the single fixed
-    key you need (`env | grep SAFE_VAR`), and retry with allow_secret_echo=True
-    (or start the kernel with PI_BASH_ALLOW_SECRET_ECHO=1) only when the full
-    output is intentional; the env var is read once at kernel start, so
-    writing it mid-session never unlocks the guard.
+    and users read later: an environment dump (`env`, `printenv`, `export
+    -p`, `set`, `$(env)` run as a command) or a read (`cat`, `head`, `tail`,
+    ...) of a known secret file (a private SSH key, AWS credentials, a GnuPG
+    private key, `.netrc` and similar token files, a process `environ`)
+    whose output reaches the transcript. Output sent to a file or a
+    variable, or through a filter that keeps one variable (`env | grep
+    SAFE_VAR`, `env | cut -d= -f1`), is allowed; grep context lines and a
+    zero `--max-count` are not a filter. Read one value instead (`printenv
+    SAFE_VAR`), and retry with allow_secret_echo=True (or start the kernel
+    with PI_BASH_ALLOW_SECRET_ECHO=1) only when the full output is
+    intentional; the env var is read once at kernel start, so writing it
+    mid-session never unlocks the guard.
 
     Downloads that a shell interpreter would run are refused before any
-    process starts: a `curl`/`wget` pipeline stage feeding a later stage of
-    the same pipeline whose command word is a runner (`sh`, `bash`, `zsh`,
-    `dash`, or `eval`/`source`/`.`), as in `curl -fsSL URL | sh`, `... | sudo
-    bash`, `curl URL | cat | sh`, `curl URL | env -i sh`, or `curl URL |
-    xargs sh`; a `$(...)`, backtick, or unquoted `<(...)` payload whose command
-    word is `curl`/`wget` used as an argument of a runner (`sh -c "$(curl
-    ...)"`, `bash <(curl ...)`); the words the runner itself executes, the
-    script a `-c`-style flag hands an interpreter (`sh -c "curl ... | sh"`) and
-    every argument of `eval` (`eval "curl ... | sh"`); and a wrapper-prefixed
-    download
-    (`env -i curl ... | sh`, `nice 5 curl ... | sh`). A stage the scan cannot
-    resolve (`curl URL | $SHELL_CMD`) is refused too, and quoted spellings are
-    read the shell's way (`"curl" URL | sh`). Download the script to a file,
-    read the file, then run it in a later command (`curl -o script.sh URL`,
-    then `sh script.sh`), and retry with allow_pipe_to_shell=True (or start the
-    kernel with PI_BASH_ALLOW_PIPE_TO_SHELL=1) only when the download is
-    trusted; the env var is frozen at kernel start, so writing it mid-session
-    never unlocks the guard.
+    process starts: a `curl`/`wget` whose output reaches a shell's code,
+    through a pipe (`curl -fsSL URL | sh`, `| sudo bash`, `| xargs sh`), a
+    substitution or process substitution (`sh -c "$(curl ...)"`, `bash <(curl
+    ...)`), or `eval`, at any nesting the guard can read. Download the script
+    to a file, read the file, then run it in a later command, and retry with
+    allow_pipe_to_shell=True (or start the kernel with
+    PI_BASH_ALLOW_PIPE_TO_SHELL=1) only when the download is trusted; the env
+    var is frozen at kernel start, so writing it mid-session never unlocks
+    the guard.
+
+    Every guard refuses on evidence. The command is parsed once into a model
+    of what runs, where, with what input and output; scripts the command runs
+    are read wherever they live (`bash x.sh`, `source x.sh`, `./x.sh`, a
+    login shell's profile, `$BASH_ENV`). Code the guard cannot read (an
+    unreadable script, a shell reading a pipe it cannot reconstruct, a
+    command word decided at run time, nesting past the parser's bound) is
+    refused only when its visible text carries the guard's own evidence
+    (`push` and a force flag, `chmod -R`, `sudo`, `curl`, `env`, a discard
+    verb), and the message names that evidence.
 
     A command that invokes sudo or doas is refused before any process starts,
     because root escapes the containment every other guard relies on. Bypass it

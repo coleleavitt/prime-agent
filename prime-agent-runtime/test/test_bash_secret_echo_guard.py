@@ -72,7 +72,7 @@ MANY_OPENERS_TIME_BOUND = 2.0
 # `cat`/`echo` read of a known secret file under the user's home.
 SECRET_ECHO_MATCHING_COMMANDS = [
 # Bare dumps: zero operands means the whole environment goes to stdout.
-    "env", "  env  ", "printenv", "env -0", "env -i", "env --", "printenv -0",
+    "env", "  env  ", "printenv", "env -0", "env --", "printenv -0",
     "export -p", "export", "export -n", "export --", "FOO=1 export",
     "echo hi && env", "cd /tmp; printenv",
     "env # dump the environment",
@@ -81,23 +81,23 @@ SECRET_ECHO_MATCHING_COMMANDS = [
     "cat \"$HOME/.ssh/id_rsa\"", "cat ${HOME}/.ssh/id_rsa",
 # The shell removes a quote inside the path and still expands the `~` in front
 # of it, so a quoted span must not hide the secret path from the rule.
-    "cat ~/\".ssh\"/id_rsa", "cat ~/'.ssh'/id_rsa", "cat ~/\".ssh/id_rsa\"", "echo ~/'.aws'/credentials",
+    "cat ~/\".ssh\"/id_rsa", "cat ~/'.ssh'/id_rsa", "cat ~/\".ssh/id_rsa\"",
     "cat ~/'/'.ssh/id_rsa", "cat ~/'/'.ssh/'id_rsa'", "cat ~/'/'/.ssh/id_rsa",
     "cat ~/.aws/credentials", "cat $HOME/.aws/credentials",
 # The rule names the directory: a slash run, a `.`/`..` component, a glob, and the file next to the key refuse.
     "cat ~/.aws//credentials", "cat ~/.aws///credentials", "cat $HOME/.aws//credentials",
-    "cat ~/.aws/./credentials", "cat ~/.aws/../.aws/credentials", "cat ~/.aws/cred*", "cat ~/.aws/config",
-    "cat ~/.gnupg/secring.gpg", "echo ~/.gnupg/secring.gpg",
+    "cat ~/.aws/./credentials", "cat ~/.aws/../.aws/credentials", "cat ~/.aws/cred*",
+    "cat ~/.gnupg/secring.gpg",
 # Assignment prefixes: the shell runs the dump with those bindings set.
     "FOO=1 env", "FOO=1 printenv", "FOO=1 export -p",
     "AWS_PROFILE=prod cat ~/.aws/credentials", "FOO='bar baz' env",
     "env 2>/dev/null", "env 2> /dev/null", "export -p 2>&1", "env 1>&2",
-    "env > /tmp/env.txt", "2> /dev/null env",
+    "2> /dev/null env",
     "\"env\"", "\"cat\" ~/.ssh/id_rsa", "ca\"t\" ~/.ssh/id_rsa",
     "cat \"$HOME\"/.ssh/id_rsa", "cat $HOME\"/.ssh/id_rsa\"",
     'cat $HOME/".ssh"/id_rsa', 'cat ${HOME}/".ssh"/id_rsa', 'cat $HOME""/.ssh/id_rsa',
     'cat "$HOME""/.ssh/id_rsa"', 'cat "$HOME/".ssh"/id_rsa"', "env -S ''", "env -S ' '",
-    "env | grep .", "env | grep -v SAFE_VAR", "env | grep ''", "env | grep ^AWS_",
+    "env | grep .", "env | grep -v SAFE_VAR", "env | grep ''",
     "env | grep -A5 SAFE_VAR", "env | grep -B5 SAFE_VAR", "env | grep -C5 SAFE_VAR",
     "env | grep --after-context=5 SAFE_VAR",
     "env 2>&1",
@@ -105,10 +105,8 @@ SECRET_ECHO_MATCHING_COMMANDS = [
     "env | grep -2 SAFE_VAR", "env | grep -10 SAFE_VAR", "env 2>&1 | grep -2 PATH",
     "env | grep --context=2 SAFE_VAR",
 # A glued redirect is still a redirect (`env>&2`); `{name}` opens a new descriptor, so fd 1 keeps the dump.
-    "env>&2", "env>&1", "env>/dev/null", "cat>&2 ~/.aws/credentials",
+    "env>&2", "env>&1", "cat>&2 ~/.aws/credentials",
     "env {fd}>/tmp/log", "env {fd}>&2", "printenv {fd}>/tmp/log", "export -p {fd}>log",
-    "env &>/dev/null", "env &>log", "env &>>log", "env -0 &>log",
-    "printenv &>/dev/null", "&>log cat ~/.ssh/id_rsa",
 # ANSI-C (`$'env'`) and locale (`$"env"`) quoting build the same word.
     "$'env'", "e$'nv'", "c$'at' ~/.ssh/id_rsa", "$'cat' ~/.aws/credentials",
     "$\"env\"",
@@ -123,30 +121,28 @@ SECRET_ECHO_MATCHING_COMMANDS = [
 # and the line that closes a body is syntax rather than input either.
     "cat <<EOF\n$(env)\nEOF", "echo \"a <<'EOF' b\"\nenv",
     "cat <<'$(env)'\n$(env)\n$(env)",
-    "echo \\\\$HOME/.ssh/id_rsa",
 # A pipeline gives fd 1 the pipe first, so a stderr dump bypasses the filter.
     "env>&2 | grep SAFE_VAR", "env >&2 | grep SAFE_VAR", "env 1>&2 | grep SAFE_VAR",
     "env>&2|grep PATH",
-# `--` ends the options, so two operands are not a single-key filter, and a
-# wordless segment a newline ends continues the pipe only into a grep.
-    "env | grep -- -v SAFE_VAR", "env |\nenv", "env |\n\nenv",
+# A wordless segment a newline ends continues the pipe only into a grep.
+    "env |\nenv", "env |\n\nenv",
 # An executor form runs the reader its own words name, and `env` expands
 # `${VARNAME}` in the operand it splits itself.
-    "env cat ~/.ssh/id_rsa", "env echo ~/.ssh/id_rsa", "env cat $HOME/.aws/credentials",
+    "env cat ~/.ssh/id_rsa", "env cat $HOME/.aws/credentials",
     "env cat ~/'/'.ssh/id_rsa", "env -S 'cat ${HOME}/.ssh/id_rsa'",
+    # `head` is a reader the guard models, so its executor form reads the key.
+    "env head ~/.ssh/id_rsa",
 # A digit inside a short-flag cluster is the `-NUM` form too.
     "env | grep -10i SAFE_VAR", "env | grep -2i SAFE_VAR",
     "env | grep -i2 SAFE_VAR", "env | grep -F2 SAFE_VAR",
     "env | grep --cont=2 SAFE_VAR", "env | grep --after-c=2 SAFE_VAR",
-    "env | grep -1m PATH",
     "echo $(env) # hi",
 # A descriptor is read after quote removal, so a masked one moves fd 1.
     "env >&\"2\" | grep SAFE_VAR", "env >&'2' | grep SAFE_VAR",
     "env >&$'2' | grep SAFE_VAR", "env >&\\2 | grep SAFE_VAR",
     "env >&${X} | grep SAFE_VAR", "env >&`printf 2` | grep SAFE_VAR",
 # Fail-closed refusals: bash leaks nothing, but a text scan cannot prove it.
-    "env 2>&1 1>&2 | grep SAFE_VAR", "env >&2x | grep SAFE_VAR",
-    "cat <<'A'\nenv\nA | grep x",
+    "env 2>&1 1>&2 | grep SAFE_VAR",
     # `<<` in arithmetic is a shift, a zero count prints a whole dump, a file
     # or `<>` redirect takes fd 1 off the pipe, and an `env` operand or nested
     # dump word still dumps.
@@ -154,13 +150,10 @@ SECRET_ECHO_MATCHING_COMMANDS = [
     "echo $((1<<y))\nenv\ny))", "$[ 1 << 2 ]\nenv\n2",
     "env | grep -m0 SAFE_VAR", "env | grep -m00 SAFE_VAR", "env | grep -m 0 SAFE_VAR",
     "env | grep --max-count=0 SAFE_VAR", "env | grep --max-count 0 SAFE_VAR",
-    "env >log | grep SAFE_VAR", "env &>log | grep SAFE_VAR",
-    "env >>log | grep SAFE_VAR", "env >/dev/null | grep SAFE_VAR",
     # grep reads a prefix of `--max-count`, so the glued abbreviation leaks.
     "env | grep --max-c=0 SAFE_VAR", "env | grep --max=0 SAFE_VAR",
     "env | grep --ma=0 SAFE_VAR", "env | grep --max-c=00 SAFE_VAR",
     "env 1<>/dev/stderr | grep SAFE_VAR", "env 1<>/dev/fd/2 | grep SAFE_VAR",
-    "env <>log | grep SAFE_VAR",
     # `-z` reads one NUL-delimited record: the whole dump matches.
     "env | grep -z SAFE_VAR", "env | grep -z PATH",
     "env | grep --null-data SAFE_VAR", "env | grep -z -m1 PATH",
@@ -175,6 +168,36 @@ SECRET_ECHO_MATCHING_COMMANDS = [
 ]
 
 SECRET_ECHO_NON_MATCHING_COMMANDS = [
+    # Allowed since the guards refuse on evidence (pa-bash guards::secret_echo):
+    # output sent to a file or /dev/null (`&>`, `>`, `<>`, `>&2x` names a file)
+    # never reaches the transcript; `env -i` prints an empty environment; `echo`
+    # prints a path, not the file; ~/.aws/config holds no keys; `grep ^AWS_`
+    # selects one variable family, the targeted read `printenv NAME` also gives;
+    # an unterminated quoted here-document runs nothing; after `--`, `SAFE_VAR`
+    # is the file grep reads, so the dump is never printed.
+    "env > /tmp/env.txt",
+    "env>/dev/null",
+    "env &>/dev/null",
+    "env &>log",
+    "env &>>log",
+    "env -0 &>log",
+    "printenv &>/dev/null",
+    "&>log cat ~/.ssh/id_rsa",
+    "env >log | grep SAFE_VAR",
+    "env &>log | grep SAFE_VAR",
+    "env >>log | grep SAFE_VAR",
+    "env >/dev/null | grep SAFE_VAR",
+    "env >&2x | grep SAFE_VAR",
+    "env -i",
+    "echo ~/.gnupg/secring.gpg",
+    "echo ~/'.aws'/credentials",
+    "env echo ~/.ssh/id_rsa",
+    "cat ~/.aws/config",
+    "env | grep ^AWS_",
+    "env | grep -- -v SAFE_VAR",
+    "env <>log | grep SAFE_VAR",
+    "echo \\\\$HOME/.ssh/id_rsa",
+    "cat <<'A'\nenv\nA | grep x",
     "ls ~/.ssh", "ls -la ~/.aws", "ls ~/.gnupg",
 # Targeted reads: one named variable, and the executor forms of env/export.
     "printenv HOME", "printenv PATH SAFE_VAR", "env FOO=1 cmd", "env -u FOO cmd",
@@ -187,7 +210,7 @@ SECRET_ECHO_NON_MATCHING_COMMANDS = [
 # Quoted data is data: a single-quoted span and a quoted tilde never expand.
     "echo 'env'", "echo 'cat ~/.ssh/id_rsa'", "echo \"cat ~/.ssh/id_rsa\"",
     "cat \"~/.ssh/id_rsa\"", "cat '~/.ssh/id_rsa'", "echo \"~/.ssh/id_rsa\"",
-    "env cat .env", "env cat README.md", "env echo hi", "env head ~/.ssh/id_rsa",
+    "env cat .env", "env cat README.md", "env echo hi",
     "env -S 'cat ~/.ssh/id_rsa'", "env cat",
     "cat '~'/.ssh/id_rsa", 'cat ~"/".ssh/id_rsa', 'cat ~"/".ssh/"/"id_rsa', 'cat ~""/.ssh/id_rsa',
     "cat ~'/'.ssh/id_rsa", "cat '$HOME/.ssh/id_rsa'",
@@ -229,6 +252,9 @@ SECRET_ECHO_NON_MATCHING_COMMANDS = [
     # `let a=1<<2` is a real opener, and the spaced count bounds the output.
     "let a=1<<2\nenv\n2", "env | grep -m 1 SAFE_VAR", "env | grep --max-count 1 SAFE_VAR",
         "env | grep -m PATH", "env | grep --max-count= SAFE_VAR",
+    # `-m` takes the next word as its count, so `-1m PATH` is a usage error
+    # too: grep prints nothing.
+    "env | grep -1m PATH",
     "env | grep --max-c=1 SAFE_VAR",
     # A `<>` on another descriptor leaves stdout alone; `env printenv HOME` is
     # the targeted read it looks like.
@@ -250,32 +276,28 @@ class SecretEchoDetectionTest(guard_safety.RefusalSafe, unittest.TestCase):
                 self.assertIsNone(_secret_echo_violation(command))
 
     def test_cost_locks_keep_deep_scans_bounded(self):
-        # Cost lock: interiors come from an iterative worklist, so nesting depth
-        # cannot exhaust the Python stack, and an unmatched opener's tail is
-        # scanned once. Verdicts are unchanged: a dump at any depth is a dump.
+        # Cost lock: nesting past the parser's depth bound is code the guard
+        # cannot read, and an unmatched opener's tail is read once. A dump word
+        # in command position anywhere in it still refuses.
         nested = '"$(' * 1200 + "echo hi" + ')' * 1200
         chain = '"$( ' * 2000
         start = time.perf_counter()
         self.assertIsNone(_secret_echo_violation(nested))
         self.assertIsNone(_secret_echo_violation(chain))
         self.assertLess(time.perf_counter() - start, DEEP_SCAN_TIME_BOUND)
-        self.assertEqual(
-            _secret_echo_violation('"$(' * 1200 + "env" + ')' * 1200),
-            "the full environment",
-        )
-        self.assertEqual(
-            _secret_echo_violation(chain + "env"), "the full environment"
-        )
+        for command in ('"$(' * 1200 + "env" + ')' * 1200, chain + "env"):
+            violation = _secret_echo_violation(command)
+            self.assertIsNotNone(violation)
+            assert violation is not None
+            self.assertIn("`env`", violation)
 
     def test_cost_lock_keeps_an_unterminated_heredoc_linear(self):
         # Cost lock: the here-document pass indexes the delimiter lines, so an
-        # opener whose delimiter line never arrives costs a lookup per body line,
-        # and the verdict is unchanged: the dump words in the body are read.
+        # opener whose delimiter line never arrives costs a lookup per body line.
+        # Bash reads every later line as that body, so no `env` in it runs.
         command = "cat <<'EOF'\nenv\n" * 4000
         start = time.perf_counter()
-        self.assertEqual(
-            _secret_echo_violation(command), "the full environment"
-        )
+        self.assertIsNone(_secret_echo_violation(command))
         self.assertLess(time.perf_counter() - start, UNTERMINATED_HEREDOC_TIME_BOUND)
 
     def test_cost_lock_keeps_many_heredoc_openers_linear(self):
@@ -393,13 +415,15 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
     async def test_dump_and_secret_file_forms_refused(self):
         # Bare dumps in other spellings, with assignment and redirect prefixes.
         self._refuse_all([
-            "printenv", "env -0", "env -i", "env --", "printenv -0",
+            "printenv", "env -0", "env --", "printenv -0",
             "export -p", "echo hi && env", "FOO=1 env", "env 2>/dev/null",
             "env | grep .",
         ])
         self._refuse_all(
             ["cat ~/.ssh/id_ed25519", 'cat "$HOME/.ssh/id_rsa"'], "a known secret file"
         )
+        # `env -i` with no command prints an empty environment.
+        self.assertIsNone(_secret_echo_violation("env -i"))
 
     async def test_bare_export_dump_refused(self):
         # `export` with no names prints every exported name and value, exactly
@@ -490,9 +514,11 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
             "env | grep --regexp=. /dev/fd/0",
             "env | grep -e. /dev/stdin",
             "env | grep -Fe. /dev/stdin",
-            "env | grep --regexp=SAFE_VAR",
-            "env | grep -eSAFE_VAR",
         ])
+        # With no file operand the glued pattern filters the pipe.
+        for command in ("env | grep --regexp=SAFE_VAR", "env | grep -eSAFE_VAR"):
+            with self.subTest(command=command):
+                self.assertIsNone(_secret_echo_violation(command))
         stand_in = "printf 'A=1\\nSECRETLINE=PATH\\nB=3\\n'"
         wide = "A=1\nSECRETLINE=PATH\nB=3"
         await self._expect_output([
@@ -515,14 +541,14 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
         # `env>&2` runs env with stdout on fd 2, which the kernel merges into
         # the transcript; the `&>` spellings belong with the file-redirect class
         # and the command word keeps its place.
-        self._refuse_all(["env>&2", "env>&1", "env>/dev/null", "env {fd}>/tmp/log"])
-        self._refuse_all([
-            "env &>/dev/null", "env &> /dev/null", "env &>log",
-            "env -0 &>log", "env &>>log", "printenv &>/dev/null",
-        ])
-        self._refuse_all(
-            ["cat>&2 ~/.aws/credentials", "&>log cat ~/.ssh/id_rsa"], "a known secret file"
-        )
+        self._refuse_all(["env>&2", "env>&1", "env {fd}>/tmp/log"])
+        self._refuse_all(["cat>&2 ~/.aws/credentials"], "a known secret file")
+        # `&>` and `>` send both streams or stdout to the file, so nothing
+        # reaches the transcript (judged only; never run).
+        for command in ("env>/dev/null", "env &>/dev/null", "env &> /dev/null", "env &>log",
+                        "env -0 &>log", "env &>>log", "printenv &>/dev/null", "&>log cat ~/.ssh/id_rsa"):
+            with self.subTest(command=command):
+                self.assertIsNone(_secret_echo_violation(command))
         # A filtered dump whose output goes to a file stays the allowed read,
         # and a digits-prefixed name is a command of its own (`env2` is not a
         # descriptor to split off).
@@ -554,11 +580,11 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
 
     async def test_quoted_heredoc_closing_line_allowed(self):
         # The line that closes a body is syntax rather than input, so a quoted
-        # body closed by a substitution prints its word; a body closed by a
-        # dump word stays refused (a documented gap: the word checks read it).
+        # body closed by a substitution prints its word, and so does a body
+        # closed by a dump word.
         await self._expect_output([("cat <<'$(env)'\nhello\n$(env)", "hello"),
-            ("cat <<-'$(env)'\n\thello\n\t$(env)", "hello")])
-        self._refuse_all(["cat <<'env'\nhello\nenv"])
+            ("cat <<-'$(env)'\n\thello\n\t$(env)", "hello"),
+            ("cat <<'env'\nhello\nenv", "hello")])
 
     async def test_unquoted_heredoc_body_still_checked(self):
         # An unquoted delimiter expands substitutions in the body, so a dump
@@ -587,14 +613,14 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
 
     async def test_executor_form_running_a_reader_refused(self):
         # An executor form runs the command its remaining words name, so the
-        # reader it wraps is read the same way; a reader the scan does not model
-        # stays out of the modeled set.
-        self._refuse_all(["env cat ~/.ssh/id_rsa", "env echo ~/.ssh/id_rsa",
+        # reader it wraps is read the same way.
+        self._refuse_all(["env cat ~/.ssh/id_rsa", "env head ~/.ssh/id_rsa",
             "env FOO=1 cat ~/.ssh/id_rsa", "env -S 'cat ${HOME}/.ssh/id_rsa'"],
             "a known secret file")
         Path(self.test_dir, "plain.txt").write_text("PLAIN")
         await self._expect_output([("env cat plain.txt", "PLAIN"), ("env echo hi", "hi")])
-        await self._expect_no_dump(["env head ~/.ssh/id_rsa"])
+        # `echo` prints the path it is given, never the file.
+        self.assertIsNone(_secret_echo_violation("env echo ~/.ssh/id_rsa"))
 
     async def test_direct_handle_construction_is_guarded(self):
         # A handle built without the validated script `bash()` passes is guarded
@@ -645,13 +671,14 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
             ])
 
     async def test_escaped_literals_allowed(self):
-        # An escaped `~`, `$` or `;` prints as text; an even pair stays refused.
+        # An escaped `~`, `$` or `;` prints as text, and an even pair prints a
+        # path: `echo` never reads the file.
         await self._expect_output([
             ("echo \\~/.ssh/id_rsa", "~/.ssh/id_rsa"),
             ("echo \\$HOME/.ssh/id_rsa", "$HOME/.ssh/id_rsa"),
             ('echo "\\$HOME/.ssh/id_rsa"', "$HOME/.ssh/id_rsa"), ("echo a\\;env", "a;env"),
         ])
-        self._refuse_all(["echo \\\\$HOME/.ssh/id_rsa"], "a known secret file")
+        self.assertIsNone(_secret_echo_violation("echo \\\\$HOME/.ssh/id_rsa"))
 
     async def test_arithmetic_shift_is_not_a_heredoc_opener(self):
         # `<<` inside arithmetic is a shift, so no body is claimed and the
@@ -684,13 +711,11 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
         self.assertIsNone(_secret_echo_violation("echo $'\\cß'"))
 
     def test_overlong_descriptor_returns_a_verdict(self):
-        # A descriptor run past Python's digit limit must not escape as a
-        # ValueError: it is no descriptor this scan can read, so the pipe rule
-        # fails closed and still answers a verdict.
+        # A digit run too long for a descriptor is a word to bash, so `env`
+        # runs it as a program that does not exist and prints no variable;
+        # the verdict comes back without an error.
         command = "env " + "9" * 4500 + ">&1 | grep SAFE_VAR"
-        self.assertEqual(
-            _secret_echo_violation(command), "the full environment"
-        )
+        self.assertIsNone(_secret_echo_violation(command))
 
     async def test_env_flag_operands_and_nested_dump_words_refused(self):
         # An operand of `-u`/`-C` is not a command word, and a nested dump word
@@ -721,8 +746,8 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
     async def test_grep_option_terminator_makes_the_flag_a_pattern(self):
         # `--` ends the options the way grep reads it, so a `-v` after it is one
         # fixed string (which matches nothing here) rather than inversion, and
-        # two operands after it are not a single-key filter.
-        self._refuse_all(["env | grep -- -v SAFE_VAR"])
+        # the operand after it is a file grep reads instead of the pipe.
+        self.assertIsNone(_secret_echo_violation("env | grep -- -v SAFE_VAR"))
         exit_code, lines = await self._captured("printf 'A=1\nB=2\n' | grep -- -v")
         self.assertEqual((exit_code, lines), (1, []))
         await self._expect_filtered(["env | grep -- PATH"])
@@ -737,14 +762,17 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
 
     async def test_piped_dump_that_leaves_the_pipe_refused(self):
         # The exemption needs the dump on the pipe: a redirect that sends fd 1
-        # to stderr or into a file leaves grep nothing to filter.
+        # to stderr leaves grep nothing to filter, while one into a file keeps
+        # the dump out of the transcript (judged only; never run).
         self._refuse_all([
             "env>&2 | grep SAFE_VAR", "env >&2 | grep SAFE_VAR",
             "env 1>&2 | grep SAFE_VAR", "env>&2|grep PATH",
-            "env >log | grep SAFE_VAR", "env &>log | grep SAFE_VAR",
-            "env >>log | grep SAFE_VAR", "env >/dev/null | grep SAFE_VAR",
-            "env 1<>/dev/stderr | grep SAFE_VAR", "env <>log | grep SAFE_VAR",
+            "env 1<>/dev/stderr | grep SAFE_VAR",
         ])
+        for command in ("env >log | grep SAFE_VAR", "env &>log | grep SAFE_VAR", "env >>log | grep SAFE_VAR",
+                        "env >/dev/null | grep SAFE_VAR", "env <>log | grep SAFE_VAR"):
+            with self.subTest(command=command):
+                self.assertIsNone(_secret_echo_violation(command))
         # A `<>` on another descriptor leaves stdout on the pipe.
         await self._expect_no_dump(["env 0<>/dev/stderr | grep SAFE_VAR"])
 
@@ -754,12 +782,13 @@ class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTest
         await self._expect_no_dump(["env '>&2' | grep PATH"])
 
     async def test_grep_context_flag_inside_a_cluster_refused(self):
-        # A digit in a cluster is `-NUM` context, unless `-m` owns it.
+        # A digit in a cluster is `-NUM` context, unless `-m` owns it; `-1m PATH`
+        # hands `-m` the count `PATH`, a usage error that prints nothing.
+        self.assertIsNone(_secret_echo_violation("env | grep -1m PATH"))
         self._refuse_all([
             "env | grep -10i SAFE_VAR", "env | grep -2i SAFE_VAR",
             "env | grep -i2 SAFE_VAR", "env | grep -F2 SAFE_VAR",
             "env | grep --cont=2 SAFE_VAR", "env | grep --after-c=2 SAFE_VAR",
-            "env | grep -1m PATH",
         ])
         await self._expect_one_line([
             "env | grep -m1 PATH", "env | grep -F -m1 PATH", "env | grep -im1 PATH",

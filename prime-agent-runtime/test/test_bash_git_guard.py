@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from git_isolation import fixture_git_env, scrub_repository_selection
+import bash_guard_check
 import guard_safety
 from rlm import bash
 from rlm.bash import (
@@ -104,7 +105,7 @@ MATCHING_COMMANDS = [
     'g\\it reset --ha\\rd', 'git res\\et --hard', '"git" reset --hard', "g'it' reset --hard", 'G=git; $G reset --hard', 'G=git; ${G} reset --hard',
     'G=git; echo G=other; $G reset --hard', "G=git; printf '%s' G=other; $G reset --hard", 'G=git; # G=other\n$G reset --hard',
     'FOO=1 cd sub && git reset --hard', '/usr/bin/git reset --hard', './git reset --hard', "G='git reset --hard'; $G", 'G="git restore ."; $G',
-    'G="it\'s # "; $G git reset --hard', "echo 'git' 'reset' '--hard'", 'git reset &>/dev/null --hard', 'git reset &> /dev/null --hard',
+    'git reset &>/dev/null --hard', 'git reset &> /dev/null --hard',
     'git reset &>>/dev/null --hard', 'git reset >&/dev/null --hard', '{ cd sub && git reset --hard; }', 'export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard',
     'for i in 1; do export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard; done', 'GIT_DIR=sub/.git; git reset --hard',
     'git -Csub reset --hard', 'git -cfoo.bar=1 reset --hard', 'git reset \\\n--hard', 'git checkout -- \\\n.', 'git clean -f \\\n-d',
@@ -117,6 +118,9 @@ MATCHING_COMMANDS = [
 ]
 
 NON_MATCHING_COMMANDS = [
+    # A `#` an expansion produces is a word, not a comment, so `$G` runs a
+    # command named `it's`; `echo` prints its words.
+    'G="it\'s # "; $G git reset --hard', "echo 'git' 'reset' '--hard'",
     'git status', 'git log --oneline', 'git checkout -b new-branch', 'git checkout main', 'git checkout -m main', 'git checkout -b newbranch .',
     'git checkout -- single-file.txt', "echo 'git reset --hard'", 'git commit -m "git reset --hard"', 'echo "git clean -fd"',
     'echo preparing # git reset --hard', 'git checkout ./nested', 'git restore --staged .', 'git restore --staged :/', 'git restore single-file.txt',
@@ -197,6 +201,10 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
 
     def _tracked(self, *parts: str) -> Path:
         return Path(self.test_dir, *parts)
+
+    def _assert_allowed(self, command: str) -> None:
+        # Judged through `bash.check` only; the command never runs.
+        self.assertIsNone(bash_guard_check.refusal("destructive_git", command))
 
     async def test_refuses_destructive_discards_on_dirty_tree(self):
         for index, command in enumerate([
@@ -389,24 +397,63 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
             bash("git checkout -- . && cd sub && git reset --hard")
 
     async def test_refuses_relocations_it_cannot_replay_safely(self):
+        # There is no `sub` here. Where the relocation can fail and git then
+        # runs in the dirty tree (a `;`, `||`, `!`, a hook or function that may
+        # not run, a variable unset again), or the target cannot be named, the
+        # discard is refused.
         self._init_dirty_repo()
         for command in [
-            'cd $(pwd)/sub && git reset --hard', 'git --git-dir=sub/.git reset --hard', 'cd sub || git reset --hard',
-            'pushd sub && git reset --hard', '"pushd" sub && git reset --hard', 'git -C "sub" reset --hard', 'git -ccore.worktree=sub reset --hard', 'git -ccore.bare=1 reset --hard', '( "pu"shd sub && git reset --hard )',
-            'git -pCsub reset --hard', 'git -qC sub reset --hard', 'source setup.sh && git reset --hard', '. setup.sh && git reset --hard',
-            'export GIT_DIR=$(pwd)/sub; git reset --hard', 'FOO=1 cd sub; git reset --hard', 'FOO=$(pwd) cd sub && git reset --hard',
-            'function f { cd sub; }; f; git reset --hard', 'function f { pushd sub; }; f && git reset --hard', 'git() { command git -C sub "$@"; }; git reset --hard', 'GIT_DIR=sub/.git; unset GIT_DIR; git reset --hard', '"unset" GIT_DIR; git reset --hard', 'command unset GIT_DIR; git reset --hard', '! cd sub; git reset --hard', '! cd no-such-dir && git reset --hard', 'WT=sub git --config-env=core.worktree=WT reset --hard', 'GIT_DIR=sub/.git GIT_WORK_TREE=sub; command -p unset GIT_DIR; git reset --hard', "eval 'cd sub'; git reset --hard", "trap 'cd sub' DEBUG; git reset --hard", "trap 'cd sub' ERR; false; git reset --hard", "shopt -s expand_aliases\nalias c=cd\neval 'c sub'\ngit reset --hard", "trap 'true; cd sub' DEBUG; git reset --hard", "trap 'echo hi' DEBUG; trap 'cd sub' DEBUG; git reset --hard", "trap '--' 'cd sub' DEBUG; git reset --hard", 'GIT_DIR=sub/.git GIT_WORK_TREE=sub; command "-p" unset GIT_DIR; git reset --hard', "X=cd; eval '$X sub'; X=echo; git reset --hard", 'A=trap; "$A" \'cd sub\' DEBUG; git reset --hard',
+            'cd sub || git reset --hard',
+            'git -ccore.worktree=sub reset --hard',
+            'git -ccore.bare=1 reset --hard',
+            'source setup.sh && git reset --hard',
+            '. setup.sh && git reset --hard',
+            'FOO=1 cd sub; git reset --hard',
+            'function f { cd sub; }; f; git reset --hard',
+            'function f { pushd sub; }; f && git reset --hard',
+            'GIT_DIR=sub/.git; unset GIT_DIR; git reset --hard',
+            '"unset" GIT_DIR; git reset --hard',
+            'command unset GIT_DIR; git reset --hard',
+            '! cd sub; git reset --hard',
+            '! cd no-such-dir && git reset --hard',
+            'WT=sub git --config-env=core.worktree=WT reset --hard',
+            'GIT_DIR=sub/.git GIT_WORK_TREE=sub; command -p unset GIT_DIR; git reset --hard',
+            "eval 'cd sub'; git reset --hard",
+            "trap 'cd sub' DEBUG; git reset --hard",
+            "trap 'cd sub' ERR; false; git reset --hard",
+            "shopt -s expand_aliases\nalias c=cd\neval 'c sub'\ngit reset --hard",
+            "trap 'true; cd sub' DEBUG; git reset --hard",
+            "trap 'echo hi' DEBUG; trap 'cd sub' DEBUG; git reset --hard",
+            "trap '--' 'cd sub' DEBUG; git reset --hard",
+            'GIT_DIR=sub/.git GIT_WORK_TREE=sub; command "-p" unset GIT_DIR; git reset --hard',
+            "X=cd; eval '$X sub'; X=echo; git reset --hard",
+            'A=trap; "$A" \'cd sub\' DEBUG; git reset --hard',
         ]:
             with self.subTest(command=command):
-                with self.assertRaises(DestructiveGitRefusalError) as caught:
+                with self.assertRaises(DestructiveGitRefusalError):
                     bash(command)
-                self.assertIn("changes directory (or repository) first", str(caught.exception))
+        # Where the failed `cd`/`pushd`/`-C`/`--git-dir` stops the discard, or
+        # git rejects the option, nothing is discarded and the guard allows it.
+        for command in [
+            'cd $(pwd)/sub && git reset --hard',
+            'git --git-dir=sub/.git reset --hard',
+            'pushd sub && git reset --hard',
+            '"pushd" sub && git reset --hard',
+            'git -C "sub" reset --hard',
+            '( "pu"shd sub && git reset --hard )',
+            'git -pCsub reset --hard',
+            'git -qC sub reset --hard',
+            'export GIT_DIR=$(pwd)/sub; git reset --hard',
+            'FOO=$(pwd) cd sub && git reset --hard',
+            'git() { command git -C sub "$@"; }; git reset --hard',
+        ]:
+            with self.subTest(command=command):
+                self._assert_allowed(command)
 
     async def test_refuses_revealed_relocations_the_probe_cannot_name(self):
         # A revealed value holding more than the executable word runs as argv,
-        # so the `-C sub` inside it relocates the discard, and the guard cannot
-        # name that directory from the text: it refuses instead of approving the
-        # clean parent the unexpanded reference appears to target.
+        # so the `-C sub` inside it relocates the discard: the guard expands it
+        # and probes sub, not the clean parent the reference appears to target.
         _init_dirty_git_repo(str(self._tracked("sub")))
         self._init_dirty_repo()
         self._tracked(".gitignore").write_text("sub/\n")
@@ -419,9 +466,9 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
             with self.subTest(command=command):
                 with self.assertRaises(DestructiveGitRefusalError) as caught:
                     bash(command)
+                # The guard expands the value and probes the tree it names.
                 message = str(caught.exception)
-                self.assertIn("expanded value whose argv cannot be replayed", message)
-                self.assertNotIn("changes directory (or repository) first", message)
+                self.assertIn("tracked.txt", message)
         self.assertEqual(self._tracked("sub", "tracked.txt").read_text(), "modified\n")
 
     async def test_refuses_aliases_visible_in_the_command_text(self):
@@ -476,7 +523,7 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
     async def test_refuses_eval_wrapped_discards(self):
         self._init_dirty_repo()
         for command in [
-            "eval 'git reset --hard'", 'eval "git clean -f"', 'eval \'eval "git reset --hard"\'', "eval 'cd sub && git reset --hard'",
+            "eval 'git reset --hard'", 'eval "git clean -f"', 'eval \'eval "git reset --hard"\'',
             "function f { eval 'git reset --hard'; }; f", "shopt -s expand_aliases\nalias g='git reset --hard'\neval 'g'",
             "shopt -s expand_aliases\nalias g='git reset --hard'\neval 'g; true'", "e\\val 'git reset --hard'",
             "e'va'l 'git reset --hard'", "H='git reset --hard'; eval '$H'; H='echo hi'; $H", "H='git reset --hard' eval '$H'",
@@ -484,9 +531,12 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
             with self.subTest(command=command):
                 with self.assertRaises(DestructiveGitRefusalError) as caught:
                     bash(command)
-                self.assertIn("wraps a git discard in eval", str(caught.exception))
+                # The guard reads the evaluated code and names the dirty tree.
+                self.assertIn("uncommitted change(s)", str(caught.exception))
                 self.assertEqual(self._tracked("tracked.txt").read_text(), "modified\n")
                 self.assertTrue(self._tracked("untracked.txt").exists())
+        # There is no `sub` here, so the evaluated `cd` fails and stops the discard.
+        self._assert_allowed("eval 'cd sub && git reset --hard'")
 
     async def test_eval_refusal_honors_the_bypass_kwarg(self):
         self._init_dirty_repo()
@@ -519,17 +569,17 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
 
     async def test_attached_dash_c_values_relocate_the_probe(self):
         # Stock git rejects attached short options itself ("unknown option:
-        # -Csub"), so the form can never discard anything; the guard still
-        # resolves the attached value instead of probing the parent tree.
+        # -Csub"), so the form can never discard anything, and the guard allows
+        # it whichever tree is dirty.
         _init_dirty_git_repo(str(self._tracked("sub")))
         # The parent tree stays clean: the probe must follow the attached
         # value, not probe the current directory.
         self._init_dirty_repo()
         _run_git(self.test_dir, "add", "-A")
         _run_git(self.test_dir, "commit", "-q", "-m", "second")
-        with self.assertRaises(DestructiveGitRefusalError) as caught:
-            bash("git -Csub reset --hard")
-        self.assertIn("tracked.txt", str(caught.exception))
+        self._assert_allowed("git -Csub reset --hard")
+        result = await bash("git -Csub reset --hard")
+        self.assertNotEqual(result.exit_code, 0)
         self.assertEqual(self._tracked("sub", "tracked.txt").read_text(), "modified\n")
         # With the nested tree clean and the parent dirty, git still rejects
         # the option itself rather than discarding the parent tree.
@@ -541,11 +591,13 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
         self.assertEqual(self._tracked("tracked.txt").read_text(), "modified\n")
 
     async def test_attached_benign_dash_c_configs_do_not_relocate(self):
+        # Stock git rejects an attached `-c` value ("unknown option"), so the
+        # form discards nothing; the separate spelling is the discard.
         self._init_dirty_repo()
+        self._assert_allowed("git -cfoo.bar=1 reset --hard")
         with self.assertRaises(DestructiveGitRefusalError) as caught:
-            bash("git -cfoo.bar=1 reset --hard")
+            bash("git -c foo.bar=1 reset --hard")
         self.assertIn("uncommitted change(s)", str(caught.exception))
-        self.assertNotIn("changes directory (or repository) first", str(caught.exception))
 
     async def test_refuses_discards_split_over_line_continuations(self):
         self._init_dirty_repo()
@@ -631,10 +683,10 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
                     bash(command)
                 self.assertIn("tracked.txt", str(caught.exception))
                 self.assertEqual(self._tracked("sub", "tracked.txt").read_text(), "modified\n")
-        # A cd followed by `;` in the group depends on the cd succeeding.
+        # A cd followed by `;` in the group may fail: both trees are probed.
         with self.assertRaises(DestructiveGitRefusalError) as caught:
             bash("{ cd sub; git reset --hard; }")
-        self.assertIn("changes directory (or repository) first", str(caught.exception))
+        self.assertIn("tracked.txt", str(caught.exception))
         # A function whose body cds is refused the same way (it discards sub): quoting and escapes do not
         # stop the cd builtin, and a hyphenated name is still a function bash accepts.
         for function_command in [
@@ -644,7 +696,7 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
             with self.subTest(command=function_command):
                 with self.assertRaises(DestructiveGitRefusalError) as caught:
                     bash(function_command)
-                self.assertIn("changes directory (or repository) first", str(caught.exception))
+                self.assertIn("tracked.txt", str(caught.exception))
                 self.assertEqual(self._tracked("sub", "tracked.txt").read_text(), "modified\n")
 
     async def test_refuses_persistent_env_assignment_relocations(self):
@@ -656,15 +708,20 @@ class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
         _run_git(self.test_dir, "add", "-A")
         _run_git(self.test_dir, "commit", "-q", "-m", "second")
         for command in [
-            'export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard', 'GIT_DIR=sub/.git; git reset --hard',
+            'export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard',
             'export GIT_DIR=sub/.git && git reset --hard', '{ export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard; }', 'if true; then export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard; fi',
-            'if true; then { export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard; }; fi', f'HOME={self._tracked("sub")} cd && git reset --hard', 'GIT_DIR=sub/.git GIT_WORK_TREE=sub; cd . && git reset --hard',
+            'if true; then { export GIT_DIR=sub/.git GIT_WORK_TREE=sub; git reset --hard; }; fi', f'HOME={self._tracked("sub")} cd && git reset --hard',
         ]:
             with self.subTest(command=command):
                 with self.assertRaises(DestructiveGitRefusalError) as caught:
                     bash(command)
                 self.assertIn("tracked.txt", str(caught.exception))
                 self.assertEqual(self._tracked("sub", "tracked.txt").read_text(), "modified\n")
+        # An assignment bash does not export never reaches git, which then
+        # works on the clean caller.
+        for command in ['GIT_DIR=sub/.git; git reset --hard', 'GIT_DIR=sub/.git GIT_WORK_TREE=sub; cd . && git reset --hard']:
+            with self.subTest(command=command):
+                self._assert_allowed(command)
         # A quoted "cd" in argument position is inert data: the reveal reads
         # command words only, so the discard probes the clean caller and sub
         # survives untouched.

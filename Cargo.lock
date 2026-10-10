@@ -1909,11 +1909,11 @@ dependencies = [
 name = "pa-bash"
 version = "0.9.8"
 dependencies = [
- "fancy-regex",
  "getrandom 0.3.4",
  "memchr",
  "pa-os-sandbox",
  "process-wrap",
+ "regex",
  "rustix 1.1.4",
  "serde",
  "serde_json",

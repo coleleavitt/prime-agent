@@ -1,10 +1,13 @@
-//! The guard pipeline: every guard reads the text the shell will run, in a
-//! fixed order, and the first refusal wins.
+//! The guard pipeline: the text the shell will run is parsed once into the
+//! command model, every guard judges that model in a fixed order, and the
+//! first refusal wins.
 
 use std::collections::BTreeSet;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::context::GuardContext;
-use crate::guards;
+use crate::guards::{self, Check, Verdict};
+use crate::model::Model;
 use crate::script::Script;
 use crate::verdict::{GuardKind, Refusal};
 
@@ -44,11 +47,40 @@ pub fn check(
     allow: &Allowances,
     context: &GuardContext,
 ) -> Result<(), Refusal> {
-    for guard in GuardKind::ALL {
-        if allow.allows(guard) || context.launch_bypassed(guard) {
-            continue;
+    let active: Vec<GuardKind> = GuardKind::ALL
+        .into_iter()
+        .filter(|guard| !allow.allows(*guard) && !context.launch_bypassed(*guard))
+        .collect();
+    if active.is_empty() {
+        return Ok(());
+    }
+    // A bug in the model or a rule must not leave the request unanswered:
+    // a panic refuses (fail closed) and names the guard that hit it.
+    let Ok(model) = catch_unwind(AssertUnwindSafe(|| Model::build(script, context))) else {
+        return Err(internal_error(active[0]));
+    };
+    let check = Check {
+        model: &model,
+        script,
+        context,
+    };
+    for guard in active {
+        match catch_unwind(AssertUnwindSafe(|| guards::judge(guard, &check))) {
+            Ok(Verdict::Refuse(refusal)) => return Err(refusal),
+            Ok(Verdict::Allow) => {}
+            Err(_) => return Err(internal_error(guard)),
         }
-        guards::check(guard, script, context)?;
     }
     Ok(())
+}
+
+fn internal_error(guard: GuardKind) -> Refusal {
+    Refusal::new(
+        guard,
+        format!(
+            "Refusing to run this command: the {} check failed while reading it (an internal error in the guard). Retry with bash(command, {}=True) if the command is safe to run.",
+            guard.key(),
+            guard.allow_kwarg()
+        ),
+    )
 }

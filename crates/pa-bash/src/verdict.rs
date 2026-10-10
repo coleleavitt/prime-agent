@@ -3,8 +3,8 @@
 
 use serde::Serialize;
 
-/// The six kernel `bash()` refusal guards, in the order the pipeline runs
-/// them (the first refusal wins).
+/// The kernel `bash()` refusal guards, in the order the pipeline runs them
+/// (the first refusal wins).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GuardKind {
