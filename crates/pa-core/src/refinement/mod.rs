@@ -763,15 +763,34 @@ mod tests {
                 scope.spawn(move || {
                     for i in 0..10u32 {
                         let id = format!("m-{worker}-{i}");
-                        update_harness_state(dir, HarnessScope::Global, |state| {
-                            let memories = state.entries.get_mut(&RefinementKind::Memory).unwrap();
-                            memories.insert(
-                                id.clone(),
-                                entry(&id, RefinementKind::Memory, HarnessScope::Global, "a fact"),
-                            );
-                            memories.len()
-                        })
-                        .unwrap();
+                        // The property is no lost update. A writer that exhausts the
+                        // lock's bounded wait (a scheduling outcome under load, not a
+                        // lost write) tries again; any other error fails the test.
+                        loop {
+                            let outcome =
+                                update_harness_state(dir, HarnessScope::Global, |state| {
+                                    let memories =
+                                        state.entries.get_mut(&RefinementKind::Memory).unwrap();
+                                    memories.insert(
+                                        id.clone(),
+                                        entry(
+                                            &id,
+                                            RefinementKind::Memory,
+                                            HarnessScope::Global,
+                                            "a fact",
+                                        ),
+                                    );
+                                    memories.len()
+                                });
+                            match outcome {
+                                Ok(_) => break,
+                                Err(error)
+                                    if error.downcast_ref::<std::io::Error>().is_some_and(
+                                        |error| error.kind() == std::io::ErrorKind::WouldBlock,
+                                    ) => {}
+                                Err(error) => panic!("harness update failed: {error:#}"),
+                            }
+                        }
                     }
                 });
             }
