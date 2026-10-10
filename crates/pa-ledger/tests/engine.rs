@@ -53,6 +53,7 @@ async fn a_failing_tool_is_counted_at_the_next_turn_boundary() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     provider.push_tool_call_turn(None, vec![("call-1", "deploy", serde_json::json!({}))]);

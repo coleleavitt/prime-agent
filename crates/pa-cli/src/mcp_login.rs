@@ -470,6 +470,7 @@ mod tests {
                 client_id: None,
                 resource: None,
                 issuer: None,
+                audience_mode: None,
                 enterprise_url: None,
             },
         );

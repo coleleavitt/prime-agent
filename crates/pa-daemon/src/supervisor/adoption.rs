@@ -44,13 +44,10 @@ mod recorded_process_tests {
     }
 }
 
-/// The boot the descriptor-adoption pass runs under. An update boot
-/// relaunches kept workers from their descriptors before the roster
-/// restore walks the rows (spec §6 step 2's create-or-adopt order). A
-/// plain startup adopts live workers and revives only genuinely
-/// interrupted ones: a supervisor restart must not mass-revive the
-/// historical idle/completed sessions a TS daemon leaves down (their
-/// clients reopen them lazily through a fresh create).
+/// The boot the descriptor-adoption pass runs under. An update boot relaunches kept
+/// workers before the roster restore walks the rows (spec §6 step 2's create-or-adopt
+/// order). A plain startup revives only genuinely interrupted ones — no mass-revival
+/// of historical idle sessions.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum AdoptionBoot {
     /// Update boot: the roster's kept workers relaunch eagerly ahead of the restore
@@ -204,11 +201,31 @@ impl Supervisor {
         // checks the recorded pid before connecting a stopped worker.
         // Ordinary descriptors retain the existing socket-based revival
         // decision, which also handles descriptors without a start id.
-        let recorded_process_alive = recorded_process_alive(
-            crate::lease::is_process_alive(descriptor.pid as u32).ok(),
-            descriptor.process_start_id.as_deref(),
-            crate::lease::get_process_start_id(descriptor.pid as u32).as_deref(),
-        );
+        // The identity probes are the tombstone's alone: an ordinary
+        // descriptor's stop term is `stop_requested_at.is_none()` and the
+        // OR never reads the probes, so running them for every descriptor
+        // pays a process spawn (`ps` on Unix platforms without /proc or
+        // sysctl) inside the async adoption task - blocking an executor
+        // worker at boot. The tombstoned path runs the probes off the
+        // runtime through `spawn_blocking`; a join failure conservatively
+        // treats the recorded process as alive (the graceful IPC leg
+        // below degrades to the same finalize a dead verdict runs).
+        let tombstoned = descriptor.stop_requested_at.is_some();
+        let recorded_process_alive = if tombstoned {
+            let pid = descriptor.pid as u32;
+            let expected = descriptor.process_start_id.clone();
+            tokio::task::spawn_blocking(move || {
+                recorded_process_alive(
+                    crate::lease::is_process_alive(pid).ok(),
+                    expected.as_deref(),
+                    crate::lease::get_process_start_id(pid).as_deref(),
+                )
+            })
+            .await
+            .unwrap_or(true)
+        } else {
+            true
+        };
         let alive = (descriptor.stop_requested_at.is_none() || recorded_process_alive)
             && socket::can_connect(&socket_path, Duration::from_millis(500)).await;
         let pid = descriptor.pid;
@@ -391,11 +408,11 @@ impl Supervisor {
                 Err(error) => {
                     let message = format!("{error:#}");
                     // The definitive unknown-worker refusal is observable (log + telemetry)
-                    // and the worker retires on it: a live worker with no descriptor would
-                    // otherwise hold its lease forever.
+                    // and the worker retires on it: a live worker this supervisor will
+                    // never adopt would otherwise hold its lease forever.
                     if message.starts_with(crate::registration::UNKNOWN_SESSION_WORKER_PREFIX) {
                         self.log_line(&format!(
-                            "session worker {active_session_id} registration refused (no descriptor on this supervisor); the worker retires and its session file stays resumable"
+                            "session worker {active_session_id} registration refused; the worker retires"
                         ));
                         self.note_daemon_event("registration_refused", None);
                     }
@@ -554,7 +571,9 @@ impl Supervisor {
         self.apply_identity_pending(&resident).await;
         // A tombstoned identity is mid-stop (TS `adoptOrRecoverWorker`'s stopRequestedAt
         // branch): adoption finishes the stop and never adopts the worker as healthy.
-        // The refusal is transient: the next attempt converges on the stop's completion.
+        // The refusal is definitive: the registrant is the process the stop must
+        // retire, so it exits on the verdict instead of re-registering into the
+        // same unfinished stop.
         if resident.descriptor.lock().await.stop_requested_at.is_some() {
             // The registering process is the identity the stop must retire: the persisted
             // descriptor carries the stopped worker's stale pid, so observing the
@@ -572,8 +591,9 @@ impl Supervisor {
             }
             self.finish_tombstoned_stop(&resident, true).await;
             return Err(anyhow!(
-                "session worker {} is stopping: the stop was forwarded; registration refused",
-                registration.active_session_id
+                crate::registration::tombstoned_registration_refusal(
+                    &registration.active_session_id
+                )
             ));
         }
         self.connect_worker(&resident, worker_connect_deadline())

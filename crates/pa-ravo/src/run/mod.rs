@@ -1061,7 +1061,7 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
         ..
     } = inputs;
     let dir = stores.dir(inputs.scope).clone();
-    let _guard = match inputs.scope {
+    let guard = match inputs.scope {
         HarnessScope::Global => {
             Some(pa_ledger::acquire_harness_state_lock(&dir).map_err(|error| error.to_string())?)
         }
@@ -1173,6 +1173,11 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
     );
     let next = carry_observed_recurrences(&marked, stored_ravo_state(&current).as_ref());
     set_stored_ravo_state(&mut current, &next);
+    // A lock reclaimed mid-commit is another writer's now: never save over
+    // its read-modify-write.
+    if let Some(guard) = &guard {
+        guard.ensure_owned().map_err(|error| error.to_string())?;
+    }
     save_harness_state(&dir, &current).map_err(|error| error.to_string())?;
     Ok(CommitOutcome::Applied(result.applied_edits.len()))
 }

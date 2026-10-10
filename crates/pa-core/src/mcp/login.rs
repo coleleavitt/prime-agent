@@ -561,6 +561,7 @@ mod tests {
                 client_id: Some("fixture-client".to_string()),
                 resource: None,
                 issuer: None,
+                audience_mode: None,
                 enterprise_url: None,
             },
         );
@@ -611,6 +612,7 @@ mod tests {
                 client_id: Some("fixture-client".to_string()),
                 resource: None,
                 issuer: None,
+                audience_mode: None,
                 enterprise_url: None,
             },
         );

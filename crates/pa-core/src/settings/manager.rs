@@ -80,7 +80,7 @@ impl SettingsManager {
 
     /// Read both scopes and the workspace trust, then re-derive the
     /// effective settings. An untrusted workspace keeps only the
-    /// [`crate::workspace_trust::UNTRUSTED_PROJECT_SETTINGS_KEYS`] of its
+    /// [`crate::workspace_trust::is_untrusted_safe_setting`] entries of its
     /// project scope.
     fn read_scopes(&mut self) {
         let mut errors = std::mem::take(&mut self.errors);
@@ -1128,7 +1128,7 @@ fn untrusted_project_view(project: &Settings) -> Settings {
         return Settings::default();
     };
     document.retain(|key, value| {
-        !value.is_null() && crate::workspace_trust::is_untrusted_safe_settings_key(key)
+        !value.is_null() && crate::workspace_trust::is_untrusted_safe_setting(key, value)
     });
     from_value_lenient(&serde_json::Value::Object(document))
 }

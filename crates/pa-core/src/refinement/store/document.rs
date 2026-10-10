@@ -247,16 +247,6 @@ pub fn read_harness_state_file(path: &Path, scope: HarnessScope) -> LoadedHarnes
     }
 }
 
-/// Whether a write syncs the new file to disk before the rename.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WriteDurability {
-    /// The TS default (`writeFileAtomicSync` without `fsync`): a hard crash
-    /// leaves the previous file or the new one.
-    NoSync,
-    /// fsync before the rename: the kernel writer's durability.
-    Sync,
-}
-
 /// The file a write replaces: the target of a symlinked state file, so an
 /// alias keeps pointing at the store.
 fn write_target(path: &Path) -> PathBuf {
@@ -302,12 +292,7 @@ fn existing_mode(path: &Path) -> Option<u32> {
         .map(|metadata| metadata.permissions().mode() & 0o7777)
 }
 
-fn write_temp(
-    temp: &Path,
-    target: &Path,
-    content: &str,
-    durability: WriteDurability,
-) -> std::io::Result<()> {
+fn write_temp(temp: &Path, target: &Path, content: &str) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut open = std::fs::OpenOptions::new();
     open.write(true).create_new(true);
@@ -324,9 +309,7 @@ fn write_temp(
     let _ = target;
     let mut file = open.open(temp)?;
     file.write_all(content.as_bytes())?;
-    if durability == WriteDurability::Sync {
-        file.sync_all()?;
-    }
+    file.sync_all()?;
     #[cfg(unix)]
     if let Some(mode) = mode {
         // The umask narrowed the create; the destination's bits win.
@@ -346,7 +329,6 @@ fn write_temp(
 pub(crate) fn write_harness_state_file(
     path: &Path,
     state: &HarnessState,
-    durability: WriteDurability,
 ) -> anyhow::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -363,12 +345,16 @@ pub(crate) fn write_harness_state_file(
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     ));
-    let written = write_temp(&temp, &target, &content, durability)
+    let written = write_temp(&temp, &target, &content)
         .and_then(|()| crate::platform::rename_onto(&temp, &target));
     if written.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
     written?;
+    // The harness state is durable (upstream #3380's durability class): the
+    // synced temp file's rename survives a crash only once its directory is
+    // synced too.
+    crate::platform::fs::sync_directory(target.parent().unwrap_or_else(|| Path::new(".")))?;
     Ok(path.to_path_buf())
 }
 
@@ -490,7 +476,7 @@ mod tests {
         std::fs::write(&path, "{\"schema\": 1}").unwrap();
         // A read-only directory refuses the temp file.
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
-        let result = write_harness_state_file(&path, &empty_harness_state(), WriteDurability::Sync);
+        let result = write_harness_state_file(&path, &empty_harness_state());
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         if nix::unistd::geteuid().is_root() {
             // root ignores the directory mode; nothing to observe.
@@ -513,11 +499,11 @@ mod tests {
     fn writes_keep_the_destination_mode() {
         use std::os::unix::fs::PermissionsExt as _;
         let (_dir, path) = temp_store();
-        write_harness_state_file(&path, &empty_harness_state(), WriteDurability::NoSync).unwrap();
+        write_harness_state_file(&path, &empty_harness_state()).unwrap();
         assert_eq!(existing_mode(&path), Some(0o600));
         for mode in [0o640, 0o666] {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
-            write_harness_state_file(&path, &empty_harness_state(), WriteDurability::Sync).unwrap();
+            write_harness_state_file(&path, &empty_harness_state()).unwrap();
             assert_eq!(existing_mode(&path), Some(mode));
         }
     }
@@ -529,7 +515,7 @@ mod tests {
         let real = dir.path().join("real_state.json");
         std::fs::write(&real, "{}").unwrap();
         std::os::unix::fs::symlink(&real, &path).unwrap();
-        write_harness_state_file(&path, &empty_harness_state(), WriteDurability::NoSync).unwrap();
+        write_harness_state_file(&path, &empty_harness_state()).unwrap();
         assert!(std::fs::symlink_metadata(&path)
             .unwrap()
             .file_type()
@@ -550,8 +536,8 @@ mod tests {
         let (dir, path) = temp_store();
         let corrupt = r#"{"schema": 1, "entries": {"memory": {"kept": {"title": "T""#;
         std::fs::write(&path, corrupt).unwrap();
-        write_harness_state_file(&path, &empty_harness_state(), WriteDurability::NoSync).unwrap();
-        write_harness_state_file(&path, &empty_harness_state(), WriteDurability::NoSync).unwrap();
+        write_harness_state_file(&path, &empty_harness_state()).unwrap();
+        write_harness_state_file(&path, &empty_harness_state()).unwrap();
         let backups: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().path())

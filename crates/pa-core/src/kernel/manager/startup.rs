@@ -500,7 +500,7 @@ impl Inner {
                                 let Ok(trimmed) = std::str::from_utf8(line) else {
                                     return ControlFlow::Break(());
                                 };
-                                if trimmed.trim().is_empty() {
+                                if trimmed.trim_ascii().trim().is_empty() {
                                     return ControlFlow::Continue(());
                                 }
                                 let Some(inner) = inner.upgrade() else {

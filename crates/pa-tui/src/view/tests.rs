@@ -44,7 +44,7 @@ fn a_paste_never_reaches_the_editor_behind_an_overlay() {
     let editor_text = |view: &AgentView| view.editor.get_lines().join("\n");
     // The /effort picker takes it into its search.
     let mut v = view();
-    v.effort_picker = Some(crate::effort_picker::EffortPicker::new(
+    v.choice_picker = Some(crate::choice_picker::ChoicePicker::effort(
         &["high".to_string()],
         None,
     ));
@@ -249,23 +249,6 @@ fn frame_is_exactly_height_rows() {
     assert!(joined.contains("prime agent v0.0.0"));
     assert!(joined.contains("Collapsed mode (Ctrl+O to expand)"));
     assert!(joined.contains('>'));
-}
-
-#[test]
-fn osc_emissions_reemit_only_changed_rows() {
-    let mut v = view();
-    v.chrome.version = "0.0.0".to_string();
-    v.chrome.cwd = "/w".to_string();
-    v.chrome.chat_name = "w".to_string();
-    v.push(TranscriptItem::UserMessage {
-        text: "hello".to_string(),
-    });
-    let frame = v.render_frame(80, 24);
-    let first = v.take_osc_emissions(&frame);
-    let marked: Vec<usize> = first.iter().map(|(row, _)| *row).collect();
-    assert!(!marked.is_empty());
-    let again = v.take_osc_emissions(&frame);
-    assert!(again.is_empty());
 }
 
 /// Fill the transcript past one window so there is scrollable history.
@@ -1648,5 +1631,37 @@ fn settled_rows_survive_a_cache_roundtrip() {
         first.replace("0s", "").replace("0.0s", ""),
         fresh_text.replace("0s", "").replace("0.0s", ""),
         "a fresh view renders the same rows (the Took clock may move)"
+    );
+}
+
+/// A keystroke burst that outruns the dropdown: the menu opened for `/`, the
+/// rest of `/model` parked a refresh, and Enter lands before the refresh
+/// materializes. The confirm must answer the typed text, never splice the
+/// stale `/` menu's selection over it (the pty flake's `/exisettings`).
+#[test]
+fn enter_over_a_stale_slash_menu_submits_the_typed_command() {
+    let mut v = view();
+    v.editor.handle_input("/");
+    v.editor.materialize_autocomplete();
+    assert!(v.editor.is_showing_autocomplete(), "the dropdown opens");
+    for key in ["m", "o", "d", "e", "l"] {
+        v.editor.handle_input(key);
+    }
+    v.editor.take_events();
+    v.editor.handle_input("enter");
+    let submitted: Vec<String> = v
+        .editor
+        .take_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            crate::editor::EditorEvent::Submitted(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        submitted,
+        ["/model"],
+        "editor text: {}",
+        v.editor.get_text()
     );
 }

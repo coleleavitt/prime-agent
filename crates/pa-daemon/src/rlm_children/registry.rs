@@ -33,6 +33,7 @@ impl SupervisorChildSessionsInner {
             session_name: record.session_name.clone(),
             session_dir: record.session_dir.clone(),
             started_at_ms: record.started_at_ms,
+            status: record.roster_status(),
             answer_preview: record.answer_preview.clone(),
             error: record
                 .error
@@ -377,6 +378,7 @@ fn ledger_child_records(
             ),
             settled: true,
             answer_preview: None,
+            answer_text: None,
             answer_captured: false,
             replied_since_task: false,
             interrupted: false,
@@ -390,6 +392,7 @@ fn ledger_child_records(
             usage_rearm: false,
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             last_emitted_status: None,
+            rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         });
     }
     records

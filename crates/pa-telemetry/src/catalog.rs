@@ -417,7 +417,6 @@ pub const IMAGE_DELEGATION_OUTCOMES: &[&str] = &["answered", "failed"];
 /// escape arm counts as `cancel`).
 pub const IMAGE_FALLBACK_ACTIONS: &[&str] = &["opened", "send_text_only", "ask_agent", "cancel"];
 
-// ---------------------------------------------------------------------------
 // Rule constructors
 
 const fn enum_rule(values: &'static [&'static str], fallback: &'static str) -> PropKind {
@@ -1922,6 +1921,14 @@ const UPDATE_EVENTS: &[EventRule] = &[
             ("sessions_restored", optional(count())),
             ("sessions_failed", optional(count())),
         ],
+    },
+    // The installer funnel refuses a Homebrew-owned executable before
+    // downloading or running the installer. `kind` is the package layout,
+    // never an executable path; invalid values normalize to `formula`.
+    EventRule {
+        name: "update_homebrew_refusal",
+        since: 2,
+        properties: &[("kind", required(enum_rule(&["formula", "cask"], "formula")))],
     },
     EventRule {
         name: "update_aborted",

@@ -19,7 +19,7 @@ use crate::backpressure::RouteAdmission;
 use crate::protocol::{
     command_type_name, response_failure, response_line, response_success, DaemonResponse,
 };
-use crate::registry::ResidentWorker;
+use crate::registry::{canonical_session_file_string, ResidentWorker};
 use crate::scheduled_jobs::session_artifact_dir;
 use crate::session_store::read_session_info;
 use crate::supervisor::{client_command_payload, Supervisor};
@@ -31,6 +31,7 @@ const CATALOG_FORWARD_TIMEOUT_MS: u64 = 5000;
 pub(crate) struct PassiveJob {
     pub(crate) job: AgentCronJob,
     pub(crate) info: crate::session_store::SessionInfo,
+    canonical_session_file: String,
 }
 
 /// The supervisor-side passive snapshot the catalog READ paths serve: the artifacts-tree
@@ -72,21 +73,31 @@ impl Supervisor {
     /// Jobs stored under the session-artifacts tree whose session file exists, is
     /// active, and has no live worker: the supervisor only merges what no worker can list.
     async fn collect_passive_scheduled_jobs(&self, include_inactive: bool) -> Vec<PassiveJob> {
+        let resident_files = self.registry.session_files().await;
+        let agent_dir = self.options.agent_dir.clone();
+        let scan = tokio::task::spawn_blocking(move || {
+            let resident_files: HashSet<String> = resident_files
+                .iter()
+                .map(|file| canonical_session_file_string(file))
+                .collect();
+            let candidates = Self::scan_passive_candidates(&agent_dir, include_inactive);
+            (resident_files, candidates)
+        });
+        let (resident_files, candidates) = scan.await.unwrap();
+        self.classify_passive_candidates(candidates, &resident_files)
+            .await
+    }
+
+    /// Filesystem work stays in the blocking pool; ownership is classified
+    /// afterward, when workers registered during the scan are visible.
+    fn scan_passive_candidates(agent_dir: &Path, include_inactive: bool) -> Vec<PassiveJob> {
         let mut out = Vec::new();
-        for job in crate::update_roster::scan_scheduled_jobs(&self.options.agent_dir) {
+        for job in crate::update_roster::scan_scheduled_jobs(agent_dir) {
             if !include_inactive && !matches!(job.status, JobStatus::Active | JobStatus::Paused) {
                 continue;
             }
             let session_file = Path::new(&job.session_file);
             if !session_file.is_file() {
-                continue;
-            }
-            if self
-                .registry
-                .find_by_session_file(&job.session_file)
-                .await
-                .is_some()
-            {
                 continue;
             }
             let Some(info) = read_session_info(session_file) else {
@@ -95,7 +106,35 @@ impl Supervisor {
             if info.state.as_deref() != Some("active") {
                 continue;
             }
-            out.push(PassiveJob { job, info });
+            let canonical_file = canonical_session_file_string(&job.session_file);
+            out.push(PassiveJob {
+                job,
+                info,
+                canonical_session_file: canonical_file,
+            });
+        }
+        out
+    }
+
+    async fn classify_passive_candidates(
+        &self,
+        candidates: Vec<PassiveJob>,
+        resident_files: &HashSet<String>,
+    ) -> Vec<PassiveJob> {
+        let mut out = Vec::new();
+        for passive in candidates {
+            if resident_files.contains(&passive.canonical_session_file)
+                || self
+                    .registry
+                    .owns_session_file_path(
+                        &passive.job.session_file,
+                        &passive.canonical_session_file,
+                    )
+                    .await
+            {
+                continue;
+            }
+            out.push(passive);
         }
         out
     }
@@ -200,6 +239,39 @@ impl Supervisor {
                 .passive_scan_pending
                 .store(false, Ordering::SeqCst);
         });
+    }
+
+    /// Warm the passive scheduled-jobs snapshot at daemon boot (the
+    /// input-latency lane): the first selector-less catalog read after boot
+    /// would otherwise run the whole session-artifacts scan inline — the
+    /// operator's 289-partition tree measured ~835ms inside the client's
+    /// open, past the interactive surface's dock fold — while the boot
+    /// itself has idle time before the first client arrives. The warmup is
+    /// the same shared scan a cold read runs (one scan, generation-stamped,
+    /// stored by the identical rules); every later invalidation, mutation,
+    /// and stale-while-revalidate refresh keeps its semantics. A client
+    /// that connects before the scan lands joins it exactly as today.
+    pub(crate) fn spawn_passive_catalog_warmup(self: &Arc<Self>) {
+        let supervisor = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = supervisor.shared_passive_scan().await;
+        });
+    }
+
+    /// The boot warmup's adopt-pass ordering (serve's watch dance,
+    /// lifted here for the pin below): the warmup only starts once the
+    /// boot's adopt pass has settled the registry (or its signal sender
+    /// is gone — the fail-open path: a degraded boot keeps the
+    /// pre-warmup cold-read behavior, never a colder one).
+    pub(crate) async fn wait_for_adoption_signal(signal: &mut tokio::sync::watch::Receiver<bool>) {
+        loop {
+            if *signal.borrow() {
+                return;
+            }
+            if signal.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     /// Invalidate the passive snapshot: claim the publish epoch so an in-flight
@@ -527,26 +599,32 @@ impl Supervisor {
                 passive.job.id == *job_id && passive.job.active_session_id == *active_session_id
             });
         if let Some(passive) = passive {
-            let store = Self::passive_job_store(&passive.info);
-            // A passive row that cannot be managed falls through to the live-worker route.
-            if let Ok(Some(heartbeat)) = store.manage_heartbeat(
-                active_session_id,
-                job_id,
-                heartbeat_manage_action(action),
-                crate::util::now_ms(),
-            ) {
-                self.broadcast_heartbeats_changed();
-                return (
-                    vec![response_line(&response_success(
-                        Some(command_id),
-                        type_name,
-                        Some(json!({
-                            "heartbeat": serde_json::to_value(&heartbeat)
-                                .unwrap_or(Value::Null),
-                        })),
-                    ))],
-                    false,
-                );
+            let owned_elsewhere = self
+                .registry
+                .owns_session_file_path(&passive.job.session_file, &passive.canonical_session_file)
+                .await;
+            if !owned_elsewhere {
+                let store = Self::passive_job_store(&passive.info);
+                // A passive row that cannot be managed falls through to the live-worker route.
+                if let Ok(Some(heartbeat)) = store.manage_heartbeat(
+                    active_session_id,
+                    job_id,
+                    heartbeat_manage_action(action),
+                    crate::util::now_ms(),
+                ) {
+                    self.broadcast_heartbeats_changed();
+                    return (
+                        vec![response_line(&response_success(
+                            Some(command_id),
+                            type_name,
+                            Some(json!({
+                                "heartbeat": serde_json::to_value(&heartbeat)
+                                    .unwrap_or(Value::Null),
+                            })),
+                        ))],
+                        false,
+                    );
+                }
             }
         }
         // No passive job managed: the live worker owns the heartbeat.
@@ -740,16 +818,32 @@ impl Supervisor {
             .find(|passive| passive.job.id == *job_id);
         if let Some(passive) = passive {
             let store = Self::passive_job_store(&passive.info);
-            if let Some(job) = store.cancel(job_id, crate::util::now_ms()) {
-                self.broadcast_heartbeats_changed();
-                return (
-                    vec![response_line(&response_success(
-                        Some(command_id),
-                        type_name,
-                        Some(json!({ "job": serde_json::to_value(&job).unwrap_or(Value::Null) })),
-                    ))],
-                    false,
-                );
+            match store.cancel(job_id, crate::util::now_ms()) {
+                Ok(Some(job)) => {
+                    self.broadcast_heartbeats_changed();
+                    return (
+                        vec![response_line(&response_success(
+                            Some(command_id),
+                            type_name,
+                            Some(
+                                json!({ "job": serde_json::to_value(&job).unwrap_or(Value::Null) }),
+                            ),
+                        ))],
+                        false,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return (
+                        vec![response_line(&response_failure(
+                            Some(command_id),
+                            type_name,
+                            &error.to_string(),
+                            None,
+                        ))],
+                        false,
+                    );
+                }
             }
         }
         (
@@ -761,5 +855,346 @@ impl Supervisor {
             ))],
             false,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A worker registering while the blocking artifact scan is in flight
+    /// owns its job before the passive path can write to the shared store.
+    #[tokio::test(start_paused = true)]
+    async fn a_worker_registered_during_the_scan_gets_its_heartbeat_manage() {
+        use crate::registry::{ResidentWorker, WorkerReply};
+        use crate::supervisor::subscribers::ClientSubscriptions;
+        use pa_types::daemon::DaemonWorkerDescriptor;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        let sessions_dir = agent_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+        let session_file = sessions_dir.join("mid-scan.jsonl");
+        std::fs::write(
+            &session_file,
+            [
+                json!({
+                    "type": "session", "version": 3, "id": "mid-scan",
+                    "timestamp": "2026-10-04T00:00:00.000Z", "cwd": "/c",
+                }),
+                json!({
+                    "type": "session_state", "id": "mid-scan",
+                    "timestamp": "2026-10-04T00:00:01.000Z",
+                    "state": { "status": "active" },
+                }),
+            ]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+                + "\n",
+        )
+        .expect("session file");
+        let artifacts = agent_dir.join("session-artifacts").join("mid-scan");
+        std::fs::create_dir_all(&artifacts).expect("artifacts partition");
+        let job_file = artifacts.join("scheduled-jobs.json");
+        let artifact = json!({
+            "jobs": [{
+                "id": "hb-mid", "status": "active",
+                "activeSessionId": "mid-scan", "sessionId": "mid-scan",
+                "sessionFile": session_file.display().to_string(),
+                "cwd": dir.path().display().to_string(), "prompt": "heartbeat",
+                "schedule": { "kind": "interval", "expression": "", "intervalMs": 60000 },
+                "createdAt": "2026-10-04T00:00:02.000Z",
+                "updatedAt": "2026-10-04T00:00:02.000Z",
+                "nextRunAt": "2026-10-04T00:01:02.000Z",
+            }],
+        })
+        .to_string();
+        std::fs::write(&job_file, &artifact).expect("scheduled jobs");
+        let supervisor = Arc::new(
+            Supervisor::new(crate::supervisor::SupervisorOptions {
+                tcp_port: None,
+                tcp_bind_host: None,
+                remote_agent_mesh: None,
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: agent_dir.clone(),
+            })
+            .expect("supervisor"),
+        );
+
+        let old_files: HashSet<String> = supervisor
+            .registry
+            .session_files()
+            .await
+            .iter()
+            .map(|file| canonical_session_file_string(file))
+            .collect();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            started_tx.send(()).expect("scan start");
+            continue_rx.recv().expect("resume scan");
+            Supervisor::scan_passive_candidates(&agent_dir, /*include_inactive*/ false)
+        });
+        started_rx.await.expect("scan started");
+
+        let mut descriptor = json!({
+            "version": 2, "workerId": "mid-scan", "pid": 0,
+            "socketPath": "/tmp/none.sock",
+            "recoveryJournalPath": "/tmp/none.jsonl",
+            "supervisorSocketPath": "/tmp/none.sock",
+            "authenticationToken": "test", "rootActiveSessionId": "mid-scan",
+            "createdAt": "2026-10-04T00:00:00Z",
+            "updatedAt": "2026-10-04T00:00:00Z",
+            "lifecycle": "ready", "createCommand": {}, "consecutiveFailures": 0,
+        });
+        descriptor["sessionFile"] = json!(session_file.to_string_lossy());
+        let descriptor: DaemonWorkerDescriptor =
+            serde_json::from_value(descriptor).expect("descriptor");
+        let worker = ResidentWorker::new(
+            "mid-scan".to_string(),
+            descriptor,
+            dir.path().join("worker.json"),
+        );
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
+        *worker.cmd_tx.lock().await = Some(cmd_tx);
+        worker.note_connection_live();
+        worker.note_session_ready();
+        supervisor.registry.insert(Arc::clone(&worker)).await;
+        continue_tx.send(()).expect("resume scan");
+
+        let candidates = scan.await.expect("blocking scan");
+        assert_eq!(candidates.len(), 1);
+        assert!(
+            supervisor
+                .classify_passive_candidates(candidates, &old_files)
+                .await
+                .is_empty(),
+            "the pre-registration snapshot must not make a live job passive"
+        );
+
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let responder = Arc::clone(&worker);
+        tokio::spawn(async move {
+            let request = cmd_rx.recv().await.expect("forwarded heartbeat_manage");
+            seen_tx
+                .send(request.command_type.clone())
+                .expect("forward observed");
+            let reply = responder.pending.lock().await.remove(&request.request_id);
+            assert!(
+                reply
+                    .expect("pending forward")
+                    .send(WorkerReply::Typed(response_success(
+                        Some(&request.request_id),
+                        &request.command_type,
+                        None,
+                    )))
+                    .is_ok(),
+                "send worker reply"
+            );
+        });
+        let command: DaemonCommand = serde_json::from_value(json!({
+            "type": "heartbeat_manage", "activeSessionId": "mid-scan",
+            "jobId": "hb-mid", "action": "pause",
+        }))
+        .expect("heartbeat_manage command");
+        let (queue, _receiver) = tokio::sync::mpsc::channel(1);
+        let attached = ClientSubscriptions::new("client".to_string(), queue);
+        let (response, _) = supervisor
+            .handle_heartbeat_manage_catalog(
+                &command,
+                "client",
+                &attached,
+                "manage-1",
+                "heartbeat_manage",
+            )
+            .await;
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), seen_rx)
+                .await
+                .expect("worker did not receive the forward")
+                .expect("worker saw forward"),
+            "heartbeat_manage"
+        );
+        assert_eq!(response[0]["success"], true);
+        assert_eq!(
+            std::fs::read_to_string(job_file).expect("read artifact"),
+            artifact
+        );
+    }
+
+    /// The passive-catalog warmup (the input-latency lane): the boot's
+    /// warm scan stores the snapshot with NO read anywhere, and the first
+    /// catalog read serves that stored snapshot instead of scanning the
+    /// artifacts tree inline. The second half is the discriminating
+    /// observable: after the warm snapshot lands, the fixture's
+    /// `scheduled-jobs.json` is deleted behind the daemon's back, and the
+    /// first read STILL answers the warm row — a read that scanned inline
+    /// at that moment would see the deleted fixture and answer nothing.
+    #[tokio::test]
+    async fn the_passive_catalog_warms_at_boot_and_the_first_read_serves_the_snapshot() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        let sessions_dir = agent_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+        let session_file = sessions_dir.join("warm-1.jsonl");
+        let session_lines = [
+            json!({
+                "type": "session", "version": 3, "id": "warm-1",
+                "timestamp": "2026-10-04T00:00:00.000Z", "cwd": "/c",
+            }),
+            json!({
+                "type": "session_state", "id": "warm-1",
+                "timestamp": "2026-10-04T00:00:01.000Z",
+                "state": { "status": "active" },
+            }),
+        ];
+        std::fs::write(
+            &session_file,
+            session_lines
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .expect("session file");
+        let artifacts = agent_dir.join("session-artifacts").join("warm-1");
+        std::fs::create_dir_all(&artifacts).expect("artifacts partition");
+        std::fs::write(
+            artifacts.join("scheduled-jobs.json"),
+            json!({
+                "jobs": [{
+                    "id": "hb-1",
+                    "status": "active",
+                    "activeSessionId": "warm-1",
+                    "sessionId": "warm-1",
+                    "sessionFile": session_file.display().to_string(),
+                    "cwd": dir.path().display().to_string(),
+                    "prompt": "the warm heartbeat",
+                    "schedule": { "kind": "interval", "expression": "", "intervalMs": 60000 },
+                    "createdAt": "2026-10-04T00:00:02.000Z",
+                    "updatedAt": "2026-10-04T00:00:02.000Z",
+                    "nextRunAt": "2026-10-04T00:01:02.000Z",
+                }],
+            })
+            .to_string(),
+        )
+        .expect("scheduled jobs");
+
+        let supervisor = Arc::new(
+            Supervisor::new(crate::supervisor::SupervisorOptions {
+                tcp_port: None,
+                tcp_bind_host: None,
+                remote_agent_mesh: None,
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: agent_dir.clone(),
+            })
+            .expect("supervisor"),
+        );
+
+        // The boot warmup (what `serve` spawns beside its other boot
+        // passes): the scan runs with no catalog read anywhere.
+        supervisor.spawn_passive_catalog_warmup();
+
+        // The warm snapshot lands on its own: one row, the fixture's
+        // heartbeat. No `heartbeats_list`/`cron_list` was issued.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let warm_rows = supervisor
+                .passive_catalog
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|snapshot| snapshot.rows.len());
+            if warm_rows == Some(1) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the boot warmup never stored the passive snapshot"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // The first read must serve the stored snapshot, not a fresh
+        // scan: the fixture's artifact vanishes behind the daemon's back
+        // (no mutation was issued, so no invalidation owes a re-scan),
+        // and the read still answers the warm row.
+        std::fs::remove_file(artifacts.join("scheduled-jobs.json")).expect("delete fixture");
+        let rows = supervisor.passive_catalog_rows(false).await;
+        assert_eq!(
+            rows.len(),
+            1,
+            "the first read must serve the warm snapshot instead of rescanning"
+        );
+        assert_eq!(rows[0].job.id, "hb-1");
+        assert_eq!(rows[0].job.session_file, session_file.display().to_string());
+    }
+
+    /// The boot warmup's adopt-pass ordering (the pre-bar review's race
+    /// finding): the warmup's scan consults the registry's live-worker
+    /// filter, so it must wait out the boot's adopt pass — a scan that
+    /// raced adoption would cache the just-adopted worker's artifacts as
+    /// a passive row and serve the stale row for the snapshot's refresh
+    /// window (adoption never invalidates the catalog). The pin: with the
+    /// adopt signal unfired the snapshot never lands; once the signal
+    /// fires, it does.
+    #[tokio::test]
+    async fn the_boot_warmup_waits_out_the_adopt_pass_before_scanning() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(agent_dir.join("sessions")).expect("sessions dir");
+        let supervisor = Arc::new(
+            Supervisor::new(crate::supervisor::SupervisorOptions {
+                tcp_port: None,
+                tcp_bind_host: None,
+                remote_agent_mesh: None,
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: agent_dir.clone(),
+            })
+            .expect("supervisor"),
+        );
+
+        let (adoption_tx, adoption_rx) = tokio::sync::watch::channel(false);
+
+        // The negative pin is on the WAITER itself, not on the scan's
+        // downstream effect: with the signal unfired the helper must stay
+        // pending for the whole window (a helper that returned early
+        // would finish in microseconds — the window catches it
+        // deterministically; a correct helper can only return on the
+        // signal or the sender's death, neither of which happens here).
+        let mut waiter = {
+            let supervisor = Arc::clone(&supervisor);
+            let mut adoption_rx = adoption_rx;
+            tokio::spawn(async move {
+                Supervisor::wait_for_adoption_signal(&mut adoption_rx).await;
+                supervisor.spawn_passive_catalog_warmup();
+            })
+        };
+        let still_waiting =
+            tokio::time::timeout(std::time::Duration::from_millis(150), &mut waiter).await;
+        assert!(
+            still_waiting.is_err(),
+            "the warmup helper returned before the adopt pass signaled"
+        );
+
+        // The adopt pass settles: the waiter completes and the scan
+        // lands (the positive pin is a poll with a real deadline — a
+        // failure names the missing snapshot).
+        adoption_tx.send(true).expect("signal adoption");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while supervisor.passive_catalog.lock().unwrap().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the warmup never scanned after the adopt pass signaled"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the warmup waiter never completed")
+            .expect("the warmup task");
     }
 }

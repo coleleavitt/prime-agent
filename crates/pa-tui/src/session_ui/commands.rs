@@ -103,10 +103,8 @@ impl SessionUi {
     pub(super) async fn start_new_session(&mut self, view: &mut AgentView) -> Result<()> {
         let id = create_session(&self.client, &self.create_options(), None).await?;
         self.attach_session(&id, DockFold::Fresh).await?;
-        // The tray's context usage rode the attach snapshot (the
-        // session-scoped pair with the title's spend, which the roster
-        // keeps live): the rebuild below copies it into the chrome
-        // without a blocking stats round-trip on the rebind path.
+        // The tray's context usage rode the attach snapshot: the
+        // rebuild copies it into the chrome without a stats round-trip.
         self.rebuild_view(view, &RebuildKind::Rebind);
         // A new session starts with no draft and no prompt history (the submitted
         // `/new` drains the draft already).
@@ -209,7 +207,7 @@ impl SessionUi {
                     .map(str::to_string);
                 match effort_picker::effort_command(&levels, current.as_deref(), &resolved.args) {
                     effort_picker::EffortCommandOutcome::Open(picker) => {
-                        view.effort_picker = Some(picker);
+                        view.choice_picker = Some(picker);
                         self.track_feature_outcome("effort", "initiated", None);
                     }
                     effort_picker::EffortCommandOutcome::Unsupported => {

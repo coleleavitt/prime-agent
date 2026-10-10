@@ -212,6 +212,7 @@ fn children(socket: &Path, agent_dir: &Path, script: &Path, depth: u32) -> Super
         thinking: None,
         child_script: Some(script.to_string_lossy().to_string()),
     });
+    sessions.set_parent_session_name(Some("parent-name".to_string()));
     sessions
 }
 
@@ -238,6 +239,7 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         cell_source_code: None,
         spawned_by_request_id: None,
         token_budget: None,
+        decision_child: false,
     }
 }
 
@@ -353,6 +355,45 @@ async fn rlm_children_spawn_roster_collect_delete_end_to_end() {
     assert_eq!(entry.label.as_deref(), Some("ship the lane"));
     assert!(entry.session_dir.ends_with(&handle.rlm_child_id));
 
+    // The kickoff row (TS `spawnMessage`): the task prompt lands as the
+    // parent-attributed `agent_message` custom row — never a user row —
+    // carrying the promised `[task from parent]` label, the raw prompt as
+    // `details.message`, `details.id "spawn:<child id>"`, and the
+    // delivery's parent/child endpoints.
+    let rows: Vec<Value> = std::fs::read_to_string(child_files[0].path())
+        .expect("read child session file")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect();
+    let Some(kickoff) = rows
+        .iter()
+        .find(|row| row.get("type").and_then(Value::as_str) == Some("custom_message"))
+    else {
+        panic!("no custom_message row in the child file: {rows:?}");
+    };
+    assert_eq!(kickoff["customType"], "agent_message");
+    assert_eq!(kickoff["content"], "[task from parent]\n\nship the lane");
+    assert_eq!(
+        kickoff["details"],
+        json!({
+            "id": format!("spawn:{}", handle.rlm_child_id),
+            "message": "ship the lane",
+            "from": {
+                "activeSessionId": "parent-active-id",
+                "sessionId": "parent-session-uuid",
+                "sessionName": "parent-name",
+            },
+            "fromRelationship": "parent",
+        }),
+    );
+    // The kickoff is the child's only prompt: no user row exists.
+    assert!(
+        rows.iter()
+            .filter(|row| row.get("type").and_then(Value::as_str) == Some("message"))
+            .all(|row| row.pointer("/message/role").and_then(Value::as_str) != Some("user")),
+        "the kickoff left a user row: {rows:?}"
+    );
+
     // Collect: settled snapshot of the child, and the selector errors.
     let results = children
         .collect(vec![handle.rlm_child_id.clone()], 5_000)
@@ -401,14 +442,24 @@ async fn rlm_children_spawn_roster_collect_delete_end_to_end() {
             .map(|_| ())
     });
 
-    // An unknown delete target is the TS selector miss.
-    let gone = children
+    // Retirement is idempotent (the M5 class): a re-delete of the deleted
+    // child's name answers from the tombstone with the row's status at its
+    // delete instead of the selector miss, so a repeated retire never
+    // reports the name slot as still held.
+    let redeleted = children
         .delete_subagent("worker-a".to_string())
         .await
-        .expect_err("deleted child no longer resolves");
+        .expect("the re-delete of a retired child is idempotent");
+    assert_eq!(redeleted.outcome, Some("deleted"));
+    assert_eq!(redeleted.subagent.rlm_child_id, handle.rlm_child_id);
+    // An unknown delete target keeps the TS selector miss.
+    let gone = children
+        .delete_subagent("ghost-worker".to_string())
+        .await
+        .expect_err("an unknown selector still errors");
     assert_eq!(
         gone.to_string(),
-        "No direct RLM subagent matches \"worker-a\" in the current parent session"
+        "No direct RLM subagent matches \"ghost-worker\" in the current parent session"
     );
 
     // TS #2388 F4: a just-deleted target resolves immediately to the settled cancelled
@@ -463,6 +514,127 @@ async fn rlm_children_spawn_roster_collect_delete_end_to_end() {
     assert_ne!(live[0].rlm_child_id, handle.rlm_child_id);
     // The live respawn answers, never the deleted generation's envelope.
     assert_ne!(live[0].status, "cancelled");
+}
+
+/// A decision child (`rlm.spawn kind="decision"`) spawns through the real
+/// supervisor on the settings decision model and runs the decision engine:
+/// the protocol prompt settles as the engine's ready answer, never an
+/// agent turn. Regression: the durable create command must ride the
+/// `decisionChild` flag to the worker's launch env — a dropped flag
+/// respawns the decision child as a regular agent session whose turn
+/// fails on the decision model.
+#[tokio::test]
+async fn a_decision_child_spawn_runs_the_decision_engine_end_to_end() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    // The settings gate, the registry recipe, and the stored login (the
+    // clef live test's fixture shape, on an unreachable endpoint: the
+    // protocol prompt makes no model call).
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({ "decisionApi": { "systemOneModel": "decision-fixture/clef" } }).to_string(),
+    )
+    .expect("write settings");
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({ "providers": { "decision-fixture": {
+            "baseUrl": "http://127.0.0.1:1/api/v1",
+            "apiKey": "DECISION_FIXTURE_KEY",
+            "api": "systemone",
+            "models": [ { "id": "clef", "input": ["text"] } ],
+        } } })
+        .to_string(),
+    )
+    .expect("write models");
+    std::fs::write(
+        agent_dir.join("auth.json"),
+        json!({ "decision-fixture": { "type": "api_key", "key": "fixture-key" } }).to_string(),
+    )
+    .expect("write auth");
+    let _daemon = spawn_daemon(&socket, &agent_dir);
+    let (mut client, hello) = Client::connect(&socket);
+    assert_eq!(hello["type"], "daemon_hello");
+    // The children registry without a child script: the decision child is
+    // an engine choice, never a scripted child.
+    let children = {
+        let sessions = SupervisorChildSessions::new(
+            Arc::new(SupervisorLink::new(socket.clone())),
+            agent_dir.clone(),
+            "parent-active-id".to_string(),
+            std::sync::Arc::new(pa_daemon::model_allowlist::ModelRefusalTelemetry::new(
+                agent_dir.clone(),
+                /*telemetry_disabled*/ true,
+            )),
+        );
+        sessions.set_identity(ParentIdentity {
+            rlm_depth: 0,
+            rlm_max_depth: 2,
+            model: Some("scripted/faux-1".to_string()),
+            cwd: Some(agent_dir.to_string_lossy().to_string()),
+            session_id: Some("parent-session-uuid".to_string()),
+            session_file: Some(agent_dir.join("parent.jsonl").to_string_lossy().to_string()),
+            thinking: None,
+            child_script: None,
+            sandbox: None,
+        });
+        sessions
+    };
+    let handle = children
+        .spawn(RlmSpawnRequest {
+            prompt: "You are System 1, the decision child of a real-time control loop.".to_string(),
+            name: Some("system-1".to_string()),
+            model: None,
+            thinking: None,
+            cell_source_code: None,
+            spawned_by_request_id: None,
+            target: RlmSpawnTarget::Local,
+            token_budget: None,
+            plan_mode: false,
+            decision_child: true,
+        })
+        .await
+        .expect("spawn the decision child");
+    children.notify_turn_done();
+    // The spawn seam resolves the settings decision model, not the parent's.
+    assert_eq!(handle.model, "decision-fixture/clef", "{handle:?}");
+    // The child settles with the decision engine's protocol answer — an
+    // agent-engine child instead fails its turn on the unreachable model.
+    let entries = {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let entries = children.list_subagents().await.expect("list subagents");
+            if entries
+                .iter()
+                .any(|entry| entry.answer_preview.as_deref() == Some("Decision child ready."))
+            {
+                break entries;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "decision child never settled ready: {entries:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    assert_eq!(entries.len(), 1, "one child in the roster");
+    assert_eq!(entries[0].session_name, "system-1");
+    // The supervisor roster carries the same settled decision child.
+    let roster_summary = wait_until(Duration::from_secs(10), || {
+        client.send_command("l1", &json!({ "type": "list" }));
+        let list = client.read_response("l1");
+        list["data"]["sessions"].as_array().and_then(|sessions| {
+            sessions
+                .iter()
+                .find(|summary| summary["sessionName"] == "system-1")
+                .cloned()
+        })
+    });
+    assert_eq!(roster_summary["rlmDepth"], 1);
+    // The decision engine serves the trait-default session summary, whose
+    // runtimeKind stays the top-level default — the engine choice is under
+    // test here, not the summary metadata.
 }
 
 #[tokio::test]

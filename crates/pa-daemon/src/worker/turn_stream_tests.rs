@@ -62,6 +62,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         cwd_override: false,
         running_tool_calls: std::collections::HashMap::new(),
         running_admission_ids: std::collections::HashSet::new(),
+        decision_child: false,
     }));
     TurnRunner {
         core,

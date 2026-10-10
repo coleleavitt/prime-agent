@@ -191,12 +191,19 @@ impl SupervisorChildSessionsInner {
             usage_watch_live: false,
             usage_rearm: false,
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             last_emitted_status: None,
+            answer_text: None,
         }));
         self.children.lock().await.push(Arc::clone(&record));
         self.refresh_running().await;
         if let Err(error) = self
-            .prompt_child(&created.active_session_id, &request.prompt, &request.images)
+            .prompt_child(
+                &created.active_session_id,
+                &request.prompt,
+                &request.images,
+                None,
+            )
             .await
         {
             let _ = self

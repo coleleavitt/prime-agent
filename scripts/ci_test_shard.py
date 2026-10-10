@@ -193,25 +193,22 @@ def _failed_tests(lines: list[str]) -> list[str]:
 
 
 def write_manifest(path: Path, shard: int, total: int, all_ids: list[str],
-                   results: list[dict], crates: list[str] | None = None) -> None:
+                   results: list[dict], crates: list[str] | None = None,
+                   run_attempt: int | None = None, run_id: str | None = None,
+                   commit_sha: str | None = None) -> None:
     selection_ids = [i for i in all_ids
                      if crates is None or _unit_package(i) in set(crates)]
-    # The attempt this manifest was produced by. `GITHUB_RUN_ATTEMPT` is the
-    # runner's own counter and rises on every re-run, so it is the one value
-    # that separates a manifest an earlier attempt wrote from one the attempt
-    # in flight wrote. It is absent outside Actions (the local gates), where
-    # every manifest is attempt 1.
-    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    if commit_sha is None:
+        commit_sha = os.environ.get("GITHUB_SHA") or subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True,
+            text=True, check=True).stdout.strip()
     manifest = {
         "schema": 1,
         "shard": shard,
         "total": total,
-        # A `gh run rerun --failed` wave re-runs only the failed jobs, so the
-        # shards that were already green keep their earlier-attempt manifests
-        # while the re-run shard writes a new one. Recording the attempt lets
-        # the summary NAME that mix instead of auditing a two-attempt wave as
-        # if one attempt produced it.
-        "attempt": int(attempt) if attempt.isdigit() else 1,
+        "run_attempt": run_attempt if run_attempt is not None else int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+        "run_id": run_id if run_id is not None else os.environ.get("GITHUB_RUN_ID", "local"),
+        "commit_sha": commit_sha,
         "all_unit_ids": all_ids,
         "digest": hashlib.sha256("\n".join(all_ids).encode("utf-8")).hexdigest(),
         "scope": scope_manifest(crates),

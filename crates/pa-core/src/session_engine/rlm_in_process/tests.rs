@@ -217,6 +217,7 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         spawned_by_request_id: None,
         cell_source_code: None,
         token_budget: None,
+        decision_child: false,
     }
 }
 

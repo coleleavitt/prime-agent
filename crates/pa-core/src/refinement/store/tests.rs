@@ -5,6 +5,7 @@
 
 use super::*;
 use serde_json::json;
+use std::time::Duration;
 
 struct Store {
     _dir: tempfile::TempDir,
@@ -491,6 +492,39 @@ fn a_write_times_out_behind_one_holder_held_past_the_wait() {
             ),
         ))
     );
+}
+
+/// A write whose lock was taken over while it ran (another process judged
+/// it dead and reclaimed the directory) refuses its save instead of
+/// overwriting the new holder's state (upstream #3380's lost-lock check):
+/// the store's lock records its owner, and the save re-checks it.
+#[cfg(unix)]
+#[test]
+fn a_write_whose_lock_was_taken_over_refuses_its_save() {
+    let store = store();
+    store.ok("harness.create", memory("Seed", "c", Some("seed")));
+    let before = std::fs::read_to_string(&store.file).unwrap();
+    let lock = crate::platform::LockDir::path_for(&store.file);
+    let refused = with_store(&file_target(&store.file, STORE_LOCK), true, |session| {
+        // The takeover: a new holder's directory, a different owner.
+        std::fs::remove_dir_all(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        std::fs::write(lock.join("owner"), "1 another-holder\n").unwrap();
+        session.dirty = true;
+        Ok(())
+    })
+    .map(|((), _)| ());
+    assert_eq!(
+        refused,
+        Err(StoreError::new(
+            StoreErrorKind::Runtime,
+            format!("harness state lock lost: {}", lock.display())
+        ))
+    );
+    assert_eq!(std::fs::read_to_string(&store.file).unwrap(), before);
+    // The new holder's lock is left to its owner.
+    assert!(lock.join("owner").exists());
+    std::fs::remove_dir_all(&lock).unwrap();
 }
 
 #[test]

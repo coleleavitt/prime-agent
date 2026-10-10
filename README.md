@@ -52,6 +52,8 @@ On Windows, install from PowerShell:
 irm https://app.primeintellect.ai/prime-agent/install.ps1 | iex
 ```
 
+The Windows installer downloads the latest stable Windows x64 build and verifies its checksum before installation.
+
 ## Why Prime Agent
 
 Prime Agent combines a persistent Python control environment with durable harness state, so useful working context and reusable operating patterns can outlive a single chat window.
@@ -95,6 +97,11 @@ prime-agent doctor [--fix]           # Inspect or repair background services
 prime-agent update [--force]         # Update Prime Agent
 prime-agent shutdown [--force]       # Stop every agent, worker, and background service
 ```
+
+The experimental Decision API (the `decisionApi.systemOneModel` setting)
+drives a decision model for real-time control tasks. See
+[Decision API setup and smoke checks](docs/decision-api.md) for the setting
+and verification in the persistent Python REPL.
 
 ## Built for Long-Running Work
 Prime Agent is built for long-running work, especially for evaluations in research. These features are available in the TUI, and when run autonomously.

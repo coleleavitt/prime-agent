@@ -61,12 +61,15 @@ pub fn child_name(run_id: &str, state_id: &str, instance_index: i64, attempt: u3
 }
 
 /// The sibling label for one spawned instance: the state's configured
-/// inline subagent name when it has one (verbatim for the first instance
-/// on its first attempt — agents message the child by exactly this label),
-/// else the generated [`child_name`]. Later instances add `-i<n>`, retries
-/// `-a<n>`; a suffixed label that would exceed the cap shrinks its base to
-/// a digest-suffixed token of the full name, so distinct names stay
-/// distinct and every admission fits.
+/// inline subagent name prefixed with the run's slug (`<run6>-name`, the
+/// same slug the generated label carries), else the generated
+/// [`child_name`]. Sibling names are per-parent-session and a parent
+/// session outlives its runs, so a verbatim configured name would collide
+/// with a prior run's still-registered children (upstream #3462's M1);
+/// agents message the child by the label the run reports. Later instances
+/// add `-i<n>`, retries `-a<n>`; a label that would exceed the cap shrinks
+/// its prefixed base to a digest-suffixed token of it, so distinct names
+/// stay distinct and every admission fits.
 #[must_use]
 pub fn spawn_label(
     configured: Option<&str>,
@@ -75,9 +78,11 @@ pub fn spawn_label(
     instance_index: i64,
     attempt: u32,
 ) -> String {
-    let Some(base) = configured else {
+    let Some(configured) = configured else {
         return child_name(run_id, state_id, instance_index, attempt);
     };
+    let base = format!("{}-{configured}", char_prefix(run_id, 6));
+    let base = base.as_str();
     let mut suffix = String::new();
     if instance_index > 0 {
         let _ = write!(suffix, "-i{instance_index}");
@@ -155,11 +160,23 @@ mod tests {
     }
 
     #[test]
-    fn configured_name_labels_the_first_instance_verbatim() {
+    fn configured_name_labels_the_first_instance_run_scoped() {
         assert_eq!(
             spawn_label(Some("reviewer"), "0123456789abcdef", "reviewing", 0, 1),
-            "reviewer"
+            "012345-reviewer"
         );
+    }
+
+    /// M1 (upstream #3462): sibling names are per-parent-session and a parent
+    /// session outlives its runs, so two runs of one machine must never share
+    /// a configured child's label.
+    #[test]
+    fn two_runs_of_one_machine_never_share_a_label() {
+        let labels = [
+            spawn_label(Some("impl-build"), "0123456789abcdef", "implement", 0, 1),
+            spawn_label(Some("impl-build"), "fedcba9876543210", "implement", 0, 1),
+        ];
+        assert_eq!(labels, ["012345-impl-build", "fedcba-impl-build"]);
     }
 
     #[test]
@@ -169,7 +186,10 @@ mod tests {
             spawn_label(Some("reviewer"), "r", "reviewing", 0, 2),
             spawn_label(Some("reviewer"), "r", "reviewing", 2, 3),
         ];
-        assert_eq!(labels, ["reviewer-i1", "reviewer-a2", "reviewer-i2-a3"]);
+        assert_eq!(
+            labels,
+            ["r-reviewer-i1", "r-reviewer-a2", "r-reviewer-i2-a3"]
+        );
         assert_ne!(
             spawn_label(Some("reviewer"), "r", "reviewing", 0, 1),
             spawn_label(Some("reviewer"), "r", "reviewing", 1, 1)
@@ -186,12 +206,17 @@ mod tests {
 
     #[test]
     fn suffixed_labels_stay_within_the_host_cap() {
+        // The run prefix costs the cap two characters here, so the full-length
+        // name never appears verbatim: the prefixed base shrinks with a digest.
         let long_name = "x".repeat(SUBAGENT_NAME_MAX_LENGTH);
-        assert_eq!(spawn_label(Some(&long_name), "r", "a", 0, 1), long_name);
+        let digest = digest_prefix(&format!("r-{long_name}"), 16);
+        let first = spawn_label(Some(&long_name), "r", "a", 0, 1);
+        assert!(first.len() <= SUBAGENT_NAME_MAX_LENGTH);
+        assert!(first.contains(&digest));
         let second = spawn_label(Some(&long_name), "r", "a", 1, 1);
         assert!(second.len() <= SUBAGENT_NAME_MAX_LENGTH);
         assert!(second.ends_with("-i1"));
-        assert!(second.contains(&digest_prefix(&long_name, 16)));
+        assert!(second.contains(&digest));
         let sharing_prefix = "x".repeat(SUBAGENT_NAME_MAX_LENGTH - 1) + "y";
         let other = spawn_label(Some(&sharing_prefix), "r", "a", 1, 1);
         assert_ne!(second, other);

@@ -88,7 +88,10 @@ pub struct AgentView {
     pub provider_auth: Option<crate::provider_auth::ProviderAuthSelector>,
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,
     pub fork_selector: Option<crate::user_message_selector::UserMessageSelector>,
-    pub effort_picker: Option<crate::effort_picker::EffortPicker>,
+    /// The `/effort` inline picker (TS
+    /// `ThinkingSelectorComponent` seam): while set, it owns the whole frame
+    /// like the model picker.
+    pub(crate) choice_picker: Option<crate::choice_picker::ChoicePicker>,
     /// The `/harness` selector (#1118): open while its entries load and
     /// after; toggles run as `/harness` session commands.
     pub harness_selector: Option<HarnessSelectorState>,
@@ -138,9 +141,6 @@ pub struct AgentView {
     /// The hovered screen cell, while its row is a clickable card row
     /// (operator directive 2026-09-26); revalidated every frame.
     pub(crate) hover_pos: Option<(usize, usize)>,
-    /// Plain text of the last frame's rows: OSC zone-marker emission only
-    /// re-emits rows whose content changed.
-    osc_last_rows: std::collections::HashMap<usize, String>,
     /// Rendered rows per chat entry and detail mode: a frame re-renders only entries invalidated
     /// since the last frame, so a transcript-scale frame pays full layout once per entry/detail.
     entry_layout: Vec<[Option<EntryLayout>; 3]>,
@@ -243,7 +243,7 @@ impl AgentView {
             picker.paste(text);
             return true;
         }
-        if let Some(picker) = self.effort_picker.as_mut() {
+        if let Some(picker) = self.choice_picker.as_mut() {
             picker.paste(text);
             return true;
         }
@@ -315,7 +315,7 @@ impl AgentView {
             provider_auth: None,
             auth_panel: None,
             fork_selector: None,
-            effort_picker: None,
+            choice_picker: None,
             harness_selector: None,
             mcp_view: None,
             factory_view: None,
@@ -339,7 +339,6 @@ impl AgentView {
             window_shows_tail: false,
             detail_transition: false,
             hover_pos: None,
-            osc_last_rows: std::collections::HashMap::new(),
             toasts: crate::toast::Toasts::default(),
             entry_layout: Vec::new(),
             entry_heights: Vec::new(),
@@ -361,35 +360,6 @@ impl AgentView {
             entry_work: std::cell::Cell::new(0),
             click: click::ClickSurface::default(),
         }
-    }
-
-    /// Zone-marker emission plan for a freshly composed frame: every
-    /// marked row whose content changed since the last frame.
-    pub fn take_osc_emissions(
-        &mut self,
-        frame: &[Line],
-    ) -> Vec<(usize, crate::osc133::RowMarkers)> {
-        // Only candidate rows build their text: joining the whole frame
-        // costs O(transcript) per render.
-        let mut plan = Vec::new();
-        let mut last_rows = std::collections::HashMap::new();
-        for (row, line) in frame.iter().enumerate() {
-            let markers = crate::osc133::row_markers(line);
-            if !markers.start && !markers.end {
-                continue;
-            }
-            let text: String = line.iter().map(|s| s.content.as_str()).collect();
-            let changed = self
-                .osc_last_rows
-                .get(&row)
-                .is_none_or(|prev| prev != &text);
-            if changed {
-                plan.push((row, markers));
-            }
-            last_rows.insert(row, text);
-        }
-        self.osc_last_rows = last_rows;
-        plan
     }
 
     pub fn terminal_rows(&self) -> u16 {

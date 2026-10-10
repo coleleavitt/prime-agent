@@ -1029,9 +1029,9 @@ fixer ever runs and its re-entry re-binds the real report; `max_entries`
 bounds the loop; `monitoring` is a `resident` that stays alive under the
 parent session after the run ends. Both worked examples bound their
 emitted payloads in the prompt — a capped findings list here, a capped
-file list in the review-sweep example — because captured answers are
-capped previews: an unbounded payload truncates at the cap and fails to
-bind.
+file list in the review-sweep example — because the executor's capture
+cap still bounds very large payloads: an unbounded payload truncates at
+the cap and fails to bind.
 
 ## Authoring reference
 
@@ -1041,14 +1041,17 @@ bind.
   content is the prompt template; `metadata.model`/`metadata.thinking` are
   spawn settings) or an inline `{"prompt": ...}` object with optional
   `name`/`model`/`thinking`. The optional `name` labels the spawned
-  children (at most 64 characters, unique across the machine's states —
-  a name another state's name can suffix onto, `foo` vs `foo-i1`, is
-  rejected at write time): the first instance is named exactly `name` —
-  the label to message the child by — and re-entries, foreach fan-out,
-  and retries disambiguate with the same `-i<n>`/`-a<n>` suffixes the
-  generated labels use; a suffixed label that would pass the host's
-  64-character cap shrinks its base with a digest of the full name, like
-  the generated labels do.
+  children run-scoped (at most 64 characters, unique across the
+  machine's states — a name another state's name can suffix onto, `foo`
+  vs `foo-i1`, is rejected at write time): the spawn label is
+  `<run6>-name` — the supervisor's sibling names are per-parent-session,
+  and a parent session outlives its runs, so the run prefix keeps two
+  runs of one machine from colliding; read the exact label from the
+  `spawned` event's `name` or the status node's instance rows — and
+  re-entries, foreach fan-out, and retries disambiguate with the same
+  `-i<n>`/`-a<n>` suffixes the generated labels use; a suffixed label
+  that would pass the host's 64-character cap shrinks its base with a
+  digest of the full name, like the generated labels do.
 - **Ports**: inputs and outputs of type `text` or `json`. An input binds
   `"from": "<state_id>.<output_name>"`; types must match, duplicates are
   rejected, and nothing can read from a resident. Bound values render into
@@ -1183,6 +1186,11 @@ status["events"]   # trailing ledger: spawned, settled, answer_captured,
                    # transition_fired, node_error, milestone, ...
 status["usage"]    # spawns, settled, tool_uses, max_parallel, max_children, running,
                     # transitions_fired
+status["needs_verify"]  # (when set) states whose child EXITED carrying a
+                        # provisional answer - verify the remote state; the
+                        # entry row carries the provisional_answer preview
+status["pause_reason"]  # (paused) why the run paused; with "last_error" (the
+status["last_error"]    # last admission/bind failure) and a one-line "remedy"
 ```
 
 `graph()` and `watch()` are the live monitoring views this namespace
@@ -1259,10 +1267,11 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   `max_entries`, `max_transitions`, and `run.max_children` (total
   admissions); the default `escalate` policy pauses
   instead of failing, so read `status` (or the notice) before resuming.
-- Captured answers are capped previews (about 160 characters) and outputs
-  bind from them: keep declared outputs compact — a small fenced json
-  block or one short line — and let the full answer live in the child's
-  session.
+- Outputs bind from the child's full final answer (the collect envelope
+  carries it; the executor caps its own capture at 8,192 characters): a
+  fenced json output block binds whole as long as it fits that cap, so
+  keep declared outputs compact — the rosters and ledger previews stay
+  ~160 characters — and let the full answer live in the child's session.
 - Runs live in the Prime Agent host, not in the kernel: a kernel restart
   or crash never touches a running workflow, and `status` keeps reading
   it. Each run keeps a durable record; a host restart pauses a run that

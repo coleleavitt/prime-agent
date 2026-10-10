@@ -29,6 +29,10 @@ use bash::{ResyncBash, SideBashRun};
 pub(crate) use factory::FactoryUpdate;
 use heartbeats::paused_heartbeat_count;
 pub(crate) use heartbeats::HeartbeatsUpdate;
+/// The opening phase's echo gate (run.rs): the fresh-state projection of
+/// `handle_key`'s keymap-aware ladder — a claimed key queues behind the
+/// session open instead of echoing into the editor.
+pub(crate) use keys::opening_echo_key_claimed;
 use keys::SelectionAutoScroll;
 pub(crate) use model_picker::picker_viewport_rows;
 pub(crate) use model_picker::ModelCatalogUpdate;
@@ -61,10 +65,11 @@ use crate::chat::{
     ChatEntry, CompactionReason, CompactionState, MessageBlock, RetryState, StatusKind,
     ToolResultView, WorkingState,
 };
+use crate::choice_picker::{ChoicePickerAction, ChoicePurpose};
 use crate::click_dispatch::PressedClick;
 use crate::daemon_client::{DaemonClient, DaemonClientEvent};
 use crate::daemon_reconnect::RecoveryKind;
-use crate::effort_picker::{self, EffortPickerAction};
+use crate::effort_picker;
 use crate::export_share::{self, GhAuthStatus, GistOutcome};
 use crate::goal_surface::{format_goal_status, tray_goal_label, GoalPanel, GoalView};
 use crate::heartbeats_picker::{

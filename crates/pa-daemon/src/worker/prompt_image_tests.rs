@@ -38,6 +38,7 @@ fn test_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         recovery_journal_path: dir.join("recovery.jsonl"),
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
+        decision_child: false,
     };
     crate::test_support::InTestDir::new(Arc::new(Worker::new(config, None)), dir)
 }

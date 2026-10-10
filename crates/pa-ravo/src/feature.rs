@@ -21,12 +21,11 @@ use pa_core::refinement::{
 use pa_core::session_engine::refine::RefinementSource;
 use pa_core::session_engine::turn_boundary::{PendingRefine, RefineRequester};
 use pa_ledger::{
-    acquire_harness_state_lock, find_provisional_regressions,
-    format_recurrence_refine_instructions, format_regression_refine_instructions,
-    local_harness_state_dir, normalize_failure_ledger, observation_ordinal,
-    record_provisional_regressions, recurring_failures, FailureLedger, FailureRecord,
-    HarnessDocument, LedgerBoundary, LedgerFlush, LedgerHandle, LedgerObserver, LedgerScope,
-    ProvisionalRegression,
+    find_provisional_regressions, format_recurrence_refine_instructions,
+    format_regression_refine_instructions, local_harness_state_dir, normalize_failure_ledger,
+    observation_ordinal, record_provisional_regressions, recurring_failures, FailureLedger,
+    FailureRecord, HarnessDocument, LedgerBoundary, LedgerFlush, LedgerHandle, LedgerObserver,
+    LedgerScope, ProvisionalRegression,
 };
 use pa_telemetry::Properties;
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
@@ -577,23 +576,6 @@ impl RefinementGate for SessionGate {
             inner: Arc::clone(&self.inner),
             session_id,
         }))
-    }
-
-    /// A global refine writes the state every session's ledger flush
-    /// writes under the harness state lock, so it takes the same lock (TS
-    /// `withHarnessStateLock` around the global apply); a local store has
-    /// one writer besides the unlocked kernel, as in TS.
-    fn lock_store(
-        &self,
-        scope: HarnessScope,
-        harness_state_dir: &std::path::Path,
-    ) -> anyhow::Result<Option<RefineGuard>> {
-        match scope {
-            HarnessScope::Global => Ok(Some(Box::new(acquire_harness_state_lock(
-                harness_state_dir,
-            )?))),
-            HarnessScope::Local => Ok(None),
-        }
     }
 
     fn attach_refine_requester(&self, requester: RefineRequester) {

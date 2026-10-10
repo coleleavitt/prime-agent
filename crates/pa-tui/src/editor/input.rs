@@ -135,6 +135,17 @@ impl Editor {
             return;
         }
 
+        // A confirm must read a menu that answers the current text: a burst
+        // that outran the dropdown (`/` opened it, the rest of `/exit` parked a
+        // refresh) resolves the parked refresh first, so Enter or Tab never
+        // splices the stale menu's selection over the typed text.
+        if self.autocomplete.is_some()
+            && self.pending_autocomplete.is_some()
+            && (self.kb_matches(input, "tui.input.tab")
+                || self.kb_matches(input, "tui.select.confirm"))
+        {
+            self.materialize_autocomplete();
+        }
         if self.autocomplete.is_some() {
             if self.kb_matches(input, "tui.select.cancel") {
                 self.cancel_autocomplete();

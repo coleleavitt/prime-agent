@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use pa_agent::abort::AbortSignal;
+use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_core::session_engine::provider_retry::{ProviderRetryPolicy, UNBOUNDED_BACKOFF_MS};
 use pa_core::session_engine::side_question::{SideQuestionSink, SideQuestionTurn};
@@ -29,7 +30,26 @@ mod scripted;
 
 /// The turn behavior a worker session runs.
 pub trait SessionEngine: Send + Sync {
-    /// The session's shared MCP manager, when the engine owns one: the
+    /// Consume one tagged Decision API message without starting a turn: the
+    /// parent's engine consumes its decision child's `decision_api.decision`
+    /// replies into its per-child slots, and the decision child consumes the
+    /// parent's `decision_api.goal` messages into its goal input. Engines
+    /// without decision loops use normal message routing. `relationship` is
+    /// the sender's edge to this session (`None` for a parent or an
+    /// unaffiliated sender — the deliver path computes child edges only).
+    fn route_decision_api_event(
+        &self,
+        _relationship: Option<AgentFamilyRelationship>,
+        _sender_name: &str,
+        _message: &str,
+    ) -> bool {
+        false
+    }
+    /// The session's shared MCP manager, when the engine owns one (the
+    /// real agent engine does; scripted harness engines do not). The
+    /// `replace_acp_mcp_servers` command writes through it so
+    /// ACP-admitted servers reach the prompt's MCP gating — the same
+    /// store the core engine gates with.    /// The session's shared MCP manager, when the engine owns one: the
     /// `replace_acp_mcp_servers` command writes through it.
     fn acp_mcp_manager(
         &self,
@@ -55,16 +75,9 @@ pub trait SessionEngine: Send + Sync {
     /// Engines without a watch registry do nothing.
     fn clear_agent_watches(&self) {}
 
-    /// Release the session's kernel at a parent-owned child's idle settle
-    /// (TS #2483's `_passivateSettledRlmChildRuntime` inline arm,
-    /// worker-side): a snapshot-flushing stop that keeps the session
-    /// listable, inspectable, collectable, and deletable; the next
-    /// kernel use revives from the flushed snapshot. The turn runner
-    /// fires this best-effort from its park arm once the worker core
-    /// proved the parent-owned, unattached, unqueued idle state;
-    /// engines that cannot release (scripted harness engines, engines
-    /// without a kernel, or engines whose settled gates fail) no-op
-    /// and the child stays resident.
+    /// Release the session's kernel at a parent-owned child's idle settle: a
+    /// snapshot-flushing stop; engines that cannot release (scripted harness, no
+    /// kernel, failed settled gates) no-op.
     fn release_settled_child_kernel(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
@@ -317,6 +330,13 @@ pub trait SessionEngine: Send + Sync {
         _entries: &[Value],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Value>> + Send + '_>> {
         Box::pin(async { None })
+    }
+
+    /// The cheap model-selection key used to validate metadata resolved outside
+    /// the worker core lock. Implementations that switch models return the
+    /// provider and model id from the same selection the resolver reads.
+    fn model_identity(&self) -> (Option<String>, Option<String>) {
+        (None, None)
     }
 
     /// The engine's resolved model as connection-state wire data

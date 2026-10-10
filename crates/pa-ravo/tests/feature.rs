@@ -554,32 +554,42 @@ async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
     );
 }
 
-/// A global refine holds the harness state lock every ledger flush takes:
-/// while another writer holds it, the refine waits and then fails rather
-/// than overwrite what that writer is writing.
+/// A global refine writes under the harness state lock every ledger flush
+/// takes: while another writer holds it, the refine waits for that writer
+/// and re-reads, so it keeps what the writer saved instead of overwriting
+/// it, and once it lands the lock is released.
 #[tokio::test]
 async fn a_global_refine_takes_the_harness_state_lock() {
     let mut session = session();
     let gate = session.ravo.refinement_gate(&session.context).unwrap();
-    let held = pa_ledger::acquire_harness_state_lock(&session.global_dir).unwrap();
-    assert!(gate
-        .lock_store(HarnessScope::Global, &session.global_dir)
-        .is_err());
-    assert!(gate
-        .lock_store(HarnessScope::Local, &session.harness_dir())
-        .unwrap()
-        .is_none());
-    drop(held);
-    let guard = gate
-        .lock_store(HarnessScope::Global, &session.global_dir)
-        .unwrap()
-        .expect("a lock guard");
-    assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_err());
-    drop(guard);
     let messages = vec![serde_json::from_value(
         json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
     )
     .unwrap()];
+    let gating = || RefinementGating {
+        gate: Arc::clone(&gate),
+        model_call: scripted(
+            r#"{"verdict":"pass","score":72,"failedCriteria":[],"rationale":"fine"}"#,
+        ),
+    };
+    let options = RefineOptions {
+        global: true,
+        ..RefineOptions::default()
+    };
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let holder = {
+        let dir = session.global_dir.clone();
+        std::thread::spawn(move || {
+            let held = pa_ledger::acquire_harness_state_lock(&dir).unwrap();
+            held_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            let mut document = pa_ledger::HarnessDocument::load(&dir);
+            document.set("holderMark", json!(true));
+            document.save(&dir).unwrap();
+            drop(held);
+        })
+    };
+    held_rx.recv().unwrap();
     let (result, _) = execute_refinement_gated(
         &mut session.manager,
         RefinementTranscript {
@@ -588,23 +598,21 @@ async fn a_global_refine_takes_the_harness_state_lock() {
         },
         &session.global_dir,
         &model(),
-        &RefineOptions {
-            global: true,
-            ..RefineOptions::default()
-        },
+        &options,
         RefinementSource::User,
         scripted(MEMORY_PLAN),
         None,
-        Some(RefinementGating {
-            gate,
-            model_call: scripted(
-                r#"{"verdict":"pass","score":72,"failedCriteria":[],"rationale":"fine"}"#,
-            ),
-        }),
+        Some(gating()),
     )
     .await
     .unwrap();
+    holder.join().unwrap();
     assert!(result.applied_edits.iter().all(|edit| edit.applied));
+    let saved = std::fs::read_to_string(session.global_dir.join("harness_state.json")).unwrap();
+    assert!(
+        saved.contains("holderMark"),
+        "the refine re-read after the holder's save and kept it: {saved}"
+    );
     // Released once the save landed.
     assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_ok());
 }

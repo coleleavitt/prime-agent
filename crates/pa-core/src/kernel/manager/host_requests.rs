@@ -146,8 +146,7 @@ impl Inner {
                 anyhow!("host request type \"{request_type}\" is not available in this session");
             return Box::pin(async move { Err(error) });
         };
-        // Tag the request with the cell that triggered it. A blocking call is
-        // still the in-flight execution; detached spawns fire after the
+        // Tag the request with the cell that triggered it. Detached spawns fire after the
         // scheduling cell goes idle, so fall back to that last cell's source.
         let cell_source_code = {
             let g = lock(&self.guarded);

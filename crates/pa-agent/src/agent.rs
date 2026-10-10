@@ -400,9 +400,8 @@ pub(crate) enum QueuedClaim {
 }
 
 pub(crate) struct AgentInner {
-    /// One lock serializes state reduction and listener awaits, mirroring the
-    /// single-threaded TS event loop: emitted events are processed strictly in
-    /// the order the loop emits them.
+    /// One lock serializes state reduction and listener awaits: emitted
+    /// events are processed strictly in the order the loop emits them.
     shared: tokio::sync::Mutex<Shared>,
     steering_queue: Mutex<PendingMessageQueue>,
     follow_up_queue: Mutex<PendingMessageQueue>,
@@ -438,13 +437,9 @@ pub(crate) struct AgentInner {
     /// The natural-turn-end continuation hook: settable after construction so the session engine
     /// can install it. A plain mutex: cloned at run-config build, never held across an await.
     get_continuation_messages: Mutex<Option<GetContinuationMessagesFn>>,
-    /// Per-run model override (TS `Agent.modelOverride`): when set, the
-    /// loop config serves every LLM request of the run on this model with
-    /// its own thinking level, while the agent state keeps identifying the
-    /// session model. A plain mutex: read at run-config build, never held
-    /// across an await. The owner sets it right before starting a routed
-    /// run and clears it before the next dispatch, so retries and
-    /// post-compaction continuations of a routed turn keep serving it.
+    /// Per-run model override; the owner sets it right before starting a routed run and clears it
+    /// before the next dispatch. A plain mutex: read at run-config build, never held across an
+    /// await.
     pub(crate) model_override: Mutex<Option<AgentModelOverride>>,
     session_id: Option<String>,
     tool_execution: ToolExecutionMode,
@@ -1153,7 +1148,6 @@ impl AgentInner {
         }
     }
 
-    /// Port of `normalizePromptInput`.
     pub(crate) fn normalize_prompt_input(input: AgentPromptInput) -> Vec<AgentMessage> {
         match input {
             AgentPromptInput::Messages(messages) => messages,
@@ -1777,6 +1771,7 @@ mod tests {
                 cost: crate::types::UsageCost::default(),
                 context_window: 200_000,
                 max_tokens: 8_192,
+                max_tokens_explicit: false,
             }
         }
 
@@ -1881,6 +1876,7 @@ mod tests {
                 cost: crate::types::UsageCost::default(),
                 context_window: 200_000,
                 max_tokens: 8_192,
+                max_tokens_explicit: false,
             }
         }
 
@@ -1936,6 +1932,7 @@ mod tests {
                 cost: crate::types::UsageCost::default(),
                 context_window: 200_000,
                 max_tokens: 8_192,
+                max_tokens_explicit: false,
             }
         }
 
@@ -2009,6 +2006,7 @@ mod tests {
                 cost: crate::types::UsageCost::default(),
                 context_window: 200_000,
                 max_tokens: 8_192,
+                max_tokens_explicit: false,
             }
         }
 

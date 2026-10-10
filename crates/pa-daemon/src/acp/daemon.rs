@@ -276,8 +276,11 @@ pub(crate) struct HostedSession {
     /// The running prompt turn; one at a time. A cancelled turn keeps
     /// the slot until its cancel stop finishes.
     pub(super) turn: Option<ActiveTurn>,
-    /// The newest assistant stop reason observed on the event stream.
-    pub(super) assistant_stop_reason: Option<String>,
+    /// The newest assistant stop reason observed on the event stream,
+    /// cleared when a prompt turn is admitted so a turn never reads a
+    /// previous turn's stop reason (read after the settlement for the
+    /// stop-reason response).
+    pub(super) assistant_stop_reason: Option<pa_types::ai::StopReason>,
     /// The event mapping state lives and dies with the session, like TS.
     pub(super) mapping: WireMappingState,
     pub(super) observed_children: std::collections::HashSet<String>,
@@ -580,6 +583,9 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
     }
 
     handlers.shutdown().await;
+    // A close frame is reserved synchronously but its stop runs detached.
+    // Let it finish before EOF teardown takes the hosted session away.
+    wait_for_session_close(&state).await;
     teardown(&link, &state, &binding).await;
     drop(tx);
     let _ = writer.await;
@@ -765,6 +771,9 @@ async fn admit_prompt(
         return Err("A prompt turn is already running for this ACP session".to_string());
     }
     let admission_id = format!("prompt-admission:{}", uuid::Uuid::new_v4());
+    // The stop reason is per-turn: a turn that runs no model call (a
+    // slash command) must not inherit the previous turn's stop reason.
+    hosted.assistant_stop_reason = None;
     hosted.turn = Some(ActiveTurn {
         admission_id: admission_id.clone(),
         cancelled: false,
@@ -818,7 +827,7 @@ fn arm_cancel_locked(session_id: &str, guard: &mut DaemonAcpState) -> CancelOrde
 async fn wait_for_session_close(state: &Arc<Mutex<DaemonAcpState>>) {
     let close_done = { state.lock().await.session_close_done.clone() };
     if let Some(mut done) = close_done {
-        let _ = done.changed().await;
+        let _ = done.wait_for(|finished| *finished).await;
     }
 }
 
@@ -1424,13 +1433,26 @@ async fn prompt_turn(
         }
         break status;
     };
-    // The stop reason follows the TS mapping (acp-stop-reason.ts): the
-    // abort flag read after the settlement, and the settlement's status
-    // (`pending.status`), not the first observation's.
-    let stop_reason = meta::acp_stop_reason_for_status(
-        turn_cancelled(&*state.lock().await, admission_id),
-        Some(&settled_status),
-    );
+    // The stop reason follows the TS mapping (acp-stop-reason.ts) plus the
+    // turn's final assistant stop reason (#3363): the abort flag read after
+    // the settlement, the settlement's status (`pending.status`), not the
+    // first observation's, and the newest assistant stop reason — the link's
+    // one frame consumer applies every message_end (the autonomous
+    // continuations' included, since they run inside the waits above) before
+    // the response that ended each wait resolved, so this read after the
+    // settlement sees the run's final one.
+    let (cancelled, assistant_stop_reason) = {
+        let guard = state.lock().await;
+        (
+            turn_cancelled(&guard, admission_id),
+            guard
+                .session
+                .as_ref()
+                .and_then(|hosted| hosted.assistant_stop_reason),
+        )
+    };
+    let stop_reason =
+        meta::acp_stop_reason_for_status(cancelled, Some(&settled_status), assistant_stop_reason);
     jsonrpc::response(
         &id,
         &serde_json::to_value(types::AcpStopReasonResponse { stop_reason }).expect("serializes"),
@@ -1752,6 +1774,161 @@ mod tests {
             session,
             ..DaemonAcpState::default()
         }
+    }
+
+    #[tokio::test]
+    async fn eof_waits_for_a_reserved_close_before_taking_the_session() {
+        let state = Arc::new(Mutex::new(state(Some(hosted_session()))));
+        let order = frame_order_prefix(
+            &Incoming::Request {
+                id: json!(1),
+                method: "session/close".to_string(),
+                params: json!({ "sessionId": "acp-1" }),
+            },
+            &state,
+        )
+        .await;
+        let FrameOrder::Close { done, .. } = order else {
+            panic!("the close should reserve its stop");
+        };
+        let eof = tokio::spawn({
+            let state = Arc::clone(&state);
+            async move {
+                wait_for_session_close(&state).await;
+                state.lock().await.session.take().is_some()
+            }
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !eof.is_finished(),
+            "EOF must not take the session before close finishes"
+        );
+        assert!(state.lock().await.session.is_some());
+        done.send(true).unwrap();
+        state.lock().await.session_close_done = None;
+        assert!(eof.await.unwrap());
+
+        // A close can settle before EOF checks the state. No stale watch
+        // should be awaited, and the hosted session is still available.
+        let (done, mut done_rx) = tokio::sync::watch::channel(false);
+        let settled = Arc::new(Mutex::new(self::state(Some(hosted_session()))));
+        done.send(true).unwrap();
+        assert!(*done_rx.borrow_and_update());
+        settled.lock().await.session_close_done = Some(done_rx);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            wait_for_session_close(&settled),
+        )
+        .await
+        .expect("an already completed close must not strand EOF");
+    }
+
+    #[tokio::test]
+    async fn lost_replace_and_clear_ack_retries_clear_before_an_empty_session() {
+        let (writer, mut commands) = mpsc::unbounded_channel::<String>();
+        let (_frames_tx, frames) = mpsc::unbounded_channel();
+        let pending = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let link = Arc::new(DaemonLink {
+            writer,
+            pending: Arc::clone(&pending),
+            closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            frames: Mutex::new(frames),
+            protocol_version: DAEMON_PROTOCOL_VERSION,
+            next_request_id: std::sync::atomic::AtomicU64::new(0),
+        });
+        let worker = tokio::spawn(async move {
+            let mut replacements = Vec::new();
+            let mut installed = Vec::<String>::new();
+            while let Some(line) = commands.recv().await {
+                let envelope: DaemonCommandEnvelope = serde_json::from_str(&line).unwrap();
+                let id = envelope.id;
+                let (command, data, lose_ack) = match envelope.command {
+                    DaemonCommand::GetConnectionState { .. } => {
+                        ("get_connection_state", None, false)
+                    }
+                    DaemonCommand::GetAvailableModels { .. } => {
+                        ("get_available_models", Some(json!({ "models": [] })), false)
+                    }
+                    DaemonCommand::GetRlmChildren { .. } => {
+                        ("get_rlm_children", Some(json!({ "children": [] })), false)
+                    }
+                    // The fork's command advertisement (upstream #1308 port)
+                    // reads the admitted session's commands off the admission path.
+                    DaemonCommand::GetCommands { .. } => {
+                        ("get_commands", Some(json!({ "commands": [] })), false)
+                    }
+                    DaemonCommand::ReplaceAcpMcpServers { servers, .. } => {
+                        installed = servers
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|server| server.get("name").unwrap().as_str().unwrap().to_string())
+                            .collect();
+                        replacements.push(installed.clone());
+                        ("replace_acp_mcp_servers", None, replacements.len() <= 2)
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                };
+                let reply = pending.lock().unwrap().remove(&id).unwrap();
+                if !lose_ack {
+                    reply
+                        .send(DaemonResponse {
+                            id: Some(id),
+                            command: command.to_string(),
+                            success: true,
+                            data,
+                            error: None,
+                            error_info: None,
+                        })
+                        .unwrap();
+                }
+                // Dropping the reply simulates an applied command whose
+                // acknowledgement never reaches the ACP connection.
+            }
+            (replacements, installed)
+        });
+        let state = Arc::new(Mutex::new(state(None)));
+        let binding = DaemonBinding {
+            active_session_id: "daemon-1".to_string(),
+            client_owned: false,
+            mcp_owner_id: "owner-1".to_string(),
+        };
+        let options = DaemonAcpOptions {
+            socket_path: PathBuf::new(),
+            actual_cwd: PathBuf::from("/tmp"),
+            product_version: "test".to_string(),
+            telemetry: None,
+            create: DaemonCommand::GetConnectionState {
+                id: None,
+                active_session_id: "daemon-1".to_string(),
+                rest: Map::default(),
+            },
+        };
+        let (tx, mut responses) = mpsc::unbounded_channel();
+        handle_session_new(
+            json!(1),
+            json!({ "mcpServers": [{ "name": "example", "command": "echo", "args": [], "env": [] }] }),
+            &link, &state, &options, &binding, tx.clone(),
+        ).await;
+        assert!(responses.recv().await.unwrap().get("error").is_some());
+        assert_eq!(state.lock().await.mcp_server_names, vec!["example"]);
+
+        handle_session_new(
+            json!(2),
+            json!({ "mcpServers": [] }),
+            &link,
+            &state,
+            &options,
+            &binding,
+            tx,
+        )
+        .await;
+        assert!(responses.recv().await.unwrap().get("result").is_some());
+        assert!(state.lock().await.mcp_server_names.is_empty());
+        drop(link);
+        let (replacements, installed) = worker.await.unwrap();
+        assert_eq!(replacements, vec![vec!["example"], vec![], vec![]]);
+        assert!(installed.is_empty());
     }
 
     #[tokio::test]

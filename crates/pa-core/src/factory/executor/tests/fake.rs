@@ -135,15 +135,49 @@ pub fn failed(error: &str) -> Outcome {
     }
 }
 
-/// The factory node a spawn name belongs to (`sw-<node>-<run>-...`, or a
-/// configured inline name verbatim).
+/// A child that exited with an error but whose last assistant text the
+/// host captured at the exit (upstream #3462's M4 shape).
+pub fn exited(error: &str, answer: &str) -> Outcome {
+    Outcome {
+        status: "error",
+        answer: Some(answer.to_string()),
+        error: Some(error.to_string()),
+    }
+}
+
+/// The host's roster preview cap (`compactRlmText`).
+pub const HOST_ANSWER_PREVIEW_CHARS: usize = 160;
+
+/// The factory node a spawn name belongs to: `sw-<node>-<run>-...` for a
+/// generated label; a configured inline name spawns run-scoped as
+/// `<run6>-<configured>[-i<n>][-a<n>]`, keyed by the configured base (the
+/// test machines' configured names never end in those suffix shapes).
 pub fn node_of_name(name: &str) -> String {
     let parts: Vec<&str> = name.split('-').collect();
     if parts[0] == "sw" && parts.len() > 2 {
-        parts[1].to_string()
-    } else {
-        name.to_string()
+        return parts[1].to_string();
     }
+    let run_prefixed = parts[0].len() == 6 && parts[0].bytes().all(|byte| byte.is_ascii_hexdigit());
+    if run_prefixed && parts.len() > 1 {
+        let mut base = &parts[1..];
+        while base.len() > 1 && is_disambiguation(base[base.len() - 1]) {
+            base = &base[..base.len() - 1];
+        }
+        return base.join("-");
+    }
+    name.to_string()
+}
+
+/// `i<n>` (n >= 1) or `a<n>` (n >= 2): a spawn label's suffix part.
+fn is_disambiguation(part: &str) -> bool {
+    let mut chars = part.chars();
+    let (Some(kind), digits) = (chars.next(), chars.as_str()) else {
+        return false;
+    };
+    let Ok(value) = digits.parse::<u64>() else {
+        return false;
+    };
+    !digits.starts_with('0') && ((kind == 'i' && value >= 1) || (kind == 'a' && value >= 2))
 }
 
 #[derive(Default)]
@@ -162,6 +196,10 @@ pub struct HostState {
     call_indices: HashMap<String, usize>,
     pub delete_fails: bool,
     pub dead_notices: bool,
+    /// Children whose FIRST collect settles them with no captured answer
+    /// (the host-side capture race); later collects carry the answer.
+    pub late_children: HashSet<String>,
+    pub collects_of: HashMap<String, u64>,
 }
 
 /// Deterministic host fake routing by request type.
@@ -298,12 +336,32 @@ impl FakeHost {
             session_dir: Some(format!("/tmp/{child_id}")),
             status,
             settled,
-            answer_preview: outcome.and_then(|outcome| outcome.answer.clone()),
+            // The real host hands a compact preview (whitespace-collapsed,
+            // capped with an ellipsis tail) plus the FULL final answer as
+            // the binding lane.
+            answer_preview: outcome
+                .and_then(|outcome| outcome.answer.as_deref())
+                .map(host_preview),
             error: outcome.and_then(|outcome| outcome.error.clone()),
             duration_ms: Some(5),
             tool_use_count: Some(1),
             replied_since_task: None,
+            answer_text: outcome.and_then(|outcome| outcome.answer.clone()),
         }
+    }
+}
+
+/// The host's roster preview of an answer (`compactRlmText`).
+fn host_preview(answer: &str) -> String {
+    let compact = answer.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > HOST_ANSWER_PREVIEW_CHARS {
+        let kept: String = compact
+            .chars()
+            .take(HOST_ANSWER_PREVIEW_CHARS - 3)
+            .collect();
+        format!("{kept}...")
+    } else {
+        compact
     }
 }
 
@@ -324,6 +382,19 @@ impl FactoryChildren for FakePorts {
                 kwargs.insert("thinking".into(), Value::from(thinking.clone()));
             }
             let node = node_of_name(&request.name);
+            // The supervisor rejects duplicate sibling names: a prior run's
+            // settled children stay registered (upstream #3462's M1 class).
+            if host.with(|state| {
+                state
+                    .children
+                    .values()
+                    .any(|(name, _)| *name == request.name)
+            }) {
+                return Err(format!(
+                    "Agent name \"{}\" is unavailable: an agent of that name already exists at depth 1 under this parent",
+                    request.name
+                ));
+            }
             let advance = host.with(|state| {
                 let attempted = state
                     .calls
@@ -383,6 +454,12 @@ impl FactoryChildren for FakePorts {
                     let Some((name, node)) = state.children.get(target).cloned() else {
                         continue; // deleted children vanish from collect results
                     };
+                    let seen = state.collects_of.entry(target.clone()).or_insert(0);
+                    *seen += 1;
+                    if state.late_children.contains(target) && *seen == 1 {
+                        results.push(FakeHost::entry(target, &name, "done", true, None));
+                        continue;
+                    }
                     let outcome = state
                         .child_outcomes
                         .get(target)

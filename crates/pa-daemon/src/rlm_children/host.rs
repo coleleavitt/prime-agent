@@ -102,19 +102,45 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let admission = async {
                 this.assert_name_available(&name, identity.rlm_depth + 1)
                     .await?;
-                let model = resolve_child_model_allowlisted(
-                    &this,
-                    request.model.as_deref(),
-                    "spawn",
-                    "subagent",
-                )
-                .await?;
+                let cwd_path = identity
+                    .cwd
+                    .clone()
+                    .unwrap_or_else(|| "/".to_string())
+                    .clone();
+                // A decision child runs the settings decision model: the
+                // spawn refuses with the same actionable message decide()
+                // serves while the setting is unset or unresolvable, then
+                // resolves through the ordinary child-model path so the
+                // allowlist still gates the selector.
+                let model = if request.decision_child {
+                    let selector = pa_core::session_engine::decision_api::decision_model_selector(
+                        std::path::Path::new(&cwd_path),
+                        &this.agent_dir,
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    let selector = resolve_child_model_allowlisted(
+                        &this,
+                        Some(&selector),
+                        "spawn",
+                        "subagent",
+                    )
+                    .await?;
+                    selector
+                } else {
+                    resolve_child_model_allowlisted(
+                        &this,
+                        request.model.as_deref(),
+                        "spawn",
+                        "subagent",
+                    )
+                    .await?
+                };
                 assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
                 let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
                 let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
                 let mut runtime_metadata = json!({
-                    "kind": "subagent",
+                    "kind": if request.decision_child { "decision" } else { "subagent" },
                     "rlmChildId": child_id,
                     "parentActiveSessionId": this.parent_active_session_id,
                     "rlmDepth": identity.rlm_depth + 1,
@@ -159,6 +185,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     settled_status: None,
                     settled: false,
                     answer_preview: None,
+                    answer_text: None,
                     answer_captured: false,
                     replied_since_task: false,
                     interrupted: false,
@@ -172,6 +199,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     usage_rearm: false,
                     emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                     last_emitted_status: None,
+                    rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 };
                 let record = Arc::new(Mutex::new(record));
                 this.children.lock().await.push(Arc::clone(&record));
@@ -188,8 +216,39 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let watcher_record = Arc::clone(&record);
             let prompt = request.prompt.clone();
             let plan_mode = request.plan_mode;
+            // TS `spawnMessage`: the kickoff rides prompt admission as
+            // the parent's `agent_message` row, so the child renders a
+            // parent message and the model reads the
+            // "[task from parent]" label.
+            let kickoff_content = format!("[task from parent]\n\n{prompt}");
+            let kickoff_row_id = format!("spawn:{child_id}");
+            let mut parent_endpoint = json!({
+                "activeSessionId": this.parent_active_session_id,
+            });
+            if let Some(session_id) = &identity.session_id {
+                parent_endpoint["sessionId"] = json!(session_id);
+            }
+            if let Some(name) = this.parent_session_name.lock_or_recover().clone() {
+                parent_endpoint["sessionName"] = json!(name);
+            }
+            let kickoff_row =
+                pa_core::session_engine::agent_messaging::create_agent_session_message_row(
+                    &pa_core::session_engine::agent_messaging::AgentSessionMessageRowPayload {
+                        id: &kickoff_row_id,
+                        prompt: &kickoff_content,
+                        message: &prompt,
+                        from: &parent_endpoint,
+                        from_relationship: Some(
+                            pa_core::session_engine::agent_messaging::AgentFamilyRelationship::Parent,
+                        ),
+                        // TS `spawnMessage` carries no `target`.
+                        target: None,
+                        timestamp: now_ms(),
+                    },
+                );
             let child_active_session_id = created.active_session_id.clone();
             let child_session_file = created.session_file.clone();
+            let child_log_id = child_id.clone();
             // Capture the current turn boundary before detaching: spawn
             // admission happens mid-turn, so the parent's continuation
             // request reaches the provider first (see `wait_turn_done`).
@@ -209,7 +268,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // that cannot enter plan mode never runs the task.
                 if plan_mode {
                     if let Err(error) = watcher_this
-                        .prompt_child(&child_active_session_id, "/plan on", &[])
+                        .prompt_child(&child_active_session_id, "/plan on", &[], None)
                         .await
                     {
                         let _ = watcher_this
@@ -226,25 +285,37 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     }
                 }
                 if let Err(error) = watcher_this
-                    .prompt_child(&child_active_session_id, &prompt, &[])
+                    .prompt_child(
+                        &child_active_session_id,
+                        &kickoff_content,
+                        &[],
+                        Some(&kickoff_row),
+                    )
                     .await
                 {
                     // The route can fail ambiguously around a worker
                     // replacement. The durable session file arbitrates: a
-                    // prompt in the file landed (re-sending would duplicate
-                    // the first turn); one retry is safe.
-                    let landed =
-                        session_file_carries_prompt(child_session_file.as_deref(), &prompt);
+                    // kickoff row in the file landed (re-sending would
+                    // duplicate the first turn); one retry is safe.
+                    let landed = session_file_carries_spawn_kickoff(
+                        child_session_file.as_deref(),
+                        &kickoff_row_id,
+                    );
                     let retried = if landed {
                         Ok(())
                     } else {
                         watcher_this
-                            .prompt_child(&child_active_session_id, &prompt, &[])
+                            .prompt_child(
+                                &child_active_session_id,
+                                &kickoff_content,
+                                &[],
+                                Some(&kickoff_row),
+                            )
                             .await
                     };
                     if let Err(retry_error) = retried {
                         eprintln!(
-                            "pa-daemon: RLM child task prompt failed for {child_active_session_id}: {error:#}; retry failed: {retry_error:#}"
+                            "pa-daemon: RLM child task prompt failed for {child_log_id}: {error:#}; retry failed: {retry_error:#}"
                         );
                         let _ = watcher_this
                             .kill_child(&child_active_session_id, ChildCloseReason::Killed)
@@ -402,7 +473,64 @@ impl RlmSubagentHost for SupervisorChildSessions {
         Box::pin(async move {
             // Selector errors surface unwrapped (the TS message is the
             // product surface); only the kill below gets a delete context.
-            let record = this.resolve_record(&target, "subagent").await?;
+            let record = match this.resolve_record(&target, "subagent").await {
+                Ok(record) => record,
+                Err(miss) => {
+                    // Retirement is idempotent (the M5 class): a selector
+                    // whose delete receipt already returned answers from
+                    // the tombstone instead of erroring, so a re-delete of
+                    // a settled child (an operator retire, the factory's
+                    // cancel pass) never reports the slot as still held.
+                    let matches = this
+                        .deleted_children
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .values()
+                        .filter(|deleted| deleted.matches(&target))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    match matches.len() {
+                        0 => return Err(miss),
+                        1 => {
+                            let deleted = &matches[0];
+                            return Ok(RlmDeleteSubagentResult {
+                                subagent: RlmSubagentEntry {
+                                    rlm_child_id: deleted.rlm_child_id.clone(),
+                                    active_session_id: Some(deleted.active_session_id.clone()),
+                                    session_id: deleted.session_id.clone(),
+                                    session_name: deleted.session_name.clone(),
+                                    session_dir: deleted.session_dir.clone(),
+                                    status: deleted.status,
+                                    activity: None,
+                                    tool_use_count: None,
+                                    duration_ms: Some(
+                                        now_ms().saturating_sub(deleted.started_at_ms),
+                                    ),
+                                    answer_preview: deleted.answer_preview.clone(),
+                                    replied_since_task: None,
+                                    progress_note: None,
+                                    label: None,
+                                    last_activity_at: Some(deleted.started_at_ms),
+                                    activity_stale_ms: None,
+                                },
+                                outcome: Some("deleted"),
+                            });
+                        }
+                        _ => bail!(
+                            "RLM subagent selector \"{target}\" is ambiguous in the current parent session"
+                        ),
+                    }
+                }
+            };
+            let rename_lock = record.lock().await.rename_lock.clone();
+            let _rename_guard = rename_lock.lock().await;
+            let no_longer_matches = {
+                let record = record.lock().await;
+                record.closed_by_parent || !record.matches(&target)
+            };
+            if no_longer_matches {
+                bail!("No direct RLM subagent matches \"{target}\" in the current parent session");
+            }
             let active_session_id = record.lock().await.active_session_id.clone();
             // Kill first: a failed kill keeps the child tracked; the
             // `rlmLedgerDelete` marker tells the supervisor this kill is a
@@ -691,6 +819,23 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     ),
                 }
             };
+            // Serialize the daemon command and parent-side record update
+            // against another rename or delete of this child.
+            let rename_lock = if let Some(record) = &record {
+                Some(record.lock().await.rename_lock.clone())
+            } else {
+                None
+            };
+            let _rename_guard = if let Some(lock) = &rename_lock {
+                Some(lock.lock().await)
+            } else {
+                None
+            };
+            if let Some(record) = &record {
+                if record.lock().await.closed_by_parent {
+                    bail!("rlm.rename can only rename the current session or one of its direct children");
+                }
+            }
             // The rename itself is daemon-owned: the supervisor's live
             // rename route reserves the name, asserts sibling uniqueness
             // across the family, and appends the child's RLM ledger
@@ -732,9 +877,14 @@ impl RlmSubagentHost for SupervisorChildSessions {
     }
 }
 
-/// Whether the child's durable session file already carries the task
-/// prompt (the record a worker replacement replays from arbitrates).
-fn session_file_carries_prompt(session_file: Option<&str>, prompt: &str) -> bool {
+/// Whether the child's durable session file already carries the spawn
+/// kickoff row (`agent_message` custom row with `details.id` =
+/// `spawn:<child id>`). The session file is the record a worker
+/// replacement replays from, so it arbitrates an ambiguous prompt-route
+/// failure: a row in the file was durably processed by the dead worker (a
+/// re-send would duplicate the first turn), a missing row provably never
+/// landed.
+fn session_file_carries_spawn_kickoff(session_file: Option<&str>, spawn_row_id: &str) -> bool {
     let Some(path) = session_file.filter(|path| !path.is_empty()) else {
         return false;
     };
@@ -744,18 +894,10 @@ fn session_file_carries_prompt(session_file: Option<&str>, prompt: &str) -> bool
     content
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|entry| {
-            entry.get("type").and_then(Value::as_str) == Some("message")
-                && entry.pointer("/message/role").and_then(Value::as_str) == Some("user")
-        })
-        .any(|entry| match entry.pointer("/message/content") {
-            Some(Value::String(text)) => text.contains(prompt),
-            Some(Value::Array(blocks)) => blocks.iter().any(|block| {
-                block
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains(prompt))
-            }),
-            _ => false,
+        .any(|entry| {
+            entry.get("type").and_then(Value::as_str) == Some("custom_message")
+                && entry.get("customType").and_then(Value::as_str)
+                    == Some(pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE)
+                && entry.pointer("/details/id").and_then(Value::as_str) == Some(spawn_row_id)
         })
 }

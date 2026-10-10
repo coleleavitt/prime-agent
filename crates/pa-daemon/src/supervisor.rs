@@ -59,7 +59,9 @@ pub(crate) type MeshRosterRx = tokio::sync::mpsc::UnboundedReceiver<MeshRosterCh
 
 // The routing consts and refusal string keep their crate::supervisor::* paths stable
 // (external callers: supervisor_parent_death, create_reuse, prompt_admission, update_restore).
-pub(crate) use routing::{client_route_timeout, ROUTE_TIMEOUT_MS, WORKER_NOT_CONNECTED};
+pub(crate) use routing::{
+    client_route_timeout, ROUTE_TIMEOUT_MS, SUMMARY_TIMEOUT_MS, WORKER_NOT_CONNECTED,
+};
 
 // Called only by the supervision sibling module and in-file tests; lib-target unused.
 #[allow(unused_imports)]
@@ -93,10 +95,10 @@ use crate::framing::{write_frame, PrivateFrameReader, DEFAULT_PRIVATE_FRAME_LIMI
 use crate::paths;
 use crate::prompt_admission::input_admission_id;
 use crate::protocol::{
-    command_active_session_id, command_type_name, current_protocol_info,
+    app_version, command_active_session_id, command_type_name, current_protocol_info,
     parse_supervisor_command_line, response_failure, response_line, response_success,
     DaemonResponse, DaemonRuntimeIdentity, EnvelopeParseError, TypedCreateRejection,
-    DAEMON_APP_VERSION, DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION,
+    DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION,
 };
 use crate::registry::{
     ResidentWorker, SessionRegistry, WorkerRegistration, WorkerReply, WorkerRequest,
@@ -464,6 +466,10 @@ impl Supervisor {
         // Descriptor adoption runs concurrently with the accept loop: a supervisor restarted
         // over live sessions must accept their self-registrations immediately, not behind the
         // whole descriptor scan. The restore pass awaits this task (spec §6 step 2).
+        // The adopt pass's completion signal: the passive-catalog warmup
+        // waits on it (see below) while the restore pass keeps awaiting
+        // the task handle itself.
+        let (adoption_tx, adoption_signal) = tokio::sync::watch::channel(false);
         let adoption = {
             let supervisor = Arc::clone(&self);
             let boot = match roster.as_ref() {
@@ -480,6 +486,7 @@ impl Supervisor {
             };
             tokio::spawn(async move {
                 supervisor.adopt_persisted_workers(boot).await;
+                let _ = adoption_tx.send(true);
             })
         };
         {
@@ -529,12 +536,57 @@ impl Supervisor {
             });
         }
 
+        // Warm the passive scheduled-jobs snapshot (the input-latency
+        // lane): the first selector-less `heartbeats_list`/`cron_list`
+        // after boot would otherwise scan the whole session-artifacts tree
+        // inline while the interactive client's open waits on it. The scan
+        // waits out the boot's adopt pass first (the pre-bar review's
+        // race finding): the scan's live-worker filter consults the
+        // registry, so a scan that raced the adopt pass would cache the
+        // just-adopted worker's artifacts as a passive row and serve the
+        // stale row for the snapshot's whole refresh window — adoption
+        // never invalidates the catalog. After the signal (a plain
+        // startup's adopt pass is ms-scale) the scan still lands well
+        // before the first client read; every invalidation and refresh
+        // rule is unchanged. The signal is fail-open: an adopt pass that
+        // died without signaling still warms (a degraded boot keeps the
+        // pre-warmup cold-read behavior, never a colder one).
+        {
+            let supervisor = Arc::clone(&self);
+            let mut adopted = adoption_signal;
+            tokio::spawn(async move {
+                Supervisor::wait_for_adoption_signal(&mut adopted).await;
+                supervisor.spawn_passive_catalog_warmup();
+            });
+        }
+
         // Session-archive sweep (the sessions directory must not grow forever): boot sweep,
         // then the periodic re-sweep. Housekeeping only — it never gates serving.
         {
             let supervisor = Arc::clone(&self);
             tokio::spawn(async move {
                 crate::session_archive::archive_sweep_loop(&supervisor).await;
+            });
+        }
+
+        // Journals without verifiable ownership and flat TS update status
+        // records stay intact: a missing descriptor or a dead coordinator
+        // does not prove that no worker or waiting caller still needs them.
+        {
+            let supervisor = Arc::clone(&self);
+            tokio::task::spawn_blocking(move || {
+                let leases = crate::lease::reclaim_dead_owner_leases(&supervisor.options.agent_dir);
+                let logs = crate::worker_stderr::prune_socket_logs(
+                    &supervisor.options.agent_dir,
+                    &supervisor.options.socket_path,
+                );
+                let leftovers =
+                    crate::ts_era::sweep_ts_era_leftovers(&supervisor.options.agent_dir);
+                if leases + logs + leftovers > 0 {
+                    supervisor.log_line(&format!(
+                        "boot cleanup: removed {leases} dead-owner lease dir(s), {logs} old socket log(s), {leftovers} TS-era leftover(s)"
+                    ));
+                }
             });
         }
 

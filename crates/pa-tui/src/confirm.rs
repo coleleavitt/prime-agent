@@ -75,8 +75,8 @@ impl ConfirmPanel {
         }
     }
 
-    /// One key id (TS `handleInput`: up/down move, confirm selects, escape
-    /// and ctrl+c cancel).
+    /// One key id: up/down move, confirm selects, escape and ctrl+c
+    /// cancel.
     pub fn handle_key(&mut self, kb: &KeybindingsManager, id: &str) -> ConfirmAction {
         if id == "ctrl+c" {
             return ConfirmAction::Cancel;

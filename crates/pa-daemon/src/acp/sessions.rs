@@ -563,6 +563,16 @@ async fn admit_session(
     // The ACP MCP servers ride the wire command, not a local manager.
     let replace_skipped = resolved.is_empty() && state.lock().await.mcp_server_names.is_empty();
     if !replace_skipped {
+        // A failed response does not prove the worker rejected this list.
+        // Keep the names until a clear is acknowledged, even if the
+        // best-effort clear below also loses its acknowledgement.
+        if !resolved.is_empty() {
+            state.lock().await.mcp_server_names = resolved
+                .iter()
+                .map(pa_core::mcp::AcpMcpServerConfig::name)
+                .map(str::to_string)
+                .collect();
+        }
         if let Err(error) =
             replace_connection_servers(link, &daemon_session_id, &binding.mcp_owner_id, &resolved)
                 .await
@@ -576,12 +586,9 @@ async fn admit_session(
             let _ = tx.send(super::internal_error(&id, &error.to_string()));
             return false;
         }
-        let names = resolved
-            .iter()
-            .map(pa_core::mcp::AcpMcpServerConfig::name)
-            .map(str::to_string)
-            .collect();
-        state.lock().await.mcp_server_names = names;
+        if resolved.is_empty() {
+            state.lock().await.mcp_server_names.clear();
+        }
     }
 
     let mut result = json!({ "configOptions": *hosted.config.published.lock().await });

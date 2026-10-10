@@ -396,6 +396,7 @@ impl FactoryExecutor {
             max_children_reported: false,
             budget_reported: false,
             pause_reason: None,
+            last_error: None,
             states,
             pending_evaluations: std::collections::VecDeque::new(),
             events: Vec::new(),

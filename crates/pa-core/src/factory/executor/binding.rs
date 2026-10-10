@@ -12,8 +12,18 @@ use serde_json::{Map, Number, Value};
 
 use crate::factory::pyvalue::{py_float_repr, py_repr, PyValue};
 
-/// Local safety cap (characters) on one captured answer preview.
+/// Local cap (characters) on a captured answer's PREVIEW: the
+/// `answer_captured` ledger event and the status node's `answer_preview`
+/// stay compact (the host's own roster previews cap at 160 characters).
 pub const ANSWER_CAPTURE_CAP: usize = 200;
+
+/// Local cap (characters) on the settle capture's binding lane. Collect
+/// carries the child's full final answer (`answer_text`, host-bounded);
+/// input binding and output capture work on that text, not the roster
+/// preview, so a fenced JSON output longer than the preview binds whole
+/// (upstream #3462's M2 class). A bind failure names this cap when the
+/// capture was cut at it.
+pub const ANSWER_BINDING_CAP: usize = 8192;
 
 const RATE_LIMIT_MARKERS: [&str; 8] = [
     "rate limit",

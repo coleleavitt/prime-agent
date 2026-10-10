@@ -49,6 +49,17 @@ impl Worker {
         response_success(None, "update_snapshot", Some(core_data))
     }
 
+    pub(crate) fn release_session_lease(&self) {
+        let lease = self
+            .core
+            .lock()
+            .unwrap()
+            .store
+            .as_mut()
+            .and_then(|store| store.lease.take());
+        drop(lease);
+    }
+
     /// Graceful stop: the connection loop exits the process after
     /// replying. The session's telemetry finalizes first.
     pub(crate) async fn handle_shutdown(&self) -> DaemonResponse {
@@ -97,13 +108,7 @@ impl Worker {
             agent_engine.dispose_kernel().await;
         }
         self.engine.end_telemetry().await;
-        let lease = self
-            .core
-            .lock_or_recover()
-            .store
-            .as_mut()
-            .and_then(|store| store.lease.take());
-        drop(lease);
+        self.release_session_lease();
         // The worker's quit (TS `session_shutdown` reason `quit`): the
         // pane reporter releases its pane as the last write on the wire
         // — awaited here so the release lands before this reply unlocks
@@ -254,10 +259,7 @@ impl Worker {
     /// runtime call.
     pub(crate) async fn refresh_replaced_session_state(&self) {
         let (rlm_depth, summary, child_script) = {
-            let mut core = self
-                .core
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (mut core, inputs) = self.summary_inputs();
             // The moved-to file's persisted depth wins (the replacement
             // carries no create-config depth).
             let rlm_depth = core
@@ -267,7 +269,7 @@ impl Worker {
                 .unwrap_or(0);
             core.rlm_depth = rlm_depth;
             let child_script = core.child_script.clone();
-            (rlm_depth, self.summary_locked(&core), child_script)
+            (rlm_depth, self.summary_locked(&core, inputs), child_script)
         };
         // No thinking flag rides the rebind (the create command's level is
         // already resolved on the engine), and the TS replacement runtime
@@ -303,7 +305,7 @@ impl Worker {
     /// Bind the live session's schedule catalog: register the artifact
     /// partition, rebind the stored jobs onto the live ids, and start (or
     /// wake) the scheduler. Runs at create and after every replacement swap.
-    pub(crate) async fn bind_scheduled_jobs(&self) {
+    pub(crate) async fn bind_scheduled_jobs(&self) -> anyhow::Result<()> {
         let binding = {
             let core = self
                 .core
@@ -312,8 +314,9 @@ impl Worker {
             crate::scheduled_jobs::live_binding(&core)
         };
         if let Some((binding, artifact_dir)) = binding {
-            self.scheduled.bind_session(binding, artifact_dir).await;
+            self.scheduled.bind_session(binding, artifact_dir).await?;
         }
+        Ok(())
     }
 
     /// Clear the queued-input suspension and wake the turn runner so parked
@@ -500,6 +503,10 @@ impl Worker {
                     Ok(None) => {}
                     Err(error) => {
                         eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
+                        self.emit_worker_event(json!({
+                            "type": "refine_failed",
+                            "error": format!("{error:#}"),
+                        }));
                     }
                 }
                 response_success(None, "compact", Some(run.result))
@@ -519,9 +526,11 @@ impl Worker {
     /// The idle park shared by `wait_for_idle` and the headless barrier: register
     /// the permit before the flag check, or a turn that settles between the check
     /// and the await loses its wake.
-    async fn wait_until_idle(&self) {
+    pub(crate) async fn wait_until_idle(&self) {
         loop {
             let idle = self.idle_notify.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
             {
                 let core = self.core.lock_or_recover();
                 if !core.busy

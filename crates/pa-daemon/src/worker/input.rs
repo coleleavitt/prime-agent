@@ -34,6 +34,9 @@ struct AgentMessageAdmission {
 /// queued; the caller answers the `digest` receipt).
 enum AgentMessageLaneOutcome {
     Queued(Box<AgentMessageAdmission>),
+    /// The Decision API router consumed the message (a decision child's
+    /// reply to its waiting parent): answered with this receipt, never queued.
+    Routed(Value),
     Digested {
         receipt: Value,
         child_reply: Option<String>,
@@ -269,16 +272,9 @@ impl Worker {
         response_success(None, command, Some(json!({ "queued": true })))
     }
 
-    /// Agent-to-agent message delivery, routed by the supervisor's
-    /// `send_message` arm: render the `[agent-message from ...]` prompt and
-    /// queue it on the requested lane, carrying the `agent_message`
-    /// custom row on the queued item (TS `acceptAgentSessionMessage` ->
-    /// `acceptAgentMessagePrompt` with `customMessage`): the turn renders
-    /// the collapsed agent-message card while the model still runs on
-    /// the rendered prompt. Answers with the delivery receipt
-    /// (`createAgentSessionMessageReceipt` shape): `queued` when a turn is
-    /// running (`queueIfBusy` semantics), `delivered` when the prompt
-    /// becomes the next run.
+    /// Agent-to-agent delivery: render the `[agent-message from ...]` prompt and queue
+    /// it on the requested lane with the `agent_message` custom row (the turn renders
+    /// the collapsed card). Answers `queued` when running, else `delivered`.
     ///
     /// A delivery carrying `cloudRequestId` (the cross-boundary family
     /// exchange) is idempotent by that request id: the receiver inbox
@@ -308,6 +304,9 @@ impl Worker {
                 if let Some(child) = &child_reply {
                     self.engine.mark_child_reply(child);
                 }
+                return response_success(None, "worker_deliver_message", Some(receipt));
+            }
+            Ok(AgentMessageLaneOutcome::Routed(receipt)) => {
                 return response_success(None, "worker_deliver_message", Some(receipt));
             }
             Err(response) => return response,
@@ -397,6 +396,16 @@ impl Worker {
             Ok(AgentMessageLaneOutcome::Queued(admission)) => *admission,
             Ok(AgentMessageLaneOutcome::Digested { .. }) => {
                 unreachable!("the keyed delivery admits with the digest lane disabled")
+            }
+            // A routed decision reply is consumed in memory: nothing to
+            // commit, so the pause releases and the receipt answers.
+            Ok(AgentMessageLaneOutcome::Routed(receipt)) => {
+                self.input_pauses.release_internal(
+                    &pause_id,
+                    &self.config.active_session_id,
+                    request_id,
+                );
+                return response_success(None, "worker_deliver_message", Some(receipt));
             }
             Err(response) => {
                 self.input_pauses.release_internal(
@@ -563,6 +572,29 @@ impl Worker {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             sender_is_child_of(&sender, &core).then_some(AgentFamilyRelationship::Child)
         };
+        if from_relationship != Some(AgentFamilyRelationship::Sibling)
+            && self
+                .engine
+                .route_decision_api_event(from_relationship, &sender_name, message)
+        {
+            let (core, inputs) = self.summary_inputs();
+            let summary = self.summary_locked(&core, inputs);
+            return Ok(AgentMessageLaneOutcome::Routed(json!({
+                    "id": pa_core::session_engine::agent_messaging::create_agent_session_message_id(),
+                    "source": AGENT_MESSAGE_SOURCE,
+                    "target": {
+                        "activeSessionId": summary.active_session_id,
+                        "sessionId": summary.session_id,
+                        "sessionName": summary.session_name,
+                        "runtimeKind": summary.runtime_kind,
+                    },
+                    "from": sender,
+                    "message": message,
+                    "deliveryMode": "steer",
+                    "deliveryStatus": "delivered",
+                    "deliveredAt": crate::util::now_iso(),
+            })));
+        }
         // The digest inbox lane (swarm PR C/D): the receiving worker owns
         // the lane. The daemon-side controller (hysteresis over per-session
         // counters) decides before each delivery; senders never choose. On
@@ -630,7 +662,7 @@ impl Worker {
             Lane::Steering
         };
         let (id, queued, snapshot, target) = {
-            let mut core = self.core.lock_or_recover();
+            let (mut core, inputs) = self.summary_inputs();
             let pending = core.steering.len() + core.follow_up.len();
             if let Err(error) =
                 pa_core::session_engine::agent_messaging::assert_agent_message_queue_capacity(
@@ -652,7 +684,7 @@ impl Worker {
             }
             let id = message_id;
             let queued = core.busy;
-            let summary = self.summary_locked(&core);
+            let summary = self.summary_locked(&core, inputs);
             // The receiving session's endpoint: the receipt's `target`
             // and the delivered row's `details.target` share the one
             // shape.
@@ -678,7 +710,7 @@ impl Worker {
                         message,
                         from: &sender,
                         from_relationship,
-                        target: &target,
+                        target: Some(&target),
                         timestamp: crate::util::now_ms(),
                     },
                 );

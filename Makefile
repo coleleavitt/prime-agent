@@ -196,3 +196,10 @@ runner-gates:
 	python3 scripts/ci/test_register_runner.py
 
 .PHONY: check deny windows-cross actionlint glibc-gate release-dry-run continuous-dry-run audit-build package catalog-assets catalog-assets-fixture catalog-assets-gates fold-gates restamp-gates shard-gates runner-gates
+
+# Offline packaging contract tests for updaters shipped since Prime Agent 0.6.
+legacy-upgrade-gates:
+	python3 scripts/release/test_native_compat.py
+	python3 scripts/release/test_npm_bridge.py
+
+.PHONY: legacy-upgrade-gates

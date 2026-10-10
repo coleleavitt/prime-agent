@@ -418,7 +418,7 @@ impl AgentMessageController for InProcessFamilyController {
             message: &message,
             from: &from,
             from_relationship,
-            target: &target,
+            target: Some(&target),
             timestamp: now_ms(),
         });
         let row: CustomMessage = serde_json::from_value(row)

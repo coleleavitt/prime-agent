@@ -1,11 +1,12 @@
 //! One agent turn: the runner that admits queued input, drives the
 //! engine, and settles the result.
 use super::{
-    checkpoint_queue_recovery, compact_action_label, create_daemon_event_meta, emit_refinement_row,
-    gather_delivery_batch, json, oneshot, session_snapshot, AgentMessageDigest, AssistantSnapshot,
-    DaemonOutbound, EngineEvent, EventPump, Lane, Map, Notify, OutboundFrame, PromptRequest,
-    QueueCheckpoint, QueuedItem, Result, SessionActionSnapshot, SessionCore, SessionEngine,
-    TurnSettle, Value, WorkerRecoveryJournal, ABORTED_TURN_SETTLE_ERROR,
+    checkpoint_queue_recovery, compact_action_label, create_daemon_event_meta,
+    emit_refinement_event_for_session, emit_refinement_row, gather_delivery_batch, json, oneshot,
+    session_snapshot, AgentMessageDigest, AssistantSnapshot, DaemonOutbound, EngineEvent,
+    EventPump, Lane, Map, Notify, OutboundFrame, PromptRequest, QueueCheckpoint, QueuedItem,
+    Result, SessionActionSnapshot, SessionCore, SessionEngine, TurnSettle, Value,
+    WorkerRecoveryJournal, ABORTED_TURN_SETTLE_ERROR,
 };
 use pa_types::sync::MutexExt;
 
@@ -29,8 +30,6 @@ pub(super) struct TurnRunner {
     /// The digest lane's counters (swarm PRs C/D): the runner counts model
     /// turns and agent-message ingestion turns for the lane controller.
     pub(super) agent_digest: Arc<AgentMessageDigest>,
-    /// The worker config slice the idle passivation needs (agent dir,
-    /// supervisor link coordinates).
     pub(super) passivation: PassivationContext,
     /// The shared pane-reporter slot (the Worker's `herdr` field): the
     /// runner reads it at every boundary so a create-time rebind is always
@@ -1104,6 +1103,14 @@ impl TurnRunner {
             },
             None,
         );
+        let session_path = {
+            let core = self.core.lock().unwrap();
+            core.store.as_ref().map(|store| store.path.clone())
+        };
+        if let Some(path) = session_path {
+            let _ =
+                tokio::task::spawn_blocking(move || std::fs::File::open(&path)?.sync_all()).await;
+        }
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
         for admission_id in settled_admissions {
@@ -1171,15 +1178,22 @@ impl TurnRunner {
                                 emit_refinement_row(&core, &events, &review_session_id, &value);
                             }
                         }
-                        crate::user_bash::emit_session_event_frame(
+                        emit_refinement_event_for_session(
                             &core,
                             &events,
+                            &review_session_id,
                             crate::worker::refine_complete_event(&result),
                         );
                     }
                     Ok(None) => {}
                     Err(error) => {
                         eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
+                        emit_refinement_event_for_session(
+                            &core,
+                            &events,
+                            &review_session_id,
+                            json!({ "type": "refine_failed", "error": format!("{error:#}") }),
+                        );
                     }
                 }
             });

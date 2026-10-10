@@ -2,7 +2,6 @@
 //! plan -> re-read -> apply -> persist flow.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use pa_types::ai::{UserContent, UserMessage};
 use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
@@ -408,7 +407,6 @@ pub async fn execute_refinement_gated(
     };
 
     let target_scope = plan.rollback_scope.unwrap_or(requested_scope);
-    let gate = gating.as_ref().map(|gating| Arc::clone(&gating.gate));
     // Rollbacks are safety actions and an empty proposal is no candidate:
     // neither meets the gate.
     let verdict = match gating {
@@ -435,17 +433,9 @@ pub async fn execute_refinement_gated(
         HarnessScope::Global => global_harness_dir.to_path_buf(),
         HarnessScope::Local => local_harness_dir.clone(),
     };
-    // Held from the re-read until the save landed.
-    let _store_guard = match gate {
-        Some(gate) => {
-            let dir = target_dir.clone();
-            tokio::task::spawn_blocking(move || gate.lock_store(target_scope, &dir)).await??
-        }
-        None => None,
-    };
-    let mut state = load_harness_state(&target_dir, target_scope);
-    // The factory opt-in resolves HERE — immediately before the apply,
-    // after the planning request — so a setting that changed during the
+    // The factory opt-in resolves HERE — after the planning request and
+    // before the store lock, so the settings read never lengthens the
+    // locked section — so a setting that changed during the
     // request (`/factory off` mid-plan) decides, not a snapshot captured
     // before it. The read rides `spawn_blocking` so the settings I/O
     // never blocks the async runtime worker (the refine arm holds the
@@ -462,14 +452,28 @@ pub async fn execute_refinement_gated(
         }
         None => false,
     };
+    // Every refine holds the store lock from the re-read until the save
+    // landed (upstream #3380's `update_harness_state`): the kernel's
+    // harness writes and the ledger flush take the same `{file}.lock`.
+    let store_lock = {
+        let dir = target_dir.clone();
+        tokio::task::spawn_blocking(move || crate::refinement::lock_harness_state(&dir))
+            .await
+            .map_err(|error| anyhow::anyhow!("refinement harness lock task failed: {error}"))??
+    };
+    let mut state = load_harness_state(&target_dir, target_scope);
     if let Some(verdict) = &verdict {
         if let GateAdmission::Reject(rejected) = verdict.admit(&plan.proposal, &state) {
             let mut rejected = *rejected;
             if verdict.record_rejection(&mut state) {
+                store_lock.ensure_owned()?;
                 rejected.harness_state_path = save_harness_state(&target_dir, &state)?
                     .to_string_lossy()
                     .to_string();
             }
+            // The history and session rows below are not the store's: release
+            // the lock before writing them.
+            drop(store_lock);
             return record_rejected_refinement(session, rejected, global_harness_dir, target_scope);
         }
         verdict.prepare_application(&mut state);
@@ -484,9 +488,11 @@ pub async fn execute_refinement_gated(
     if let Some(verdict) = &verdict {
         verdict.record_application(&mut state, &mut result);
     }
+    store_lock.ensure_owned()?;
     result.harness_state_path = save_harness_state(&target_dir, &state)?
         .to_string_lossy()
         .to_string();
+    drop(store_lock);
     if target_scope == HarnessScope::Global {
         append_global_refinement(global_harness_dir, &result)?;
     }
@@ -1001,7 +1007,7 @@ mod tests {
             },
             context_window: 100_000,
             max_tokens: 8_000,
-            max_tokens_explicit: None,
+            max_tokens_explicit: false,
             featured: None,
             headers: None,
             compat: None,
@@ -1716,15 +1722,6 @@ Reviewer instructions: record it"
         log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     }
 
-    /// Logs `unlock` when the store lock is released.
-    struct StubStoreLock(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
-
-    impl Drop for StubStoreLock {
-        fn drop(&mut self) {
-            self.0.lock().unwrap().push("unlock".to_string());
-        }
-    }
-
     struct StubHold(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
     impl Drop for StubHold {
@@ -1737,21 +1734,6 @@ Reviewer instructions: record it"
         fn begin_refine(&self) -> Option<crate::refinement::gate::RefineGuard> {
             self.held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Some(Box::new(StubHold(std::sync::Arc::clone(&self.held))))
-        }
-
-        fn lock_store(
-            &self,
-            scope: HarnessScope,
-            harness_state_dir: &Path,
-        ) -> anyhow::Result<Option<crate::refinement::gate::RefineGuard>> {
-            assert!(harness_state_dir.ends_with("harness"));
-            self.evaluated
-                .lock()
-                .unwrap()
-                .push(format!("lock {scope:?}"));
-            Ok(Some(Box::new(StubStoreLock(std::sync::Arc::clone(
-                &self.evaluated,
-            )))))
         }
 
         fn evaluate(
@@ -1938,7 +1920,7 @@ Reviewer instructions: record it"
         );
         assert_eq!(
             evaluated.lock().unwrap().clone(),
-            ["true user Local held=1", "lock Local", "unlock"]
+            ["true user Local held=1"]
         );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -1989,18 +1971,72 @@ Reviewer instructions: record it"
                 REFINEMENT_NOTICE_CUSTOM_TYPE
             ]
         );
-        // The store stays locked from the re-read until the save landed.
         assert_eq!(
             evaluated.lock().unwrap().clone(),
-            [
-                "true auto Local held=1",
-                "lock Local",
-                "prepare",
-                "apply",
-                "unlock"
-            ]
+            ["true auto Local held=1", "prepare", "apply"]
         );
         assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Every refine, gated or not, writes under the harness state file's
+    /// lock (upstream #3380): while another live writer holds it, the
+    /// refine waits for the holder and then re-reads, so it keeps what the
+    /// holder saved instead of racing or overwriting it.
+    #[tokio::test]
+    async fn a_refine_writes_only_under_the_harness_store_lock() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        session.append_message(user_message("seed")).unwrap();
+        let global_dir = dir.path().join("harness");
+        let harness_dir =
+            crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
+                .unwrap();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let holder = {
+            let harness_dir = harness_dir.clone();
+            std::thread::spawn(move || {
+                let held = crate::refinement::lock_harness_state(&harness_dir).unwrap();
+                held_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let mut state = crate::refinement::empty_harness_state();
+                state
+                    .extensions
+                    .insert("holderMark".to_string(), json!(true));
+                crate::refinement::save_harness_state(&harness_dir, &state).unwrap();
+                drop(held);
+            })
+        };
+        held_rx.recv().unwrap();
+        let result = execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[user_message("do a thing twice")],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            seam(MEMORY_REPLY),
+            None,
+        )
+        .await
+        .unwrap();
+        holder.join().unwrap();
+        assert!(result.applied_edits[0].applied);
+        let saved =
+            std::fs::read_to_string(crate::refinement::get_harness_state_path(&harness_dir))
+                .unwrap();
+        assert!(
+            saved.contains("holderMark") && saved.contains("Use tactic A"),
+            "the refine re-read after the holder's save and kept it: {saved}"
+        );
+        assert!(
+            !crate::platform::LockDir::path_for(&crate::refinement::get_harness_state_path(
+                &harness_dir
+            ))
+            .exists()
+        );
     }
 
     /// An empty proposal is no candidate: the gate never evaluates it.
@@ -2027,7 +2063,8 @@ Reviewer instructions: record it"
         .await
         .unwrap();
         assert_eq!(result.summary, "nothing");
-        // Not evaluated; the store is still locked for its write.
-        assert_eq!(evaluated.lock().unwrap().clone(), ["lock Local", "unlock"]);
+        // Not evaluated: the gate saw nothing (the store lock is the
+        // refine's own `lock_harness_state`, not a gate seam).
+        assert!(evaluated.lock().unwrap().is_empty());
     }
 }

@@ -120,9 +120,8 @@ async fn drive(
     // stops renewing, so the window self-heals inside the lease.
     let mut admission = pa_daemon::supervisor_ownership::ShutdownAdmission::acquire()
         .map_err(PhaseFailure::before_stop)?;
-    // `Preparing`: connect the old supervisor. An unreachable daemon is a
-    // daemon-less update: an empty prepare is trivially durable and the
-    // successor boots without a roster (the workers are already gone).
+    // `Preparing`: connect the old supervisor. An unreachable daemon means a
+    // daemon-less update: the successor boots without a roster.
     let daemon = match pa_tui::daemon_client::DaemonClient::connect(&options.socket_path).await {
         Ok((client, _events)) => Some(client),
         Err(_) => None,
@@ -200,6 +199,11 @@ async fn drive(
             .await
             .set_state(UpdateState::Prepared)
             .map_err(PhaseFailure::after_stop)?;
+        writer
+            .lock()
+            .await
+            .set_state(UpdateState::Stopping)
+            .map_err(PhaseFailure::after_stop)?;
     }
     // `Stopped`: fence-free predecessor exit wait (spec §9).
     if let Some(identity) = &predecessor {
@@ -256,8 +260,8 @@ async fn drive(
         .assert_or_renew()
         .map_err(PhaseFailure::after_stop)?;
     admission.release();
-    // `Booting`: spawn the successor from the candidate release dir, roster
-    // via env (spec §6), hello within `T_boot`.
+    // `Booting`: spawn the successor from the candidate release dir, roster via env (spec §6),
+    // hello within `T_boot`.
     writer
         .lock()
         .await

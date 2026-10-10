@@ -10,6 +10,7 @@ use super::{
     SideQuestionOutcome, SideQuestionRequest, StartupScope, TurnPrompt, Value,
     DEFAULT_RLM_MAX_DEPTH,
 };
+use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_types::sync::{MutexExt, RwLockExt};
 
 impl SessionEngine for AgentSessionEngine {
@@ -20,9 +21,33 @@ impl SessionEngine for AgentSessionEngine {
         AgentSessionEngine::clear_agent_watches(self);
     }
 
-    /// TS `_clearQueuedGoalContexts`: the worker-installed purge withdraws
-    /// the queued minted goal-context turns (pause/clear/start must not
-    /// leave a stale continuation to run after the state change).
+    fn route_decision_api_event(
+        &self,
+        relationship: Option<AgentFamilyRelationship>,
+        sender_name: &str,
+        message: &str,
+    ) -> bool {
+        if relationship != Some(AgentFamilyRelationship::Child) {
+            return false;
+        }
+        let Ok(decision) = serde_json::from_str::<Value>(message) else {
+            return false;
+        };
+        if decision["type"] != "decision_api.decision" {
+            return false;
+        }
+        if let Some(slot) = self
+            .decision_replies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(sender_name)
+        {
+            *slot = Some(decision);
+        }
+        true
+    }
+
+    /// Withdraw the queued minted goal-context turns so a state change leaves nothing stale to run.
     fn purge_queued_goal_contexts(&self) {
         let purge = self.goal_queue_purge.lock_or_recover().clone();
         if let Some(purge) = purge {
@@ -305,7 +330,16 @@ impl SessionEngine for AgentSessionEngine {
         *self
             .own_summary
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(summary);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(summary.clone());
+        if let Some(children) = &self.children {
+            children.set_parent_session_name(
+                summary
+                    .get("sessionName")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string),
+            );
+        }
     }
 
     fn configure_service_tier(&self, tier: Option<pa_types::ai::ServiceTier>) {
@@ -484,6 +518,11 @@ impl SessionEngine for AgentSessionEngine {
         // The scope changed the startup decisions: drop the stale level; the
         // next read re-resolves against the scope.
         *self.effective_thinking.write_or_recover() = None;
+    }
+
+    fn model_identity(&self) -> (Option<String>, Option<String>) {
+        let selection = self.current_selection();
+        (selection.provider, selection.model)
     }
 
     fn model_metadata(&self) -> Option<Value> {

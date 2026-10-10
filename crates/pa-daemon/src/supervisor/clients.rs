@@ -4,14 +4,14 @@ use anyhow::anyhow;
 use pa_types::sync::MutexExt;
 
 use super::{
-    broadcast, command_type_name, current_protocol_info, daemon_closing_shutdown_event,
-    input_admission_id, json, parse_supervisor_command_line, response_failure, response_line,
-    response_success, salvage_command_type, salvage_id, subscribers, update_gate_refuses, util,
-    Arc, AsyncWriteExt, BufReader, ClientRouting, ClientTrust, DaemonCommand, DaemonOutbound,
-    DaemonRuntimeIdentity, Duration, EnvelopeParseError, Map, Ordering, Outbound, ResidentWorker,
-    Result, RouteAdmission, Supervisor, TransportStream, TypedCreateRejection, Value,
-    DAEMON_APP_VERSION, DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION, ROUTE_TIMEOUT_MS,
-    UPDATE_PREPARING_MESSAGE,
+    app_version, broadcast, command_type_name, current_protocol_info,
+    daemon_closing_shutdown_event, input_admission_id, json, parse_supervisor_command_line,
+    response_failure, response_line, response_success, salvage_command_type, salvage_id,
+    subscribers, update_gate_refuses, util, Arc, AsyncWriteExt, BufReader, ClientRouting,
+    ClientTrust, DaemonCommand, DaemonOutbound, DaemonRuntimeIdentity, Duration,
+    EnvelopeParseError, Map, Ordering, Outbound, ResidentWorker, Result, RouteAdmission,
+    Supervisor, TransportStream, TypedCreateRejection, Value, DAEMON_SCHEMA_ID,
+    DAEMON_SCHEMA_REVISION, ROUTE_TIMEOUT_MS, UPDATE_PREPARING_MESSAGE,
 };
 
 /// TS `OWNED_WORKER_DISCONNECT_GRACE_MS`: how long a client-owned worker
@@ -251,7 +251,7 @@ impl Supervisor {
             protocol: current_protocol_info(),
             schema_id: Some(DAEMON_SCHEMA_ID.to_string()),
             schema_revision: Some(DAEMON_SCHEMA_REVISION),
-            app_version: Some(DAEMON_APP_VERSION.to_string()),
+            app_version: Some(app_version().to_string()),
             runtime: local.then(|| DaemonRuntimeIdentity {
                 build_id: concat!("pa-daemon-rs-", env!("CARGO_PKG_VERSION")).to_string(),
                 executable_path: std::env::current_exe()
@@ -406,10 +406,8 @@ impl Supervisor {
                             tcp_authenticated = true;
                         }
                     }
-                    // The arm's guard proved a slot free (this loop is
-                    // the only slot acquirer, and slots only free while
-                    // the loop is between iterations), so the non-blocking
-                    // take always succeeds.
+                    // The arm's guard proved a slot free (this loop is the only slot
+                    // acquirer), so the non-blocking take always succeeds.
                     let dispatch_slot = Arc::clone(&dispatch_slots)
                         .try_acquire_owned()
                         .expect("the read arm's guard held a dispatch slot");
@@ -595,9 +593,7 @@ impl Supervisor {
                                     deadline_write(write_deadline, write_line(&mut writer, &payload))
                                         .await
                                 {
-                                    // An event-write failure must not strand an
-                                    // accepted shutdown: if this connection owns
-                                    // the stop, it still starts the pass.
+                                    // An event-write failure must not strand an accepted shutdown.
                                     let is_shutdown_owner = self
                                         .shutdown_owner
                                         .lock()

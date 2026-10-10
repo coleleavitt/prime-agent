@@ -58,6 +58,9 @@ pub(crate) struct SessionCore {
     /// The create command's harness `childScript` (kept across the runtime swap
     /// so a replacement's children stay scripted); `None` for product sessions.
     pub(crate) child_script: Option<String>,
+    /// The Decision API child flag (`rlm.spawn kind="decision"`): the worker
+    /// runs the decision engine instead of the agent engine.
+    pub(crate) decision_child: bool,
     /// The session's service-tier preference (TS `_serviceTierPreference`,
     /// `None` = "auto"): clamps `priority` to `default` without fast mode.
     pub(crate) service_tier: Option<pa_types::ai::ServiceTier>,
@@ -97,16 +100,9 @@ pub(crate) struct SessionCore {
     /// flips. Default `"push"` (the controller ships dormant — see
     /// [`crate::worker::digest::DigestLanePin`]).
     pub(crate) agent_message_digest_pin: super::digest::DigestLanePin,
-    /// The queue projection's active action (TS `getSessionActionSnapshot`
-    /// reads the store's first active action): the runner sets the phase
-    /// transitions of a queue-visible delivery (`preparing` at pickup,
-    /// `committing` at the turn's first row — the prompt becomes visible
-    /// in the conversation then, TS's commit fence — `running` at the
-    /// turn's first assistant frame) and clears it once the delivered
-    /// turn settles. The `preparing` projection is what a client renders
-    /// as the queued strip's "Starting" row (TS #2063). The label rides
-    /// the snapshot (TS #2063 `compactRlmText(queuedAgentMessagePreview(
-    /// active))`: the delivery's labeled preview, else the message text).
+    /// The queue projection's active action: the runner sets the phase transitions
+    /// (`preparing` at pickup, `committing` at the first row, `running` at the
+    /// first assistant frame) and clears it once the turn settles.
     pub(crate) active_action: Option<crate::types::SessionActionActive>,
     /// Installed features' latest live status, keyed by feature name
     /// (`{line, status}`): the roster summary's `featureStatus`.
@@ -172,6 +168,7 @@ impl SessionCore {
             active_action: None,
             feature_status: serde_json::Map::new(),
             cwd_override: false,
+            decision_child: false,
         }
     }
 }

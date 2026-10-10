@@ -269,8 +269,8 @@ fn duration_row(
     rows.wrapped_text(&text, theme.fg_style(ThemeColor::Dim), content_width);
 }
 
-/// The bash tool's output byte budget (TS `DEFAULT_MAX_BYTES`), used in the
-/// truncation warning when the spill carries no `maxBytes`.
+/// The bash tool's output byte budget, used when the spill carries no
+/// `maxBytes`.
 pub const DEFAULT_MAX_BYTES: usize = 50 * 1024;
 
 /// `formatSize`: `512B`, `50.0KB`, `1.2MB`.

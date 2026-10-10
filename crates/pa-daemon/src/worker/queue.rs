@@ -261,13 +261,8 @@ pub(crate) fn record_queue_checkpoint_locked(
     checkpoint: QueueCheckpoint,
     cloud_admission: Option<(&str, &Value)>,
 ) -> anyhow::Result<()> {
-    // The lanes are read under the recovery lock (a microsecond core
-    // hold — never across the journal's fsyncs, which would block every
-    // concurrent command behind the write): every queue mutation that
-    // persists lands its own snapshot under this same recovery lock, so
-    // no persist can interleave between this read and the appends, and a
-    // mutating non-persist (a runner pop) is corrected by the next
-    // checkpoint's fresh read.
+    // The lanes are read under the recovery lock (a microsecond core hold —
+    // never across the journal's fsyncs): no persist interleaves this read.
     let (active_session_id, session_id, session_file, lanes, turn_in_flight) = {
         let core = core_lock.lock_or_recover();
         (
@@ -293,15 +288,8 @@ pub(crate) fn record_queue_checkpoint_locked(
             operation,
         ),
     };
-    // The verdict never publishes over a snapshot that did not persist:
-    // busy=true evidence must not promise a queue the journal cannot
-    // replay (a skipped settled verdict keeps the previous record — the
-    // worst case parks like any uncheckpointed session). The pair rides
-    // ONE durable append — the snapshot line and the verdict line share a
-    // single journal flush, landing together or not at all (the unchanged
-    // verdict keeps appending the snapshot alone, exactly like the
-    // sequential form); a failed batch lands neither record, so the
-    // checkpoint is simply skipped.
+    // The verdict never publishes over a snapshot that did not
+    // persist: the pair rides ONE durable append.
     journal.record_queue_checkpoint(
         &active_session_id,
         &session_id,

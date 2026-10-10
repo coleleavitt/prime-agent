@@ -356,7 +356,7 @@ fn a_store_request_without_a_caller_cap_sends_the_model_s_request_budget() {
     let catalog = model_with_id(provider, &base, "claude-opus-5-5");
     let configured = pa_types::ai::Model {
         max_tokens: 64_000,
-        max_tokens_explicit: Some(true),
+        max_tokens_explicit: true,
         ..catalog.clone()
     };
 

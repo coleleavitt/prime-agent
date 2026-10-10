@@ -162,7 +162,9 @@ fn decode_utf8_carrying(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
 }
 
 impl HttpResponse {
-    /// Read the next text chunk from the body (None at end of stream).
+    /// Read the next text chunk from the body (None at end of stream). A UTF-8 sequence split
+    /// across body chunks is held until it completes; a sequence still incomplete at end of
+    /// stream yields one U+FFFD.
     pub async fn next_text(&mut self) -> Result<Option<String>, ProviderError> {
         if self
             .signal
@@ -290,6 +292,19 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
     let mut builder = client.request(request.method, &request.url);
     for (name, value) in &request.headers {
         builder = builder.header(name, value);
+    }
+    // A JSON request body carries `content-type: application/json` —
+    // strict OpenAI-compatible frontends (self-hosted vLLM) validate the
+    // media type and 400 a label-less body. A caller-supplied label
+    // (bedrock's signed set, mistral's, a user's `model.headers`/
+    // options override) always wins.
+    if request.body.is_some()
+        && !request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+    {
+        builder = builder.header("content-type", "application/json");
     }
     if let Some(body) = &request.body {
         builder = builder.body(body.clone());

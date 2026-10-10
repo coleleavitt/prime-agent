@@ -65,7 +65,16 @@ mod tests {
         let summary = |core: &Arc<Mutex<SessionCore>>| {
             let core = core.lock().unwrap();
             serde_json::to_value(crate::worker::session_summary(
-                &core, "off", None, None, false, false, false,
+                &core,
+                crate::worker::SummaryInputs {
+                    thinking_level: "off".to_string(),
+                    model: None,
+                    model_fallback_message: None,
+                    bash_running: false,
+                    quota_parked: false,
+                    subagents_running: false,
+                    model_context_window: None,
+                },
             ))
             .unwrap()
         };

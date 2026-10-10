@@ -42,6 +42,7 @@ async fn engine_runs_tool_loop_and_persists() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     provider.push_tool_call_turn(
@@ -150,6 +151,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     let tmp = tempfile::tempdir().unwrap();
@@ -217,6 +219,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             cost: pa_agent::types::UsageCost::default(),
             context_window: 1_000,
             max_tokens: 100,
+            max_tokens_explicit: false,
         }
     }
 
@@ -396,6 +399,7 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
             cost: pa_agent::types::UsageCost::default(),
             context_window: 1_000,
             max_tokens: 100,
+            max_tokens_explicit: false,
         };
         let provider = Arc::new(ScriptedProvider::new(model.clone()));
         let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
@@ -509,6 +513,7 @@ async fn the_repetition_guard_setting_picks_the_guarded_channels() {
             cost: pa_agent::types::UsageCost::default(),
             context_window: 1_000,
             max_tokens: 100,
+            max_tokens_explicit: false,
         };
         let provider = Arc::new(ScriptedProvider::new(model.clone()));
         provider.push_text_turn(&"the ".repeat(5_000));
@@ -580,6 +585,7 @@ async fn a_funded_subagent_stops_once_its_grant_is_spent() {
             cost: pa_agent::types::UsageCost::default(),
             context_window: 1_000,
             max_tokens: 100,
+            max_tokens_explicit: false,
         };
         let provider = Arc::new(ScriptedProvider::new(model.clone()));
         // Two tool-call turns of 80 tokens each, then a natural stop.
@@ -681,6 +687,7 @@ async fn the_delegation_budget_survives_a_resume() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let tmp = crate::test_support::ThreadTempDir::new();
     let agent_dir = tmp.path().join("agent");
@@ -828,6 +835,7 @@ async fn agent_started_reports_the_settings_adoption() {
             cost: pa_agent::types::UsageCost::default(),
             context_window: 1_000,
             max_tokens: 100,
+            max_tokens_explicit: false,
         };
         let tmp = tempfile::tempdir().unwrap();
         let agent_dir = tmp.path().join("agent");
@@ -922,6 +930,7 @@ async fn a_length_auto_continue_counts_on_session_end() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
@@ -986,6 +995,7 @@ async fn an_untrusted_project_mcp_server_never_starts() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().join("repo");

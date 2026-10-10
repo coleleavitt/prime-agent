@@ -74,6 +74,7 @@ fn scripted_model() -> pa_agent::types::Model {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 100_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     }
 }
 

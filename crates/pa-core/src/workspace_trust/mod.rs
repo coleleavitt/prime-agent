@@ -61,10 +61,14 @@ pub const UNTRUSTED_PROJECT_SETTINGS_KEYS: &[&str] = &[
     "sandbox",
 ];
 
-/// Whether a project settings key applies in an untrusted workspace.
+/// Whether a project settings entry applies in an untrusted workspace: a
+/// key from [`UNTRUSTED_PROJECT_SETTINGS_KEYS`], or a tighten-only trace
+/// opt-out (`agentTraces.enabled: false`). A project may withdraw trace
+/// sharing for its own sessions, but an untrusted one never opts the user in.
 #[must_use]
-pub fn is_untrusted_safe_settings_key(key: &str) -> bool {
+pub fn is_untrusted_safe_setting(key: &str, value: &serde_json::Value) -> bool {
     UNTRUSTED_PROJECT_SETTINGS_KEYS.contains(&key)
+        || (key == "agentTraces" && value.get("enabled") == Some(&serde_json::Value::Bool(false)))
 }
 
 /// One piece of project configuration the gate holds back.

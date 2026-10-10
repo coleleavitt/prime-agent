@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "pa-agent"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "pa-ai"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1885,7 +1885,7 @@ dependencies = [
 
 [[package]]
 name = "pa-anthropic-auth"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anthropic",
  "anyhow",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "pa-bash"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "getrandom 0.3.4",
  "memchr",
@@ -1923,7 +1923,7 @@ dependencies = [
 
 [[package]]
 name = "pa-cli"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "pa-computer-use"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "atspi-proxies",
  "objc2",
@@ -1983,7 +1983,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "toml",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
  "uuid",
  "wayland-client",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "pa-core"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2030,6 +2030,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "unicode-normalization",
  "unicode-properties",
@@ -2039,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "pa-daemon"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "filetime",
@@ -2051,6 +2052,7 @@ dependencies = [
  "pa-models",
  "pa-telemetry",
  "pa-types",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",
@@ -2065,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "pa-dream"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "pa-agent",
@@ -2087,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "pa-learning"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "flate2",
  "indexmap",
@@ -2109,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "pa-ledger"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -2131,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "pa-mermaid"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "serde_json",
  "unicode-segmentation",
@@ -2140,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "pa-models"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "hex",
  "hmac",
@@ -2158,7 +2160,7 @@ dependencies = [
 
 [[package]]
 name = "pa-os-sandbox"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "landlock",
  "libc",
@@ -2170,7 +2172,7 @@ dependencies = [
 
 [[package]]
 name = "pa-ravo"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -2193,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "pa-recall"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "fancy-regex",
  "getrandom 0.3.4",
@@ -2211,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "pa-sandbox"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -2224,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "pa-session-index"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "pa-core",
  "serde",
@@ -2235,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "pa-telemetry"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -2250,7 +2252,7 @@ dependencies = [
 
 [[package]]
 name = "pa-toolforge"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "nix 0.29.0",
@@ -2269,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "pa-trace"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2288,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "pa-tui"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2317,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "pa-types"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -2334,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "pa-workflow"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -3479,6 +3481,21 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.9.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml"
 version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
@@ -3486,10 +3503,19 @@ dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
  "toml_writer",
- "winnow",
+ "winnow 1.0.4",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]
@@ -3508,9 +3534,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap",
- "toml_datetime",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
- "winnow",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -3519,7 +3545,7 @@ version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
- "winnow",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -4312,6 +4338,12 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+
+[[package]]
+name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
@@ -4399,7 +4431,7 @@ dependencies = [
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",
- "winnow",
+ "winnow 1.0.4",
  "zbus_macros",
  "zbus_names",
  "zvariant",
@@ -4451,7 +4483,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8bf88b4a3ff53e883001e0e0115b297a9d53c31b9c1edd2bfdd853e3428624e"
 dependencies = [
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zvariant",
 ]
 
@@ -4462,7 +4494,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1586c021a01ca0a9216dcd874e546382e156a5cbab5fab6cb5f10087e22682a"
 dependencies = [
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zbus_names",
  "zvariant",
 ]
@@ -4592,7 +4624,7 @@ dependencies = [
  "endi",
  "enumflags2",
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zcheapstr",
  "zvariant_derive",
  "zvariant_utils",
@@ -4621,5 +4653,5 @@ dependencies = [
  "quote",
  "serde",
  "syn 3.0.5",
- "winnow",
+ "winnow 1.0.4",
 ]

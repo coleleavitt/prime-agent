@@ -307,14 +307,10 @@ async fn prepare_locked_socket_path(path: &Path, lease: Option<&SocketLease>) ->
     unlink_stale_socket_with_lease(path, stale_identity, lease).await
 }
 
-/// Final gate before unlinking a probed-stale socket file: refuse while a
-/// live listener answers, and remove only the exact inode that was probed
-/// stale - a file replaced between the probe and the unlink stays untouched.
-/// The caller holds the cleanup lock, so competing startup workers are
-/// serialized out of this check-then-act window; the identity gate covers
-/// processes that do not take the lock (non-pa-daemon), like the TS gate
-/// behind proper-lockfile's lease. Unix only: named-pipe endpoints leave
-/// no socket file to unlink, so the whole path stays unix.
+/// Final gate before unlinking a probed-stale socket: refuse while a live
+/// listener answers, and remove only the exact inode that was probed stale —
+/// a file replaced between the probe and the unlink stays untouched. The
+/// identity gate covers processes that do not take the cleanup lock.
 #[cfg(all(test, unix))]
 async fn unlink_stale_socket(path: &Path, expected: SocketIdentity) -> Result<()> {
     unlink_stale_socket_with_lease(path, expected, None).await
@@ -389,9 +385,22 @@ pub fn cleanup_socket_path(path: &Path, expected_identity: Option<SocketIdentity
 /// after definite refusal may the existing cleanup lock and identity gate
 /// unlink the stale, still-ours socket. TS cleanup checks identity alone,
 /// so the poisoned-capture case remains a disclosed TS difference.
+///
+/// A caller without a captured identity never unlinks: `None` skips
+/// `cleanup_socket_path`'s inode gate, so a replacement that binds the
+/// path between this probe and that remove would lose its live file to
+/// an identity-less unlink. The worker's exit paths wait for the serve
+/// handshake's confirmation - which always follows the identity capture -
+/// so a registration-refusal exit inside the bind->capture window still
+/// reads its own captured identity; `None` reaches here only from exits
+/// before the bind (no listener, no file) or from platforms without a
+/// file identity (named pipes), and the cleanup stays a no-op.
 #[cfg(unix)]
 pub fn cleanup_socket_path_after_close(path: &Path, expected_identity: Option<SocketIdentity>) {
-    if !path.exists() || !pa_types::platform::transport::unix_listener_definitely_closed(path) {
+    if expected_identity.is_none()
+        || !path.exists()
+        || !pa_types::platform::transport::unix_listener_definitely_closed(path)
+    {
         return;
     }
     cleanup_socket_path(path, expected_identity);
@@ -535,6 +544,10 @@ mod tests {
     /// close, and the listener's own fd is closed while the in-flight
     /// stream's fd stays open - no fd is leaked on the bound socket
     /// across the exit sequence.
+    /// The fd-leak oracle reads `/proc/self/fd`, so it runs where that
+    /// exists: the neighbors' `target_os = "linux"` gate, not bare `unix`
+    /// (macOS has no `/proc` and the fd probes would always read false).
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn dropping_the_listener_is_the_graceful_exit_close() {
         use std::io::Write;
@@ -542,13 +555,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         fn fd_exists(fd: std::os::fd::RawFd) -> bool {
-            fd_target(fd).is_some()
-        }
-        // What the fd number names (`socket:[inode]`): another test thread
-        // may reuse a closed number at once, so "closed" means the number
-        // no longer names this socket, not that the number is free.
-        fn fd_target(fd: std::os::fd::RawFd) -> Option<std::path::PathBuf> {
-            std::fs::read_link(format!("/proc/self/fd/{fd}")).ok()
+            std::fs::read_link(format!("/proc/self/fd/{fd}")).is_ok()
         }
 
         let dir = tempfile::TempDir::new().unwrap();
@@ -560,12 +567,19 @@ mod tests {
         let mut accepted = listener.accept().await.unwrap().0;
         let listener_fd = listener.as_raw_fd();
         let accepted_fd = accepted.as_raw_fd();
-        let listener_target = fd_target(listener_fd);
-        assert!(listener_target.is_some());
+        assert!(fd_exists(listener_fd));
+        // The leak check compares the fd's /proc TARGET (the socket's
+        // anon inode), never the bare fd number: parallel tests recycle
+        // fd numbers the moment a close lands, so a bare-number probe
+        // misreads another test's fresh fd as a leak. The exact socket
+        // object is what a leak would still reference.
+        let listener_target = std::fs::read_link(format!("/proc/self/fd/{listener_fd}"))
+            .expect("the bound listener's fd target before the drop");
         drop(listener);
+        let leaked_at_fd = std::fs::read_link(format!("/proc/self/fd/{listener_fd}"));
         assert!(
-            fd_target(listener_fd) != listener_target,
-            "the listener's fd closed at the drop: no fd leaked on the bound socket"
+            !matches!(&leaked_at_fd, Ok(target) if *target == listener_target),
+            "the listener's socket object is no longer referenced at the dropped fd: no fd leaked on the bound socket"
         );
         assert!(
             fd_exists(accepted_fd),
@@ -613,11 +627,47 @@ mod tests {
         );
         assert!(can_connect(&socket, Duration::from_millis(250)).await);
         drop(successor);
-        // The same matching identity now describes a dead file: the
-        // probe passes it through and the gate unlinks it.
-        cleanup_socket_path_after_close(&socket, Some(poisoned));
-        assert!(!socket.exists(), "the dead still-ours file is unlinked");
         std::fs::remove_file(&aside).unwrap();
+    }
+
+    /// The still-ours direction of the close cleanup: the matching
+    /// identity now describes a dead file the probe passed as definitely
+    /// closed. Linux-only because `unix_listener_definitely_closed` only
+    /// rules `ECONNREFUSED` definitive there (a saturated BSD/macOS
+    /// backlog also refuses, so those platforms never reach this arm).
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn exit_cleanup_after_close_unlinks_the_dead_still_ours_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let owner = bind_transport(&socket).await.unwrap();
+        let identity = socket_identity(&socket).unwrap();
+        drop(owner);
+        cleanup_socket_path_after_close(&socket, Some(identity));
+        assert!(!socket.exists(), "the dead still-ours file is unlinked");
+    }
+
+    /// Off Linux the refused probe is ambiguous (a saturated backlog
+    /// also refuses), so the close cleanup preserves the dead still-ours
+    /// file; the next bind's stale-socket prepare clears it instead.
+    #[cfg(not(target_os = "linux"))]
+    #[tokio::test]
+    async fn exit_cleanup_off_linux_preserves_the_dead_file_until_the_next_bind() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let owner = bind_transport(&socket).await.unwrap();
+        let identity = socket_identity(&socket).unwrap();
+        drop(owner);
+        cleanup_socket_path_after_close(&socket, Some(identity));
+        assert!(
+            socket.exists(),
+            "off Linux the close cleanup never claims a dead file from the probe alone"
+        );
+        prepare_socket_path(&socket).await.unwrap();
+        assert!(
+            !socket.exists(),
+            "the next bind's stale-socket prepare clears the preserved dead file"
+        );
     }
 
     /// A full accept queue is not proof of a dead listener: the successor's

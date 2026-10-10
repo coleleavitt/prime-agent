@@ -151,6 +151,7 @@ impl OAuthIntegration for RotatingOAuth {
             client_id: None,
             resource: None,
             issuer: None,
+            audience_mode: None,
         })
     }
 }
@@ -167,6 +168,7 @@ fn stored_login() -> AuthCredential {
         client_id: None,
         resource: None,
         issuer: None,
+        audience_mode: None,
     }
 }
 

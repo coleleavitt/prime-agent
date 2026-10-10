@@ -99,12 +99,8 @@ impl Supervisor {
         self.push_roster_update(entries, removed);
     }
 
-    /// `roster_subscribe` (TS: sets the client flag and answers with the
-    /// full roster snapshot; the caller stores the flag). Pure in-memory:
-    /// the boot seed and the create path's family seed
-    /// (`supervisor_roster_seed.rs`) publish `roster_update` for rows
-    /// that land between subscribes, so the answer itself never reads
-    /// the ledger or a transcript.
+    /// `roster_subscribe`: answer with the full roster snapshot (the
+    /// caller stores the client flag). Pure in-memory.
     pub(crate) async fn handle_roster_subscribe(
         self: &Arc<Self>,
         command_id: &str,

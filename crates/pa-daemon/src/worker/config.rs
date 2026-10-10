@@ -23,6 +23,8 @@ pub struct WorkerConfig {
     pub agent_dir: PathBuf,
     pub recovery_journal_path: PathBuf,
     pub script: Option<Value>,
+    /// The Decision API child flag (`rlm.spawn kind="decision"`).
+    pub decision_child: bool,
     /// Telemetry opt-out inherited from the create command ("1" = disabled;
     /// absent/other = enabled). Sessions created on this worker install no
     /// telemetry subscriber.
@@ -52,9 +54,10 @@ impl WorkerConfig {
         let agent_dir = paths::agent_dir()?;
         let recovery_journal_path = std::env::var_os(WORKER_RECOVERY_JOURNAL_ENV).map_or_else(
             || {
-                agent_dir
-                    .join("daemon-workers")
-                    .join(format!("{active_session_id}.recovery.jsonl"))
+                agent_dir.join("daemon-workers").join(format!(
+                    "{active_session_id}{}",
+                    crate::journal::RECOVERY_JOURNAL_SUFFIX
+                ))
             },
             PathBuf::from,
         );
@@ -64,6 +67,8 @@ impl WorkerConfig {
                 let content = std::fs::read_to_string(path).ok()?;
                 serde_json::from_str::<Value>(&content).ok()
             });
+        let decision_child = std::env::var_os(crate::worker::WORKER_DECISION_CHILD_ENV)
+            .is_some_and(|value| value == "1");
         let telemetry_disabled =
             std::env::var_os(WORKER_TELEMETRY_DISABLED_ENV).map(|value| value == "1");
         Ok(WorkerConfig {
@@ -75,6 +80,7 @@ impl WorkerConfig {
             agent_dir,
             recovery_journal_path,
             script,
+            decision_child,
             telemetry_disabled,
         })
     }

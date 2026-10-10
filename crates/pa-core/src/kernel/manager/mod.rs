@@ -39,6 +39,11 @@ use crate::kernel::state_snapshot::{
 
 const READY_TIMEOUT_MS: u64 = 30_000;
 const REPAIR_STEP_TIMEOUT_MS: u64 = 30_000;
+/// The MCP status lane's settle margin over the per-server timeout (the
+/// kernel lists every server concurrently): the reply always settles
+/// inside the bound, and a wedged reply errors instead of hanging the
+/// caller.
+const MCP_STATUS_SETTLE_MARGIN_MS: u64 = 5_000;
 /// Largest legit frame is an attachment display event, base64 capped at
 /// `MAX_ATTACHMENT_DATA_CHARS`; a longer line is corruption the protocol repair owns.
 const MAX_PROTOCOL_LINE_BYTES: usize = 32 * 1024 * 1024;
@@ -317,6 +322,11 @@ struct Guarded {
     pending_done_waiters: HashMap<String, oneshot::Sender<()>>,
     /// Resolvers for out-of-band `plan_guard` done events.
     plan_guard_waiters: HashMap<String, oneshot::Sender<Value>>,
+    /// Resolvers for out-of-band `mcp_status` done events (the MCP
+    /// status lane; ids never collide with cell requests — the eager
+    /// settle and the connections view ride it, and a slow server must
+    /// never hold the execution queue a python cell needs).
+    mcp_status_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
     active_execution: Option<Arc<ActiveExecution>>,
     /// Source of the most recently started cell, retained after it finishes so
@@ -486,6 +496,7 @@ impl ReplKernelManager {
                 late_handlers: VecDeque::new(),
                 pending_done_waiters: HashMap::new(),
                 plan_guard_waiters: HashMap::new(),
+                mcp_status_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
                 active_execution: None,
                 last_cell_code: None,
@@ -875,8 +886,19 @@ impl ReplKernelManager {
     /// server or the error string when that server failed or timed out. `None` when the kernel
     /// isn't running.
     ///
-    /// The listing opens each not-yet-connected server, so the call can take
-    /// seconds; callers bound it.
+    /// The listing opens each not-yet-connected server (bounded by
+    /// `per_server_timeout_ms`), so the call can take seconds; callers
+    /// bound it with their own deadline.
+    ///
+    /// The request rides the dedicated MCP status lane (the eager
+    /// background settle and the connections view are its callers): the
+    /// done event settles by request id, so the listing NEVER occupies
+    /// the manager's execution queue — a slow or unreachable server
+    /// would otherwise park the user's first python cell behind its
+    /// handshake for up to the per-server timeout (the pre-bar review's
+    /// finding). The kernel runtime's own dedicated lane keeps its
+    /// serve loop free the same way, and the registry's per-server locks
+    /// still join an early user call onto the same in-flight open.
     pub async fn mcp_tool_listing(
         &self,
         servers: &[String],
@@ -888,34 +910,47 @@ impl ReplKernelManager {
         if servers.is_empty() {
             return Some(Vec::new());
         }
-        let opts = ExecuteOptions {
-            internal: true,
-            ..ExecuteOptions::default()
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        lock(&self.inner.guarded)
+            .mcp_status_waiters
+            .insert(request_id.clone(), tx);
+        let frame = json!({
+            "type": "mcp_status",
+            "id": request_id,
+            "servers": servers,
+            "timeout_ms": per_server_timeout_ms,
+        });
+        if let Err(error) = self.inner.write_line(&frame).await {
+            lock(&self.inner.guarded)
+                .mcp_status_waiters
+                .remove(&request_id);
+            self.inner
+                .append_diagnostic(&format!("mcp tool listing error: {error:#}"));
+            return None;
+        }
+        // The kernel lists every server concurrently, each bounded by the
+        // per-server timeout, so the settle bound is one timeout plus the
+        // serve work's margin — a wedged reply never hangs the caller.
+        let bound_ms = per_server_timeout_ms.saturating_add(MCP_STATUS_SETTLE_MARGIN_MS);
+        let Ok(Ok(fields)) = tokio::time::timeout(Duration::from_millis(bound_ms), rx).await else {
+            lock(&self.inner.guarded)
+                .mcp_status_waiters
+                .remove(&request_id);
+            self.inner
+                .append_diagnostic("mcp tool listing did not settle inside the per-server bound");
+            return None;
         };
-        let request = Request::McpStatus {
-            servers: servers.to_vec(),
-            timeout_ms: per_server_timeout_ms,
-        };
-        match self.enqueue_request(request, "", opts, None).await {
-            Ok(r) if r.result.status == ExecuteStatus::Ok => {
-                let connections = r
-                    .done_fields
-                    .as_ref()
-                    .and_then(|fields| fields.get("connections"))
-                    .and_then(Value::as_array)
-                    .cloned();
+        match fields.get("status").and_then(Value::as_str) {
+            Some("ok") => {
+                let connections = fields.get("connections").and_then(Value::as_array).cloned();
                 Some(connections.unwrap_or_default())
             }
-            Ok(r) => {
+            status => {
                 self.inner.append_diagnostic(&format!(
                     "mcp tool listing failed: {}",
-                    describe_failure(&r.result)
+                    status.unwrap_or("unset status")
                 ));
-                None
-            }
-            Err(error) => {
-                self.inner
-                    .append_diagnostic(&format!("mcp tool listing error: {error:#}"));
                 None
             }
         }

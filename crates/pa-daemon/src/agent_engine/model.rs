@@ -21,10 +21,8 @@ impl AgentSessionEngine {
         pa_core::models::ModelRegistry::for_session(&self.config.agent_dir, self.cwd())
     }
 
-    /// The TS `createAgentSession` startup chain (the no-flagged-model
-    /// arm of [`Self::resolve_registry_model`]): the saved settings
-    /// default, then the featured default, then the first available
-    /// model — resolved against `registry`'s current view.
+    /// The startup chain: the saved settings default, then the featured
+    /// default, then the first available model.
     fn startup_chain_model(&self, registry: &pa_core::models::ModelRegistry) -> Option<Model> {
         let available: Vec<Model> = registry.get_available().into_iter().cloned().collect();
         let all: Vec<Model> = registry.get_all().to_vec();

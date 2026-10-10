@@ -73,10 +73,34 @@ fn get_str<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// The canonical file identity (the saved catalog already serves absolute paths, so lexical
+/// The stable key form of a session-file path. The daemon publishes the
+/// SAME file in two string forms on Windows (the operator's 2026-10-08
+/// grouped-sessions report): live worker summaries and the saved-catalog
+/// scan serve the raw `C:\...` form, while the spawn ledger's seeded
+/// roster rows and passive saved rows serve `Path::canonicalize`'s
+/// verbatim `\\?\C:\...` form - and Windows paths compare
+/// case-insensitively on the filesystem. The join keys must converge the
+/// same two forms the daemon's own `same_session_file` converges, or
+/// ledger-derived children detach and each family re-groups under one
+/// wrong root.
+pub(crate) fn normalize_session_file_path(path: &str) -> String {
+    let trimmed = path
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| path.strip_prefix(r"\\?\").map(str::to_string))
+        .unwrap_or_else(|| path.to_string());
+    if cfg!(windows) {
+        trimmed.to_lowercase()
+    } else {
+        trimmed
+    }
+}
+
+/// The canonical file identity: the normalized path under the `file:` key
+/// prefix (the saved catalog already serves absolute paths, so lexical
 /// normalization is enough; TS canonicalizes).
-fn file_identity(path: &str) -> String {
-    format!("file:{path}")
+pub(crate) fn file_identity(path: &str) -> String {
+    format!("file:{}", normalize_session_file_path(path))
 }
 
 /// The aliases of one roster entry summary, in TS order. A remote row's
@@ -196,9 +220,8 @@ fn model_provider_or_default(summary: &Value) -> String {
         .to_string()
 }
 
-/// Merge the live roster entries and the saved catalog rows into unified
-/// records without inventing runtime ancestry: roster data wins, saved rows
-/// only join through a shared alias and enrich search text.
+/// Merge the live roster entries and the saved catalog rows into unified records without
+/// inventing runtime ancestry: roster data wins, saved rows only join through a shared alias.
 pub fn reconcile_unified_sessions(roster: &[Value], saved: &[Value]) -> Vec<UnifiedRecord> {
     let mut records: Vec<UnifiedRecord> = Vec::new();
     let mut by_alias: HashMap<String, usize> = HashMap::new();

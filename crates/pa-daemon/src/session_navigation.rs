@@ -18,10 +18,13 @@ use crate::worker::{SessionCore, Worker};
 pub(crate) struct PreparedReplacement {
     pub(crate) file: SessionFile,
     pub(crate) cwd: Option<String>,
+    // A successful fresh write owes scheduling only after publication.
+    trace_persisted: bool,
 }
 
 /// The navigation surface: the prepare and swap phases of the replacement
 /// flow the three commands share.
+#[derive(Clone)]
 pub(crate) struct SessionNavigation {
     engine: Arc<dyn SessionEngine>,
     core: Arc<Mutex<SessionCore>>,
@@ -47,7 +50,12 @@ impl SessionNavigation {
     /// Swap the live session onto `file` (store, engine session file, rebuilt
     /// context). The caller retires the previous runtime and rebinds the cwd
     /// first, so the context park lands on the fresh session.
-    async fn replace_session(&self, file: SessionFile) -> Result<(), String> {
+    async fn replace_session(&self, target: PreparedReplacement) -> Result<(), String> {
+        let PreparedReplacement {
+            mut file,
+            trace_persisted,
+            ..
+        } = target;
         let branch_entries = file.branch_file_entries();
         let new_path = file.path.clone();
         // Prime the new store's usage fold before it enters the core: the
@@ -65,13 +73,27 @@ impl SessionNavigation {
         // session's pin/mode, never the retired session's in-flight
         // traffic in the replacement's counters, and never the
         // replacement's early traffic erased by the reset.
-        let previous = self
-            .agent_digest
-            .reset_for_replacement(|core| core.store.replace(file));
+        let (previous, traces) = self.agent_digest.reset_for_replacement(|core| {
+            if file.trace_upload.is_none() {
+                file.trace_upload = core
+                    .store
+                    .as_ref()
+                    .and_then(|old| old.trace_upload.as_ref())
+                    .and_then(|traces| traces.rebind(std::path::Path::new(&core.cwd), &file.path));
+            }
+            let traces = file.trace_upload.clone();
+            // No await or fallible preparation between slot transfer and publication.
+            (core.store.replace(file), traces)
+        });
         // And its watches die with the replaced session (TS #2356: the
         // registry is cleared on dispose; stale subscriptions must not
         // bleed into the new session's notices).
         self.engine.clear_agent_watches();
+        if let Some(traces) = traces.filter(|_| trace_persisted) {
+            // The successful prepare wrote this file before its controller existed.
+            // Record bounded intent outside the core lock, after publication.
+            traces.persisted(&new_path);
+        }
         // The old store's lease release flushes the window and info
         // sidecars (megabytes for a large session): off the core lock
         // and the runtime.
@@ -154,9 +176,11 @@ impl SessionNavigation {
             }
         }
         // TS `newSession` keeps the runtime's cwd: the fresh session runs where the live one did.
+        let trace_persisted = !fresh.path.as_os_str().is_empty();
         Ok(PreparedReplacement {
             file: fresh,
             cwd: None,
+            trace_persisted,
         })
     }
 
@@ -265,6 +289,9 @@ impl SessionNavigation {
                 .target_lease(std::path::Path::new(path))
                 .map_err(|error| response_failure(None, command, &error.to_string(), None))?,
         };
+        if lease.is_some() {
+            pa_core::session::manager::repair_jsonl_damage(std::path::Path::new(path));
+        }
         let mut file = SessionFile::open(std::path::Path::new(path))
             .map_err(|error| response_failure(None, command, &error.to_string(), None))?;
         file.lease = lease;
@@ -294,7 +321,11 @@ impl SessionNavigation {
                 ));
             }
         }
-        Ok(PreparedReplacement { file, cwd })
+        Ok(PreparedReplacement {
+            file,
+            cwd,
+            trace_persisted: false,
+        })
     }
 }
 
@@ -336,11 +367,13 @@ impl Worker {
         if let Some(cwd) = target.cwd.as_deref() {
             self.rebind_worker_cwd(cwd);
         }
-        match self.navigation.replace_session(target.file).await {
+        match self.navigation.replace_session(target).await {
             Ok(()) => {
                 self.refresh_replaced_session_state().await;
                 self.reseed_service_tier_for_replacement();
-                self.bind_scheduled_jobs().await;
+                if let Err(error) = self.bind_scheduled_jobs().await {
+                    return response_failure(None, command, &error.to_string(), None);
+                }
                 self.prewarm_replacement_session();
                 // The replacement never pushed a roster delta, so the subscribed
                 // surfaces kept the PREVIOUS session's numbers.
@@ -383,7 +416,26 @@ impl Worker {
         if let Err(response) = self.require_created("switch_session") {
             return response;
         }
-        let prepared = self.navigation.prepare_switch_session(payload);
+        let navigation = self.navigation.clone();
+        let payload = payload.clone();
+        // The closure boxes its error (clippy::result_large_err): the
+        // DaemonResponse unwraps in the match arms, not inside any closure.
+        let prepared = match tokio::task::spawn_blocking(move || {
+            navigation
+                .prepare_switch_session(&payload)
+                .map_err(Box::new)
+        })
+        .await
+        {
+            Ok(Ok(prepared)) => Ok(prepared),
+            Ok(Err(boxed)) => Err(*boxed),
+            Err(error) => Err(response_failure(
+                None,
+                "switch_session",
+                &error.to_string(),
+                None,
+            )),
+        };
         self.run_session_replacement("switch_session", prepared)
             .await
     }
@@ -393,7 +445,22 @@ impl Worker {
         if let Err(response) = self.require_created("import_jsonl") {
             return response;
         }
-        let prepared = self.navigation.prepare_import_jsonl(payload);
+        let navigation = self.navigation.clone();
+        let payload = payload.clone();
+        let prepared = match tokio::task::spawn_blocking(move || {
+            navigation.prepare_import_jsonl(&payload).map_err(Box::new)
+        })
+        .await
+        {
+            Ok(Ok(prepared)) => Ok(prepared),
+            Ok(Err(boxed)) => Err(*boxed),
+            Err(error) => Err(response_failure(
+                None,
+                "import_jsonl",
+                &error.to_string(),
+                None,
+            )),
+        };
         self.run_session_replacement("import_jsonl", prepared).await
     }
 }
@@ -416,6 +483,7 @@ mod tests {
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
+            decision_child: false,
         };
         let worker = Arc::new(Worker::new(config, None));
         let created = worker
@@ -489,6 +557,7 @@ mod tests {
                 "engine": "faux",
                 "responses": [{ "text": "one" }, { "text": "two" }],
             })),
+            decision_child: false,
         };
         let worker = Arc::new(Worker::new(config, None));
         let created = worker
@@ -700,6 +769,7 @@ mod tests {
             recovery_journal_path: dir.path().join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
+            decision_child: false,
         };
         let worker = Arc::new(Worker::new(config, None));
         let created = worker
@@ -815,6 +885,7 @@ mod tests {
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
+            decision_child: false,
         };
         let worker = Arc::new(crate::worker::Worker::new(config, None));
         let created = worker
@@ -899,6 +970,7 @@ mod tests {
             recovery_journal_path: root.path().join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
+            decision_child: false,
         };
         let worker = Arc::new(crate::worker::Worker::new(config, None));
         let created = worker
@@ -977,7 +1049,14 @@ mod tests {
         let mut fresh = SessionFile::create("/tmp", None, 0);
         fresh.set_path(dir.join(session_file_name(fresh.session_id())));
         fresh.rewrite().unwrap();
-        navigation.replace_session(fresh).await.unwrap();
+        navigation
+            .replace_session(PreparedReplacement {
+                file: fresh,
+                cwd: None,
+                trace_persisted: false,
+            })
+            .await
+            .unwrap();
         // The replacement session starts on the default push lane with
         // fresh counters: neither the retired session's pin nor its mode
         // survived the swap.
@@ -1064,7 +1143,14 @@ mod tests {
             let mut fresh = SessionFile::create("/tmp", None, 0);
             fresh.set_path(fresh_path.clone());
             fresh.rewrite().unwrap();
-            navigation.replace_session(fresh).await.unwrap();
+            navigation
+                .replace_session(PreparedReplacement {
+                    file: fresh,
+                    cwd: None,
+                    trace_persisted: false,
+                })
+                .await
+                .unwrap();
             // The replaced-in store: after the swap every route pushes (the
             // pin reset rode the swap's hold), so a digested row in THIS file
             // means a delivery read the swapped store with the retired pin.
@@ -1089,5 +1175,59 @@ mod tests {
             json!(false),
             "the final replacement left the lane push-pinned"
         );
+    }
+}
+
+#[cfg(test)]
+mod trace_replacement_tests {
+    use super::*;
+
+    #[test]
+    fn failed_new_session_prepare_preserves_the_live_trace_registration() {
+        let _env = crate::trace_test_env::lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("not-a-directory");
+        std::fs::write(&blocked, "synthetic blocker").unwrap();
+        let old_path = blocked.join("old.jsonl");
+        let agent_dir = dir.path().join("agent");
+        let (_, consent) =
+            pa_core::agent_traces::ContinuousTraceUpload::load_settings(dir.path(), &agent_dir);
+        let controller = pa_core::agent_traces::ContinuousTraceUpload::install(
+            dir.path(),
+            &agent_dir,
+            Some(&old_path),
+            consent,
+        )
+        .unwrap();
+        let mut store = SessionFile::create(dir.path().to_str().unwrap(), None, 0);
+        store.set_path(old_path.clone());
+        store.trace_upload = Some(controller.clone());
+        let core = Arc::new(Mutex::new(SessionCore::test_core(
+            Some(store),
+            dir.path().to_string_lossy().into_owned(),
+        )));
+        let digest = Arc::new(crate::worker::AgentMessageDigest::new(
+            Arc::clone(&core),
+            Arc::new(std::sync::Mutex::new(None)),
+            Arc::new(tokio::sync::Notify::new()),
+        ));
+        let navigation = SessionNavigation::new(
+            Arc::new(crate::engine::ScriptedEngine::default()),
+            core.clone(),
+            digest,
+        );
+        assert!(navigation.prepare_new_session(&json!({})).is_err());
+        let live = core.lock().unwrap();
+        assert_eq!(live.store.as_ref().unwrap().path, old_path);
+        assert!(Arc::ptr_eq(
+            live.store.as_ref().unwrap().trace_upload.as_ref().unwrap(),
+            &controller
+        ));
+        drop(live);
+        // A cancelled predecessor cannot transfer its registry slot again.
+        assert!(controller
+            .rebind(dir.path(), &dir.path().join("probe.jsonl"))
+            .is_some());
+        assert!(!agent_dir.join("agent-traces-outbox").exists());
     }
 }

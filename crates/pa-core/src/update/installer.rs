@@ -9,17 +9,12 @@
 //! from the official source, run it". This module only fetches and execs
 //! the script, then reports what landed; every install/uninstall decision
 //! stays in the script the installer-takeover lane owns, so the two
-//! surfaces can never drift from it.
-//!
-//! The Windows exception to "run it, then report" is the payload handoff
-//! ([`RunOutcome::Handoff`]): on Windows a running executable keeps its own
-//! directory un-renameable, and the running CLI is exactly the payload
-//! binary the installer replaces — so a spawn-and-wait funnel can never let
-//! the installer's publish (the rename of `<prefix>/share/prime-agent`)
-//! happen. When the caller IS that payload binary, the funnel spawns the
-//! installer detached (never waited on) and tells the caller to exit; the
-//! publish lands once the process is gone.
+//! surfaces can never drift from it. The one Windows exception is the
+//! payload handoff ([`RunOutcome::Handoff`]): on Windows a running executable keeps its own
+//! directory un-renameable, so when the funnel's process IS the install's
+//! payload binary the installer runs detached and the caller exits.
 
+use std::io::{Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -116,6 +111,9 @@ pub fn install_prefix() -> PathBuf {
         if !prefix.is_empty() {
             return PathBuf::from(prefix);
         }
+    }
+    if let Some(prefix) = running_installer_prefix() {
+        return prefix;
     }
     pa_types::platform::home_dir()
         .unwrap_or_default()
@@ -221,7 +219,7 @@ pub struct UpdateFailure {
 /// # Errors
 /// Returns the failure message for every non-installing outcome (see
 /// [`run_installer_from`]); [`RunOutcome::Handoff`] reports the Windows
-/// payload handoff instead of a failure.
+/// payload handoff.
 pub async fn run_installer(
     channel: Option<&'static str>,
     output: InstallerOutput,
@@ -239,12 +237,13 @@ pub async fn run_installer(
 /// `~/.prime/agent` preserve). On success the
 /// launcher's `--version` answers the new version; on failure the
 /// previous install is kept (the script's own rollback covers a
-/// mid-publish crash). On Windows, when the caller IS the install's
-/// payload binary, the run hands off instead of waiting (see
-/// [`RunOutcome::Handoff`]).
+/// mid-publish crash).
 ///
 /// # Errors
-/// Returns the failure message for every non-installing outcome.
+/// Returns the failure message for every non-installing outcome: an
+/// unsupported platform, a script download that failed, or an installer
+/// run that exited nonzero. On Windows, when this process is the install's
+/// payload binary, the installer is handed off ([`RunOutcome::Handoff`]).
 pub async fn run_installer_from(
     url: &str,
     prefix: &Path,
@@ -254,23 +253,20 @@ pub async fn run_installer_from(
     current_target().map_err(|error| UpdateFailure {
         message: format!("{error:#}"),
     })?;
-    let script = fetch_script(url).await.map_err(|error| UpdateFailure {
+    let (script, handle) = fetch_script(url).await.map_err(|error| UpdateFailure {
         message: format!("could not download the installer from {url}: {error:#}"),
     })?;
     // THE WINDOWS HANDOFF (the update path's half of the rename rule the
     // bundled local modes already honor): when this process IS the
-    // install's payload binary, a waited-on installer could never publish
-    // (Windows keeps a running image's directory un-renameable), so the
-    // installer runs detached and the caller exits. The handoff never
-    // reaches the probe: the publish has not run yet, and the launcher
-    // still answers the previous version until the installer finishes.
+    // install's payload binary, a waited-on installer could never publish,
+    // so the installer runs detached and the caller exits. The handoff
+    // never reaches the probe: the publish has not run yet.
     #[cfg(windows)]
     if caller_owns_payload(prefix) {
-        spawn_handoff(&script, prefix, channel, &[])?;
+        spawn_handoff(&script, handle, prefix, channel, &[])?;
         return Ok(RunOutcome::Handoff);
     }
-    // The downloaded script is this run's own temp file: remove it whatever the installer did.
-    let result = execute_script(&script, &[], prefix, channel, output).await;
+    let result = execute_script(&handle, &[], prefix, channel, output).await;
     let _ = std::fs::remove_file(&script);
     result?;
     let version = launcher_version(prefix).await;
@@ -278,28 +274,22 @@ pub async fn run_installer_from(
 }
 
 /// Spawn the installer detached for the Windows payload handoff and return
-/// without waiting (see [`RunOutcome::Handoff`]). The script rides the
-/// child's stdin (`bash -s --`, the curl|sh one-liner's own invocation
-/// form), so its temp file is removed as soon as the child holds the
-/// handle; nothing of this run outlives the caller, not even on a failed
-/// spawn.
+/// without waiting. The script rides the child's stdin from the handle it
+/// was written through (`bash -s --`, the curl|sh one-liner's own
+/// invocation form), so its temp file's name is removed as soon as the
+/// child holds the handle; nothing of this run outlives the caller, not
+/// even on a failed spawn.
 ///
 /// # Errors
-/// Returns the failure when the script cannot be opened, no trusted shell
-/// resolves, or the spawn fails.
+/// Returns the failure when no trusted shell resolves or the spawn fails.
 #[cfg(windows)]
 fn spawn_handoff(
     script: &Path,
+    handle: std::fs::File,
     prefix: &Path,
     channel: Option<&'static str>,
     args: &[&std::ffi::OsStr],
 ) -> std::result::Result<(), UpdateFailure> {
-    let file = std::fs::File::open(script).map_err(|error| {
-        let _ = std::fs::remove_file(script);
-        UpdateFailure {
-            message: format!("could not run the installer: {error}"),
-        }
-    })?;
     let shell = trusted_shell().inspect_err(|_| {
         let _ = std::fs::remove_file(script);
     })?;
@@ -308,7 +298,7 @@ fn spawn_handoff(
         .arg("-s")
         .arg("--")
         .args(args)
-        .stdin(std::process::Stdio::from(file));
+        .stdin(std::process::Stdio::from(handle));
     // THE PROCESS-CONTROL WALL (the in-house detached-spawn wrapper:
     // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
     // the product's own detached-survives-parent mapping): a console-
@@ -319,6 +309,15 @@ fn spawn_handoff(
     // handles keep the installer's own steps printing to the
     // caller's window for as long as that window lives.
     crate::platform::process::set_new_process_group(command.as_std_mut());
+    // THE PARENT EXIT: the payload unlock this whole handoff exists
+    // for happens only when THIS process dies — the child gets the
+    // pid and the script's head waits for it (bounded) before any
+    // step touches the payload, so the release-before-publish
+    // ordering is explicit instead of a spawn-timing coincidence.
+    command.env(
+        "PRIME_AGENT_INSTALLER_PARENT_PID",
+        std::process::id().to_string(),
+    );
     let spawned = command.spawn();
     let _ = std::fs::remove_file(script);
     spawned.map_err(|error| UpdateFailure {
@@ -341,9 +340,13 @@ pub async fn run_bundled_installer(
     prefix: &Path,
     args: &[&std::ffi::OsStr],
 ) -> std::result::Result<Installed, UpdateFailure> {
-    let script = write_script(BUNDLED_INSTALLER.as_bytes()).map_err(|error| UpdateFailure {
-        message: format!("could not write the bundled installer: {error:#}"),
-    })?;
+    // `mut` serves the Windows handoff's post-pre-flight rewind; the
+    // unix path only ever borrows the handle.
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let (script, mut handle) =
+        write_script(BUNDLED_INSTALLER.as_bytes()).map_err(|error| UpdateFailure {
+            message: format!("could not write the bundled installer: {error:#}"),
+        })?;
     #[cfg(windows)]
     if caller_owns_payload(prefix) {
         // THE HANDOFF (Windows rename rule): this process's image sits inside
@@ -373,14 +376,23 @@ pub async fn run_bundled_installer(
         // would die with — the caller exits with the real status, and
         // only the publication itself stays async (the platform-
         // inherent residue).
-        if let Err(error) = local_mode_preflight(&script, prefix, args).await {
+        if let Err(error) = local_mode_preflight(&handle, prefix, args).await {
             let _ = std::fs::remove_file(&script);
             return Err(error);
         }
-        spawn_handoff(&script, prefix, None, args)?;
+        // The pre-flight child read the script to EOF through its own
+        // descriptor — a clone shares this handle's file position, so the
+        // real child must start from the first byte again.
+        handle.seek(SeekFrom::Start(0)).map_err(|error| {
+            let _ = std::fs::remove_file(&script);
+            UpdateFailure {
+                message: format!("could not run the installer: {error}"),
+            }
+        })?;
+        spawn_handoff(&script, handle, prefix, None, args)?;
         return Ok(Installed { version: None });
     }
-    let result = execute_script(&script, args, prefix, None, InstallerOutput::Inherit).await;
+    let result = execute_script(&handle, args, prefix, None, InstallerOutput::Inherit).await;
     let _ = std::fs::remove_file(&script);
     result?;
     Ok(Installed {
@@ -452,16 +464,21 @@ pub fn caller_owns_payload(prefix: &Path) -> bool {
 /// Returns the pre-flight's captured refusal tail or the spawn failure.
 #[cfg(windows)]
 async fn local_mode_preflight(
-    script: &Path,
+    script: &std::fs::File,
     prefix: &Path,
     args: &[&std::ffi::OsStr],
 ) -> std::result::Result<(), UpdateFailure> {
     let shell = trusted_shell()?;
     let mut command = installer_child(&shell, prefix, None);
     command
-        .arg(script)
+        .arg("-s")
+        .arg("--")
         .args(args)
-        .stdin(std::process::Stdio::null());
+        .stdin(std::process::Stdio::from(script.try_clone().map_err(
+            |error| UpdateFailure {
+                message: format!("could not run the installer: {error}"),
+            },
+        )?));
     if args.first().copied() == Some(std::ffi::OsStr::new("--rollback")) {
         command.env("PRIME_AGENT_ROLLBACK_CHECK", "1");
     } else {
@@ -478,21 +495,58 @@ async fn local_mode_preflight(
     Err(UpdateFailure { message: refusal })
 }
 
+/// Flatten an install marker's ps1-era encodings to plain bytes: strip a
+/// leading UTF-8 or UTF-16 BOM, then drop the NULs (UTF-16's interleave;
+/// this script's own ASCII markers contain none). UTF-16BE text loses its
+/// byte pairing, but the marker content is ASCII, so both UTF-16 orders
+/// read back as the same ASCII bytes.
+fn normalize_marker_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let bytes = match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] | [0xFF, 0xFE, rest @ ..] | [0xFE, 0xFF, rest @ ..] => rest,
+        _ => bytes,
+    };
+    if bytes.contains(&0) {
+        std::borrow::Cow::Owned(
+            bytes
+                .iter()
+                .copied()
+                .filter(|byte| *byte != 0)
+                .collect::<Vec<u8>>(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(bytes)
+    }
+}
+
 /// The installed payload's version, read from the install marker's
-/// "version <v>" line.
+/// "version <v>" line — through the same encoding normalization as
+/// [`installed_channel`]: a ps1-written marker can be UTF-16 or
+/// BOM-prefixed, and the version line of an encoded marker must read too.
 fn installed_version(prefix: &Path) -> Option<String> {
-    let marker =
-        std::fs::read_to_string(prefix.join("share/prime-agent/.prime-agent-install")).ok()?;
+    let bytes = std::fs::read(prefix.join("share/prime-agent/.prime-agent-install")).ok()?;
+    let normalized = normalize_marker_bytes(&bytes).into_owned();
+    let marker = String::from_utf8_lossy(&normalized);
     let version = marker.lines().nth(1)?.strip_prefix("version ")?.trim();
     (!version.is_empty()).then(|| version.to_string())
 }
 
-/// The installed payload's channel, read from the install marker under the
-/// prefix's share dir; `None` rides the fetched script's own default.
+/// The installed payload's channel, read from the install marker (the
+/// installer's own `.prime-agent-install` under the prefix's share dir;
+/// its first line is "channel <name>"). `None` when the marker is absent
+/// (a pre-marker install or a foreign tree) or carries no known channel —
+/// the update then rides the fetched script's own default.
 #[must_use]
 pub fn installed_channel(prefix: &Path) -> Option<&'static str> {
-    let marker =
-        std::fs::read_to_string(prefix.join("share/prime-agent/.prime-agent-install")).ok()?;
+    // The marker read mirrors install-rust.sh's marker_text: install.ps1's
+    // Set-Content follows $PSDefaultParameterValues['*:Encoding'], so a
+    // ps1-published live marker can be UTF-16 (NUL-interleaved, and its
+    // BOM is not valid UTF-8, failing the whole read) or BOM-prefixed.
+    // Flattening the NULs and stripping a leading BOM keeps the exact
+    // prefix check working for this script's own ASCII writes and for the
+    // ps1-written ones alike (a plain marker passes through untouched).
+    let bytes = std::fs::read(prefix.join("share/prime-agent/.prime-agent-install")).ok()?;
+    let bytes = normalize_marker_bytes(&bytes);
+    let marker = String::from_utf8_lossy(&bytes);
     // The marker's first line must be the installer's OWN write shape —
     // "install-rust.sh channel <name>" — the exact prefix is the ownership
     // proof, so a foreign marker never steers the update onto a channel.
@@ -509,12 +563,14 @@ pub fn installed_channel(prefix: &Path) -> Option<&'static str> {
     }
 }
 
-/// Fetch the installer script to a per-run temp file.
+/// Fetch the installer script into a per-run temp file (the small-file
+/// budget; the file is the exact bytes the branch serves) — the path with
+/// the held handle [`write_script`] created it through.
 ///
 /// # Errors
 /// Returns an error when the request fails, answers a non-success status,
 /// or the body cannot be read or written.
-async fn fetch_script(url: &str) -> Result<PathBuf> {
+async fn fetch_script(url: &str) -> Result<(PathBuf, std::fs::File)> {
     let response = reqwest::Client::new()
         .get(url)
         .header("User-Agent", update_user_agent(env!("CARGO_PKG_VERSION")))
@@ -536,14 +592,45 @@ async fn fetch_script(url: &str) -> Result<PathBuf> {
     write_script(&bytes)
 }
 
-/// Write installer script bytes to a per-run temp file.
-fn write_script(bytes: &[u8]) -> Result<PathBuf> {
+/// Write installer script bytes to a per-run temp file, created fresh
+/// under an unguessable name and returned together with the OPEN HANDLE
+/// the bytes were written through. The temp directory is writable by
+/// every process of this user (and, under a permissive umask, by every
+/// local user), so a script the child later re-opens BY NAME could be
+/// swapped between this write and the run — executing the swap with the
+/// credentials this funnel is hardened to guard. The handle is therefore
+/// the only thing every consumer hands to the child (as its stdin, the
+/// `curl|sh` one-liner's own invocation form): the bytes that run are
+/// the bytes written here, and the name only serves the post-run
+/// cleanup.
+fn write_script(bytes: &[u8]) -> Result<(PathBuf, std::fs::File)> {
     let script = std::env::temp_dir().join(format!(
         "prime-agent-update-{}.sh",
         uuid::Uuid::now_v7().simple()
     ));
-    std::fs::write(&script, bytes).with_context(|| format!("write {}", script.display()))?;
-    Ok(script)
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Owner-only: the default umask would leave the shared temp
+        // directory's other users a write window into the file the
+        // child is about to run.
+        options.mode(0o600);
+    }
+    let mut script_file = options
+        .open(&script)
+        .with_context(|| format!("create {}", script.display()))?;
+    script_file
+        .write_all(bytes)
+        .with_context(|| format!("write {}", script.display()))?;
+    // Every consumer hands a clone of this handle to the child as its
+    // stdin, and a clone shares the file position: start them all from
+    // the first byte.
+    script_file
+        .seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind {}", script.display()))?;
+    Ok((script, script_file))
 }
 
 /// The trusted interpreter for the installer child (the `curl|sh`
@@ -582,14 +669,14 @@ fn trusted_shell() -> std::result::Result<std::path::PathBuf, UpdateFailure> {
 }
 
 /// Build the installer's child command: [`trusted_shell`]'s interpreter
-/// with the installer's env knobs (the script and its args are the
-/// caller's — [`execute_script`] passes them as the child's arguments,
-/// and the Windows handoff rides the script over the child's stdin), so
-/// both wait modes ([`execute_script`]) and the handoff spawn this same
-/// command: the install prefix riding the child's environment as the
-/// installer's own knob, so the script publishes exactly where the probe
-/// looks — every other `PRIME_AGENT_RUST_*` knob passes through
-/// untouched.
+/// with the installer's env knobs (the caller completes it with the
+/// `-s --` form — the `curl|sh` one-liner's own — where the script rides
+/// the child's stdin from the handle [`write_script`] returned and
+/// `args` stay the child's positional parameters), so both wait modes
+/// ([`execute_script`]) and the Windows handoff spawn this same command:
+/// the install prefix riding the child's environment as the installer's
+/// own knob, so the script publishes exactly where the probe looks —
+/// every other `PRIME_AGENT_RUST_*` knob passes through untouched.
 fn installer_child(
     shell: &Path,
     prefix: &Path,
@@ -613,8 +700,11 @@ fn installer_child(
 }
 
 /// Exec the script and wait for it: [`trusted_shell`]'s interpreter
-/// under [`installer_child`]'s env wiring, plus the script and its args
-/// as the child's arguments. The script's own
+/// under [`installer_child`]'s env wiring, the `-s --` form with the
+/// script riding the child's stdin from the handle [`write_script`]
+/// returned (the shared temp directory can never swap the bytes under a
+/// name — the handle IS what runs) and `args` as the child's positional
+/// parameters. The script's own
 /// die messages already streamed with [`InstallerOutput::Inherit`];
 /// with [`InstallerOutput::Capture`] the tail becomes the failure
 /// message.
@@ -622,7 +712,7 @@ fn installer_child(
 /// # Errors
 /// Returns the failure when the script cannot start or exits nonzero.
 async fn execute_script(
-    script: &Path,
+    script: &std::fs::File,
     args: &[&std::ffi::OsStr],
     prefix: &Path,
     channel: Option<&'static str>,
@@ -632,8 +722,11 @@ async fn execute_script(
     let shell = trusted_shell()?;
     #[cfg(not(windows))]
     let shell = trusted_shell();
+    let stdin = std::process::Stdio::from(script.try_clone().map_err(|error| UpdateFailure {
+        message: format!("could not run the installer: {error}"),
+    })?);
     let mut command = installer_child(&shell, prefix, channel);
-    command.arg(script).args(args);
+    command.arg("-s").arg("--").args(args).stdin(stdin);
     match output {
         InstallerOutput::Inherit => {
             let status = command.status().await.map_err(|error| UpdateFailure {
@@ -655,9 +748,9 @@ async fn execute_script(
             })
         }
         InstallerOutput::Capture => {
-            // The TUI owns the terminal: no inherited stdin and no
-            // controlling tty, so the script cannot open /dev/tty to prompt.
-            command.stdin(std::process::Stdio::null());
+            // The TUI owns the terminal: no controlling tty, and the
+            // child's stdin is the script itself — so the script cannot
+            // open /dev/tty to prompt and never reads a terminal.
             #[cfg(unix)]
             crate::platform::process::set_new_session(command.as_std_mut());
             let captured = command.output().await.map_err(|error| UpdateFailure {
@@ -777,6 +870,76 @@ mod tests {
         let message = no_build_message("windows", "aarch64");
         assert!(message.contains("windows aarch64"), "{message}");
         assert!(message.contains("x86_64-pc-windows-msvc"), "{message}");
+    }
+
+    /// The ps1-era marker encodings read back as their ASCII content: a
+    /// UTF-16 or BOM-prefixed live marker (install.ps1's Set-Content
+    /// followed $`PSDefaultParameterValues`) keeps the installer-ownership
+    /// gate working instead of sending a ps1-updated machine down the
+    /// managed path.
+    #[test]
+    fn installed_channel_reads_the_ps1_encoded_marker() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let prefix = dir.path().join("prefix");
+        let payload = prefix.join("share/prime-agent");
+        std::fs::create_dir_all(&payload).unwrap();
+        let cases: [(&str, Vec<u8>, &str); 4] = [
+            (
+                "utf-16le",
+                {
+                    let text: Vec<u16> = "install-rust.sh channel beta\nversion 1\n"
+                        .encode_utf16()
+                        .collect();
+                    let mut bytes = vec![0xFF, 0xFE];
+                    for unit in &text {
+                        bytes.extend_from_slice(&unit.to_le_bytes());
+                    }
+                    bytes
+                },
+                "beta",
+            ),
+            (
+                "utf-8-bom",
+                {
+                    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+                    bytes.extend_from_slice(b"install-rust.sh channel stable\nversion 1\n");
+                    bytes
+                },
+                "stable",
+            ),
+            (
+                "utf-16be",
+                {
+                    let text: Vec<u16> = "install-rust.sh channel stable\nversion 1\n"
+                        .encode_utf16()
+                        .collect();
+                    let mut bytes = vec![0xFE, 0xFF];
+                    for unit in &text {
+                        bytes.extend_from_slice(&unit.to_be_bytes());
+                    }
+                    bytes
+                },
+                "stable",
+            ),
+            (
+                "ascii",
+                b"install-rust.sh channel stable\nversion 1\n".to_vec(),
+                "stable",
+            ),
+        ];
+        for (name, bytes, expected) in cases {
+            std::fs::write(payload.join(".prime-agent-install"), &bytes).unwrap();
+            assert_eq!(
+                installed_channel(&prefix),
+                Some(expected),
+                "{name}: the ps1-era encoding reads back as its ASCII channel"
+            );
+            assert_eq!(
+                installed_version(&prefix).as_deref(),
+                Some("1"),
+                "{name}: the version line of an encoded marker reads too"
+            );
+        }
     }
 
     /// The installed-marker channel read: a beta install's update must

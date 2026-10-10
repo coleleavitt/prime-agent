@@ -5,11 +5,10 @@
 //! the same key the kernel's `rlm.harness.set_enabled` writes.
 
 use std::path::Path;
-use std::time::Duration;
 
 use super::{
-    get_harness_state_path, load_harness_state, save_harness_state, HarnessEntry, HarnessScope,
-    RefinementKind, REFINEMENT_KINDS,
+    load_harness_state, save_harness_state, HarnessEntry, HarnessScope, RefinementKind,
+    REFINEMENT_KINDS,
 };
 
 /// The entry key the flag lives under.
@@ -167,37 +166,14 @@ pub fn resolve_harness_entry<'a>(
     }
 }
 
-/// Attempts (5 ms apart) at the store's lock before a write gives up; a
-/// lock older than 10 s is stale (the kernel writer's protocol).
-const LOCK_ATTEMPTS: u32 = 400;
-const LOCK_RETRY: Duration = Duration::from_millis(5);
-const LOCK_STALE: Duration = Duration::from_secs(10);
-
-/// Take the cross-process lock on the store at `dir` (`harness_state.json.lock`,
-/// the kernel's, TS `proper-lockfile`'s and `pa-ledger`'s protocol). Blocking.
-/// A heartbeat keeps the held lock fresh, so a slow write is never judged
-/// stale and taken over mid-write.
+/// Take the cross-process lock on the store at `dir` (the one
+/// `harness_state.json` lock, [`super::lock_harness_state`]). Blocking.
 ///
 /// # Errors
 ///
-/// The lock stayed held past the retry budget, or the lock directory could not be created.
+/// One holder kept the lock past the wait, or the lock could not be made.
 pub(crate) fn lock_harness_state(dir: &Path) -> anyhow::Result<crate::platform::HeartbeatLock> {
-    let state_path = get_harness_state_path(dir);
-    for attempt in 0..LOCK_ATTEMPTS {
-        match crate::platform::LockDir::acquire(&state_path, LOCK_STALE) {
-            Ok(held) => return Ok(held.with_heartbeat(LOCK_STALE / 2)),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if attempt + 1 < LOCK_ATTEMPTS {
-                    std::thread::sleep(LOCK_RETRY);
-                }
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    anyhow::bail!(
-        "harness state is locked by another writer: {}",
-        state_path.display()
-    )
+    super::lock_harness_state(dir)
 }
 
 /// Flip one entry's flag in the store at `dir` under the store's lock (the

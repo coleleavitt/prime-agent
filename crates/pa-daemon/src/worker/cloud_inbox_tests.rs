@@ -162,6 +162,7 @@ async fn restart_restores_the_lane_and_the_inbox_key() {
         recovery_journal_path: dir.join("recovery.jsonl"),
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
+        decision_child: false,
     };
     let first_worker = Arc::new(Worker::new(config.clone(), None));
     let created = first_worker

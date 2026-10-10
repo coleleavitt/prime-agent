@@ -83,8 +83,6 @@ mod image_delegation;
 // images through the same image-model child.
 mod vision_read;
 
-// The `SessionEngine` trait impl moved to the child module whole -
-// one impl block per trait+type is a rustc constraint (E0119).
 mod session_engine_impl;
 
 mod turn;
@@ -114,6 +112,10 @@ pub(crate) type SettledKernelRelease =
 
 /// A [`SessionEngine`] running real agent turns.
 pub struct AgentSessionEngine {
+    /// Latest decision reply per live decision child; shared with its kernel
+    /// host handler (`decision_api.decision`).
+    pub(crate) decision_replies:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, Option<Value>>>>,
     pub(crate) runtime: crate::async_safe_runtime::AsyncSafeRuntime,
     pub(crate) config: AgentEngineConfig,
     /// The session-scoped ACP MCP store, shared with the core engine's prompt gating.
@@ -175,12 +177,8 @@ pub struct AgentSessionEngine {
     /// The agent-watch registration state (swarm PR E): the subscription
     /// registry plus the one-shared-poll arming flag.
     pub(crate) agent_watches: std::sync::Mutex<crate::agent_inbox_host::AgentWatchHostState>,
-    /// The session's live agent handle (TS `AgentSession.agent`): the eager
-    /// turn-abort funnel's target. Mirrored from the core session at build
-    /// time for the same reason as the goal runtime handles — a running
-    /// turn holds the core session's mutex across its admission, so an
-    /// abort request from the worker must reach the agent's run controller
-    /// without locking it.
+    /// The live agent handle: the eager turn-abort funnel's target, mirrored
+    /// because a running turn holds the core session's mutex.
     pub(crate) turn_agent: std::sync::Mutex<Option<std::sync::Arc<pa_agent::agent::Agent>>>,
     pub(crate) quota_park: std::sync::Arc<std::sync::Mutex<Option<QuotaParkState>>>,
     /// Whether the settled turn parked: the park's pause, not the goal's death.
@@ -244,10 +242,8 @@ pub struct AgentSessionEngine {
     pub(crate) provider_target: std::sync::Arc<
         std::sync::RwLock<Option<pa_core::session_engine::provider_adapter::ProviderTarget>>,
     >,
-    /// One shared supervisor-link client for the worker: agent messaging
-    /// and supervisor-backed RLM children multiplex the same connection
-    /// (the TS worker's single `SupervisorLink` socket). Unconnected until
-    /// the first request; standalone workers never use it.
+    /// One shared supervisor-link client: agent messaging and RLM children
+    /// multiplex the same connection.
     pub(crate) link: Arc<crate::supervisor_link::SupervisorLink>,
     /// Supervisor-backed RLM children; `None` for standalone workers.
     pub(crate) children: Option<Arc<SupervisorChildSessions>>,

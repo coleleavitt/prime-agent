@@ -100,6 +100,10 @@ pub struct KernelBootstrapStats {
 /// Reports kernel bootstrap results (the `kernel_bootstrap_*` session counters).
 pub type KernelBootstrapResultHandler = Arc<dyn Fn(KernelBootstrapStats) + Send + Sync>;
 
+/// Decides at each kernel boot whether a Python skill is pre-imported; the
+/// skill stays installed in the kernel venv either way.
+pub(crate) type PythonSkillPreimportFilter = Arc<dyn Fn(&KernelPythonSkill) -> bool + Send + Sync>;
+
 #[derive(Default, Clone)]
 pub struct IpythonKernelProvisionerOptions {
     /// Python override. Must have prime-agent-runtime installed.
@@ -113,6 +117,8 @@ pub struct IpythonKernelProvisionerOptions {
     pub session_id: Option<String>,
     pub host_handlers: HostRequestHandlers,
     pub python_skills: Vec<KernelPythonSkill>,
+    /// Narrows which `python_skills` a boot pre-imports (all when `None`).
+    pub preimport_filter: Option<PythonSkillPreimportFilter>,
     /// Artifact directory of a persistent session; the revivable snapshot and
     /// the stderr log live there. `None` for ephemeral sessions.
     pub snapshot_dir: Option<PathBuf>,
@@ -181,9 +187,6 @@ enum Settle {
 enum StopArm {
     /// Neither a live kernel nor an in-flight boot: nothing to stop.
     Nothing,
-    /// A stop is already armed for the same in-flight boot; its gate opens
-    /// once that stop's shutdown settles.
-    Joined(tokio::sync::watch::Receiver<bool>),
     /// This stop's own gate, installed atomically with the manager take
     /// (direct) or the in-flight boot it joins.
     Armed {
@@ -222,12 +225,20 @@ struct ProvisionerState {
     /// previous.
     pending_stop: Option<tokio::sync::watch::Receiver<bool>>,
     /// The startup memo the installed pending-stop gate is armed against;
-    /// `None` when the gate was armed with a directly-taken manager. A
-    /// second stop of the SAME in-flight boot joins the armed gate instead
-    /// of superseding it: each stop arming its own gate would have the
-    /// take-LOSING stop task open a fresh gate before the winner's final
-    /// snapshot flush, un-gating a revival to race that flush.
+    /// `None` when the gate was armed with a directly-taken manager. The
+    /// failed-boot teardown consults it to keep the gate of a stop
+    /// ACTIVELY armed for its own boot (that stop's task waits the boot's
+    /// memo, which settles only after the teardown): the teardown's flush
+    /// is already covered, so it installs no replacement gate.
     pending_stop_for_startup: Option<tokio::sync::watch::Receiver<Option<StartupResult>>>,
+    /// Startup memos `kill()` invalidated but whose boots have not settled
+    /// yet. The memo's generation is dead (the boot tears down with `kill()`
+    /// semantics) yet the boot's kernel still exists, so a later
+    /// `dispose()` must wait its settle the same way it waits an armed
+    /// memo — without the park, a kill followed by a dispose skips the
+    /// doomed boot entirely and can orphan its kernel at worker exit.
+    /// Each parked memo is spent by its own boot's settle.
+    doomed_startups: Vec<tokio::sync::watch::Receiver<Option<StartupResult>>>,
     /// The unexpected exit of a kernel this provisioner replaced, not yet
     /// surfaced to the model (TS `takeUnreportedExit`).
     unreported_exit: Option<crate::kernel::shared::KernelUnexpectedExit>,
@@ -267,6 +278,7 @@ impl IpythonKernelProvisioner {
                     pending_stop: None,
                     pending_stop_for_startup: None,
                     unreported_exit: None,
+                    doomed_startups: Vec::new(),
                 }),
                 dispose_signal: AbortSignal::new(),
             }),
@@ -440,21 +452,7 @@ impl IpythonKernelProvisioner {
                         }
                         match result {
                             Ok((manager, duration_ms)) => {
-                                if state.disposed {
-                                    Settle::TearDownForDispose {
-                                        manager,
-                                        snapshot: state.dispose_snapshot,
-                                        duration_ms,
-                                    }
-                                } else if !mine {
-                                    Settle::TearDownForKill {
-                                        manager,
-                                        duration_ms,
-                                    }
-                                } else {
-                                    state.manager = Some(manager.clone());
-                                    Settle::Published(manager)
-                                }
+                                park_or_tear_down(&mut state, mine, manager, duration_ms)
                             }
                             Err(failure) => Settle::Failed(failure),
                         }
@@ -518,6 +516,11 @@ impl IpythonKernelProvisioner {
                         state.startup = None;
                     }
                     release_spent_stop_arm(&mut state, &startup_memo);
+                    // A memo kill() parked for this boot is spent with the
+                    // settle the dispose() parker waits on.
+                    state
+                        .doomed_startups
+                        .retain(|parked| !parked.same_channel(&startup_memo));
                 });
                 state.startup = Some(done_rx.clone());
                 done_rx
@@ -659,11 +662,11 @@ impl IpythonKernelProvisioner {
     /// resident); with neither a live kernel nor an in-flight boot there
     /// is nothing to stop.
     ///
-    /// Concurrent stops of ONE in-flight boot share the first stop's gate
-    /// instead of superseding it: each stop arming its own gate would have
-    /// whichever stop task loses the manager take open a fresh gate before
-    /// the winner's final snapshot flush, un-gating a revival to race that
-    /// flush over the same on-disk file.
+    /// Concurrent stops of one in-flight boot chain instead of racing: each
+    /// stop arms its own gate superseding the previous, and every stop task
+    /// waits the strictly older gate it superseded before opening its own,
+    /// so a revival gated on any of them cannot cross before the final
+    /// snapshot flush settles.
     ///
     /// Best-effort by construction: a failed shutdown leaves no manager
     /// and the next `ensure()` boots fresh.
@@ -671,11 +674,6 @@ impl IpythonKernelProvisioner {
         let snapshot = options.is_none_or(|o| o.snapshot);
         match self.arm_stop(snapshot) {
             StopArm::Nothing => {}
-            StopArm::Joined(mut gate) => {
-                // The armed stop's task opens its gate after the shutdown
-                // settles; waiting it is this stop's own settle too.
-                let _ = gate.wait_for(|done| *done).await;
-            }
             StopArm::Armed {
                 manager,
                 startup,
@@ -725,13 +723,12 @@ impl IpythonKernelProvisioner {
         }
     }
 
-    /// Claim one stop: take a live manager directly, join a stop already
-    /// armed for the same in-flight boot, or arm this stop's own gate for
-    /// the in-flight boot's parked kernel. The gate is installed under the
-    /// same lock `ensure()` uses to select its startup, so no revival can
-    /// miss this stop; `pending_stop_for_startup` records which boot the
-    /// gate is armed against so a second stop of that boot joins it
-    /// instead of superseding it.
+    /// Claim one stop: take a live manager directly, or arm this stop's
+    /// own gate for the in-flight boot's parked kernel. The gate is
+    /// installed under the same lock `ensure()` uses to select its
+    /// startup, so no revival can miss this stop; a second stop of the
+    /// same boot simply supersedes the first's gate, and the stops chain
+    /// through their superseded gates.
     fn arm_stop(&self, snapshot: bool) -> StopArm {
         let mut state = self.lock_state();
         state.dispose_snapshot = snapshot;
@@ -740,23 +737,12 @@ impl IpythonKernelProvisioner {
         if manager.is_none() && startup.is_none() {
             return StopArm::Nothing;
         }
-        if manager.is_none() {
-            let joined = state.pending_stop.clone().filter(|_| {
-                state
-                    .pending_stop_for_startup
-                    .as_ref()
-                    .zip(startup.as_ref())
-                    .is_some_and(|(armed_for, memo)| armed_for.same_channel(memo))
-            });
-            if let Some(gate) = joined {
-                return StopArm::Joined(gate);
-            }
-        }
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let previous_stop = state.pending_stop.replace(stop_rx);
         // A gate armed with a directly-taken manager guards that manager's
-        // shutdown, not a boot; only a gate armed for an in-flight boot is
-        // joinable by the next stop of the same boot.
+        // shutdown, not a boot; the failed-boot teardown consults this
+        // record to leave a stop ACTIVELY armed for the tearing-down boot
+        // alone (its own task already covers the flush).
         state.pending_stop_for_startup = if manager.is_some() {
             None
         } else {
@@ -772,15 +758,21 @@ impl IpythonKernelProvisioner {
 
     pub async fn dispose(&self, options: Option<KernelShutdownOptions>) {
         let snapshot = options.is_none_or(|o| o.snapshot);
-        let mut startup = {
+        let (mut startup, mut doomed) = {
             let mut state = self.lock_state();
             state.dispose_snapshot = snapshot;
             state.disposed = true;
-            state.startup.clone()
+            (state.startup.clone(), state.doomed_startups.clone())
         };
         self.inner.dispose_signal.abort();
+        // A boot `kill()` invalidated settles like an armed one: the
+        // dispose must not return while its kernel is still settling, or a
+        // worker exit could orphan it.
         if let Some(startup) = &mut startup {
             let _ = startup.wait_for(Option::is_some).await;
+        }
+        for memo in &mut doomed {
+            let _ = memo.wait_for(Option::is_some).await;
         }
         let manager = self.lock_state().manager.take();
         if let Some(manager) = manager {
@@ -795,10 +787,12 @@ impl IpythonKernelProvisioner {
 
     /// Kill the owned kernel without a final snapshot (busy-kernel restart).
     /// A kernel still starting up has not been published yet: like TS
-    /// `kill()`, the startup memo is cleared (generation invalidation), so
+    /// `kill()`, the startup memo leaves the generation (invalidation), so
     /// the doomed boot's own settle kills its kernel instead of parking
     /// it, and the next `ensure()` boots fresh - a kill racing a boot
-    /// leaves no resident kernel behind.
+    /// leaves no resident kernel behind. The invalidated memo is PARKED
+    /// for `dispose()`: the doomed boot's kernel still exists until its
+    /// settle, and a dispose racing the kill must wait it out.
     pub fn kill(&self) {
         let manager = {
             let mut state = self.lock_state();
@@ -807,7 +801,9 @@ impl IpythonKernelProvisioner {
             if let Some(armed_for) = state.startup.clone() {
                 release_spent_stop_arm(&mut state, &armed_for);
             }
-            state.startup = None;
+            if let Some(doomed) = state.startup.take() {
+                state.doomed_startups.push(doomed);
+            }
             // The shared progress state belongs to the memo generation
             // kill() just invalidated: its own emits already skip shared
             // writes, and the next ensure() must neither replay the
@@ -841,6 +837,56 @@ fn release_spent_stop_arm(
     {
         state.pending_stop_for_startup = None;
     }
+}
+
+/// The settled boot's disposition: apply the settle decision under the
+/// settle's own lock scope.
+fn park_or_tear_down(
+    state: &mut ProvisionerState,
+    mine: bool,
+    manager: ReplKernelManager,
+    duration_ms: u64,
+) -> Settle {
+    match settle_decision(state, mine) {
+        SettleDecision::Kill => Settle::TearDownForKill {
+            manager,
+            duration_ms,
+        },
+        SettleDecision::Dispose => Settle::TearDownForDispose {
+            manager,
+            snapshot: state.dispose_snapshot,
+            duration_ms,
+        },
+        SettleDecision::Publish => {
+            state.manager = Some(manager.clone());
+            Settle::Published(manager)
+        }
+    }
+}
+
+/// The settle's disposition order, isolated because the ORDER is the
+/// contract: the generation check comes FIRST — a boot `kill()` doomed
+/// tears down with `kill()` semantics (no flush) even when a dispose raced
+/// in behind the kill, because the dispose's own snapshot policy cannot
+/// resurrect a generation `kill()` invalidated (a killed+disposed boot
+/// reaching Ok must never flush, and kill→ensure→dispose must never
+/// overlap two flushes on one `snapshot_dir`). Only a live generation
+/// honors the dispose.
+fn settle_decision(state: &ProvisionerState, mine: bool) -> SettleDecision {
+    if !mine {
+        SettleDecision::Kill
+    } else if state.disposed {
+        SettleDecision::Dispose
+    } else {
+        SettleDecision::Publish
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SettleDecision {
+    Kill,
+    Dispose,
+    Publish,
 }
 
 /// The snapshot policy for a failed boot's teardown: the provisioner's
@@ -977,8 +1023,9 @@ fn resolve_startup_budget_ms() -> u64 {
 /// A failed boot the provisioner may retry on its own: transient spawn or
 /// ready-handshake problems. Structural failures never auto-retry.
 fn startup_failure_is_retryable(error: &anyhow::Error) -> bool {
-    const FATAL_MARKERS: [&str; 9] = [
+    const FATAL_MARKERS: [&str; 10] = [
         "provisioner disposed",
+        "provisioner killed",
         "aborted",
         "Failed to set up the Python kernel runtime",
         "PRIME_AGENT_KERNEL_PYTHON points to a Python",
@@ -1163,7 +1210,18 @@ async fn start_kernel_impl(
         gate().await;
     }
     let snapshot_dir = options.snapshot_dir.clone();
-    let bootstrap_code = build_rlm_bootstrap_code(&options.python_skills);
+    let preimported: Vec<KernelPythonSkill> = options
+        .python_skills
+        .iter()
+        .filter(|skill| {
+            options
+                .preimport_filter
+                .as_ref()
+                .is_none_or(|preimport| preimport(skill))
+        })
+        .cloned()
+        .collect();
+    let bootstrap_code = build_rlm_bootstrap_code(&preimported);
     let mut env = options.env.clone();
     if let Some(shell_path) = &options.shell_path {
         env.insert(
@@ -1268,11 +1326,20 @@ async fn start_kernel_impl(
         signal: None,
         on_bootstrap_progress: on_progress.cloned(),
     });
+    let permit_inner = Arc::clone(inner);
+    let permit_memo = memo.clone();
     let boot = async {
         with_kernel_boot_permit(move || async move {
-            // Disposed while queued for the permit — don't spawn a kernel nobody wants.
+            // Disposed, or its memo generation kill() invalidated, while
+            // queued for the permit — don't spawn a kernel nobody wants.
+            // The permit frees after the stop/ready gates below, so a boot
+            // that waited those gates rechecks liveness here, the last
+            // point before the interpreter spawn.
             if permit_dispose_signal.is_aborted() {
                 return Err(anyhow!("Kernel provisioner disposed before start"));
+            }
+            if !boot_generation_is_live(&permit_inner, &permit_memo) {
+                return Err(anyhow!("Kernel provisioner killed before start"));
             }
             start.await
         })
@@ -1521,6 +1588,41 @@ mod tests {
             state.pending_stop_for_startup.is_none(),
             "kill() releases the stop arm armed for the boot it invalidates"
         );
+        assert_eq!(
+            state.doomed_startups.len(),
+            1,
+            "kill() parks the invalidated memo for dispose() to wait"
+        );
+    }
+
+    #[test]
+    fn a_killed_boot_never_takes_the_dispose_teardown() {
+        let provisioner = IpythonKernelProvisioner::new(
+            PathBuf::from("/tmp"),
+            IpythonKernelProvisionerOptions::default(),
+        );
+        {
+            let mut state = provisioner.lock_state();
+            state.disposed = true;
+            state.dispose_snapshot = true;
+        }
+        // A killed generation tears down with kill() semantics even under a
+        // racing dispose: the dispose's own snapshot policy cannot resurrect
+        // it. The order is the contract — checking disposed first would
+        // flush a snapshot kill() forbade.
+        {
+            let state = provisioner.lock_state();
+            assert_eq!(settle_decision(&state, false), SettleDecision::Kill);
+            // A live generation honors the dispose; a live undisposed one
+            // parks.
+            assert_eq!(settle_decision(&state, true), SettleDecision::Dispose);
+        }
+        {
+            let mut state = provisioner.lock_state();
+            state.disposed = false;
+        }
+        let state = provisioner.lock_state();
+        assert_eq!(settle_decision(&state, true), SettleDecision::Publish);
     }
 
     #[test]
@@ -1685,6 +1787,9 @@ mod tests {
             "Kernel provisioner disposed before start"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
+            "Kernel provisioner killed before start"
+        )));
+        assert!(!startup_failure_is_retryable(&anyhow!(
             "Python execution aborted"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
@@ -1794,6 +1899,46 @@ mod tests {
             format!("{error:#}").contains("failed to spawn"),
             "ensure must surface the spawn cause: {error:#}"
         );
+    }
+
+    /// A ready kernel that stops reading stdin must not wedge its bootstrap
+    /// request or the failed boot's shutdown behind a full pipe.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn nonreading_kernel_fails_bootstrap_without_parking_shutdown() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let python = dir.path().join("ready-but-not-reading");
+        std::fs::write(
+            &python,
+            "#!/usr/bin/env python3\nimport json, time\nprint(json.dumps({'event': 'ready', 'protocol': 5, 'python': '3.13.0'}), flush=True)\ntime.sleep(30)\n",
+        )
+        .expect("write fake kernel");
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake kernel");
+        let provisioner = IpythonKernelProvisioner::new(
+            dir.path(),
+            IpythonKernelProvisionerOptions {
+                python: Some(python),
+                python_skills: vec![KernelPythonSkill {
+                    name: "oversized".into(),
+                    import_name: "x".repeat(1024 * 1024),
+                    package_path: dir.path().into(),
+                    pyproject_path: dir.path().join("pyproject.toml"),
+                }],
+                ..Default::default()
+            },
+        );
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(9),
+            provisioner.ensure(None, None),
+        )
+        .await
+        .expect("timed out bootstrap must not park during failed-boot cleanup")
+        .expect_err("kernel never reads bootstrap");
+        assert!(format!("{error:#}").contains("runtime bootstrap did not finish"));
+        assert!(!provisioner.has_running_kernel());
     }
 
     /// A kernel that answers the ready handshake but never answers the

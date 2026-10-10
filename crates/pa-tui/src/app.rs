@@ -78,6 +78,8 @@ fn run_app_surface(
     // A panic anywhere between the mount below and the deliberate teardown must still hand
     // the terminal back whole (the same unwind-guard contract the session surface arms).
     let _surface_restore = crate::exit_restore::SurfaceRestore::armed();
+    // Enable Windows VT processing before raw ANSI mode writes.
+    pa_types::platform::console_init();
     // The raw-mode bracket's `cfmakeraw` write clears IXON, the kernel's one trigger for
     // lifting a pending Ctrl+S stop (see the flow e2e's launch route).
     terminal::enable_raw_mode()?;
@@ -251,7 +253,8 @@ pub(crate) fn draw(
     // The mount sequences (the alt-screen adopt/enter, the queued clear, the cursor hide) ride
     // THIS draw's single flush: the first paint is the mount, and a mid-gap flush can never
     // carry the clear out early over it.
-    if crate::altscreen::take_first_draw_mount() {
+    let mounting = crate::altscreen::take_first_draw_mount();
+    if mounting {
         let mut out = std::io::stdout();
         crate::altscreen::enter_queued(&mut out)?;
         crossterm::queue!(
@@ -269,9 +272,9 @@ pub(crate) fn draw(
     // The frame's embedded OSC 8 sequences drive the paint backend's hyperlink injection; install
     // the ranges before the draw (which strips the sequences from the painted cells).
     crate::hyperlinks::install_frame(&frame);
-    // Zone markers ride on the composed rows; plan their emission before the cell paint
-    // (which strips them), then write the sequences at their rows after the frame is painted.
-    let emissions = view.take_osc_emissions(&frame);
+    // OSC 133 describes shell prompts, not alternate-screen rows. In iTerm2 it can
+    // disable soft alternate-screen mode and let cursor moves clear the painted grid.
+    // Keep those markers in the main-screen exit transcript only.
     // Fullscreen paint brackets the row diff in synchronized output so terminals never display
     // an intermediate, partly scrolled frame; a terminal without mode 2026 support ignores the
     // two escape sequences.
@@ -303,12 +306,12 @@ pub(crate) fn draw(
             }
         }
     }
-    let markers = if painted.is_ok() {
+    let images_written = if painted.is_ok() {
         // Inline images go over their reserved cells after the cell flush,
         // inside the same synchronized update.
         // An error here still reaches the update release below.
         let images = crate::inline_image::paint_frame(&frame, area.width, area.height);
-        let written = (|| -> Result<()> {
+        (|| -> Result<()> {
             use std::io::Write;
             if images.is_empty() {
                 return Ok(());
@@ -320,43 +323,18 @@ pub(crate) fn draw(
             }
             out.flush()?;
             Ok(())
-        })();
-        written.and_then(|()| emit_zone_markers(&emissions, cursor))
+        })()
     } else {
         Ok(())
     };
     // Always release the terminal's pending update, including on paint errors.
     crossterm::execute!(stdout(), terminal::EndSynchronizedUpdate)?;
     painted?;
-    markers
-}
-
-/// Write OSC 133 zone-marker sequences at their frame rows. The sequences are zero-width: only
-/// the row flags the shell integration reads change; the frame cursor is restored afterwards.
-fn emit_zone_markers(
-    emissions: &[(usize, crate::osc133::RowMarkers)],
-    cursor: Option<(usize, usize)>,
-) -> Result<()> {
-    use crossterm::cursor::MoveTo;
-    use std::io::Write;
-    if emissions.is_empty() {
-        return Ok(());
+    images_written?;
+    if mounting {
+        // Mode setup flushes stdout, so it must follow the completed first paint.
+        crate::enhanced_keys::enable(&mut stdout())?;
     }
-    let mut out = stdout();
-    for (row, markers) in emissions {
-        crossterm::queue!(out, MoveTo(0, *row as u16))?;
-        if markers.start {
-            out.write_all(crate::osc133::ZONE_START.as_bytes())?;
-        }
-        if markers.end {
-            out.write_all(crate::osc133::ZONE_END.as_bytes())?;
-            out.write_all(crate::osc133::ZONE_FINAL.as_bytes())?;
-        }
-    }
-    if let Some((row, col)) = cursor {
-        crossterm::queue!(out, MoveTo(col as u16, row as u16))?;
-    }
-    out.flush()?;
     Ok(())
 }
 

@@ -11,4 +11,5 @@ mod graph;
 mod machine;
 mod persist;
 mod policies;
+mod recovery;
 mod run;

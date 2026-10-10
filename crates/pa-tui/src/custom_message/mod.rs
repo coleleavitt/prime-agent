@@ -66,6 +66,8 @@ pub const PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE: &str = "provider_retry_outcome";
 /// (upstream #1062; wire twin of
 /// `pa_core::session_engine::presented_artifact::PRESENTED_ARTIFACT_CUSTOM_TYPE`).
 pub const PRESENTED_ARTIFACT_CUSTOM_TYPE: &str = "prime-agent.presented-artifact";
+/// Wire twin of `pa_core::prompts::model_prompts::MODEL_PROMPT_ERROR_CUSTOM_TYPE`.
+pub const MODEL_PROMPT_ERROR_CUSTOM_TYPE: &str = "model_prompt_error";
 
 /// Which agent-message side a row renders: the received transcript rows, or the
 /// sent/queued ipython cell receipts. The direction word folds into the
@@ -208,6 +210,10 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
                 },
             }]
         }
+        MODEL_PROMPT_ERROR_CUSTOM_TYPE => vec![ChatEntry::Status {
+            text: content,
+            kind: crate::chat::StatusKind::Warning,
+        }],
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
         PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
         AGENT_MESSAGE_CUSTOM_TYPE => agent_message_entry(details).map_or_else(

@@ -842,6 +842,19 @@ impl Harness {
                     let Ok(row) = serde_json::from_str::<Value>(line) else {
                         continue;
                     };
+                    // The spawn kickoff lands as the parent's `agent_message`
+                    // custom row (upstream #3369), not a user message.
+                    if row.get("type").and_then(Value::as_str) == Some("custom_message")
+                        && row
+                            .pointer("/details/id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| id.starts_with("spawn:"))
+                    {
+                        if let Some(text) = row.get("content").and_then(content_text) {
+                            prompts.push(text);
+                        }
+                        continue;
+                    }
                     if row.get("type").and_then(Value::as_str) != Some("message") {
                         continue;
                     }
@@ -856,17 +869,7 @@ impl Harness {
                     if message.get("role").and_then(Value::as_str) != Some("user") {
                         continue;
                     }
-                    let content = message.get("content");
-                    let text = match content {
-                        Some(Value::String(text)) => text.clone(),
-                        Some(Value::Array(blocks)) => blocks
-                            .iter()
-                            .filter_map(|block| block.get("text").and_then(Value::as_str))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        _ => continue,
-                    };
-                    if !text.is_empty() {
+                    if let Some(text) = message.get("content").and_then(content_text) {
                         prompts.push(text);
                     }
                 }
@@ -1831,4 +1834,18 @@ fn factory_run_interrupted_by_a_host_crash_resumes_on_the_restarted_host() {
     )
     .expect("record json");
     assert_eq!(record["run"]["state"], "done");
+}
+
+/// A persisted row's text content (a string or text blocks); `None` when empty.
+fn content_text(content: &Value) -> Option<String> {
+    let text = match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
+    };
+    (!text.is_empty()).then_some(text)
 }

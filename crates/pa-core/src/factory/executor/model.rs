@@ -96,8 +96,13 @@ pub struct NodeInstance {
     /// Admission time on the executor clock (seconds).
     pub spawned_at: Option<f64>,
     pub duration_ms: Option<u64>,
-    /// The capped collect preview.
+    /// The binding lane's captured answer (capped at `ANSWER_BINDING_CAP`).
     pub answer: Option<String>,
+    /// The answer came from a child EXIT, not a settle: the state reads
+    /// needs-verify instead of counting the exit's last assistant text as
+    /// delivered work (upstream #3462's M4 class).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub provisional: bool,
     pub error: Option<String>,
     pub tool_uses: u64,
     /// The child a host restart lost track of while this instance was in
@@ -119,6 +124,7 @@ impl NodeInstance {
             spawned_at: None,
             duration_ms: None,
             answer: None,
+            provisional: false,
             error: None,
             tool_uses: 0,
             interrupted_child: None,
@@ -144,6 +150,21 @@ pub struct StateEntry {
     pub output_errors: Option<Map<String, Value>>,
     pub is_settle: bool,
     pub consumed: bool,
+    /// A child exit carried a provisional answer: the entry failed, but
+    /// the answer is preserved and the run surfaces the state in
+    /// `status()["needs_verify"]`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub needs_verify: bool,
+}
+
+/// `skip_serializing_if` for the default-false flags (persisted runs stay
+/// byte-identical while a flag is unset).
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip predicate takes the field by reference"
+)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl StateEntry {
@@ -159,6 +180,7 @@ impl StateEntry {
             output_errors: None,
             is_settle: false,
             consumed: false,
+            needs_verify: false,
         }
     }
 }
@@ -271,6 +293,10 @@ pub struct FactoryRun {
     pub run_budget_ms: Option<u64>,
     pub budget_reported: bool,
     pub pause_reason: Option<String>,
+    /// The last entry-failure reason (admission or binding): a paused
+    /// run's status carries it with a one-line remedy (upstream #3462's M6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     /// States in declared order (the deterministic iteration order).
     pub states: Vec<StateRun>,
     pub pending_evaluations: VecDeque<PendingEvaluation>,
@@ -321,6 +347,8 @@ pub mod kind {
     pub const ANSWER_CAPTURED: &str = "answer_captured";
     pub const RETRY: &str = "retry";
     pub const NODE_ERROR: &str = "node_error";
+    pub const NEEDS_VERIFY: &str = "needs_verify";
+    pub const OUTPUT_CAPTURE_FAILED: &str = "output_capture_failed";
     pub const NODE_CANCELLED: &str = "node_cancelled";
     pub const CANCELLED: &str = "cancelled";
     pub const CANCEL_FAILED: &str = "cancel_failed";
