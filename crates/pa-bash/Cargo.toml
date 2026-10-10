@@ -10,7 +10,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 pa-os-sandbox = { path = "../pa-os-sandbox" }
-# grep patterns the secret-echo rule reads.
+# Patterns the rules read: grep patterns (secret echo) and pkill/killall
+# patterns (self match, POSIX EREs).
 regex = "1"
 getrandom = "0.3"
 # Byte search for the completion marker and the cargo-lock text in every

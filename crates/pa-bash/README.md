@@ -28,7 +28,8 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   dirty tree (`destructive_git`), recursive chmod/chown escaping the workspace
   (`destructive_chmod`), force-pushes to protected targets (`force_push`),
   secret echoes (`secret_echo`), downloads run by a shell (`pipe_to_shell`),
-  and sudo/doas (`sudo`). `pipeline` builds the model once and runs them in that
+  sudo/doas (`sudo`), and kills whose pattern matches the command's own shell
+  (`self_match`). `pipeline` builds the model once and runs them in that
   order; the first refusal wins (`Refusal`: guard, message, one-time
   late-bypass warning).
 - `probe`: the guards' read-only shell probes (`git status`, the upstream of
@@ -77,8 +78,8 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 
 ## Dependencies
 
-`serde`, `serde_json`, `thiserror`, `regex` (the secret-echo
-rule reads grep patterns), `getrandom` (the fence token and
+`serde`, `serde_json`, `thiserror`, `regex` (the secret-echo and self-match
+rules read grep and pkill/killall patterns), `getrandom` (the fence token and
 job ids),
 `memchr` (the marker and cargo-lock searches over every output read),
 `process-wrap` (safe `setsid` in the child and Windows job objects, which std

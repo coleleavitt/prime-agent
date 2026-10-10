@@ -92,12 +92,17 @@ class PrivilegeEscalationRefusalError(RuntimeError):
     """Raised when a command would run as root (or another user) via sudo/doas."""
 
 
+class SelfMatchRefusalError(RuntimeError):
+    """A pkill -f / killall pattern that matches the command's own shell was refused."""
+
+
 BASH_DESTRUCTIVE_GIT_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_GIT"
 BASH_DESTRUCTIVE_CHMOD_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_CHMOD"
 BASH_FORCE_PUSH_BYPASS_ENV = "PI_BASH_ALLOW_FORCE_PUSH"
 BASH_SECRET_ECHO_BYPASS_ENV = "PI_BASH_ALLOW_SECRET_ECHO"
 BASH_PIPE_TO_SHELL_BYPASS_ENV = "PI_BASH_ALLOW_PIPE_TO_SHELL"
 BASH_SUDO_BYPASS_ENV = "PI_BASH_ALLOW_SUDO"
+BASH_SELF_MATCH_BYPASS_ENV = "PI_BASH_ALLOW_SELF_MATCH"
 
 
 GIT_STATUS_PORCELAIN_COMMAND = "git status --porcelain --untracked-files=all"
@@ -127,12 +132,14 @@ _FORCE_PUSH_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_FO
 _SECRET_ECHO_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SECRET_ECHO_BYPASS_ENV))
 _PIPE_TO_SHELL_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_PIPE_TO_SHELL_BYPASS_ENV))
 _SUDO_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SUDO_BYPASS_ENV))
+_SELF_MATCH_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SELF_MATCH_BYPASS_ENV))
 
 _destructive_chmod_late_bypass_warned = False
 _force_push_late_bypass_warned = False
 _secret_echo_late_bypass_warned = False
 _pipe_to_shell_late_bypass_warned = False
 _sudo_late_bypass_warned = False
+_self_match_late_bypass_warned = False
 
 # guard key -> (bash() kwarg, frozen launch flag, warn-once flag, refusal class)
 _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
@@ -167,6 +174,12 @@ _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
         PipeToShellRefusalError,
     ),
     "sudo": ("allow_sudo", "_SUDO_BYPASS_AT_KERNEL_START", "_sudo_late_bypass_warned", PrivilegeEscalationRefusalError),
+    "self_match": (
+        "allow_self_match",
+        "_SELF_MATCH_BYPASS_AT_KERNEL_START",
+        "_self_match_late_bypass_warned",
+        SelfMatchRefusalError,
+    ),
 }
 _REFUSALS = {error.__name__: (key, error) for key, (_, _, _, error) in _GUARDS.items()}
 _REFUSAL_ERRORS = tuple(error for _, _, _, error in _GUARDS.values())
@@ -1419,6 +1432,7 @@ def _run_kernel_bash_guards(
     allow_secret_echo: bool = False,
     allow_pipe_to_shell: bool = False,
     allow_sudo: bool = False,
+    allow_self_match: bool = False,
 ) -> None:
     """Run every kernel-bash refusal guard on the text the shell will run.
 
@@ -1435,6 +1449,7 @@ def _run_kernel_bash_guards(
         "secret_echo": allow_secret_echo,
         "pipe_to_shell": allow_pipe_to_shell,
         "sudo": allow_sudo,
+        "self_match": allow_self_match,
     }
     _raise_for(
         _request(
@@ -1459,6 +1474,7 @@ def bash(
     allow_secret_echo: bool = False,
     allow_pipe_to_shell: bool = False,
     allow_sudo: bool = False,
+    allow_self_match: bool = False,
 ) -> BashHandle:
     """Start a shell command immediately; await the handle for the result.
 
@@ -1558,6 +1574,15 @@ def bash(
     deliberately with allow_sudo=True, or by starting the kernel with
     PI_BASH_ALLOW_SUDO=1 (honored only when set at kernel start, so a mid-session
     environment write cannot disable the guard).
+
+    A process kill whose pattern matches the command's own shell is refused
+    before any process starts: `pkill -f PATTERN` (and `kill $(pgrep -f
+    PATTERN)`, `pgrep -f PATTERN | xargs kill`) where PATTERN occurs in the
+    command's text, or `pkill NAME` / `killall [-r] NAME` matching the shell's
+    process name, would kill the shell running the command. Match the target
+    precisely instead (`pkill -x NAME`, a pid, or the bracket trick `pkill -f
+    '[b]urp'`), or retry with allow_self_match=True (or start the kernel with
+    PI_BASH_ALLOW_SELF_MATCH=1).
     """
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
@@ -1574,6 +1599,7 @@ def bash(
         "secret_echo": allow_secret_echo,
         "pipe_to_shell": allow_pipe_to_shell,
         "sudo": allow_sudo,
+        "self_match": allow_self_match,
     }
     # The guards and the spawn are one host request on that one script; a
     # refusal raises here, before any handle (or process) exists.

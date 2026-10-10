@@ -20,17 +20,20 @@ pub enum GuardKind {
     PipeToShell,
     /// sudo/doas privilege escalation.
     Sudo,
+    /// `pkill -f` / `killall -r` patterns that match the command's own shell.
+    SelfMatch,
 }
 
 impl GuardKind {
     /// Every guard, in pipeline order.
-    pub const ALL: [GuardKind; 6] = [
+    pub const ALL: [GuardKind; 7] = [
         GuardKind::DestructiveGit,
         GuardKind::DestructiveChmod,
         GuardKind::ForcePush,
         GuardKind::SecretEcho,
         GuardKind::PipeToShell,
         GuardKind::Sudo,
+        GuardKind::SelfMatch,
     ];
 
     /// The guard's wire name (`destructive_git`, ..., `sudo`): the kernel's
@@ -44,6 +47,7 @@ impl GuardKind {
             GuardKind::SecretEcho => "secret_echo",
             GuardKind::PipeToShell => "pipe_to_shell",
             GuardKind::Sudo => "sudo",
+            GuardKind::SelfMatch => "self_match",
         }
     }
 
@@ -64,6 +68,7 @@ impl GuardKind {
             GuardKind::SecretEcho => "SecretEchoRefusalError",
             GuardKind::PipeToShell => "PipeToShellRefusalError",
             GuardKind::Sudo => "PrivilegeEscalationRefusalError",
+            GuardKind::SelfMatch => "SelfMatchRefusalError",
         }
     }
 
@@ -78,6 +83,7 @@ impl GuardKind {
             GuardKind::SecretEcho => "PI_BASH_ALLOW_SECRET_ECHO",
             GuardKind::PipeToShell => "PI_BASH_ALLOW_PIPE_TO_SHELL",
             GuardKind::Sudo => "PI_BASH_ALLOW_SUDO",
+            GuardKind::SelfMatch => "PI_BASH_ALLOW_SELF_MATCH",
         }
     }
 
@@ -91,6 +97,7 @@ impl GuardKind {
             GuardKind::SecretEcho => "allow_secret_echo",
             GuardKind::PipeToShell => "allow_pipe_to_shell",
             GuardKind::Sudo => "allow_sudo",
+            GuardKind::SelfMatch => "allow_self_match",
         }
     }
 }

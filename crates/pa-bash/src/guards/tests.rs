@@ -692,6 +692,51 @@ fn secrets_reaching_the_transcript_are_refused() {
 }
 
 #[test]
+fn kills_that_match_their_own_shell_are_refused() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::SelfMatch,
+        &[
+            "pkill -9 -f 'burpsuite'",
+            "pkill -f burpsuite; sleep 1; burpsuite &",
+            "pkill -f 'bun.*server.ts'",
+            "pkill -f \"tempo -config.file\"",
+            "kill $(pgrep -f 'run_full.sh')",
+            "kill -9 $(pgrep -f \"membench run\")",
+            "pgrep -f vulpine | xargs kill",
+            "pkill bash",
+            "pkill -x bash",
+            "killall bash",
+            "killall -r 'ba.h'",
+            "bash -c 'pkill -f worker-loop'",
+            "pkill -i -f BURPSUITE",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::SelfMatch,
+        &[
+            "pkill -9 -f '[b]urpsuite'",
+            "pkill -x burpsuite",
+            "pkill burpsuite",
+            "for p in a; do pkill -f \"$p\"; done",
+            "pgrep -f burpsuite",
+            "pgrep -af burpsuite | head",
+            "kill 1234",
+            "killall firefox",
+            "killall -r '^fire'",
+            "pkill -F /tmp/app.pid",
+        ],
+    );
+    let message = fixture
+        .refusal(GuardKind::SelfMatch, "pkill -9 -f 'burpsuite'")
+        .expect("refused");
+    assert!(message.contains("pkill -f '[b]urpsuite'"), "{message}");
+    assert!(message.contains("allow_self_match=True"), "{message}");
+}
+
+#[test]
 fn discards_on_a_dirty_tree_are_refused() {
     let fixture = Fixture::new();
     let repo = fixture.repo("app", "main", false);

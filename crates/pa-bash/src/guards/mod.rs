@@ -18,6 +18,7 @@ mod git;
 mod opaque;
 mod pipe_to_shell;
 mod secret_echo;
+mod self_match;
 mod sudo;
 
 #[cfg(test)]
@@ -77,6 +78,7 @@ pub(crate) fn judge(guard: GuardKind, check: &Check<'_>) -> Verdict {
         GuardKind::SecretEcho => verdict::<secret_echo::SecretEcho>(check),
         GuardKind::PipeToShell => verdict::<pipe_to_shell::PipeToShell>(check),
         GuardKind::Sudo => verdict::<sudo::Sudo>(check),
+        GuardKind::SelfMatch => verdict::<self_match::SelfMatch>(check),
     }
 }
 
