@@ -237,15 +237,25 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
             }
         }
         self.focus_window(window_id)?;
-        let refused = |reason: String| {
-            unsupported(format!(
-                "{reason}; no input was sent. Use element actions by index (they run through \
-                 AT-SPI), or re-observe and retry"
-            ))
-            .with_details(json!({"platform": "wayland", "window_id": window_id}))
+        let placement = self.placement(window_id)?;
+        let mut mapped = points;
+        for point in &mut mapped {
+            *point = self.map_point(window_id, &placement, *point)?;
+        }
+        #[allow(clippy::cast_possible_truncation)] // output sizes are far inside i32
+        let target = PointerTarget {
+            output: placement.output,
+            width: placement.output_rect.width as i32,
+            height: placement.output_rect.height as i32,
         };
-        // The rendered geometry after the focus settled, or the floating
-        // window's derived one on a niri without `WindowGeometry`.
+        Ok((target, mapped))
+    }
+
+    /// Where the just-focused window sits once it settled: the rendered
+    /// geometry, or the floating window's derived one on a niri without
+    /// `WindowGeometry`. A window that is not on screen, or whose position
+    /// or output geometry is unknown, is refused.
+    fn placement(&self, window_id: Target) -> Result<Placement> {
         let settled = self.settle(window_id, ErrorCode::InjectionFailed)?;
         let (origin, visible, output, output_rect) = if let Some(settled) = settled {
             let Some(rect) = settled.live_rect() else {
@@ -254,14 +264,16 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
                 } else {
                     "its workspace is not shown"
                 };
-                return Err(refused(format!(
-                    "window {window_id} is not on screen after focusing it ({why})"
-                )));
+                return Err(refused(
+                    window_id,
+                    &format!("window {window_id} is not on screen after focusing it ({why})"),
+                ));
             };
             let Some(visible) = settled.visible_rect else {
-                return Err(refused(format!(
-                    "window {window_id} is scrolled fully off screen"
-                )));
+                return Err(refused(
+                    window_id,
+                    &format!("window {window_id} is scrolled fully off screen"),
+                ));
             };
             let output_rect = match settled.output.as_deref() {
                 Some(name) => self.niri.output_rect(name)?,
@@ -276,60 +288,76 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         } else {
             let derived = self.niri.geometry(&self.require_window(window_id)?)?;
             let Some(origin) = derived.origin else {
-                return Err(refused(format!(
-                    "coordinate input needs the window's screen position: {}",
-                    derived.reason
-                )));
+                return Err(refused(
+                    window_id,
+                    &format!(
+                        "coordinate input needs the window's screen position: {}",
+                        derived.reason
+                    ),
+                ));
             };
             (origin, None, derived.output, derived.output_rect)
         };
         let Some(output_rect) = output_rect else {
-            return Err(refused(format!(
-                "the output of window {window_id} has no known geometry"
-            )));
+            return Err(refused(
+                window_id,
+                &format!("the output of window {window_id} has no known geometry"),
+            ));
         };
-        let mut mapped = points;
-        for point in &mut mapped {
-            let (x, y) = (origin.0 + point.0, origin.1 + point.1);
-            let repr = format!("({}, {})", repr_float(point.0), repr_float(point.1));
-            if let Some(visible) = visible {
-                if !(visible.x..visible.x + visible.width).contains(&x)
-                    || !(visible.y..visible.y + visible.height).contains(&y)
-                {
-                    return Err(refused(format!("point {repr} of the window is off screen")));
-                }
+        Ok(Placement {
+            origin,
+            visible,
+            output,
+            output_rect,
+        })
+    }
+
+    /// One window-relative point as an output-relative one, refused when it
+    /// is off screen or the compositor's hit test gives it to anything but
+    /// the window's input area.
+    fn map_point(&self, window_id: Target, placement: &Placement, point: Pair) -> Result<Pair> {
+        let (x, y) = (placement.origin.0 + point.0, placement.origin.1 + point.1);
+        let repr = format!("({}, {})", repr_float(point.0), repr_float(point.1));
+        if let Some(visible) = placement.visible {
+            if !(visible.x..visible.x + visible.width).contains(&x)
+                || !(visible.y..visible.y + visible.height).contains(&y)
+            {
+                return Err(refused(
+                    window_id,
+                    &format!("point {repr} of the window is off screen"),
+                ));
             }
-            if let Some(hit) = self.niri.window_at((x, y))? {
-                if let Some(layer) = hit.layer {
-                    return Err(refused(format!(
+        }
+        if let Some(hit) = self.niri.window_at((x, y))? {
+            if let Some(layer) = hit.layer {
+                return Err(refused(
+                    window_id,
+                    &format!(
                         "point {repr} is covered by the {} layer surface",
                         head(&layer.namespace, 64)
-                    )));
+                    ),
+                ));
+            }
+            match hit.window_id {
+                Some(id) if id == window_id && hit.is_input => {}
+                Some(id) if id == window_id => {
+                    return Err(refused(
+                        window_id,
+                        &format!("point {repr} is not in the window's input area"),
+                    ));
                 }
-                match hit.window_id {
-                    Some(id) if id == window_id && hit.is_input => {}
-                    Some(id) if id == window_id => {
-                        return Err(refused(format!(
-                            "point {repr} is not in the window's input area"
-                        )));
-                    }
-                    Some(id) => {
-                        return Err(refused(format!("point {repr} is covered by window {id}")));
-                    }
-                    None => {
-                        return Err(refused(format!("point {repr} hits no window")));
-                    }
+                Some(id) => {
+                    return Err(refused(
+                        window_id,
+                        &format!("point {repr} is covered by window {id}"),
+                    ));
+                }
+                None => {
+                    return Err(refused(window_id, &format!("point {repr} hits no window")));
                 }
             }
-            *point = (x - output_rect.x, y - output_rect.y);
         }
-        #[allow(clippy::cast_possible_truncation)] // output sizes are far inside i32
-        let target = PointerTarget {
-            output,
-            width: output_rect.width as i32,
-            height: output_rect.height as i32,
-        };
-        Ok((target, mapped))
+        Ok((x - placement.output_rect.x, y - placement.output_rect.y))
     }
 
     /// Whether another on-screen floating window intersects `rect` (a
@@ -456,6 +484,25 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         refuse_secure_focus(self.live_focus_security(window_id))?;
         self.input.send_keys(strokes)
     }
+}
+
+/// Where a focused, settled window sits for the virtual pointer, in global
+/// logical pixels.
+struct Placement {
+    origin: Pair,
+    /// The part of the window on its output (known on the niri fork only).
+    visible: Option<Rect>,
+    output: Option<String>,
+    output_rect: Rect,
+}
+
+/// Coordinate input refused after the focus moved: nothing was sent.
+fn refused(window_id: Target, reason: &str) -> ComputerUseError {
+    unsupported(format!(
+        "{reason}; no input was sent. Use element actions by index (they run through AT-SPI), \
+         or re-observe and retry"
+    ))
+    .with_details(json!({"platform": "wayland", "window_id": window_id}))
 }
 
 /// The `app_id` one spec names (stripped), refusing launch-path shapes.
