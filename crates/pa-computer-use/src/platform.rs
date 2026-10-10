@@ -147,8 +147,9 @@ pub(crate) struct Captured {
     /// The PNG's own pixel size (2x the logical size on a Retina/2x output).
     pub width: u32,
     pub height: u32,
-    /// The logical rect the capture covers, when the backend computed it
-    /// (Wayland); screenshot points scale back through it.
+    /// The logical rect the capture covers relative to the window's origin
+    /// (Wayland; popups or decorations can put it at a negative offset);
+    /// screenshot points map back through it.
     pub logical_rect: Option<Rect>,
 }
 

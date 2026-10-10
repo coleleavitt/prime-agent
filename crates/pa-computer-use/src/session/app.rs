@@ -300,15 +300,16 @@ impl<P: Platform> Session<P> {
             }
             PlatformKind::Wayland => {
                 // A screenshot of this window scales its pixels back to the
-                // logical size; without one the point is logical already.
+                // logical rect it covers, relative to the window's origin;
+                // without one the point is logical already.
                 match app.shot {
                     Some(shot) if shot.window_id == Some(app.target) => {
                         if !within(x, shot.size.0) || !within(y, shot.size.1) {
                             return Err(outside_image(repr, shot.size));
                         }
                         Ok((
-                            x * shot.rect.width / shot.size.0,
-                            y * shot.rect.height / shot.size.1,
+                            shot.rect.x + x * shot.rect.width / shot.size.0,
+                            shot.rect.y + y * shot.rect.height / shot.size.1,
                         ))
                     }
                     _ => Ok((x, y)),

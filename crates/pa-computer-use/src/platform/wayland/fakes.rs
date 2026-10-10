@@ -2,7 +2,7 @@
 //! scripted niri IPC server, a fake AT-SPI object graph, and a recorder at
 //! the virtual-input seam. Nothing touches a real session.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde_json::{json, Value};
@@ -13,6 +13,7 @@ use super::niri::NiriTransport;
 use crate::element::Pair;
 use crate::error::{ComputerUseError, Result};
 use crate::platform::{MouseButton, ScrollDirection};
+use crate::process::script::png_bytes;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -109,6 +110,185 @@ pub(crate) fn default_windows() -> Vec<Value> {
     ]
 }
 
+/// A logical rect as (x, y, width, height).
+pub(crate) type Bounds = (f64, f64, f64, f64);
+
+fn logical(bounds: Option<Bounds>) -> Value {
+    bounds.map_or(
+        Value::Null,
+        |(x, y, width, height)| json!({"x": x, "y": y, "width": width, "height": height}),
+    )
+}
+
+/// One `WindowGeometry` payload in the fork's shape (CONTRACT.md item A),
+/// settled, on screen when `window_rect` is known.
+pub(crate) fn rendered(
+    id: i64,
+    output: &str,
+    floating: bool,
+    window_rect: Option<Bounds>,
+    visible_rect: Option<Bounds>,
+) -> Value {
+    json!({
+        "id": id,
+        "output": output,
+        "scale": 1.0,
+        "workspace_id": 1,
+        "is_floating": floating,
+        "on_screen": window_rect.is_some(),
+        "tile_rect": logical(window_rect),
+        "window_rect": logical(window_rect),
+        "visible_rect": logical(visible_rect),
+        "fully_visible": window_rect.is_some() && window_rect == visible_rect,
+        "animating": false,
+        "overview_open": false,
+    })
+}
+
+/// The computer-use niri fork's state behind `WindowGeometry`,
+/// `CaptureWindow` and `WindowAt`.
+pub(crate) struct Fork {
+    /// The `WindowGeometry` payload per window id.
+    pub geometry: BTreeMap<i64, Value>,
+    /// How many more `WindowGeometry` replies report an animation.
+    pub animating: u32,
+    /// What `CaptureWindow` renders: the PNG size, the scale and the window
+    /// geometry's offset in it.
+    pub capture: ((u32, u32), f64, (i32, i32)),
+    /// A scripted `WindowAt` reply; otherwise the topmost on-screen window
+    /// (floating above tiled, focused first) under the point.
+    pub hit: Option<Value>,
+    /// The requests this fork refuses like upstream niri.
+    pub unknown: BTreeSet<&'static str>,
+}
+
+impl Default for Fork {
+    /// The default session's windows: the floating editor, its tiled second
+    /// window half off the right edge, the terminal scrolled off screen, the
+    /// floating app on HDMI.
+    fn default() -> Self {
+        let clip = |(x, y, width, height): Bounds| {
+            let (ox, oy, ow, oh) = (0.0, 0.0, 1920.0, 1200.0);
+            let (left, top) = (x.max(ox), y.max(oy));
+            let (right, bottom) = ((x + width).min(ox + ow), (y + height).min(oy + oh));
+            (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
+        };
+        let editor = (104.0, 56.0, 800.0, 600.0);
+        let other = (1320.0, 40.0, 800.0, 600.0);
+        let shell = (2000.0, 40.0, 800.0, 600.0);
+        let floaty = (1932.0, 23.0, 400.0, 300.0);
+        Self {
+            geometry: BTreeMap::from([
+                (10, rendered(10, "eDP-1", true, Some(editor), clip(editor))),
+                (11, rendered(11, "eDP-1", false, Some(other), clip(other))),
+                (20, rendered(20, "eDP-1", false, Some(shell), clip(shell))),
+                (
+                    30,
+                    rendered(30, "HDMI-A-1", true, Some(floaty), Some(floaty)),
+                ),
+            ]),
+            animating: 0,
+            capture: ((1616, 1236), 2.0, (8, 36)),
+            hit: None,
+            unknown: BTreeSet::new(),
+        }
+    }
+}
+
+impl Fork {
+    fn window_at(&self, windows: &[Value], (x, y): (f64, f64)) -> Value {
+        if let Some(hit) = &self.hit {
+            return hit.clone();
+        }
+        let flag = |value: &Value, name: &str| value[name].as_bool().unwrap_or(false);
+        let mut order: Vec<(&i64, &Value)> = self.geometry.iter().collect();
+        let focused = |id: i64| {
+            windows
+                .iter()
+                .any(|window| window["id"] == json!(id) && flag(window, "is_focused"))
+        };
+        order.sort_by_key(|(id, geometry)| (!flag(geometry, "is_floating"), !focused(**id)));
+        let under = order.into_iter().find(|(_, geometry)| {
+            let rect = &geometry["window_rect"];
+            let field = |name: &str| rect[name].as_f64().unwrap_or(0.0);
+            flag(geometry, "on_screen")
+                && (field("x")..field("x") + field("width")).contains(&x)
+                && (field("y")..field("y") + field("height")).contains(&y)
+        });
+        match under {
+            Some((id, geometry)) => json!({
+                "output": geometry["output"],
+                "window_id": id,
+                "window_local": [
+                    x - geometry["window_rect"]["x"].as_f64().unwrap(),
+                    y - geometry["window_rect"]["y"].as_f64().unwrap(),
+                ],
+                "is_input": true,
+                "layer": null,
+            }),
+            None => json!({
+                "output": null, "window_id": null, "window_local": null, "is_input": false,
+                "layer": null,
+            }),
+        }
+    }
+
+    /// Serve one fork request, `None` for any other request.
+    fn serve(
+        &mut self,
+        windows: &[Value],
+        request: &Value,
+    ) -> Option<std::result::Result<Value, String>> {
+        let (name, body) = request.as_object()?.iter().next()?;
+        let name = ["WindowGeometry", "CaptureWindow", "WindowAt"]
+            .into_iter()
+            .find(|known| known == name)?;
+        if self.unknown.contains(name) {
+            return Some(Err("error parsing request".to_string()));
+        }
+        let id = body["id"].as_i64();
+        Some(match name {
+            "WindowGeometry" => {
+                let Some(mut geometry) = self
+                    .geometry
+                    .get(&id.expect("the backend names its window"))
+                    .cloned()
+                else {
+                    return Some(Err("no such window".to_string()));
+                };
+                if self.animating > 0 {
+                    self.animating -= 1;
+                    geometry["animating"] = json!(true);
+                }
+                Ok(json!({"WindowGeometry": geometry}))
+            }
+            "CaptureWindow" => {
+                let id = id.expect("the backend names its window");
+                if !self.geometry.contains_key(&id) {
+                    return Some(Err("no such window".to_string()));
+                }
+                let path = body["path"].as_str().expect("an absolute path");
+                assert_eq!(body["show_pointer"], json!(false));
+                let ((width, height), scale, offset) = self.capture;
+                std::fs::write(path, png_bytes(width, height)).unwrap();
+                Ok(json!({"WindowCaptured": {
+                    "id": id,
+                    "path": path,
+                    "width_px": width,
+                    "height_px": height,
+                    "scale": scale,
+                    "window_offset_px": [offset.0, offset.1],
+                    "window_size_px": [1600, 1200],
+                }}))
+            }
+            _ => {
+                let point = (body["x"].as_f64().unwrap(), body["y"].as_f64().unwrap());
+                Ok(json!({"WindowAt": self.window_at(windows, point)}))
+            }
+        })
+    }
+}
+
 pub(crate) struct NiriState {
     pub windows: Vec<Value>,
     pub workspaces: Value,
@@ -119,6 +299,9 @@ pub(crate) struct NiriState {
     pub fail: Option<String>,
     /// Runs after a `FocusWindow` lands (a focus change moving onto a field).
     pub on_focus: Option<Arc<dyn Fn(i64) + Send + Sync>>,
+    /// The computer-use fork's requests; `None` refuses them like upstream
+    /// niri 26.04.
+    pub fork: Option<Fork>,
 }
 
 /// The scripted niri server; clones share state.
@@ -151,8 +334,21 @@ impl FakeNiri {
                 focus_lands: true,
                 fail: None,
                 on_focus: None,
+                fork: None,
             })),
         }
+    }
+
+    /// The default session on the computer-use niri fork.
+    pub(crate) fn fork() -> Self {
+        let niri = Self::default();
+        niri.state().fork = Some(Fork::default());
+        niri
+    }
+
+    /// Edit the fork's state (panics on an upstream fake).
+    pub(crate) fn edit_fork(&self, edit: impl FnOnce(&mut Fork)) {
+        edit(self.state().fork.as_mut().expect("a fork fake"));
     }
 
     pub(crate) fn state(&self) -> MutexGuard<'_, NiriState> {
@@ -184,6 +380,14 @@ impl NiriTransport for FakeNiri {
             state.requests.push(request.clone());
             if let Some(fail) = &state.fail {
                 return Ok(format!("{}\n", json!({"Err": fail})).into_bytes());
+            }
+            let NiriState { windows, fork, .. } = &mut *state;
+            if let Some(served) = fork.as_mut().and_then(|fork| fork.serve(windows, &request)) {
+                let reply = match served {
+                    Ok(ok) => json!({"Ok": ok}),
+                    Err(error) => json!({"Err": error}),
+                };
+                return Ok(format!("{reply}\n").into_bytes());
             }
             match request.as_str() {
                 Some("Windows") => (json!({"Windows": state.windows}), None),

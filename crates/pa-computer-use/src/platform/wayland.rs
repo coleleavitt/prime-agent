@@ -6,11 +6,13 @@
 //! Python skill's PyGObject/libatspi), element actions run through AT-SPI
 //! without moving focus, pointer and keyboard input through the
 //! compositor's virtual-input protocols after the bound window is focused
-//! and verified, and screenshots through `grim` over the window's logical
-//! rect (niri's own screenshot action always copies to the user's
-//! clipboard). `ydotool` is deliberately not used: its socket lets anything
-//! type as the user, its absolute motion is not pixel-accurate, its typing
-//! is US-ASCII.
+//! and verified, and screenshots through the computer-use niri fork's
+//! `CaptureWindow` request (upstream niri's screenshot action always copies
+//! to the user's clipboard, so there `grim` captures the window's logical
+//! rect). On the fork, coordinate input also waits for niri's animations to
+//! settle and is checked against the compositor's own hit test. `ydotool`
+//! is deliberately not used: its socket lets anything type as the user, its
+//! absolute motion is not pixel-accurate, its typing is US-ASCII.
 
 pub(crate) mod atspi;
 pub(crate) mod input;
@@ -27,10 +29,12 @@ use serde_json::{json, Value};
 
 use self::atspi::{Accessibility, AtSpi};
 use self::input::{chord_stroke, keysym_for_char, KeyStroke, PointerTarget, VirtualInput};
-use self::niri::{Niri, NiriTransport, WindowRecord};
+use self::niri::{Niri, NiriTransport, WindowGeometry, WindowRecord};
 use crate::capture::CaptureDir;
 use crate::element::{cap, Observation, Pair, Rect};
-use crate::error::{head, invalid, not_running, transport, unsupported, ComputerUseError, Result};
+use crate::error::{
+    head, invalid, not_running, transport, unsupported, ComputerUseError, ErrorCode, Result,
+};
 use crate::keymap::ParsedChord;
 use crate::permissions::{PermissionReport, PermissionState, WAYLAND_APPS_HELP_LINE};
 use crate::platform::logind;
@@ -125,7 +129,7 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
             }
             if Instant::now() >= deadline {
                 return Err(ComputerUseError::new(
-                    crate::error::ErrorCode::InjectionFailed,
+                    ErrorCode::InjectionFailed,
                     format!(
                         "focus did not land on window {window_id}; no input was sent. Re-observe \
                          and retry"
@@ -166,35 +170,159 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         }
     }
 
-    /// Map one window-relative logical point onto the window's output for
-    /// the virtual pointer, refusing a window whose position niri hides.
-    fn pointer_point(&self, window_id: Target, (x, y): Pair) -> Result<(PointerTarget, Pair)> {
+    /// Poll niri's geometry of the window until no animation moves it
+    /// (bounded like the focus wait); `None` on a niri without
+    /// `WindowGeometry`. A window still moving at the deadline fails with
+    /// `code`.
+    fn settle(&self, window_id: Target, code: ErrorCode) -> Result<Option<WindowGeometry>> {
+        let deadline = Instant::now() + self.focus_wait;
+        loop {
+            let Some(geometry) = self.niri.window_geometry(window_id)? else {
+                return Ok(None);
+            };
+            if !geometry.animating {
+                return Ok(Some(geometry));
+            }
+            if Instant::now() >= deadline {
+                return Err(ComputerUseError::new(
+                    code,
+                    format!(
+                        "window {window_id} was still animating after {} ms; nothing was sent \
+                         or captured. Retry once it has settled",
+                        self.focus_wait.as_millis()
+                    ),
+                )
+                .with_details(json!({"window_id": window_id})));
+            }
+            std::thread::sleep(FOCUS_POLL);
+        }
+    }
+
+    /// Focus the bound window, let it settle, and map window-relative
+    /// logical points onto its output for the virtual pointer. A point
+    /// outside the window, or a window whose position niri hides, is refused
+    /// before focus moves; a point that is off screen or that the
+    /// compositor's hit test gives to something else is refused after.
+    fn aim<const K: usize>(
+        &self,
+        window_id: Target,
+        points: [Pair; K],
+    ) -> Result<(PointerTarget, [Pair; K])> {
         let geometry = self.niri.geometry(&self.require_window(window_id)?)?;
-        let (Some((origin_x, origin_y)), Some(output)) = (geometry.origin, geometry.output_rect)
-        else {
+        let rendered = self.niri.window_geometry(window_id)?.is_some();
+        if !rendered && (geometry.origin.is_none() || geometry.output_rect.is_none()) {
             return Err(unsupported(format!(
                 "coordinate input needs the window's screen position: {}. Use element actions by \
                  index (they run through AT-SPI), or ask the user to make the window floating",
                 geometry.reason
             ))
             .with_details(json!({"platform": "wayland", "window_id": window_id})));
-        };
-        if !(0.0..geometry.width).contains(&x) || !(0.0..geometry.height).contains(&y) {
-            let repr = format!("({}, {})", repr_float(x), repr_float(y));
-            return Err(invalid(format!(
-                "point {repr} is outside the window ({}x{})",
-                fixed0(geometry.width),
-                fixed0(geometry.height)
+        }
+        for (x, y) in points {
+            if !(0.0..geometry.width).contains(&x) || !(0.0..geometry.height).contains(&y) {
+                let repr = format!("({}, {})", repr_float(x), repr_float(y));
+                return Err(invalid(format!(
+                    "point {repr} is outside the window ({}x{})",
+                    fixed0(geometry.width),
+                    fixed0(geometry.height)
+                ))
+                .with_details(json!({"point": head(&repr, 64)})));
+            }
+        }
+        self.focus_window(window_id)?;
+        let refused = |reason: String| {
+            unsupported(format!(
+                "{reason}; no input was sent. Use element actions by index (they run through \
+                 AT-SPI), or re-observe and retry"
             ))
-            .with_details(json!({"point": head(&repr, 64)})));
+            .with_details(json!({"platform": "wayland", "window_id": window_id}))
+        };
+        // The rendered geometry after the focus settled, or the floating
+        // window's derived one on a niri without `WindowGeometry`.
+        let settled = self.settle(window_id, ErrorCode::InjectionFailed)?;
+        let (origin, visible, output, output_rect) = if let Some(settled) = settled {
+            let Some(rect) = settled.live_rect() else {
+                let why = if settled.overview_open {
+                    "the overview is open"
+                } else {
+                    "its workspace is not shown"
+                };
+                return Err(refused(format!(
+                    "window {window_id} is not on screen after focusing it ({why})"
+                )));
+            };
+            let Some(visible) = settled.visible_rect else {
+                return Err(refused(format!(
+                    "window {window_id} is scrolled fully off screen"
+                )));
+            };
+            let output_rect = match settled.output.as_deref() {
+                Some(name) => self.niri.output_rect(name)?,
+                None => None,
+            };
+            (
+                (rect.x, rect.y),
+                Some(Rect::from(visible)),
+                settled.output,
+                output_rect,
+            )
+        } else {
+            let derived = self.niri.geometry(&self.require_window(window_id)?)?;
+            let Some(origin) = derived.origin else {
+                return Err(refused(format!(
+                    "coordinate input needs the window's screen position: {}",
+                    derived.reason
+                )));
+            };
+            (origin, None, derived.output, derived.output_rect)
+        };
+        let Some(output_rect) = output_rect else {
+            return Err(refused(format!(
+                "the output of window {window_id} has no known geometry"
+            )));
+        };
+        let mut mapped = points;
+        for point in &mut mapped {
+            let (x, y) = (origin.0 + point.0, origin.1 + point.1);
+            let repr = format!("({}, {})", repr_float(point.0), repr_float(point.1));
+            if let Some(visible) = visible {
+                if !(visible.x..visible.x + visible.width).contains(&x)
+                    || !(visible.y..visible.y + visible.height).contains(&y)
+                {
+                    return Err(refused(format!("point {repr} of the window is off screen")));
+                }
+            }
+            if let Some(hit) = self.niri.window_at((x, y))? {
+                if let Some(layer) = hit.layer {
+                    return Err(refused(format!(
+                        "point {repr} is covered by the {} layer surface",
+                        head(&layer.namespace, 64)
+                    )));
+                }
+                match hit.window_id {
+                    Some(id) if id == window_id && hit.is_input => {}
+                    Some(id) if id == window_id => {
+                        return Err(refused(format!(
+                            "point {repr} is not in the window's input area"
+                        )));
+                    }
+                    Some(id) => {
+                        return Err(refused(format!("point {repr} is covered by window {id}")));
+                    }
+                    None => {
+                        return Err(refused(format!("point {repr} hits no window")));
+                    }
+                }
+            }
+            *point = (x - output_rect.x, y - output_rect.y);
         }
         #[allow(clippy::cast_possible_truncation)] // output sizes are far inside i32
         let target = PointerTarget {
-            output: geometry.output,
-            width: output.width as i32,
-            height: output.height as i32,
+            output,
+            width: output_rect.width as i32,
+            height: output_rect.height as i32,
         };
-        Ok((target, (origin_x + x - output.x, origin_y + y - output.y)))
+        Ok((target, mapped))
     }
 
     /// Whether another on-screen floating window intersects `rect` (a
@@ -227,8 +355,34 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         Ok(false)
     }
 
+    /// The window rendered alone by niri's `CaptureWindow` (tiled, covered
+    /// or off-screen windows included), else `grim` over the logical rect of
+    /// a floating, uncovered window. The captured rect is window-relative:
+    /// screenshot points map back through it.
     fn screenshot(&self, window_id: Target) -> Result<Captured> {
         let window = self.require_window(window_id)?;
+        self.settle(window_id, ErrorCode::TransportError)?;
+        let dir = self.capture.open()?;
+        let (name, path) = dir.new_target()?;
+        let path = path.to_string_lossy().into_owned();
+        if let Some(capture) = self.niri.capture_window(window_id, &path)? {
+            let (png_width, png_height) = dir.png_dimensions(&name)?;
+            dir.make_private(&name);
+            dir.sweep(Some(&name));
+            let scale = capture.scale;
+            let (offset_x, offset_y) = capture.window_offset_px;
+            return Ok(Captured {
+                path,
+                width: png_width,
+                height: png_height,
+                logical_rect: Some(Rect::new(
+                    -f64::from(offset_x) / scale,
+                    -f64::from(offset_y) / scale,
+                    f64::from(png_width) / scale,
+                    f64::from(png_height) / scale,
+                )),
+            });
+        }
         let geometry = self.niri.geometry(&window)?;
         let Some(rect) = geometry.rect() else {
             return Err(unsupported(format!(
@@ -253,9 +407,6 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         #[allow(clippy::cast_possible_truncation)] // screen coordinates are far inside i64
         let [x, y, width, height] =
             [rect.x, rect.y, rect.width, rect.height].map(|value| value.round_ties_even() as i64);
-        let dir = self.capture.open()?;
-        let (name, path) = dir.new_target()?;
-        let path = path.to_string_lossy().into_owned();
         let output = run_tool(
             &self.tools,
             &[
@@ -277,12 +428,17 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
         dir.make_private(&name);
         dir.sweep(Some(&name));
         #[allow(clippy::cast_precision_loss)] // screen coordinates are far inside f64's mantissa
-        let logical = Rect::new(x as f64, y as f64, width as f64, height as f64);
+        let captured = Rect::new(
+            x as f64 - rect.x,
+            y as f64 - rect.y,
+            width as f64,
+            height as f64,
+        );
         Ok(Captured {
             path,
             width: png_width,
             height: png_height,
-            logical_rect: Some(logical),
+            logical_rect: Some(captured),
         })
     }
 
@@ -616,11 +772,15 @@ where
         }
     }
 
-    /// niri's title, the absolute logical rect when niri exposes it, and the
+    /// niri's title, the absolute logical rect while the window is on screen
+    /// (only for a floating one on a niri without `WindowGeometry`), and the
     /// AT-SPI frame's showing descendants (empty for an app off the bus).
     fn observe(&self, window_id: Target) -> Result<Observation<A::Node>> {
         let window = self.require_window(window_id)?;
-        let window_rect = self.niri.geometry(&window)?.rect();
+        let window_rect = match self.niri.window_geometry(window_id)? {
+            Some(geometry) => geometry.live_rect(),
+            None => self.niri.geometry(&window)?.rect(),
+        };
         self.accessibility.bus.available().map_err(transport)?;
         let frame = self
             .accessibility
@@ -690,21 +850,15 @@ where
         self.live_focus_security(target)
     }
 
-    /// Focus the window, then click through the virtual pointer (an
-    /// unmappable point is refused before focus moves).
+    /// Focus the window, then click through the virtual pointer (see
+    /// `aim` for what is refused, and when).
     fn click(&self, window_id: Target, point: Pair, button: MouseButton, count: u32) -> Result<()> {
-        self.pointer_point(window_id, point)?;
-        self.focus_window(window_id)?;
-        let (target, local) = self.pointer_point(window_id, point)?;
+        let (target, [local]) = self.aim(window_id, [point])?;
         self.input.click(&target, local, button, count)
     }
 
     fn drag(&self, window_id: Target, from: Pair, to: Pair) -> Result<()> {
-        self.pointer_point(window_id, from)?;
-        self.pointer_point(window_id, to)?;
-        self.focus_window(window_id)?;
-        let (target, start) = self.pointer_point(window_id, from)?;
-        let (_, end) = self.pointer_point(window_id, to)?;
+        let (target, [start, end]) = self.aim(window_id, [from, to])?;
         self.input.drag(&target, start, end)
     }
 
@@ -715,9 +869,7 @@ where
         pages: u32,
         point: Pair,
     ) -> Result<()> {
-        self.pointer_point(window_id, point)?;
-        self.focus_window(window_id)?;
-        let (target, local) = self.pointer_point(window_id, point)?;
+        let (target, [local]) = self.aim(window_id, [point])?;
         self.input
             .scroll(&target, local, direction, pages * WHEEL_CLICKS_PER_PAGE)
     }

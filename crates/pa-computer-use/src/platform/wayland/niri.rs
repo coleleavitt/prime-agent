@@ -2,12 +2,19 @@
 //! `{"Ok": ...}` / `{"Err": ...}` reply line.
 //!
 //! The app identity is the Wayland `app_id`, the bound id is niri's window
-//! id. niri exposes a window's on-screen position only for floating windows
-//! (a tiled window's scrolling-view offset is not in the IPC), so the
-//! absolute rect is derivable only for a floating window on an active
-//! workspace: the output's logical origin, plus the tile position, plus the
-//! window's offset in its tile.
+//! id. The computer-use niri fork answers three more requests:
+//! `WindowGeometry` (any window's rendered rect, tiled ones included, and
+//! whether an animation is moving it), `CaptureWindow` (the window rendered
+//! alone into a PNG) and `WindowAt` (the compositor's own input hit test).
+//! Upstream niri refuses them as unparseable, so each has a fallback: niri
+//! 26.04 exposes a window's on-screen position only for floating windows (a
+//! tiled window's scrolling-view offset is not in its IPC), so the absolute
+//! rect is derivable only for a floating window on an active workspace: the
+//! output's logical origin, plus the tile position, plus the window's offset
+//! in its tile.
 
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::element::Rect;
@@ -55,9 +62,78 @@ fn pair(value: Option<&Value>) -> Option<(f64, f64)> {
     Some((float(items.first()), float(items.get(1))))
 }
 
+/// niri's whole `Err` text for a request line it cannot deserialize: the
+/// IPC server reports only the context, not serde's "unknown variant". A
+/// well-formed fork request gets it exactly when this niri predates the
+/// request.
+const UNKNOWN_REQUEST: &str = "error parsing request";
+
+/// A rect in global logical pixels (niri-ipc's `LogicalRect`).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub(crate) struct LogicalRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<LogicalRect> for Rect {
+    fn from(rect: LogicalRect) -> Self {
+        Rect::new(rect.x, rect.y, rect.width, rect.height)
+    }
+}
+
+/// The fields of the fork's `WindowGeometry` reply the backend reads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct WindowGeometry {
+    pub output: Option<String>,
+    /// Its workspace is the visible one on its output and the overview is
+    /// closed.
+    pub on_screen: bool,
+    /// The rendered window-geometry rect, animations included.
+    pub window_rect: Option<LogicalRect>,
+    /// `window_rect` clipped to its output, `None` when fully off screen.
+    pub visible_rect: Option<LogicalRect>,
+    pub animating: bool,
+    pub overview_open: bool,
+}
+
+impl WindowGeometry {
+    /// The rect where input reaches the window right now: on screen, the
+    /// overview closed.
+    pub(crate) fn live_rect(&self) -> Option<Rect> {
+        self.window_rect
+            .filter(|_| self.on_screen && !self.overview_open)
+            .map(Rect::from)
+    }
+}
+
+/// The fork's `WindowCaptured` reply: the PNG's size and where the window
+/// geometry sits in it (popups and client-side decorations can grow it).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct WindowCapture {
+    pub scale: f64,
+    pub window_offset_px: (i32, i32),
+}
+
+/// The layer-shell surface a hit test found on top.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct LayerHit {
+    pub namespace: String,
+}
+
+/// The fork's `WindowAt` reply.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct PointHit {
+    pub window_id: Option<i64>,
+    /// Clicks reach the window (false on its border or a hidden part).
+    pub is_input: bool,
+    pub layer: Option<LayerHit>,
+}
+
 impl<N: NiriTransport> Niri<N> {
-    /// Run one request and unwrap its `Ok` payload.
-    pub(crate) fn request(&self, request: &Value) -> Result<Value> {
+    /// Run one request: its `Ok` payload, or niri's `Err` text.
+    fn exchange(&self, request: &Value) -> Result<std::result::Result<Value, String>> {
         let mut line = request.to_string().into_bytes();
         line.push(b'\n');
         let raw = self.transport.exchange(&line)?;
@@ -67,19 +143,95 @@ impl<N: NiriTransport> Niri<N> {
             .and_then(|text| serde_json::from_str(text).ok())
             .ok_or_else(|| transport("niri IPC returned an unreadable reply"))?;
         if let Some(error) = reply.get("Err") {
-            let reason = error
+            return Ok(Err(error
                 .as_str()
-                .map_or_else(|| error.to_string(), ToString::to_string);
-            return Err(transport(format!(
-                "niri IPC refused the request: {}",
-                head(&reason, ERROR_LIMIT)
-            )));
+                .map_or_else(|| error.to_string(), ToString::to_string)));
         }
         reply
             .get("Ok")
             .filter(|_| reply.is_object())
             .cloned()
+            .map(Ok)
             .ok_or_else(|| transport("niri IPC returned an unexpected reply"))
+    }
+
+    /// Run one request and unwrap its `Ok` payload.
+    pub(crate) fn request(&self, request: &Value) -> Result<Value> {
+        self.exchange(request)?.map_err(|reason| {
+            transport(format!(
+                "niri IPC refused the request: {}",
+                head(&reason, ERROR_LIMIT)
+            ))
+        })
+    }
+
+    /// Run one fork request and read its `name` payload, `None` when this
+    /// niri does not know the request.
+    fn extension<T: DeserializeOwned>(&self, request: &Value, name: &str) -> Result<Option<T>> {
+        let ok = match self.exchange(request)? {
+            Err(reason) if reason == UNKNOWN_REQUEST => return Ok(None),
+            Err(reason) => {
+                return Err(transport(format!(
+                    "niri IPC refused the {name} request: {}",
+                    head(&reason, ERROR_LIMIT)
+                )))
+            }
+            Ok(ok) => ok,
+        };
+        let payload = ok
+            .get(name)
+            .cloned()
+            .ok_or_else(|| transport(format!("niri IPC returned no {name} payload")))?;
+        serde_json::from_value(payload).map(Some).map_err(|error| {
+            transport(format!(
+                "niri IPC returned an unreadable {name} payload: {}",
+                head(&error.to_string(), ERROR_LIMIT)
+            ))
+        })
+    }
+
+    /// The window's rendered geometry, `None` on a niri without the request.
+    pub(crate) fn window_geometry(&self, window_id: i64) -> Result<Option<WindowGeometry>> {
+        self.extension(
+            &json!({"WindowGeometry": {"id": window_id}}),
+            "WindowGeometry",
+        )
+    }
+
+    /// Render the window alone into the PNG at `path` (niri replies once the
+    /// file is written), `None` on a niri without the request.
+    pub(crate) fn capture_window(
+        &self,
+        window_id: i64,
+        path: &str,
+    ) -> Result<Option<WindowCapture>> {
+        self.extension(
+            &json!({"CaptureWindow": {"id": window_id, "path": path, "show_pointer": false}}),
+            "WindowCaptured",
+        )
+    }
+
+    /// The compositor's input hit test at one global logical point, `None`
+    /// on a niri without the request.
+    pub(crate) fn window_at(&self, (x, y): (f64, f64)) -> Result<Option<PointHit>> {
+        self.extension(&json!({"WindowAt": {"x": x, "y": y}}), "WindowAt")
+    }
+
+    /// One output's logical rect, by name.
+    pub(crate) fn output_rect(&self, name: &str) -> Result<Option<Rect>> {
+        let outputs = self.response("Outputs")?;
+        Ok(outputs
+            .get(name)
+            .and_then(|output| output.get("logical"))
+            .filter(|logical| logical.is_object())
+            .map(|logical| {
+                Rect::new(
+                    float(logical.get("x")),
+                    float(logical.get("y")),
+                    float(logical.get("width")),
+                    float(logical.get("height")),
+                )
+            }))
     }
 
     /// Run one unit request (`"Windows"`, ...) and return its payload.
@@ -149,20 +301,10 @@ impl<N: NiriTransport> Niri<N> {
             .and_then(|workspace| workspace.get("output"))
             .and_then(Value::as_str)
             .map(ToString::to_string);
-        let outputs = self.response("Outputs")?;
-        let logical = output
-            .as_deref()
-            .and_then(|name| outputs.get(name))
-            .and_then(|output| output.get("logical"))
-            .filter(|logical| logical.is_object());
-        let output_rect = logical.map(|logical| {
-            Rect::new(
-                float(logical.get("x")),
-                float(logical.get("y")),
-                float(logical.get("width")),
-                float(logical.get("height")),
-            )
-        });
+        let output_rect = match output.as_deref() {
+            Some(name) => self.output_rect(name)?,
+            None => None,
+        };
         let geometry = |origin, reason| Geometry {
             origin,
             width,

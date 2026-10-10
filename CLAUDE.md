@@ -99,7 +99,8 @@ Open:
   for aarch64-apple-darwin, never run); none has been live-tested yet. The removed Python Wayland backend was
   live-tested on niri 26.04 with a GTK 4 window; tiled windows lacked coordinate input and screenshots there (niri
   exposes positions only for floating windows), and the Rust Wayland backend refuses coordinate input on a tiled
-  window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`).
+  window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`) unless niri is the
+  computer-use fork (`WindowGeometry`/`CaptureWindow`/`WindowAt`, contract in the niri fork's `CONTRACT.md`).
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
 
 ## Working Rules

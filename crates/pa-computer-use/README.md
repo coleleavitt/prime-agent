@@ -17,8 +17,9 @@ client: it checks the Python-typed arguments, forwards each call, raises `{"erro
   refusals), `render` (element-indexed text and its difflib-exact diff), `keymap`, `capture` (the hardened
   screenshot directory), `pyfmt` (Python `repr`/`round`/`casefold` text forms the model reads).
 - `platform::x11`: `xwininfo`/`xdotool`/`maim`|`scrot` subprocesses.
-- `platform::wayland`: niri IPC, AT-SPI over `zbus`/`atspi-proxies`, the wlr virtual pointer and the virtual
-  keyboard over `wayland-client`, `grim`.
+- `platform::wayland`: niri IPC (plus the computer-use niri fork's `WindowGeometry`, `CaptureWindow` and
+  `WindowAt`, each falling back when niri refuses it as unknown), AT-SPI over `zbus`/`atspi-proxies`, the wlr
+  virtual pointer and the virtual keyboard over `wayland-client`, `grim` (screenshots on upstream niri).
 - `platform::mac`: the AX walk and reads (`mac::ax`, over a raw AX seam), `CGEvent` sequences (`mac::events`),
   `NSWorkspace`/Spotlight/`open`/`screencapture` flows; `mac::sys` is the objc2 FFI — the crate's only `unsafe`
   module (`unsafe_code = "deny"` everywhere else), every block with a `SAFETY:` comment.

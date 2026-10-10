@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::fakes::{
-    editor_app, floaty_app, niri_window, FakeAtSpi, FakeNiri, Input, InputRecorder, Node,
+    editor_app, floaty_app, niri_window, rendered, FakeAtSpi, FakeNiri, Input, InputRecorder, Node,
 };
 use super::input::{KeyStroke, PointerTarget};
 use super::*;
@@ -790,7 +790,8 @@ fn grim_captures_the_logical_rect_into_the_hardened_dir() {
     assert_eq!((captured.width, captured.height), (1600, 1200));
     assert_eq!(
         captured.logical_rect,
-        Some(Rect::new(104.0, 56.0, 800.0, 600.0))
+        Some(Rect::new(0.0, 0.0, 800.0, 600.0)),
+        "window-relative"
     );
     let mode =
         |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
@@ -936,6 +937,331 @@ fn the_status_reports_real_capabilities_and_names_missing_pieces() {
         help.contains("accessibility bus")
             && help.contains("grim")
             && help.contains("zwlr_virtual_pointer_manager_v1")
+    );
+}
+
+// --- the computer-use niri fork ------------------------------------------------
+
+#[test]
+fn unknown_fork_requests_fall_back_and_other_refusals_stay_errors() {
+    let unknown = Niri {
+        transport: Canned(b"{\"Err\":\"error parsing request\"}\n"),
+    };
+    assert_eq!(unknown.window_geometry(10).unwrap(), None);
+    assert_eq!(unknown.capture_window(10, "/tmp/x.png").unwrap(), None);
+    assert_eq!(unknown.window_at((1.0, 2.0)).unwrap(), None);
+    assert_eq!(
+        unknown.windows().unwrap_err().message,
+        "niri IPC refused the request: error parsing request",
+        "only the fork requests fall back"
+    );
+    let gone = Niri {
+        transport: Canned(b"{\"Err\":\"no such window\"}\n"),
+    };
+    assert_eq!(
+        gone.window_geometry(10).unwrap_err(),
+        transport("niri IPC refused the WindowGeometry request: no such window")
+    );
+    let garbled = Niri {
+        transport: Canned(b"{\"Ok\":{\"WindowAt\":{\"window_id\":\"ten\"}}}\n"),
+    };
+    let error = garbled.window_at((1.0, 2.0)).unwrap_err();
+    assert_eq!(error.code, ErrorCode::TransportError);
+    assert!(
+        error
+            .message
+            .starts_with("niri IPC returned an unreadable WindowAt payload: "),
+        "{}",
+        error.message
+    );
+}
+
+fn fork_world() -> World {
+    world_with(FakeNiri::fork(), FakeAtSpi::default(), &["loginctl"])
+}
+
+/// The requests named `name`, in order.
+fn requests(world: &World, name: &str) -> Vec<serde_json::Value> {
+    world
+        .niri
+        .state()
+        .requests
+        .iter()
+        .filter(|request| request.get(name).is_some())
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn rendered_geometry_gives_tiled_windows_coordinate_input() {
+    let world = fork_world();
+    assert_eq!(
+        world.platform.observe(11).unwrap().window_rect,
+        Some(Rect::new(1320.0, 40.0, 800.0, 600.0))
+    );
+    world
+        .platform
+        .click(11, (100.0, 100.0), MouseButton::Left, 1)
+        .unwrap();
+    assert_eq!(
+        world.niri.actions(),
+        [json!({"Action": {"FocusWindow": {"id": 11}}})]
+    );
+    assert_eq!(
+        world.input.calls(),
+        [Input::Click(
+            edp(),
+            (1420.0, 140.0),
+            MouseButton::Left,
+            1,
+            Some(11)
+        )]
+    );
+    assert_eq!(
+        requests(&world, "WindowGeometry")[0],
+        json!({"WindowGeometry": {"id": 11}})
+    );
+    assert_eq!(
+        requests(&world, "WindowAt"),
+        [json!({"WindowAt": {"x": 1420.0, "y": 140.0}})]
+    );
+}
+
+#[test]
+fn points_off_screen_or_on_a_hidden_window_are_refused_after_focus() {
+    let world = fork_world();
+    let off_edge = world
+        .platform
+        .click(11, (700.0, 10.0), MouseButton::Left, 1)
+        .unwrap_err();
+    assert_eq!(off_edge.code, ErrorCode::ActionUnsupported);
+    assert!(
+        off_edge
+            .message
+            .contains("(700.0, 10.0) of the window is off screen"),
+        "{}",
+        off_edge.message
+    );
+    let scrolled_off = world
+        .platform
+        .scroll(20, ScrollDirection::Down, 1, (1.0, 1.0))
+        .unwrap_err();
+    assert!(
+        scrolled_off.message.contains("scrolled fully off screen"),
+        "{}",
+        scrolled_off.message
+    );
+    world.niri.edit_fork(|fork| {
+        fork.geometry.get_mut(&30).unwrap()["overview_open"] = json!(true);
+    });
+    let overview = world.platform.drag(30, (1.0, 1.0), (2.0, 2.0)).unwrap_err();
+    assert!(
+        overview.message.contains("the overview is open"),
+        "{}",
+        overview.message
+    );
+    assert_eq!(world.input.calls(), Vec::<Input>::new());
+}
+
+#[test]
+fn input_waits_for_niri_to_settle_and_refuses_a_window_that_never_does() {
+    let world = fork_world();
+    world.niri.edit_fork(|fork| fork.animating = 3);
+    world
+        .platform
+        .click(30, (1.0, 1.0), MouseButton::Left, 1)
+        .unwrap();
+    assert_eq!(
+        requests(&world, "WindowGeometry").len(),
+        4,
+        "the pre-check, two animating polls, the settled one"
+    );
+    assert_eq!(world.input.calls().len(), 1);
+    world.niri.edit_fork(|fork| fork.animating = u32::MAX);
+    let error = world
+        .platform
+        .click(30, (1.0, 1.0), MouseButton::Left, 1)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ComputerUseError::new(
+            ErrorCode::InjectionFailed,
+            "window 30 was still animating after 50 ms; nothing was sent or captured. Retry once \
+             it has settled"
+        )
+        .with_details(json!({"window_id": 30}))
+    );
+    assert_eq!(world.input.calls().len(), 1);
+}
+
+#[test]
+fn the_hit_test_refuses_layers_borders_and_covering_windows() {
+    let world = fork_world();
+    world.niri.edit_fork(|fork| {
+        fork.geometry.insert(
+            12,
+            rendered(
+                12,
+                "eDP-1",
+                true,
+                Some((1400.0, 100.0, 200.0, 200.0)),
+                Some((1400.0, 100.0, 200.0, 200.0)),
+            ),
+        );
+    });
+    let mut refusals = vec![world
+        .platform
+        .click(11, (100.0, 100.0), MouseButton::Left, 1)
+        .unwrap_err()];
+    for hit in [
+        json!({"output": "eDP-1", "window_id": null, "window_local": null, "is_input": false,
+               "layer": {"namespace": "waybar", "layer": "Top"}}),
+        json!({"output": "eDP-1", "window_id": 11, "window_local": [0.0, 0.0], "is_input": false,
+               "layer": null}),
+        json!({"output": "eDP-1", "window_id": null, "window_local": null, "is_input": false,
+               "layer": null}),
+    ] {
+        world.niri.edit_fork(|fork| fork.hit = Some(hit));
+        refusals.push(
+            world
+                .platform
+                .drag(11, (10.0, 10.0), (20.0, 20.0))
+                .unwrap_err(),
+        );
+    }
+    let messages: Vec<String> = refusals
+        .into_iter()
+        .map(|error| {
+            assert_eq!(error.code, ErrorCode::ActionUnsupported);
+            error.message
+        })
+        .collect();
+    let reasons = [
+        "point (100.0, 100.0) is covered by window 12",
+        "point (10.0, 10.0) is covered by the waybar layer surface",
+        "point (10.0, 10.0) is not in the window's input area",
+        "point (10.0, 10.0) hits no window",
+    ];
+    for (message, reason) in messages.iter().zip(reasons) {
+        assert!(message.starts_with(reason), "{message}");
+    }
+    assert_eq!(world.input.calls(), Vec::<Input>::new());
+}
+
+#[test]
+fn each_fork_request_falls_back_on_its_own() {
+    // Geometry unknown: the floating window's derived rect, still hit tested.
+    let world = fork_world();
+    world.niri.edit_fork(|fork| {
+        fork.unknown.insert("WindowGeometry");
+        fork.hit = Some(
+            json!({"output": "HDMI-A-1", "window_id": 99, "window_local": [0.0, 0.0],
+                               "is_input": true, "layer": null}),
+        );
+    });
+    let covered = world
+        .platform
+        .click(30, (1.0, 1.0), MouseButton::Left, 1)
+        .unwrap_err();
+    assert!(covered.message.contains("covered by window 99"));
+    let tiled = world
+        .platform
+        .click(11, (1.0, 1.0), MouseButton::Left, 1)
+        .unwrap_err();
+    assert!(tiled.message.contains("floating"), "{}", tiled.message);
+    // Hit test unknown: the input goes out as on upstream niri.
+    let world = fork_world();
+    world.niri.edit_fork(|fork| {
+        fork.unknown.insert("WindowAt");
+        fork.hit = Some(json!({"window_id": 99, "is_input": true, "layer": null}));
+    });
+    world
+        .platform
+        .click(11, (100.0, 100.0), MouseButton::Left, 1)
+        .unwrap();
+    assert_eq!(world.input.calls().len(), 1);
+}
+
+#[test]
+fn capture_window_renders_any_window_into_the_hardened_dir_without_grim() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = fork_world();
+    world.niri.focus(20);
+    let captured = world.platform.capture(CaptureRequest::Window(11)).unwrap();
+    assert_eq!(
+        captured,
+        Captured {
+            path: captured.path.clone(),
+            width: 1616,
+            height: 1236,
+            logical_rect: Some(Rect::new(-4.0, -18.0, 808.0, 618.0)),
+        }
+    );
+    assert_eq!(
+        requests(&world, "CaptureWindow"),
+        [json!({"CaptureWindow": {"id": 11, "path": captured.path, "show_pointer": false}})]
+    );
+    let path = std::path::Path::new(&captured.path);
+    assert_eq!(path.parent().unwrap(), world.shots.path().join("shots"));
+    let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(world.script.calls().is_empty(), "no grim");
+}
+
+#[test]
+fn capture_waits_for_the_settle_and_falls_back_to_grim_when_unknown() {
+    let world = fork_world();
+    world.niri.edit_fork(|fork| fork.animating = u32::MAX);
+    let moving = world
+        .platform
+        .capture(CaptureRequest::Window(10))
+        .unwrap_err();
+    assert_eq!(moving.code, ErrorCode::TransportError);
+    assert_eq!(
+        requests(&world, "CaptureWindow"),
+        Vec::<serde_json::Value>::new()
+    );
+    let world = world_with(FakeNiri::fork(), FakeAtSpi::default(), &["grim"]);
+    world.niri.edit_fork(|fork| {
+        fork.unknown.insert("CaptureWindow");
+    });
+    world.script.on_png(&["-g"], (1600, 1200));
+    world.platform.capture(CaptureRequest::Window(10)).unwrap();
+    assert_eq!(
+        world.script.calls()[0][..3],
+        ["/usr/bin/grim", "-g", "104,56 800x600"]
+    );
+    let tiled = world
+        .platform
+        .capture(CaptureRequest::Window(11))
+        .unwrap_err();
+    assert_eq!(tiled.code, ErrorCode::ActionUnsupported);
+}
+
+#[test]
+fn fork_screenshot_points_map_through_the_window_offset() {
+    let (env, world) = app_env(
+        FakeNiri::fork(),
+        FakeAtSpi::default(),
+        &["org.gnome.TextEditor"],
+    );
+    let app = bind(&env, "org.gnome.TextEditor");
+    env.session
+        .call(app.handle, AppCall::GetScreenshot)
+        .unwrap();
+    // Pixel (28, 76) is 20x40 px past the window's offset (8, 36) at 2x.
+    env.session.call(app.handle, point(28.0, 76.0)).unwrap();
+    let decoration = env.session.call(app.handle, point(2.0, 2.0)).unwrap_err();
+    assert_eq!(decoration.code, ErrorCode::InvalidArgument);
+    assert_eq!(
+        world.input.calls(),
+        [Input::Click(
+            edp(),
+            (114.0, 76.0),
+            MouseButton::Left,
+            1,
+            Some(10)
+        )]
     );
 }
 
