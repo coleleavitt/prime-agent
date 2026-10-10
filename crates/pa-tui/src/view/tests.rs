@@ -1633,3 +1633,35 @@ fn settled_rows_survive_a_cache_roundtrip() {
         "a fresh view renders the same rows (the Took clock may move)"
     );
 }
+
+/// A keystroke burst that outruns the dropdown: the menu opened for `/`, the
+/// rest of `/model` parked a refresh, and Enter lands before the refresh
+/// materializes. The confirm must answer the typed text, never splice the
+/// stale `/` menu's selection over it (the pty flake's `/exisettings`).
+#[test]
+fn enter_over_a_stale_slash_menu_submits_the_typed_command() {
+    let mut v = view();
+    v.editor.handle_input("/");
+    v.editor.materialize_autocomplete();
+    assert!(v.editor.is_showing_autocomplete(), "the dropdown opens");
+    for key in ["m", "o", "d", "e", "l"] {
+        v.editor.handle_input(key);
+    }
+    v.editor.take_events();
+    v.editor.handle_input("enter");
+    let submitted: Vec<String> = v
+        .editor
+        .take_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            crate::editor::EditorEvent::Submitted(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        submitted,
+        ["/model"],
+        "editor text: {}",
+        v.editor.get_text()
+    );
+}
