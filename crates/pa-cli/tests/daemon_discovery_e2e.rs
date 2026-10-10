@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::Value;
 
 /// Environment keys this box's own prime-agent worker sets; they must not
@@ -68,6 +69,7 @@ fn spawn_daemon(socket: &Path, agent_dir: &Path, tmp_dir: &Path) -> Daemon {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
     std::fs::create_dir_all(tmp_dir).expect("tmp dir");
     let mut command = Command::new(cli_binary());
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(socket)
@@ -116,6 +118,7 @@ fn run_cli_with_containment(root: &Path, args: &[&str], containment: &str) -> Ou
     let agent_dir = root.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let mut command = Command::new(cli_binary());
+    TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .args(args)
         .env(pa_cli::DISCOVERY_CONTAINMENT_ENV, containment)
@@ -159,6 +162,7 @@ fn interactive_launcher_detaches_supervisor_from_client_session() {
     };
 
     let mut client = Command::new(std::env::current_exe().expect("test binary"));
+    TestState::for_agent_dir(&agent_dir).apply(&mut client);
     client
         .arg("--exact")
         .arg("launcher_client_child_mode")

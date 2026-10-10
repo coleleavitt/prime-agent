@@ -85,6 +85,7 @@ impl Drop for Daemon {
 // immediately afterwards, reaping it.
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(mut launcher: Command, socket: &Path, agent_dir: &Path) -> Daemon {
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut launcher);
     let child = launcher
         .arg("supervisor")
         .arg("--socket")

@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -110,7 +111,8 @@ fn serve(mut stream: TcpStream, answer: &str) -> std::io::Result<()> {
 
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)

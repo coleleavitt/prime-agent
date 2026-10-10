@@ -26,16 +26,7 @@ use pa_core::{create_ipython_tool_definition, IpythonToolOptions, ToolContentBlo
 use serde_json::{json, Value};
 
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!("kernel python {} not found; skipping", candidate.display());
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 async fn run_cell(tool: &pa_core::ToolDefinition, code: &str) -> (String, bool) {

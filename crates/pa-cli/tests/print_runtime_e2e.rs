@@ -16,10 +16,13 @@
 
 use std::process::Command;
 
+use pa_types::platform::test_isolation::TestState;
+
 fn run(args: &[&str], script: &serde_json::Value) -> (String, String, i32) {
     let home = tempfile::TempDir::new().unwrap();
     let bin = env!("CARGO_BIN_EXE_prime-agent");
-    let output = Command::new(bin)
+    let output = TestState::for_agent_dir(home.path().join(".prime/agent"))
+        .apply(&mut Command::new(bin))
         .args(args)
         .env("HOME", home.path())
         .env("PRIME_AGENT_AGENT_DIR", home.path().join("agent"))
@@ -137,7 +140,8 @@ fn run_in_home(
     script: &serde_json::Value,
 ) -> (String, String, i32) {
     let bin = env!("CARGO_BIN_EXE_prime-agent");
-    let output = Command::new(bin)
+    let output = TestState::for_agent_dir(home.join(".prime/agent"))
+        .apply(&mut Command::new(bin))
         .args(args)
         .env("HOME", home)
         .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
@@ -876,7 +880,8 @@ fn run_in_home_cwd(
     script: &serde_json::Value,
 ) -> (String, String, i32) {
     let bin = env!("CARGO_BIN_EXE_prime-agent");
-    let output = Command::new(bin)
+    let output = TestState::for_agent_dir(home.join(".prime/agent"))
+        .apply(&mut Command::new(bin))
         .args(args)
         .env("HOME", home)
         .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())

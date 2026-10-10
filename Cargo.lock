@@ -2200,6 +2200,7 @@ dependencies = [
  "libc",
  "pa-agent",
  "pa-core",
+ "pa-types",
  "serde_json",
  "sha2",
  "tempfile",

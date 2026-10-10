@@ -39,6 +39,7 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(socket)

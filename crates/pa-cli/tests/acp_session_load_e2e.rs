@@ -32,23 +32,25 @@ impl AcpChild {
     /// A daemon-attached ACP child on `home`'s sandboxed supervisor socket,
     /// hosting the scripted faux worker of `<home>/worker-script.json`.
     fn spawn(home: &Path, args: &[&str]) -> AcpChild {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_prime-agent"))
-            .args(args)
-            .arg("--daemon-socket")
-            .arg(home.join("daemon.sock"))
-            .env("HOME", home)
-            .env("DO_NOT_TRACK", "1")
-            .env("PRIME_AGENT_FAUX_SCRIPT", home.join("worker-script.json"))
-            .env(
-                pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
-                "15000",
-            )
-            .current_dir(home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("binary present");
+        let mut child =
+            pa_types::platform::test_isolation::TestState::for_agent_dir(home.join(".prime/agent"))
+                .apply(&mut Command::new(env!("CARGO_BIN_EXE_prime-agent")))
+                .args(args)
+                .arg("--daemon-socket")
+                .arg(home.join("daemon.sock"))
+                .env("HOME", home)
+                .env("DO_NOT_TRACK", "1")
+                .env("PRIME_AGENT_FAUX_SCRIPT", home.join("worker-script.json"))
+                .env(
+                    pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+                    "15000",
+                )
+                .current_dir(home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("binary present");
         let stdout = child.stdout.take().expect("stdout piped");
         let (tx, lines) = channel();
         std::thread::spawn(move || {

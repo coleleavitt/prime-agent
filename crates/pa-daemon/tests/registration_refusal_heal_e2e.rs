@@ -35,6 +35,7 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
@@ -276,7 +277,8 @@ fn a_refused_registration_retires_the_worker() {
     // The scripted engine keeps the runtime self-contained, so the retire path under test
     // is the registration close alone.
     let script_path = write_script(dir.path(), &["unused"]);
-    let mut worker = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let mut worker = pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("worker")
         .env(pa_daemon::worker::WORKER_ROLE_ENV, "1")
         .env(pa_daemon::worker::WORKER_TOKEN_ENV, "token-no-descriptor")

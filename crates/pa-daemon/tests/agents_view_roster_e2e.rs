@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
+
 struct Daemon {
     child: Child,
     #[allow(dead_code)]
@@ -43,7 +45,8 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
-    let child = Command::new(binary)
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(binary))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -360,7 +363,8 @@ async fn rlm_children_key_the_roster_by_parent_path_and_child_id() {
             }
         }
         #[allow(clippy::zombie_processes)]
-        let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+        let child = TestState::for_agent_dir(&agent_dir)
+            .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
             .arg("supervisor")
             .arg("--socket")
             .arg(&socket)

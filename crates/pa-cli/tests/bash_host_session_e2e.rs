@@ -43,6 +43,7 @@ fn run_on_a_terminal_host(
     let pty = nix::pty::openpty(None, None).expect("pty");
     let slave = pty.slave.as_raw_fd();
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .arg("--prime-agent-bash-host")
         .current_dir(cwd)

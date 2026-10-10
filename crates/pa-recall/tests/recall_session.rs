@@ -163,16 +163,7 @@ async fn the_block_lands_on_the_first_ipython_result_and_the_run_end_rewrites_th
 /// The kernel Python the sandbox bootstrap installed; the live test is
 /// skipped without it.
 fn kernel_python() -> Option<std::path::PathBuf> {
-    let candidate = std::path::PathBuf::from(std::env::var("HOME").ok()?)
-        .join(".prime/agent/kernel-venv/bin/python");
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping the live kernel test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 /// The whole chain on a live kernel: a cell's `bash("make")` exits 0 while

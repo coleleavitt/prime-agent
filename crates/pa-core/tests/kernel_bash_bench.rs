@@ -26,12 +26,7 @@ use pa_core::kernel::shared::{
 };
 
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    candidate.exists().then_some(candidate)
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 /// Times each case `runs` times (after a warm-up) and prints one line per

@@ -7,6 +7,7 @@ use std::process::Command;
 
 fn run(sandbox: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::new(sandbox).apply(&mut command);
     command
         .args(args)
         .env("PRIME_AGENT_CODING_AGENT_DIR", sandbox.join("agent"))

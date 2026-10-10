@@ -21,6 +21,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pa_types::platform::test_isolation::TestState;
+
 const ENV_INSTALLER_URL: &str = "PRIME_AGENT_RUST_INSTALLER_URL";
 const ENV_PREFIX: &str = "PRIME_AGENT_RUST_PREFIX";
 
@@ -156,6 +158,7 @@ fn prime_agent(args: &[&str], sandbox: &Sandbox) -> Command {
     let tmp = sandbox.root.join("tmp");
     std::fs::create_dir_all(&tmp).expect("tmp dir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    TestState::for_agent_dir(sandbox.root.join("home/.prime/agent")).apply(&mut command);
     command
         .args(args)
         .env("HOME", sandbox.root.join("home"))
@@ -328,8 +331,10 @@ fn installer_env(command: &mut Command, sandbox: &Sandbox) {
     make_executable(&npm);
     let tmp = sandbox.root.join("tmp");
     std::fs::create_dir_all(&tmp).expect("tmp dir");
+    command.env_clear();
+    // After the clear, which would drop it: the isolated state and its marker.
+    TestState::for_agent_dir(sandbox.root.join("home/.prime/agent")).apply(command);
     command
-        .env_clear()
         .env("PATH", format!("{}:/usr/bin:/bin", shims.display()))
         .env("HOME", sandbox.root.join("home"))
         .env("TMPDIR", tmp)

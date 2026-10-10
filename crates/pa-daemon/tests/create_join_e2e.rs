@@ -46,7 +46,8 @@ impl Drop for WorkerGuard {
 /// below disarm the orphan monitor).
 fn spawn_worker(dir: &Path, socket: &Path, token: &str) -> WorkerGuard {
     std::fs::create_dir_all(dir.join("agent")).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = pa_types::platform::test_isolation::TestState::for_agent_dir(dir.join("agent"))
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("worker")
         .env(pa_daemon::worker::WORKER_ROLE_ENV, "1")
         .env(pa_daemon::worker::WORKER_TOKEN_ENV, token)

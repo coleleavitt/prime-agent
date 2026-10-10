@@ -40,6 +40,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -g) ;;
     --prefix) PREFIX="$2"; shift ;;
+    --omit) shift ;;
     *) SPECS+=("$1") ;;
   esac
   shift
@@ -125,6 +126,12 @@ impl Sandbox {
             agent_dir,
             npm_shim,
         }
+    }
+
+    /// The shim as an `npmCommand`: a git package's `npm install` never
+    /// runs the real npm (it reads `~/.npmrc` and writes `~/.npm`).
+    fn npm_command(&self) -> Vec<String> {
+        vec![self.npm_shim.display().to_string()]
     }
 
     fn manager(&self) -> PackageManager {
@@ -239,7 +246,7 @@ fn git_clone_update_remove_flow() {
         SourceScope::User,
         &sandbox.cwd,
         &sandbox.agent_dir,
-        None,
+        Some(&sandbox.npm_command()),
     )
     .unwrap();
 
@@ -262,7 +269,7 @@ fn git_clone_update_remove_flow() {
         SourceScope::User,
         &sandbox.cwd,
         &sandbox.agent_dir,
-        None,
+        Some(&sandbox.npm_command()),
     )
     .unwrap();
     assert!(installed.join("skills.md").exists());
@@ -272,7 +279,7 @@ fn git_clone_update_remove_flow() {
         SourceScope::User,
         &sandbox.cwd,
         &sandbox.agent_dir,
-        None,
+        Some(&sandbox.npm_command()),
     )
     .unwrap();
 
@@ -307,7 +314,7 @@ fn git_ref_checkout_installs_the_pinned_revision() {
         SourceScope::User,
         &sandbox.cwd,
         &sandbox.agent_dir,
-        None,
+        Some(&sandbox.npm_command()),
     )
     .unwrap();
     let installed = sandbox

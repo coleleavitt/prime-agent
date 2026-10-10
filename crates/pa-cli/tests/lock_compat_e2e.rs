@@ -42,7 +42,8 @@ fn sandbox(prefix: &str) -> tempfile::TempDir {
 }
 
 fn run(binary: &Path, args: &[&str], sandbox: &Path) -> (Option<i32>, String, String) {
-    let output = Command::new("timeout")
+    let output = pa_types::platform::test_isolation::TestState::new(sandbox)
+        .apply(&mut Command::new("timeout"))
         .arg("30")
         .arg(binary)
         .args(args)

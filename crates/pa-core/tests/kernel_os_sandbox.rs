@@ -20,19 +20,7 @@ use pa_core::os_sandbox::{SandboxMode, SessionSandbox};
 use pa_core::settings::{SandboxSettings, Settings, SettingsManager};
 
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping the kernel sandbox test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 /// A fresh directory outside `/tmp` and `$TMPDIR` (both stay writable in the sandbox) to hold
