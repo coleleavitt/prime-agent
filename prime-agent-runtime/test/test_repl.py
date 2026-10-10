@@ -2126,8 +2126,8 @@ class FinishRequestTest(unittest.TestCase):
         repl = self.repl_module
         real_run_guarded = repl._run_guarded
 
-        async def run_guarded_then_sigint(task, rid):
-            outcome = await real_run_guarded(task, rid)
+        async def run_guarded_then_sigint(task, rid, **kwargs):
+            outcome = await real_run_guarded(task, rid, **kwargs)
             with repl._interrupt_lock:
                 repl._sigint_target = rid
             # Synchronous SIGINT in the post-run window: the handler sees
@@ -2694,19 +2694,18 @@ class SnapshotTempCleanupTest(unittest.TestCase):
 
         sys.path.insert(0, SRC)
         self.addCleanup(sys.path.remove, SRC)
-        import dill
-
+        from rlm import repl
         from rlm.repl import _snapshot_state
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "kernel-state.dill")
 
-            def interrupted_dump(value, fh):
+            def interrupted_dump(dill, value, writer, buffer):
                 # Interrupt mid-dump, after partial bytes landed in the staged temp.
-                fh.write(b"partial")
+                writer.write(b"partial")
                 raise KeyboardInterrupt
 
-            with unittest_mock.patch.object(dill, "dump", interrupted_dump):
+            with unittest_mock.patch.object(repl, "_dump_value", interrupted_dump):
                 with self.assertRaises(KeyboardInterrupt):
                     _snapshot_state(
                         {"x": 1},
@@ -3116,16 +3115,17 @@ class SnapshotPairConsistencyTest(unittest.TestCase):
     def test_each_variable_serialized_once_and_payload_is_not_a_pickle(self):
         import dill
 
+        from rlm import repl
         from rlm.repl import _SNAPSHOT_MAGIC
 
-        real_dump = dill.dump
+        real_dump = repl._dump_value
         dumped: list[object] = []
 
-        def counting_dump(value, writer):
+        def counting_dump(dill, value, writer, buffer):
             dumped.append(value)
-            return real_dump(value, writer)
+            return real_dump(dill, value, writer, buffer)
 
-        with mock.patch.object(dill, "dump", counting_dump):
+        with mock.patch.object(repl, "_dump_value", counting_dump):
             result = self._snap({"a": 1, "b": 2, "c": 3})
         self.assertEqual(result["saved"], ["a", "b", "c"])
         self.assertEqual(dumped, [1, 2, 3])

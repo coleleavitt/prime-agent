@@ -42,6 +42,30 @@ pub fn notice_content(result: &RestoreResult) -> String {
                 .join(", ")
         ));
     }
+    // A snapshot the time budget cut short: its stale names either kept an older value or
+    // were never saved.
+    let (older, unsaved): (Vec<&str>, Vec<&str>) = result
+        .stale
+        .iter()
+        .map(|skip| skip.name.as_str())
+        .partition(|name| result.restored.iter().any(|restored| restored == name));
+    if !older.is_empty() {
+        lines.push(format!(
+            "These were restored from an older snapshot and may be missing recent changes: {}.",
+            older.join(", ")
+        ));
+    }
+    if !unsaved.is_empty() {
+        lines.push(format!(
+            "These were not saved before the restart and must be recreated if needed: {}.",
+            unsaved.join(", ")
+        ));
+    }
+    if result.capture_incomplete {
+        lines.push(
+            "The last state snapshot before this restart did not finish, so the revived state is older: re-create any variables, imports, or data you changed after it.".to_string(),
+        );
+    }
     lines.join("\n")
 }
 
@@ -77,6 +101,7 @@ mod tests {
                 })
                 .collect(),
             path: std::path::PathBuf::from("/tmp/art/kernel-state.dill"),
+            ..RestoreResult::default()
         }
     }
 
@@ -122,6 +147,26 @@ mod tests {
         };
         assert!(
             content.ends_with("These could not be restored and must be recreated if needed: sock.")
+        );
+    }
+
+    #[test]
+    fn stale_and_incomplete_snapshots_say_what_is_out_of_date() {
+        let skip = |name: &str| SnapshotSkip {
+            name: name.to_string(),
+            reason: "snapshot time budget ran out".to_string(),
+        };
+        let result = RestoreResult {
+            stale: vec![skip("frame"), skip("fresh")],
+            capture_incomplete: true,
+            ..restore(vec!["frame", "helper"], vec![])
+        };
+        assert_eq!(
+            notice_content(&result),
+            "[python-state-restored]\n\nYour Python kernel state was revived from your previous session. These names are available again: frame, helper.\n\
+             These were restored from an older snapshot and may be missing recent changes: frame.\n\
+             These were not saved before the restart and must be recreated if needed: fresh.\n\
+             The last state snapshot before this restart did not finish, so the revived state is older: re-create any variables, imports, or data you changed after it."
         );
     }
 }

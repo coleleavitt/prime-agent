@@ -33,8 +33,8 @@ use crate::kernel::shared::{
     RESTORE_EXECUTION_TIMEOUT_MS, SNAPSHOT_EXECUTION_TIMEOUT_MS,
 };
 use crate::kernel::state_snapshot::{
-    RestoreResult, SnapshotResult, SnapshotSkip, DEFAULT_SNAPSHOT_MAX_BYTES,
-    DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES,
+    incomplete_marker_path, RestoreResult, SnapshotResult, SnapshotSkip,
+    DEFAULT_SNAPSHOT_MAX_BYTES, DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES,
 };
 
 const READY_TIMEOUT_MS: u64 = 30_000;

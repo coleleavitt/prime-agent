@@ -26,6 +26,9 @@ pub struct SnapshotResult {
     pub skipped: Vec<SnapshotSkip>,
     /// Oversized live variables removed by an explicit compaction snapshot.
     pub pruned: Option<Vec<String>>,
+    /// Names the runtime's time budget ran out before: each kept the previous snapshot's value
+    /// or was not persisted, as its reason says. Empty for a complete snapshot.
+    pub stale: Vec<SnapshotSkip>,
     /// Payload size on disk, in bytes.
     pub bytes: u64,
     pub path: PathBuf,
@@ -37,6 +40,11 @@ pub struct RestoreResult {
     pub restored: Vec<String>,
     /// Names present in the snapshot that failed to revive, with a short reason.
     pub failed: Vec<SnapshotSkip>,
+    /// The restored snapshot's own stale names (see [`SnapshotResult::stale`]).
+    pub stale: Vec<SnapshotSkip>,
+    /// A capture after the restored snapshot did not finish: whatever changed since that
+    /// snapshot was committed is missing from the restored namespace.
+    pub capture_incomplete: bool,
     pub path: PathBuf,
 }
 
@@ -52,6 +60,12 @@ pub fn manifest_path_in(artifact_dir: impl AsRef<Path>) -> PathBuf {
     artifact_dir
         .as_ref()
         .join(format!("{KERNEL_STATE_BASENAME}.json"))
+}
+
+/// The host's record of a capture that did not finish, beside the manifest it postdates:
+/// `kernel-state.json` -> `kernel-state.incomplete.json`.
+pub(crate) fn incomplete_marker_path(manifest_path: &Path) -> PathBuf {
+    manifest_path.with_extension("incomplete.json")
 }
 
 #[cfg(test)]

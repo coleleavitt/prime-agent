@@ -58,7 +58,7 @@ unknown-type protocol error.
 | `execute` | `{"type":"execute","id":str,"code":str}` |
 | `interrupt` | `{"type":"interrupt","id"?:str}` — no reply |
 | `host_reply` | `{"type":"host_reply","id":str,"data":{"status":"ok","result":{...}}}` or an error envelope — no reply |
-| `snapshot` | `{"type":"snapshot","id":str,"path":str,"manifest_path":str,"max_bytes"?:int,"max_variable_bytes"?:int,"prune_oversized"?:bool}` |
+| `snapshot` | `{"type":"snapshot","id":str,"path":str,"manifest_path":str,"max_bytes"?:int,"max_variable_bytes"?:int,"prune_oversized"?:bool,"budget_ms"?:int}` |
 | `restore` | `{"type":"restore","id":str,"path":str}` |
 | `list_names` | `{"type":"list_names","id":str}` |
 | `mcp_status` | `{"type":"mcp_status","id":str,"servers":[str,...],"timeout_ms"?:number}` — host-side view query: per-server tool listing (opens each server on demand, bounded by `timeout_ms` per server; default 10s); the `done` frame carries `connections: [{server, tools: [{name, description}] | null, error: str | null}]` |
@@ -111,7 +111,7 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   cap, same trailing marker).
 - `{"event":"done","id":str,"status":"ok"|"error"}` — exactly one per id'd
   request, always after all of that request's other events. A snapshot `done`
-  adds `saved`, `skipped`, `pruned`, `bytes`; a restore `done` adds `restored`,
+  adds `saved`, `skipped`, `pruned`, `stale`, `bytes`; a restore `done` adds `restored`,
   `failed`; a `list_names` `done` adds `names`; a failed snapshot/restore adds
   `reason`. Bash activity `done` carries `activities` (list), `tail` (tail),
   or `killed` (kill); `status:"error"` with `reason` on unknown IDs.
@@ -490,8 +490,10 @@ bounds with a timeout.
 
 ## Snapshot / restore
 
-`snapshot` serializes the user namespace with `dill` (recurse mode), one name
-at a time: `_`-prefixed names and
+`snapshot` serializes the user namespace one name at a time, with the C
+pickler for values built from importable types and with `dill` (without
+`recurse`, so a cell function's globals stay a reference to the namespace) for
+anything that reaches a class or function defined in a cell: `_`-prefixed names and
 `{rlm, mcp, bash, asyncio, In, Out, get_ipython, exit, quit, open}` are always
 skipped; a name whose pickle exceeds `max_variable_bytes` or would push the
 total over `max_bytes` is skipped and reported. With `prune_oversized`, only
@@ -499,9 +501,19 @@ names exceeding the per-variable cap (`max_variable_bytes`) are also deleted
 from the namespace and listed in `pruned`; names skipped for the aggregate
 `max_bytes` cap are reported in `skipped` but kept in the namespace. The
 payload is written atomically (tmp file + `os.replace`) and a JSON manifest
-(`version`, `savedNames`, `skipped`, `pruned`, `bytes`, `pythonVersion`,
-`timestamp`) is written to `manifest_path`. A manifest write failure fails the
-snapshot (and nothing is pruned).
+(`version`, `savedNames`, `skipped`, `pruned`, `stale`, `bytes`,
+`pythonVersion`, `timestamp`) is written to `manifest_path`. A manifest write
+failure fails the snapshot (and nothing is pruned).
+
+With `budget_ms`, serialization stops once that many milliseconds have passed
+(checked between names and inside one value's pickling) and the snapshot
+commits what it has: each remaining name keeps its record from the payload
+already at `path` (`saved`), or is skipped when there is none, and `stale`
+lists every such name with its reason. The commit itself is not budgeted.
+Without `budget_ms` the snapshot runs to completion and `stale` is empty.
+
+An `interrupt` aimed at a snapshot or restore only ever cancels that request:
+it never raises into a detached task that holds the loop meanwhile.
 
 `restore` loads the payload and revives each name independently; a missing
 file yields an ok empty restore with `reason:"snapshot not found"`, a corrupt

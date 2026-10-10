@@ -184,7 +184,8 @@ _TRACED_REQUESTS = ("execute", "snapshot", "restore")
 _current_cell_execution: contextvars.ContextVar[_CellExecution | None] = contextvars.ContextVar(
     "_current_cell_execution", default=None
 )
-_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False}
+# "state": the active request is a snapshot/restore, whose interrupt never leaves its own task.
+_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False, "state": False}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
 # host_request_blocking waiters: resolved on the reader thread itself, since
@@ -822,9 +823,11 @@ def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
         raise KeyboardInterrupt
     # Loop idle in select() or another task mid-step: cancel the active task (same thread, safe).
     task.cancel()
-    if running is not None and running is not _serve_task:
+    if running is not None and running is not _serve_task and not _active["state"]:
         # A background task blocked in sync code occupies the only thread and would keep the
         # cancel from ever running: raise into it to unwind its step; it dies with the KI.
+        # Not for a snapshot/restore: that interrupt is the host abandoning its own bookkeeping,
+        # and the cancel lands once the user's work yields the loop.
         running.add_done_callback(_consume_task_exception)
         raise KeyboardInterrupt
 
@@ -1028,12 +1031,16 @@ async def _run_codes(codes: list[types.CodeType], ns: dict[str, Any]) -> Any:
     return value
 
 
-async def _run_guarded(task: asyncio.Task[Any], rid: str) -> tuple[str, Any, dict[str, Any] | None]:
-    """Await a request task; returns (status, value, error event or None)."""
+async def _run_guarded(
+    task: asyncio.Task[Any], rid: str, *, state: bool = False
+) -> tuple[str, Any, dict[str, Any] | None]:
+    """Await a request task; returns (status, value, error event or None). `state` marks a
+    snapshot/restore request (see `_sigint_handler`)."""
     with _interrupt_lock:
         _active["interrupted"] = False
         _active["rid"] = rid
         _active["task"] = task
+        _active["state"] = state
         if _consume_pending_interrupt(rid):
             # Interrupt parked before activation: cancel before the first step.
             _active["interrupted"] = True
@@ -1057,6 +1064,7 @@ async def _run_guarded(task: asyncio.Task[Any], rid: str) -> tuple[str, Any, dic
             _finishing_rid = rid
             _active["task"] = None
             _active["rid"] = None
+            _active["state"] = False
 
 
 async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
@@ -1135,19 +1143,86 @@ class _SnapshotSizeLimitExceeded(Exception):
     pass
 
 
+class _SnapshotBudgetExhausted(Exception):
+    pass
+
+
+# The snapshot's time-budget clock; tests substitute a fake one.
+_snapshot_clock = time.monotonic
+
+_BUDGET_KEPT_REASON = "snapshot time budget ran out; kept the previous snapshot's value"
+_BUDGET_LOST_REASON = "snapshot time budget ran out; not persisted"
+
+
 class _CappedWriter:
-    def __init__(self, sink: Any, limit: int) -> None:
+    def __init__(self, sink: Any, limit: int, deadline: float | None = None) -> None:
         self._sink = sink
         self._limit = limit
+        self._deadline = deadline
         self.written = 0
 
     def write(self, chunk: Any) -> int:
         size = len(chunk)
         if self.written + size > self._limit:
             raise _SnapshotSizeLimitExceeded()
+        # Checked per pickler frame: one slow value alone cannot outlast the budget.
+        if self._deadline is not None and _snapshot_clock() >= self._deadline:
+            raise _SnapshotBudgetExhausted()
         self._sink.write(chunk)
         self.written += size
         return size
+
+
+class _NeedsDill(Exception):
+    """The value reaches a class or function defined in a cell: only dill persists those."""
+
+
+class _PlainPickler(pickle.Pickler):
+    """The C pickler, for values made of importable types (dicts, lists, strings, numpy, pandas).
+
+    dill's pickler is pure Python: on plain data it is 10-40x slower than this one, which kept
+    large namespaces past the host's snapshot window. Cell-defined classes and functions are
+    left to dill, which persists them by value; this pickler would store a `__main__.Name`
+    reference that a fresh kernel cannot resolve before that name is restored.
+    """
+
+    # typeshed declares the hook as a one-argument callable attribute; the method form is the documented one.
+    def reducer_override(self, obj: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if isinstance(obj, (type, types.FunctionType)) and getattr(obj, "__module__", None) == "__main__":
+            raise _NeedsDill
+        return NotImplemented
+
+
+def _dump_value(dill: Any, value: Any, writer: _CappedWriter, buffer: io.BytesIO) -> bytes:
+    """Serialize one namespace value: the C pickler first, dill when it cannot.
+
+    dill dumps without `recurse`, so a cell function's globals pickle as a reference to the
+    live namespace instead of a by-value copy of every global it reads (`_restore_state`
+    rebinds restored functions onto the live namespace either way).
+    """
+    try:
+        _PlainPickler(writer, protocol=dill.settings["protocol"]).dump(value)
+        return buffer.getvalue()
+    except (_SnapshotSizeLimitExceeded, _SnapshotBudgetExhausted):
+        raise
+    except Exception:  # noqa: BLE001 - anything the C pickler refuses is dill's to try
+        buffer.seek(0)
+        buffer.truncate()
+        writer.written = 0
+    dill.dump(value, writer, recurse=False)
+    return buffer.getvalue()
+
+
+def _previous_records(path: str, max_bytes: int, max_variable_bytes: int) -> dict[str, bytes]:
+    """The committed payload's records, which a budget-cut snapshot carries forward; empty when
+    there is none (or it is a legacy or damaged one: nothing then carries over)."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(len(_SNAPSHOT_MAGIC)) != _SNAPSHOT_MAGIC:
+                return {}
+            return _read_snapshot_records(fh, max_bytes, max_variable_bytes)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
 
 
 def _read_snapshot_records(fh: Any, max_bytes: int, max_variable_bytes: int) -> dict[str, bytes]:
@@ -1198,7 +1273,16 @@ def _snapshot_state(
     max_variable_bytes: int,
     prune_oversized: bool,
     committed: list[dict[str, Any]] | None = None,
+    *,
+    budget_ms: int | None = None,
 ) -> dict[str, Any]:
+    """Persist the namespace, one record per name.
+
+    With `budget_ms`, serialization stops once the budget is spent instead of running until the
+    host aborts it: every name not serialized by then keeps the previous snapshot's record (or,
+    without one, is not persisted), and the result's and manifest's `stale` list names each of
+    them with its reason. The commit itself is not budgeted.
+    """
     import datetime
 
     try:
@@ -1207,10 +1291,13 @@ def _snapshot_state(
         return {"error": f"dill unavailable: {err}"}
     dill.settings["recurse"] = True
 
+    deadline = None if budget_ms is None else _snapshot_clock() + budget_ms / 1000
     saved: list[str] = []
     skipped: list[dict[str, str]] = []
+    stale: list[dict[str, str]] = []
     oversized: list[str] = []
     missing = object()
+    carried: dict[str, bytes] | None = None
 
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     temps: list[str] = []
@@ -1248,11 +1335,39 @@ def _snapshot_state(
                 return {"error": "write failed: snapshot exceeds aggregate snapshot size cap"}
             fh, tmp = stage_temp(path, "wb")
             with fh:
-                # Single pass: each variable is dill-serialized exactly once, streamed
+                # Single pass: each variable is serialized exactly once, streamed
                 # into the staged temp. The record header is charged against the aggregate
                 # cap up front, so a completed record can never overflow it (no prefix re-dump).
                 total = fh.write(_SNAPSHOT_MAGIC)
                 env_secrets = _live_env_secrets()
+
+                def write_record(encoded: bytes, blob: bytes) -> None:
+                    nonlocal total
+                    fh.write(len(encoded).to_bytes(4, "little"))
+                    fh.write(encoded)
+                    fh.write(len(blob).to_bytes(8, "little"))
+                    fh.write(blob)
+                    total += 12 + len(encoded) + len(blob)
+
+                def carry_forward(name: str, encoded: bytes, value: Any) -> None:
+                    # The budget ran out before this name: keep the committed record, if any.
+                    nonlocal carried
+                    if carried is None:
+                        carried = _previous_records(path, max_bytes, max_variable_bytes)
+                    blob = carried.get(name)
+                    if blob is None or total + 12 + len(encoded) + len(blob) > max_bytes:
+                        skipped.append({"name": name, "reason": _BUDGET_LOST_REASON})
+                        stale.append({"name": name, "reason": _BUDGET_LOST_REASON})
+                        return
+                    # The live environment may hold a secret the earlier scan did not know.
+                    reason = _secret_skip_reason(name, value, blob, env_secrets)
+                    if reason is not None:
+                        skipped.append({"name": name, "reason": reason})
+                        return
+                    write_record(encoded, blob)
+                    saved.append(name)
+                    stale.append({"name": name, "reason": _BUDGET_KEPT_REASON})
+
                 for name in list(ns.keys()):
                     if name.startswith("_") or name in _ALWAYS_SKIP:
                         continue
@@ -1279,10 +1394,15 @@ def _snapshot_state(
                     # pruned-ness, and the write always re-measures — in-place mutation
                     # defeats any name-based size tracking from an earlier dump.
                     limit = max_variable_bytes if prune_oversized else min(max_variable_bytes, budget)
+                    if deadline is not None and _snapshot_clock() >= deadline:
+                        carry_forward(name, encoded, value)
+                        continue
                     buffer = io.BytesIO()
                     try:
-                        dill.dump(value, _CappedWriter(buffer, limit))
-                        blob = buffer.getvalue()
+                        blob = _dump_value(dill, value, _CappedWriter(buffer, limit, deadline), buffer)
+                    except _SnapshotBudgetExhausted:
+                        carry_forward(name, encoded, value)
+                        continue
                     except _SnapshotSizeLimitExceeded:
                         if not prune_oversized and budget < max_variable_bytes:
                             skipped.append({"name": name, "reason": "exceeds aggregate snapshot size cap"})
@@ -1301,11 +1421,7 @@ def _snapshot_state(
                         # Only reachable in prune mode, where the measurement cap ignores the budget.
                         skipped.append({"name": name, "reason": "exceeds aggregate snapshot size cap"})
                         continue
-                    fh.write(len(encoded).to_bytes(4, "little"))
-                    fh.write(encoded)
-                    fh.write(len(blob).to_bytes(8, "little"))
-                    fh.write(blob)
-                    total += 12 + len(encoded) + len(blob)
+                    write_record(encoded, blob)
                     saved.append(name)
                 saved.sort()
                 pruned = sorted(name for name in oversized if name in ns) if prune_oversized else []
@@ -1314,6 +1430,7 @@ def _snapshot_state(
                     "savedNames": saved,
                     "skipped": skipped,
                     "pruned": pruned,
+                    "stale": stale,
                     "bytes": total,
                     "pythonVersion": sys.version.split()[0],
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -1343,7 +1460,7 @@ def _snapshot_state(
             return {"error": f"manifest write failed: {err}"}
         for name in pruned:
             ns.pop(name, None)
-        result = {"saved": saved, "skipped": skipped, "pruned": pruned, "bytes": total}
+        result = {"saved": saved, "skipped": skipped, "pruned": pruned, "stale": stale, "bytes": total}
         # Publish while still parked: a later KeyboardInterrupt into this task finds the committed result (see _handle_state).
         if committed is not None:
             committed.append(result)
@@ -1619,7 +1736,7 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
             prune = req.get("prune_oversized", False)
             if not isinstance(prune, bool):
                 return {"error": "prune_oversized must be a boolean"}
-            for field in ("max_bytes", "max_variable_bytes"):
+            for field in ("max_bytes", "max_variable_bytes", "budget_ms"):
                 # Any present value must be a non-negative int; a JSON null is not a valid way to ask
                 # for the default, and a negative cap would prune every user variable from ns.
                 if field in req and (
@@ -1637,6 +1754,7 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
                 req.get("max_variable_bytes", DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES),
                 prune,
                 committed,
+                budget_ms=req.get("budget_ms"),
             )
         return _restore_state(
             ns,
@@ -1652,7 +1770,7 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
         task = _loop.create_task(run())
         outcome: tuple[str, Any, dict[str, Any] | None] | None = None
         try:
-            outcome = await _run_guarded(task, rid)
+            outcome = await _run_guarded(task, rid, state=True)
             _finish_request(rid)  # no post-run repr/drain: close the interrupt window now
         except KeyboardInterrupt:
             # A finishing-targeted SIGINT can raise anywhere between _run_guarded's
