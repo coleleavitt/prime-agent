@@ -1416,6 +1416,7 @@ class HarnessStateDurabilityTest(unittest.TestCase):
             env = {
                 **os.environ,
                 "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+                "HOME": str(Path(temp_dir) / "home"),
                 "PRIME_AGENT_CODING_AGENT_DIR": str(Path(temp_dir) / "agent"),
                 "PA_TEST_ISOLATED": "1",
             }

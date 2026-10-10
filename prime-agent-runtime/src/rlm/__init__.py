@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+# First: a unittest run isolates its environment before anything resolves state.
+from . import _state_guard as _state_guard
 from . import toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
 from .factory import (
