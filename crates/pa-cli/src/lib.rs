@@ -119,6 +119,62 @@ fn bash_host_sandbox() -> pa_bash::JobSandbox {
     }
 }
 
+/// Test support: a bash host confined, itself and everything it runs, to the
+/// `read-only` OS sandbox with `PA_TEST_BASH_HOST_ROOT` (a test's
+/// private temporary root) as its only writable directory and no network.
+/// The guard suites start their host this way, so neither a command they
+/// run nor a probe the guards make can write outside that root.
+const ENV_TEST_BASH_HOST_ROOT: &str = "PA_TEST_BASH_HOST_ROOT";
+/// Set in the re-executed, already confined test host.
+const ENV_TEST_BASH_HOST_CONFINED: &str = "PA_TEST_BASH_HOST_CONFINED";
+
+/// Serve a test bash host under the sandbox [`ENV_TEST_BASH_HOST_ROOT`]
+/// names: the host re-executes itself confined (so its own probes are too),
+/// and where the sandbox cannot be enforced it refuses every command.
+fn serve_test_bash_host(root: &std::path::Path) -> i32 {
+    let policy = pa_os_sandbox::SandboxPolicy {
+        confinement: pa_os_sandbox::Confinement::ReadOnly,
+        network: pa_os_sandbox::NetworkAccess::Denied,
+        writable_roots: Vec::new(),
+    };
+    let paths = pa_os_sandbox::SandboxPaths {
+        workspace: std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()),
+        scratch: vec![root.to_path_buf()],
+    };
+    let prepared = match pa_os_sandbox::prepare(&policy, &paths) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return pa_bash::serve_stdio(pa_bash::JobSandbox::Unavailable(format!(
+                "the test bash host requires the OS sandbox: {error}"
+            )))
+        }
+    };
+    if std::env::var_os(ENV_TEST_BASH_HOST_CONFINED).is_none() {
+        let Ok(exe) = std::env::current_exe() else {
+            return 1;
+        };
+        let mut command = prepared.command(exe);
+        command
+            .arg("--prime-agent-bash-host")
+            .env(ENV_TEST_BASH_HOST_CONFINED, "1");
+        // Replace this process, so whoever started the host holds the confined one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let error = command.exec();
+            eprintln!("prime-agent: the test bash host could not confine itself: {error}");
+            return 1;
+        }
+        #[cfg(not(unix))]
+        return command
+            .status()
+            .ok()
+            .and_then(|status| status.code())
+            .unwrap_or(1);
+    }
+    pa_bash::serve_stdio(pa_bash::JobSandbox::Confined(std::sync::Arc::new(prepared)))
+}
+
 fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String> {
     use std::io::IsTerminal;
 
@@ -144,6 +200,11 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     // bash() commands through this sidecar over stdin/stdout, under the OS
     // sandbox a session in the same directory would get.
     if args.len() == 1 && args[0] == "--prime-agent-bash-host" {
+        if let Some(root) =
+            std::env::var_os(ENV_TEST_BASH_HOST_ROOT).filter(|root| !root.is_empty())
+        {
+            return Ok(serve_test_bash_host(std::path::Path::new(&root)));
+        }
         return Ok(pa_bash::serve_stdio(bash_host_sandbox()));
     }
 

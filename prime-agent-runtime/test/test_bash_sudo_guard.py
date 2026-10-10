@@ -13,9 +13,14 @@ import unittest
 from unittest import mock
 
 import bash_guard_check
+import guard_safety
 from rlm import bash
 
 bash_module = sys.modules["rlm.bash"]
+
+# Every command these suites run is confined; a refusal-expecting case never
+# runs its command (guard_safety).
+guard_safety.confine()
 
 
 def _sudo_violation(command: str) -> str | None:
@@ -451,7 +456,7 @@ SUDO_NON_MATCHING_COMMANDS = [
 ]
 
 
-class SudoDetectionTest(unittest.TestCase):
+class SudoDetectionTest(guard_safety.RefusalSafe, unittest.TestCase):
     def test_sudo_command_words_are_violations(self):
         for command in SUDO_MATCHING_COMMANDS:
             with self.subTest(command=command):
@@ -466,7 +471,7 @@ class SudoDetectionTest(unittest.TestCase):
         self.assertIn("sudo", _sudo_violation("sudo ls"))
         self.assertIn("doas", _sudo_violation("doas id"))
 
-class BraceFloodTest(unittest.TestCase):
+class BraceFloodTest(guard_safety.RefusalSafe, unittest.TestCase):
     """The brace-expansion cap: a flood fails closed and never scans quadratically."""
 
     FLOOD = "{" * 32000
@@ -505,7 +510,7 @@ class BraceFloodTest(unittest.TestCase):
         self.assertIsNone(violation)
 
 
-class SudoGuardTest(unittest.IsolatedAsyncioTestCase):
+class SudoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._cwd = os.getcwd()
         self._environ = dict(os.environ)

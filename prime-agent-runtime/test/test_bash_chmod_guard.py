@@ -13,12 +13,17 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
+import guard_safety
 from rlm import bash
 from rlm.bash import BASH_DESTRUCTIVE_CHMOD_BYPASS_ENV, DestructiveChmodRefusalError
 
 # The package re-exports the bash() function under the same name, so reach the
 # module through sys.modules for internals.
 bash_module = sys.modules["rlm.bash"]
+
+# Every command these suites run is confined; a refusal-expecting case never
+# runs its command (guard_safety).
+guard_safety.confine()
 
 # Each guard's suite verifies one rule in isolation. The sibling guards fail
 # closed on shapes this suite exercises (`bash <(...)`, `sh -c ...`, `env`,
@@ -100,7 +105,7 @@ CHMOD_NON_MATCHING_COMMANDS = [
 ]
 
 
-class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
+class RecursiveChmodGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._prev_cwd = os.getcwd()
         self._prev_env = dict(os.environ)
@@ -154,19 +159,11 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
         return await asyncio.wait_for(bash(command, **kwargs), AWAIT_TIMEOUT)
 
     async def _refused(self, command: str, home: str | None = None):
+        # Check-only: a command the guards allow is never run (guard_safety).
         with mock.patch.dict(os.environ, {"HOME": home} if home else {}):
-            try:
-                handle = bash(command)
-            except DestructiveChmodRefusalError as caught:
-                return str(caught)
-            # The refusal is synchronous: a refused command never reaches
-            # BashHandle. If bash() returned a handle the guard missed and
-            # the command is running: kill and reap that process before the
-            # failure aborts the test, so a missed refusal can never leave
-            # a live recursive chmod behind.
-            handle.kill()
-            await asyncio.wait_for(handle, AWAIT_TIMEOUT)
-            self.fail(f"expected {command!r} to be refused; bash() ran it")
+            with self.assertRaises(DestructiveChmodRefusalError) as caught:
+                bash(command)
+            return str(caught.exception)
 
     async def test_refuses_escapes_to_home_root_and_outside_trees(self):
         home = tempfile.TemporaryDirectory()
@@ -1633,7 +1630,7 @@ class RecursiveChmodGuardTest(unittest.IsolatedAsyncioTestCase):
                 bash_module.BashHandle("echo ok", script="chmod -R 755 ~")
 
 
-class FrozenBypassEnvLaunchTest(unittest.TestCase):
+class FrozenBypassEnvLaunchTest(guard_safety.RefusalSafe, unittest.TestCase):
     """Launch-level behavior of the frozen bypass env var, in fresh kernels."""
 
     def setUp(self):

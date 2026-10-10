@@ -15,12 +15,17 @@ from unittest import mock
 
 import bash_guard_check
 from git_isolation import fixture_git_env, scrub_repository_selection
+import guard_safety
 from rlm import bash
 from rlm.bash import BASH_FORCE_PUSH_BYPASS_ENV, ForcePushRefusalError
 
 # The package re-exports the bash() function under the same name, so reach the module through sys.modules for
 # internals.
 bash_module = sys.modules["rlm.bash"]
+
+# Every command these suites run is confined; a refusal-expecting case never
+# runs its command (guard_safety).
+guard_safety.confine()
 
 # Each guard's suite verifies one rule in isolation. The sibling guards fail
 # closed on shapes this suite exercises (`bash <(...)`, `sh -c ...`, `env`,
@@ -201,7 +206,7 @@ def _scan_flags_all(
             test.assertEqual(scanner(command), expected)
 
 
-class ForcePushScanCostTest(unittest.TestCase):
+class ForcePushScanCostTest(guard_safety.RefusalSafe, unittest.TestCase):
     """A pathological word must not wedge the scan (py/redos, CWE-1333).
 
     Each measurement runs in its own interpreter so a wedged classification is
@@ -395,7 +400,7 @@ pre-budget numbers (13.8s to more than 30s per shape) would do."""
         self.assertGreaterEqual(refused, 1)
 
 
-class ForcePushGuardSuite(unittest.IsolatedAsyncioTestCase):
+class ForcePushGuardSuite(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTestCase):
     """End-to-end: bash() refuses before spawning anything."""
 
     def setUp(self):
@@ -548,14 +553,10 @@ names its vector."""
                 self.assertIn(needle, verdict)
 
     async def _refused(self, command: str) -> str:
-        try:
-            handle = bash(command)
-        except ForcePushRefusalError as refusal:
-            return str(refusal)
-        # Only reachable while the guard is broken: the command was already spawned, so stop it before failing
-        # the test.
-        handle.kill()
-        self.fail(f"expected a force-push refusal for {command!r}")
+        # Check-only: a command the guards allow is never run (guard_safety).
+        with self.assertRaises(ForcePushRefusalError) as caught:
+            bash(command)
+        return str(caught.exception)
 
     async def test_refuses_force_push_to_main_and_master(self):
         repo = self._enter("repo-main")
@@ -1498,7 +1499,7 @@ read as the command. A long option is resolved by prefix, the way getopt_long do
             self.assertIn(BASH_FORCE_PUSH_BYPASS_ENV, bash_module._child_env())
 
 
-class ForcePushGitCommandNameTest(unittest.TestCase):
+class ForcePushGitCommandNameTest(guard_safety.RefusalSafe, unittest.TestCase):
     """A git subcommand git does not resolve itself is refused.
 
     The guard cannot see what an alias or an external `git-<name>` program
@@ -1568,7 +1569,7 @@ class ForcePushGitCommandNameTest(unittest.TestCase):
         )
 
 
-class ForcePushFrozenBypassTest(unittest.TestCase):
+class ForcePushFrozenBypassTest(guard_safety.RefusalSafe, unittest.TestCase):
     """The bypass env var is frozen at kernel start, in a fresh kernel."""
 
     def setUp(self):

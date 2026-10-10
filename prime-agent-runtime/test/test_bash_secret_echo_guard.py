@@ -13,12 +13,17 @@ from pathlib import Path
 from unittest import mock
 
 import bash_guard_check
+import guard_safety
 from rlm import bash
 from rlm.bash import BASH_SECRET_ECHO_BYPASS_ENV, SecretEchoRefusalError
 
 # The package re-exports the bash() function under the same name, so reach the
 # module through sys.modules for internals.
 bash_module = sys.modules["rlm.bash"]
+
+# Every command these suites run is confined; a refusal-expecting case never
+# runs its command (guard_safety).
+guard_safety.confine()
 
 
 def _secret_echo_violation(command: str) -> str | None:
@@ -233,7 +238,7 @@ SECRET_ECHO_NON_MATCHING_COMMANDS = [
     "cat <<EOF\n(( 1 << 2 ))\nEOF",
 ]
 
-class SecretEchoDetectionTest(unittest.TestCase):
+class SecretEchoDetectionTest(guard_safety.RefusalSafe, unittest.TestCase):
     def test_matches_dumps_and_secret_file_reads(self):
         for command in SECRET_ECHO_MATCHING_COMMANDS:
             with self.subTest(command=command):
@@ -295,7 +300,7 @@ class SecretEchoDetectionTest(unittest.TestCase):
 
 
 
-class SecretEchoGuardTest(unittest.IsolatedAsyncioTestCase):
+class SecretEchoGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._prev_cwd = os.getcwd()
         self._prev_env = dict(os.environ)
@@ -804,7 +809,7 @@ PROBE = _probe()
 LATE_BYPASS_PROBE = _probe(f"import os\nos.environ[{BYPASS_ENV!r}] = '1'\n")
 
 
-class FrozenBypassEnvLaunchTest(unittest.TestCase):
+class FrozenBypassEnvLaunchTest(guard_safety.RefusalSafe, unittest.TestCase):
     """Launch-level behavior of the frozen bypass env var, in fresh kernels."""
 
     def _launch(self, extra_env, probe: str = PROBE) -> subprocess.CompletedProcess:

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from git_isolation import fixture_git_env, scrub_repository_selection
+import guard_safety
 from rlm import bash
 from rlm.bash import (
     BASH_DESTRUCTIVE_GIT_BYPASS_ENV,
@@ -21,6 +22,10 @@ from rlm.bash import (
 # The package re-exports the bash() function under the same name, so reach the
 # module through sys.modules for internals.
 bash_module = sys.modules["rlm.bash"]
+
+# Every command these suites run is confined; a refusal-expecting case never
+# runs its command (guard_safety).
+guard_safety.confine()
 
 # Each guard's suite verifies one rule in isolation. The sibling guards fail
 # closed on shapes this suite exercises (`bash <(...)`, `sh -c ...`, `env`,
@@ -126,7 +131,7 @@ NON_MATCHING_COMMANDS = [
 ]
 
 
-class DestructiveGitDetectionTest(unittest.TestCase):
+class DestructiveGitDetectionTest(guard_safety.RefusalSafe, unittest.TestCase):
     def test_matches_destructive_discards(self):
         for command in MATCHING_COMMANDS:
             with self.subTest(command=command):
@@ -149,7 +154,7 @@ class DestructiveGitDetectionTest(unittest.TestCase):
             self.assertLess(time.monotonic() - start, 5.0)
 
 
-class DestructiveGitGuardTest(unittest.IsolatedAsyncioTestCase):
+class DestructiveGitGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._prev_cwd = os.getcwd()
         self._prev_env = dict(os.environ)
