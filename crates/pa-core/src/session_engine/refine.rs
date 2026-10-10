@@ -2056,7 +2056,8 @@ Reviewer instructions: record it"
         .await
         .unwrap();
         assert_eq!(result.summary, "nothing");
-        // Not evaluated; the store is still locked for its write.
-        assert_eq!(evaluated.lock().unwrap().clone(), ["lock Local", "unlock"]);
+        // Not evaluated: the gate saw nothing (the store lock is the
+        // refine's own `lock_harness_state`, not a gate seam).
+        assert!(evaluated.lock().unwrap().is_empty());
     }
 }
