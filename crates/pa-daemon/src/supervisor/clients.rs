@@ -406,10 +406,8 @@ impl Supervisor {
                             tcp_authenticated = true;
                         }
                     }
-                    // The arm's guard proved a slot free (this loop is
-                    // the only slot acquirer, and slots only free while
-                    // the loop is between iterations), so the non-blocking
-                    // take always succeeds.
+                    // The arm's guard proved a slot free (this loop is the only slot
+                    // acquirer), so the non-blocking take always succeeds.
                     let dispatch_slot = Arc::clone(&dispatch_slots)
                         .try_acquire_owned()
                         .expect("the read arm's guard held a dispatch slot");
@@ -595,9 +593,7 @@ impl Supervisor {
                                     deadline_write(write_deadline, write_line(&mut writer, &payload))
                                         .await
                                 {
-                                    // An event-write failure must not strand an
-                                    // accepted shutdown: if this connection owns
-                                    // the stop, it still starts the pass.
+                                    // An event-write failure must not strand an accepted shutdown.
                                     let is_shutdown_owner = self
                                         .shutdown_owner
                                         .lock()

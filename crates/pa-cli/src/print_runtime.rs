@@ -766,8 +766,6 @@ fn headless_image_model_router(
                 if armed_from.is_none() {
                     armed_from.clone_from(&provider_target.read_or_recover());
                 }
-                // The routed model's request auth resolves like the
-                // session model's did at startup (registry + headers).
                 let mut registry =
                     pa_core::models::ModelRegistry::for_session(&agent_dir, &swap_cwd);
                 registry.load_private_authorization_from_cache();

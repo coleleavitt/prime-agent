@@ -692,9 +692,8 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "websearch",
 ];
 
-/// The bundled skills directory matches the TS packaged set name-for-name:
-/// the generic `mcp` skill is present and markdown-only, and the retired
-/// per-service pair (linear/notion) is gone.
+/// The bundled skills directory matches the TS packaged set name-for-name: the generic `mcp` skill
+/// is present and markdown-only, and the retired per-service pair (linear/notion) is gone.
 /// Bundled skills with no TS counterpart: deliberate net-new features that
 /// the packaged-set parity below must still declare name-for-name. Every
 /// entry needs a justification here; adding one without a TS counterpart

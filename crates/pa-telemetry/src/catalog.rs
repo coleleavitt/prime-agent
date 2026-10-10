@@ -417,7 +417,6 @@ pub const IMAGE_DELEGATION_OUTCOMES: &[&str] = &["answered", "failed"];
 /// escape arm counts as `cancel`).
 pub const IMAGE_FALLBACK_ACTIONS: &[&str] = &["opened", "send_text_only", "ask_agent", "cancel"];
 
-// ---------------------------------------------------------------------------
 // Rule constructors
 
 const fn enum_rule(values: &'static [&'static str], fallback: &'static str) -> PropKind {

@@ -795,32 +795,14 @@ impl Supervisor {
             epoch: connection_epoch,
             installed: false,
         };
-        // The handshake owns the channel privately (TS `pendingClient`):
-        // the channel is NOT installed for routing until the auth answer
-        // proves the connection — the worker answers any command other
-        // than `worker_auth` as the unauthenticated FIRST command with the
-        // authentication refusal and closes the connection, so a route
-        // that wins the enqueue race against the handshake (the
-        // registration path's roster refresh under a concurrent-launch
-        // storm) would kill the connection and strand the handshake for
-        // the whole connect budget — a fully-healthy worker failing its
-        // launch "did not come up in time". A pre-auth route finds no
-        // installed channel (`route_command` fails fast with the
-        // retryable not-connected error) and the callers that tolerate it
-        // (the roster refresh) skip; the install below is the
-        // `worker.client = client` boundary, epoch-guarded against a
-        // superseded connect installing over a live one.
+        // The handshake owns the channel privately (TS `pendingClient`): any non-`worker_auth`
+        // route winning the enqueue race would strand the handshake for the whole connect
+        // budget. A pre-auth route finds no installed channel; the install is epoch-guarded.
         let auth_tx = cmd_tx.clone();
 
-        // Authenticate against the worker within the remaining connect
-        // budget (TS `handshakeBudgetMs`: probes, connect, and auth share one
-        // deadline).
-        // A worker whose probes ate the whole connect budget still proved
-        // it is alive (the socket answered), so the handshake always gets
-        // at least the auth floor — the floor, never the budget's crumbs,
-        // and a fully-spent budget included. The launch's failure mode
-        // stays the connect-budget error instead of a misleading route
-        // timeout on a worker that just came up.
+        // Authenticate within the remaining connect budget (TS `handshakeBudgetMs`: probes,
+        // connect, and auth share one deadline). A worker whose probes ate the whole budget
+        // still proved it is alive, so the handshake always gets at least the auth floor.
         let remaining_ms = connect_deadline
             .saturating_duration_since(tokio::time::Instant::now())
             .as_millis() as u64;

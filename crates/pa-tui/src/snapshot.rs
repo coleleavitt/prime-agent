@@ -55,7 +55,6 @@ pub struct Reconstructed {
     /// a turn or compaction settles). `None` clears the tray display
     /// (unknown usage).
     pub context_usage: Option<crate::chrome::ContextUsage>,
-    /// Session display name.
     pub session_name: Option<String>,
     /// Session id of the persisted session file.
     pub session_id: String,

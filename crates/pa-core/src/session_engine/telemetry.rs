@@ -145,9 +145,8 @@ pub enum ContextLimitAction {
     Clear,
 }
 
-/// Installed session telemetry: the event subscription plus the in-memory
-/// state the live agent events feed. The handle outlives the agent events and
-/// finalizes the session on `end()`.
+/// Installed session telemetry: the subscription plus the state the live
+/// agent events feed; finalizes the session on `end()`.
 pub struct SessionTelemetry {
     client: TelemetryClient,
     state: Arc<Mutex<TelemetryState>>,

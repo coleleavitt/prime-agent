@@ -13,9 +13,8 @@ fn get_str<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 /// The model column text: the bare model id plus `:level` when a thinking level is active
 /// ("off" reads as noise and stays bare).
 pub(crate) fn session_model(summary: &Value) -> String {
-    // Live workers publish the model object with `id` (the engine's
-    // `model_metadata`); seeded roster rows and saved-session rows carry
-    // `modelId` (the persisted selector). Both read as the full model id.
+    // Live workers publish the model object with `id`; seeded roster rows and saved-session
+    // rows carry `modelId` (the persisted selector). Both read as the full model id.
     let Some(id) = get_str(summary, "model")
         .or_else(|| {
             summary

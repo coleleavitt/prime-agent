@@ -97,16 +97,9 @@ pub(crate) struct SessionCore {
     /// flips. Default `"push"` (the controller ships dormant — see
     /// [`crate::worker::digest::DigestLanePin`]).
     pub(crate) agent_message_digest_pin: super::digest::DigestLanePin,
-    /// The queue projection's active action (TS `getSessionActionSnapshot`
-    /// reads the store's first active action): the runner sets the phase
-    /// transitions of a queue-visible delivery (`preparing` at pickup,
-    /// `committing` at the turn's first row — the prompt becomes visible
-    /// in the conversation then, TS's commit fence — `running` at the
-    /// turn's first assistant frame) and clears it once the delivered
-    /// turn settles. The `preparing` projection is what a client renders
-    /// as the queued strip's "Starting" row (TS #2063). The label rides
-    /// the snapshot (TS #2063 `compactRlmText(queuedAgentMessagePreview(
-    /// active))`: the delivery's labeled preview, else the message text).
+    /// The queue projection's active action: the runner sets the phase transitions
+    /// (`preparing` at pickup, `committing` at the first row, `running` at the
+    /// first assistant frame) and clears it once the turn settles.
     pub(crate) active_action: Option<crate::types::SessionActionActive>,
     /// Installed features' latest live status, keyed by feature name
     /// (`{line, status}`): the roster summary's `featureStatus`.

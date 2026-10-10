@@ -132,11 +132,8 @@ mod tests {
     /// owned-listener shape the production loop takes now).
     type ScriptedResults = Arc<Mutex<VecDeque<io::Result<Box<dyn TransportStream>>>>>;
 
-    /// A stand-in transport listener that replays a scripted accept
-    /// sequence. When the script drains, the stand-in runs the
-    /// supervisor's shutdown wake (the accept-loop exit flag plus the
-    /// notify) and parks: `serve` falls out of its loop exactly the way
-    /// a real listener does once `begin_shutdown` completes.
+    /// A stand-in listener replaying a scripted accept sequence; when the script drains,
+    /// it fires the shutdown wake and parks, so `serve` falls out like a real listener.
     struct ScriptedAccepts {
         results: ScriptedResults,
         supervisor: Arc<Supervisor>,

@@ -410,8 +410,8 @@ pub struct Settings {
     /// so set this only to a trusted interface; `0.0.0.0` exposes the
     /// token to every on-path peer.
     pub daemon_tcp_bind_host: Option<String>,
-    /// Log per-request provider timing phases to the diagnostic log (TS
-    /// `requestTiming`; unset means OFF, exactly the TS default).
+    /// Log per-request provider timing phases to the diagnostic log
+    /// (unset means OFF, exactly the TS default).
     pub request_timing: Option<bool>,
     /// `lengthContinuations`: how many times in a row a reply cut off at the
     /// output-token limit auto-continues (upstream #969). Unset or 0 is

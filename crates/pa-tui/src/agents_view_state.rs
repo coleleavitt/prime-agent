@@ -196,9 +196,8 @@ fn model_provider_or_default(summary: &Value) -> String {
         .to_string()
 }
 
-/// Merge the live roster entries and the saved catalog rows into unified
-/// records without inventing runtime ancestry: roster data wins, saved rows
-/// only join through a shared alias and enrich search text.
+/// Merge the live roster entries and the saved catalog rows into unified records without
+/// inventing runtime ancestry: roster data wins, saved rows only join through a shared alias.
 pub fn reconcile_unified_sessions(roster: &[Value], saved: &[Value]) -> Vec<UnifiedRecord> {
     let mut records: Vec<UnifiedRecord> = Vec::new();
     let mut by_alias: HashMap<String, usize> = HashMap::new();

@@ -2038,9 +2038,8 @@ fn attach_snapshot_carries_the_tray_context_usage() {
     assert_eq!(reconstruct(&data).context_usage, None);
 }
 
-/// The synthetic image-heavy tool-result row: a `role: "toolResult"`
-/// message with one 500KB image payload block (the `attach_image` emit's
-/// stored shape).
+/// A `role: "toolResult"` message with one 500KB image payload block
+/// (the `attach_image` emit's stored shape).
 fn image_heavy_tool_result(payload: &str) -> serde_json::Value {
     json!({
         "role": "toolResult",

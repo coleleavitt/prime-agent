@@ -221,11 +221,10 @@ pub trait InteractionTelemetry: Send + Sync {
     /// escape arm counts as `cancel`). Never the prompt text.
     fn image_fallback(&self, action: &'static str)
         -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
-    /// A submission parked in the follow-up queue behind a running turn:
-    /// `lane` is `steering` (Enter) / `follow_up` (the follow-up key);
-    /// `steering_mode` is the session's queue delivery mode (TS
-    /// `steeringMode`: `all` = batched delivery at the boundary,
-    /// `one-at-a-time` = one steer per turn).
+    /// A submission parked in the follow-up queue behind a running turn: `lane` is `steering`
+    /// (Enter) / `follow_up` (the follow-up key); `steering_mode` is the session's queue delivery
+    /// mode (TS `steeringMode`: `all` = batched at the boundary, `one-at-a-time` = one steer per
+    /// turn).
     fn queued_input(
         &self,
         lane: &'static str,

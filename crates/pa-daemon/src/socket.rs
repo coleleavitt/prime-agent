@@ -307,14 +307,10 @@ async fn prepare_locked_socket_path(path: &Path, lease: Option<&SocketLease>) ->
     unlink_stale_socket_with_lease(path, stale_identity, lease).await
 }
 
-/// Final gate before unlinking a probed-stale socket file: refuse while a
-/// live listener answers, and remove only the exact inode that was probed
-/// stale - a file replaced between the probe and the unlink stays untouched.
-/// The caller holds the cleanup lock, so competing startup workers are
-/// serialized out of this check-then-act window; the identity gate covers
-/// processes that do not take the lock (non-pa-daemon), like the TS gate
-/// behind proper-lockfile's lease. Unix only: named-pipe endpoints leave
-/// no socket file to unlink, so the whole path stays unix.
+/// Final gate before unlinking a probed-stale socket: refuse while a live
+/// listener answers, and remove only the exact inode that was probed stale —
+/// a file replaced between the probe and the unlink stays untouched. The
+/// identity gate covers processes that do not take the cleanup lock.
 #[cfg(all(test, unix))]
 async fn unlink_stale_socket(path: &Path, expected: SocketIdentity) -> Result<()> {
     unlink_stale_socket_with_lease(path, expected, None).await

@@ -272,7 +272,7 @@ fn session_model_cell(session: &SessionSummary) -> String {
         .unwrap_or_default()
 }
 
-/// `formatSessionDisplayId`: the last 12 chars of a hex-normalized id.
+/// The last 12 chars of a hex-normalized id.
 pub(crate) fn format_session_display_id(id: &str) -> String {
     let normalized = normalize_session_id(id);
     if is_hex(&normalized) {

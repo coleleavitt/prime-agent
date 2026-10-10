@@ -31,8 +31,7 @@ const TAIL_BYTES: u64 = 4096;
 /// before the tail is cut, instead of pushing the error line out of it.
 const SCAN_BYTES: u64 = 64 * 1024;
 
-/// How many worker stderr logs the daemon retains (the spawn-time prune
-/// cap; see the module docs for the full retention rule).
+/// How many worker stderr logs the daemon retains (the prune cap).
 const RETAINED_FILES: usize = 64;
 
 /// Logs younger than this are never prune targets: a concurrent spawn's prune

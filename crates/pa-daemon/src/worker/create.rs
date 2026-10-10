@@ -603,10 +603,8 @@ impl Worker {
         // durable inbox and re-arms the one-per-batch notice (a no-op on a
         // clean or fully-read inbox).
         self.agent_digest.ensure_digest_notice();
-        // TS `sdk.ts` seeds the Agent's queue modes from the settings
-        // manager at session create (`steeringMode`/`followUpMode`): the
-        // engine's agent-level queues drain per the same modes the worker
-        // lane delivers by. Scripted harness engines keep the no-op.
+        // The engine's agent-level queues drain per the same modes the
+        // worker lane delivers by.
         self.engine
             .set_queue_modes(Some(&steering_mode), Some(&follow_up_mode));
         // Seed the engine's RLM identity: recursion depth and bound, the session's

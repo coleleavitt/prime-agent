@@ -485,8 +485,8 @@ impl AuthStorage {
 
     pub fn reload(&mut self) {
         self.directory_selection = DirectorySelectionMemo::default();
-        // The pure-read arm: a locked protocol read on any cache miss, the
-        // process-cached copy on a hit (see `AuthStorageBackend::read`).
+        // A locked protocol read on any cache miss; the process-cached
+        // copy on a hit.
         let result = self.storage.read();
         match result.and_then(|content| parse_storage_data(content.as_deref())) {
             Ok(mut data) => {

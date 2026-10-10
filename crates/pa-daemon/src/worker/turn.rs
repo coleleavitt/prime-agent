@@ -30,8 +30,6 @@ pub(super) struct TurnRunner {
     /// The digest lane's counters (swarm PRs C/D): the runner counts model
     /// turns and agent-message ingestion turns for the lane controller.
     pub(super) agent_digest: Arc<AgentMessageDigest>,
-    /// The worker config slice the idle passivation needs (agent dir,
-    /// supervisor link coordinates).
     pub(super) passivation: PassivationContext,
     /// The shared pane-reporter slot (the Worker's `herdr` field): the
     /// runner reads it at every boundary so a create-time rebind is always

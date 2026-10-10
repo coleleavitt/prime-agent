@@ -728,10 +728,8 @@ impl SessionUi {
         else {
             return;
         };
-        // TS `patchConnectionState` REPLACES the context usage snapshot:
-        // unknown usage (tokens null right after a compaction, or a
-        // response without the field) clears the tray display instead of
-        // keeping the stale one.
+        // Unknown usage (tokens null right after a compaction, or a response without
+        // the field) clears the tray display instead of keeping the stale one.
         self.context = data
             .get("contextUsage")
             .and_then(crate::chrome::ContextUsage::from_wire);

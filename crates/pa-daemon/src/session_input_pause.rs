@@ -133,9 +133,8 @@ impl InputPauseTable {
             .find_map(|(pause_id, entry)| entry.owner_client_id.is_none().then(|| pause_id.clone()))
     }
 
-    /// `release_session_input_pause`: `Unknown` answers the plain TS
-    /// success (an idempotent release), a foreign owner or session
-    /// answers the TS ownership error, `Released` lifts the gate.
+    /// `release_session_input_pause`: `Unknown` answers the plain TS success
+    /// (idempotent), a foreign owner the TS ownership error, `Released` lifts the gate.
     pub(crate) fn release(
         &self,
         pause_id: &str,

@@ -44,13 +44,10 @@ mod recorded_process_tests {
     }
 }
 
-/// The boot the descriptor-adoption pass runs under. An update boot
-/// relaunches kept workers from their descriptors before the roster
-/// restore walks the rows (spec §6 step 2's create-or-adopt order). A
-/// plain startup adopts live workers and revives only genuinely
-/// interrupted ones: a supervisor restart must not mass-revive the
-/// historical idle/completed sessions a TS daemon leaves down (their
-/// clients reopen them lazily through a fresh create).
+/// The boot the descriptor-adoption pass runs under. An update boot relaunches kept
+/// workers before the roster restore walks the rows (spec §6 step 2's create-or-adopt
+/// order). A plain startup revives only genuinely interrupted ones — no mass-revival
+/// of historical idle sessions.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum AdoptionBoot {
     /// Update boot: the roster's kept workers relaunch eagerly ahead of the restore

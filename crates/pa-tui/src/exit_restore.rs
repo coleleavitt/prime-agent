@@ -70,9 +70,7 @@ pub(crate) static TEST_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 
 /// The one best-effort exit restore: the full sequence above, with no
 /// inline flush. Idempotent — every mode release is gated on its own
-/// process-global flag, so a restore after a deliberate teardown only
-/// re-emits the two unconditional bytes (`?2026l`, SGR reset) and the
-/// cursor show. A no-op off a terminal (headless harness pipes).
+/// process-global flag. A no-op off a terminal.
 pub fn restore_terminal() {
     #[cfg(test)]
     RESTORE_ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

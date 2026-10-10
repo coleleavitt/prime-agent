@@ -120,12 +120,9 @@ impl AgentSession {
         Ok(self.agent.admit_or_enqueue(messages))
     }
 
-    /// Classify a prompt as a session command without admitting it: the
-    /// same expansion-plus-grammar parse `prompt` applies. Host turn loops
-    /// use this to keep their pre-turn compaction arms off the
-    /// session-command path (TS session commands never reach
-    /// `_prepareForCommit`, so `_runPreTurnCompaction` never fires for
-    /// them).
+    /// Classify a prompt as a session command without admitting it (the same
+    /// expansion-plus-grammar parse `prompt` applies). Pre-turn compaction
+    /// arms stay off the session-command path (TS never reaches `_prepareForCommit`).
     pub fn classify_session_command(&self, text: &str) -> Option<SessionSlashCommand> {
         let normalized = crate::skills::expand_prompt_template(text, &self.prompt_templates);
         parse_session_command(&self.slash_commands, &normalized)

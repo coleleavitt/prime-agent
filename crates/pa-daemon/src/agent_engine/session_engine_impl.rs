@@ -20,9 +20,7 @@ impl SessionEngine for AgentSessionEngine {
         AgentSessionEngine::clear_agent_watches(self);
     }
 
-    /// TS `_clearQueuedGoalContexts`: the worker-installed purge withdraws
-    /// the queued minted goal-context turns (pause/clear/start must not
-    /// leave a stale continuation to run after the state change).
+    /// Withdraw the queued minted goal-context turns so a state change leaves nothing stale to run.
     fn purge_queued_goal_contexts(&self) {
         let purge = self.goal_queue_purge.lock_or_recover().clone();
         if let Some(purge) = purge {

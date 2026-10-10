@@ -189,8 +189,7 @@ pub struct Worker {
     /// daemon-side lane controller with its counters, and the notice
     /// routing through this worker's queue lanes.
     pub(crate) agent_digest: Arc<AgentMessageDigest>,
-    /// Session input-pause leases (`acquire`/`release_session_input_pause`):
-    /// the admission gate the turn runner consults.
+    /// Session input-pause leases: the admission gate the turn runner consults.
     pub(crate) input_pauses: crate::session_input_pause::InputPauseTable,
     /// Session navigation: `new_session` / `switch_session` / `import_jsonl`,
     /// the shared replacement flow.
@@ -402,9 +401,6 @@ impl Worker {
             Arc::clone(&recovery),
             Arc::clone(&work_notify),
         ));
-        // The turn runner runs for the whole process lifetime. The command
-        // dispatcher keeps the engine handle too (model metadata for the
-        // stats commands).
         let (engine, agent_engine, roster_pushes, turn_runner): (
             std::sync::Arc<dyn SessionEngine>,
             Option<std::sync::Arc<crate::agent_engine::AgentSessionEngine>>,
@@ -939,8 +935,8 @@ impl Worker {
     /// registration-retirement path share it (`std::process::exit` runs
     /// no destructors, so the caller must have settled the close first).
     async fn exit_after_close(&self) -> ! {
-        // Shutdown keeps the resume entry and exits the process, like the
-        // TS close path (`closeKeepsResumeEntry("shutdown")`).
+        // Shutdown keeps the resume entry and exits the process (TS
+        // `closeKeepsResumeEntry("shutdown")`).
         let _ = self.record_recovery(false, "shutdown");
         self.close_listener_then_cleanup_socket().await;
         std::process::exit(0)

@@ -48,7 +48,6 @@ pub struct AgentsViewRow {
     /// own host column, sized to its content, so a `MagicDNS` hostname is
     /// never truncated away).
     pub host_label: Option<String>,
-    /// Own usage cost plus every descendant's (TS `recursiveCost`).
     pub cost: f64,
     pub age: String,
     /// Nesting depth: 0 for top-level agent rows.

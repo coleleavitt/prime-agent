@@ -269,16 +269,9 @@ impl Worker {
         response_success(None, command, Some(json!({ "queued": true })))
     }
 
-    /// Agent-to-agent message delivery, routed by the supervisor's
-    /// `send_message` arm: render the `[agent-message from ...]` prompt and
-    /// queue it on the requested lane, carrying the `agent_message`
-    /// custom row on the queued item (TS `acceptAgentSessionMessage` ->
-    /// `acceptAgentMessagePrompt` with `customMessage`): the turn renders
-    /// the collapsed agent-message card while the model still runs on
-    /// the rendered prompt. Answers with the delivery receipt
-    /// (`createAgentSessionMessageReceipt` shape): `queued` when a turn is
-    /// running (`queueIfBusy` semantics), `delivered` when the prompt
-    /// becomes the next run.
+    /// Agent-to-agent delivery: render the `[agent-message from ...]` prompt and queue
+    /// it on the requested lane with the `agent_message` custom row (the turn renders
+    /// the collapsed card). Answers `queued` when running, else `delivered`.
     ///
     /// A delivery carrying `cloudRequestId` (the cross-boundary family
     /// exchange) is idempotent by that request id: the receiver inbox

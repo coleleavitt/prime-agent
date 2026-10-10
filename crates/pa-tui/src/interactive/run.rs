@@ -687,9 +687,7 @@ async fn run_interactive_surface(
     // `refresh_stats()` here cost a full daemon round-trip on the
     // first-frame path (the open and every agents-view switch
     // re-entry) for data the snapshot already carried.
-    // The startup catalog fetch (TS `updateAvailableProviderCount` →
-    // `getConnectionAvailableModels`): failures stay silent and the
-    // composition-root snapshot keeps serving the picker.
+    // The startup catalog fetch: failures stay silent and the snapshot keeps serving the picker.
     session.spawn_model_catalog_refresh();
     session.rebuild_view(&mut view, &crate::session_ui::RebuildKind::Rebind);
     // The cross-view layout handoff's adopt (view::handoff): a re-entry whose attach cursor exactly

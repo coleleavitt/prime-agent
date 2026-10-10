@@ -23,12 +23,8 @@ pub(crate) enum SubmitBehavior {
 /// can act on it.
 const IMAGE_MODEL_CONFIGURE_REQUEST: &str = "Set the imageModel setting in settings.json to an image-capable model (\"provider/model-id\" or a bare id) so image prompts can be routed.";
 
-/// One backgrounded prompt round trip's settled outcome (TS `onSubmit`
-/// awaits `agentConnection.prompt` off the render path —
-/// `interactive-mode.ts` clears the editor and lets Ink paint before the
-/// await, and the daemon answer folds back later): `Ok(())` is an
-/// admitted/queued prompt; the error is the daemon failure the inline
-/// await used to surface on the key path.
+/// One backgrounded prompt round trip's settled outcome: `Ok(())` is an
+/// admitted/queued prompt; the error is the daemon failure.
 pub(crate) struct PromptSubmitNote {
     /// The submit-time active id: the outcome applies only while the client
     /// still holds that session.
@@ -376,11 +372,9 @@ impl SessionUi {
             .is_some_and(|settings| !settings.block_images() && settings.image_model().is_none())
     }
 
-    /// Submit a prompt (the Enter path). The user message arrives back as a
-    /// `message_start` session event (no local echo), and prompts sent while
-    /// a turn is active queue on the daemon side. `behavior` selects the
-    /// lane (TS `handleFollowUp` routes the follow-up key through this
-    /// same ladder with the `followUp` behavior).
+    /// Submit a prompt (the Enter path): the user message arrives back as a `message_start` event
+    /// (no local echo); prompts sent while a turn is active queue on the daemon side; `behavior`
+    /// selects the lane.
     pub(crate) async fn submit_prompt(
         &mut self,
         text: &str,
@@ -505,7 +499,6 @@ impl SessionUi {
         }
     }
 
-    // ------------------------------------------------------------------
     // Side questions (/btw, /side)
 
     /// One client-local notice turn: rendered like a turn, never sent to the

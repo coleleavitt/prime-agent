@@ -405,9 +405,8 @@ impl Supervisor {
             }
         };
         let mut summaries: Vec<Value> = if let Some(true) = all {
-            // TS `buildSessionList` order: saved rows (resident ones
-            // replaced in place by their live summary), then passive
-            // ledger children, then resident-only rows.
+            // TS `buildSessionList` order: saved rows (resident ones replaced in place by
+            // their live summary), then passive children, then resident-only rows.
             let mut infos = list_sessions(&dir);
             if let Some(cwd) = cwd {
                 infos.retain(|info| info.cwd == cwd);

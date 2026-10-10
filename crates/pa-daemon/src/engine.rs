@@ -55,16 +55,9 @@ pub trait SessionEngine: Send + Sync {
     /// Engines without a watch registry do nothing.
     fn clear_agent_watches(&self) {}
 
-    /// Release the session's kernel at a parent-owned child's idle settle
-    /// (TS #2483's `_passivateSettledRlmChildRuntime` inline arm,
-    /// worker-side): a snapshot-flushing stop that keeps the session
-    /// listable, inspectable, collectable, and deletable; the next
-    /// kernel use revives from the flushed snapshot. The turn runner
-    /// fires this best-effort from its park arm once the worker core
-    /// proved the parent-owned, unattached, unqueued idle state;
-    /// engines that cannot release (scripted harness engines, engines
-    /// without a kernel, or engines whose settled gates fail) no-op
-    /// and the child stays resident.
+    /// Release the session's kernel at a parent-owned child's idle settle: a
+    /// snapshot-flushing stop; engines that cannot release (scripted harness, no
+    /// kernel, failed settled gates) no-op.
     fn release_settled_child_kernel(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {

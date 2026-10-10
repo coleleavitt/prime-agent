@@ -202,9 +202,7 @@ impl LockDir {
     ///
     /// # Errors
     ///
-    /// Returns [`io::ErrorKind::WouldBlock`] when a fresh lock is held by
-    /// another process, and any underlying I/O error (missing parent,
-    /// permissions, stale-reclaim failures) as-is.
+    /// [`io::ErrorKind::WouldBlock`] for a fresh foreign lock; other I/O errors as-is.
     pub fn acquire_at(path: &Path, stale_after: Duration) -> io::Result<Self> {
         let path = path.to_path_buf();
         let stale_after = stale_after.max(MIN_STALE);

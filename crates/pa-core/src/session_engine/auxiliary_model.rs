@@ -89,8 +89,7 @@ pub fn resolve_auxiliary_model(
         }
     }
     // The TS find runs over the authenticated, non-stale catalog
-    // (`_authenticatedRlmModels`); the registry's searchable set is the
-    // same filter.
+    // (`_authenticatedRlmModels`); the registry's set is the same filter.
     let mut registry = crate::models::ModelRegistry::for_session(&context.agent_dir, &context.cwd);
     registry.load_private_authorization_from_cache();
     let model = registry

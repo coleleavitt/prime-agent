@@ -354,23 +354,12 @@ fn remote_host_label(summary: &Value) -> Option<String> {
     })
 }
 
-/// The subagents line under one agent (the operator's 2026-09-28
-/// one-dropdown directive): `"{total} subagents ({running} running)"` —
-/// `total` = the FULL descendant roster (running + inactive), `running`
-/// = the running subset — expanding to the whole roster in one group,
-/// the running rows first. TS parity: TS `createSubagentSummaryRow`
-/// titles one `"{n} subagents running"` / `"{n} subagents"` line that
-/// expands to every child — this is the same one-line shape with the
-/// operator's both-counts label, a sanctioned divergence. The title
-/// stays count-only (the expanded children render their own Model
-/// column).
-///
-/// The line reuses its parent's summary so the open action and selection
-/// keys resolve the parent. The `cost` cell is the whole descendant
-/// tree's spend — the line always renders while any descendant exists,
-/// so the aggregate never loses its row (TS `createSubagentSummaryRow`
-/// pins `recursiveCost: 0` there, a deliberate divergence) — and the
-/// line carries no age.
+/// The subagents line under one agent (the operator's 2026-09-28 one-dropdown directive):
+/// `"{total} subagents ({running} running)"` — `total` = the FULL descendant roster, `running` =
+/// the running subset — expanding to the whole roster in one group, the running rows first (a
+/// sanctioned divergence: TS titles one `"{n} subagents running"` line). The line reuses its
+/// parent's summary so the open action and selection keys resolve the parent; the `cost` cell is
+/// the whole descendant tree's spend (TS pins `recursiveCost: 0` there, a deliberate divergence).
 fn merged_summary_row(parent: &BaseRow, depth: usize, expanded: bool) -> AgentsViewRow {
     let total = parent.descendant_count;
     let running = parent.running_subagent_count;
