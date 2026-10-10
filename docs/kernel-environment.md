@@ -46,3 +46,10 @@ artifact folder, so a resumed session gets them back. The snapshot never stores:
 
 Such variables are listed as skipped in `kernel-state.json` (names only) and are not revived on
 resume; recreate them in the resumed session if you need them.
+
+A snapshot taken in the background (after a cell, or before a restart such as a plan-mode
+toggle) has a time budget. When the budget runs out, the variables not yet saved keep their
+value from the previous snapshot, or are not saved when there is none; `kernel-state.json`
+lists them under `stale`, and the next restore tells the model which variables are older or
+missing. A snapshot that cannot run at all (the kernel is stuck in other work) is recorded in
+`kernel-state.incomplete.json`, and the next restore says the revived state predates it.

@@ -2,11 +2,11 @@
 //! and flush on dispose.
 
 use super::{
-    describe_failure, lock, Arc, CaptureFreshness, Duration, ExecuteOptions, ExecuteStatus, Inner,
-    Instant, KernelState, ManifestStat, MemoSlot, Request, RestoreResult, RestoredNamespaceSkip,
-    SnapshotResult, SnapshotSkip, Value, DEFAULT_SNAPSHOT_DEBOUNCE_MS, DEFAULT_SNAPSHOT_MAX_BYTES,
-    DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES, REPAIR_STEP_TIMEOUT_MS, RESTORE_EXECUTION_TIMEOUT_MS,
-    SNAPSHOT_EXECUTION_TIMEOUT_MS,
+    describe_failure, incomplete_marker_path, json, lock, Arc, CaptureFreshness, Duration,
+    ExecuteOptions, ExecuteStatus, Inner, Instant, KernelState, ManifestStat, MemoSlot, Request,
+    RestoreResult, RestoredNamespaceSkip, SnapshotResult, SnapshotSkip, Value,
+    DEFAULT_SNAPSHOT_DEBOUNCE_MS, DEFAULT_SNAPSHOT_MAX_BYTES, DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES,
+    REPAIR_STEP_TIMEOUT_MS, RESTORE_EXECUTION_TIMEOUT_MS, SNAPSHOT_EXECUTION_TIMEOUT_MS,
 };
 
 /// The runtime snapshot writer's reason for a name above the per-variable cap: such a skipped name
@@ -16,6 +16,10 @@ const OVER_CAP_SKIP_REASON: &str = "exceeds per-variable snapshot size cap";
 /// Bound on the witness stat pair's await: a stalled artifacts filesystem must not wedge a capture;
 /// a timed-out stat reads as "not fresh".
 const STAT_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Bound on the incomplete-capture marker's write, removal, and read: like [`STAT_TIMEOUT`], a
+/// stalled artifacts filesystem must not wedge a capture or a restore.
+const MARKER_TIMEOUT: Duration = Duration::from_secs(1);
 
 impl Inner {
     /// Serialize the user namespace to disk (best-effort, per-variable). `None` when the kernel
@@ -48,6 +52,11 @@ impl Inner {
                 .max_variable_bytes
                 .unwrap_or(DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES),
             prune_oversized,
+            // Inside a bounded window the runtime stops serializing at three fifths of it and
+            // commits what it has, with the rest reported stale: the commit, the carried-forward
+            // records and the kernel's scheduling delay keep the remainder, so the host's abort
+            // (which can only discard the capture) stays the wedged-kernel backstop.
+            budget_ms: execution_timeout_ms.map(|window_ms| window_ms / 5 * 3),
         };
         let result = self
             .enqueue_request(
@@ -63,7 +72,9 @@ impl Inner {
         match result {
             Ok(r) if r.result.status == ExecuteStatus::Ok => {
                 let Some(fields) = &r.done_fields else {
-                    self.append_diagnostic("state snapshot failed: no done fields");
+                    let failure = "state snapshot failed: no done fields";
+                    self.append_diagnostic(failure);
+                    record_incomplete_capture(&cfg, failure.to_string()).await;
                     return None;
                 };
                 let committed = SnapshotResult {
@@ -73,6 +84,7 @@ impl Inner {
                         let pruned = as_string_array(fields, "pruned");
                         (!pruned.is_empty()).then_some(pruned)
                     },
+                    stale: as_reason_array(fields, "stale"),
                     bytes: fields.get("bytes").and_then(Value::as_u64).unwrap_or(0),
                     path: cfg.path.clone(),
                 };
@@ -82,20 +94,29 @@ impl Inner {
                     g.capture_sequence += 1;
                     g.capture_sequence
                 };
-                self.record_capture_freshness(
-                    &cfg,
-                    &committed,
-                    user_executions_before,
-                    epoch_before,
-                    capture_sequence,
-                )
-                .await;
+                // A partial commit never vouches for the namespace: the next capture must run
+                // to refresh its stale names.
+                if committed.stale.is_empty() {
+                    self.record_capture_freshness(
+                        &cfg,
+                        &committed,
+                        user_executions_before,
+                        epoch_before,
+                        capture_sequence,
+                    )
+                    .await;
+                }
+                // The commit (partial or not) supersedes any earlier incomplete capture; the
+                // manifest says which of its names are stale.
+                let marker = incomplete_marker_path(&cfg.manifest_path);
+                let removal = tokio::task::spawn_blocking(move || std::fs::remove_file(marker));
+                let _ = tokio::time::timeout(MARKER_TIMEOUT, removal).await;
                 Some(committed)
             }
             // A failed capture leaves the memo describing the last successful
             // commit — still valid while nothing settled since it.
             Ok(r) => {
-                self.append_diagnostic(&format!(
+                let failure = format!(
                     "state snapshot {}: {}",
                     if r.result.status == ExecuteStatus::Aborted {
                         "timed out"
@@ -103,11 +124,15 @@ impl Inner {
                         "failed"
                     },
                     describe_failure(&r.result),
-                ));
+                );
+                self.append_diagnostic(&failure);
+                record_incomplete_capture(&cfg, failure).await;
                 None
             }
             Err(error) => {
-                self.append_diagnostic(&format!("state snapshot error: {error:#}"));
+                let failure = format!("state snapshot error: {error:#}");
+                self.append_diagnostic(&failure);
+                record_incomplete_capture(&cfg, failure).await;
                 None
             }
         }
@@ -218,6 +243,15 @@ impl Inner {
                 .ok();
             lock(&self.guarded).restored_manifest_stat = stat;
         }
+        // Read before the restore runs: the debounced capture after it may rewrite both files.
+        let staleness = {
+            let manifest_path = cfg.manifest_path.clone();
+            let read = tokio::task::spawn_blocking(move || snapshot_staleness(&manifest_path));
+            match tokio::time::timeout(MARKER_TIMEOUT, read).await {
+                Ok(Ok(staleness)) => staleness,
+                _ => SnapshotStaleness::default(),
+            }
+        };
         let request = Request::Restore {
             path: cfg.path.to_string_lossy().to_string(),
             max_bytes: cfg.max_bytes.unwrap_or(DEFAULT_SNAPSHOT_MAX_BYTES),
@@ -271,6 +305,8 @@ impl Inner {
                 Some(RestoreResult {
                     restored: as_string_array(r.done_fields.as_ref().expect("checked"), "restored"),
                     failed,
+                    stale: staleness.stale,
+                    capture_incomplete: staleness.capture_incomplete,
                     path: cfg.path,
                 })
             }
@@ -493,6 +529,62 @@ async fn stats_after_commit(
         _ => (None, None),
     }
 }
+/// Record a capture that did not finish, keyed to the manifest it postdates: a capture that still
+/// commits later (a force-aborted snapshot the kernel completes) rewrites the manifest, and the
+/// marker no longer matches it.
+async fn record_incomplete_capture(
+    cfg: &crate::kernel::shared::KernelSnapshotConfig,
+    reason: String,
+) {
+    let manifest_path = cfg.manifest_path.clone();
+    let write = tokio::task::spawn_blocking(move || {
+        let marker = json!({
+            "version": 1,
+            "manifestTimestamp": timestamp_of(read_json(&manifest_path).as_ref()),
+            "reason": reason,
+        });
+        crate::settings::storage::atomic_write(
+            &incomplete_marker_path(&manifest_path),
+            &marker.to_string(),
+        )
+    });
+    let _ = tokio::time::timeout(MARKER_TIMEOUT, write).await;
+}
+
+/// What a restore reports beyond the payload: the manifest's stale names, and whether a capture
+/// after that manifest's commit did not finish.
+#[derive(Default)]
+struct SnapshotStaleness {
+    stale: Vec<SnapshotSkip>,
+    capture_incomplete: bool,
+}
+
+fn snapshot_staleness(manifest_path: &std::path::Path) -> SnapshotStaleness {
+    let manifest = read_json(manifest_path);
+    let marker = read_json(&incomplete_marker_path(manifest_path));
+    SnapshotStaleness {
+        stale: manifest
+            .as_ref()
+            .map(|manifest| as_reason_array(manifest, "stale"))
+            .unwrap_or_default(),
+        capture_incomplete: marker.is_some_and(|marker| {
+            marker.get("manifestTimestamp") == Some(&timestamp_of(manifest.as_ref()))
+        }),
+    }
+}
+
+/// A manifest's commit timestamp, `null` without a (readable) manifest: the key that ties an
+/// incomplete-capture marker to the commit it postdates.
+fn timestamp_of(manifest: Option<&Value>) -> Value {
+    manifest
+        .and_then(|manifest| manifest.get("timestamp").cloned())
+        .unwrap_or(Value::Null)
+}
+
+fn read_json(path: &std::path::Path) -> Option<Value> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
 fn manifest_stat_of(path: &std::path::Path) -> Option<ManifestStat> {
     std::fs::metadata(path).ok().map(|m| ManifestStat {
         mtime: m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),

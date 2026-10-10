@@ -1,8 +1,10 @@
-"""Snapshot cost and interrupts: a large namespace fits the host's snapshot window, and the
-interrupt that abandons a snapshot never lands on unrelated kernel work."""
+"""Snapshot cost and the time budget: a large namespace fits the host's snapshot window, a capture
+that runs out of time commits an explicit partial instead of being aborted, and the abort
+interrupt never lands on unrelated kernel work."""
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -63,6 +65,70 @@ class SnapshotCostTest(unittest.TestCase):
         self.assertEqual(sorted(result["saved"]), sorted(names))
         self.assertLess(result["bytes"], data_only["bytes"] * 2)
 
+
+class SnapshotBudgetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        sys.path.insert(0, SRC)
+        self.addCleanup(sys.path.remove, SRC)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "kernel-state.dill")
+        self.manifest_path = os.path.join(tmp.name, "kernel-state.json")
+
+    def _snap(self, ns: dict[str, object], budget_ms: int | None = None) -> dict[str, object]:
+        from rlm.repl import _snapshot_state
+
+        return _snapshot_state(ns, self.path, self.manifest_path, 1 << 20, 1 << 20, False, budget_ms=budget_ms)
+
+    def test_exhausted_budget_commits_an_explicit_partial(self):
+        from rlm.repl import _restore_state
+
+        self.assertEqual(self._snap({"a": 1, "b": "old"})["stale"], [])
+        # Nothing fits a spent budget: the names the previous snapshot holds keep its value,
+        # a new name is not persisted, and both say so instead of the capture failing.
+        result = self._snap({"a": 2, "b": "old", "c": 3}, budget_ms=0)
+        kept = "snapshot time budget ran out; kept the previous snapshot's value"
+        lost = "snapshot time budget ran out; not persisted"
+        stale = [{"name": "a", "reason": kept}, {"name": "b", "reason": kept}, {"name": "c", "reason": lost}]
+        self.assertEqual(
+            {key: result[key] for key in ("saved", "skipped", "stale")},
+            {"saved": ["a", "b"], "skipped": [{"name": "c", "reason": lost}], "stale": stale},
+        )
+        with open(self.manifest_path) as fh:
+            manifest = json.load(fh)
+        self.assertEqual((manifest["savedNames"], manifest["stale"]), (["a", "b"], stale))
+        restored: dict[str, object] = {}
+        self.assertEqual(_restore_state(restored, self.path), {"restored": ["a", "b"], "failed": []})
+        self.assertEqual(restored, {"a": 1, "b": "old"})
+
+    def test_exhausted_budget_without_a_previous_snapshot_persists_nothing_stale(self):
+        result = self._snap({"a": 1}, budget_ms=0)
+        lost = [{"name": "a", "reason": "snapshot time budget ran out; not persisted"}]
+        self.assertEqual((result["saved"], result["skipped"], result["stale"]), ([], lost, lost))
+
+    def test_budget_is_checked_inside_one_slow_value(self):
+        # One value alone can outlast the budget: the writer stops it mid-dump.
+        from unittest import mock
+
+        from rlm import repl
+
+        clock = [0.0]
+
+        class Slow:
+            def __reduce__(self):
+                clock[0] += 10.0
+                return (list, ([b"x" * 200_000],))
+
+        with mock.patch.object(repl, "_snapshot_clock", lambda: clock[0]):
+            result = self._snap({"slow": [Slow(), Slow()], "z": 1}, budget_ms=5_000)
+        lost = "snapshot time budget ran out; not persisted"
+        self.assertEqual(
+            (result["saved"], result["stale"]), ([], [{"name": "slow", "reason": lost}, {"name": "z", "reason": lost}])
+        )
+
+    def test_no_budget_snapshots_everything(self):
+        result = self._snap({"a": 1, "b": 2})
+        self.assertEqual((result["saved"], result["stale"]), (["a", "b"], []))
 
 
 class SnapshotInterruptTargetTest(unittest.TestCase):

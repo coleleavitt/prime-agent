@@ -34,6 +34,10 @@ pub enum Request {
         max_bytes: u64,
         max_variable_bytes: u64,
         prune_oversized: bool,
+        /// The runtime's serialization budget: once spent, the remaining names keep their
+        /// previous records and come back as `stale`. Optional on the wire; a runtime that
+        /// predates it ignores the field.
+        budget_ms: Option<u64>,
     },
     Restore {
         path: String,
@@ -77,14 +81,21 @@ impl Request {
                 max_bytes,
                 max_variable_bytes,
                 prune_oversized,
-            } => json!({
-                "type": "snapshot",
-                "path": path,
-                "manifest_path": manifest_path,
-                "max_bytes": max_bytes,
-                "max_variable_bytes": max_variable_bytes,
-                "prune_oversized": prune_oversized,
-            }),
+                budget_ms,
+            } => {
+                let mut frame = json!({
+                    "type": "snapshot",
+                    "path": path,
+                    "manifest_path": manifest_path,
+                    "max_bytes": max_bytes,
+                    "max_variable_bytes": max_variable_bytes,
+                    "prune_oversized": prune_oversized,
+                });
+                if let Some(budget_ms) = budget_ms {
+                    frame["budget_ms"] = json!(budget_ms);
+                }
+                frame
+            }
             Request::Restore {
                 path,
                 max_bytes,
@@ -384,10 +395,12 @@ mod tests {
             max_bytes: 1,
             max_variable_bytes: 2,
             prune_oversized: true,
+            budget_ms: Some(3_000),
         };
         let v = req.to_json();
         assert_eq!(v["type"], "snapshot");
         assert_eq!(v["prune_oversized"], true);
+        assert_eq!(v["budget_ms"], 3_000);
     }
 
     #[test]

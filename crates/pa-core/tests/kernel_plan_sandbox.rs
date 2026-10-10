@@ -418,10 +418,112 @@ async fn toggling_keeps_a_namespace_that_outlasted_the_old_snapshot_window() {
         fixture.provisioner.sync_plan_mode().await.unwrap(),
         PlanModeApplied::Restarted
     );
+    let restore = fixture.provisioner.last_restore().unwrap_or_default();
+    let notice = pa_core::session_engine::state_restore_notice::notice_content(&restore);
     let rows = cell(&fixture, TABLE_ROWS).await;
     assert_eq!(
-        (built, rows),
-        ("41".to_string(), "(41, 800000)".to_string())
+        (
+            built,
+            rows,
+            notice.contains("older snapshot") || notice.contains("did not finish")
+        ),
+        ("41".to_string(), "(41, 800000)".to_string(), false),
+        "{notice}"
+    );
+    fixture.provisioner.dispose(None).await;
+}
+
+/// A final snapshot the kernel cannot run (a detached task holds its loop from the moment the
+/// snapshot arrives until past the window) is abandoned, and the restart's restore notice says
+/// the restored state predates it.
+#[tokio::test]
+async fn an_abandoned_toggle_snapshot_is_reported_by_the_restore() {
+    let Some(fixture) = fixture(SandboxMode::Off, false) else {
+        return;
+    };
+    let manager = fixture.provisioner.ensure(None, None).await.unwrap();
+    assert_eq!(cell(&fixture, "kept = 1\nkept").await, "1");
+    assert!(manager.snapshot_state().await.is_some());
+    let blocked = cell(
+        &fixture,
+        "import asyncio, time\nfrom rlm import repl as _r\nkept = 2\n_cell = set(_r._inflight)\n\
+         async def _hold():\n    for _ in range(3):\n        await asyncio.sleep(0)\n    while not _r._inflight - _cell:\n        time.sleep(0.001)\n    time.sleep(8)\n\
+         _held = asyncio.ensure_future(_hold())\nkept",
+    )
+    .await;
+    fixture.mode.set(true);
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
+    let restore = fixture.provisioner.last_restore().unwrap_or_default();
+    let notice = pa_core::session_engine::state_restore_notice::notice_content(&restore);
+    assert_eq!(
+        (blocked, cell(&fixture, "kept").await),
+        ("2".to_string(), "1".to_string())
+    );
+    assert!(
+        notice.contains("The last state snapshot before this restart did not finish"),
+        "{notice}"
+    );
+    // The next toggle's snapshot finishes: its restore no longer reports the abandoned one.
+    fixture.mode.set(false);
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
+    let restore = fixture.provisioner.last_restore().unwrap_or_default();
+    assert_eq!(
+        (restore.capture_incomplete, cell(&fixture, "kept").await),
+        (false, "1".to_string())
+    );
+    fixture.provisioner.dispose(None).await;
+}
+
+/// A value too slow to pickle inside the toggle's snapshot window: the runtime's budget commits
+/// everything else, and the restart's restore names the value it could not save.
+#[tokio::test]
+async fn a_toggle_snapshot_cut_by_the_budget_names_what_it_could_not_save() {
+    let Some(fixture) = fixture(SandboxMode::Off, false) else {
+        return;
+    };
+    let built = cell(
+        &fixture,
+        "import time
+kept = 3
+class Slow:
+    def __reduce__(self):
+        time.sleep(4)
+        return (int, (0,))
+slow = Slow()
+kept",
+    )
+    .await;
+    fixture.mode.set(true);
+    assert_eq!(
+        fixture.provisioner.sync_plan_mode().await.unwrap(),
+        PlanModeApplied::Restarted
+    );
+    let restore = fixture.provisioner.last_restore().unwrap_or_default();
+    let names = |skips: &[pa_core::kernel::state_snapshot::SnapshotSkip]| {
+        skips
+            .iter()
+            .map(|skip| skip.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (
+            built,
+            names(&restore.stale),
+            restore.restored.contains(&"kept".to_string()),
+            cell(&fixture, "kept").await,
+        ),
+        (
+            "3".to_string(),
+            vec!["slow".to_string()],
+            true,
+            "3".to_string()
+        )
     );
     fixture.provisioner.dispose(None).await;
 }
