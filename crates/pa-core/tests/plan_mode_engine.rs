@@ -20,19 +20,7 @@ use pa_core::session_engine::slash_commands::{parse_session_command, SlashComman
 use pa_types::ai::UserContent;
 
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping the plan-mode engine test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 fn model() -> pa_agent::types::Model {

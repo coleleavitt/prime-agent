@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import _host
+from ._state_guard import guard_state_path
 
 
 def _is_number(value: Any) -> bool:
@@ -729,7 +730,7 @@ def user_machines_dir() -> Path:
         or _machine_env_dir("PI_CODING_AGENT_DIR")
         or str(Path.home() / ".prime" / "agent")
     )
-    return Path(raw).expanduser().resolve() / MACHINES_DIR_NAME
+    return guard_state_path("agent dir", Path(raw).expanduser().resolve()) / MACHINES_DIR_NAME
 
 
 def machine_library_dirs(

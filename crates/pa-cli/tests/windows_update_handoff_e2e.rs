@@ -114,6 +114,8 @@ impl Sandbox {
     fn prime_agent(&self, installer_url: &str) -> Command {
         let home = self.root.join("home");
         let mut command = Command::new(&self.payload_exe);
+        pa_types::platform::test_isolation::TestState::for_agent_dir(home.join(".prime/agent"))
+            .apply(&mut command);
         command
             .arg("update")
             .env(ENV_INSTALLER_URL, installer_url)

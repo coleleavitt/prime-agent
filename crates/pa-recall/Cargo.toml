@@ -21,6 +21,7 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 pa-agent = { path = "../pa-agent" }
+pa-types = { path = "../pa-types" }
 
 [lints]
 workspace = true

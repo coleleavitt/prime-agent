@@ -100,13 +100,23 @@ pub fn expand_tilde_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// The agent state directory: the `PRIME_AGENT_CODING_AGENT_DIR` override, else
+/// `~/.prime/agent`.
+///
+/// # Panics
+///
+/// In a test process, when the directory is the real home's
+/// (`pa_types::platform::test_isolation`).
 pub fn get_agent_dir() -> PathBuf {
-    match std::env::var(ENV_AGENT_DIR) {
+    pa_types::platform::test_isolation::prepare();
+    let dir = match std::env::var(ENV_AGENT_DIR) {
         Ok(dir) if !dir.is_empty() => expand_tilde_path(&dir),
         _ => pa_types::platform::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(CONFIG_DIR_NAME),
-    }
+    };
+    pa_types::platform::test_isolation::guard_state_path("agent dir", &dir);
+    dir
 }
 
 pub fn get_session_dir_env_override() -> Option<PathBuf> {

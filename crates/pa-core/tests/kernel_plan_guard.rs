@@ -205,19 +205,7 @@ async fn a_kernel_that_cannot_arm_the_guard_never_starts_in_plan_mode() {
 /// The kernel Python with prime-agent-runtime installed; set
 /// `PA_CORE_KERNEL_PYTHON` to point at an explicit interpreter instead.
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live plan-guard test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 async fn cell(provisioner: &IpythonKernelProvisioner, code: &str) -> (ExecuteStatus, String) {

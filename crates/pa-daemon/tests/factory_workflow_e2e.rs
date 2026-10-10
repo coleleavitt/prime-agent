@@ -229,9 +229,14 @@ static KERNEL_PYTHON: std::sync::OnceLock<Option<pa_core::factory_eval::FactoryK
 fn kernel_python() -> Option<pa_core::factory_eval::FactoryKernelPython> {
     KERNEL_PYTHON
         .get_or_init(|| {
+            // The test home's venv before the product resolver's own
+            // fallback, which reads the shared venv under `HOME`.
             let explicit = std::env::var_os("PA_E2E_KERNEL_PYTHON")
                 .or_else(|| std::env::var_os("PRIME_AGENT_KERNEL_PYTHON"))
-                .map(PathBuf::from);
+                .map(PathBuf::from)
+                .or_else(|| {
+                    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
+                });
             resolve_kernel_python(explicit)
         })
         .clone()
@@ -573,6 +578,7 @@ fn spawn_supervisor(
         std::fs::File::create(socket.with_extension("supervisor.log")).expect("log file");
     let log_err = log_file.try_clone().expect("clone log file");
     let mut command = Command::new(binary);
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")

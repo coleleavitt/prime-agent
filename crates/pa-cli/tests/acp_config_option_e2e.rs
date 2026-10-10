@@ -204,7 +204,8 @@ fn acp_daemon_attached_config_option_pickers() {
     )
     .unwrap();
     let bin = env!("CARGO_BIN_EXE_prime-agent");
-    let mut child = Command::new(bin)
+    let mut child = pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir)
+        .apply(&mut Command::new(bin))
         .args([
             "--mode",
             "acp",

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -32,6 +33,7 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path) -> Daemon {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
@@ -477,7 +479,8 @@ fn the_give_up_sweep_reaps_a_live_leftover_of_the_abandoned_id() {
     // A real product worker process whose active-session env names the
     // session's worker id; it fails registration (an unknown token) and
     // parks in the registration backoff - a process the supervisor lost track of.
-    let mut fake = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let mut fake = TestState::for_agent_dir(&agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("worker")
         .env(pa_daemon::worker::WORKER_ROLE_ENV, "1")
         .env(pa_daemon::worker::WORKER_ACTIVE_SESSION_ID_ENV, &session_id)

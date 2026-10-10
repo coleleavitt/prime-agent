@@ -27,16 +27,15 @@ assert slugify.run(\"Hello,  World!\") == \"hello-world\", slugify.run(\"Hello, 
 ";
 
 /// A Python 3 for the gate runs: `PA_TOOLFORGE_PYTHON`, else the kernel venv
-/// under `HOME`, else `python3` on `PATH`. `None` skips the test with a note.
+/// under the test home (never the real one), else `python3` on `PATH`. `None` skips the test with a note.
 pub fn gate_python() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("PA_TOOLFORGE_PYTHON") {
         return Some(PathBuf::from(explicit));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let kernel = Path::new(&home).join(".prime/agent/kernel-venv/bin/python");
-        if kernel.exists() {
-            return Some(kernel);
-        }
+    let kernel =
+        pa_types::platform::test_isolation::test_home().join(".prime/agent/kernel-venv/bin/python");
+    if kernel.exists() {
+        return Some(kernel);
     }
     let found = std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)

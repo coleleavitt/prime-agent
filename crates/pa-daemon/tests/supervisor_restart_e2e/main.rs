@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -51,7 +52,8 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path) -> Daemon {
 fn spawn_supervisor_env(socket: &Path, agent_dir: &Path, extra_env: &[(&str, String)]) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
     let mut command = Command::new(binary);
-    let command = command
+    let command = TestState::for_agent_dir(agent_dir)
+        .apply(&mut command)
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)

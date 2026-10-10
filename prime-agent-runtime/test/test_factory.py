@@ -2576,6 +2576,12 @@ class _ClientTestCase(unittest.TestCase):
     write in the real document shape the daemon writes."""
 
     def setUp(self) -> None:
+        # The agent dir first: the harness load below already names it.
+        agent_temp = TemporaryDirectory()
+        self.addCleanup(agent_temp.cleanup)
+        self.settings_path = Path(agent_temp.name) / "settings.json"
+        self.write_settings({"factory": {"enabled": True}})
+        self._isolate_agent_dir(agent_temp.name)
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.harness = HarnessState(Path(temp.name) / "harness_state.json")
@@ -2588,11 +2594,6 @@ class _ClientTestCase(unittest.TestCase):
         patcher = patch.object(rlm_module, "host_request", self.host)
         patcher.start()
         self.addCleanup(patcher.stop)
-        agent_temp = TemporaryDirectory()
-        self.addCleanup(agent_temp.cleanup)
-        self.settings_path = Path(agent_temp.name) / "settings.json"
-        self.write_settings({"factory": {"enabled": True}})
-        self._isolate_agent_dir(agent_temp.name)
 
     def write_settings(self, document: Any) -> None:
         """Write the agent-dir settings document (the real file shape)."""
@@ -3116,6 +3117,10 @@ class MachineFileRoundTripTest(unittest.TestCase):
         root = Path(temp.name).resolve()
         self.library = root / "machines"
         self.out_dir = root / "out"
+        # The import gate reads the agent dir's settings: never the real one.
+        env = patch.dict(os.environ, {"PRIME_AGENT_CODING_AGENT_DIR": str(root / "agent")})
+        env.start()
+        self.addCleanup(env.stop)
 
     def test_exported_file_imports_to_the_identical_spec(self) -> None:
         spec = valid_dag()
@@ -3716,19 +3721,20 @@ class ExportMachineTest(unittest.TestCase):
         self.library = root / "machines"
         self.out_dir = root / "out"
         self.out_dir.mkdir(parents=True)
+        # The opt-in gate: create_factory (below) refuses while the
+        # `factory.enabled` setting is off, so the agent dir points at an
+        # isolated temp dir whose settings file writes the real document
+        # shape the daemon writes -- the core's enabled-fixture pattern.
+        # It comes first: the harness load below already names it.
+        agent_temp = TemporaryDirectory()
+        self.addCleanup(agent_temp.cleanup)
+        self._isolate_agent_dir(agent_temp.name)
+        self.write_settings({"factory": {"enabled": True}})
         self.harness = HarnessState(root / "harness_state.json")
         self.previous_executor = factory_module._DEFAULT_EXECUTOR
         self.executor = FactoryExecutor(harness=self.harness)
         factory_module._DEFAULT_EXECUTOR = self.executor
         self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", self.previous_executor))
-        # The opt-in gate: create_factory (below) refuses while the
-        # `factory.enabled` setting is off, so the agent dir points at an
-        # isolated temp dir whose settings file writes the real document
-        # shape the daemon writes -- the core's enabled-fixture pattern.
-        agent_temp = TemporaryDirectory()
-        self.addCleanup(agent_temp.cleanup)
-        self._isolate_agent_dir(agent_temp.name)
-        self.write_settings({"factory": {"enabled": True}})
 
     def write_settings(self, document: Any) -> None:
         """Write the agent-dir settings document (the real file shape)."""
@@ -3912,17 +3918,8 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         root = Path(temp.name).resolve()
         self.library = root / "machines"
-        self.harness = HarnessState(root / "harness_state.json")
-        self.harness.create_subagent("Worker", "Do the work carefully.", id="worker")
-        self.host = ClientHost()
-        self.executor = FactoryExecutor(harness=self.harness)
-        previous_executor = factory_module._DEFAULT_EXECUTOR
-        factory_module._DEFAULT_EXECUTOR = self.executor
-        self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", previous_executor))
-        patcher = patch.object(rlm_module, "host_request", self.host)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        # Isolate the library resolution from this machine's real home dir.
+        # Isolate the library resolution from this machine's real home dir,
+        # before the harness load below names the agent dir.
         agent_home = root / "agent-home"
         # The library run routes through rlm.factory.run, so it inherits the
         # opt-in gate: the isolated agent dir carries the same enabled
@@ -3938,6 +3935,16 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         })
         env.start()
         self.addCleanup(env.stop)
+        self.harness = HarnessState(root / "harness_state.json")
+        self.harness.create_subagent("Worker", "Do the work carefully.", id="worker")
+        self.host = ClientHost()
+        self.executor = FactoryExecutor(harness=self.harness)
+        previous_executor = factory_module._DEFAULT_EXECUTOR
+        factory_module._DEFAULT_EXECUTOR = self.executor
+        self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", previous_executor))
+        patcher = patch.object(rlm_module, "host_request", self.host)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def store_machine_file(self, name: str, spec: dict[str, Any]) -> Path:
         directory = self.library / name

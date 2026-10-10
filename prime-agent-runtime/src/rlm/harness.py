@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeAlias, TypedDict, TypeGuard, Unpack, cast, overload
 
 from . import _host
+from ._state_guard import guard_state_path
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent", "factory"]
 HarnessScope = Literal["local", "global"]
@@ -89,7 +90,7 @@ def _agent_dir() -> Path:
         or os.environ.get("PI_CODING_AGENT_DIR")
         or str(Path.home() / ".prime" / "agent")
     )
-    return Path(raw).expanduser().resolve()
+    return guard_state_path("agent dir", Path(raw).expanduser().resolve())
 
 
 def _resolve_global_flag(global_: bool = False, extra: Mapping[str, object] | None = None) -> bool:

@@ -83,6 +83,7 @@ fn daemon_binary() -> PathBuf {
     daemon
 }
 
+use pa_types::platform::test_isolation::TestState;
 use support::ts_binary;
 
 struct Daemon {
@@ -100,6 +101,7 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(binary: &Path, socket: &Path, agent_dir: &Path) -> Daemon {
     let mut command = Command::new(binary);
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
@@ -232,6 +234,7 @@ fn create_session(
 /// Run a CLI in an isolated env (agent dir + TMPDIR point into the temp dir).
 fn run_cli(binary: &Path, dir: &Path, agent_dir: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(binary);
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .args(args)
         .current_dir(dir)
@@ -765,6 +768,7 @@ fn ts_daemon_differential_cli_output() {
     // supervisor does), so the parent must exist first.
     std::fs::create_dir_all(socket.parent().expect("socket parent")).expect("socket parent dir");
     let mut daemon_command = Command::new(&ts);
+    TestState::for_agent_dir(&agent_dir).apply(&mut daemon_command);
     daemon_command
         .arg("--mode")
         .arg("daemon")

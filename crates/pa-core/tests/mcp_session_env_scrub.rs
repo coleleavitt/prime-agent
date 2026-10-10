@@ -22,16 +22,7 @@ use pa_core::mcp::{
 use serde_json::{json, Value};
 
 fn python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
-        return Some(PathBuf::from(explicit));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = PathBuf::from(format!("{home}/.prime/agent/kernel-venv/bin/python"));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!("kernel python {} not found; skipping", candidate.display());
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 async fn fixture_env(python: &Path, environment: KernelEnvironment) -> Value {

@@ -315,6 +315,7 @@ const CORPUS: &[&[&str]] = &[
     &["mcp", "remove", "y"],
 ];
 
+use pa_types::platform::test_isolation::TestState;
 use support::ts_binary;
 
 struct InvocationOutput {
@@ -324,7 +325,8 @@ struct InvocationOutput {
 }
 
 fn run(binary: &Path, args: &[&str], sandbox: &Path) -> InvocationOutput {
-    let output = Command::new("timeout")
+    let output = TestState::new(sandbox)
+        .apply(&mut Command::new("timeout"))
         .arg("20")
         .arg(binary)
         .args(args)
@@ -533,6 +535,7 @@ fn run_with_env(
     envs: &[(&str, &str)],
 ) -> InvocationOutput {
     let mut command = Command::new("timeout");
+    TestState::new(sandbox).apply(&mut command);
     command
         .arg("20")
         .arg(binary)

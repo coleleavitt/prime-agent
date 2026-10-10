@@ -25,16 +25,7 @@ use serde_json::{json, Value};
 /// The kernel Python with prime-agent-runtime installed. Skipped (with a
 /// note) on machines without a bootstrapped kernel venv.
 fn kernel_python() -> Option<PathBuf> {
-    let candidate =
-        PathBuf::from(std::env::var("HOME").ok()?).join(".prime/agent/kernel-venv/bin/python");
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live kernel test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 /// Scoped process-env overrides, restored on drop. This binary carries

@@ -37,6 +37,7 @@ use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSuba
 use pa_daemon::agent_messaging::LinkAgentMessageController;
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -81,7 +82,8 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Da
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
     let log_file = std::fs::File::create(socket.with_extension("daemon.log")).expect("log file");
     let log_err = log_file.try_clone().expect("clone log file");
-    let child = Command::new(binary)
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(binary))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -205,27 +207,7 @@ impl Client {
 /// The kernel Python with the runtime installed; the child's reply cell needs it. Skipped (with a
 /// note) without a live install.
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
-        let explicit = PathBuf::from(explicit);
-        assert!(
-            explicit.exists(),
-            "PA_E2E_KERNEL_PYTHON {} not found",
-            explicit.display()
-        );
-        return Some(explicit);
-    }
-    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
-        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
-    ));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live family e2e",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
 }
 
 /// The child's reply turn; no receiver name: the parent is the only Parent member.

@@ -21,14 +21,20 @@ pub(super) fn home_dir() -> PathBuf {
 /// Directory of the pinned kernel venv (`PRIME_AGENT_KERNEL_VENV`), else
 /// `~/.prime/agent/kernel-venv`: the link to the most recently booted keyed
 /// venv (the keyed store). Its parent is where the runtime bundles live.
+///
+/// # Panics
+///
+/// In a test process, when the directory is the real home's
+/// (`pa_types::platform::test_isolation`).
 #[must_use]
 pub fn kernel_venv_dir() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("PRIME_AGENT_KERNEL_VENV") {
-        if !override_dir.is_empty() {
-            return expand_home(&override_dir);
-        }
-    }
-    home_dir().join(".prime").join("agent").join("kernel-venv")
+    pa_types::platform::test_isolation::prepare();
+    let dir = match std::env::var("PRIME_AGENT_KERNEL_VENV") {
+        Ok(override_dir) if !override_dir.is_empty() => expand_home(&override_dir),
+        _ => home_dir().join(".prime").join("agent").join("kernel-venv"),
+    };
+    pa_types::platform::test_isolation::guard_state_path("kernel venv", &dir);
+    dir
 }
 
 pub(super) fn xdg_kernel_venv_dir() -> PathBuf {
@@ -61,6 +67,11 @@ pub(super) fn store_bases() -> [PathBuf; 2] {
 
 /// The venv location for this process: the pinned override when set, else
 /// the first store whose directory can be created.
+///
+/// # Panics
+///
+/// In a test process, when the location is the real home's
+/// (`pa_types::platform::test_isolation`).
 pub(crate) fn resolve_kernel_venv_location() -> anyhow::Result<KernelVenvLocation> {
     if std::env::var("PRIME_AGENT_KERNEL_VENV").is_ok_and(|v| !v.is_empty()) {
         let pinned = kernel_venv_dir();
@@ -74,6 +85,7 @@ pub(crate) fn resolve_kernel_venv_location() -> anyhow::Result<KernelVenvLocatio
     }
     let [primary, fallback] = store_bases();
     for base in [&primary, &fallback] {
+        pa_types::platform::test_isolation::guard_state_path("kernel venv store", base);
         let store = VenvStore::new(base.clone());
         if std::fs::create_dir_all(store.root()).is_ok() {
             return Ok(KernelVenvLocation::Keyed(store));

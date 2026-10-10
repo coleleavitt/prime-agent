@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 
 /// Run one request through the one-shot: (exit code, stdout reply, stderr).
 fn one_shot(request: &Value) -> (Option<i32>, Option<Value>, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_prime-agent"))
+    let state = tempfile::tempdir().expect("state dir");
+    let mut child = pa_types::platform::test_isolation::TestState::new(state.path())
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_prime-agent")))
         .arg("--prime-agent-harness-request")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -279,6 +279,8 @@ fn run(binary: &Path, args: &[&str], sandbox: &Sandbox) -> Output {
     // The binary honours an exported `GIT_DIR` wherever it acts in the user's repository; the
     // test's own (a git hook, `rebase --exec`) must not reach it.
     let mut command = Command::new("timeout");
+    pa_types::platform::test_isolation::TestState::for_agent_dir(&sandbox.agent_dir)
+        .apply(&mut command);
     let output = pa_core::git_env::scrub_repository_selection(&mut command)
         .arg("60")
         .arg(binary)

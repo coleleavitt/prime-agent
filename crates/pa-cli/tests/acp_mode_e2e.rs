@@ -230,6 +230,8 @@ fn daemon_attached_command(
     args: &[&str],
 ) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(home.join(".prime/agent"))
+        .apply(&mut command);
     command
         .args(args)
         .arg("--daemon-socket")
@@ -2136,27 +2138,7 @@ fn acp_overflow_recovery_compacts_and_retries_the_turn() {
 /// `PA_E2E_KERNEL_PYTHON` to point at an explicit interpreter instead.
 /// Without one, the live RLM quiescence lanes below skip (with a note).
 fn kernel_python() -> Option<std::path::PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
-        let explicit = std::path::PathBuf::from(explicit);
-        assert!(
-            explicit.exists(),
-            "PA_E2E_KERNEL_PYTHON {} not found",
-            explicit.display()
-        );
-        return Some(explicit);
-    }
-    let candidate = std::path::PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
-        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
-    ));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live RLM quiescence e2e",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
 }
 
 /// The namespaced prime-agent payload of one session/update frame.

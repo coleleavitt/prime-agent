@@ -9,6 +9,7 @@ pub mod identity;
 mod pipe_security;
 pub mod process;
 pub mod terminal;
+pub mod test_isolation;
 pub mod transport;
 #[cfg(windows)]
 pub(crate) mod windows_pipe;

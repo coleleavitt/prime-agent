@@ -348,6 +348,7 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(&socket)
@@ -1268,9 +1269,17 @@ async fn ensure_daemon_running_spawns_supervisor_and_tui_attaches() {
     let session_dir = agent_dir.join("sessions");
     std::fs::create_dir_all(&session_dir).expect("session dir");
     let socket = dir.path().join("spawned.sock");
-    std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir);
-    // The internally-spawned supervisor inherits this process's env: the short
+    // The internally-spawned supervisor inherits this process's env: its
+    // isolated state, and the short
     // supervisor-lost window keeps a killed supervisor from leaking workers.
+    for (name, value) in
+        pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir).env()
+    {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
     std::env::set_var(
         pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
         "15000",

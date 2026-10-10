@@ -30,6 +30,7 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path, poison_lease_owner: Option<&str>) -> Daemon {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
@@ -550,7 +551,8 @@ fn a_reopened_session_without_a_cwd_runs_in_its_recorded_cwd() {
         ),
     )
     .expect("write session file");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("supervisor")
         .arg("--socket")
         .arg(&socket)
@@ -604,7 +606,8 @@ fn a_supervisor_whose_binary_was_replaced_still_spawns_workers() {
     std::fs::create_dir_all(&sessions).expect("sessions dir");
     let binary = dir.path().join("pa-daemon");
     std::fs::hard_link(env!("CARGO_BIN_EXE_pa-daemon"), &binary).expect("link the binary");
-    let child = Command::new(&binary)
+    let child = pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir)
+        .apply(&mut Command::new(&binary))
         .arg("supervisor")
         .arg("--socket")
         .arg(&socket)

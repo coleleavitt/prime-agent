@@ -10,23 +10,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 /// The kernel Python with prime-agent-runtime installed. Skipped (with a
 /// note) on machines without a live install.
 fn kernel_python() -> Option<PathBuf> {
-    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
-        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
-    ));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live kernel test",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
 }
 
 /// The faux provider script: turn one calls the kernel with a cell that
@@ -76,7 +66,8 @@ impl Drop for Supervisor {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path, script: &Path) -> Supervisor {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)

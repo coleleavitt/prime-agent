@@ -47,7 +47,8 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Da
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
     let log_file = std::fs::File::create(socket.with_extension("daemon.log")).expect("log file");
     let log_err = log_file.try_clone().expect("clone log file");
-    let child = Command::new(binary)
+    let child = pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(binary))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -127,27 +128,7 @@ impl Client {
 /// The kernel Python with prime-agent-runtime installed; set
 /// `PA_E2E_KERNEL_PYTHON` to point at an explicit interpreter instead.
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
-        let explicit = PathBuf::from(explicit);
-        assert!(
-            explicit.exists(),
-            "PA_E2E_KERNEL_PYTHON {} not found",
-            explicit.display()
-        );
-        return Some(explicit);
-    }
-    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
-        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
-    ));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live passivation e2e",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
 }
 
 /// The worker's token from its persisted descriptor (the same lookup the family e2e uses).

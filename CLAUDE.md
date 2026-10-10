@@ -110,7 +110,10 @@ Open:
   identity overrides (`AGENTS.md` → Repository).
 - **Do not push or open PRs** unless asked; the upstream repo is the org's.
 - Tests must be hermetic against this machine (see `.claude/rules/testing.md`): global git config, gitignore, TZ,
-  `PI_OFFLINE`, backtrace env and the TS binary on PATH have all leaked into tests before.
+  `PI_OFFLINE`, backtrace env and the TS binary on PATH have all leaked into tests before. So has the real agent
+  state: a spawned binary gets `pa_types::platform::test_isolation::TestState` (temp agent dir, account store, Claude
+  config, test `HOME`), and the agent-dir/kernel-venv resolvers and binary startups refuse the passwd home's
+  `~/.prime`, `~/.anthropic-accounts` and `~/.claude` in any test process (`PA_TEST_PROTECTED_HOME` adds a sentinel).
 - Ask before removing functionality that looks intentional. No emoji in commits, code, or docs.
 
 ## Validation

@@ -182,6 +182,7 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     )
     .expect("write settings");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(&socket)

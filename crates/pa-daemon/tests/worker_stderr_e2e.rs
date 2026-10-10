@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -30,6 +31,7 @@ struct DaemonBuilder {
 impl DaemonBuilder {
     fn new(socket: &Path, agent_dir: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+        TestState::for_agent_dir(agent_dir).apply(&mut command);
         command
             .arg("supervisor")
             .arg("--socket")

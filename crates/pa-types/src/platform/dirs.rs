@@ -9,8 +9,23 @@ use std::path::PathBuf;
 /// the
 /// TS order), then on Windows the `USERPROFILE`/`HOMEDRIVE`+`HOMEPATH` chain; `None` when nothing
 /// resolves (the per-call-site fallback replaces the TS throw).
+///
+/// In a libtest harness whose `HOME` is the real (protected) home, the test home instead
+/// ([`super::test_isolation::test_home`]): an in-process test never resolves the real home's
+/// state through a `~` default.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
+    env_home_dir().map(super::test_isolation::harness_home)
+}
+
+/// [`home_dir`] from the environment alone (a harness isolated first).
+fn env_home_dir() -> Option<PathBuf> {
+    super::test_isolation::prepare();
+    raw_home_dir()
+}
+
+/// `HOME` (and the Windows chain) as the environment holds it right now.
+pub(crate) fn raw_home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
         return Some(PathBuf::from(home));
     }
@@ -40,8 +55,21 @@ pub const CONFIG_DIR_NAME: &str = ".prime/agent";
 /// The agent state directory: the env override with a leading `~`/`~/` expanded, else
 /// `<home>/.prime/agent`; `None` when the home directory does not resolve (each caller owns its
 /// fallback).
+///
+/// # Panics
+///
+/// In a test process, when the directory is the real home's
+/// ([`super::test_isolation::guard_state_path`]).
 #[must_use]
 pub fn agent_dir() -> Option<PathBuf> {
+    let dir = resolve_agent_dir()?;
+    super::test_isolation::guard_state_path("agent dir", &dir);
+    Some(dir)
+}
+
+/// [`agent_dir`] without the test-isolation guard.
+pub(crate) fn resolve_agent_dir() -> Option<PathBuf> {
+    super::test_isolation::prepare();
     if let Some(dir) = std::env::var_os(ENV_AGENT_DIR).filter(|dir| !dir.is_empty()) {
         return Some(expand_tilde(&dir.to_string_lossy()));
     }

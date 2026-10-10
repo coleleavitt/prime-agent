@@ -135,35 +135,7 @@ fn set_executable(path: &Path) {
 /// The kernel Python with prime-agent-runtime installed (skipped with a
 /// note without a live install).
 fn kernel_python() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
-        let explicit = PathBuf::from(explicit);
-        assert!(
-            explicit.exists(),
-            "PA_E2E_KERNEL_PYTHON {} not found",
-            explicit.display()
-        );
-        return Some(explicit);
-    }
-    // The kernel venv's interpreter spelling is platform-shaped (the venv
-    // layout the product's own bootstrap creates: `bin/python` on unix,
-    // `Scripts\python.exe` on Windows).
-    let venv_python = if cfg!(windows) {
-        "kernel-venv/Scripts/python.exe"
-    } else {
-        "kernel-venv/bin/python"
-    };
-    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| format!("/home/ubuntu/.prime/agent/{venv_python}"),
-        |home| format!("{home}/.prime/agent/{venv_python}"),
-    ));
-    if candidate.exists() {
-        return Some(candidate);
-    }
-    eprintln!(
-        "kernel python {} not found; skipping live kernel e2e",
-        candidate.display()
-    );
-    None
+    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
 }
 
 struct Sandbox {
@@ -191,6 +163,8 @@ impl Sandbox {
     /// keys (a later `Command::env` wins over the scrub).
     fn command(&self, staged: &Path) -> Command {
         let mut command = Command::new(staged.join(packaged_binary_name()));
+        pa_types::platform::test_isolation::TestState::for_agent_dir(&self.agent_dir)
+            .apply(&mut command);
         command
             .env("HOME", self.home.path())
             .env("PRIME_AGENT_CODING_AGENT_DIR", &self.agent_dir)

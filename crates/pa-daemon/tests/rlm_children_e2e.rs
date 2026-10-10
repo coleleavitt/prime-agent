@@ -34,6 +34,7 @@ use pa_core::session_engine::rlm_host::{
 };
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Daemon {
@@ -53,7 +54,8 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_daemon(socket: &Path, agent_dir: &Path) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
-    let child = Command::new(binary)
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(binary))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)

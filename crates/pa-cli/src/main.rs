@@ -18,6 +18,8 @@ fn main() {
     // per-thread arenas otherwise keep each burst's high-water pages
     // resident for the process lifetime.
     pa_types::memory_release::cap_thread_arenas();
+    // A binary a test spawned must not start on the user's real agent state.
+    pa_types::platform::test_isolation::refuse_real_state();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // The kernel harness store's one-shot, before anything else starts:
     // it serves one request and exits.

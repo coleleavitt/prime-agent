@@ -20,6 +20,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 /// The child plus the tempdir it runs in (it must outlive the child's cwd).
@@ -51,7 +52,8 @@ impl RpcChild {
             std::fs::write(agent_dir.join("models.json"), models.to_string()).unwrap();
         }
         let bin = env!("CARGO_BIN_EXE_prime-agent");
-        let mut child = Command::new(bin)
+        let mut child = TestState::new(home.path())
+            .apply(&mut Command::new(bin))
             .args(args)
             .env("HOME", home.path())
             .env("PRIME_AGENT_CODING_AGENT_DIR", home.path().join("agent"))
@@ -1097,7 +1099,8 @@ impl TimedRpcChild {
     fn spawn_stalled(fixture: &std::path::Path, script: &Value) -> TimedRpcChild {
         let home = tempfile::TempDir::new().unwrap();
         let bin = env!("CARGO_BIN_EXE_prime-agent");
-        let mut child = Command::new(bin)
+        let mut child = TestState::new(home.path())
+            .apply(&mut Command::new(bin))
             .args(["--mode", "rpc", "--resume", fixture.to_str().unwrap()])
             .env("HOME", home.path())
             .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())

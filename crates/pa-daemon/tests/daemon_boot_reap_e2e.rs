@@ -30,6 +30,7 @@ impl Drop for Daemon {
 fn spawn_supervisor(socket: &Path, agent_dir: &Path) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
     let mut command = Command::new(binary);
+    pa_types::platform::test_isolation::TestState::for_agent_dir(agent_dir).apply(&mut command);
     let command = command
         .arg("supervisor")
         .arg("--socket")

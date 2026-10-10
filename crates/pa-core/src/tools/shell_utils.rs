@@ -4,7 +4,19 @@
 pub use crate::platform::shell::get_shell_config;
 
 /// The agent config directory (`~/.prime/agent` unless overridden).
+///
+/// # Panics
+///
+/// In a test process, when the directory is the real home's
+/// (`pa_types::platform::test_isolation`).
 pub fn get_agent_dir() -> String {
+    pa_types::platform::test_isolation::prepare();
+    let dir = resolve_agent_dir();
+    pa_types::platform::test_isolation::guard_state_path("agent dir", std::path::Path::new(&dir));
+    dir
+}
+
+fn resolve_agent_dir() -> String {
     if let Ok(dir) = std::env::var("PI_CODING_AGENT_DIR") {
         if dir.starts_with('~') {
             if let Some(rest) = dir.strip_prefix("~/") {

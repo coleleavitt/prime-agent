@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{json, Value};
 
 struct Supervisor {
@@ -47,7 +48,8 @@ impl Drop for Supervisor {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path) -> Supervisor {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = TestState::for_agent_dir(agent_dir)
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
