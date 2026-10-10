@@ -268,21 +268,21 @@ pub fn save_harness_state(
     store::document::write_harness_state_file(&get_harness_state_path(harness_state_dir), state)
 }
 
-/// Take the harness state file's lock (`{file}.lock`, owned: a live holder
-/// is never reclaimed, only a provably dead one), creating the directory.
-/// Every writer of the file takes it around its re-read and save: the
-/// kernel's harness store, refine, and the ledger flush.
+/// Take the harness state file's lock ([`lock::lock_harness_state_file`]
+/// with [`lock::HARNESS_STATE_LOCK`]), creating the directory. Every writer
+/// of the file takes it around its re-read and save: the kernel's harness
+/// store, refine, the RAVO commit and the ledger flush.
 ///
 /// # Errors
 ///
-/// Error when the directory cannot be created or the lock stays contended.
-pub fn lock_harness_state(harness_state_dir: &Path) -> anyhow::Result<crate::platform::LockDir> {
-    std::fs::create_dir_all(harness_state_dir)?;
-    Ok(crate::platform::LockDir::acquire_owned_retrying(
+/// Error when the directory cannot be created or one holder kept the lock
+/// past the wait.
+pub fn lock_harness_state(
+    harness_state_dir: &Path,
+) -> anyhow::Result<crate::platform::HeartbeatLock> {
+    Ok(lock::lock_harness_state_file(
         &get_harness_state_path(harness_state_dir),
-        std::time::Duration::from_secs(10),
-        50,
-        std::time::Duration::from_millis(20),
+        lock::HARNESS_STATE_LOCK,
     )?)
 }
 
@@ -557,6 +557,7 @@ fn scope_prefix(scope: HarnessScope, id: &str) -> String {
 pub mod entries;
 pub mod executor;
 pub mod gate;
+pub mod lock;
 pub mod package_harness;
 pub mod planner;
 pub mod prompt_hook;

@@ -24,7 +24,6 @@ mod search;
 mod validate;
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
@@ -47,23 +46,11 @@ const KINDS: [(&str, RefinementKind); 5] = [
     ("factory", RefinementKind::Factory),
 ];
 
-/// How a write takes the store's lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LockPolicy {
-    /// How long a write waits for one holder: past the stale window, so a
-    /// crashed holder's leftover is always reclaimed first.
-    wait: Duration,
-    retry: Duration,
-    /// A lock this old is a crashed holder's leftover (the TS host's
-    /// `HARNESS_STATE_LOCK_STALE_MS`).
-    stale: Duration,
-}
+/// How a write takes the store's lock: the one `harness_state.json` lock
+/// policy ([`super::lock::HARNESS_STATE_LOCK`]).
+type LockPolicy = super::lock::HarnessLockPolicy;
 
-const STORE_LOCK: LockPolicy = LockPolicy {
-    wait: Duration::from_secs(15),
-    retry: Duration::from_millis(5),
-    stale: Duration::from_secs(10),
-};
+const STORE_LOCK: LockPolicy = super::lock::HARNESS_STATE_LOCK;
 
 /// The Python exception class a store call raises in the kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,51 +139,22 @@ struct Session {
     dirty: bool,
 }
 
-/// Take the store's lock for one write. The holder keeps it fresh with a
-/// heartbeat, so a write whose synced save outlasts the stale window (an
-/// fsync under I/O pressure) is never judged a crashed holder's leftover
-/// and has its lock taken by a concurrent writer mid-write.
-///
-/// The wait bounds how long ONE holder keeps the lock, not how long this
-/// write queues: each time the lock changes hands the wait restarts, so a
-/// convoy of writers that each hold briefly never times a write out.
+/// Take the store's lock for one write ([`super::lock::lock_harness_state_file`]):
+/// owned and heartbeated, so a write whose synced save outlasts the stale
+/// window is never judged a crashed holder's leftover, and waited for per
+/// holder, so a convoy of brief writers never times a write out.
 fn lock_store(
     path: &Path,
     policy: LockPolicy,
 ) -> Result<crate::platform::HeartbeatLock, StoreError> {
-    use crate::platform::LockDir;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| StoreError::new(StoreErrorKind::Os, error.to_string()))?;
-    }
-    let lock_path = LockDir::path_for(path);
-    let mut holder = None;
-    let mut deadline = Instant::now() + policy.wait;
-    loop {
-        // Owned: a live holder is never reclaimed, and the save re-checks
-        // the owner record before it replaces the file (upstream #3380).
-        match LockDir::acquire_owned(path, policy.stale) {
-            Ok(held) => return Ok(held.with_heartbeat(policy.stale / 2)),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                let current = LockDir::holder_at(&lock_path);
-                if current.is_some() && current != holder {
-                    holder = current;
-                    deadline = Instant::now() + policy.wait;
-                } else if Instant::now() >= deadline {
-                    return Err(StoreError::new(
-                        StoreErrorKind::Timeout,
-                        format!(
-                            "harness state is locked by another process: {} (held longer than {}s)",
-                            lock_path.display(),
-                            policy.wait.as_secs()
-                        ),
-                    ));
-                }
-                std::thread::sleep(policy.retry);
-            }
-            Err(error) => return Err(StoreError::new(StoreErrorKind::Os, error.to_string())),
-        }
-    }
+    super::lock::lock_harness_state_file(path, policy).map_err(|error| {
+        let kind = if error.kind() == std::io::ErrorKind::TimedOut {
+            StoreErrorKind::Timeout
+        } else {
+            StoreErrorKind::Os
+        };
+        StoreError::new(kind, error.to_string())
+    })
 }
 
 /// What a finished call hands back besides its result.

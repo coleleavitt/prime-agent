@@ -26,8 +26,8 @@ use serde_json::Value;
 use crate::extract::{observe_message, tool_result_text, IPYTHON_TOOL_NAME};
 use crate::fingerprint::fingerprint_tool_result_text;
 use crate::harness::{
-    global_failure_ledger_enabled_from_env, global_harness_state_dir, local_harness_state_dir,
-    with_harness_state_lock, HarnessDocument,
+    global_failure_ledger_enabled_from_env, global_harness_state_dir, harness_state_path,
+    local_harness_state_dir, with_harness_state_lock, HarnessDocument, HarnessStateError,
 };
 use crate::ledger::{
     apply_replay_verifications, merge_failure_observations, observation_ordinal,
@@ -476,12 +476,19 @@ impl Inner {
             error = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let written = with_harness_state_lock(&dir, || {
+        let written = with_harness_state_lock(&dir, |lock| {
             let mut document = HarnessDocument::load(&dir);
             let merged = merge_failure_observations(&document.failures(), &pending, None);
             let ledger = apply_replay_verifications(&merged.ledger, &verifications);
             document.set_failures(&ledger);
             self.announce_flush(LedgerScope::Global, session_id, &mut document);
+            // A lock reclaimed mid-flush is another writer's now: never save
+            // over its read-modify-write.
+            lock.ensure_owned()
+                .map_err(|source| HarnessStateError::Io {
+                    path: harness_state_path(&dir),
+                    source,
+                })?;
             document.save(&dir).map(|_| ledger.failures.len())
         });
         let landed = match written {

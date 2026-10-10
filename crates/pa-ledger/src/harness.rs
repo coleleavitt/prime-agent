@@ -7,13 +7,14 @@
 //! (key order kept), so it never rewrites another producer's data. Writes
 //! are `JSON.stringify(state, null, 2) + "\n"` to a temp file renamed over
 //! the target, keeping the target's mode (0600 for a new file). The global
-//! read-modify-write runs under the TS `proper-lockfile` lock
-//! (`harness_state.json.lock`, 10 s stale), so a TS and a Rust process
-//! flushing at once serialize and neither loses the other's records.
+//! read-modify-write runs under the file's one lock
+//! (`harness_state.json.lock`, [`pa_core::refinement::lock`]: owned,
+//! heartbeated, 10 s stale, a 15 s wait per holder), shared with the
+//! kernel's harness store, refine and the RAVO commit, so concurrent
+//! writers serialize and none loses another's records.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -27,10 +28,6 @@ pub const HARNESS_STATE_FILE_NAME: &str = "harness_state.json";
 pub const FAILURES_KEY: &str = "failures";
 /// `PRIME_AGENT_GLOBAL_LEDGER=0|off|false|no` keeps the ledger per session.
 pub const GLOBAL_FAILURE_LEDGER_ENV: &str = "PRIME_AGENT_GLOBAL_LEDGER";
-
-const LOCK_STALE: Duration = Duration::from_secs(10);
-const LOCK_ATTEMPTS: u32 = 200;
-const LOCK_RETRY: Duration = Duration::from_millis(5);
 
 /// The top-level keys the TS `loadHarnessState` emits, in its order; a key
 /// this crate adds lands where a TS save would put it.
@@ -46,7 +43,7 @@ const CANONICAL_KEY_ORDER: [&str; 6] = [
 /// Why a harness state write did not land.
 #[derive(Debug, thiserror::Error)]
 pub enum HarnessStateError {
-    /// Another process held the harness state lock for every attempt.
+    /// One holder kept the harness state lock past the wait.
     #[error("could not lock harness state: {0}")]
     Locked(PathBuf),
     /// Reading, serializing, or writing failed.
@@ -252,50 +249,49 @@ fn set_mode(path: &Path, _mode: u32) -> std::io::Result<()> {
     std::fs::metadata(path).map(|_| ())
 }
 
-/// Acquire the harness state lock of `harness_state_dir` (the TS
-/// `withHarnessStateLock` protocol: 200 attempts 5 ms apart, a lock older
-/// than 10 s is stale); dropping the guard releases it. Blocking; call it
-/// off the async runtime.
+/// Acquire the harness state lock of `harness_state_dir` (the file's one
+/// lock, [`pa_core::refinement::lock::lock_harness_state_file`]); dropping
+/// the guard releases it. Blocking; call it off the async runtime.
 ///
 /// # Errors
 ///
-/// [`HarnessStateError::Locked`] when every attempt found a live lock, and
-/// [`HarnessStateError::Io`] when the directory or the lock cannot be made.
+/// [`HarnessStateError::Locked`] when one holder kept the lock past the
+/// wait, and [`HarnessStateError::Io`] when the directory or the lock
+/// cannot be made.
 pub fn acquire_harness_state_lock(
     harness_state_dir: &Path,
-) -> Result<pa_core::platform::LockDir, HarnessStateError> {
+) -> Result<pa_core::platform::HeartbeatLock, HarnessStateError> {
     let path = harness_state_path(harness_state_dir);
-    std::fs::create_dir_all(harness_state_dir).map_err(|source| HarnessStateError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    for attempt in 0..LOCK_ATTEMPTS {
-        match pa_core::platform::LockDir::acquire(&path, LOCK_STALE) {
-            Ok(lock) => return Ok(lock),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if attempt + 1 < LOCK_ATTEMPTS {
-                    std::thread::sleep(LOCK_RETRY);
-                }
+    pa_core::refinement::lock::lock_harness_state_file(
+        &path,
+        pa_core::refinement::lock::HARNESS_STATE_LOCK,
+    )
+    .map_err(|source| {
+        if source.kind() == std::io::ErrorKind::TimedOut {
+            HarnessStateError::Locked(path.clone())
+        } else {
+            HarnessStateError::Io {
+                path: path.clone(),
+                source,
             }
-            Err(source) => return Err(HarnessStateError::Io { path, source }),
         }
-    }
-    Err(HarnessStateError::Locked(path))
+    })
 }
 
 /// Run `update` while holding the harness state lock of `harness_state_dir`
-/// ([`acquire_harness_state_lock`]). Blocking; call it off the async
-/// runtime.
+/// ([`acquire_harness_state_lock`]). The guard is lent to `update` so it
+/// can confirm the lock is still its own right before it saves. Blocking;
+/// call it off the async runtime.
 ///
 /// # Errors
 ///
 /// The errors of [`acquire_harness_state_lock`].
 pub fn with_harness_state_lock<T>(
     harness_state_dir: &Path,
-    update: impl FnOnce() -> T,
+    update: impl FnOnce(&pa_core::platform::HeartbeatLock) -> T,
 ) -> Result<T, HarnessStateError> {
     let lock = acquire_harness_state_lock(harness_state_dir)?;
-    let result = update();
+    let result = update(&lock);
     drop(lock);
     Ok(result)
 }
@@ -390,15 +386,34 @@ mod tests {
         assert_eq!(HarnessDocument::load(dir.path()), HarnessDocument::empty());
     }
 
+    /// A held lock makes the update wait for the holder instead of failing
+    /// fast: the update runs after the release and reads what the holder
+    /// saved, so neither write is lost.
     #[test]
-    fn a_held_lock_keeps_the_update_out_until_it_goes_stale_or_is_released() {
+    fn a_held_lock_makes_the_update_wait_for_the_holder() {
         let dir = tempfile::tempdir().unwrap();
         let path = harness_state_path(dir.path());
-        let held = pa_core::platform::LockDir::acquire(&path, LOCK_STALE).unwrap();
-        let blocked = with_harness_state_lock(dir.path(), || ());
-        assert!(matches!(blocked, Err(HarnessStateError::Locked(_))));
-        drop(held);
-        assert_eq!(with_harness_state_lock(dir.path(), || 7).unwrap(), 7);
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let holder = {
+            let dir = dir.path().to_path_buf();
+            std::thread::spawn(move || {
+                let held = acquire_harness_state_lock(&dir).unwrap();
+                held_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::fs::write(harness_state_path(&dir), "{\"holder\":true}\n").unwrap();
+                drop(held);
+            })
+        };
+        held_rx.recv().unwrap();
+        let seen = with_harness_state_lock(dir.path(), |_| {
+            std::fs::read_to_string(harness_state_path(dir.path())).unwrap_or_default()
+        })
+        .unwrap();
+        holder.join().unwrap();
+        assert!(
+            seen.contains("holder"),
+            "the update ran after the holder's save: {seen:?}"
+        );
         assert!(!pa_core::platform::LockDir::path_for(&path).exists());
     }
 }
