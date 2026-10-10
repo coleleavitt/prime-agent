@@ -11,7 +11,6 @@
 //! it stands when the edits would apply, and lets the verdict record what
 //! happened in the state it saves.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use pa_types::session::AgentMessage;
@@ -93,24 +92,6 @@ pub trait RefinementGate: Send + Sync {
     /// its harness write landed or it failed. The default holds nothing.
     fn begin_refine(&self) -> Option<RefineGuard> {
         None
-    }
-
-    /// The refine is about to re-read, edit and save the `scope` store at
-    /// `harness_state_dir`; the guard returned is held until that save
-    /// landed (a lock the store shares with its other writers). Called for
-    /// every refine of the session, gated or not, off the async runtime.
-    /// The default locks nothing.
-    ///
-    /// # Errors
-    ///
-    /// An error fails the refinement before anything is written.
-    fn lock_store(
-        &self,
-        scope: HarnessScope,
-        harness_state_dir: &Path,
-    ) -> anyhow::Result<Option<RefineGuard>> {
-        let _ = (scope, harness_state_dir);
-        Ok(None)
     }
 
     /// The session accepts refinements this gate's feature requests: it may

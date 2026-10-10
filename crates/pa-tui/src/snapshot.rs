@@ -48,12 +48,9 @@ pub struct Reconstructed {
     /// The tray effort suffix for that model, when the state's model
     /// carries its reasoning level.
     pub thinking_suffix: Option<String>,
-    /// The tray's context usage (`state.contextUsage`, the TS
-    /// `createAgentConnectionState` `contextUsage` field): the snapshot
-    /// feeds the first frame's tray row — the open path does not block
-    /// on a `get_session_stats` round-trip (TS fetches stats only after
-    /// a turn or compaction settles). `None` clears the tray display
-    /// (unknown usage).
+    /// The tray's context usage (`state.contextUsage`): the snapshot
+    /// feeds the first frame's tray row without a stats round-trip.
+    /// `None` clears the tray display.
     pub context_usage: Option<crate::chrome::ContextUsage>,
     pub session_name: Option<String>,
     /// Session id of the persisted session file.

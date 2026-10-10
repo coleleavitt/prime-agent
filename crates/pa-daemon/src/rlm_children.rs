@@ -26,7 +26,8 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use crate::rlm_child_model::{
-    assert_thinking_supported, compact_rlm_text, resolve_child_model, rlm_child_label,
+    assert_thinking_supported, cap_text, compact_rlm_text, resolve_child_model, rlm_child_label,
+    ANSWER_TEXT_MAX_CHARS,
 };
 use crate::supervisor_link::SupervisorLink;
 use crate::util::now_ms;
@@ -150,6 +151,11 @@ struct ChildRecord {
     /// notice window.
     settled: bool,
     answer_preview: Option<String>,
+    /// The full final-answer text (bounded by
+    /// [`ANSWER_TEXT_MAX_CHARS`]), the collect envelope's binding lane:
+    /// a consumer that extracts outputs (the factory's ports) needs the
+    /// whole fenced JSON, while the roster rows keep the compact preview.
+    answer_text: Option<String>,
     answer_captured: bool,
     /// A child agent message arrived since its task was admitted; the
     /// no-reply terminal notice is withheld once set.
@@ -267,6 +273,10 @@ struct DeletedChild {
     session_name: String,
     session_dir: String,
     started_at_ms: u64,
+    /// The roster status the row carried at its delete (the idempotent
+    /// re-delete receipt reports it verbatim, so a repeated retire reads
+    /// the same verdict as the first).
+    status: &'static str,
     answer_preview: Option<String>,
     /// The envelope's error: the child's own terminal error when one was
     /// recorded, else the delete reason.
@@ -313,6 +323,10 @@ struct SupervisorChildSessionsInner {
     link: Arc<SupervisorLink>,
     agent_dir: PathBuf,
     parent_active_session_id: String,
+    /// The parent session's live name (the worker's summary, the TS
+    /// `sessionName` of every spawn row's `from` endpoint): `None` until
+    /// the worker publishes a summary, and refreshed by every rename.
+    parent_session_name: std::sync::Mutex<Option<String>>,
     // Std mutex: the identity lock is only a data swap, never held across
     // an await, so sync engine paths can set it without a runtime `block_on`.
     identity: std::sync::Mutex<ParentIdentity>,
@@ -383,6 +397,7 @@ impl SupervisorChildSessions {
                 link,
                 agent_dir,
                 parent_active_session_id,
+                parent_session_name: std::sync::Mutex::new(None),
                 identity: std::sync::Mutex::new(ParentIdentity::with_default_depth()),
                 children: Mutex::new(Vec::new()),
                 ephemeral_child_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -513,6 +528,22 @@ impl SupervisorChildSessions {
     /// from now on start in `cwd`; running ones keep theirs.
     pub fn set_identity_cwd(&self, cwd: &str) {
         self.inner.identity.lock_or_recover().cwd = Some(cwd.to_string());
+    }
+
+    /// Replace the parent session's live name (the worker's summary — the
+    /// `sessionName` of the spawn kickoff's `from` endpoint); `None` when
+    /// the summary carries none.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the name mutex is poisoned (a holder panicked while
+    /// holding the lock).
+    pub fn set_parent_session_name(&self, name: Option<String>) {
+        *self
+            .inner
+            .parent_session_name
+            .lock()
+            .expect("parent session name lock") = name;
     }
 
     /// Rebuild the children registry from the spawn ledger (a restarted
@@ -654,6 +685,7 @@ impl SupervisorChildSessions {
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 last_emitted_status: None,
+                answer_text: None,
             })));
     }
 
@@ -677,6 +709,7 @@ impl SupervisorChildSessions {
                 settled_status: None,
                 settled: false,
                 answer_preview: None,
+                answer_text: None,
                 answer_captured: false,
                 replied_since_task: false,
                 interrupted: false,
@@ -756,6 +789,7 @@ impl SupervisorChildSessions {
             status: record.status(),
             settled: record.settled_status.is_some(),
             answer_preview: record.answer_preview.clone(),
+            answer_text: record.answer_text.clone(),
             error: record.error.clone(),
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
             tool_use_count: None,
@@ -773,6 +807,7 @@ impl SupervisorChildSessions {
             status: "cancelled",
             settled: true,
             answer_preview: deleted.answer_preview.clone(),
+            answer_text: None,
             error: Some(deleted.error.clone()),
             duration_ms: Some(now_ms().saturating_sub(deleted.started_at_ms)),
             tool_use_count: None,

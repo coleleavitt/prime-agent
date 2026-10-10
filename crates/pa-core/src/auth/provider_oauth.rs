@@ -102,6 +102,7 @@ impl ProviderOAuth {
                             client_id: None,
                             resource: None,
                             issuer: None,
+                            audience_mode: None,
                         })
                     }
                     ANTHROPIC_PROVIDER_ID => {
@@ -122,6 +123,7 @@ impl ProviderOAuth {
                             client_id: None,
                             resource: None,
                             issuer: None,
+                            audience_mode: None,
                         })
                     }
                     GITHUB_COPILOT_PROVIDER_ID => {
@@ -145,6 +147,7 @@ impl ProviderOAuth {
                             client_id: None,
                             resource: None,
                             issuer: None,
+                            audience_mode: None,
                         })
                     }
                     XAI_PROVIDER_ID => {
@@ -162,6 +165,7 @@ impl ProviderOAuth {
                             client_id: None,
                             resource: None,
                             issuer: None,
+                            audience_mode: None,
                         })
                     }
                     // The match arms cover the four subscription ids;
@@ -290,6 +294,7 @@ mod tests {
             client_id: None,
             resource: None,
             issuer: None,
+            audience_mode: None,
         }
     }
 
@@ -307,6 +312,7 @@ mod tests {
                 client_id: None,
                 resource: None,
                 issuer: None,
+                audience_mode: None,
             },
             _ => AuthCredential::Oauth {
                 access: "stale-access".to_string(),
@@ -319,6 +325,7 @@ mod tests {
                 client_id: None,
                 resource: None,
                 issuer: None,
+                audience_mode: None,
             },
         }
     }
@@ -545,6 +552,7 @@ mod tests {
             client_id: None,
             resource: None,
             issuer: None,
+            audience_mode: None,
         }
     }
 
@@ -616,6 +624,7 @@ mod tests {
             client_id: None,
             resource: None,
             issuer: None,
+            audience_mode: None,
         };
         let mut auth = storage_with_credential(OPENAI_CODEX_PROVIDER_ID, &unexpired);
         assert_eq!(

@@ -19,6 +19,8 @@ const HEADLESS_SETTLE_TIMEOUT_MS: u64 = 60_000;
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 /// The spinner's wall-clock cadence, not the render rate.
 const SPINNER_INTERVAL_MS: u128 = 80;
+/// The input-idle window the quiet tick waits out before materializing parked work.
+const QUIET_TICK_INTERVAL: Duration = Duration::from_millis(50);
 
 /// The animating loader's next phase boundary, the wake the select needs
 /// while a quiet turn waits out its stream: TS `Loader`'s `setInterval`
@@ -679,15 +681,8 @@ async fn run_interactive_surface(
     if headless {
         session.osc_sink = crate::clipboard::OscSink::Buffer(Vec::new());
     }
-    // The tray's context usage came in with the attach snapshot (TS
-    // `createAgentConnectionState` carries `contextUsage`; TS never
-    // blocks the first frame on a `getSessionStats` fetch — its stats
-    // refreshes run only after a turn or compaction settles, which the
-    // loop's settle arms below keep doing). A blocking
-    // `refresh_stats()` here cost a full daemon round-trip on the
-    // first-frame path (the open and every agents-view switch
-    // re-entry) for data the snapshot already carried.
-    // The startup catalog fetch: failures stay silent and the snapshot keeps serving the picker.
+    // The tray's context usage came in with the attach snapshot, so the
+    // open path does not block on a stats fetch.
     session.spawn_model_catalog_refresh();
     session.rebuild_view(&mut view, &crate::session_ui::RebuildKind::Rebind);
     // The cross-view layout handoff's adopt (view::handoff): a re-entry whose attach cursor exactly
@@ -826,6 +821,7 @@ async fn run_interactive_surface(
     // is armed while a dirty frame waits out the interval.
     let mut last_render_at: Option<Instant> = None;
     let mut render_deadline: Option<Instant> = None;
+    let mut quiet_tick_deadline: Option<Instant> = None;
     let mut anim_started: Option<Instant> = None;
     // The spinner phase painted by the last frame (`usize::MAX` before the first): a quiet turn
     // only dirties when the 80ms phase advances.
@@ -1026,6 +1022,14 @@ async fn run_interactive_surface(
                     }
                 }
             } else if let Some(input) = pending.pop_front() {
+                // Timing markers observe the previous frame without dirtying the view or
+                // adding a select/render iteration to the measured input sequence. The render
+                // count rides along: the frame capture dedupes on plain text, so restyle-only
+                // renders need a separate witness.
+                if let UiInput::Timestamp(sender) = input {
+                    sender.send((Instant::now(), renderer.headless_renders()))?;
+                    continue;
+                }
                 session.dirty = true;
                 step_applied = true;
                 match input {
@@ -1177,6 +1181,7 @@ async fn run_interactive_surface(
                             session.run_traces_login(&mut view);
                         }
                     }
+                    UiInput::Timestamp(_) => unreachable!("timing marker handled above"),
                     UiInput::HeadlessDone => headless_done = true,
                     UiInput::WaitRender { .. } | UiInput::WaitGone { .. } => {
                         unreachable!("render barrier handled above")
@@ -1369,6 +1374,14 @@ async fn run_interactive_surface(
         // iteration. Terminal runs never arm it (`headless_done`
         // exists only on the headless harness).
         let settle_recheck_wanted = headless_done && headless_settle_pending;
+        // The window anchors at the first iteration that sees pending work: another arm's
+        // wake must not restart it, or a streaming reply starves the parked request.
+        quiet_tick_deadline = if autocomplete_pending || auto_scroll_armed || settle_recheck_wanted
+        {
+            quiet_tick_deadline.or_else(|| Some(Instant::now() + QUIET_TICK_INTERVAL))
+        } else {
+            None
+        };
         tokio::select! {
             maybe_event = async {
                 // A closed channel's recv() resolves None instantly and forever; while the
@@ -1600,6 +1613,11 @@ async fn run_interactive_surface(
                     next_ui_input(&mut ui_rx, &mut ui_closed).await
                 }
             } => {
+                // A keystroke restarts the window: the rest of a typed burst (a
+                // command plus its Enter) applies before a parked request materializes.
+                if matches!(input, UiInput::Key(_) | UiInput::Paste(_)) {
+                    quiet_tick_deadline = None;
+                }
                 pending.push_back(input);
             }
             maybe_note = notes_rx.recv() => {
@@ -1942,11 +1960,14 @@ async fn run_interactive_surface(
                 // autocomplete request (suggestions resolve asynchronously after the keystroke
                 // batch, so the dropdown opens only once typing pauses) or an armed selection
                 // auto-scroll. An idle surface parks this arm.
-                if !(autocomplete_pending || auto_scroll_armed || settle_recheck_wanted) {
-                    std::future::pending::<()>().await;
+                match quiet_tick_deadline {
+                    Some(deadline) => {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                    }
+                    None => std::future::pending::<()>().await,
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
             } => {
+                quiet_tick_deadline = None;
                 session.materialize_editor_autocomplete(&mut view);
                 session.selection_auto_scroll_tick(&mut view);
             }

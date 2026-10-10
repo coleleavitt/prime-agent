@@ -31,9 +31,7 @@ use serde_json::{json, Map, Value};
 use crate::refinement::{
     HarnessEntry, HarnessRefinementEvent, HarnessScope, HarnessState, RefinementKind,
 };
-use document::{
-    parse_harness_document, read_harness_state_file, write_harness_state_file, WriteDurability,
-};
+use document::{parse_harness_document, read_harness_state_file, write_harness_state_file};
 use validate::{Arg, EntryFields, FactoryChecks, FactorySpec};
 
 pub use document::{LoadedHarnessState, LEGACY_ENTRY_SOURCE};
@@ -259,8 +257,7 @@ fn with_store<T>(
             return Err(error);
         }
         if let StoreLocation::File(path) = &target.location {
-            write_harness_state_file(path, &session.state, WriteDurability::Sync)
-                .map_err(|error| os_error(&error))?;
+            write_harness_state_file(path, &session.state).map_err(|error| os_error(&error))?;
         }
         session.load_error = None;
     }

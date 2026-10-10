@@ -27,7 +27,6 @@ mod append;
 // is_persisted + flush_now keep their pub levels; try_rewrite_file +
 // notify_persist_listeners stay private (child-internal callers).
 mod persist;
-use persist::atomic_write;
 
 mod queries;
 use super::{build_session_context, SessionContext};
@@ -48,10 +47,9 @@ use header::{is_valid_rlm_depth, resolve_session_rlm_depth, root_rlm_depth_from_
 mod git;
 pub use git::capture_git_context;
 
-// The re-export has zero external callers; it keeps the pub path stable.
 mod repair;
-pub use repair::load_entries_from_file;
 use repair::serialize_entry;
+pub use repair::{load_entries_from_file, repair_jsonl_damage};
 
 // The durable terminal-notice concern (the strict keyed append of an
 // RLM child terminal notice, the consumption marker, and the

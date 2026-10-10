@@ -255,8 +255,8 @@ impl Worker {
     fn publish_cwd(&self, cwd: &str) {
         self.emit_worker_event(json!({ "type": "cwd_changed", "cwd": cwd }));
         let summary = {
-            let core = self.core.lock_or_recover();
-            self.summary_locked(&core)
+            let (core, inputs) = self.summary_inputs();
+            self.summary_locked(&core, inputs)
         };
         if let Ok(summary) = serde_json::to_value(&summary) {
             self.engine.set_session_summary(summary);

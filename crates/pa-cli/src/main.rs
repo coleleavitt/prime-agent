@@ -30,5 +30,7 @@ fn main() {
     let code = pa_cli::main_with_runtime(&args, &pa_cli::PrintRuntime);
     pa_cli::features::flush_enabled_features();
     features.finish();
+    // Restore the Windows VT bit before process exit.
+    pa_types::platform::console_restore();
     std::process::exit(code);
 }

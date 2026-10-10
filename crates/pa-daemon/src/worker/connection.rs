@@ -1,12 +1,12 @@
 //! Client connections: accept, authenticate, and the frame/event plumbing
 //! between the worker and its supervisor.
 use super::{
-    active_session_id_of, anyhow, bind_transport, broadcast, create_daemon_replay_info,
-    current_protocol_info, default_client_capabilities, json, normalize_client_capabilities,
-    peer_command_allowed, response_failure, response_success, worker_peer_command_allowed,
-    worker_server_capabilities, write_frame, write_frame_segments, Arc, AtomicU64, ConnectionRole,
-    Context, DaemonOutbound, DaemonResponse, DaemonResumeCursor, Map, Ordering, Result,
-    TransportStream, Value, Worker, WorkerRecoveryJournal, DAEMON_APP_VERSION, DAEMON_SCHEMA_ID,
+    active_session_id_of, anyhow, app_version, bind_transport, broadcast,
+    create_daemon_replay_info, current_protocol_info, default_client_capabilities, json,
+    normalize_client_capabilities, peer_command_allowed, response_failure, response_success,
+    worker_peer_command_allowed, worker_server_capabilities, write_frame, write_frame_segments,
+    Arc, AtomicU64, ConnectionRole, Context, DaemonOutbound, DaemonResponse, DaemonResumeCursor,
+    Map, Ordering, Result, TransportStream, Value, Worker, WorkerRecoveryJournal, DAEMON_SCHEMA_ID,
     DAEMON_SCHEMA_REVISION, DEFAULT_PRIVATE_FRAME_LIMITS, PEER_COMMAND_NOT_ALLOWED,
 };
 use pa_types::sync::MutexExt;
@@ -215,10 +215,36 @@ impl Worker {
         if !self.config.supervisor_socket_path.as_os_str().is_empty() {
             crate::supervisor_lost::start(self.clone());
         }
-        crate::socket::prepare_socket_path(&self.config.socket_path).await?;
-        let listener = bind_transport(&self.config.socket_path)
-            .await
-            .with_context(|| format!("bind worker socket {}", self.config.socket_path.display()))?;
+        if let Err(error) = crate::socket::prepare_socket_path(&self.config.socket_path).await {
+            // The no-listener confirmation of the close handshake: an
+            // exit path already parked on the confirmation proceeds (its
+            // `None` identity makes the cleanup a no-op) instead of
+            // waiting on a listener that will never exist.
+            self.listener_closed.notify_one();
+            return Err(error);
+        }
+        let listener = match bind_transport(&self.config.socket_path).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                let error = error.context(format!(
+                    "bind worker socket {}",
+                    self.config.socket_path.display()
+                ));
+                self.listener_closed.notify_one();
+                return Err(error);
+            }
+        };
+        // From the bind on, the close handshake is fully asynchronous:
+        // an exit path firing anywhere in the setup below (a
+        // registration refusal parked in the capture gap, the orphan
+        // monitor, a routed shutdown) parks on the confirmation, which
+        // only this task emits - after the accept loop has consumed the
+        // stored close request and dropped the listener. The close
+        // request's permit stays stored while the loop has not armed
+        // yet, so the loop consumes it as its first event, and the
+        // confirmation always orders an exit path's identity read
+        // behind the capture below: a bound listener's own cleanup
+        // never reads the gap's `None` identity.
         crate::socket::bind_capture_gap().await;
         // Capture the bound file's identity before anything can replace
         // it (TS daemon-mode.ts:718, the listen callback, between the
@@ -238,8 +264,6 @@ impl Worker {
         // against wake loss: a close request that fires while an accept
         // is being handed off leaves its permit stored, and the next
         // loop iteration consumes it.
-        self.listener_bound
-            .store(true, std::sync::atomic::Ordering::SeqCst);
         let accept_error = loop {
             let stream = tokio::select! {
                 accepted = listener.accept() => match accepted {
@@ -298,7 +322,7 @@ impl Worker {
             protocol: current_protocol_info(),
             schema_id: Some(DAEMON_SCHEMA_ID.to_string()),
             schema_revision: Some(DAEMON_SCHEMA_REVISION),
-            app_version: Some(DAEMON_APP_VERSION.to_string()),
+            app_version: Some(app_version().to_string()),
             runtime: None,
             supervisor_generation: None,
             supervisor_pid: Some(u64::from(std::process::id())),
@@ -774,7 +798,7 @@ impl Worker {
             .filter(|value| !value.is_null())
             .and_then(|value| serde_json::from_value::<DaemonResumeCursor>(value).ok());
 
-        let mut core = self.core.lock_or_recover();
+        let (mut core, summary_inputs, connection_inputs) = self.attach_inputs();
         // The connection-scoped registry (the fresh bots' release
         // findings): the attach's retention is keyed by the connection
         // token so the release on ANY return path (the guard's Drop)
@@ -797,7 +821,7 @@ impl Worker {
         if retained && !core.attached_client_ids.iter().any(|id| id == &client_id) {
             core.attached_client_ids.push(client_id.clone());
         }
-        let summary = self.summary_locked(&core);
+        let summary = self.summary_locked(&core, summary_inputs);
         let mut messages: Vec<Value> = core
             .store
             .as_ref()
@@ -813,7 +837,7 @@ impl Worker {
         if crate::snapshot_stream::wants_image_elision(&client_capabilities) {
             crate::snapshot_stream::elide_snapshot_image_payloads(&mut messages);
         }
-        let state = self.connection_state_locked(&core);
+        let state = Self::connection_state_locked(&core, connection_inputs);
         let last_event_sequence = core.last_event_sequence;
         let generation = core.generation.clone();
         let active_session_id = core.active_session_id.clone();

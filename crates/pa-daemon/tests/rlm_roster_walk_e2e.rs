@@ -362,6 +362,7 @@ async fn subscribe_after_spawn_then_shutdown_seeds_the_passive_child() {
             model: None,
             thinking: None,
             target: RlmSpawnTarget::Local,
+            decision_child: false,
             cell_source_code: None,
             spawned_by_request_id: None,
             token_budget: None,

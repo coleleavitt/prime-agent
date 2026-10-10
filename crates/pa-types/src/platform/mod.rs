@@ -11,6 +11,7 @@ pub mod process;
 pub mod terminal;
 pub mod test_isolation;
 pub mod transport;
+pub mod windows_console;
 #[cfg(windows)]
 pub(crate) mod windows_pipe;
 #[cfg(windows)]
@@ -26,5 +27,6 @@ pub use transport::{
     bind_transport, connect_blocking, connect_transport, BlockingTransportStream,
     TransportListener, TransportStream,
 };
+pub use windows_console::{init as console_init, restore as console_restore};
 #[cfg(windows)]
 pub use windows_security::current_user_sid;

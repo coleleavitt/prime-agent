@@ -160,10 +160,10 @@ fn lock_modes() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Whether the kitty probe's answer window is open. The input reader keys
-/// its bounded poll cadence on this so its park cannot starve the probe.
-pub(crate) fn query_in_flight() -> bool {
-    QUERY_IN_FLIGHT.load(Ordering::SeqCst)
+/// Whether Kitty setup or its probe is pending. Keep input polls bounded even
+/// before the first draw starts the probe, so an idle reader cannot starve it.
+pub(crate) fn kitty_probe_pending() -> bool {
+    !KITTY_PROBED.load(Ordering::SeqCst) || QUERY_IN_FLIGHT.load(Ordering::SeqCst)
 }
 
 /// Mark the terminal released for process exit, before writing the restore
@@ -305,7 +305,7 @@ fn take_late_reply_supported() -> bool {
 pub(crate) fn apply_late_capability_reply() {
     // A graphics query's late reply lands before the DA1 that woke the reader.
     crate::terminal_image::take_graphics_query_reply();
-    if query_in_flight() {
+    if QUERY_IN_FLIGHT.load(Ordering::SeqCst) {
         return;
     }
     if take_late_reply_supported() {
@@ -354,6 +354,11 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
     if !QUERY_IN_FLIGHT.load(Ordering::SeqCst) && take_late_reply_supported() {
         record_kitty_supported();
     }
+    // Ghostty keeps keyboard flags per screen. The first draw enables Kitty once
+    // the alternate screen is painted; bracketed paste is already safe to enable.
+    if !crate::altscreen::active() {
+        return Ok(());
+    }
     match kitty_action(
         KITTY_SUPPORTED.load(Ordering::SeqCst),
         KITTY_PROBED.load(Ordering::SeqCst),
@@ -367,7 +372,7 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
                 KeyboardCapability::Supported => {
                     KITTY_PROBED.store(true, Ordering::SeqCst);
                     record_kitty_supported();
-                    if !KITTY_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if !KITTY_ACTIVE.load(Ordering::SeqCst) {
                         // The stale-level drain: clear the levels a
                         // killed session (or a miscounting relay) left
                         // before this process's own push (see
@@ -376,6 +381,7 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
                             write_all(out, POP_KITTY_FLAGS)?;
                         }
                         write_all(out, ENABLE_KITTY_FLAGS)?;
+                        KITTY_ACTIVE.store(true, Ordering::SeqCst);
                     }
                 }
                 KeyboardCapability::Unsupported => {
@@ -390,7 +396,7 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
             }
         }
         KittyAction::PushFlags => {
-            if !KITTY_ACTIVE.swap(true, Ordering::SeqCst) {
+            if !KITTY_ACTIVE.load(Ordering::SeqCst) {
                 // The stale-level drain (see STALE_LEVEL_DRAIN): a
                 // suspend's pop and resume's re-push stay balanced; a
                 // stale level from a killed session levels out here.
@@ -398,6 +404,7 @@ pub(crate) fn enable(out: &mut Stdout) -> Result<()> {
                     write_all(out, POP_KITTY_FLAGS)?;
                 }
                 write_all(out, ENABLE_KITTY_FLAGS)?;
+                KITTY_ACTIVE.store(true, Ordering::SeqCst);
             }
         }
         KittyAction::None => {}
@@ -560,13 +567,13 @@ fn enable_kitty(out: &mut Stdout) {
     if EXIT_RELEASE.load(Ordering::SeqCst) {
         return;
     }
-    if !KITTY_ACTIVE.swap(true, Ordering::SeqCst) {
+    if !KITTY_ACTIVE.load(Ordering::SeqCst) {
         // The stale-level drain (see STALE_LEVEL_DRAIN): the probe
         // answer's push drains the stale levels too.
         for _ in 0..STALE_LEVEL_DRAIN {
             let _ = write_all(out, POP_KITTY_FLAGS);
         }
-        let _ = write_all(out, ENABLE_KITTY_FLAGS);
+        KITTY_ACTIVE.store(write_all(out, ENABLE_KITTY_FLAGS).is_ok(), Ordering::SeqCst);
     }
 }
 

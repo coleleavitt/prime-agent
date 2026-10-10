@@ -1208,6 +1208,24 @@ fn retry_outcome_row_collapses_the_superseded_attempts() {
 }
 
 #[test]
+fn model_prompt_error_row_is_a_warning_status_line() {
+    let message = json!({
+        "role": "custom",
+        "customType": "model_prompt_error",
+        "content": "[model-prompt-error]\n\nPer-model system prompt additions were not applied:\n- /x/model-prompts.toml: bad TOML",
+        "display": true,
+    });
+    let entries = transcript_to_entries(&[message]);
+    assert!(
+        matches!(
+            entries.as_slice(),
+            [ChatEntry::Status { text, kind: StatusKind::Warning }] if text.contains("[model-prompt-error]")
+        ),
+        "entries: {entries:?}"
+    );
+}
+
+#[test]
 fn a_lone_failed_attempt_without_an_outcome_row_stays() {
     let user = json!({"role": "user", "content": "hi"});
     let failed = json!({
@@ -2001,12 +2019,8 @@ fn attach_snapshot_carries_the_goal_state() {
     assert_eq!(goal.objective.as_deref(), Some("keep shipping"));
 }
 
-/// The tray's context usage rides the attach snapshot's state (TS
-/// `createAgentConnectionState`'s `contextUsage`): the reconstruct hands
-/// it to the rebuild that follows every attach, so the first frame's tray
-/// row comes off the snapshot — the three wire shapes the stats response
-/// serves (known tokens, unknown tokens right after a compaction, and
-/// the model-less session that omits the field entirely).
+/// The tray's context usage rides the attach snapshot's state: the
+/// reconstruct hands it to the rebuild that follows every attach.
 #[test]
 fn attach_snapshot_carries_the_tray_context_usage() {
     let mut attach = slim_attach();

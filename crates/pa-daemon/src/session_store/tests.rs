@@ -185,12 +185,23 @@ fn the_depth_two_chain_reports_the_folded_aggregate() {
         "totalTokens": 1_040,
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0.10 },
     });
+    let kickoff = |id: &str, parent: Option<&str>| {
+        json!({
+            "type": "custom_message", "id": id, "parentId": parent,
+            "timestamp": "2026-09-24T00:00:00.000Z",
+            "customType": "agent_message",
+            "content": "[task from parent]\n\ntask",
+            "display": true,
+            "details": { "id": "spawn:sub-1", "message": "task" },
+        })
+        .to_string()
+    };
     let lines = [
             json!({"type": "session", "version": 3, "id": "child-s1", "timestamp": "2026-09-24T00:00:00.000Z", "cwd": "/tmp"}).to_string(),
-            row("u1", None, json!({"role": "user", "content": "task"})),
+            kickoff("c0", None),
             row(
                 "a1",
-                Some("u1"),
+                Some("c0"),
                 json!({
                     "role": "assistant",
                     "provider": "prime-inference", "model": "internal/glm-5.3-fast",
@@ -1248,4 +1259,28 @@ fn session_header_line_leads_with_the_type_tag() {
     };
     let line = serde_json::to_string(&session_header_line(&header)).unwrap();
     assert!(line.starts_with("{\"type\":\"session\",\"version\":3,\"id\":\"abc\""));
+}
+
+#[cfg(unix)] // Windows uses the full reader rather than windowed hydration.
+#[test]
+fn hydrating_full_history_preserves_the_trace_controller() {
+    let dir = temp_dir();
+    let path = dir.join("trace-hydration.jsonl");
+    let mut original = SessionFile::create(dir.to_str().unwrap(), None, 0);
+    original.append_message(&json!({"role":"user", "content":"synthetic", "timestamp":1u64}));
+    original.set_path(path.clone());
+    original.rewrite().unwrap();
+    let mut windowed = SessionFile::open_windowed(&path).unwrap();
+    assert!(windowed.window.is_some());
+    let (_, consent) = pa_core::agent_traces::ContinuousTraceUpload::load_settings(&dir, &dir);
+    let controller =
+        pa_core::agent_traces::ContinuousTraceUpload::install(&dir, &dir, Some(&path), consent)
+            .unwrap();
+    windowed.trace_upload = Some(controller.clone());
+    windowed.ensure_full_history().unwrap();
+    assert!(windowed.window.is_none());
+    assert!(std::sync::Arc::ptr_eq(
+        windowed.trace_upload.as_ref().unwrap(),
+        &controller
+    ));
 }

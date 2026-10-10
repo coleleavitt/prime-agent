@@ -64,6 +64,10 @@ class RLMSubagentActivity:
 
 @dataclass(frozen=True)
 class RLMSubagent:
+    """One direct child row: `status` is `running` | `completed` | `error` |
+    `cancelled` (a cancelled child keeps its status verbatim in the
+    registry row, the TS-era semantics)."""
+
     rlm_child_id: str
     active_session_id: str | None
     session_id: str | None
@@ -109,7 +113,11 @@ class RLMPathWatch:
 
 @dataclass(frozen=True)
 class RLMChildResult:
-    """Terminal or in-progress state of one direct child, from `collect()`."""
+    """Terminal or in-progress state of one direct child, from `collect()`.
+
+    `answer_text` is the child's full final answer (the settle-binding
+    lane, host-bounded); `answer_preview` is the compact roster preview.
+    """
 
     rlm_child_id: str
     session_name: str | None
@@ -117,10 +125,11 @@ class RLMChildResult:
     status: str
     settled: bool
     answer_preview: str | None
-    error: str | None
-    duration_ms: int | None
-    tool_use_count: int | None
-    replied_since_task: bool | None
+    answer_text: str | None = None
+    error: str | None = None
+    duration_ms: int | None = None
+    tool_use_count: int | None = None
+    replied_since_task: bool | None = None
 
 
 def _spawn_handle_from_payload(payload: Any) -> RLMSpawnHandle:
@@ -203,6 +212,7 @@ async def spawn(
     cwd: str | None = None,
     target: str | None = None,
     token_budget: int | None = None,
+    kind: str | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -222,6 +232,8 @@ async def spawn(
     grant is drawn from this session's pool and must fit what is left and
     the per-depth cap; without one it funds the child alone. Omitted, a
     budgeted session grants whatever is left (up to the per-depth cap).
+    ``kind`` selects a dedicated child kind; ``"decision"`` spawns the Decision API
+    child (the model comes from the decisionApi.systemOneModel setting).
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
@@ -231,6 +243,8 @@ async def spawn(
         not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget <= 0
     ):
         raise TypeError(f"token_budget must be a positive int, got {token_budget!r}")
+    if kind is not None and kind != "decision":
+        raise TypeError(f"kind must be 'decision' or None, got {kind!r}")
     kwargs: dict[str, Any] = {"name": name}
     if model is not None:
         kwargs["model"] = model
@@ -242,6 +256,8 @@ async def spawn(
         kwargs["target"] = target
     if token_budget is not None:
         kwargs["token_budget"] = token_budget
+    if kind is not None:
+        kwargs["kind"] = kind
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -360,7 +376,7 @@ def _subagent_from_payload(payload: Any, operation: str = "rlm.list_subagents") 
         raise RuntimeError(f"{operation} entry is missing session_name")
     if not isinstance(session_dir, str) or not session_dir:
         raise RuntimeError(f"{operation} entry is missing session_dir")
-    if status not in {"running", "completed", "error"}:
+    if status not in {"running", "completed", "error", "cancelled"}:
         raise RuntimeError(f"{operation} entry has invalid status")
     return RLMSubagent(
         rlm_child_id=child_id,
@@ -443,6 +459,7 @@ def _child_result_from_payload(payload: Any) -> RLMChildResult:
         status=status,
         settled=settled,
         answer_preview=_optional_str("answer_preview"),
+        answer_text=_optional_str("answer_text"),
         error=_optional_str("error"),
         duration_ms=_optional_int("duration_ms"),
         tool_use_count=_optional_int("tool_use_count"),
@@ -1010,6 +1027,7 @@ class _RLMNamespace:
         cwd: str | None = None,
         target: str | None = None,
         token_budget: int | None = None,
+        kind: str | None = None,
     ) -> RLMSpawnHandle:
         return await spawn(
             prompt,
@@ -1019,6 +1037,7 @@ class _RLMNamespace:
             cwd=cwd,
             target=target,
             token_budget=token_budget,
+            kind=kind,
         )
 
     async def create_session(

@@ -170,6 +170,7 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         cell_source_code: None,
         spawned_by_request_id: None,
         token_budget: None,
+        decision_child: false,
     }
 }
 

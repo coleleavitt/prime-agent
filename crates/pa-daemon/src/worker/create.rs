@@ -46,8 +46,8 @@ impl Worker {
         // answers with the created summary instead of racing a second init.
         let _create_gate = self.create_gate.lock().await;
         let existing_summary = {
-            let core = self.core.lock_or_recover();
-            core.created.then(|| self.summary_locked(&core))
+            let (core, inputs) = self.summary_inputs();
+            core.created.then(|| self.summary_locked(&core, inputs))
         };
         if let Some(summary) = existing_summary {
             // Idempotent re-create after a supervisor restart or respawn.
@@ -89,7 +89,9 @@ impl Worker {
                         return response_failure(
                             None,
                             "create",
-                            &format!("Invalid thinking level \"{level}\". Valid values: off, minimal, low, medium, high, xhigh, max"),
+                            &format!(
+                                "Invalid thinking level \"{level}\". Valid values: off, minimal, low, medium, high, xhigh, max"
+                            ),
                             None,
                         );
                     }
@@ -237,6 +239,12 @@ impl Worker {
             .get("childScript")
             .and_then(Value::as_str)
             .map(str::to_string);
+        // The Decision API child flag (`rlm.spawn kind="decision"`): the
+        // worker runs the decision engine instead of the agent engine.
+        let decision_child = payload
+            .get("decisionChild")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         // Set by the fresh-path arm when the name landed in its single rewrite:
         // the shared name persist must not append a second `session_info` line.
@@ -244,9 +252,22 @@ impl Worker {
         // Set by the continuing arm when it OPENED an existing session file:
         // `is_continuing` reads this arm fact, never an existence check.
         let mut opened_existing_session = false;
+        let mut restored_tier: Option<Option<pa_types::ai::ServiceTier>> = None;
         // The fresh arms defer their creation prefix to after the startup scope
         // registers, so a fresh `--models` session persists the scoped startup pick.
         let mut fresh_prefix = FreshPrefixPlan::None;
+        let (settings, trace_consent) = pa_core::agent_traces::ContinuousTraceUpload::load_settings(
+            std::path::Path::new(&cwd),
+            &self.config.agent_dir,
+        );
+        let traces = |path: &std::path::Path| {
+            pa_core::agent_traces::ContinuousTraceUpload::install(
+                std::path::Path::new(&cwd),
+                &self.config.agent_dir,
+                Some(path),
+                trace_consent.clone(),
+            )
+        };
         let mut store = match (&session_path, no_session) {
             (Some(path), false) if path.exists() => {
                 let loaded = {
@@ -254,6 +275,7 @@ impl Worker {
                     let agent_dir = self.config.agent_dir.clone();
                     tokio::task::spawn_blocking(move || {
                         let lease = crate::lease::acquire_runtime_session_lease(&path, &agent_dir)?;
+                        pa_core::session::manager::repair_jsonl_damage(&path);
                         let mut store = SessionFile::open_windowed(&path)?;
                         store.lease = Some(Arc::new(lease));
                         Ok(store)
@@ -264,19 +286,34 @@ impl Worker {
                 };
                 match loaded {
                     Ok(mut opened) => {
+                        opened.trace_upload = traces(&opened.path);
                         opened_existing_session = true;
                         if !cwd_override {
                             if let Some(recorded) = super::session_cwd::branch_cwd(&opened) {
                                 cwd = recorded;
                             }
                         }
+                        if opened.skipped_lines > 0 {
+                            // The rows stay on disk (the append-only
+                            // reopen): the skip count is the damage
+                            // report the torn-tail repair can act on — a
+                            // silent skip is how a torn session degraded
+                            // unnoticed (the operator's 2026-10-08
+                            // report).
+                            eprintln!(
+                                "pa-daemon: session {} skipped {} unparsable row(s) on open; they stay on disk",
+                                path.display(),
+                                opened.skipped_lines
+                            );
+                        }
                         // The session-model restore records its decision only for a path
                         // this worker opened — a failed open never leaks the binding into a
                         // later create.
                         self.engine.set_session_file(path.clone());
-                        // One fold serves both consumers: the model restore takes its saved
+                        // One fold serves all consumers: the model restore takes its saved
                         // context off the store this create just opened.
                         let restored = opened.restored_settings();
+                        restored_tier = opened.has_service_tier().then_some(restored.service_tier);
                         let has_thinking_level = opened.has_thinking_level();
                         let saved = crate::agent_engine::saved_session_context_from_parts(
                             &restored,
@@ -305,17 +342,23 @@ impl Worker {
                             false,
                         );
                         let _ = opened.append_session_state("active");
-                        let persisted = if opened.window.is_some() {
-                            opened.persist_appended(append_start)
-                        } else {
-                            opened.rewrite()
-                        };
+                        // A reopen is APPEND-ONLY (the operator's 2026-10-08
+                        // report: a reopened session showed none of the old
+                        // messages): the full reader skips malformed rows in
+                        // memory, and the legacy full-file rewrite this
+                        // arm carried DELETED them from disk — a gap early
+                        // in the parent chain took the whole transcript
+                        // with it. Only the rows this open appended
+                        // persist; the file keeps every original byte for
+                        // the torn-tail repair to see.
+                        let persisted = opened.persist_appended(append_start);
                         if let Err(error) = persisted {
                             return response_failure(None, "create", &error.to_string(), None);
                         }
-                        // Prime the usage fold on the file's final identity (the full-reader
-                        // fallback's rewrite replaces the inode), off the runtime and before
-                        // the core lock: summaries under the lock fold only the appended tail.
+                        // Prime the usage fold on the file's final identity,
+                        // off the runtime and before the core lock:
+                        // summaries under the lock fold only the appended
+                        // tail.
                         let primed = path.clone();
                         let _ = tokio::task::spawn_blocking(move || {
                             crate::session_store::read_session_info(&primed)
@@ -333,6 +376,7 @@ impl Worker {
                     rlm_depth.unwrap_or(0),
                 );
                 created.set_path(path.clone());
+                created.trace_upload = traces(&created.path);
                 let acquired = {
                     let path = path.clone();
                     let agent_dir = self.config.agent_dir.clone();
@@ -371,6 +415,7 @@ impl Worker {
                 );
                 let path = session_dir.join(session_file_name(created.session_id()));
                 created.set_path(path.clone());
+                created.trace_upload = traces(&created.path);
                 let acquired = {
                     let path = path.clone();
                     let agent_dir = self.config.agent_dir.clone();
@@ -397,7 +442,7 @@ impl Worker {
                     "create",
                     "Session cannot be both no-session and session-pathed",
                     None,
-                )
+                );
             }
         };
 
@@ -483,9 +528,6 @@ impl Worker {
                 }
             }
         }
-        let restored_tier = store
-            .has_service_tier()
-            .then(|| store.restored_settings().service_tier);
         // Restore the persisted queue snapshot (crash/respawn recovery) from
         // the worker recovery journal.
         let (steering, follow_up) = {
@@ -503,7 +545,6 @@ impl Worker {
         // The session's settings-seeded switches: a restarted session re-seeds
         // its auto-compaction flag from the persisted `compaction.enabled`.
         let (service_tier, steering_mode, follow_up_mode, auto_compaction_enabled) = {
-            let settings = pa_core::settings::SettingsManager::create(&cwd, &self.config.agent_dir);
             let queue_mode = |mode: pa_core::settings::QueueModeSetting| -> String {
                 match mode {
                     pa_core::settings::QueueModeSetting::All => "all".to_string(),
@@ -535,7 +576,7 @@ impl Worker {
         // The core lock stays inside this block: everything after it may await,
         // and a std MutexGuard must never ride an await point.
         let (summary, rlm_depth) = {
-            let mut core = self.core.lock_or_recover();
+            let (mut core, inputs) = self.summary_inputs();
             core.cwd_override = cwd_override;
             if !cwd_override && Some(cwd.as_str()) != payload.get("cwd").and_then(Value::as_str) {
                 self.engine.set_cwd(std::path::PathBuf::from(&cwd));
@@ -593,7 +634,8 @@ impl Worker {
             core.parent_active_session_id = parent_active_session_id;
             core.parent_session_id = parent_session_id;
             core.child_script.clone_from(&child_script);
-            (self.summary_locked(&core), rlm_depth)
+            core.decision_child = decision_child;
+            (self.summary_locked(&core, inputs), rlm_depth)
         };
         // A worker reload over a crashed predecessor's session file: a
         // digested message whose row reached the durable inbox but whose
@@ -654,7 +696,9 @@ impl Worker {
         }
         // Bind the schedule catalog onto the session (artifact partition,
         // job rebind, scheduler start) — TS `rebindCronJobsToState`.
-        self.bind_scheduled_jobs().await;
+        if let Err(error) = self.bind_scheduled_jobs().await {
+            return response_failure(None, "create", &error.to_string(), None);
+        }
         // Recovery journal writes must not happen while holding the core
         // lock: record_recovery locks the core to read the store.
         let _ = self.record_recovery(true, "create");

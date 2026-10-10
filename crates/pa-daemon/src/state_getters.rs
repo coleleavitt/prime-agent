@@ -18,8 +18,8 @@ impl Worker {
         if let Err(response) = self.require_created("get_connection_state") {
             return response;
         }
-        let core = self.core.lock_or_recover();
-        let state = self.connection_state_locked(&core);
+        let (core, inputs) = self.connection_state_inputs();
+        let state = Self::connection_state_locked(&core, inputs);
         drop(core);
         let mut value = serde_json::to_value(&state).unwrap_or(Value::Null);
         value["heartbeat"] = Value::Null;

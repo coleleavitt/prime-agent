@@ -303,6 +303,7 @@ impl FakeHost {
             duration_ms: Some(5),
             tool_use_count: Some(1),
             replied_since_task: None,
+            answer_text: None,
         }
     }
 }

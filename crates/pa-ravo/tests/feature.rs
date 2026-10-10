@@ -554,32 +554,46 @@ async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
     );
 }
 
-/// A global refine holds the harness state lock every ledger flush takes:
-/// while another writer holds it, the refine waits and then fails rather
-/// than overwrite what that writer is writing.
+/// A global refine writes under the harness state lock every ledger flush
+/// takes: while another writer holds it, the refine fails rather than
+/// overwrite what that writer is writing, and once it lands the lock is
+/// released.
 #[tokio::test]
 async fn a_global_refine_takes_the_harness_state_lock() {
     let mut session = session();
     let gate = session.ravo.refinement_gate(&session.context).unwrap();
-    let held = pa_ledger::acquire_harness_state_lock(&session.global_dir).unwrap();
-    assert!(gate
-        .lock_store(HarnessScope::Global, &session.global_dir)
-        .is_err());
-    assert!(gate
-        .lock_store(HarnessScope::Local, &session.harness_dir())
-        .unwrap()
-        .is_none());
-    drop(held);
-    let guard = gate
-        .lock_store(HarnessScope::Global, &session.global_dir)
-        .unwrap()
-        .expect("a lock guard");
-    assert!(pa_ledger::acquire_harness_state_lock(&session.global_dir).is_err());
-    drop(guard);
     let messages = vec![serde_json::from_value(
         json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
     )
     .unwrap()];
+    let gating = || RefinementGating {
+        gate: Arc::clone(&gate),
+        model_call: scripted(
+            r#"{"verdict":"pass","score":72,"failedCriteria":[],"rationale":"fine"}"#,
+        ),
+    };
+    let options = RefineOptions {
+        global: true,
+        ..RefineOptions::default()
+    };
+    let held = pa_ledger::acquire_harness_state_lock(&session.global_dir).unwrap();
+    let refused = execute_refinement_gated(
+        &mut session.manager,
+        RefinementTranscript {
+            messages: &messages,
+            refinement_history: &[],
+        },
+        &session.global_dir,
+        &model(),
+        &options,
+        RefinementSource::User,
+        scripted(MEMORY_PLAN),
+        None,
+        Some(gating()),
+    )
+    .await;
+    assert!(refused.is_err(), "a held lock refuses the global refine");
+    drop(held);
     let (result, _) = execute_refinement_gated(
         &mut session.manager,
         RefinementTranscript {
@@ -588,19 +602,11 @@ async fn a_global_refine_takes_the_harness_state_lock() {
         },
         &session.global_dir,
         &model(),
-        &RefineOptions {
-            global: true,
-            ..RefineOptions::default()
-        },
+        &options,
         RefinementSource::User,
         scripted(MEMORY_PLAN),
         None,
-        Some(RefinementGating {
-            gate,
-            model_call: scripted(
-                r#"{"verdict":"pass","score":72,"failedCriteria":[],"rationale":"fine"}"#,
-            ),
-        }),
+        Some(gating()),
     )
     .await
     .unwrap();

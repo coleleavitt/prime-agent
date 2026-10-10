@@ -265,11 +265,44 @@ pub fn save_harness_state(
     state: &HarnessState,
 ) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(harness_state_dir)?;
-    store::document::write_harness_state_file(
+    store::document::write_harness_state_file(&get_harness_state_path(harness_state_dir), state)
+}
+
+/// Take the harness state file's lock (`{file}.lock`, owned: a live holder
+/// is never reclaimed, only a provably dead one), creating the directory.
+/// Every writer of the file takes it around its re-read and save: the
+/// kernel's harness store, refine, and the ledger flush.
+///
+/// # Errors
+///
+/// Error when the directory cannot be created or the lock stays contended.
+pub fn lock_harness_state(harness_state_dir: &Path) -> anyhow::Result<crate::platform::LockDir> {
+    std::fs::create_dir_all(harness_state_dir)?;
+    Ok(crate::platform::LockDir::acquire_owned_retrying(
         &get_harness_state_path(harness_state_dir),
-        state,
-        store::document::WriteDurability::NoSync,
-    )
+        std::time::Duration::from_secs(10),
+        50,
+        std::time::Duration::from_millis(20),
+    )?)
+}
+
+/// Locked read-modify-write of the harness state file: both writer sides
+/// (the kernel and refine) take `{file}.lock` around the reload and the save.
+///
+/// # Errors
+///
+/// Error when the directory cannot be created, the state lock cannot be acquired, or the atomic write fails.
+pub fn update_harness_state<R>(
+    harness_state_dir: &Path,
+    scope: HarnessScope,
+    update: impl FnOnce(&mut HarnessState) -> R,
+) -> anyhow::Result<(R, PathBuf)> {
+    let lock = lock_harness_state(harness_state_dir)?;
+    let mut state = load_harness_state(harness_state_dir, scope);
+    let result = update(&mut state);
+    lock.ensure_owned()?;
+    let written = save_harness_state(harness_state_dir, &state)?;
+    Ok((result, written))
 }
 
 #[must_use]
@@ -696,11 +729,10 @@ mod tests {
         );
     }
 
-    /// Served-path oracle (refinement.ts:404 passes only `{ mode }` — the
-    /// measured signal of record 20260928-172400): the save takes NO fsync
-    /// branch, landing exactly `to_string_pretty(state) + "\n"` bytes.
+    /// The save lands exactly the pretty document; the store's writer syncs
+    /// the file and its directory on every save (no opt-in branch to skip).
     #[test]
-    fn harness_save_takes_the_ts_default_no_sync() {
+    fn harness_save_lands_the_exact_document() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = get_global_harness_state_dir(tmp.path());
         let mut state = empty_harness_state();
@@ -713,18 +745,39 @@ mod tests {
                 entry("m1", RefinementKind::Memory, HarnessScope::Global, "a fact"),
             );
         let expected = format!("{}\n", serde_json::to_string_pretty(&state).unwrap());
-        let before = crate::settings::storage::opt_in_fsync_calls();
         let written = save_harness_state(&dir, &state).unwrap();
-        assert_eq!(
-            crate::settings::storage::opt_in_fsync_calls(),
-            before,
-            "the TS-default harness save must not sync"
-        );
         assert_eq!(written, get_harness_state_path(&dir));
         assert_eq!(
             std::fs::read_to_string(get_harness_state_path(&dir)).unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn concurrent_update_harness_state_writes_all_land() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = get_global_harness_state_dir(tmp.path());
+        std::thread::scope(|scope| {
+            for worker in 0..8u32 {
+                let dir = &dir;
+                scope.spawn(move || {
+                    for i in 0..10u32 {
+                        let id = format!("m-{worker}-{i}");
+                        update_harness_state(dir, HarnessScope::Global, |state| {
+                            let memories = state.entries.get_mut(&RefinementKind::Memory).unwrap();
+                            memories.insert(
+                                id.clone(),
+                                entry(&id, RefinementKind::Memory, HarnessScope::Global, "a fact"),
+                            );
+                            memories.len()
+                        })
+                        .unwrap();
+                    }
+                });
+            }
+        });
+        let loaded = load_harness_state(&dir, HarnessScope::Global);
+        assert_eq!(loaded.entries[&RefinementKind::Memory].len(), 80);
     }
 
     #[test]

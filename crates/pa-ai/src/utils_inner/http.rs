@@ -162,7 +162,9 @@ fn decode_utf8_carrying(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
 }
 
 impl HttpResponse {
-    /// Read the next text chunk from the body (None at end of stream).
+    /// Read the next text chunk from the body (None at end of stream). A UTF-8 sequence split
+    /// across body chunks is held until it completes; a sequence still incomplete at end of
+    /// stream yields one U+FFFD.
     pub async fn next_text(&mut self) -> Result<Option<String>, ProviderError> {
         if self
             .signal

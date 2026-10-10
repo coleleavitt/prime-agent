@@ -250,7 +250,7 @@ impl SettingsStorage for FileSettingsStorage {
                 }
             }
             if let Some(content) = next {
-                atomic_write(path, &content)?;
+                atomic_write_with(path, &content, AtomicWriteOptions { fsync: true })?;
             }
         }
         drop(held);
@@ -310,7 +310,11 @@ pub fn atomic_write_with(path: &Path, content: &str, options: AtomicWriteOptions
         // leaves no partial copy of the document behind.
         let _ = fs::remove_file(&temp);
     }
-    written
+    written?;
+    if options.fsync {
+        crate::platform::fs::sync_directory(path.parent().unwrap_or_else(|| Path::new(".")))?;
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -424,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_write_takes_the_ts_default_no_sync() {
+    fn settings_write_takes_exactly_one_fsync() {
         let dir = tempfile::tempdir().unwrap();
         let storage = FileSettingsStorage::new(dir.path().join("cwd"), dir.path().join("agent"));
         let document = "{ \"defaultProvider\": \"prime-inference\" }";
@@ -432,7 +436,11 @@ mod tests {
         storage
             .with_lock(SettingsScope::Global, &mut |_| Some(document.to_string()))
             .unwrap();
-        assert_eq!(opt_in_fsync_calls(), before);
+        assert_eq!(
+            opt_in_fsync_calls(),
+            before + 1,
+            "the settings write must flush the temp file before the rename"
+        );
         let path = dir.path().join("agent").join("settings.json");
         assert_eq!(fs::read_to_string(&path).unwrap(), document);
     }

@@ -75,7 +75,7 @@ fn parent_worker_token(agent_dir: &Path, active_session_id: &str) -> String {
             return token.to_string();
         }
     }
-    panic!("parent worker descriptor not found for {active_session_id}");
+    panic!("parent worker descriptor not found");
 }
 
 fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Daemon {
@@ -439,6 +439,7 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
             cell_source_code: None,
             spawned_by_request_id: None,
             token_budget: None,
+            decision_child: false,
         })
         .await
         .expect("spawn the child");
@@ -767,6 +768,7 @@ async fn family_edges_never_cross_families_end_to_end() {
                 cell_source_code: None,
                 spawned_by_request_id: None,
                 token_budget: None,
+                decision_child: false,
             })
             .await
             .expect("spawn the child");
@@ -911,6 +913,7 @@ async fn family_edges_never_cross_families_end_to_end() {
             cell_source_code: None,
             spawned_by_request_id: None,
             token_budget: None,
+            decision_child: false,
         })
         .await
         .expect("spawn the grandchild");
@@ -1186,6 +1189,7 @@ async fn parent_renames_a_child_end_to_end() {
             spawned_by_request_id: None,
             cell_source_code: None,
             token_budget: None,
+            decision_child: false,
         })
         .await
         .expect("spawn the child");

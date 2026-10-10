@@ -778,14 +778,6 @@ impl Supervisor {
                         })
                         .await;
                 }
-                // Fail this connection's in-flight requests now instead of
-                // at their route deadline: after a restart give-up no next
-                // connect clears them. Checking the epoch under the lock
-                // keeps a newer connection's requests out of the drain.
-                let mut pending = reader_resident.pending.lock().await;
-                if reader_resident.connection_is_current(connection_epoch) {
-                    pending.clear();
-                }
             })
         };
         let mut pumps = PreAuthPumps {

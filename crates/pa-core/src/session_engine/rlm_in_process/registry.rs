@@ -489,6 +489,7 @@ impl InProcessChildRecord {
             duration_ms: Some(now_ms.saturating_sub(self.started_at_ms)),
             tool_use_count: Some(state.tool_use_count),
             replied_since_task: Some(state.replied_since_task),
+            answer_text: None,
         }
     }
 }
@@ -527,6 +528,7 @@ impl DeletedChild {
             duration_ms: Some(super::now_ms().saturating_sub(self.started_at_ms)),
             tool_use_count: None,
             replied_since_task: None,
+            answer_text: None,
         }
     }
 }
