@@ -1163,3 +1163,189 @@ async fn ineligible_terminal_replies_end_the_run_without_a_retry() {
     }
     assert_eq!(served, vec![1, 1, 1, 1]);
 }
+
+/// A tool-call response whose stream ends at the output-token limit
+/// (`stopReason: length`, `output` tokens spent), as Anthropic ends a
+/// response cut off while it writes a call's arguments.
+fn cut_off_tool_call_turn(
+    provider: &ScriptedProvider,
+    model: &Model,
+    calls: Vec<(&str, &str, serde_json::Value)>,
+    output: u64,
+) {
+    let mut steps = pa_agent::scripted::tool_call_turn_steps(model, None, calls);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = StopReason::Length;
+            message.stop_reason = StopReason::Length;
+            message.usage.output = output;
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+}
+
+/// The tool result the model reads for a call cut off at the 16384-token
+/// output limit.
+const CUT_OFF_ECHO_NOTICE: &str = "This echo call was not run: the response reached the output \
+    limit of 16384 tokens while the call's arguments were still being written, so they were cut \
+    off. Thinking and text count toward the limit. Split the work into smaller steps, for \
+    example several shorter code cells, or a large file written in parts with one call per part.";
+
+/// A response cut off at the output limit while it wrote its last tool
+/// call (the arguments stream incomplete; here they parse as `{}`) does not
+/// run that call: the model reads why as the call's error result and the
+/// run goes on. Neither the dropped-tool-call retry (upstream #2530) nor
+/// the length auto-continuation (#969) fires on top: the reply delivered a
+/// call, and its result drives the next turn.
+#[tokio::test]
+async fn a_tool_call_cut_off_at_the_output_limit_is_not_run_and_the_model_hears_why() {
+    let echo = EchoTool::new("echo");
+    let model = completions_model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    let agent = Agent::new(AgentOptions {
+        initial_state: pa_agent::agent::AgentInitialState {
+            tools: Some(vec![echo.clone()]),
+            ..Default::default()
+        },
+        stream_fn: Some(provider.stream_fn()),
+        length_continuation: Some(pa_agent::agent_loop::LengthContinuation {
+            max_continuations: 3,
+            message: Arc::new(|attempt, max| {
+                AgentMessage::Standard(Message::User(pa_agent::types::UserMessage {
+                    content: UserContent::Text(format!("continue {attempt}/{max}")),
+                    timestamp: 0,
+                }))
+            }),
+        }),
+        ..Default::default()
+    });
+    agent.set_model(model.clone()).await;
+    agent.set_tool_intent_recovery_hook(Some(Arc::new(|_context| {
+        Box::pin(async {
+            Ok(Some(AgentMessage::Standard(Message::User(
+                pa_agent::types::UserMessage {
+                    content: UserContent::Text("recover".to_string()),
+                    timestamp: 0,
+                },
+            ))))
+        })
+    })));
+    cut_off_tool_call_turn(
+        &provider,
+        &model,
+        vec![("call-1", "echo", serde_json::json!({}))],
+        16_384,
+    );
+    provider.push_text_turn("I'll split it into smaller cells.");
+    agent.prompt("write the module").await.unwrap();
+    agent.wait_for_idle().await;
+
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 0);
+    let calls = provider.calls();
+    assert_eq!(calls.len(), 2);
+    let seen: Vec<(String, bool, String)> = calls[1]
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some((
+                result.tool_call_id.clone(),
+                result.is_error,
+                single_text(&result.content).to_string(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![("call-1".to_string(), true, CUT_OFF_ECHO_NOTICE.to_string())]
+    );
+    assert_eq!(
+        transcript(&agent.state().await.messages),
+        vec![
+            ("user", "write the module".to_string()),
+            ("assistant", String::new()),
+            ("other", String::new()),
+            ("assistant", "I'll split it into smaller cells.".to_string()),
+        ]
+    );
+}
+
+/// Calls the model finished before the cut-off one are complete (each
+/// block ends before the next starts), so they run as usual; only the last
+/// block, the call the limit interrupted, is held back, even when its
+/// partial arguments happen to pass the tool's schema.
+#[tokio::test]
+async fn complete_calls_before_the_cut_off_one_still_run() {
+    let echo = EchoTool::new("echo");
+    let (agent, provider, _events) = scripted_agent(vec![echo.clone()]).await;
+    cut_off_tool_call_turn(
+        &provider,
+        &test_model(),
+        vec![
+            ("call-a", "echo", serde_json::json!({ "text": "a" })),
+            ("call-b", "echo", serde_json::json!({ "text": "par" })),
+        ],
+        16_384,
+    );
+    provider.push_text_turn("done");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1);
+    let state = agent.state().await;
+    let results: Vec<(String, bool, String)> = state
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Standard(Message::ToolResult(result)) => Some((
+                result.tool_call_id.clone(),
+                result.is_error,
+                single_text(&result.content).to_string(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        results,
+        vec![
+            ("call-a".to_string(), false, "echo:a".to_string()),
+            ("call-b".to_string(), true, CUT_OFF_ECHO_NOTICE.to_string()),
+        ]
+    );
+    assert_eq!(
+        assistant_text(state.messages.last().unwrap()).stop_reason,
+        StopReason::Stop
+    );
+}
+
+/// A length stop that came after the call finished (text follows it) cut
+/// the text, not the call: the call runs.
+#[tokio::test]
+async fn a_call_followed_by_cut_off_text_still_runs() {
+    let echo = EchoTool::new("echo");
+    let (agent, provider, _events) = scripted_agent(vec![echo.clone()]).await;
+    let model = test_model();
+    let mut steps = pa_agent::scripted::tool_call_turn_steps(
+        &model,
+        None,
+        vec![("call-1", "echo", serde_json::json!({ "text": "x" }))],
+    );
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
+            *reason = StopReason::Length;
+            message.stop_reason = StopReason::Length;
+            message.content.push(
+                serde_json::from_value(
+                    serde_json::json!({ "type": "text", "text": "And then I will" }),
+                )
+                .expect("a text block"),
+            );
+        }
+    }
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+    provider.push_text_turn("done");
+    agent.prompt("go").await.unwrap();
+    agent.wait_for_idle().await;
+
+    assert_eq!(echo.calls.load(Ordering::SeqCst), 1);
+}

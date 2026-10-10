@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::abort::{is_abort_error, AbortSignal};
 use crate::types::{
     AfterToolCallContext, AgentContext, AgentEvent, AgentMessage, AgentTool, AgentToolResult,
-    AgentToolUpdateCallback, AssistantMessage, BeforeToolCallContext, ToolCall, ToolResultMessage,
+    AgentToolUpdateCallback, AssistantContent, AssistantMessage, BeforeToolCallContext, StopReason,
+    ToolCall, ToolResultMessage,
 };
 
 use super::abort::race_with_abort;
@@ -18,6 +19,14 @@ use super::{AgentEventSink, AgentLoopConfig};
 /// Tool lookup, `prepareArguments`, schema validation, and the
 /// `beforeToolCall` hook. Never fails; errors become immediate error tool
 /// results exactly like the TS catch-all.
+///
+/// A response cut off at the output-token limit (`stopReason: length`)
+/// whose last block is a tool call was cut while it wrote that call: its
+/// arguments are whatever streamed before the limit, so the call is never
+/// run (TS ran it, and a partial `edit` or cell can pass the schema). Its
+/// error result tells the model why, which also keeps the call paired with
+/// a result as the provider protocols require. Calls before it ended before
+/// it started, so they are complete and run as usual.
 pub(crate) async fn prepare_tool_call(
     current_context: &AgentContext,
     assistant_message: &AssistantMessage,
@@ -25,6 +34,36 @@ pub(crate) async fn prepare_tool_call(
     config: &AgentLoopConfig,
     signal: Option<&AbortSignal>,
 ) -> Preparation {
+    if assistant_message.stop_reason == StopReason::Length
+        && matches!(
+            assistant_message.content.last(),
+            Some(AssistantContent::ToolCall(last)) if last.id == tool_call.id
+        )
+    {
+        let output = assistant_message.usage.output;
+        tracing::warn!(
+            target: "pa_agent::truncated_tool_call",
+            tool_name = tool_call.name.as_str(),
+            tool_call_id = tool_call.id.as_str(),
+            output_tokens = output,
+            "not running a tool call cut off at the output-token limit"
+        );
+        let limit = if output == 0 {
+            "the output token limit".to_string()
+        } else {
+            format!("the output limit of {output} tokens")
+        };
+        return Preparation::Immediate {
+            result: AgentToolResult::error(format!(
+                "This {} call was not run: the response reached {limit} while the call's \
+                 arguments were still being written, so they were cut off. Thinking and text \
+                 count toward the limit. Split the work into smaller steps, for example several \
+                 shorter code cells, or a large file written in parts with one call per part.",
+                tool_call.name
+            )),
+            is_error: true,
+        };
+    }
     let Some(tool) = current_context
         .tools
         .iter()
