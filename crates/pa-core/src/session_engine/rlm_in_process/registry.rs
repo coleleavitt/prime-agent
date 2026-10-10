@@ -103,6 +103,10 @@ pub(crate) struct ChildRunState {
     /// absent.
     pub(crate) settled_status: Option<&'static str>,
     pub(crate) answer_preview: Option<String>,
+    /// The latest completed assistant message's full text (bounded at
+    /// [`ANSWER_TEXT_MAX_CHARS`]): the collect envelope's binding lane,
+    /// beside the compact preview (upstream #3462's M2).
+    pub(crate) answer_text: Option<String>,
     pub(crate) error: Option<String>,
     /// An agent message from this child reached the parent since its task
     /// was admitted (TS `_parentReplyCount`): the no-reply terminal notice
@@ -185,6 +189,7 @@ impl InProcessChildRecord {
             state: Mutex::new(ChildRunState {
                 settled_status: None,
                 answer_preview: None,
+                answer_text: None,
                 error: None,
                 replied_since_task: false,
                 interrupted: false,
@@ -489,7 +494,7 @@ impl InProcessChildRecord {
             duration_ms: Some(now_ms.saturating_sub(self.started_at_ms)),
             tool_use_count: Some(state.tool_use_count),
             replied_since_task: Some(state.replied_since_task),
-            answer_text: None,
+            answer_text: state.answer_text.clone(),
         }
     }
 }
@@ -538,6 +543,10 @@ impl DeletedChild {
 pub(crate) fn record_matches(record: &InProcessChildRecord, target: &str) -> bool {
     record.rlm_child_id == target || record.session_id == target || record.session_name == target
 }
+
+/// The collect envelope's full-answer cap (the daemon host's
+/// `ANSWER_TEXT_MAX_CHARS`).
+pub(crate) const ANSWER_TEXT_MAX_CHARS: usize = 65_536;
 
 /// Collapse whitespace and cap at the roster limit (TS `compactRlmText`).
 #[must_use]

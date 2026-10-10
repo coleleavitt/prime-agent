@@ -96,13 +96,14 @@ async fn inline_subagent_name_labels_the_spawned_child() {
     let result = case.start().await;
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
-    assert_eq!(case.host.spawn_names(), strings(&["reviewer"]));
+    let label = format!("{}-reviewer", &Case::run_id(&result)[..6]);
+    assert_eq!(case.host.spawn_names(), strings(&[&label]));
     let names: Vec<Value> = case
         .all_events_of(&result, "spawned")
         .iter()
         .map(|event| event["name"].clone())
         .collect();
-    assert_eq!(names, [json!("reviewer")]);
+    assert_eq!(names, [json!(label)]);
 }
 
 #[tokio::test]
@@ -119,7 +120,11 @@ async fn inline_subagent_name_disambiguates_reentry_and_foreach() {
     let result = case.start().await;
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
-    assert_eq!(case.host.spawn_names(), strings(&["worker", "worker-i1"]));
+    let prefix = &Case::run_id(&result)[..6];
+    assert_eq!(
+        case.host.spawn_names(),
+        strings(&[&format!("{prefix}-worker"), &format!("{prefix}-worker-i1")])
+    );
 
     case.host.outcome(
         "src",
@@ -149,13 +154,20 @@ async fn inline_subagent_name_disambiguates_reentry_and_foreach() {
     let result = case.start_spec("fan").await;
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
+    let prefix = &Case::run_id(&result)[..6];
     let expanders: Vec<String> = case
         .host
         .spawn_names()
         .into_iter()
-        .filter(|name| name.starts_with("expander"))
+        .filter(|name| name.contains("-expander"))
         .collect();
-    assert_eq!(expanders, strings(&["expander", "expander-i1"]));
+    assert_eq!(
+        expanders,
+        strings(&[
+            &format!("{prefix}-expander"),
+            &format!("{prefix}-expander-i1")
+        ])
+    );
 }
 
 #[tokio::test]

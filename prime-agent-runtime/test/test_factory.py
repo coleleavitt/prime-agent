@@ -2408,8 +2408,8 @@ class FactoryHelpTest(unittest.TestCase):
         )
 
         # The configured inline subagent name contract.
-        self.assertIn("The optional `name` labels the spawned children", flat)
-        self.assertIn("the first instance is named exactly `name`", flat)
+        self.assertIn("The optional `name` labels the spawned children run-scoped", flat)
+        self.assertIn("the spawn label is `<run6>-name`", flat)
         self.assertIn("unique across the machine's states", flat)
         self.assertIn("a name another state's name can suffix onto, `foo` vs `foo-i1`, is rejected at write time", flat)
 

@@ -373,9 +373,15 @@ async fn observe_child_event(record: &Arc<InProcessChildRecord>, event: AgentEve
                         }
                     }
                 }
-                let text = compact_rlm_text(&assistant_text(assistant));
+                let full = assistant_text(assistant);
+                let text = compact_rlm_text(&full);
                 if !text.is_empty() {
                     state.answer_preview = Some(text);
+                    state.answer_text = Some(
+                        full.chars()
+                            .take(super::registry::ANSWER_TEXT_MAX_CHARS)
+                            .collect(),
+                    );
                 }
                 state.last_activity_at_ms = now;
             }

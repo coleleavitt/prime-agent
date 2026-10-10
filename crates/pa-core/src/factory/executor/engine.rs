@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use super::binding::{
     char_prefix, guard_passes, is_rate_limit_error, json_repr, parse_json_output, py_json_dumps,
-    render_prompt, text_of, ANSWER_CAPTURE_CAP,
+    render_prompt, text_of, ANSWER_BINDING_CAP, ANSWER_CAPTURE_CAP,
 };
 use super::model::{
     kind, EventAt, FactoryRun, JoinMark, NodeInstance, PendingEvaluation, RunState, StateEntry,
@@ -297,6 +297,22 @@ impl FactoryRun {
             }
             let Some(value) = value.filter(|_| latest.is_some() && failure.is_none()) else {
                 let optional = input.get("optional").is_some_and(json_truthy);
+                // An optional input over a DIFFERENT state with a live entry
+                // waits for that source's settle: a sentinel here would spawn
+                // the dependent beside its running upstream (upstream #3462's
+                // M3). The self-input loop form and a source with no live
+                // entry keep the sentinel.
+                if optional && latest.is_none() && src_id != self.states[position].state_id {
+                    let source_live = self.position(src_id).is_some_and(|src| {
+                        self.states[src]
+                            .entries
+                            .iter()
+                            .any(|entry| entry.status.in_flight())
+                    });
+                    if source_live {
+                        return Ok(None);
+                    }
+                }
                 if optional {
                     // Optional inputs bind a null sentinel whenever their
                     // source offers no value; an optional foreach.over
@@ -369,6 +385,11 @@ impl FactoryRun {
             .cloned()
             .unwrap_or_default();
         let target = &mut self.states[position].entries[entry];
+        let truncated_at = target
+            .answer
+            .as_deref()
+            .map(|answer| answer.chars().count())
+            .filter(|chars| *chars >= ANSWER_BINDING_CAP);
         let mut outputs = Map::new();
         let mut errors = Map::new();
         for out in &spec_outputs {
@@ -385,13 +406,54 @@ impl FactoryRun {
                 Ok(parsed) => {
                     outputs.insert(name.to_string(), parsed);
                 }
-                Err(error) => {
+                Err(mut error) => {
+                    // A capture cut at the binding cap reads as a size
+                    // problem, not a missing output.
+                    if let Some(chars) = truncated_at {
+                        let _ = write!(
+                            error,
+                            "; the captured answer is truncated at {chars} characters - keep the fenced JSON block compact"
+                        );
+                    }
                     errors.insert(name.to_string(), Value::from(error));
                 }
             }
         }
         target.outputs = Some(outputs);
         target.output_errors = Some(errors);
+    }
+
+    /// The declared output ports the entry's capture bound no value for
+    /// (presence, never the value: a port that parsed as JSON null bound).
+    fn unbound_outputs(&self, position: usize, entry: usize) -> Vec<String> {
+        let target = &self.states[position].entries[entry];
+        self.states[position]
+            .spec
+            .get("outputs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|out| out.get("name").and_then(Value::as_str))
+            .filter(|name| {
+                !target
+                    .outputs
+                    .as_ref()
+                    .is_some_and(|outputs| outputs.contains_key(*name))
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Join the entry's done instances' captured answers.
+    fn join_entry_answer(&mut self, position: usize, entry: usize) {
+        let target = &mut self.states[position].entries[entry];
+        let answers: Vec<&str> = target
+            .instances
+            .iter()
+            .filter(|instance| instance.status == Status::Done)
+            .filter_map(|instance| instance.answer.as_deref())
+            .collect();
+        target.answer = (!answers.is_empty()).then(|| answers.join("\n\n"));
     }
 }
 
@@ -1073,6 +1135,9 @@ impl Inner {
             Ignore,
             Fail(String, bool),
             Done,
+            /// The entry settled but a declared output bound nothing: its
+            /// settled children are re-collected once before the settle.
+            CaptureRetry(Vec<String>),
         }
         let now = self.clock.now();
         let outcome = cell.with(|run| {
@@ -1100,6 +1165,16 @@ impl Inner {
                 other => Some(format!("child settled with unexpected status {}", py_str_repr(other))),
             };
             if let Some(reason) = child_reason {
+                // The exit capture (upstream #3462's M4): whatever the exit
+                // envelope carried is a PROVISIONAL answer, kept on the
+                // instance so the state reads needs-verify instead of the
+                // exit silently counting as settled work.
+                let exit_answer = binding_lane(result);
+                if exit_answer.is_some() {
+                    let instance = run.slot_instance(slot);
+                    instance.answer = exit_answer;
+                    instance.provisional = true;
+                }
                 // Child failures retry (same prompt, attempts + 1) while
                 // attempts remain; then the entry failure policy applies.
                 return Outcome::Fail(reason, true);
@@ -1118,11 +1193,16 @@ impl Inner {
             }
             let instance = run.slot_instance(slot);
             instance.status = Status::Done;
-            let answer = result.answer_preview.clone().unwrap_or_default();
-            let capped = char_prefix(&answer, ANSWER_CAPTURE_CAP);
-            instance.answer = (!capped.is_empty()).then(|| capped.to_string());
+            // The binding lane first (the collect envelope's full answer);
+            // the roster preview is the fallback. A real settle supersedes
+            // any exit capture.
+            instance.answer = binding_lane(result);
+            instance.provisional = false;
             let duration = instance.duration_ms;
-            let captured = instance.answer.clone();
+            let captured = instance
+                .answer
+                .as_deref()
+                .map(|answer| char_prefix(answer, ANSWER_CAPTURE_CAP).to_string());
             run.record_at(
                 kind::SETTLED,
                 slot,
@@ -1153,21 +1233,125 @@ impl Inner {
                 && entry.instances.iter().all(|instance| instance.status == Status::Done)
             {
                 entry.status = Status::Done;
-                let answers: Vec<&str> = entry
-                    .instances
-                    .iter()
-                    .filter(|instance| instance.status == Status::Done)
-                    .filter_map(|instance| instance.answer.as_deref())
-                    .collect();
-                entry.answer = (!answers.is_empty()).then(|| answers.join("\n\n"));
+                run.join_entry_answer(slot.state, slot.entry);
                 run.capture_outputs(slot.state, slot.entry);
+                if !run.unbound_outputs(slot.state, slot.entry).is_empty() {
+                    let children: Vec<String> = run.states[slot.state].entries[slot.entry]
+                        .instances
+                        .iter()
+                        .filter(|instance| instance.status == Status::Done)
+                        .filter_map(|instance| instance.child_id.clone())
+                        .collect();
+                    return Outcome::CaptureRetry(children);
+                }
                 run.queue_settle(slot.state, slot.entry);
             }
             Outcome::Done
         });
-        if let Outcome::Fail(reason, retry) = outcome {
-            self.apply_instance_failure(cell, slot, reason, retry).await;
+        match outcome {
+            Outcome::Fail(reason, retry) => {
+                self.apply_instance_failure(cell, slot, reason, retry).await;
+            }
+            Outcome::CaptureRetry(children) => {
+                self.retry_capture(cell, slot, children).await;
+            }
+            Outcome::Ignore | Outcome::Done => {}
         }
+    }
+
+    /// The settle capture's one retry (upstream #3462's M2): the host can
+    /// settle a child before its answer capture lands (a later refresh
+    /// recovers it), so a declared output that bound nothing re-collects
+    /// the entry's settled children once and re-captures; a port that
+    /// still binds nothing records `output_capture_failed` instead of
+    /// passing silently. The settle is queued either way.
+    async fn retry_capture(&self, cell: &Arc<RunCell>, slot: Slot, children: Vec<String>) {
+        let refreshed = if children.is_empty() {
+            Ok(Vec::new())
+        } else {
+            self.children.collect(children, 0).await
+        };
+        cell.with(|run| {
+            match refreshed {
+                Ok(results) => {
+                    let mut changed = false;
+                    for instance in &mut run.states[slot.state].entries[slot.entry].instances {
+                        let Some(result) = results.iter().find(|result| {
+                            Some(result.rlm_child_id.as_str()) == instance.child_id.as_deref()
+                        }) else {
+                            continue;
+                        };
+                        let Some(answer) = binding_lane(result) else {
+                            continue;
+                        };
+                        let longer = instance
+                            .answer
+                            .as_deref()
+                            .is_none_or(|current| answer.chars().count() > current.chars().count());
+                        if longer {
+                            instance.answer = Some(answer);
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        run.join_entry_answer(slot.state, slot.entry);
+                        run.capture_outputs(slot.state, slot.entry);
+                    }
+                }
+                Err(error) => {
+                    let node = run.states[slot.state].state_id.clone();
+                    let index = run.states[slot.state].entries[slot.entry].index;
+                    run.record(
+                        kind::OUTPUT_CAPTURE_FAILED,
+                        EventAt {
+                            node: Some(&node),
+                            entry: Some(index),
+                            instance: None,
+                            detail: Some("the first capture stands"),
+                        },
+                        vec![(
+                            "error",
+                            Value::from(format!(
+                                "capture retry could not re-collect the settled children: {error}"
+                            )),
+                        )],
+                    );
+                }
+            }
+            let node = run.states[slot.state].state_id.clone();
+            let index = run.states[slot.state].entries[slot.entry].index;
+            for port in run.unbound_outputs(slot.state, slot.entry) {
+                let error = run.states[slot.state].entries[slot.entry]
+                    .output_errors
+                    .as_ref()
+                    .and_then(|errors| errors.get(&port))
+                    .and_then(Value::as_str)
+                    .map_or_else(
+                        || {
+                            format!(
+                                "output {} captured no value from the upstream answer",
+                                py_str_repr(&port)
+                            )
+                        },
+                        str::to_string,
+                    );
+                let detail = format!(
+                    "output {} did not bind after one capture retry",
+                    py_str_repr(&port)
+                );
+                run.record(
+                    kind::OUTPUT_CAPTURE_FAILED,
+                    EventAt {
+                        node: Some(&node),
+                        entry: Some(index),
+                        instance: None,
+                        detail: Some(&detail),
+                    },
+                    vec![("port", Value::from(port)), ("error", Value::from(error))],
+                );
+            }
+            run.queue_settle(slot.state, slot.entry);
+        });
     }
 
     async fn apply_instance_failure(
@@ -1225,6 +1409,33 @@ impl Inner {
         reason: &str,
     ) {
         let policy = cell.with(|run| {
+            // The verify mark is oversight, not failure-policy bookkeeping:
+            // a later foreach sibling can exit with a provisional answer
+            // AFTER its entry went terminal, so the mark runs before the
+            // terminal guard; it stays one-shot per entry.
+            let marked = &run.states[position].entries[entry_index];
+            if !marked.needs_verify
+                && marked
+                    .instances
+                    .iter()
+                    .any(|instance| instance.provisional && instance.answer.is_some())
+            {
+                run.states[position].entries[entry_index].needs_verify = true;
+                let node = run.states[position].state_id.clone();
+                let index = run.states[position].entries[entry_index].index;
+                run.record(
+                    kind::NEEDS_VERIFY,
+                    EventAt {
+                        node: Some(&node),
+                        entry: Some(index),
+                        instance: None,
+                        detail: Some(
+                            "child exit captured a provisional answer - verify the remote state",
+                        ),
+                    },
+                    Vec::new(),
+                );
+            }
             let state = &run.states[position];
             if state.entries[entry_index].status.terminal() {
                 return None; // the policy already ran for this entry
@@ -1237,6 +1448,7 @@ impl Inner {
             entry.status = Status::Error;
             entry.error = Some(reason.to_string());
             let index = entry.index;
+            run.last_error = Some(format!("state {} failed: {reason}", py_str_repr(&node)));
             let detail = format!("failure_policy {policy}");
             run.record(
                 kind::NODE_ERROR,
@@ -1722,4 +1934,18 @@ fn record_cancellation(run: &mut FactoryRun, slot: Slot, child_id: &str, failure
             );
         }
     }
+}
+
+/// The settle capture's binding lane: the collect envelope's full final
+/// answer, else the roster preview (older hosts, a capture that raced a
+/// worker teardown), capped at [`ANSWER_BINDING_CAP`]; `None` when empty.
+fn binding_lane(result: &RlmChildResult) -> Option<String> {
+    let answer = result
+        .answer_text
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .or(result.answer_preview.as_deref())
+        .unwrap_or_default();
+    let capped = char_prefix(answer, ANSWER_BINDING_CAP);
+    (!capped.is_empty()).then(|| capped.to_string())
 }

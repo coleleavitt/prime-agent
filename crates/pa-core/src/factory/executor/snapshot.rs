@@ -4,8 +4,8 @@
 
 use serde_json::{json, Map, Value};
 
-use super::binding::py_json_dumps;
-use super::model::{FactoryRun, StateRun, Status};
+use super::binding::{char_prefix, py_json_dumps, ANSWER_CAPTURE_CAP};
+use super::model::{FactoryRun, RunState, StateEntry, StateRun, Status};
 use crate::factory::spec::{
     MAX_TRANSITIONS_CAP, NODE_LIFECYCLE_DEFAULT, NODE_RETRIES_DEFAULT, RUN_FAILURE_POLICY_DEFAULT,
     RUN_MAX_CHILDREN_DEFAULT, RUN_MAX_PARALLEL_DEFAULT, STATE_MAX_ENTRIES_DEFAULT,
@@ -55,13 +55,7 @@ pub fn state_report(state: &StateRun, include_answer: bool) -> Value {
     report.insert("max_entries".into(), Value::from(state.max_entries));
     report.insert(
         "entries".into(),
-        Value::Array(
-            state
-                .entries
-                .iter()
-                .map(|entry| json!({ "index": entry.index, "status": entry.status.as_str(), "error": entry.error }))
-                .collect(),
-        ),
+        Value::Array(state.entries.iter().map(entry_report).collect()),
     );
     report.insert(
         "instances".into(),
@@ -105,13 +99,41 @@ pub fn state_report(state: &StateRun, include_answer: bool) -> Value {
             .and_then(|entry| entry.answer.as_deref())
             .filter(|answer| !answer.is_empty())
         {
-            report.insert("answer_preview".into(), Value::from(answer));
+            // The report previews compactly; the full binding text stays
+            // on the entry.
+            report.insert(
+                "answer_preview".into(),
+                Value::from(char_prefix(answer, ANSWER_CAPTURE_CAP)),
+            );
         }
     }
     if let Some(error) = &state.error {
         report.insert("error".into(), Value::from(error.clone()));
     }
+    if state.entries.iter().any(|entry| entry.needs_verify) {
+        report.insert("needs_verify".into(), Value::Bool(true));
+    }
     Value::Object(report)
+}
+
+/// One entry's report row: its status and error plus, for a needs-verify
+/// entry, the provisional answer the child exit captured (compacted).
+fn entry_report(entry: &StateEntry) -> Value {
+    let mut row =
+        json!({ "index": entry.index, "status": entry.status.as_str(), "error": entry.error });
+    if entry.needs_verify {
+        row["needs_verify"] = Value::Bool(true);
+        if let Some(provisional) = entry
+            .instances
+            .iter()
+            .rev()
+            .filter(|instance| instance.provisional)
+            .find_map(|instance| instance.answer.as_deref())
+        {
+            row["provisional_answer"] = Value::from(char_prefix(provisional, ANSWER_CAPTURE_CAP));
+        }
+    }
+    row
 }
 
 /// The usage block `status()` returns (the graph reuses it).
@@ -150,7 +172,7 @@ pub fn status_report(run: &mut FactoryRun, now: f64) -> Value {
         run.touch();
     }
     let start = run.events.len().saturating_sub(EVENT_WINDOW);
-    json!({
+    let mut payload = json!({
         "run_id": run.run_id,
         "spec_id": run.spec_id,
         "name": run.name,
@@ -159,7 +181,32 @@ pub fn status_report(run: &mut FactoryRun, now: f64) -> Value {
         "events": run.events[start..].to_vec(),
         "elapsed_ms": elapsed_ms(run, now),
         "usage": usage_report(run),
-    })
+    });
+    // Every state whose entry carried a provisional answer (a child exit)
+    // needs verification, root-visible without ledger archaeology.
+    let needs_verify: Vec<Value> = run
+        .states
+        .iter()
+        .filter(|state| state.entries.iter().any(|entry| entry.needs_verify))
+        .map(|state| Value::from(state.state_id.clone()))
+        .collect();
+    if !needs_verify.is_empty() {
+        payload["needs_verify"] = Value::Array(needs_verify);
+    }
+    // A paused run carries the last failed admission/bind error and a
+    // one-line remedy (upstream #3462's M6).
+    if run.state == RunState::Paused {
+        payload["pause_reason"] = opt(run.pause_reason.as_deref());
+        if let Some(last_error) = &run.last_error {
+            payload["last_error"] = Value::from(last_error.clone());
+            payload["remedy"] = Value::from(format!(
+                "resume with await rlm.factory.resume('{}') to continue the remaining states; \
+                 the failed state stays error - fix its subagent and start a fresh run to redo it",
+                run.run_id
+            ));
+        }
+    }
+    payload
 }
 
 #[must_use]
