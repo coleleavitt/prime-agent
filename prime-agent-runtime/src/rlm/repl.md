@@ -504,6 +504,9 @@ payload is written atomically (tmp file + `os.replace`) and a JSON manifest
 `timestamp`) is written to `manifest_path`. A manifest write failure fails the
 snapshot (and nothing is pruned).
 
+An `interrupt` aimed at a snapshot or restore only ever cancels that request:
+it never raises into a detached task that holds the loop meanwhile.
+
 `restore` loads the payload and revives each name independently; a missing
 file yields an ok empty restore with `reason:"snapshot not found"`, a corrupt
 file fails with a `reason`, and per-name failures are listed in `failed`.

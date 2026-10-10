@@ -184,7 +184,8 @@ _TRACED_REQUESTS = ("execute", "snapshot", "restore")
 _current_cell_execution: contextvars.ContextVar[_CellExecution | None] = contextvars.ContextVar(
     "_current_cell_execution", default=None
 )
-_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False}
+# "state": the active request is a snapshot/restore, whose interrupt never leaves its own task.
+_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False, "state": False}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
 # host_request_blocking waiters: resolved on the reader thread itself, since
@@ -822,9 +823,11 @@ def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
         raise KeyboardInterrupt
     # Loop idle in select() or another task mid-step: cancel the active task (same thread, safe).
     task.cancel()
-    if running is not None and running is not _serve_task:
+    if running is not None and running is not _serve_task and not _active["state"]:
         # A background task blocked in sync code occupies the only thread and would keep the
         # cancel from ever running: raise into it to unwind its step; it dies with the KI.
+        # Not for a snapshot/restore: that interrupt is the host abandoning its own bookkeeping,
+        # and the cancel lands once the user's work yields the loop.
         running.add_done_callback(_consume_task_exception)
         raise KeyboardInterrupt
 
@@ -1028,12 +1031,16 @@ async def _run_codes(codes: list[types.CodeType], ns: dict[str, Any]) -> Any:
     return value
 
 
-async def _run_guarded(task: asyncio.Task[Any], rid: str) -> tuple[str, Any, dict[str, Any] | None]:
-    """Await a request task; returns (status, value, error event or None)."""
+async def _run_guarded(
+    task: asyncio.Task[Any], rid: str, *, state: bool = False
+) -> tuple[str, Any, dict[str, Any] | None]:
+    """Await a request task; returns (status, value, error event or None). `state` marks a
+    snapshot/restore request (see `_sigint_handler`)."""
     with _interrupt_lock:
         _active["interrupted"] = False
         _active["rid"] = rid
         _active["task"] = task
+        _active["state"] = state
         if _consume_pending_interrupt(rid):
             # Interrupt parked before activation: cancel before the first step.
             _active["interrupted"] = True
@@ -1057,6 +1064,7 @@ async def _run_guarded(task: asyncio.Task[Any], rid: str) -> tuple[str, Any, dic
             _finishing_rid = rid
             _active["task"] = None
             _active["rid"] = None
+            _active["state"] = False
 
 
 async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
@@ -1691,7 +1699,7 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
         task = _loop.create_task(run())
         outcome: tuple[str, Any, dict[str, Any] | None] | None = None
         try:
-            outcome = await _run_guarded(task, rid)
+            outcome = await _run_guarded(task, rid, state=True)
             _finish_request(rid)  # no post-run repr/drain: close the interrupt window now
         except KeyboardInterrupt:
             # A finishing-targeted SIGINT can raise anywhere between _run_guarded's

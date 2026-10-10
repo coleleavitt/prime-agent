@@ -1,4 +1,5 @@
-"""Snapshot cost: a large namespace fits the host's snapshot window."""
+"""Snapshot cost and interrupts: a large namespace fits the host's snapshot window, and the
+interrupt that abandons a snapshot never lands on unrelated kernel work."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import time
 import unittest
 
 # `unittest discover -s test` puts test/ itself on sys.path.
-from test_repl import SRC  # pyright: ignore[reportImplicitRelativeImport]
+from test_repl import SRC, ReplProcess, one, stream_text  # pyright: ignore[reportImplicitRelativeImport]
 
 # The host's snapshot window (`SNAPSHOT_EXECUTION_TIMEOUT_MS`).
 _HOST_SNAPSHOT_WINDOW_S = 5.0
@@ -61,6 +62,52 @@ class SnapshotCostTest(unittest.TestCase):
         result = _snapshot_state(ns, self.path, self.manifest_path, 1 << 30, 1 << 30, False)
         self.assertEqual(sorted(result["saved"]), sorted(names))
         self.assertLess(result["bytes"], data_only["bytes"] * 2)
+
+
+
+class SnapshotInterruptTargetTest(unittest.TestCase):
+    """The host interrupts a snapshot it timed out; that interrupt is for the snapshot alone."""
+
+    def setUp(self) -> None:
+        self.repl = ReplProcess()
+        self.addCleanup(self.repl.close)
+        self.repl.ready()
+
+    def test_snapshot_interrupt_never_raises_into_background_work(self):
+        # A detached task blocks the loop while the snapshot is active but has not started yet:
+        # aborting the snapshot must cancel the snapshot, not kill the user's background work.
+        code = (
+            "import asyncio, time\n"
+            "from rlm import repl as _r\n"
+            "outcome = []\n"
+            "async def background():\n"
+            "    while not str(_r._active['rid']).startswith('snap'):\n"
+            "        await asyncio.sleep(0)\n"
+            "    print('blocking', flush=True)\n"
+            "    try:\n"
+            "        time.sleep(3)\n"
+            "        outcome.append('finished')\n"
+            "    except KeyboardInterrupt:\n"
+            "        outcome.append('interrupted')\n"
+            "job = asyncio.ensure_future(background())\n"
+        )
+        self.assertEqual(one(self.repl.execute("c1", code), "done"), {"event": "done", "id": "c1", "status": "ok"})
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repl.send(
+                {
+                    "type": "snapshot",
+                    "id": "snap1",
+                    "path": os.path.join(tmp, "s.dill"),
+                    "manifest_path": os.path.join(tmp, "s.json"),
+                }
+            )
+            events: list[dict[str, object]] = []
+            while "blocking" not in stream_text(events, "stdout"):
+                events.append(self.repl.read_event())
+            self.repl.send({"type": "interrupt", "id": "snap1"})
+            self.repl.until_done("snap1")
+        events = self.repl.execute("c2", "await job\noutcome")
+        self.assertEqual(one(events, "result"), {"event": "result", "id": "c2", "text": "['finished']"})
 
 
 if __name__ == "__main__":

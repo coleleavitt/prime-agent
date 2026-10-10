@@ -2126,8 +2126,8 @@ class FinishRequestTest(unittest.TestCase):
         repl = self.repl_module
         real_run_guarded = repl._run_guarded
 
-        async def run_guarded_then_sigint(task, rid):
-            outcome = await real_run_guarded(task, rid)
+        async def run_guarded_then_sigint(task, rid, **kwargs):
+            outcome = await real_run_guarded(task, rid, **kwargs)
             with repl._interrupt_lock:
                 repl._sigint_target = rid
             # Synchronous SIGINT in the post-run window: the handler sees
