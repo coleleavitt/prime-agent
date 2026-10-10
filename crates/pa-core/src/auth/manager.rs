@@ -929,6 +929,16 @@ impl AuthStorage {
     /// second time and present it later). A newer login written in the
     /// meantime is what is offered. The source's custody work (a store write,
     /// at most one identity lookup) holds the lock, once per login.
+    ///
+    /// The offer also holds the provider's refresh claim (the one the
+    /// built-in refresh holds from its re-check through its write), taken
+    /// before the document lock as the refresh takes it: a login is never
+    /// offered while another process spends its refresh token from
+    /// `auth.json`, and a refresh that waited on the offer re-reads the
+    /// file and finds the login gone. Without it, a process whose document
+    /// lock wait ran out during another's custody step found no login in
+    /// the source yet and refreshed `auth.json`'s copy, while the source
+    /// refreshed the same token.
     pub(crate) fn offer_stored_login_to_source(&mut self, provider: &str) {
         let Some(source) = super::credential_source(provider) else {
             return;
@@ -946,6 +956,13 @@ impl AuthStorage {
         {
             return;
         }
+        let _claim = match self.storage.claim_refresh(provider) {
+            Ok(claim) => claim,
+            Err(error) => {
+                self.errors.push(error.to_string());
+                return;
+            }
+        };
         let result = self.storage.with_lock(&mut |current| {
             let mut data = parse_storage_data(current.as_deref())?;
             let Some(AuthCredential::Oauth {

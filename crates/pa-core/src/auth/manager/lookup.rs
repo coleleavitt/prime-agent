@@ -316,6 +316,16 @@ impl AuthStorage {
             self.reload();
             return Some(credential);
         }
+        // The login left the document while this waited for the claim (an
+        // installed credential source took custody of it, or a logout):
+        // there is nothing here to spend.
+        if !matches!(
+            data.credential(provider_id),
+            Some(AuthCredential::Oauth { .. })
+        ) {
+            self.reload();
+            return None;
+        }
         // A refresh token the endpoint revoked is never presented again.
         if refresh_token_revoked(provider_id, &data) {
             self.reload();

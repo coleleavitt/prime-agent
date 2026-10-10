@@ -2,6 +2,7 @@
 //! directory, a temporary store and a loopback token endpoint answering by
 //! refresh token.
 
+use std::io::{BufRead as _, Write as _};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -113,8 +114,12 @@ fn a_login_another_process_moved_and_spent_is_not_imported_again() {
 }
 
 /// Set in the processes [`custody_child`] runs in: their shared setup, as
-/// JSON (`agent_dir`, `store`, `token_url`, `provider`).
+/// JSON (`agent_dir`, `store`, `token_url`, `provider`; `after_go`: wait for
+/// a line on stdin between reading auth.json and the lookup).
 const CHILD_SETUP_ENV: &str = "PA_ANTHROPIC_AUTH_CUSTODY_CHILD";
+/// What [`custody_child`] prints once it read auth.json, with `after_go`
+/// (the test harness may print its own text on the same line).
+const CHILD_READ: &str = "auth-json-read";
 
 /// The built-in refresh of `auth.json`'s login (pa-core's step after the
 /// source), presenting the refresh token to the test's token endpoint, so
@@ -194,6 +199,13 @@ fn custody_child() {
     install_credential_source(provider, source);
     let mut auth =
         AuthStorage::create_with_oauth(field("agent_dir"), Arc::new(PresentingOAuth { token_url }));
+    // Read auth.json, then look up only when told to (a process that loaded
+    // auth.json before another one began moving its login).
+    if setup["after_go"].as_bool() == Some(true) {
+        println!("{CHILD_READ}");
+        let mut go = String::new();
+        std::io::stdin().read_line(&mut go).expect("the go-ahead");
+    }
 
     // The rotation, or (a peer's refresh outlasting this process's wait
     // for its claim, on a loaded machine) no key this time; never
@@ -265,6 +277,129 @@ fn auth_json_and_the_store_never_both_refresh_one_token_across_processes() {
     )
     .expect("auth.json parses");
     assert_eq!(on_disk.get(provider), None);
+}
+
+/// The store source, with its custody step held open until the test lets it
+/// finish (another process's custody step, slowed by a loaded disk).
+struct HeldCustody {
+    inner: Arc<crate::SharedStoreSource>,
+    entered: Mutex<std::sync::mpsc::Sender<()>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl pa_core::auth::ProviderCredentialSource for HeldCustody {
+    fn status(&self) -> Option<pa_core::auth::CredentialSourceStatus> {
+        pa_core::auth::ProviderCredentialSource::status(self.inner.as_ref())
+    }
+
+    fn credential(
+        &self,
+    ) -> Result<pa_core::auth::SourcedCredential, pa_core::auth::CredentialSourceError> {
+        pa_core::auth::ProviderCredentialSource::credential(self.inner.as_ref())
+    }
+
+    fn adopt_stored_login(
+        &self,
+        login: &pa_core::auth::StoredOAuthLogin,
+    ) -> pa_core::auth::StoredLoginCustody {
+        let _ = self.entered.lock_or_recover().send(());
+        let _ = self.release.lock_or_recover().recv();
+        pa_core::auth::ProviderCredentialSource::adopt_stored_login(self.inner.as_ref(), login)
+    }
+}
+
+#[test]
+fn a_lookup_in_another_process_waits_for_a_custody_step_in_progress() {
+    let provider = "anthropic-custody-mid-move";
+    let (url, presented) =
+        token_endpoint_by_refresh(vec![(LOGIN_REFRESH.to_string(), 200, ROTATED)]);
+    let (home, source) = source_over(Vec::new(), &url);
+    let (entered, entering) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    install_credential_source(
+        provider,
+        Arc::new(HeldCustody {
+            inner: source.clone(),
+            entered: Mutex::new(entered),
+            release: Mutex::new(released),
+        }),
+    );
+    let agent_dir = home.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).expect("the agent dir");
+    write_auth_json(&agent_dir, provider);
+
+    // Another process has read auth.json (the expired login), with the
+    // built-in refresh of that login presenting to the same endpoint.
+    let setup = serde_json::json!({
+        "agent_dir": agent_dir,
+        "store": source.store_path(),
+        "token_url": url,
+        "provider": provider,
+        "after_go": true,
+    })
+    .to_string();
+    let mut other = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "custody::tests::custody_child",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD_SETUP_ENV, &setup)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start the other process");
+    let mut lines = std::io::BufReader::new(other.stdout.take().expect("its stdout")).lines();
+    assert!(
+        lines
+            .by_ref()
+            .map_while(Result::ok)
+            .any(|line| line.contains(CHILD_READ)),
+        "the other process read auth.json"
+    );
+    // This process starts moving auth.json's login into the store.
+    let mover = std::thread::spawn(move || {
+        AuthStorage::create_with_oauth(&agent_dir, Arc::new(NoOAuth)).get_api_key(provider)
+    });
+    entering.recv().expect("the custody step started");
+    // The other process looks the provider up meanwhile.
+    let mut go = other.stdin.take().expect("its stdin");
+    writeln!(go, "go").expect("tell it to look up");
+    drop(go);
+    let (finished, finishing) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        let output = other.wait_with_output().expect("the other process ends");
+        let _ = finished.send(());
+        let rest: Vec<String> = lines.map_while(Result::ok).collect();
+        (output, rest)
+    });
+    // A lookup that does not wait for the custody step finishes on its own
+    // (its document lock wait runs out in 200 ms); give it the time to.
+    let _ = finishing.recv_timeout(std::time::Duration::from_secs(5));
+    release.send(()).expect("finish the custody step");
+
+    assert_eq!(
+        mover.join().expect("the mover"),
+        Some(ROTATED_ACCESS.to_string())
+    );
+    let (output, stdout) = waiter.join().expect("the other process");
+    assert!(
+        output.status.success(),
+        "the other process failed: {stdout:?}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The token was spent once, by the store, its only custodian.
+    assert_eq!(
+        *presented.lock_or_recover(),
+        vec![LOGIN_REFRESH.to_string()]
+    );
+    assert_eq!(
+        stored_refresh_tokens(source.store_path()),
+        vec!["sk-ant-ort01-rotated-rotated-rotated-00".to_string()]
+    );
 }
 
 const CLAUDE_CODE_ACCESS: &str = "sk-ant-oat01-claude-code-own-access-000";

@@ -1,0 +1,1 @@
+- Anthropic (shared account store): when one process was moving an `auth.json` Anthropic login into `~/.anthropic-accounts` on a busy machine, another process could refresh `auth.json`'s copy at the same time as the store refreshed it, spending the single-use refresh token twice (which can log the account out). The other process now waits for the move and then uses the store.
