@@ -173,7 +173,9 @@ fn lock_store(
     let mut holder = None;
     let mut deadline = Instant::now() + policy.wait;
     loop {
-        match LockDir::acquire(path, policy.stale) {
+        // Owned: a live holder is never reclaimed, and the save re-checks
+        // the owner record before it replaces the file (upstream #3380).
+        match LockDir::acquire_owned(path, policy.stale) {
             Ok(held) => return Ok(held.with_heartbeat(policy.stale / 2)),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 let current = LockDir::holder_at(&lock_path);
@@ -216,7 +218,7 @@ fn with_store<T>(
             return Err(StoreError::new(StoreErrorKind::Runtime, message.clone()));
         }
     }
-    let (_lock, loaded) = match &target.location {
+    let (lock, loaded) = match &target.location {
         StoreLocation::File(path) => {
             let lock = if write {
                 Some(lock_store(path, target.lock)?)
@@ -257,6 +259,10 @@ fn with_store<T>(
             return Err(error);
         }
         if let StoreLocation::File(path) = &target.location {
+            if let Some(lock) = &lock {
+                lock.ensure_owned()
+                    .map_err(|error| StoreError::new(StoreErrorKind::Runtime, error.to_string()))?;
+            }
             write_harness_state_file(path, &session.state).map_err(|error| os_error(&error))?;
         }
         session.load_error = None;

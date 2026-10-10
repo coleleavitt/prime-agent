@@ -268,6 +268,25 @@ impl LockDir {
         }
     }
 
+    /// [`LockDir::acquire`] recording this holder as the lock's owner (a
+    /// PID and a per-acquisition token): only a provably dead owner can be
+    /// reclaimed after `stale_after`, and [`LockDir::ensure_owned`] tells a
+    /// holder whose lock was taken over.
+    ///
+    /// # Errors
+    ///
+    /// [`io::ErrorKind::WouldBlock`] for a held lock; other I/O errors as-is.
+    pub fn acquire_owned(file: &Path, stale_after: Duration) -> io::Result<Self> {
+        Self::acquire_with_owner(&Self::path_for(file), stale_after, Some(Self::new_owner()))
+    }
+
+    /// A fresh owner record: this process's id and a per-acquisition token.
+    fn new_owner() -> String {
+        static PROCESS_TOKEN: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
+        let token = PROCESS_TOKEN.get_or_init(uuid::Uuid::new_v4);
+        format!("{} {token}.{}", std::process::id(), uuid::Uuid::new_v4())
+    }
+
     /// Acquire a harness-state lock with a PID and per-process token.
     /// Only a provably dead owner can be reclaimed after `stale_after`.
     ///
@@ -280,9 +299,7 @@ impl LockDir {
         attempts: u32,
         interval: Duration,
     ) -> io::Result<Self> {
-        static PROCESS_TOKEN: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
-        let token = PROCESS_TOKEN.get_or_init(uuid::Uuid::new_v4);
-        let owner = format!("{} {token}.{}", std::process::id(), uuid::Uuid::new_v4());
+        let owner = Self::new_owner();
         let mut attempt = 0;
         loop {
             match Self::acquire_with_owner(&Self::path_for(file), stale_after, Some(owner.clone()))
@@ -540,9 +557,11 @@ impl LockDir {
     ///
     /// # Errors
     ///
-    /// The lock directory is gone (reclaimed by another process) or its
-    /// times cannot be set.
+    /// The lock directory is gone (reclaimed by another process), its
+    /// owner record names another holder, or its times cannot be set.
     pub fn refresh(&self) -> io::Result<()> {
+        // A taken-over lock is the new holder's: never keep it fresh.
+        self.ensure_owned()?;
         let (sec, nanos) = probe_mtime();
         set_mtime(&self.path, sec, nanos)
     }
@@ -597,6 +616,19 @@ pub struct HeartbeatLock {
     stop: Option<std::sync::mpsc::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
     lock: Option<std::sync::Arc<LockDir>>,
+}
+
+impl HeartbeatLock {
+    /// [`LockDir::ensure_owned`] for the held lock.
+    ///
+    /// # Errors
+    ///
+    /// The lock was taken over (its owner record no longer names this holder).
+    pub fn ensure_owned(&self) -> io::Result<()> {
+        self.lock
+            .as_ref()
+            .map_or(Ok(()), |lock| lock.ensure_owned())
+    }
 }
 
 impl Drop for HeartbeatLock {

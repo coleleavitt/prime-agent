@@ -68,6 +68,34 @@ FACTORY_DAG = {
 
 
 class HarnessStateTest(unittest.TestCase):
+    def test_concurrent_subprocess_creates_all_land(self) -> None:
+        # Upstream #3380's lock pin, through this client: eight processes
+        # creating at once all land, because every write the host store
+        # serves holds the state file's owned lock across its read and save.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness" / "harness_state.json"
+            start = Path(temp_dir) / "start"
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            workers = []
+            for worker in range(8):
+                code = (
+                    "import time\n"
+                    "from pathlib import Path\n"
+                    "from rlm.harness import HarnessState\n"
+                    f"while not Path({str(start)!r}).exists():\n"
+                    "    time.sleep(0.005)\n"
+                    f"state = HarnessState({str(state_path)!r})\n"
+                    "for i in range(10):\n"
+                    f"    state.create('memory', f'note {worker} {{i}}', f'note {worker} {{i}}', id=f'm-{worker}-{{i}}')\n"
+                )
+                workers.append(subprocess.Popen([sys.executable, "-c", code], env=env))
+            start.write_text("", encoding="utf-8")
+            for worker in workers:
+                self.assertEqual(worker.wait(), 0)
+            entries = HarnessState(state_path).list("memory")
+            self.assertEqual(len(entries), 80)
+
     def test_entries_disable_and_re_enable_without_deletion(self) -> None:
         # #1118: a disabled entry stays stored with its content and version,
         # survives a reload and a later content update, is marked in the
