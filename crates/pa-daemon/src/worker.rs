@@ -783,7 +783,7 @@ impl Worker {
                         crate::messaging_stats_host::MessagingStatsSeams {
                             snapshot: Arc::new(move || snapshot_digest.messaging_snapshot()),
                             record_send: Arc::new(move |failed| {
-                                send_digest.note_send_attempt(failed)
+                                send_digest.note_send_attempt(failed);
                             }),
                         },
                     );
