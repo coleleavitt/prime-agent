@@ -10,6 +10,8 @@ async fn main() -> Result<()> {
     // (session loads, attach snapshots) must not leave per-arena high-water
     // pages resident.
     pa_types::memory_release::cap_thread_arenas();
+    // A binary a test spawned must not start on the user's real agent state.
+    pa_types::platform::test_isolation::refuse_real_state();
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| {
         eprintln!("usage: pa-daemon <supervisor|worker> [options]");
@@ -31,6 +33,7 @@ async fn main() -> Result<()> {
                 Some(dir) => dir,
                 None => pa_daemon::paths::agent_dir()?,
             };
+            pa_types::platform::test_isolation::guard_state_path("agent dir", &agent_dir);
             let options = pa_daemon::supervisor::SupervisorOptions {
                 tcp_port: None,
                 tcp_bind_host: None,

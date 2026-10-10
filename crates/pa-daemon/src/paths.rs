@@ -45,11 +45,19 @@ pub fn expand_tilde(path: &str) -> Result<PathBuf> {
 ///
 /// Returns an error when the override cannot be tilde-expanded, or when the
 /// fallback needs the home directory and [`home_dir`] cannot resolve it.
+///
+/// # Panics
+///
+/// In a test process, when the directory is the real home's
+/// (`pa_types::platform::test_isolation`).
 pub fn agent_dir() -> Result<PathBuf> {
-    match std::env::var_os(AGENT_DIR_ENV) {
-        Some(dir) if !dir.is_empty() => expand_tilde(&dir.to_string_lossy()),
-        _ => Ok(home_dir()?.join(CONFIG_DIR_NAME)),
-    }
+    pa_types::platform::test_isolation::prepare();
+    let dir = match std::env::var_os(AGENT_DIR_ENV) {
+        Some(dir) if !dir.is_empty() => expand_tilde(&dir.to_string_lossy())?,
+        _ => home_dir()?.join(CONFIG_DIR_NAME),
+    };
+    pa_types::platform::test_isolation::guard_state_path("agent dir", &dir);
+    Ok(dir)
 }
 
 /// The sessions root: the `PRIME_AGENT_SESSION_DIR` override when set
