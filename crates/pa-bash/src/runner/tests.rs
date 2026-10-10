@@ -363,8 +363,11 @@ fn output_starts_a_new_silence_episode() {
     // 400 ms), every repeat at least twice the silence of the one before.
     for silences in [&first, &second] {
         assert!(silences.len() >= 2, "{warnings:?}");
+        // `bash.silence_ms` is each warning's silence rounded to the
+        // millisecond, so a repeat due at exactly twice the last silence can
+        // read up to 2 ms short of twice the last rounded value.
         assert!(
-            silences.windows(2).all(|pair| pair[1] >= 2 * pair[0]),
+            silences.windows(2).all(|pair| pair[1] + 2 >= 2 * pair[0]),
             "{warnings:?}"
         );
     }
