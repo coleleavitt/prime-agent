@@ -248,6 +248,9 @@ pub struct SharedStoreSource {
     this: OnceLock<std::sync::Weak<SharedStoreSource>>,
     /// The revoked logins this process reported.
     pub(crate) revocations: Mutex<crate::revoked::Revocations>,
+    /// A malformed login in `auth.json` was reported (once: it is offered
+    /// on every lookup).
+    pub(crate) malformed_login_reported: std::sync::atomic::AtomicBool,
 }
 
 /// How many served tokens the source remembers (the pi plugin's bound).
@@ -308,6 +311,7 @@ impl SharedStoreSource {
             cachekeep_started: std::sync::Once::new(),
             this: OnceLock::new(),
             revocations: Mutex::default(),
+            malformed_login_reported: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

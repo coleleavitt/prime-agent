@@ -5,6 +5,8 @@
 //! which removes the login the store serves the provider (the plugins'
 //! account removal, `removeAccount`: the row goes, nothing is revoked).
 
+use std::sync::atomic::Ordering;
+
 use anthropic::credentials::read_claude_code_login;
 use anthropic::token::{
     is_valid_access_token, is_valid_refresh_token, AccessToken, Credential, OAuthTokens,
@@ -17,6 +19,15 @@ use pa_types::sync::MutexExt;
 
 use crate::source::{block_on_own_runtime, logins, served_login, UsageEvent};
 use crate::SharedStoreSource;
+
+/// The refresh token the plugins write into a host's own auth file in place
+/// of the real one once the store holds the login (anthropic-auth's
+/// `STORE_MANAGED_REFRESH_PLACEHOLDER`: the pi plugin seeds a host's
+/// `auth.json` with it, replaces a real refresh token it moved into the
+/// store with it, and hands it to the host after every refresh; the
+/// opencode plugin does the same in opencode's `auth.json`). Such a login
+/// is already the store's.
+const STORE_MANAGED_REFRESH: &str = "managed-by-anthropic-accounts";
 
 /// What the store did with an imported login (napi `ImportResult.status`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,9 +144,16 @@ impl SharedStoreSource {
 
     /// [`pa_core::auth::ProviderCredentialSource::adopt_stored_login`]: the
     /// login is the store's once it holds it (or a login of the same
-    /// account); a malformed login or an unusable store leaves it in
-    /// `auth.json`.
+    /// account), or when a plugin already moved it there (its refresh token
+    /// is [`STORE_MANAGED_REFRESH`]: nothing to import, and `auth.json`'s
+    /// access token is a copy the store may since have rotated); a
+    /// malformed login (reported once per source) or an unusable store
+    /// leaves it in `auth.json`.
     pub(crate) fn adopt(&self, login: &StoredOAuthLogin) -> StoredLoginCustody {
+        if login.refresh.trim() == STORE_MANAGED_REFRESH {
+            tracing::debug!("auth.json's Anthropic login is already the shared account store's");
+            return StoredLoginCustody::Adopted;
+        }
         match block_on_own_runtime(self.import_login(login)) {
             Ok(Ok(Some(status))) => {
                 self.count(UsageEvent::Migrated);
@@ -146,9 +164,12 @@ impl SharedStoreSource {
                 StoredLoginCustody::Adopted
             }
             Ok(Ok(None)) => {
-                tracing::warn!(
-                    "auth.json's Anthropic login is malformed; the shared account store did not take it"
-                );
+                // Offered again on every lookup while auth.json holds it.
+                if !self.malformed_login_reported.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        "auth.json's Anthropic login is malformed; the shared account store did not take it"
+                    );
+                }
                 StoredLoginCustody::Kept
             }
             Ok(Err(message)) | Err(message) => {

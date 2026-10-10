@@ -367,3 +367,148 @@ fn claude_code_s_login_left_in_auth_json_follows_claude_code_s_rotation() {
     );
     assert_eq!(*presented.lock_or_recover(), Vec::<String>::new());
 }
+
+/// The refresh token the plugins write in place of the real one in a host's
+/// own auth file once the store holds the login.
+const STORE_MANAGED: &str = "managed-by-anthropic-accounts";
+
+/// An in-memory `auth.json` holding `provider`'s OAuth login.
+fn auth_json_holding(
+    provider: &str,
+    access: &str,
+    refresh: &str,
+    expires_in: Duration,
+    oauth: Arc<dyn pa_core::auth::OAuthIntegration>,
+) -> AuthStorage {
+    let data = serde_json::json!({
+        provider: {
+            "type": "oauth", "access": access, "refresh": refresh,
+            "expires": (Utc::now() + expires_in).timestamp_millis()
+        }
+    });
+    AuthStorage::in_memory_without_env(
+        &pa_core::auth::AuthStorageData(data.as_object().cloned().unwrap_or_default()),
+        oauth,
+    )
+}
+
+/// A built-in refresh that counts its calls and never produces a login.
+#[derive(Default)]
+struct CountingOAuth(std::sync::atomic::AtomicUsize);
+
+impl pa_core::auth::OAuthIntegration for CountingOAuth {
+    fn api_key_for(
+        &self,
+        _provider: &str,
+        credential: &pa_core::auth::AuthCredential,
+    ) -> Option<String> {
+        match credential {
+            pa_core::auth::AuthCredential::Oauth { access, .. } => Some(access.clone()),
+            _ => None,
+        }
+    }
+
+    fn refresh(
+        &self,
+        _provider_id: &str,
+        _credentials: &pa_core::auth::AuthStorageData,
+    ) -> Result<pa_core::auth::AuthCredential, pa_core::auth::OAuthRefreshError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(pa_core::auth::OAuthRefreshError::Failed)
+    }
+}
+
+#[test]
+fn a_login_the_plugins_already_moved_to_the_store_is_adopted_silently() {
+    let provider = "anthropic-custody-store-managed";
+    let (_home, source) = source_over(
+        vec![row("managed-pool", Duration::hours(2))],
+        "http://127.0.0.1:9",
+    );
+    install_credential_source(provider, source.clone());
+    let mut auth = auth_json_holding(
+        provider,
+        "sk-ant-oat01-plugin-seeded-access-0000",
+        STORE_MANAGED,
+        Duration::hours(-1),
+        Arc::new(NoOAuth),
+    );
+    let warnings = WarningLog::default();
+
+    let key = warnings.capture(|| auth.get_api_key(provider));
+
+    // The store serves; nothing was imported and nothing was reported.
+    assert_eq!(key, Some(access_of("managed-pool")));
+    assert_eq!(warnings.messages(), Vec::<String>::new());
+    assert_eq!(
+        stored_refresh_tokens(source.store_path()),
+        vec![refresh_of("managed-pool")]
+    );
+    // auth.json no longer holds the placeholder login.
+    assert_eq!(auth.get_all().get(provider), None);
+}
+
+#[test]
+fn a_store_managed_login_is_never_served_or_refreshed_from_auth_json() {
+    let provider = "anthropic-custody-store-managed-empty";
+    let (_home, source) = source_over(Vec::new(), "http://127.0.0.1:9");
+    install_credential_source(provider, source);
+    let oauth = Arc::new(CountingOAuth::default());
+    let mut expired = auth_json_holding(
+        provider,
+        "sk-ant-oat01-plugin-seeded-access-0000",
+        STORE_MANAGED,
+        Duration::hours(-1),
+        oauth.clone(),
+    );
+    let mut live = auth_json_holding(
+        provider,
+        "sk-ant-oat01-plugin-seeded-access-0000",
+        STORE_MANAGED,
+        Duration::hours(1),
+        oauth.clone(),
+    );
+
+    // The store holds no login: there is nothing to serve, and the
+    // placeholder is never presented as a refresh token.
+    assert_eq!(expired.get_api_key(provider), None);
+    assert_eq!(oauth.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(live.get_api_key(provider), None);
+}
+
+#[test]
+fn a_malformed_login_is_reported_once_per_process() {
+    let provider = "anthropic-custody-malformed";
+    let (_home, source) = source_over(
+        vec![row("malformed-pool", Duration::hours(2))],
+        "http://127.0.0.1:9",
+    );
+    install_credential_source(provider, source);
+    let mut auth = auth_json_holding(
+        provider,
+        "not-an-access-token",
+        "not-a-refresh-token",
+        Duration::hours(-1),
+        Arc::new(NoOAuth),
+    );
+    let warnings = WarningLog::default();
+
+    warnings.capture(|| {
+        for _ in 0..3 {
+            assert_eq!(
+                auth.get_api_key(provider),
+                Some(access_of("malformed-pool"))
+            );
+        }
+    });
+
+    assert_eq!(
+        warnings.messages(),
+        vec![
+            "auth.json's Anthropic login is malformed; the shared account store did not take it"
+                .to_string()
+        ]
+    );
+    // auth.json keeps it: it is not the store's to discard.
+    assert!(auth.get_all().get(provider).is_some());
+}
