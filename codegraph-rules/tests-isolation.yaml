@@ -200,3 +200,125 @@ examples:
           scrub_repository_selection(&mut command);
           command.arg("rev-parse").current_dir(dir).output()
       }
+---
+id: pa-test-spawn-without-state-isolation
+description: >-
+  A test spawns a workspace binary (`CARGO_BIN_EXE_*`) without
+  `pa_types::platform::test_isolation::TestState`. The child then resolves
+  its agent dir, `auth.json`, the shared Anthropic account store, Claude
+  Code's credentials and the kernel venv from the environment the test
+  inherited: a `cargo test` started from a prime-agent session inherits the
+  session's `PRIME_AGENT_CODING_AGENT_DIR`, and 32 spawned binaries that set
+  `HOME` but not the agent dir traced into the real `~/.prime/agent/logs`,
+  read the real `auth.json` and flushed the real harness ledger.
+  `TestState::new(root).apply(&mut command)` (or `for_agent_dir`) points all
+  of them under the test's temp dir and scrubs the inherited redirects; the
+  binary's startup guard refuses a real-state path, but only isolation keeps
+  the test hermetic.
+severity: medium
+tags: [test-isolation, data-loss]
+language: rust
+check-patterns:
+  - name: bin-exe-spawn
+    query: |
+      ((call_expression
+         function: (scoped_identifier path: (_) @ty name: (identifier) @ctor)
+         arguments: (arguments) @args) @call
+       (#match? @ty "(^|::)Command$")
+       (#eq? @ctor "new"))
+    at: call
+    where:
+      - capture: args
+        not-regex: "^\\(\\s*\"[^\"]*\"\\s*\\)$"
+      - enclosing-function:
+          contains: |
+            ((string_literal) @bin (#match? @bin "CARGO_BIN_EXE_"))
+          # `PROTECTED_HOME_ENV`: a guard test that leaks on purpose, against a sentinel home.
+          contains-not: |
+            ([(identifier) (type_identifier)] @state (#match? @state "^(TestState|PROTECTED_HOME_ENV)$"))
+message: "workspace binary spawned without TestState: it resolves the inherited agent dir and auth stores"
+review:
+  - Does the command get `TestState::new(<temp root>).apply(&mut command)` (or `for_agent_dir`) before its own `.env(..)` calls?
+  - Is the state applied in a caller or a wrapper (a `timeout`/`sh` launcher whose env reaches the binary)?
+examples:
+  bad:
+    - |
+      #[test]
+      fn rpc_resumes() {
+          let home = tempfile::TempDir::new().unwrap();
+          let child = Command::new(env!("CARGO_BIN_EXE_prime-agent"))
+              .env("HOME", home.path())
+              .spawn()
+              .unwrap();
+      }
+    - |
+      fn spawn_daemon(agent_dir: &Path) -> Child {
+          let binary = env!("CARGO_BIN_EXE_pa-daemon");
+          Command::new(binary).arg("--agent-dir").arg(agent_dir).spawn().unwrap()
+      }
+  good:
+    - |
+      fn spawn_daemon(agent_dir: &Path) -> Child {
+          let binary = env!("CARGO_BIN_EXE_pa-daemon");
+          TestState::for_agent_dir(agent_dir)
+              .apply(&mut Command::new(binary))
+              .arg("--agent-dir")
+              .arg(agent_dir)
+              .spawn()
+              .unwrap()
+      }
+    - |
+      fn fixture(dir: &Path) {
+          let bin = env!("CARGO_BIN_EXE_prime-agent");
+          Command::new("git").arg("init").current_dir(dir).status().unwrap();
+      }
+---
+id: pa-test-engine-on-resolved-agent-dir
+description: >-
+  Test code hands an engine (or any config with an `agent_dir` field) the
+  agent dir resolved from the environment (`agent_dir()`,
+  `get_agent_dir()`, `home_dir()`) instead of a temp dir it owns. That is
+  the user's real `~/.prime/agent` whenever the test runs with the real
+  `HOME` or an inherited `PRIME_AGENT_CODING_AGENT_DIR`: the engine then
+  reads the real `auth.json` and writes the real logs, sessions and harness.
+  The resolvers panic on a real-state path in test processes; give the engine
+  an explicit temp agent dir.
+severity: medium
+tags: [test-isolation, data-loss]
+language: rust
+check-patterns:
+  - name: resolved-agent-dir-field
+    query: |
+      ((field_initializer
+         field: (field_identifier) @field
+         value: (_) @value) @init
+       (#eq? @field "agent_dir"))
+    at: init
+    where:
+      - capture: value
+        regex: "(^|::)(agent_dir|get_agent_dir|home_dir)\\(\\)"
+      - enclosing-function:
+          is-test: true
+message: "test engine built on the environment-resolved agent dir"
+review:
+  - Is the value a temp dir the test owns? Use it (`tempfile`, `TestState::agent_dir`).
+examples:
+  bad:
+    - |
+      #[tokio::test]
+      async fn engine_starts() {
+          let config = SessionEngineConfig {
+              agent_dir: pa_types::platform::agent_dir().unwrap(),
+              cwd,
+          };
+      }
+  good:
+    - |
+      #[tokio::test]
+      async fn engine_starts() {
+          let tmp = tempfile::tempdir().unwrap();
+          let config = SessionEngineConfig {
+              agent_dir: tmp.path().join("agent"),
+              cwd,
+          };
+      }

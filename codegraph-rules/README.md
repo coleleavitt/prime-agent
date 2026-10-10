@@ -33,6 +33,8 @@ to read to confirm or dismiss it.
 | `pa-test-proc-self-fd-number` | `tests-isolation.yaml` | a test reading `/proc/self/fd/<n>` | 1 |
 | `pa-test-git-without-isolation` | `tests-isolation.yaml` | `Command::new("git")` in a function that neither uses the fixture helper nor scrubs `GIT_DIR` | 1 (was 4 in pa-core tests alone) |
 | `pa-test-global-count-assertion` | `tests-isolation.yaml` | `assert_eq!(live_*_count(), N)` / `registry().len()` in a test | 0 |
+| `pa-test-spawn-without-state-isolation` | `tests-isolation.yaml` | `Command::new(..)` in a function naming `CARGO_BIN_EXE_*` that never uses `TestState` | 115 in 93 files before `fix-test-isolation` |
+| `pa-test-engine-on-resolved-agent-dir` | `tests-isolation.yaml` | a test's `agent_dir:` field set from `agent_dir()` / `get_agent_dir()` / `home_dir()` | 0 |
 | `pa-unvalidated-name-path-join` | `paths.yaml` | `dir.join(name)` / `dir.join(format!("{id}.jsonl"))` with no validator in the function | 41 |
 | `pa-float-parse-js-parity` | `floats.yaml` | `parse::<f64>()`, `f64::from_str`, `from_str::<f64>` outside tests | 15 |
 
@@ -127,6 +129,34 @@ git-running tests under an exported `GIT_DIR` and require the sentinel repositor
 A test asserting an exact count on a process-wide registry races the other tests
 in the binary (the `live_kernels` fix in 4f08bda73). No sites are left. The rule
 guards against the pattern coming back.
+
+### `pa-test-spawn-without-state-isolation`
+
+A spawned workspace binary resolves its agent dir, `auth.json`, the shared
+Anthropic account store (`~/.anthropic-accounts`), Claude Code's credentials
+and the kernel venv from the environment the test inherited. A `cargo test`
+started from a prime-agent session inherits the session's
+`PRIME_AGENT_CODING_AGENT_DIR` (the kernel exports it): on 2026-10-08, 32
+spawned binaries that set `HOME` but not the agent dir traced into the real
+`~/.prime/agent/logs/agent.jsonl`, read the real `auth.json` and flushed the
+real global harness ledger. `pa_types::platform::test_isolation::TestState`
+points every one of those paths under the test's temp dir and scrubs the
+inherited redirects (`PRIME_AGENT_*`, `PI_*`, `RLM_*`, `OPENCODE_*`,
+`ANTHROPIC_ACCOUNTS_*`, `CLAUDE_CONFIG_DIR`); apply it right after
+`Command::new`, before the test's own `.env(..)`. The binaries' startup guard
+(`test_isolation::refuse_real_state`) and the agent-dir resolvers refuse a
+real-state path in any test process (`PA_TEST_ISOLATED`, `CARGO_BIN_EXE_*` in
+the environment, or a `deps/<name>-<hash>` harness), judged against the passwd
+home rather than `$HOME`; the rule keeps new spawn sites isolated rather than
+merely refused. Functions naming `PROTECTED_HOME_ENV` are the guard's own tests,
+which leak on purpose against a sentinel home.
+
+### `pa-test-engine-on-resolved-agent-dir`
+
+Every in-process engine in the tests takes an explicit temp agent dir. A test
+that passes the environment-resolved one instead (`agent_dir()`, `home_dir()`)
+works on the real `~/.prime/agent` under the real `HOME`; the resolvers panic
+there in test processes. No sites; the rule guards the pattern.
 
 ### `pa-unvalidated-name-path-join`
 
