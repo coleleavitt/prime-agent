@@ -95,6 +95,27 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         awaited = await handle
         self.assertEqual(handle.poll(), awaited)
 
+    async def test_awaiting_a_result_again_returns_it(self):
+        # Models write `h = await bash(...)` and then `await h` (8 times in
+        # user logs): awaiting the result is harmless and gives it back.
+        result = await bash("echo hi")
+        self.assertIs(await result, result)
+
+    async def test_subscripting_the_output_method_names_both_spellings(self):
+        # `handle.output[-2000:]` (6 times in user logs) raised "'method'
+        # object is not subscriptable"; the error now says what to write.
+        handle = bash("echo hi")
+        result = await handle
+        with self.assertRaises(TypeError) as raised:
+            handle.output[-2000:]  # noqa: B018 - the misuse under test
+        self.assertIn(".output()", str(raised.exception))
+        self.assertIn("(await h).output", str(raised.exception))
+        with self.assertRaises(AttributeError) as raised:
+            handle.output.splitlines()
+        self.assertIn(".output()", str(raised.exception))
+        self.assertEqual(handle.output(), result.output)
+        self.assertTrue(callable(bash_module.BashHandle.output))
+
     def test_construction_cleanup_uses_windows_signal_without_sigkill(self):
         failure = RuntimeError("task construction failed")
         loop = mock.Mock()
