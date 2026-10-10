@@ -935,6 +935,13 @@ mod tests {
         })
     }
 
+    /// A no-output turn that reaches the goal's progress gate. An empty normal stop never
+    /// does: the agent loop re-requests it and settles the last empty attempt as an error
+    /// (upstream #1896); an empty length stop settles as the model's own no-output turn.
+    fn empty_length_turn() -> Value {
+        json!({ "text": "", "stopReason": "length" })
+    }
+
     fn no_compaction() -> Value {
         json!({ "compaction": { "enabled": false } })
     }
@@ -1102,7 +1109,7 @@ mod tests {
     async fn backoff_wake_runs_the_marker_turn_and_recovers_the_reply() {
         let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
-            script(&json!([{}, "recovered reply"]), 128_000),
+            script(&json!([empty_length_turn(), "recovered reply"]), 128_000),
             no_compaction(),
             Some(("finish the work", None)),
         )
@@ -1138,7 +1145,14 @@ mod tests {
     async fn three_empty_turns_hit_the_cap_with_exactly_three_model_calls() {
         let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
-            script(&json!([{}, {}, {}]), 128_000),
+            script(
+                &json!([
+                    empty_length_turn(),
+                    empty_length_turn(),
+                    empty_length_turn()
+                ]),
+                128_000,
+            ),
             no_compaction(),
             Some(("finish the work", None)),
         )

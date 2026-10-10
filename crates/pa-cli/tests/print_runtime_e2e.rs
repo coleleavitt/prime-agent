@@ -222,7 +222,10 @@ fn read_entries(path: &std::path::Path) -> Vec<serde_json::Value> {
 #[test]
 fn print_mode_goal_cap_reports_the_reason_and_exits_one() {
     let home = isolated_home();
-    let script = serde_json::json!({ "responses": [{}, {}, {}] });
+    // Empty length stops: an empty normal stop is re-requested in-loop and its last attempt
+    // settles as an error (upstream #1896), so only these strike the no-progress cap.
+    let empty = serde_json::json!({ "text": "", "stopReason": "length" });
+    let script = serde_json::json!({ "responses": [empty, empty, empty] });
     let (stdout, stderr, code) = run_in_home(
         home.path(),
         &["--goal", "finish the work", "-p", "work"],
