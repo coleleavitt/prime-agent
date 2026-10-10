@@ -187,8 +187,9 @@ context, or a fresh trace when there is none):
   progress snapshots with elapsed/silence times, output byte count, and last
   output time. Long silence emits structured `bash/command_no_output` events
   after five minutes by default (`PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS`, `0`
-  disables). Output matching Cargo's build-directory lock wait emits
-  `bash/cargo_lock_wait` immediately and records
+  disables), repeated each time the same silence doubles (5, 10, 20 minutes,
+  ...); new output starts a fresh silence. Output matching Cargo's
+  build-directory lock wait emits `bash/cargo_lock_wait` immediately and records
   `bash.wait_reason="cargo_build_lock"`; no captured output content is emitted.
 - `mcp.call` — one per `mcp.list_tools(server)` / `mcp.call_tool(server,
   tool, arguments)` call (`attrs`: `mcp.server`, `mcp.tool` — `"list_tools"`
