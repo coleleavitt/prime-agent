@@ -1,8 +1,9 @@
 # anthropic-rs, vendored
 
 Pinned source of `anthropic` 0.1.0 (MIT OR Apache-2.0), the shared Anthropic auth SDK from
-`git@github.com:coleleavitt/anthropic-rs.git` at commit `449f30aa02ee9f968954064c0a750f7913b89023`
-(2026-10-08, "refresh: keep a rotation the store could not save", on `main`). Only the crate is
+`git@github.com:coleleavitt/anthropic-rs.git` at commit `50cb3606950de7a1fd36048e9e9aead7f0c8e26f`
+(2026-10-10, "keepalive: a pass with nothing due takes no store lock", on the `refresh-commit-recovery` branch,
+after 449f30a). Only the crate is
 vendored (`Cargo.toml`, `README.md`, `PORTING.md`, `docs/`, `src/`, from `git archive`); the `anthropic-napi`
 workspace member and the upstream `Cargo.lock` are not. `crates/pa-anthropic-auth` is its only user.
 
