@@ -46,12 +46,20 @@ fn next_spinner_deadline(started: Instant, now: Instant) -> Instant {
 /// the 80ms phase on a big transcript or a loaded box), the spinning loop
 /// stops yielding to the session reader on the same runtime: the stream
 /// stops applying and the barrier expires.
-async fn next_ui_input(ui_rx: &mut mpsc::UnboundedReceiver<UiInput>, closed: &mut bool) -> UiInput {
+///
+/// The close itself resolves once (`None`): the loop must take one more
+/// iteration to see `closed` and wake for the steps still queued in
+/// `pending` (the opening phase queues typed-ahead input there). Parking
+/// on the very poll that discovered the close would hold that select
+/// forever with runnable steps queued.
+async fn next_ui_input(
+    ui_rx: &mut mpsc::UnboundedReceiver<UiInput>,
+    closed: &mut bool,
+) -> Option<UiInput> {
     if !*closed {
-        if let Some(input) = ui_rx.recv().await {
-            return input;
-        }
-        *closed = true;
+        let input = ui_rx.recv().await;
+        *closed = input.is_none();
+        return input;
     }
     std::future::pending().await
 }
@@ -731,8 +739,11 @@ async fn run_interactive_surface(
     session.restore_prompt_stash_on_open(&mut view);
     // Declared above the onboarding phase: the pane's drive marks it.
     let mut headless_done = false;
-    // The UI input channel closed (see [`next_ui_input`]).
-    let mut ui_closed = false;
+    // The UI input channel closed (see [`next_ui_input`]). The opening phase
+    // reads the same channel: a close it already saw carries over, or the
+    // loop's first select would discover it, park the arm, and never wake
+    // for the typed-ahead steps still queued in `pending`.
+    let mut ui_closed = ui_input_closed;
     // The settle bound's deadline (see [`HEADLESS_SETTLE_TIMEOUT_MS`]).
     let mut headless_settle_deadline: Option<Instant> = None;
     let mut headless_settle_pending = false;
@@ -1608,17 +1619,21 @@ async fn run_interactive_surface(
                 // always ready and would starve turn events while a barrier or the final
                 // submitted prompt is still settling, so the arm parks once it saw the close.
                 if headless_done {
-                    std::future::pending::<UiInput>().await
+                    std::future::pending::<Option<UiInput>>().await
                 } else {
                     next_ui_input(&mut ui_rx, &mut ui_closed).await
                 }
             } => {
-                // A keystroke restarts the window: the rest of a typed burst (a
-                // command plus its Enter) applies before a parked request materializes.
-                if matches!(input, UiInput::Key(_) | UiInput::Paste(_)) {
-                    quiet_tick_deadline = None;
+                // `None` is the close, reported once: this iteration ends so the next
+                // one sees `ui_closed` and wakes for the queued steps.
+                if let Some(input) = input {
+                    // A keystroke restarts the window: the rest of a typed burst (a
+                    // command plus its Enter) applies before a parked request materializes.
+                    if matches!(input, UiInput::Key(_) | UiInput::Paste(_)) {
+                        quiet_tick_deadline = None;
+                    }
+                    pending.push_back(input);
                 }
-                pending.push_back(input);
             }
             maybe_note = notes_rx.recv() => {
                 if let Some(note) = maybe_note {
@@ -2254,8 +2269,12 @@ mod tests {
         let mut closed = false;
         let first = next_ui_input(&mut ui_rx, &mut closed).await;
         assert!(
-            matches!(first, UiInput::HeadlessDone),
+            matches!(first, Some(UiInput::HeadlessDone)),
             "the queued input arrives first"
+        );
+        assert!(
+            next_ui_input(&mut ui_rx, &mut closed).await.is_none(),
+            "the close resolves once, so the loop iterates and sees it"
         );
         let parked = tokio::time::timeout(
             Duration::from_secs(60),
