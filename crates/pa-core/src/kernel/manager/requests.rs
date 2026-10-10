@@ -426,7 +426,7 @@ mod tests {
         let python = dir.path().join("ready-but-not-reading");
         std::fs::write(
             &python,
-            "#!/usr/bin/env python3\nimport json, time\nprint(json.dumps({'event': 'ready', 'protocol': 3, 'python': '3.13.0'}), flush=True)\ntime.sleep(30)\n",
+            "#!/usr/bin/env python3\nimport json, time\nprint(json.dumps({'event': 'ready', 'protocol': 5, 'python': '3.13.0'}), flush=True)\ntime.sleep(30)\n",
         )
         .expect("write fake kernel");
         std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
@@ -473,7 +473,7 @@ mod tests {
         use super::*;
         use std::os::unix::fs::PermissionsExt;
 
-        // Protocol v3: ready, then idles without reading stdin until the
+        // Protocol v5: ready, then idles without reading stdin until the
         // sibling "go" file appears, then answers execute frames, ignores
         // glued garbage (a torn prefix makes any next line invalid), and
         // never answers interrupts (that would settle the aborted execution).
@@ -483,7 +483,7 @@ import os
 import sys
 import time
 
-print(json.dumps({"event": "ready", "protocol": 3, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
 go = os.path.join(os.path.dirname(os.path.abspath(__file__)), "go")
 while not os.path.exists(go):
     time.sleep(0.01)
