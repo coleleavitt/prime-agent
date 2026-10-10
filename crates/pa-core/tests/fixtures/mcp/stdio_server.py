@@ -11,6 +11,8 @@ Behaviour is chosen by environment variables (all optional):
   ``denied``, ``other``, ``fail``).
 - FIXTURE_HOLD_INITIALIZE: path; ``initialize`` is answered only once it
   exists.
+- FIXTURE_INITIALIZE_DELAY_MS: answer ``initialize`` only after this many
+  milliseconds (a server with a slow handshake).
 - FIXTURE_IGNORE_EOF: keep running after stdin closes (and ignore SIGTERM).
 
 Tools: ``fixture/raw.tool`` echoes argv, cwd, two env values and the
@@ -62,6 +64,7 @@ def answer(request):
     method = request.get("method")
     params = request.get("params") or {}
     if method == "initialize":
+        time.sleep(int(os.environ.get("FIXTURE_INITIALIZE_DELAY_MS") or 0) / 1000)
         hold = os.environ.get("FIXTURE_HOLD_INITIALIZE")
         while hold and not os.path.exists(hold):
             time.sleep(0.01)

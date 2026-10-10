@@ -27,7 +27,7 @@
 //!   that open and succeeds instead of erroring.
 #![cfg(unix)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -225,10 +225,32 @@ async fn a_kernel_needing_op_mid_boot_joins_the_in_flight_build_and_succeeds() {
     );
 }
 
-/// The stdio MCP server fixture: it records its spawn to `marker`, delays
-/// its handshake by [`SETTLE_SERVER_OPEN_DELAY_MS`], then serves one echo
-/// tool. The delay is what keeps the settle's open in flight when the
-/// test's first use arrives.
+/// The host variables the fixture server's `{"env": NAME}` references
+/// resolve through (set with [`EnvOverride`] under [`LIVE_KERNEL_LOCK`]).
+const MARKER_ENV: &str = "PA_TEST_MCP_SETTLE_MARKER";
+const DELAY_ENV: &str = "PA_TEST_MCP_SETTLE_DELAY_MS";
+
+/// The `settings.json` entry for the shared stdlib-only stdio MCP server
+/// fixture (the fork's kernel venv carries no MCP SDK: `rlm.mcp` is a
+/// client over the host-owned sessions) under the kernel Python. It
+/// records its spawn to the [`MARKER_ENV`] file, delays its `initialize`
+/// answer by [`DELAY_ENV`] milliseconds, then serves its echo tool
+/// `fixture/raw.tool`.
+fn fixture_server_config(kernel_python: &Path) -> serde_json::Value {
+    let server = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp/stdio_server.py");
+    json!({
+        "type": "stdio",
+        "command": kernel_python.display().to_string(),
+        "args": [server.display().to_string()],
+        "env": {
+            "FIXTURE_PID_FILE": { "env": MARKER_ENV },
+            "FIXTURE_INITIALIZE_DELAY_MS": { "env": DELAY_ENV },
+        },
+    })
+}
+
+/// The settle fixture's handshake delay: what keeps the settle's open in
+/// flight when the test's first use arrives.
 const SETTLE_SERVER_OPEN_DELAY_MS: u64 = 1_500;
 
 /// The queue-contention fixture's handshake delay: long enough that a
@@ -242,30 +264,6 @@ const HANGING_SERVER_OPEN_DELAY_MS: u64 = 8_000;
 /// while the dedicated-lane shape (the cell never touching the MCP
 /// work) passes with margin.
 const CELL_COMPLETION_BOUND_MS: u64 = 4_000;
-
-fn slow_echo_server_code(handshake_delay_ms: u64) -> String {
-    r#"import sys
-import time
-from pathlib import Path
-
-Path(sys.argv[1]).write_text("started", encoding="utf-8")
-time.sleep({HANDSHAKE_DELAY_MS} / 1000)
-
-from mcp.server.mcpserver import MCPServer
-
-server = MCPServer("settle-fixture")
-
-
-@server.tool()
-def echo(text: str) -> str:
-    """Echo the text back."""
-    return text
-
-
-server.run()
-"#
-    .replace("{HANDSHAKE_DELAY_MS}", &handshake_delay_ms.to_string())
-}
 
 /// The configured generic MCP servers settle in the background once the
 /// kernel is up (the fixture server's process spawns with no user use
@@ -291,30 +289,13 @@ async fn generic_mcp_servers_settle_in_the_background_and_first_use_joins_the_op
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     std::fs::create_dir_all(&cwd).expect("cwd");
     let marker = dir.path().join("settle-server-started");
-    let server_script = dir.path().join("slow_echo_server.py");
-    std::fs::write(
-        &server_script,
-        slow_echo_server_code(SETTLE_SERVER_OPEN_DELAY_MS),
-    )
-    .expect("server script");
 
     // The user-declared stdio server the kernel's generic MCP surface
     // resolves through the `mcp.config` host request.
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({
-            "mcpServers": {
-                "settle-fixture": {
-                    "type": "stdio",
-                    "command": kernel_python.display().to_string(),
-                    "args": [
-                        server_script.display().to_string(),
-                        marker.display().to_string(),
-                    ],
-                },
-            },
-        })
-        .to_string(),
+        json!({ "mcpServers": { "settle-fixture": fixture_server_config(&kernel_python) } })
+            .to_string(),
     )
     .expect("settings");
 
@@ -325,6 +306,8 @@ async fn generic_mcp_servers_settle_in_the_background_and_first_use_joins_the_op
         ),
         ("PRIME_AGENT_CODING_AGENT_DIR", None),
         ("PRIME_API_KEY", None),
+        (MARKER_ENV, Some(marker.display().to_string())),
+        (DELAY_ENV, Some(SETTLE_SERVER_OPEN_DELAY_MS.to_string())),
     ]);
 
     let model = scripted_model();
@@ -365,7 +348,7 @@ async fn generic_mcp_servers_settle_in_the_background_and_first_use_joins_the_op
     let manager = provisioner.manager().expect("the booted kernel's manager");
     let result = manager
         .execute(
-            "result = await mcp.call_tool('settle-fixture', 'echo', {'text': 'probe'})\nresult",
+            "result = await mcp.call_tool('settle-fixture', 'fixture/raw.tool', {'text': 'probe'})\nresult",
             ExecuteOptions::default(),
         )
         .await
@@ -414,28 +397,11 @@ async fn the_first_python_cell_never_waits_behind_the_eager_mcp_status() {
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     std::fs::create_dir_all(&cwd).expect("cwd");
     let marker = dir.path().join("hanging-server-started");
-    let server_script = dir.path().join("hanging_echo_server.py");
-    std::fs::write(
-        &server_script,
-        slow_echo_server_code(HANGING_SERVER_OPEN_DELAY_MS),
-    )
-    .expect("server script");
 
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({
-            "mcpServers": {
-                "hanging-fixture": {
-                    "type": "stdio",
-                    "command": kernel_python.display().to_string(),
-                    "args": [
-                        server_script.display().to_string(),
-                        marker.display().to_string(),
-                    ],
-                },
-            },
-        })
-        .to_string(),
+        json!({ "mcpServers": { "hanging-fixture": fixture_server_config(&kernel_python) } })
+            .to_string(),
     )
     .expect("settings");
 
@@ -446,6 +412,8 @@ async fn the_first_python_cell_never_waits_behind_the_eager_mcp_status() {
         ),
         ("PRIME_AGENT_CODING_AGENT_DIR", None),
         ("PRIME_API_KEY", None),
+        (MARKER_ENV, Some(marker.display().to_string())),
+        (DELAY_ENV, Some(HANGING_SERVER_OPEN_DELAY_MS.to_string())),
     ]);
 
     let model = scripted_model();
