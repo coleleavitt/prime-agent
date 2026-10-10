@@ -144,7 +144,7 @@ pub struct Worker {
     /// queue: per-request links deliver pushes unordered.
     roster_delta_sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub(crate) work_notify: Arc<Notify>,
-    idle_notify: Arc<Notify>,
+    pub(crate) idle_notify: Arc<Notify>,
     /// The per-connection session-attach registry: connection tokens -> their `attach`'s retained
     /// client ids (a shared id leaves with the last connection holding it).
     pub(crate) session_attachments:
@@ -971,6 +971,38 @@ pub(crate) fn refine_complete_event(
         "type": "refine_complete",
         "result": serde_json::to_value(result).unwrap_or(Value::Null),
     })
+}
+
+/// Send a background refinement result only if the session that started
+/// the review is still current. Hold the core lock through the broadcast so
+/// navigation cannot move the event onto a different session.
+fn emit_refinement_event_for_session(
+    core: &Arc<Mutex<SessionCore>>,
+    events: &Arc<EventPump>,
+    review_session_id: &str,
+    event: Value,
+) -> bool {
+    let mut core = core.lock().unwrap();
+    if core.store.as_ref().map(SessionFile::session_id) != Some(review_session_id) {
+        return false;
+    }
+    let sequence = core.last_event_sequence + 1;
+    core.last_event_sequence = sequence;
+    let meta = crate::protocol::create_daemon_event_meta(
+        &core.active_session_id,
+        sequence,
+        None,
+        Some(&core.generation),
+    );
+    let outbound = crate::protocol::DaemonOutbound::SessionEvent {
+        active_session_id: core.active_session_id.clone(),
+        event,
+        meta: Some(meta),
+        rest: Map::default(),
+    };
+    let payload = serde_json::to_vec(&outbound).unwrap_or_default();
+    events.send(OutboundFrame::session_event(payload));
+    true
 }
 
 /// Record one durable custom row of the background compact-trigger

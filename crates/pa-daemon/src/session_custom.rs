@@ -270,6 +270,10 @@ impl Worker {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
+                self.emit_worker_event(json!({
+                    "type": "refine_failed",
+                    "error": format!("{error:#}"),
+                }));
                 return response_failure(None, "refine", &format!("{error:#}"), None);
             }
         };
@@ -932,6 +936,7 @@ mod tests {
     #[tokio::test]
     async fn refine_surfaces_the_engine_failure() {
         let worker = created_worker().await;
+        let mut subscription = worker.events.subscribe();
         let response = worker
             .dispatch(
                 "refine",
@@ -942,6 +947,22 @@ mod tests {
         assert_eq!(
             response.error.as_deref(),
             Some("This session does not support refinement")
+        );
+        let mut failures = Vec::new();
+        while let Ok(frame) = subscription.try_recv() {
+            if frame.outbound_type == "session_event" {
+                let event: Value = serde_json::from_slice(&frame.payload).unwrap();
+                if event["event"]["type"] == "refine_failed" {
+                    failures.push(event["event"].clone());
+                }
+            }
+        }
+        assert_eq!(
+            failures,
+            vec![json!({
+                "type": "refine_failed",
+                "error": "This session does not support refinement",
+            })]
         );
     }
 

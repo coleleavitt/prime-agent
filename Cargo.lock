@@ -2051,6 +2051,7 @@ dependencies = [
  "pa-models",
  "pa-telemetry",
  "pa-types",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

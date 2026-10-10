@@ -187,6 +187,8 @@ struct ChildRecord {
     /// Serializes usage emissions for this child without holding the record lock across them.
     emit_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     last_emitted_status: Option<&'static str>,
+    /// Serializes parent-directed rename and delete for this child.
+    rename_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ChildRecord {
@@ -650,6 +652,7 @@ impl SupervisorChildSessions {
                 usage_watch_live: false,
                 usage_rearm: false,
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 last_emitted_status: None,
             })));
     }
@@ -687,6 +690,7 @@ impl SupervisorChildSessions {
                 usage_rearm: false,
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 last_emitted_status: None,
+                rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             })));
     }
 

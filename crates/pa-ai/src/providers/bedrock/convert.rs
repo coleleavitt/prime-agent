@@ -481,7 +481,7 @@ mod supports_prompt_caching_tests {
             cost,
             context_window: 200_000,
             max_tokens: 8192,
-            max_tokens_explicit: None,
+            max_tokens_explicit: false,
             featured: None,
             headers: None,
             compat: None,

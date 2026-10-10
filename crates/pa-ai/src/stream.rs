@@ -149,8 +149,11 @@ pub fn stream_simple(
 ) -> Result<AssistantMessageEventStream, ProviderError> {
     let provider = resolve_provider(&model.api)?;
     let mut options = options;
-    // A `None` caller still gets the default output budget downstream (`build_base_options` fills
-    // `min(model.maxTokens, 32000)`), so materialize the options to clamp that default too.
+    // A `None` caller still gets the default output budget downstream
+    // (`build_base_options` fills the per-model default: an explicit
+    // `maxTokens` unchanged, a catalog value `min(model.maxTokens, 32000)`),
+    // so materialize the options to clamp that default too. The
+    // materialized default builds the same request otherwise.
     let simple = options.get_or_insert_with(SimpleStreamOptions::default);
     clamp_output_budget(model, context, Some(&mut simple.base));
     Ok(provider.stream_simple(model, context, options.as_ref()))

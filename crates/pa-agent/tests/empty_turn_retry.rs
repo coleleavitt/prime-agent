@@ -27,6 +27,7 @@ fn test_model() -> Model {
         cost: UsageCost::default(),
         context_window: CONTEXT_WINDOW,
         max_tokens: 4_096,
+        max_tokens_explicit: false,
     }
 }
 

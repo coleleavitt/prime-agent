@@ -234,6 +234,42 @@ VERBOSE="${PRIME_AGENT_RUST_VERBOSE:-0}"
 FORCE=0
 MODE="channel"
 ARCHIVE=""
+# THE TRUSTED TASKLIST: the liveness question goes to Windows's own
+# tasklist, never through the inherited PATH — this script runs with the
+# updater's environment (the funnel's own shell is trusted-rooted for
+# exactly that reason), and a repo- or user-planted lookup would run
+# BEFORE the publish with the credentials that hardening guards.
+# System32 alone answers: the machine's own SystemRoot spelling first,
+# the MSYS C: mount second. A machine offering neither (every unix; a
+# stripped Windows env) simply has no answerable liveness question, and
+# both callers treat the empty TASKLIST as "cannot ask" — the parent wait
+# proceeds, the publication lock refuses with its manual-recovery
+# message instead of trusting a miss.
+TASKLIST=""
+if [ -n "${SystemRoot:-}" ] && [ -x "${SystemRoot}/System32/tasklist.exe" ]; then
+  TASKLIST="${SystemRoot}/System32/tasklist.exe"
+elif [ -x /c/Windows/System32/tasklist.exe ]; then
+  TASKLIST=/c/Windows/System32/tasklist.exe
+fi
+# THE HANDOFF PARENT WAIT: the Windows update command spawns THIS script
+# and exits precisely so its own payload image stops locking
+# <prefix>/share/prime-agent for the publish below — but a fast child
+# could reach that rename while the parent still lives. The handoff sets
+# the parent's pid here; the payload touch happens many steps below, and
+# this bounded wait (the parent is normally gone in milliseconds) makes
+# the release-before-publish ordering explicit instead of incidental.
+# tasklist carries the liveness question to Windows the same way the
+# publication lock does (the MSYS kill cannot see a native pid).
+if [ -n "${PRIME_AGENT_INSTALLER_PARENT_PID:-}" ] && [ -n "$TASKLIST" ]; then
+  parent_waits=0
+  while MSYS2_ARG_CONV_EXCL='*' "$TASKLIST" \
+          /FI "PID eq ${PRIME_AGENT_INSTALLER_PARENT_PID}" 2>/dev/null \
+        | grep -qw "${PRIME_AGENT_INSTALLER_PARENT_PID}"; do
+    parent_waits=$((parent_waits + 1))
+    [ "$parent_waits" -gt 300 ] && die "the prime-agent process that started this installer (pid ${PRIME_AGENT_INSTALLER_PARENT_PID}) is still running after 30s; the payload it holds cannot be replaced while it lives — stop that process and re-run"
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+fi
 # Every argument is scanned (no positionals exist): the flags compose, so
 # `--update --verbose` sets both effects instead of silently dropping one.
 while [ $# -gt 0 ]; do
@@ -639,6 +675,32 @@ else
   trap 'ui_stop; rm -rf "$dl"' EXIT
 fi
 stage=""
+publish_parked=""
+# THE PUBLISH-WINDOW RESTORE (the interrupt handler's discipline, shared
+# by the cleanup trap): the publish parks the incoming live tree at its
+# rollback slot and only then moves the new stage in — between those two
+# renames an interrupt would otherwise delete the staged payload (this
+# run's own trash, the sweep's rule) while the parked tree stays aside,
+# leaving share_dir with NOTHING live in it (the bots' finding: the
+# machine's launcher breaks until a manual rollback). The restore mirrors
+# the publish's own mv-failure branch: the parked tree goes back to the
+# live path, and the generation record's entry for the vacated slot then
+# simply names a path that no longer exists — the rollback's record read
+# skips absent entries by design. Defined before the traps that call it;
+# before the publish window it is a no-op (publish_parked stays empty).
+publish_window_restore() {
+  # share_dir ABSENT is the window's own signature: once the new stage has
+  # landed there, the publish is done, the parked tree is exactly the
+  # rollback generation it should be, and no signal may un-publish it.
+  if [ -n "${publish_parked:-}" ] && [ -d "${publish_parked}" ] \
+     && [ ! -e "${share_dir:-}" ]; then
+    if mv "${publish_parked}" "${share_dir}" 2>/dev/null; then
+      publish_parked=""
+    else
+      echo "warning: could not restore the previous prime-agent payload from ${publish_parked}; restore it with: mv '${publish_parked}' '${share_dir}'" >&2
+    fi
+  fi
+}
 ui_interrupted() {
   # The failed-step line prints FIRST: it writes the renderer's files
   # under the download staging, and removing that mid-write would fail
@@ -651,6 +713,7 @@ ui_interrupted() {
   # environment is never the removal's target.
   if [ -n "$ui_step" ]; then step_fail "$ui_step" "interrupted"; fi
   ui_stop
+  publish_window_restore
   rm -rf "$dl"
   if [ -z "${rollback_from:-}" ] && [ -n "${stage:-}" ]; then
     rm -rf "$stage"
@@ -866,6 +929,10 @@ elif [ "$MODE" = archive ]; then
   esac
   VERSION="${archive_name#prime-agent-}"
   VERSION="${VERSION%-"${CHANNEL_PLATFORM}".tar.gz}"
+  # A leading v is the pin's accepted spelling too (`--rollback`'s marker
+  # versions carry none; the exact payload match below compares the bare
+  # version the binary reports).
+  VERSION="${VERSION#v}"
   case "$VERSION" in
     *[!0-9A-Za-z.-]*) die "invalid version in the archive name ${archive_name}: ${VERSION}" ;;
   esac
@@ -974,7 +1041,16 @@ else
   # alias — which also overrides any inherited value pointing into the
   # shared session store (it would place uv there BEFORE the store guard
   # runs).
-  if [ -n "$uv_bin_dir" ]; then
+  # The download attempt is CHANNEL-install machinery on Windows: the
+  # rollback and the archive never reach a UVPY consumer there — every
+  # path they take resolves through physical_path (the store guard, the
+  # prefix), and the daemon ladder and the TS uninstall are unix-only —
+  # so a ps1-installed machine with no Python and no network can still
+  # restore its previous generation or install a local archive (the
+  # modes are local BY DESIGN; the channel manifest's JSON parsing is
+  # Python's one Windows use).
+  if [ -n "$uv_bin_dir" ] \
+     && { [ "$WINDOWS" != "yes" ] || [ "$MODE" = "channel" ]; }; then
     step_start "Setting up Python (one-time)"
     python_step="yes"
     if uv_install_out="$(curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 \
@@ -1028,13 +1104,19 @@ fi
 if [ "$python_step" = yes ] && [ -n "$UVPY" ]; then
   step_ok "Python ready"
 fi
-[ -n "$UVPY" ] \
-  || die "the installer could not obtain a Python runtime, which it needs
+# The interpreter gate rides the same Windows-local exemption: on every
+# other path the machine is missing the one prerequisite the installer
+# cannot provide for itself, but the Windows rollback and archive run
+# entirely without one (see the download attempt's gate above).
+if [ -z "$UVPY" ] \
+   && { [ "$WINDOWS" != "yes" ] || [ "$MODE" = "channel" ]; }; then
+  die "the installer could not obtain a Python runtime, which it needs
 for its scripting steps (the store guard, the artifact handling). Install
 uv with:
   curl -LsSf https://astral.sh/uv/install.sh | sh
 (the installer then provisions its own Python through uv — no system
 python3 required), or install python3 yourself and re-run"
+fi
 
 # --- the preserve invariant: guard the shared store ---------------------------
 # ~/.prime/agent is shared by both products BY DESIGN (sessions, leases,
@@ -2193,7 +2275,10 @@ if [ -n "$probe_timed_out" ]; then
   rm -rf "$stage"
   die "the archive names ${VERSION} but its payload did not answer --version within 10s; refusing an unresponsive payload"
 fi
-reported_version="$(head -n 1 "$probe_out" 2>/dev/null)"
+# tr -d '\r' strips the trailing CR Git Bash text-mode redirection can
+# append (the lock-pid reader's precedent): a CR would make every exact
+# case arm miss and refuse a correctly named archive.
+reported_version="$(head -n 1 "$probe_out" 2>/dev/null | tr -d '\r')"
 probe_exit_status="$(cat "$probe_status" 2>/dev/null || true)"
 rm -f "$probe_out" "$probe_done" "$probe_pid_file" "$probe_status"
 if [ "$probe_exit_status" != "0" ]; then
@@ -2283,8 +2368,8 @@ if [ "$WINDOWS" = "yes" ]; then
       sleep 1
       continue
     fi
-    if [ -n "$held_by" ] \
-       && MSYS2_ARG_CONV_EXCL='*' tasklist.exe /FI "PID eq ${held_by}" /NH 2>/dev/null \
+    if [ -n "$held_by" ] && [ -n "$TASKLIST" ] \
+       && MSYS2_ARG_CONV_EXCL='*' "$TASKLIST" /FI "PID eq ${held_by}" /NH 2>/dev/null \
           | grep -qw "$held_by"; then
       { [ -z "${rollback_from:-}" ] && rm -rf "$stage"; die "another prime-agent installer (Windows pid ${held_by}) is publishing to ${PREFIX}; retry when it finishes"; }
     fi
@@ -2363,6 +2448,7 @@ on_exit() {
   # Restores FIRST, lock release LAST: a second installer must not be able
   # to publish into share_dir while this one still restores state — the
   # restore would delete that fresh payload (cross-installer data loss).
+  publish_window_restore
   [ -n "$launcher_tmp" ] && rm -f "$launcher_tmp" 2>/dev/null || true
   [ -n "${cmd_tmp:-}" ] && rm -f "$cmd_tmp" 2>/dev/null || true
   # The extraction stage is disposable on every failed path: a successful
@@ -2529,6 +2615,14 @@ if [ -d "$old_layout_dir" ] && [ ! -d "$share_dir" ]; then
 fi
 if [ -d "$share_dir" ]; then
   had_share_dir=1
+  # THE PUBLISH WINDOW opens with the parking rename, and the marker is
+  # set BEFORE the mv: a signal that lands while the mv runs is only
+  # handled at the mv's completion — the trap fires at that command
+  # boundary, before any assignment after the mv could run. Set-then-move
+  # lets the trap-side restore see the parked tree from the first
+  # boundary of the window; the slot's record entry is skipped by every
+  # reader while the slot is vacant (and stays if the restore cannot).
+  publish_parked="$old"
   mv "$share_dir" "$old"
   # The slot is a rollback generation this installer created: record its
   # exact path so the next install's sweep can tell it from a user-made
@@ -2543,6 +2637,7 @@ if ! mv "$stage" "$share_dir"; then
   # (a failed migration restore is the EXIT trap's job: it holds the lock
   # until the tree is back, so no second installer can slip in between)
 fi
+publish_parked=""
 windows_installed="yes"
 # A leftover old-layout tree when a new-layout tree also existed: it is
 # superseded by the fresh publish. The ownership rule is EXACTLY the

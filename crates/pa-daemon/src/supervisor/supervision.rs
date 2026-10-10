@@ -1,6 +1,6 @@
 //! Worker supervision: the watch loop, the restart backoff, and
 //! the spawn/connect plumbing.
-use super::routing::{fail_unsent_request, WORKER_REQUEST_TIMEOUT_MS};
+use super::routing::{fail_unsent_request, WORKER_REQUEST_TIMEOUT_MS, WORKER_SOCKET_CLOSED};
 use super::{
     anyhow, connect_transport, create_command_payload, json, mpsc, persist_worker,
     persist_worker_at, probe_worker_socket, util, write_frame, Arc, Child, ClientRouting, Command,
@@ -858,7 +858,7 @@ impl Supervisor {
                     }
                     // The worker died mid-handshake: its reply channel
                     // closed with the socket.
-                    "Daemon worker socket closed" => format!(
+                    WORKER_SOCKET_CLOSED => format!(
                         "session worker {} exited before its handshake finished",
                         resident.worker_id
                     ),

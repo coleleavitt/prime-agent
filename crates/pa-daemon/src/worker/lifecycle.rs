@@ -500,6 +500,10 @@ impl Worker {
                     Ok(None) => {}
                     Err(error) => {
                         eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
+                        self.emit_worker_event(json!({
+                            "type": "refine_failed",
+                            "error": format!("{error:#}"),
+                        }));
                     }
                 }
                 response_success(None, "compact", Some(run.result))
@@ -519,9 +523,11 @@ impl Worker {
     /// The idle park shared by `wait_for_idle` and the headless barrier: register
     /// the permit before the flag check, or a turn that settles between the check
     /// and the await loses its wake.
-    async fn wait_until_idle(&self) {
+    pub(crate) async fn wait_until_idle(&self) {
         loop {
             let idle = self.idle_notify.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
             {
                 let core = self.core.lock_or_recover();
                 if !core.busy

@@ -132,6 +132,7 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
         cost: pa_agent::types::UsageCost::default(),
         context_window: 1_000,
         max_tokens: 100,
+        max_tokens_explicit: false,
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     provider.push_tool_call_turn(
