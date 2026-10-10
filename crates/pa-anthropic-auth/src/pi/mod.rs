@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anthropic::cch::js_json_stringify;
 use anthropic::claude_code::{order_claude_code_body, FAST_MODE_BETA, SERVER_SIDE_FALLBACK_BETAS};
-use pa_ai::request_hooks::{OutgoingRequest, RequestSource};
+use pa_ai::request_hooks::{CallerOptions, OutgoingRequest, RequestSource};
 use serde_json::Value;
 
 use crate::shape::{shape_headers, ShapeEnv, ShapeIdentity};
@@ -145,9 +145,26 @@ pub(crate) fn prepare(
 ) {
     let version = source.claude_code_version();
     let flag = std::env::var(anthropic::models::DISABLE_ADAPTIVE_THINKING_ENV).ok();
+    // pi falls back to 16384 output tokens when the caller sets none; the
+    // session loop never sets one, so the store route sends what the
+    // API-key route sends for the model instead: its request budget (the
+    // catalog's max output capped at pa-ai's 32000, or a configured
+    // `maxTokens` as configured). 16384 cut adaptive models off mid tool
+    // call, their thinking counting toward it.
+    let options = CallerOptions {
+        max_tokens: request
+            .source
+            .options
+            .max_tokens
+            .or_else(|| pa_ai::default_request_max_tokens(request.model)),
+        ..request.source.options.clone()
+    };
     let outgoing = build_outgoing(
         &request.model.id,
-        &request.source,
+        &RequestSource {
+            options: &options,
+            ..request.source
+        },
         &BuildInputs {
             settings: source.pi.settings.request(),
             identity,

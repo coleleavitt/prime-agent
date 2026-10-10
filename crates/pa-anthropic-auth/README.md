@@ -139,8 +139,10 @@ auth.json resolves the `anthropic` provider exactly as before.
     (`x-anthropic-billing-header: cc_version=<version>.<suffix>; cc_entrypoint=cli; cch=00000;`, the suffix sampling
     UTF-16 positions 4, 7, 20 of the first user text) and Claude Code's identity block, pi's thinking shape (the
     5-series' summarized adaptive thinking, effort for adaptive models, a budget below `max_tokens` for the older
-    families; the caller's level as given, `off` included, as pi tests it), `max_tokens` 16384 unless the caller set
-    one, pi's cache breakpoints and its cache mode (`claudeCache`), `metadata.user_id` (`{"device_id","account_uuid",
+    families; the caller's level as given, `off` included, as pi tests it), `max_tokens` as the caller set it, else
+    the model's request budget as the API-key route sends it (`pa_ai::default_request_max_tokens`: the catalog's max
+    output capped at 32000, or a configured `maxTokens`; pi's own 16384 cut Opus 5.5 off mid tool call, its thinking
+    counting toward the cap; 16384 only for a model with no max output), pi's cache breakpoints and its cache mode (`claudeCache`), `metadata.user_id` (`{"device_id","account_uuid",
     "session_id"}`; the device id from `device.json` beside the store, created like the plugins' when missing; the
     account uuid the store holds; omitted without one). Sent as `JSON.stringify` bytes in Claude Code's key order
     (`OutgoingRequest::body`). Golden: `tests/fixtures/golden/pi_requests.json`, recorded by

@@ -119,13 +119,14 @@ fn a_store_request_leaves_as_pi_sends_the_same_conversation() {
         let settings = golden["cases"][index]["settings"].clone();
         let (request, session) = send(case, index, &settings);
         // The plugin's body, with this process's session id in
-        // metadata.user_id (the one its session header carries).
-        assert_eq!(
-            request.body,
-            case.body_text.replace(&case.identity.session_id, &session),
-            "{}",
-            case.name
-        );
+        // metadata.user_id (the one its session header carries), and,
+        // where the case sets no cap, the model's request budget (32000
+        // for the test model's 128000) in place of pi's 16384.
+        let mut expected_body = case.body_text.replace(&case.identity.session_id, &session);
+        if case.options.max_tokens.is_none() {
+            expected_body = expected_body.replace("\"max_tokens\":16384,", "\"max_tokens\":32000,");
+        }
+        assert_eq!(request.body, expected_body, "{}", case.name);
         let mut expected = case.headers.clone();
         expected.insert(
             "authorization".to_string(),
@@ -326,4 +327,48 @@ fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
         ),
         (Value::Null, false)
     );
+}
+
+/// With no cap from the caller (the session loop sets none), a store
+/// request sends what the API-key route sends for the model: its request
+/// budget, the catalog's max output capped at pa-ai's 32000 (claude-opus-5-5
+/// declares 128000), or a `maxTokens` the user configured as configured.
+/// pi's own fallback, 16384, cut Opus 5.5 off mid tool call: its thinking
+/// counts toward the cap.
+#[test]
+fn a_store_request_without_a_caller_cap_sends_the_model_s_request_budget() {
+    let provider = "anthropic-pi-max-tokens";
+    let (_home, source) = source_over(
+        vec![row_with_account("pi-max-tokens", None)],
+        "http://127.0.0.1:9",
+    );
+    pa_core::auth::install_credential_source(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    let (base, requests) = messages_endpoint(vec![
+        (200, Vec::new(), OK_STREAM),
+        (200, Vec::new(), OK_STREAM),
+    ]);
+    let served = || {
+        pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
+            .expect("the store's token")
+            .api_key
+    };
+    let catalog = model_with_id(provider, &base, "claude-opus-5-5");
+    let configured = pa_types::ai::Model {
+        max_tokens: 64_000,
+        max_tokens_explicit: Some(true),
+        ..catalog.clone()
+    };
+
+    assert_eq!(text_of(&complete(&catalog, &served())), "hello");
+    assert_eq!(text_of(&complete(&configured, &served())), "hello");
+
+    let sent: Vec<Value> = requests
+        .lock_or_recover()
+        .iter()
+        .map(|request| {
+            serde_json::from_str::<Value>(&request.body).expect("a body")["max_tokens"].clone()
+        })
+        .collect();
+    assert_eq!(sent, vec![Value::from(32_000_u64), Value::from(64_000_u64)]);
 }
