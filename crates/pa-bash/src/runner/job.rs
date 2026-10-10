@@ -29,10 +29,9 @@ const READ_CHUNK: usize = 65_536;
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
 /// Progress events while output flows, at most this often.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
-/// Silence before the first no-output warning (overridable per kernel), and
-/// between repeats.
+/// Silence before the first no-output warning (overridable per kernel); each
+/// repeat in the same silence waits until the silence has doubled.
 pub(crate) const DEFAULT_NO_OUTPUT_WARN: Duration = Duration::from_mins(5);
-const NO_OUTPUT_REPEAT: Duration = Duration::from_mins(5);
 /// Output that means a cargo build waits on another build's lock.
 const CARGO_BUILD_LOCK_TEXT: &[u8] = b"Blocking waiting for file lock on build directory";
 
@@ -534,27 +533,35 @@ impl Job {
 
     fn warn_no_output(&self, threshold: Duration) {
         let mut state = self.lock();
-        let mut next = state.last_output + threshold;
+        // The silence episode the warnings describe ends when output arrives.
+        let mut episode = state.last_output;
+        let mut warned = None;
         loop {
-            let wait = next.saturating_duration_since(Instant::now());
+            let Some(due) = episode.checked_add(no_output_warning_due(threshold, warned)) else {
+                return;
+            };
+            let wait = due.saturating_duration_since(Instant::now());
             let (guard, _) = self
                 .changed
-                .wait_timeout_while(state, wait, |state| !state.reaped && Instant::now() < next)
+                .wait_timeout_while(state, wait, |state| {
+                    !state.reaped && state.last_output == episode && Instant::now() < due
+                })
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state = guard;
             if state.reaped {
                 return;
             }
-            let now = Instant::now();
-            if now < next {
+            if state.last_output != episode {
+                episode = state.last_output;
+                warned = None;
                 continue;
             }
-            if now.duration_since(state.last_output) < threshold {
-                next = state.last_output + threshold;
+            let now = Instant::now();
+            if now < due {
                 continue;
             }
             self.emit_progress(&mut state, "command_no_output", now);
-            next = now + NO_OUTPUT_REPEAT;
+            warned = Some(now.duration_since(episode));
         }
     }
 
@@ -715,6 +722,18 @@ impl Job {
     }
 }
 
+/// How much silence a silence episode has when its next no-output warning
+/// is due: `threshold` for the first, then twice the silence at the last
+/// warning (the TS runtime repeated every five minutes, so a job silent for
+/// a day logged hundreds of identical warnings; the backoff keeps the
+/// repeats, logarithmically).
+fn no_output_warning_due(threshold: Duration, warned: Option<Duration>) -> Duration {
+    match warned {
+        None => threshold,
+        Some(warned) => warned.saturating_mul(2),
+    }
+}
+
 /// The command's result text (rendered from the buffer unless a later byte
 /// froze it first).
 fn result_text(state: &State) -> Arc<str> {
@@ -738,5 +757,38 @@ fn millis(duration: Duration) -> u64 {
         millis
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod no_output_tests {
+    use std::time::Duration;
+
+    use super::no_output_warning_due;
+
+    /// The silence (in minutes) at each warning an unbroken silence of
+    /// `silence` earns.
+    fn warnings(threshold: Duration, silence: Duration) -> Vec<u64> {
+        let mut at = Vec::new();
+        let mut warned = None;
+        loop {
+            let due = no_output_warning_due(threshold, warned);
+            if due > silence {
+                return at;
+            }
+            at.push(due.as_secs() / 60);
+            warned = Some(due);
+        }
+    }
+
+    /// A job silent for 25 hours logged 299 warnings in a user's logs (one
+    /// every five minutes): the repeats back off instead, so the same
+    /// silence warns nine times.
+    #[test]
+    fn a_long_silence_warns_with_exponential_backoff() {
+        assert_eq!(
+            warnings(Duration::from_mins(5), Duration::from_hours(25)),
+            vec![5, 10, 20, 40, 80, 160, 320, 640, 1280]
+        );
     }
 }

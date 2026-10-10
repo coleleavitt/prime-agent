@@ -331,6 +331,49 @@ fn a_printf_function_or_alias_cannot_swallow_the_fence() {
     assert_eq!(result, Some((0, "out\n".to_string())));
 }
 
+/// Output ends a silence episode: the next silence warns again from the
+/// threshold, while the first one's repeats had backed off.
+#[test]
+fn output_starts_a_new_silence_episode() {
+    let table = JobTable::new();
+    let job = spawn(
+        &table,
+        "sleep 0.5; printf x; sleep 0.5",
+        context(&[("PRIME_AGENT_BASH_NO_OUTPUT_WARN_MS", "100".to_string())]),
+    );
+    let warnings: Vec<(u64, u64)> = events(&job)
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Progress { msg, fields } if *msg == "command_no_output" => Some((
+                fields["bash.output_bytes"].as_u64().expect("bytes"),
+                fields["bash.silence_ms"].as_u64().expect("silence"),
+            )),
+            JobEvent::Progress { .. } | JobEvent::Finished { .. } | JobEvent::Reaped { .. } => None,
+        })
+        .collect();
+    let episode = |bytes: u64| -> Vec<u64> {
+        warnings
+            .iter()
+            .filter(|(at, _)| *at == bytes)
+            .map(|(_, silence)| *silence)
+            .collect()
+    };
+    let (first, second) = (episode(0), episode(1));
+    // Each half-second silence repeats its warning (due at 100, 200 and
+    // 400 ms), every repeat at least twice the silence of the one before.
+    for silences in [&first, &second] {
+        assert!(silences.len() >= 2, "{warnings:?}");
+        assert!(
+            silences.windows(2).all(|pair| pair[1] >= 2 * pair[0]),
+            "{warnings:?}"
+        );
+    }
+    // The second silence starts over from the threshold.
+    assert!(
+        (100..first[first.len() - 1]).contains(&second[0]),
+        "{warnings:?}"
+    );
+}
 /// The result is the output as of the fence; output written after it (an
 /// EXIT trap) stays out of the result but in the job's output, whether it
 /// lands before or after the result is read.

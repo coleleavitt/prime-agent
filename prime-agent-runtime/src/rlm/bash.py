@@ -33,7 +33,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, final, overload
 
 from . import plan_guard, trace
 
@@ -776,6 +776,75 @@ class BashResult:
     output: str
     duration: float
 
+    def __await__(self) -> Generator[Any, None, BashResult]:
+        # `h = await bash(cmd)` followed by `await h` is a common slip: awaiting
+        # a result just gives it back, without suspending.
+        yield from ()
+        return self
+
+
+_OUTPUT_HINT = (
+    "BashHandle.output is a method: call h.output() for the text so far, "
+    "or use (await h).output for the finished result"
+)
+
+
+@final
+class _BoundOutput:
+    """`handle.output`, the bound method: calling it reads the text; using it
+    as the text (a subscript, `len()`, a `str` method) names both spellings
+    instead of failing as an opaque method object."""
+
+    __slots__ = ("_handle", "_read")
+
+    def __init__(self, handle: BashHandle, read: Callable[[BashHandle], str]) -> None:
+        self._handle: BashHandle = handle
+        self._read: Callable[[BashHandle], str] = read
+
+    def __call__(self) -> str:
+        return self._read(self._handle)
+
+    def __getitem__(self, _key: object) -> NoReturn:
+        raise TypeError(f"'method' object is not subscriptable; {_OUTPUT_HINT}")
+
+    def __len__(self) -> NoReturn:
+        raise TypeError(f"object of type 'method' has no len(); {_OUTPUT_HINT}")
+
+    def __iter__(self) -> NoReturn:
+        raise TypeError(f"'method' object is not iterable; {_OUTPUT_HINT}")
+
+    def __contains__(self, _item: object) -> NoReturn:
+        raise TypeError(f"argument of type 'method' is not iterable; {_OUTPUT_HINT}")
+
+    def __getattr__(self, name: str) -> NoReturn:
+        if hasattr(str, name):
+            raise AttributeError(f"'method' object has no attribute {name!r}; {_OUTPUT_HINT}")
+        raise AttributeError(f"'method' object has no attribute {name!r}")
+
+    def __repr__(self) -> str:
+        return f"<bound method BashHandle.output of {self._handle!r}>"
+
+
+@final
+class _OutputMethod:
+    """The `output` descriptor: the plain function on the class (so
+    `BashHandle.output` stays callable), a `_BoundOutput` on a handle."""
+
+    def __init__(self, read: Callable[[BashHandle], str]) -> None:
+        self._read: Callable[[BashHandle], str] = read
+        self.__doc__ = read.__doc__
+
+    @overload
+    def __get__(self, handle: None, owner: type | None = None) -> Callable[[BashHandle], str]: ...
+    @overload
+    def __get__(self, handle: BashHandle, owner: type | None = None) -> _BoundOutput: ...
+    def __get__(
+        self, handle: BashHandle | None, owner: type | None = None
+    ) -> Callable[[BashHandle], str] | _BoundOutput:
+        if handle is None:
+            return self._read
+        return _BoundOutput(handle, self._read)
+
 
 class BashHandle:
     """Live handle to a shell command; await it for the BashResult.
@@ -900,10 +969,13 @@ class BashHandle:
             return self._final_output
         return str(_raise_for(_request({"type": "bash.output", "id": self._activity_id})).get("output", ""))
 
-    def output(self) -> str:
+    def _read_output(self) -> str:
+        """The output text so far (the whole text once the job has ended)."""
         self._released = True
         self._note_result_consumed()
         return self._output_text()
+
+    output: _OutputMethod = _OutputMethod(_read_output)
 
     def peek_output(self) -> str:
         """The current output text without marking the result consumed.
