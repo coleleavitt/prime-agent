@@ -57,6 +57,9 @@ fn per_provider_policy(
         base_delay_ms: failover.base_delay_ms,
         max_retry_delay_ms: server_wait_cap_ms,
         max_delay_ms: failover.max_delay_ms,
+        // A spent per-provider ladder fails over to the next provider; the
+        // failover loop never waits an outage out on one provider.
+        connection_wait_ms: 0,
     }
 }
 
@@ -535,6 +538,7 @@ mod tests {
             base_delay_ms: 2000,
             max_retry_delay_ms: 60000,
             max_delay_ms: super::super::provider_retry::UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         }
     }
 

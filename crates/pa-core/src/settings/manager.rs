@@ -823,6 +823,13 @@ impl SettingsManager {
                         .max_retry_delay_ms,
                 ),
             max_delay_ms: crate::session_engine::provider_retry::UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: self
+                .merged
+                .retry
+                .as_ref()
+                .and_then(|retry| retry.provider.as_ref())
+                .and_then(|provider| provider.connection_wait_ms)
+                .unwrap_or(crate::session_engine::provider_retry::DEFAULT_CONNECTION_WAIT_MS),
         }
     }
 
@@ -1198,6 +1205,34 @@ mod tests {
         );
         manager.reload().unwrap();
         assert_eq!(manager.get_default_model(), Some("z-ai/glm-5.3"));
+    }
+
+    /// `retry.provider.connectionWaitMs` sets the connection-outage budget;
+    /// unset, outages get the two-minute default, and `0` keeps the quick
+    /// ladder alone.
+    #[test]
+    fn the_connection_outage_budget_reads_retry_provider_connection_wait_ms() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let read = |global: &str| {
+            std::fs::write(agent_dir.join("settings.json"), global).unwrap();
+            SettingsManager::create(dir.path(), &agent_dir)
+                .get_provider_retry_policy()
+                .connection_wait_ms
+        };
+        assert_eq!(
+            [
+                read("{}"),
+                read(r#"{ "retry": { "provider": { "connectionWaitMs": 30000 } } }"#),
+                read(r#"{ "retry": { "provider": { "connectionWaitMs": 0 } } }"#),
+            ],
+            [
+                crate::session_engine::provider_retry::DEFAULT_CONNECTION_WAIT_MS,
+                30_000,
+                0
+            ]
+        );
     }
 
     /// `kernel.environment` (upstream #2174): the default inherits everything, the global

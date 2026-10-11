@@ -138,6 +138,9 @@ pub struct ProviderWaitSettings {
 pub struct ProviderRetrySettings {
     pub timeout_ms: Option<u64>,
     pub max_retry_delay_ms: Option<u64>,
+    /// Connection-outage retry budget (`retry.provider.connectionWaitMs`):
+    /// how long connection-level failures keep retrying past `maxRetries`.
+    pub connection_wait_ms: Option<u64>,
     pub wait_for_usage: Option<ProviderWaitSettings>,
 }
 

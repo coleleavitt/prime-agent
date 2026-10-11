@@ -482,6 +482,7 @@ mod tests {
             base_delay_ms: 1,
             max_retry_delay_ms: 1000,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         }
     }
 

@@ -69,6 +69,7 @@ fn fast_policy() -> ProviderRetryPolicy {
         base_delay_ms: 5,
         max_retry_delay_ms: 50,
         max_delay_ms: UNBOUNDED_BACKOFF_MS,
+        connection_wait_ms: 0,
     }
 }
 
@@ -884,4 +885,173 @@ async fn unsupported_tool_failures_surface_with_the_disclosure() {
             restored_model: None,
         }]
     );
+}
+
+/// A failed turn whose request produced no response (the provider's HTTP
+/// layer records the `transport` facts): a refused, reset or timed-out
+/// connection.
+fn connection_failure_message() -> AssistantMessage {
+    let mut message = error_message(Some("unknown"), None, None);
+    message.error_message = Some("Connection error.".to_string());
+    if let Some(details) = message
+        .diagnostics
+        .as_mut()
+        .and_then(|diagnostics| diagnostics[0].details.as_mut())
+    {
+        details["transport"] = serde_json::json!({
+            "class": "connect",
+            "cause": "tcp connect error: Network is unreachable (os error 101)",
+        });
+    }
+    message
+}
+
+fn outage_policy(connection_wait_ms: u64) -> ProviderRetryPolicy {
+    ProviderRetryPolicy {
+        connection_wait_ms,
+        ..fast_policy()
+    }
+}
+
+/// Drive the loop over `outcomes` (one per attempt, the last repeating),
+/// returning the settled message, the attempt count, the waited delays and
+/// the events.
+async fn run_attempts(
+    policy: &ProviderRetryPolicy,
+    outcomes: Vec<AssistantMessage>,
+) -> (AssistantMessage, usize, Vec<u64>, Vec<AutoRetryEvent>) {
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let waits = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (attempts_seen, waits_seen, events_seen) = (
+        Arc::clone(&attempts),
+        Arc::clone(&waits),
+        Arc::clone(&events),
+    );
+    let message = run_turn_with_auto_retry(
+        policy,
+        0,
+        None,
+        || {
+            let index = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let outcome = outcomes[index.min(outcomes.len() - 1)].clone();
+            async move { Ok(outcome) }
+        },
+        move |event| {
+            let events = Arc::clone(&events);
+            async move {
+                events.lock().unwrap().push(event);
+                Ok(())
+            }
+        },
+        move |delay| {
+            waits
+                .lock()
+                .unwrap()
+                .push(u64::try_from(delay.as_millis()).unwrap());
+            async { true }
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let waits = waits_seen.lock().unwrap().clone();
+    let events = events_seen.lock().unwrap().clone();
+    (
+        message,
+        attempts_seen.load(std::sync::atomic::Ordering::SeqCst),
+        waits,
+        events,
+    )
+}
+
+/// A network outage outlasts the quick ladder: connection failures keep
+/// retrying past `max_retries` until the waits spent in the outage reach
+/// `connection_wait_ms`, then the loop gives up with the last failure.
+#[tokio::test]
+async fn connection_failures_retry_past_the_ladder_until_the_outage_budget_is_spent() {
+    let policy = outage_policy(1_000);
+    let (message, attempts, waits, events) =
+        run_attempts(&policy, vec![connection_failure_message()]).await;
+    assert_eq!(message.error_message.as_deref(), Some("Connection error."));
+    let waited: u64 = waits.iter().sum();
+    let before_last = waited - waits.last().copied().unwrap_or(0);
+    assert!(
+        attempts > 1 + policy.max_retries as usize,
+        "the outage outlasts the ladder: {attempts} attempts"
+    );
+    assert!(
+        before_last < 1_000 && waited >= 1_000,
+        "retries until the waits reach the budget: {waits:?}"
+    );
+    assert_eq!(attempts, waits.len() + 1);
+    let retries = u32::try_from(waits.len()).unwrap();
+    assert_eq!(
+        events.last(),
+        Some(&AutoRetryEvent::End {
+            success: false,
+            attempt: retries,
+            final_error: Some("Connection error.".to_string()),
+            restored_model: None,
+        })
+    );
+    // Each start counts against a total that grows with the outage.
+    assert!(events.iter().all(|event| match event {
+        AutoRetryEvent::Start {
+            attempt,
+            max_attempts,
+            ..
+        } => attempt <= max_attempts,
+        AutoRetryEvent::End { .. } => true,
+    }));
+}
+
+/// The network comes back mid-outage: the turn resumes and settles as a
+/// successful retry, past the quick ladder's count.
+#[tokio::test]
+async fn a_turn_resumes_when_the_network_returns_mid_outage() {
+    let policy = outage_policy(60_000);
+    let mut outcomes = vec![connection_failure_message(); 6];
+    outcomes.push(ok_message());
+    let (message, attempts, _waits, events) = run_attempts(&policy, outcomes).await;
+    assert_eq!(message.stop_reason, StopReason::Stop);
+    assert_eq!(attempts, 7);
+    assert_eq!(
+        events.last(),
+        Some(&AutoRetryEvent::End {
+            success: true,
+            attempt: 6,
+            final_error: None,
+            restored_model: None,
+        })
+    );
+}
+
+/// The outage budget is for connection failures only: a server error keeps
+/// the quick ladder.
+#[tokio::test]
+async fn failures_with_a_response_keep_the_quick_ladder() {
+    let policy = outage_policy(60_000);
+    let (_message, attempts, _waits, _events) = run_attempts(
+        &policy,
+        vec![error_message(Some("server_error"), None, None)],
+    )
+    .await;
+    assert_eq!(attempts, 1 + policy.max_retries as usize);
+}
+
+/// Outage waits stay short, so the turn lands soon after the network
+/// returns: past the ladder each wait is capped (before jitter).
+#[tokio::test]
+async fn outage_waits_are_capped() {
+    let policy = ProviderRetryPolicy {
+        max_retries: 0,
+        base_delay_ms: 60_000,
+        ..outage_policy(40_000)
+    };
+    let (_message, _attempts, waits, _events) =
+        run_attempts(&policy, vec![connection_failure_message()]).await;
+    let ceiling = CONNECTION_RETRY_MAX_DELAY_MS + CONNECTION_RETRY_MAX_DELAY_MS / 5;
+    assert!(!waits.is_empty());
+    assert!(waits.iter().all(|wait| *wait <= ceiling), "{waits:?}");
 }

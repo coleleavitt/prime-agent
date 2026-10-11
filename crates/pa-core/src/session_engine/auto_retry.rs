@@ -10,11 +10,12 @@ use pa_agent::types::{AssistantMessage, StopReason};
 
 use super::provider_park::{is_quota_block_failure, ParkDecisionCallback};
 use super::provider_retry::{
-    has_provider_stream_failure, is_agent_lifecycle_failure, is_context_overflow_failure,
-    is_faux_provider_queue_exhausted, is_permanent_provider_failure_kind,
-    is_unsupported_tool_failure, jittered_delay_ms, provider_retry_delay,
-    provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
+    has_provider_stream_failure, is_agent_lifecycle_failure, is_connection_failure,
+    is_context_overflow_failure, is_faux_provider_queue_exhausted,
+    is_permanent_provider_failure_kind, is_unsupported_tool_failure, jittered_delay_ms,
+    provider_retry_delay, provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
     provider_stream_failure_status, retry_jitter_rand01, ProviderRetryDelay, ProviderRetryPolicy,
+    CONNECTION_RETRY_MAX_DELAY_MS,
 };
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).
@@ -79,6 +80,10 @@ where
     WF: Future<Output = bool>,
 {
     let mut retries_performed = 0u32;
+    // Retry waits spent inside the current run of connection-level failures:
+    // past the quick ladder, such a run keeps retrying until it has waited
+    // `policy.connection_wait_ms` (a network outage outlasts the ladder).
+    let mut outage_waited_ms = 0u64;
     loop {
         let message = attempt().await?;
         if message.stop_reason != StopReason::Error {
@@ -141,9 +146,19 @@ where
             // the jittered value is both waited and reported, so the countdown
             // stays honest while retried sessions spread off the ladder ticks.
             ProviderRetryDelay::Wait { delay_ms } => {
+                let connection_failure = is_connection_failure(&message);
+                if !connection_failure {
+                    outage_waited_ms = 0;
+                }
                 // The server-requested-wait arm runs BEFORE the quick-retry
                 // exhaustion check: a quota-blocked final retry still parks.
-                if retries_performed > policy.max_retries {
+                let delay_ms = if retries_performed <= policy.max_retries {
+                    delay_ms
+                } else if connection_failure && outage_waited_ms < policy.connection_wait_ms {
+                    // Riding out an outage: short waits, so the turn resumes
+                    // soon after the network returns.
+                    delay_ms.min(CONNECTION_RETRY_MAX_DELAY_MS)
+                } else {
                     emit(AutoRetryEvent::End {
                         success: false,
                         attempt: retries_performed - 1,
@@ -152,8 +167,12 @@ where
                     })
                     .await?;
                     return Ok(message);
+                };
+                let delay_ms = jittered_delay_ms(delay_ms, retry_jitter_rand01());
+                if connection_failure {
+                    outage_waited_ms = outage_waited_ms.saturating_add(delay_ms);
                 }
-                jittered_delay_ms(delay_ms, retry_jitter_rand01())
+                delay_ms
             }
             ProviderRetryDelay::ExceedsCap { retry_after_ms } => {
                 // The give-up sentence of this arm is the park's abort
@@ -194,7 +213,8 @@ where
         };
         emit(AutoRetryEvent::Start {
             attempt: retries_performed,
-            max_attempts: policy.max_retries,
+            // An outage retry runs past the quick ladder's count.
+            max_attempts: policy.max_retries.max(retries_performed),
             delay_ms,
             error_message: final_error_of(&message),
             reason: RetryStartReason::Quick,

@@ -17,7 +17,20 @@ pub struct ProviderRetryPolicy {
     /// Ceiling on the exponential backoff; the default is unbounded
     /// (the TS quick-retry loop grows without bound).
     pub max_delay_ms: u64,
+    /// How long a run of connection-level failures (no response: refused,
+    /// reset, timed out) keeps retrying past `max_retries`, counted in waited
+    /// retry delays; 0 gives up with the quick ladder. A network outage (a
+    /// dropped Wi-Fi link) lasts longer than the ladder's ~14 s (a fork
+    /// addition; the TS loop has none).
+    pub connection_wait_ms: u64,
 }
+
+/// The default connection-outage budget: two minutes of retry waits.
+pub const DEFAULT_CONNECTION_WAIT_MS: u64 = 120_000;
+
+/// The longest single wait while riding out a connection outage, so the
+/// request lands soon after the network returns.
+pub const CONNECTION_RETRY_MAX_DELAY_MS: u64 = 15_000;
 
 /// No backoff ceiling (the TS quick-retry schedule).
 pub const UNBOUNDED_BACKOFF_MS: u64 = u64::MAX;
@@ -29,6 +42,7 @@ pub const DEFAULT_PROVIDER_RETRY_POLICY: ProviderRetryPolicy = ProviderRetryPoli
     base_delay_ms: 2000,
     max_retry_delay_ms: 60000,
     max_delay_ms: UNBOUNDED_BACKOFF_MS,
+    connection_wait_ms: DEFAULT_CONNECTION_WAIT_MS,
 };
 
 /// Resolution of one retry-delay decision.
@@ -118,6 +132,15 @@ pub fn provider_stream_failure_retry_after_ms(message: &AssistantMessage) -> Opt
     provider_stream_failure_details(message)?
         .get("retryAfterMs")
         .and_then(Value::as_u64)
+}
+
+/// Whether the failure is connection-level: the request produced no response
+/// (the diagnostic's `transport` facts, recorded by the provider's HTTP layer).
+#[must_use]
+pub fn is_connection_failure(message: &AssistantMessage) -> bool {
+    provider_stream_failure_details(message)
+        .and_then(|details| details.get("transport"))
+        .is_some_and(Value::is_object)
 }
 
 pub fn provider_stream_failure_status(message: &AssistantMessage) -> Option<u16> {
@@ -379,6 +402,7 @@ mod tests {
             base_delay_ms: 2000,
             max_retry_delay_ms: 60000,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         assert_eq!(
             provider_retry_delay(1, None, &policy),
@@ -406,6 +430,7 @@ mod tests {
             base_delay_ms: 2000,
             max_retry_delay_ms: 60000,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         assert_eq!(
             provider_retry_delay(1, Some(60001), &policy),
@@ -534,6 +559,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts_for_attempt = std::sync::Arc::clone(&attempts);
@@ -580,6 +606,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts_for_attempt = std::sync::Arc::clone(&attempts);
@@ -617,6 +644,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts_for_attempt = std::sync::Arc::clone(&attempts);
@@ -671,6 +699,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let mut attempts = 0;
         let message = complete_with_provider_retry(
@@ -696,6 +725,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let mut attempts = 0;
         let message = complete_with_provider_retry(
@@ -721,6 +751,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts_for_attempt = std::sync::Arc::clone(&attempts);
@@ -759,6 +790,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let controller = pa_agent::abort::AbortController::new();
         controller.abort();
@@ -781,6 +813,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let mut attempts = 0;
         let message = complete_with_provider_retry(
@@ -806,6 +839,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let mut lifecycle = error_message(None, None, None);
         lifecycle.diagnostics = Some(vec![AssistantMessageDiagnostic {
@@ -856,6 +890,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let error = complete_with_provider_retry(
             &policy,
@@ -914,6 +949,7 @@ mod tests {
             base_delay_ms: 5,
             max_retry_delay_ms: 50,
             max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
         };
         let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let attempts_for_attempt = std::sync::Arc::clone(&attempts);

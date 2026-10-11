@@ -110,6 +110,10 @@ impl ScriptedEngine {
                         .and_then(Value::as_u64)
                         .unwrap_or(0),
                     max_delay_ms: UNBOUNDED_BACKOFF_MS,
+                    connection_wait_ms: retry
+                        .get("connectionWaitMs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
                 }),
             })
             .unwrap_or_default();
