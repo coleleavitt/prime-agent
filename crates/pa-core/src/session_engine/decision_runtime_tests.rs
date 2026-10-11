@@ -32,18 +32,27 @@ async fn build_session(root: &Path, agent_dir: &std::path::Path) -> SessionEngin
     .unwrap()
 }
 
-// Real fixtures own their process-wide kernel registry and environment.
+// Real fixtures own their process-wide kernel registry and environment, so
+// each runs alone in a child test process. The parent resolves the test
+// kernel Python (never the real home's venv) and hands it to the child as
+// `PRIME_AGENT_KERNEL_PYTHON`, so the child can only execute, never skip.
+// Returns the interpreter in the child; `None` in the parent, once the child
+// passed or when no test venv exists.
 #[tracing::instrument]
-async fn run_runtime_fixture_in_child(name: &str) -> bool {
+async fn runtime_fixture_python(name: &str) -> Option<std::path::PathBuf> {
     const CHILD_FIXTURE: &str = "PA_DECISION_API_RUNTIME_FIXTURE_CHILD";
     let test = format!("session_engine::decision_runtime_tests::{name}");
     if std::env::var(CHILD_FIXTURE).as_deref() == Ok(test.as_str()) {
-        return false;
+        let python = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
+            .expect("the parent fixture passes the test kernel Python");
+        return Some(python.into());
     }
+    let python = pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")?;
     let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", &test, "--nocapture"])
         .env(CHILD_FIXTURE, &test)
+        .env("PRIME_AGENT_KERNEL_PYTHON", &python)
         .env("RUST_TEST_THREADS", "1")
         .kill_on_drop(true);
     let output = tokio::time::timeout(std::time::Duration::from_secs(240), command.output())
@@ -65,34 +74,22 @@ async fn run_runtime_fixture_in_child(name: &str) -> bool {
         "the exact child fixture must run"
     );
     assert!(
-        stdout.contains(&format!("DECISION_API_REAL_FIXTURE_EXECUTED: {name}"))
-            || stderr.contains("no installed kernel Python"),
-        "fixture must report execution or its explicit runtime skip",
+        stdout.contains(&format!("DECISION_API_REAL_FIXTURE_EXECUTED: {name}")),
+        "the child fixture must execute against {}",
+        python.display()
     );
-    true
+    None
 }
 
 #[tokio::test]
 async fn decision_api_preimports_the_skill_only_while_the_setting_is_set() {
     use crate::kernel::shared::{ExecuteOptions, ExecuteStatus};
-    if run_runtime_fixture_in_child(
-        "decision_api_preimports_the_skill_only_while_the_setting_is_set",
-    )
-    .await
+    // The provisioner resolves the kernel from the `PRIME_AGENT_KERNEL_PYTHON`
+    // the parent fixture set.
+    if runtime_fixture_python("decision_api_preimports_the_skill_only_while_the_setting_is_set")
+        .await
+        .is_none()
     {
-        return;
-    }
-    // This verifier needs an installed runtime; hermetic hosts can run the
-    // metadata regressions without downloading a Python environment.
-    let installed = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| {
-                std::path::PathBuf::from(home).join(".prime/agent/kernel-venv/bin/python")
-            })
-        });
-    if !installed.is_some_and(|path| path.exists()) {
-        eprintln!("skipping decision API real-kernel verifier: no installed kernel Python");
         return;
     }
     for (configured, expected) in [(true, "True"), (false, "False")] {
@@ -150,24 +147,13 @@ async fn decision_api_real_runtime_loop_routes_decisions_and_child_delivery_then
         Decision,
         Delete,
     }
-    if run_runtime_fixture_in_child(
+    // This is a real REPL/skill bridge with synthetic child and reply
+    // handlers. It never invokes a paid provider or starts a daemon child.
+    let Some(python) = runtime_fixture_python(
         "decision_api_real_runtime_loop_routes_decisions_and_child_delivery_then_cleans_up",
     )
     .await
-    {
-        return;
-    }
-    // This is a real REPL/skill bridge with synthetic child and reply
-    // handlers. It never invokes a paid provider or starts a daemon child.
-    let python = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| {
-                std::path::PathBuf::from(home).join(".prime/agent/kernel-venv/bin/python")
-            })
-        });
-    let Some(python) = python.filter(|path| path.exists()) else {
-        eprintln!("skipping decision API real-runtime fixture: no installed kernel Python");
+    else {
         return;
     };
     let events = Arc::new(Mutex::new(Vec::new()));
