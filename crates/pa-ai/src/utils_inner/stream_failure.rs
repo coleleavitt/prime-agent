@@ -59,6 +59,30 @@ pub struct StreamFailureInfo {
     /// Truncated raw provider payload for post-mortems.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// A connection-level failure's transport facts (a fork addition to the TS shape): the class
+    /// the session retry loop waits a network outage out on, and the underlying cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<TransportFailure>,
+}
+
+/// A request that produced no response: how the transport failed, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TransportFailure {
+    pub class: TransportFailureClass,
+    /// The underlying error chain (never the request URL).
+    pub cause: String,
+}
+
+/// The transport failure classes of [`TransportFailure`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportFailureClass {
+    /// The connection could not be established (refused, unreachable, DNS).
+    Connect,
+    /// The request exceeded its deadline before a response arrived.
+    Timeout,
+    /// The peer closed or reset the connection before or while the response arrived.
+    Reset,
 }
 
 impl StreamFailureInfo {
@@ -71,6 +95,7 @@ impl StreamFailureInfo {
             request_id: None,
             retry_after_ms: None,
             raw: None,
+            transport: None,
         }
     }
 }
@@ -305,6 +330,22 @@ impl ProviderConnectionError {
             return "TimeoutError";
         }
         "Error"
+    }
+
+    /// The transport facts a diagnostic records for this failure.
+    #[must_use]
+    pub fn transport_failure(&self) -> TransportFailure {
+        let class = match self.kind {
+            ConnectionErrorKind::Connect => TransportFailureClass::Connect,
+            ConnectionErrorKind::Timeout => TransportFailureClass::Timeout,
+            ConnectionErrorKind::Reset
+            | ConnectionErrorKind::H2Request(_)
+            | ConnectionErrorKind::H2MidStream(_) => TransportFailureClass::Reset,
+        };
+        TransportFailure {
+            class,
+            cause: self.cause.clone(),
+        }
     }
 
     /// The TS `err.code` the classification uses as the provider error type; the openai/anthropic
@@ -609,6 +650,7 @@ pub fn stream_failure_from_stop_reason(
         status: None,
         retry_after_ms: None,
         raw: None,
+        transport: None,
     };
     if info.kind == StreamFailureKind::Unknown
         && raw_stop_reason.is_some_and(|reason| reason.to_lowercase().contains("malformed"))
@@ -672,6 +714,7 @@ pub(crate) fn stream_drop_failure(open_block: OpenStreamBlock) -> StreamFailureE
         request_id: None,
         retry_after_ms: None,
         raw: None,
+        transport: None,
     };
     StreamFailureError {
         message: stream_failure_message(&info, Some(detail)),
@@ -768,6 +811,7 @@ fn extract_parts_from_http(error: &ProviderHttpError) -> ExtractedParts {
             request_id,
             retry_after_ms,
             raw: None,
+            transport: None,
         },
         detail: body_message,
     }
@@ -782,6 +826,7 @@ pub fn extract_stream_failure_info(error: &ProviderError) -> StreamFailureInfo {
         // provider error type is the recorded `err.code`.
         ProviderError::Connection(connection) => StreamFailureInfo {
             provider_error_type: connection.error_code().map(str::to_string),
+            transport: Some(connection.transport_failure()),
             ..StreamFailureInfo::unknown()
         },
         // TS WS transport errors never classify; the provider error type is the error's class name,
@@ -891,7 +936,11 @@ pub fn record_stream_failure(
             Some(info_json),
         ),
     );
-    let raw_message = error.to_string();
+    // A connection failure's text is a fixed per-SDK sentence; its cause is the transport chain.
+    let raw_message = match error {
+        ProviderError::Connection(connection) => connection.cause.clone(),
+        _ => error.to_string(),
+    };
     let error_message = output.error_message.clone().unwrap_or_default();
     crate::utils_inner::log::get_logger("ai.provider").error(
         "provider stream failure",

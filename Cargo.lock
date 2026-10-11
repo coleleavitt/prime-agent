@@ -1867,6 +1867,7 @@ dependencies = [
  "hex",
  "hmac",
  "http",
+ "hyper",
  "pa-types",
  "rand 0.8.8",
  "regex",

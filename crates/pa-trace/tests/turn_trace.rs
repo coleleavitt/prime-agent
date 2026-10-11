@@ -273,3 +273,78 @@ fn a_turn_with_a_kernel_cell_reconstructs_as_one_trace_tree() {
         expected
     );
 }
+
+/// A request that produced no response settles with the SDK's fixed "Connection error."; the
+/// `llm.request` span also records the failure's transport class and cause, the only place the
+/// real reason (a reset, a refused connect, a peer that closed) survives.
+#[test]
+fn a_connection_failure_records_its_transport_cause_on_the_request_span() {
+    use pa_agent::scripted::{stream_failure_steps, ScriptStep, ScriptedTurn};
+    use pa_agent::stream::AssistantMessageEvent;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let log_path = dir.path().join("logs").join("agent.jsonl");
+    let (layer, handle) = pa_trace::recorder(RecorderConfig {
+        log_path: log_path.clone(),
+        inbound: None,
+        otlp: None,
+    });
+    pa_trace::install_context_source();
+    let mut steps = stream_failure_steps(&model(), "", "Connection error.");
+    let Some(ScriptStep::Event(event)) = steps.last_mut() else {
+        panic!("the failure script ends with its error event");
+    };
+    let AssistantMessageEvent::Error { error, .. } = event.as_mut() else {
+        panic!("the failure script ends with its error event");
+    };
+    error.diagnostics = Some(vec![pa_agent::types::AssistantMessageDiagnostic {
+        kind: "provider_stream_failure".to_string(),
+        timestamp: 0,
+        error: Some(serde_json::json!({ "name": "Error", "message": "Connection error." })),
+        details: Some(serde_json::json!({
+            "kind": "unknown",
+            "transport": {
+                "class": "reset",
+                "cause": "client error (SendRequest): connection closed before message completed",
+            },
+        })),
+    }]);
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let provider = Arc::new(ScriptedProvider::new(model()));
+                provider.push_turn(ScriptedTurn::Events(steps));
+                let agent = Agent::new(AgentOptions {
+                    stream_fn: Some(provider.stream_fn()),
+                    ..Default::default()
+                });
+                agent.set_model(model()).await;
+                agent.prompt("hi").await.expect("prompt");
+                agent.wait_for_idle().await;
+            });
+    });
+    assert!(handle.flush(Duration::from_secs(30)));
+
+    let entries = entries(&log_path);
+    let request = entries
+        .iter()
+        .find(|entry| entry["msg"] == "span_end" && entry["name"] == "llm.request")
+        .expect("llm.request span");
+    assert_eq!(
+        (
+            request["status"].as_str(),
+            request["error"].as_str(),
+            request["attrs"]["llm.transport.class"].as_str(),
+            request["attrs"]["llm.transport.cause"].as_str(),
+        ),
+        (
+            Some("error"),
+            Some("Connection error."),
+            Some("reset"),
+            Some("client error (SendRequest): connection closed before message completed"),
+        )
+    );
+}

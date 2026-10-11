@@ -27,6 +27,10 @@ reqwest = { version = "0.12", default-features = false, features = [
 # directly (the TS default transport — the AWS SDK's NodeHttp2Handler — is
 # http2 there); the same version the graph resolves for reqwest/hyper.
 h2 = { version = "0.4", features = ["stream"] }
+# hyper: the stale-connection test reads hyper's own error class (a request written to a
+# connection the peer already closed) through the reqwest error chain; the same version the
+# graph resolves for reqwest.
+hyper = { version = "1", default-features = false }
 bytes = "1"
 regex = "1"
 rand = "0.8"

@@ -122,7 +122,10 @@ pub(crate) async fn stream_assistant_response(
 
 /// One provider call as an `llm.request` span (`llm.provider`, `llm.api`,
 /// `llm.model`, `llm.base_url`); it ends when the response settles, with the
-/// stop reason and token usage, and a provider error marks it failed.
+/// stop reason and token usage, and a provider error marks it failed. A
+/// connection failure also records its transport class and cause
+/// (`llm.transport.class`, `llm.transport.cause`): its `error` text is a fixed
+/// SDK sentence that names neither.
 #[tracing::instrument(
     level = "info",
     name = "llm.request",
@@ -135,6 +138,8 @@ pub(crate) async fn stream_assistant_response(
         llm.stop_reason = tracing::field::Empty,
         llm.usage.input = tracing::field::Empty,
         llm.usage.output = tracing::field::Empty,
+        llm.transport.class = tracing::field::Empty,
+        llm.transport.cause = tracing::field::Empty,
         error = tracing::field::Empty,
     )
 )]
@@ -200,6 +205,12 @@ async fn stream_assistant_attempt(
                     "error",
                     message.error_message.as_deref().unwrap_or("provider error"),
                 );
+                if let Some(transport) = transport_failure(&message) {
+                    let field =
+                        |name: &str| transport.get(name).and_then(serde_json::Value::as_str);
+                    span.record("llm.transport.class", field("class"))
+                        .record("llm.transport.cause", field("cause"));
+                }
             }
             Ok(message)
         }
@@ -211,6 +222,20 @@ async fn stream_assistant_attempt(
             Err(error)
         }
     }
+}
+
+/// The `transport` facts of a failed message's `provider_stream_failure`
+/// diagnostic: present when the request produced no response.
+fn transport_failure(message: &AssistantMessage) -> Option<&serde_json::Value> {
+    message
+        .diagnostics
+        .as_deref()?
+        .iter()
+        .find(|diagnostic| diagnostic.kind == "provider_stream_failure")?
+        .details
+        .as_ref()?
+        .get("transport")
+        .filter(|transport| transport.is_object())
 }
 
 /// Inner body of `streamAssistantResponse`.

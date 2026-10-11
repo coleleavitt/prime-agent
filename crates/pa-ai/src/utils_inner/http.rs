@@ -12,30 +12,47 @@ use crate::utils::stream_failure::{
     ProviderError, ProviderHttpError, StreamFailureError, StreamFailureInfo, StreamFailureKind,
 };
 
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static CLIENT: std::sync::Mutex<Option<reqwest::Client>> = std::sync::Mutex::new(None);
 static H2_ALPN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 /// The HTTP/1.1 client every provider shares, pinned with `http1_only()` so that enabling the
-/// reqwest `http2` feature (bedrock) cannot change the transport of any other provider.
-fn client() -> &'static reqwest::Client {
-    CLIENT.get_or_init(|| {
+/// reqwest `http2` feature (bedrock) cannot change the transport of any other provider. Its
+/// keep-alive pool lives until [`discard_pooled_connections`] replaces the client.
+fn client() -> reqwest::Client {
+    let mut slot = CLIENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    slot.get_or_insert_with(|| {
         reqwest::Client::builder()
             .http1_only()
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .expect("reqwest client")
     })
+    .clone()
+}
+
+/// Drop the shared HTTP/1.1 pool: the next request builds a new client, so every idle
+/// connection the old pool held (possibly closed by the peer) is gone. In-flight requests keep
+/// the connections they hold.
+fn discard_pooled_connections() {
+    CLIENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
 }
 
 /// The TLS-ALPN client for bedrock https endpoints: HTTP/2 preferred (ALPN-negotiated), like the TS
 /// default transport; cleartext bedrock endpoints go through `providers/bedrock/h2.rs` instead.
-fn h2_alpn_client() -> &'static reqwest::Client {
-    H2_ALPN_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .build()
-            .expect("reqwest h2 client")
-    })
+fn h2_alpn_client() -> reqwest::Client {
+    H2_ALPN_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .build()
+                .expect("reqwest h2 client")
+        })
+        .clone()
 }
 
 /// The wire transport a request is issued with.
@@ -214,7 +231,7 @@ impl HttpResponse {
             return ProviderError::Connection(ProviderConnectionError {
                 kind: ConnectionErrorKind::H2MidStream(failure),
                 profile: self.connection.clone(),
-                cause: error.to_string(),
+                cause: crate::utils_inner::transport_failure::cause_chain(error),
             });
         }
         ProviderError::Http(ProviderHttpError {
@@ -274,8 +291,11 @@ impl RequestOptions {
     }
 }
 
-/// Issue a request and return the response with a streaming body. No retries: retry ownership lives
-/// with the caller (agent layer), matching the TS `maxRetries: 0` client configuration.
+/// Issue a request and return the response with a streaming body. No provider-level retries:
+/// retry ownership lives with the caller (agent layer), matching the TS `maxRetries: 0` client
+/// configuration. The one exception is transport hygiene: a send that dies on a stale pooled
+/// HTTP/1.1 connection (the peer closed it, so the request produced no response) drops the pool
+/// and is re-sent once on a fresh connection, as Claude Code does.
 pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError> {
     let signal = request.signal.clone();
     if signal
@@ -285,11 +305,102 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
         return Err(ProviderError::Aborted);
     }
 
+    let response = match send_attempt(&request).await {
+        Err(SendFailure::Transport(error))
+            if request.transport == Transport::Http1
+                && crate::utils_inner::transport_failure::is_stale_connection(&error) =>
+        {
+            crate::utils_inner::log::get_logger("ai.http").warn(
+                "stale connection, retrying on a fresh connection",
+                serde_json::json!({
+                    "cause": crate::utils_inner::transport_failure::cause_chain(&error),
+                }),
+            );
+            discard_pooled_connections();
+            send_attempt(&request).await
+        }
+        other => other,
+    };
+    let response = response.map_err(|failure| failure.into_provider_error(&request))?;
+
+    let status = response.status().as_u16();
+    let mut headers = std::collections::HashMap::new();
+    for (name, value) in response.headers() {
+        if let Ok(value) = value.to_str() {
+            headers.insert(name.as_str().to_ascii_lowercase(), value.to_string());
+        }
+    }
+
+    Ok(HttpResponse {
+        status,
+        headers,
+        body: response,
+        signal,
+        connection: request.connection,
+        utf8_carry: Vec::new(),
+        stall: stall_timeout_from_env(request.stall_timeout_ms),
+    })
+}
+
+/// Why one send attempt produced no response.
+enum SendFailure {
+    Aborted,
+    /// The request exceeded its `timeout_ms` deadline.
+    Deadline {
+        timeout_ms: u64,
+    },
+    Transport(reqwest::Error),
+}
+
+impl SendFailure {
+    // The TS SDKs surface request-send failures as their fixed connection error texts: the
+    // openai/anthropic SDK family throws `APIConnectionError` ("Connection error.") /
+    // `APIConnectionTimeoutError` ("Request timed out.") for every fetch failure; providers whose
+    // SDK appends the raw cause (mistral) or surfaces undici's raw text (codex, bedrock, google:
+    // "fetch failed") rewrite it at their catch site.
+    fn into_provider_error(self, request: &RequestOptions) -> ProviderError {
+        let error = match self {
+            Self::Aborted => return ProviderError::Aborted,
+            Self::Deadline { timeout_ms } => {
+                return ProviderError::Connection(ProviderConnectionError {
+                    kind: ConnectionErrorKind::Timeout,
+                    profile: request.connection.clone(),
+                    cause: format!("request exceeded the {timeout_ms}ms timeout"),
+                })
+            }
+            Self::Transport(error) => error,
+        };
+        let kind = if error.is_timeout() {
+            ConnectionErrorKind::Timeout
+        } else if error.is_connect() {
+            ConnectionErrorKind::Connect
+        } else if matches!(request.connection, ConnectionErrorProfile::AwsHttp2 { .. }) {
+            // Pre-response http2 failure on the bedrock https transport: the h2 failure detail (no
+            // deserialization hint — no response yet).
+            ConnectionErrorKind::H2Request(crate::utils_inner::h2_classify::classify_reqwest_error(
+                &error,
+            ))
+        } else {
+            // The peer closed or reset after the connection was established but before the response
+            // arrived (only distinguishable from refused connects on the AWS handler surfaces).
+            ConnectionErrorKind::Reset
+        };
+        ProviderError::Connection(ProviderConnectionError {
+            kind,
+            profile: request.connection.clone(),
+            cause: crate::utils_inner::transport_failure::cause_chain(&error),
+        })
+    }
+}
+
+/// One send of `request` through the transport's shared client, racing the cancel signal (or,
+/// without one, the request deadline).
+async fn send_attempt(request: &RequestOptions) -> Result<reqwest::Response, SendFailure> {
     let client = match request.transport {
         Transport::Http1 => client(),
         Transport::H2Alpn => h2_alpn_client(),
     };
-    let mut builder = client.request(request.method, &request.url);
+    let mut builder = client.request(request.method.clone(), &request.url);
     for (name, value) in &request.headers {
         builder = builder.header(name, value);
     }
@@ -311,75 +422,23 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
     }
 
     let send_future = builder.send();
-    let response = match (&signal, request.timeout_ms) {
+    match (&request.signal, request.timeout_ms) {
         (Some(signal), _) => {
             tokio::select! {
-                () = signal.cancelled() => return Err(ProviderError::Aborted),
-                result = send_future => result,
+                () = signal.cancelled() => Err(SendFailure::Aborted),
+                result = send_future => result.map_err(SendFailure::Transport),
             }
         }
         (None, Some(timeout_ms)) => {
             match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), send_future)
                 .await
             {
-                Ok(result) => result,
-                Err(_) => {
-                    return Err(ProviderError::Connection(ProviderConnectionError {
-                        kind: ConnectionErrorKind::Timeout,
-                        profile: request.connection.clone(),
-                        cause: format!("request exceeded the {timeout_ms}ms timeout"),
-                    }))
-                }
+                Ok(result) => result.map_err(SendFailure::Transport),
+                Err(_) => Err(SendFailure::Deadline { timeout_ms }),
             }
         }
-        (None, None) => send_future.await,
-    };
-
-    // The TS SDKs surface request-send failures as their fixed connection error texts: the
-    // openai/anthropic SDK family throws `APIConnectionError` ("Connection error.") /
-    // `APIConnectionTimeoutError` ("Request timed out.") for every fetch failure; providers whose
-    // SDK appends the raw cause (mistral) or surfaces undici's raw text (codex, bedrock, google:
-    // "fetch failed") rewrite it at their catch site.
-    let response = response.map_err(|error| {
-        let kind = if error.is_timeout() {
-            ConnectionErrorKind::Timeout
-        } else if error.is_connect() {
-            ConnectionErrorKind::Connect
-        } else if matches!(request.connection, ConnectionErrorProfile::AwsHttp2 { .. }) {
-            // Pre-response http2 failure on the bedrock https transport: the h2 failure detail (no
-            // deserialization hint — no response yet).
-            ConnectionErrorKind::H2Request(crate::utils_inner::h2_classify::classify_reqwest_error(
-                &error,
-            ))
-        } else {
-            // The peer closed or reset after the connection was established but before the response
-            // arrived (only distinguishable from refused connects on the AWS handler surfaces).
-            ConnectionErrorKind::Reset
-        };
-        ProviderError::Connection(ProviderConnectionError {
-            kind,
-            profile: request.connection.clone(),
-            cause: error.to_string(),
-        })
-    })?;
-
-    let status = response.status().as_u16();
-    let mut headers = std::collections::HashMap::new();
-    for (name, value) in response.headers() {
-        if let Ok(value) = value.to_str() {
-            headers.insert(name.as_str().to_ascii_lowercase(), value.to_string());
-        }
+        (None, None) => send_future.await.map_err(SendFailure::Transport),
     }
-
-    Ok(HttpResponse {
-        status,
-        headers,
-        body: response,
-        signal,
-        connection: request.connection,
-        utf8_carry: Vec::new(),
-        stall: stall_timeout_from_env(request.stall_timeout_ms),
-    })
 }
 
 /// JSON POST helper used by non-streaming calls (OAuth token refresh, catalogs).
@@ -408,6 +467,9 @@ pub async fn post_json(
     };
     Ok((status, parsed))
 }
+
+#[cfg(test)]
+mod stale_connection_tests;
 
 #[cfg(test)]
 mod tests {

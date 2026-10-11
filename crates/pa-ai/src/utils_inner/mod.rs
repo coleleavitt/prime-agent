@@ -12,5 +12,6 @@ pub mod overflow;
 pub mod sanitize_unicode;
 pub mod sse;
 pub mod stream_failure;
+pub(crate) mod transport_failure;
 
 pub use stream_failure::ProviderError;

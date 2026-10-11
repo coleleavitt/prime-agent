@@ -82,6 +82,7 @@ fn builds_user_facing_messages() {
         request_id: Some("req_abc".into()),
         retry_after_ms: None,
         raw: None,
+        transport: None,
     };
     assert_eq!(
         stream_failure_message(&info, Some("slow down")),
@@ -101,6 +102,7 @@ fn classified_message_with_parenthesized_status() {
         request_id: None,
         retry_after_ms: None,
         raw: None,
+        transport: None,
     };
     assert_eq!(
         stream_failure_message(&status_only, Some("bad request")),
@@ -162,10 +164,24 @@ fn connection_error_texts() {
     // The classified-format providers surface them verbatim too.
     assert_eq!(format_stream_failure_message(&connect), "Connection error.");
     // The classification is unknown, like the TS SDK connection errors, and the openai/anthropic
-    // family records no error code.
+    // family records no error code. The fork adds the transport facts: the class and the cause the
+    // fixed text hides.
     assert_eq!(
         extract_stream_failure_info(&connect),
-        StreamFailureInfo::unknown()
+        StreamFailureInfo {
+            transport: Some(TransportFailure {
+                class: TransportFailureClass::Connect,
+                cause: "tcp connect error".to_string(),
+            }),
+            ..StreamFailureInfo::unknown()
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(extract_stream_failure_info(&timeout)).unwrap(),
+        serde_json::json!({
+            "kind": "unknown",
+            "transport": { "class": "timeout", "cause": "request exceeded the 10000ms timeout" },
+        })
     );
     // The TS Stainless SDK errors do not set `error.name`: JS records the inherited plain "Error".
     assert_eq!(

@@ -83,6 +83,7 @@ fn anthropic_sse_error(data: &str, request_id: Option<&str>) -> StreamFailureErr
         request_id,
         retry_after_ms: None,
         raw: Some(truncate_raw_payload(data)),
+        transport: None,
     };
     let message = stream_failure_message(&info, detail.as_deref());
     StreamFailureError { message, info }
