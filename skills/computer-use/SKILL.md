@@ -195,13 +195,14 @@ from macOS:
   say so before you do it) and fail with `INJECTION_FAILED` if focus did
   not land. Password fields (`password text`) are refused, and an
   unverifiable focus is refused too.
-- niri reports screen positions only for floating windows, so coordinate
-  input and `get_screenshot()` work only on a floating window on a visible
-  workspace; on a tiled window they raise `ACTION_UNSUPPORTED`. Use element
-  indices instead, or ask the user to float the window.
+- On the computer-use niri fork, coordinate input and `get_screenshot()`
+  work on tiled windows too; do not float windows for them. On upstream niri
+  they work only on a floating window on a visible workspace and raise
+  `ACTION_UNSUPPORTED` on a tiled one: use element indices instead, or ask
+  the user to float the window.
 - `paste` and `get_text_regions` are not available (`ACTION_UNSUPPORTED`).
-- `permissions_status()` reports AT-SPI as `accessibility`, grim as
-  `screen_recording`, and the virtual pointer/keyboard as `input`, with
+- `permissions_status()` reports AT-SPI as `accessibility`, the fork's
+  capture or grim as `screen_recording`, and the virtual pointer/keyboard as `input`, with
   fix-it lines in `help`.
 
 ## References

@@ -1006,7 +1006,9 @@ fn the_fork_reports_screenshots_without_grim_from_one_cached_probe() {
     for _ in 0..2 {
         let status = world.platform.permissions().to_json();
         assert_eq!(status["screen_recording"], json!("ok"));
-        assert!(!status["help"].to_string().contains("grim"));
+        let help = status["help"].to_string();
+        assert!(!help.contains("grim"));
+        assert!(!help.contains("floating"), "the fork places tiled windows");
     }
     assert_eq!(
         requests(&world, "WindowAt"),

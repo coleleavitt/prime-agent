@@ -36,7 +36,9 @@ use crate::error::{
     head, invalid, not_running, transport, unsupported, ComputerUseError, ErrorCode, Result,
 };
 use crate::keymap::ParsedChord;
-use crate::permissions::{PermissionReport, PermissionState, WAYLAND_APPS_HELP_LINE};
+use crate::permissions::{
+    PermissionReport, PermissionState, WAYLAND_APPS_HELP_LINE, WAYLAND_UPSTREAM_HELP_LINE,
+};
 use crate::platform::logind;
 use crate::platform::{
     AppEntry, CaptureRequest, Captured, Discovery, ElementActions, FieldFocus, Fingerprint,
@@ -838,6 +840,9 @@ where
             );
         }
         help.push(WAYLAND_APPS_HELP_LINE.to_string());
+        if fork != Some(true) {
+            help.push(WAYLAND_UPSTREAM_HELP_LINE.to_string());
+        }
         PermissionReport::Wayland {
             accessibility,
             screen_recording,

@@ -47,11 +47,14 @@ pub const MAC_HELP_LINES: [&str; 4] = [
 pub const X11_HELP_LINE: &str = "Linux: no macOS TCC grants apply; the X11 backend needs DISPLAY \
                                  set and the xdotool, xwininfo, and maim (or scrot) tools on PATH";
 
-/// The Wayland backend's standing note on what apps and windows need.
+/// The Wayland backend's standing note on what apps need.
 pub const WAYLAND_APPS_HELP_LINE: &str = "Wayland (niri): apps must expose AT-SPI (GTK/Qt do; \
-     Firefox needs accessibility enabled, Chromium/Electron need --force-renderer-accessibility); \
-     coordinate input and screenshots need a floating window, because niri does not expose tiled \
-     windows' screen positions";
+     Firefox needs accessibility enabled, Chromium/Electron need --force-renderer-accessibility)";
+
+/// The Wayland backend's note for upstream niri, which lacks the computer-use
+/// fork's `WindowGeometry`/`CaptureWindow`/`WindowAt` requests.
+pub const WAYLAND_UPSTREAM_HELP_LINE: &str = "Upstream niri: coordinate input and screenshots \
+     need a floating window, because niri does not expose tiled windows' screen positions";
 
 /// One backend's permission report.
 #[derive(Debug, Clone, PartialEq, Eq)]

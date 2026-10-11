@@ -191,30 +191,32 @@ naming the tools the backend needs.
 | Secure fields | AT-SPI `ROLE_PASSWORD_TEXT` | Rendered as role `password text` with `[secure]`; their value is never read. `type_text`/`press_key` read the live focus and refuse a password field, and refuse when the focus cannot be verified (app not on the bus, search bounds hit) — the macOS fail-closed rule. |
 | Element actions | AT-SPI | `click(i)` (left, single) runs the element's `click`/`press`/`activate`/`jump`/`toggle`/`open` action, except on a text or password field, where it focuses the field like a real click: AT-SPI GrabFocus where the toolkit has it, otherwise (GTK 4) a real pointer click at the field's center, which needs a floating window; the field must report focus or the click fails with INJECTION_FAILED. `set_value` uses EditableText; `select_text` uses Text selections; `perform_secondary_action` runs any listed action. Apart from the field focus, none of these move focus. After `get_screenshot()`, `(x, y)` points are screenshot pixels. |
 | Keyboard | `zwp_virtual_keyboard_v1` | Focus-bound: the window is focused through niri first and the input is refused (`INJECTION_FAILED`) if niri does not report it focused. Text is typed with an uploaded keymap holding one keysym per character, so it does not depend on the user's layout. `cmd` maps to Super. |
-| Pointer | `zwlr_virtual_pointer_v1` | Pixel-exact in logical coordinates, mapped onto the window's output; focus as above. Needs the window's screen position, which niri reports only for floating windows on an active workspace; tiled windows raise `ACTION_UNSUPPORTED`. |
-| Screenshots | `grim -g` (wlr-screencopy) | Captures the window's logical rect into the same hardened directory; the PNG is at the output scale (2x on a 2x output) and `(x, y)` targets scale back automatically. Refused for tiled windows and when another floating window overlaps an unfocused bound window. |
+| Pointer | `zwlr_virtual_pointer_v1` | Pixel-exact in logical coordinates, mapped onto the window's output; focus as above. On the computer-use niri fork, any on-screen window works (tiled too): the client waits for animations to settle and refuses a point that niri's own hit test (`WindowAt`) says lands on a bar, popup, another window or the window's edge. Upstream niri reports a position only for floating windows on an active workspace; tiled windows raise `ACTION_UNSUPPORTED` there. |
+| Screenshots | niri fork `CaptureWindow`, else `grim -g` (wlr-screencopy) | The fork renders the window alone (tiled, covered or off-screen included) into the same hardened directory, with no clipboard and no grim. On upstream niri, grim captures the window's logical rect; that is refused for tiled windows and when another floating window overlaps an unfocused bound window. The PNG is at the output scale (2x on a 2x output) and `(x, y)` targets scale back automatically. |
 | Locked screen | logind `LockedHint` + `Active` (via `loginctl`) | niri maintains `LockedHint`; an unreadable or inactive session counts as locked. |
 
 `permissions_status()` on Wayland returns `{"accessibility", "screen_recording",
-"input": {"pointer", "keyboard"}, "help"}` — AT-SPI, grim, and the two
+"input": {"pointer", "keyboard"}, "help"}` — AT-SPI, the fork's capture or grim, and the two
 virtual-input managers, each `ok`, `missing`, or `unknown`.
 
 Setup: nothing is installed into the kernel (the host speaks AT-SPI over
-D-Bus itself). The host needs at-spi2-core running, `grim` on PATH, and apps
+D-Bus itself). The host needs at-spi2-core running, `grim` on PATH (only on upstream niri), and apps
 exposing AT-SPI (Firefox: accessibility enabled; Chromium/Electron:
 `--force-renderer-accessibility`). The virtual-input protocols need no
 setup: niri offers them to every client outside a sandboxed security context.
 
 Known gaps on Wayland:
 
-- Coordinate input and screenshots need a floating window: niri's IPC does
-  not expose the scrolling layout's view offset, so a tiled window's screen
-  position is unknown.
+- Upstream niri only: coordinate input and screenshots need a floating
+  window, because its IPC does not expose the scrolling layout's view offset.
+  The computer-use niri fork (`WindowGeometry`, `CaptureWindow`, `WindowAt`)
+  removes this limit; the client detects the fork and falls back otherwise.
 - Input is focus-bound, not window-targeted: there is a short race between
   the focus check and delivery if the user changes focus in between.
-- Pointer clicks land on whatever surface is topmost at the point
-  (layer-shell bars and notifications are not checked); screenshots of the
-  rect include such overlays.
+- Upstream niri only: pointer clicks land on whatever surface is topmost at
+  the point (layer-shell bars and notifications are not checked), and grim
+  screenshots of the rect include such overlays. On the fork, clicks are hit
+  tested first and captures render the window alone.
 - AT-SPI WINDOW coordinates of client-side-decorated apps can be offset by
   their shadow margins relative to niri's window geometry.
 - `paste` (clipboard transaction) and `get_text_regions` (OCR) are
