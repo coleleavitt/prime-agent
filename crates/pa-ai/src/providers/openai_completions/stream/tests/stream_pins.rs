@@ -174,7 +174,10 @@ async fn reasoning_content_deltas_assemble_the_thinking_block_with_the_field_sig
     ]);
     let (events, message) = stream_events(glm_fast_model(), body).await;
     // The thinking block carries the field name as its signature.
-    let [AssistantContent::Thinking(thinking), AssistantContent::Text(text)] = &message.content[..]
+    let [
+        AssistantContent::Thinking(thinking),
+        AssistantContent::Text(text),
+    ] = &message.content[..]
     else {
         panic!(
             "the healthy envelope assembles thinking then text: {:?}",

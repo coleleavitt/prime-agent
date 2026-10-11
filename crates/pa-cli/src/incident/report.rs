@@ -1,11 +1,18 @@
 //! The incident timeline report.
 
-use pa_types::incident::{
-    collect_incident_events, collect_worker_pid_map, compute_incident_anomalies,
-    format_incident_duration, IncidentCategory, IncidentEvent, IncidentLogEntry, IncidentSeverity,
-};
 use std::collections::HashMap;
 use std::io::IsTerminal as _;
+
+use pa_types::incident::{
+    IncidentCategory,
+    IncidentEvent,
+    IncidentLogEntry,
+    IncidentSeverity,
+    collect_incident_events,
+    collect_worker_pid_map,
+    compute_incident_anomalies,
+    format_incident_duration,
+};
 
 use super::time::format_incident_time;
 

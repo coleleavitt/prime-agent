@@ -6,12 +6,23 @@
 use std::path::{Path, PathBuf};
 
 use pa_core::auth::{
-    AuthCredential, AuthSource, AuthStatus, SERPER_CREDENTIAL_ID, SERPER_CREDENTIAL_NAME,
+    AuthCredential,
+    AuthSource,
+    AuthStatus,
+    SERPER_CREDENTIAL_ID,
+    SERPER_CREDENTIAL_NAME,
 };
 use pa_core::models::ModelRegistry;
 use pa_tui::provider_auth::{
-    AuthFlow, AuthStatusIndicator, AuthStatusStyle, AuthType, ProviderAuthCommands,
-    ProviderAuthFuture, ProviderAuthOutcome, ProviderRow, ProviderRowsFuture,
+    AuthFlow,
+    AuthStatusIndicator,
+    AuthStatusStyle,
+    AuthType,
+    ProviderAuthCommands,
+    ProviderAuthFuture,
+    ProviderAuthOutcome,
+    ProviderRow,
+    ProviderRowsFuture,
     ProviderWarningFuture,
 };
 

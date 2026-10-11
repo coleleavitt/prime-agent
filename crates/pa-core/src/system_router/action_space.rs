@@ -8,8 +8,14 @@ use std::fmt::Write as _;
 use serde_json::{Map, Value};
 
 use super::types::{
-    resolve_gate, RouterActionParamSpec, RouterActionRisk, RouterActionSpec, RouterGateSpec,
-    RouterObservation, ESCALATE_ACTION, FINISH_ACTION,
+    ESCALATE_ACTION,
+    FINISH_ACTION,
+    RouterActionParamSpec,
+    RouterActionRisk,
+    RouterActionSpec,
+    RouterGateSpec,
+    RouterObservation,
+    resolve_gate,
 };
 
 /// fnv1a (32-bit, 8 hex chars) digest for repeated-state detection. The

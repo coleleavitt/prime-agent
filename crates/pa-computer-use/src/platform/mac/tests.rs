@@ -12,11 +12,11 @@ use serde_json::json;
 
 use super::ax::{Accessibility, AxValue, MESSAGING_TIMEOUT};
 use super::events::{MacEvent, MouseKind};
-use super::fakes::{geometry, workspace_app, AxCall, FakeAx, FakeDesktop, Node, CANNOT_COMPLETE};
+use super::fakes::{AxCall, CANNOT_COMPLETE, FakeAx, FakeDesktop, Node, geometry, workspace_app};
 use super::*;
 use crate::element::{Element, MAX_ACTIONS, MAX_ELEMENTS};
 use crate::error::ErrorCode;
-use crate::keymap::{parse_chord, Modifier};
+use crate::keymap::{Modifier, parse_chord};
 use crate::process::script::Script;
 use crate::session::fake::Env;
 use crate::session::{AppCall, TargetArg};
@@ -425,9 +425,11 @@ fn attributes_titles_and_action_names_are_bounded() {
         (actions.len(), actions[0].as_str()),
         (MAX_ACTIONS, "AXAction0")
     );
-    assert!(accessibility
-        .actions(&Node::new(5).actions(Err(CANNOT_COMPLETE)), None)
-        .is_empty());
+    assert!(
+        accessibility
+            .actions(&Node::new(5).actions(Err(CANNOT_COMPLETE)), None)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1152,10 +1154,12 @@ fn get_app_binds_observes_and_presses_an_element() {
             },
         )
         .unwrap();
-    assert!(world
-        .ax
-        .calls()
-        .contains(&AxCall::Perform(3, "AXPress".to_string())));
+    assert!(
+        world
+            .ax
+            .calls()
+            .contains(&AxCall::Perform(3, "AXPress".to_string()))
+    );
     assert!(world.desktop.state().posted.is_empty());
 }
 

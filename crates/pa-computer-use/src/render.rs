@@ -10,10 +10,10 @@ mod seqmatch;
 
 use std::fmt::Write as _;
 
+use seqmatch::{Tag, opcodes};
+
 use crate::element::Element;
 use crate::pyfmt::{repr_float, repr_str, round1};
-
-use seqmatch::{opcodes, Tag};
 
 /// Render one tree depth-first into indexed lines:
 /// `{indent}[{index}] role (subrole) 'title' = 'value' description='…'

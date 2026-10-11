@@ -175,13 +175,22 @@ pub async fn complete_simple(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Map, json};
+
     use super::*;
     use crate::types::{
-        AssistantContent, AssistantMessage, ImageContent, TextContent, ThinkingContent, ToolCall,
-        ToolResultMessage, Usage, UserMessage, UserMessageContent, UserOrToolContent,
+        AssistantContent,
+        AssistantMessage,
+        ImageContent,
+        TextContent,
+        ThinkingContent,
+        ToolCall,
+        ToolResultMessage,
+        Usage,
+        UserMessage,
+        UserMessageContent,
+        UserOrToolContent,
     };
-    use serde_json::json;
-    use serde_json::Map;
 
     fn test_model(context_window: u64, max_tokens: u64) -> Model {
         serde_json::from_value(json!({

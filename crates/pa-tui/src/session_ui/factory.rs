@@ -6,17 +6,18 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use pa_types::daemon::DaemonCommand;
 use serde_json::{Map, Value};
 
-use pa_types::daemon::DaemonCommand;
-
 use super::AgentView;
-
 use crate::factory_view::{
-    factory_reply_lists_runs, parse_factory_runs, FactoryView, FactoryViewAction,
     FACTORY_WATCH_TICK_MS,
+    FactoryView,
+    FactoryViewAction,
+    factory_reply_lists_runs,
+    parse_factory_runs,
 };
-use crate::session_ui::{picker_viewport_rows, UI_REQUEST_TIMEOUT_MS};
+use crate::session_ui::{UI_REQUEST_TIMEOUT_MS, picker_viewport_rows};
 
 /// One background factory refresh's delivery: the session the request
 /// asked about (a late reply from a previous session never repaints the
@@ -406,8 +407,9 @@ impl super::SessionUi {
 
 #[cfg(test)]
 mod fold_tests {
-    use super::super::SessionUi;
     use serde_json::json;
+
+    use super::super::SessionUi;
 
     /// The malformed fold keeps the dock's cached reply (the Cursor
     /// review finding): a bad batch never replaces the last good reply,

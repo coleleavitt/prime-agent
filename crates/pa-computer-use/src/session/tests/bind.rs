@@ -6,8 +6,8 @@ use serde_json::json;
 use super::*;
 use crate::permissions::PermissionState;
 use crate::platform::RunningApp;
-use crate::session::fake::{NAME, PID};
 use crate::session::BoundApp;
+use crate::session::fake::{NAME, PID};
 
 fn running(bundle_id: &str, name: &str, pid: i64) -> RunningApp {
     RunningApp {
@@ -313,11 +313,12 @@ fn per_app_instructions_append_once_per_host() {
         .session
         .get_app(&AppSpec::text(BUNDLE), Some(guides.path().to_path_buf()))
         .unwrap();
-    assert!(app
-        .state
-        .as_deref()
-        .unwrap()
-        .ends_with("\nUse the sidebar."));
+    assert!(
+        app.state
+            .as_deref()
+            .unwrap()
+            .ends_with("\nUse the sidebar.")
+    );
     let full = call(&env, &app, AppCall::GetAxState { diff: false }).unwrap();
     assert!(!full.as_str().unwrap().contains("Use the sidebar."));
 }

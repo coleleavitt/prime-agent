@@ -7,32 +7,40 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::error::{CapacityError, ProtocolError};
-use tokio_tungstenite::tungstenite::Error as WsError;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-
 use tokio_util::sync::CancellationToken;
 
 use crate::providers::openai_codex_responses::errors::{
-    CodexProtocolError, CodexStreamError, WebSocketTransportError, WEBSOCKET_CLOSE_CODE_ABNORMAL,
-    WEBSOCKET_CLOSE_CODE_PROTOCOL, WEBSOCKET_CLOSE_CODE_STATUS, WEBSOCKET_CLOSE_CODE_TOO_BIG,
+    CodexProtocolError,
+    CodexStreamError,
+    WEBSOCKET_CLOSE_CODE_ABNORMAL,
+    WEBSOCKET_CLOSE_CODE_PROTOCOL,
+    WEBSOCKET_CLOSE_CODE_STATUS,
+    WEBSOCKET_CLOSE_CODE_TOO_BIG,
     WEBSOCKET_CONNECTION_ENDED_REASON,
+    WebSocketTransportError,
 };
-use crate::providers::openai_codex_responses::session::{session_state, CachedConnection};
+use crate::providers::openai_codex_responses::session::{CachedConnection, session_state};
 
 pub const OPENAI_BETA_RESPONSES_WEBSOCKETS: &str = "responses_websockets=2026-02-06";
 pub(crate) const SESSION_WEBSOCKET_CACHE_TTL_MS: u64 = 5 * 60 * 1000;
 
 #[allow(unused_imports)] // re-exported for consumers of the transport module
 pub use crate::providers::openai_codex_responses::session::{
-    clear_continuation, close_websocket_sessions, is_websocket_sse_fallback_active,
-    record_request_stats, record_websocket_failure, record_websocket_sse_fallback,
-    schedule_session_websocket_expiry, take_continuation_for,
+    clear_continuation,
+    close_websocket_sessions,
+    is_websocket_sse_fallback_active,
+    record_request_stats,
+    record_websocket_failure,
+    record_websocket_sse_fallback,
+    schedule_session_websocket_expiry,
+    take_continuation_for,
 };
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -595,8 +603,9 @@ pub fn build_cached_websocket_request_body(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn continuation(last_body: Value, items: Vec<Value>) -> ContinuationState {
         ContinuationState {
@@ -653,15 +662,18 @@ mod tests {
 /// per scenario, pinning the TS-binary-verified texts and the diagnostic error surface in-crate.
 #[cfg(test)]
 mod ws_wire_tests {
-    use super::*;
-    use crate::providers::openai_codex_responses::errors::{
-        WebSocketTransportError, WEBSOCKET_CLOSE_CODE_ABNORMAL,
-    };
+    use std::time::Duration;
+
     use base64::Engine as _;
     use sha1::Digest as _;
-    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+    use crate::providers::openai_codex_responses::errors::{
+        WEBSOCKET_CLOSE_CODE_ABNORMAL,
+        WebSocketTransportError,
+    };
 
     const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const OP_TEXT: u8 = 0x1;
@@ -874,9 +886,11 @@ mod ws_wire_tests {
     #[tokio::test]
     async fn bad_accept_key_text() {
         let error = acquire_connect_error(MockAction::BadAcceptKey).await;
-        assert!(error
-            .to_string()
-            .ends_with("/codex/responses' failed: Mismatch websocket accept header"));
+        assert!(
+            error
+                .to_string()
+                .ends_with("/codex/responses' failed: Mismatch websocket accept header")
+        );
         assert_eq!(error.error_name(), "Error");
     }
 
@@ -994,7 +1008,9 @@ mod ws_wire_tests {
         };
         assert_eq!(
             error.to_string(),
-            format!("WebSocket connection to 'wss://127.0.0.1:{port}/codex/responses' failed: TLS handshake failed")
+            format!(
+                "WebSocket connection to 'wss://127.0.0.1:{port}/codex/responses' failed: TLS handshake failed"
+            )
         );
         assert_eq!(error.error_name(), "Error");
     }

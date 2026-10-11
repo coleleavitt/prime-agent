@@ -6,11 +6,13 @@ use std::sync::Arc;
 use pa_agent::scripted::ScriptedProvider;
 
 use crate::session::manager::SessionManager;
-use crate::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
+use crate::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
 use crate::session_engine::session_commands::{
-    execute_session_command, SessionCommandExecution, SessionCommandParams,
+    SessionCommandExecution,
+    SessionCommandParams,
+    execute_session_command,
 };
-use crate::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
+use crate::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 
 fn model() -> pa_agent::types::Model {
     pa_agent::types::Model {
@@ -114,6 +116,8 @@ async fn the_command_reports_the_pool_the_spend_and_each_grant() {
     let usage = run(&budgeted, "/rlm-token-budget 400k").await;
     assert_eq!(
         usage.error.as_deref(),
-        Some("Usage: /rlm-token-budget (the budget is configured by the global rlmTokenBudget setting)")
+        Some(
+            "Usage: /rlm-token-budget (the budget is configured by the global rlmTokenBudget setting)"
+        )
     );
 }

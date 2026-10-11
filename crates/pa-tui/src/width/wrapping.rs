@@ -1,7 +1,8 @@
 //! Shared wrap boundaries for styled output and counts without output row allocation.
+use ratatui::style::Style;
+
 use super::{char_width, is_whitespace_char, str_width, wrap_unit_len};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 #[derive(Clone, Copy)]
 enum Ending {

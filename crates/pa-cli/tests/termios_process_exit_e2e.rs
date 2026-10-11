@@ -31,12 +31,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::pty::{openpty, Winsize};
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::Pid;
-
 use harness::{ChildSpec, DifferentialHarness, PtyReader, Termios};
+use nix::pty::{Winsize, openpty};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::Pid;
 
 /// The kitty flags push (the arm proof the mounted surface must show).
 const KITTY_FLAGS_PUSH: &[u8] = b"\x1b[>7u";

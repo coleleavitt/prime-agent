@@ -16,21 +16,37 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::dreams::{
-    dreams_path, DreamProbationRecord, DreamStepInput, DreamsLog, DreamsLogContext,
+    DreamProbationRecord,
+    DreamStepInput,
+    DreamsLog,
+    DreamsLogContext,
+    dreams_path,
 };
 use crate::improve::{
-    run_dreaming, select_best_policy, CandidateInput, CandidateSource, CandidateVerdict,
-    DreamResult, DreamerKind, DreamingOptions, DreamingScoreConfig, LeverScanRecord,
+    CandidateInput,
+    CandidateSource,
+    CandidateVerdict,
+    DreamResult,
+    DreamerKind,
+    DreamingOptions,
+    DreamingScoreConfig,
+    LeverScanRecord,
+    run_dreaming,
+    select_best_policy,
 };
 use crate::objective::ReplayObjectiveConfig;
-use crate::policy::{policy_id, ExplorationPolicy};
+use crate::policy::{ExplorationPolicy, policy_id};
 use crate::proposer::ProposalTally;
 use crate::rng::{Seed, SeededRng};
 use crate::rollout::{
-    improvements_of, run_online_exploration, DreamClock, ExploreOptions, ExploreResult,
+    DreamClock,
+    ExploreOptions,
+    ExploreResult,
     ScoreImprovement,
+    improvements_of,
+    run_online_exploration,
 };
-use crate::store::{list_trees, read_tree, DreamStoreError, RecordedTree};
+use crate::store::{DreamStoreError, RecordedTree, list_trees, read_tree};
 use crate::task::DynTask;
 
 /// A rollout's best may sit this far below the probation floor and still reach it.

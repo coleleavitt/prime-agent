@@ -3,7 +3,7 @@
 //! and spot checks of the validator problem strings (the full matrix lives
 //! in the TS-recorded golden corpus, `tests/cloud_protocol_golden.rs`).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -253,9 +253,11 @@ fn codec_round_trip_matches_ts_semantics() {
 
     // The not-valid-JSON reason is engine-specific (serde vs V8); only the
     // TS prefix is pinned.
-    assert!(parse_cloud_message("{nope")
-        .unwrap_err()
-        .starts_with("message is not valid JSON: "));
+    assert!(
+        parse_cloud_message("{nope")
+            .unwrap_err()
+            .starts_with("message is not valid JSON: ")
+    );
     assert_eq!(
         parse_cloud_message("null").unwrap_err(),
         "message must be a JSON object"

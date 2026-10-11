@@ -1,7 +1,7 @@
 //! Editor layout for rendering: layout lines, scroll window, cursor position.
 
 use super::text_utils::char_suffix;
-use super::{word_wrap_line, Editor, LayoutLine};
+use super::{Editor, LayoutLine, word_wrap_line};
 use crate::width::str_width;
 
 impl Editor {

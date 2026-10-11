@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pa_learning::command::{run_learning_command, LearningCommandIo, LearningRunReport};
+use pa_learning::command::{LearningCommandIo, LearningRunReport, run_learning_command};
 
 /// The process's stdout/stderr and the wall clock.
 struct StdIo;
@@ -89,8 +89,9 @@ fn track(report: &LearningRunReport, elapsed: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_learning::command::{LearningOutcome, LearningSubcommand};
+
+    use super::*;
 
     #[test]
     fn the_event_carries_only_its_catalogued_vocabulary_and_counts() {

@@ -3,9 +3,10 @@
 //! lovely-mermaid 0.3.3 under node (`scripts/lovely-mermaid-goldens.mjs`). The unit cases
 //! port `test/mermaid.test.ts`'s `rotateFlowchart` and `layoutMermaid` blocks.
 
-use super::{layout, rotate_flowchart, Axis, Layout, Notice, NoticeLevel, Rotated};
+use serde_json::{Value, json};
+
+use super::{Axis, Layout, Notice, NoticeLevel, Rotated, layout, rotate_flowchart};
 use crate::render::tests::art_json;
-use serde_json::{json, Value};
 
 const POLICY_GOLDENS: &str = include_str!("policy_goldens.json");
 

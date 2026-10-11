@@ -4,15 +4,26 @@
 //! and credential write through the panel.
 
 use std::path::{Path, PathBuf};
-use std::pin::{pin, Pin};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::pin::{Pin, pin};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pa_core::auth::{
-    check_prime_inference_access, fetch_prime_teams, login_prime_inference, AuthStorage,
-    PrimeAccessError, PrimeAuthInfo, PrimeHttp, PrimeInferenceAuthConfig,
-    PrimeInferenceLoginCallbacks, PrimeInferenceLoginOptions, PrimeInferenceLoginResult,
-    PrimeTeamAssignment, PrimeTeamCredential, StoredPrimeTeam, DEFAULT_REQUEST_TIMEOUT_MS,
+    AuthStorage,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+    PrimeAccessError,
+    PrimeAuthInfo,
+    PrimeHttp,
+    PrimeInferenceAuthConfig,
+    PrimeInferenceLoginCallbacks,
+    PrimeInferenceLoginOptions,
+    PrimeInferenceLoginResult,
+    PrimeTeamAssignment,
+    PrimeTeamCredential,
+    StoredPrimeTeam,
+    check_prime_inference_access,
+    fetch_prime_teams,
+    login_prime_inference,
 };
 use pa_tui::auth_panel::{PastePromptTone, PasteStyle, PrimeTeamOption, PrimeTeamPick};
 use pa_tui::provider_auth::ProviderAuthOutcome;
@@ -435,12 +446,14 @@ pub(crate) fn prime_cli_config_path(agent_dir: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use base64::Engine as _;
-    use rsa::pkcs8::DecodePublicKey;
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
+
+    use base64::Engine as _;
+    use rsa::pkcs8::DecodePublicKey;
+
+    use super::*;
 
     type PrimeHttpResponse = pa_core::auth::PrimeHttpResponse;
 
@@ -902,10 +915,12 @@ mod tests {
                     .to_string(),
             )
         );
-        assert!(AuthStorage::create(&agent_dir)
-            .get_all()
-            .get("prime-inference")
-            .is_none());
+        assert!(
+            AuthStorage::create(&agent_dir)
+                .get_all()
+                .get("prime-inference")
+                .is_none()
+        );
         // The core's browser check never ran (the paste won).
         assert_eq!(
             ui.progress_log(),
@@ -928,10 +943,12 @@ mod tests {
             login(&agent_dir, &ui, &http, None, None).await,
             ProviderAuthOutcome::Cancelled
         );
-        assert!(AuthStorage::create(&agent_dir)
-            .get_all()
-            .get("prime-inference")
-            .is_none());
+        assert!(
+            AuthStorage::create(&agent_dir)
+                .get_all()
+                .get("prime-inference")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -981,10 +998,12 @@ mod tests {
                 agent_dir.join("auth.json").display()
             ))
         );
-        assert!(!http
-            .requests()
-            .iter()
-            .any(|request| request.contains("/api/v1/user/teams")));
+        assert!(
+            !http
+                .requests()
+                .iter()
+                .any(|request| request.contains("/api/v1/user/teams"))
+        );
     }
 
     /// A session directory pinned to a team (`prime switch <team>
@@ -1026,10 +1045,12 @@ mod tests {
                 repo.join(".prime/context.json").display()
             ))
         );
-        assert!(!http
-            .requests()
-            .iter()
-            .any(|request| request.contains("/api/v1/user/teams")));
+        assert!(
+            !http
+                .requests()
+                .iter()
+                .any(|request| request.contains("/api/v1/user/teams"))
+        );
     }
 
     #[tokio::test]

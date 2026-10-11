@@ -8,15 +8,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::packages::{
+    MetadataSource,
+    PackageManager,
+    PackageManagerOptions,
+    PathMetadata,
+    ResolvedPaths,
+    ResolvedResource,
+};
 use crate::resources::ResourceLoaderOptions;
 use crate::settings::SettingsManager;
-
-use crate::packages::PathMetadata;
-use crate::packages::{
-    MetadataSource, PackageManager, PackageManagerOptions, ResolvedPaths, ResolvedResource,
-};
 use crate::skills::{
-    SourceInfo as SkillSourceInfo, SourceOrigin as SkillSourceOrigin,
+    SourceInfo as SkillSourceInfo,
+    SourceOrigin as SkillSourceOrigin,
     SourceScope as SkillSourceScope,
 };
 

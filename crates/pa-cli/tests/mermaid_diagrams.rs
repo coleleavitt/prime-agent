@@ -3,7 +3,7 @@
 //! grok-mermaid 0.2.3 rows in the native build (`--no-default-features`), each byte for
 //! byte against the goldens its renderer was generated with.
 
-use pa_tui::markdown::{render_markdown, MarkdownStyle, MermaidMode};
+use pa_tui::markdown::{MarkdownStyle, MermaidMode, render_markdown};
 use serde_json::Value;
 
 /// The rows the assistant-text markdown draws for one `mermaid` fence, as plain text (a
@@ -16,11 +16,7 @@ fn drawn_rows(src: &str, width: usize, streaming: bool) -> Vec<String> {
         .iter()
         .map(|line| {
             let row: String = line.iter().map(|span| span.content.as_str()).collect();
-            if row == "\u{a0}" {
-                String::new()
-            } else {
-                row
-            }
+            if row == "\u{a0}" { String::new() } else { row }
         })
         .collect()
 }

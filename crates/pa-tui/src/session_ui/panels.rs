@@ -2,10 +2,26 @@
 //! summary, the goal and info panels, and the retry-episode collapse.
 
 use super::{
-    key_event_to_id, mpsc, paused_heartbeat_count, picker_viewport_rows, tray_goal_label,
-    AgentView, BashActivityUpdate, CommandCatalogUpdate, DaemonCommand, DockFocusSource,
-    FactoryUpdate, GoalPanel, HeartbeatsUpdate, InfoContent, InfoPanelAction, KeyEvent, Map,
-    Result, SessionUi, Value,
+    AgentView,
+    BashActivityUpdate,
+    CommandCatalogUpdate,
+    DaemonCommand,
+    DockFocusSource,
+    FactoryUpdate,
+    GoalPanel,
+    HeartbeatsUpdate,
+    InfoContent,
+    InfoPanelAction,
+    KeyEvent,
+    Map,
+    Result,
+    SessionUi,
+    Value,
+    key_event_to_id,
+    mpsc,
+    paused_heartbeat_count,
+    picker_viewport_rows,
+    tray_goal_label,
 };
 
 pub(crate) struct ActivityUpdates {
@@ -381,9 +397,10 @@ pub(crate) fn pop_superseded_attempt_row(view: &mut AgentView) -> bool {
 
 #[cfg(test)]
 mod activity_dock_counts_tests {
-    use super::paused_heartbeat_count;
-    use crate::heartbeats_picker::{parse_heartbeat_job, HeartbeatEntry};
     use serde_json::json;
+
+    use super::paused_heartbeat_count;
+    use crate::heartbeats_picker::{HeartbeatEntry, parse_heartbeat_job};
 
     fn entry(job_json: &serde_json::Value) -> HeartbeatEntry {
         HeartbeatEntry {

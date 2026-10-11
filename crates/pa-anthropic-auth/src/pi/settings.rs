@@ -303,7 +303,7 @@ impl PluginSettings {
                     return Err(SettingsError::Corrupt {
                         path: self.path.display().to_string(),
                         cause: error.to_string(),
-                    })
+                    });
                 }
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,

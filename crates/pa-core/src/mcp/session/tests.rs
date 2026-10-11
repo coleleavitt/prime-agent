@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::*;
@@ -997,12 +997,16 @@ async fn an_anonymous_streamable_http_server_lists_and_calls() {
         ok(&json!({ "value": "ok" }), true)
     );
     let requests = server.requests();
-    assert!(requests
-        .iter()
-        .all(|request| request.header("x-team") == Some("eng")));
-    assert!(requests
-        .iter()
-        .all(|request| request.header("authorization").is_none()));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.header("x-team") == Some("eng"))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.header("authorization").is_none())
+    );
     harness.sessions.close_all().await;
 }
 
@@ -1027,10 +1031,12 @@ async fn http_headers_carry_the_bearer_env_token_last() {
             .await["ok"],
         json!(true)
     );
-    assert!(server
-        .requests()
-        .iter()
-        .all(|request| request.header("authorization") == Some("Bearer env-secret")));
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| request.header("authorization") == Some("Bearer env-secret"))
+    );
     harness.sessions.close_all().await;
 }
 
@@ -1051,10 +1057,12 @@ async fn a_redirecting_http_endpoint_never_receives_a_followed_request() {
     );
     let reply = harness.call("svc", "http/raw.tool", json!({})).await;
     assert_eq!(reply["error"]["type"], json!("RuntimeError"), "{reply}");
-    assert!(!reply["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("secret"));
+    assert!(
+        !reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("secret")
+    );
     assert_eq!(target.requests().len(), 0);
 }
 
@@ -1078,10 +1086,12 @@ async fn an_integration_call_is_a_per_call_connection_with_its_headers() {
         harness.request("mcp.integration.call_tool", call).await,
         ok(&json!({ "value": "x" }), false)
     );
-    assert!(server
-        .requests()
-        .iter()
-        .all(|request| request.header("authorization") == Some("Bearer tok-xyz")));
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| request.header("authorization") == Some("Bearer tok-xyz"))
+    );
     // Two connections, each initialized once and closed.
     assert_eq!(server.initializations(), 2);
     assert_eq!(harness.sessions.open_connections().await, 0);

@@ -26,10 +26,10 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const TIMEOUT: Duration = Duration::from_mins(1);
 
@@ -121,9 +121,9 @@ fn shutdown_sandboxed_daemon(socket: &std::path::Path) {
         return;
     };
     let frame = format!(
-            "{{\"type\":\"command\",\"id\":\"shutdown-test\",\"protocol\":{{\"name\":\"prime-agent.daemon\",\"version\":{}}},\"command\":{{\"type\":\"shutdown\"}}}}\n",
-            pa_types::daemon::DAEMON_PROTOCOL_VERSION
-        );
+        "{{\"type\":\"command\",\"id\":\"shutdown-test\",\"protocol\":{{\"name\":\"prime-agent.daemon\",\"version\":{}}},\"command\":{{\"type\":\"shutdown\"}}}}\n",
+        pa_types::daemon::DAEMON_PROTOCOL_VERSION
+    );
     let _ = stream.write_all(frame.as_bytes());
     let _ = stream.flush();
     std::thread::sleep(Duration::from_millis(300));

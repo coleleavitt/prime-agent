@@ -4,11 +4,13 @@
 //! the user-message transcript block ([`PromptTokenMask`]), and the session-command echo row
 //! ([`slash_command_source_spans`]).
 
+use std::sync::OnceLock;
+
+use pa_types::slash_commands::{SlashCommandRegistry, parse_slash_command};
+use ratatui::style::{Modifier, Style};
+
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use pa_types::slash_commands::{parse_slash_command, SlashCommandRegistry};
-use ratatui::style::{Modifier, Style};
-use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArgTokenSpan {
@@ -620,9 +622,11 @@ mod tests {
         );
         // Argument-taking commands highlight a bare separator; others do not.
         let line = style_queued_message_preview(&theme(), "/new x -- y", "Steering");
-        assert!(spans(&line)
-            .iter()
-            .any(|(text, style)| { text == "--" && *style == md_link() }));
+        assert!(
+            spans(&line)
+                .iter()
+                .any(|(text, style)| { text == "--" && *style == md_link() })
+        );
         let line = style_queued_message_preview(&theme(), "/hotkeys x -- y", "Steering");
         assert!(
             !spans(&line).iter().any(|(text, _)| text == "--"),
@@ -730,7 +734,10 @@ mod tests {
     fn mask_replaces_token_graphemes_with_same_width_placeholders() {
         let mask = PromptTokenMask::new("fix @Cargo.toml now", 0, false);
 
-        assert_eq!(mask.text, "fix \u{E000}\u{E001}\u{E002}\u{E003}\u{E004}\u{E005}\u{E006}\u{E007}\u{E008}\u{E009}\u{E00A} now");
+        assert_eq!(
+            mask.text,
+            "fix \u{E000}\u{E001}\u{E002}\u{E003}\u{E004}\u{E005}\u{E006}\u{E007}\u{E008}\u{E009}\u{E00A} now"
+        );
         // A wide grapheme pads its placeholder with the extra-width char
         // per extra column: "@" spans one column, "\u{65E5}" spans two.
         let mask = PromptTokenMask::new("@\u{65E5}", 0, false);

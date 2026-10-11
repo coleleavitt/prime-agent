@@ -1,6 +1,7 @@
-use super::*;
-use crate::tree_nodes::{build_tree, TreeNodeData};
 use serde_json::Map;
+
+use super::*;
+use crate::tree_nodes::{TreeNodeData, build_tree};
 
 fn message_node(id: &str, parent: Option<&str>, timestamp: &str, text: &str) -> TreeNodeData {
     TreeNodeData {

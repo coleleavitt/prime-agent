@@ -9,5 +9,5 @@ mod cell;
 pub use cell::parse_ipython_bash_cell;
 mod python;
 
-pub use bash::{preview_bash_command, CodePreview, CodePreviewLanguage};
+pub use bash::{CodePreview, CodePreviewLanguage, preview_bash_command};
 pub use python::{preview_ipython_code, python_statement_lines};

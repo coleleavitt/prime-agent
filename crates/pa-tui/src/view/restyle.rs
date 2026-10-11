@@ -99,10 +99,11 @@ impl AgentView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::chat::ChatEntry;
-    use crate::Span;
     use ratatui::style::Modifier;
+
+    use super::*;
+    use crate::Span;
+    use crate::chat::ChatEntry;
 
     /// A view whose first user row renders on a known window row.
     fn view() -> AgentView {

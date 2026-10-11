@@ -3,13 +3,13 @@
 use pa_core::packages::{PackageManager, ProgressEvent, ProgressEventKind, UserOrProject};
 use pa_core::update::version::UpdateChannel;
 
-use crate::config::{get_agent_dir, APP_NAME, CONFIG_DIR_NAME};
-use crate::self_update::SelfUpdateOptions;
-
+use crate::config::{APP_NAME, CONFIG_DIR_NAME, get_agent_dir};
 use crate::public_command::{
-    DAEMON_UPDATE_RESTART_COORDINATOR_FLAG, DAEMON_UPDATE_RESTART_ORIGIN_FLAG,
+    DAEMON_UPDATE_RESTART_COORDINATOR_FLAG,
+    DAEMON_UPDATE_RESTART_ORIGIN_FLAG,
     DAEMON_UPDATE_RESTART_STATUS_FLAG,
 };
+use crate::self_update::SelfUpdateOptions;
 
 /// Result of running a package command: printed output is handled here, and the
 /// exit code is reported for the caller to propagate.
@@ -684,9 +684,11 @@ mod tests {
         let options = parse(&["update", "--stable"]);
         assert_eq!(options.channel, Some(UpdateChannel::Stable));
         // The conflict survives: both channel flags never resolve to one.
-        assert!(parse(&["update", "--nightly", "--stable"])
-            .conflicting_options
-            .is_some());
+        assert!(
+            parse(&["update", "--nightly", "--stable"])
+                .conflicting_options
+                .is_some()
+        );
         // The other commands reject both flags outright.
         assert!(parse(&["install", "--force"]).invalid_option.is_some());
         assert!(parse(&["remove", "--nightly"]).invalid_option.is_some());

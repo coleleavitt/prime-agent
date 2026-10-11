@@ -3,14 +3,23 @@
 
 use pa_types::session::{AgentMessage, FileEntry};
 
-use super::compaction::{estimate_context_tokens, find_cut_point, CutPointResult};
-use super::compaction_exec;
+use super::compaction::{CutPointResult, estimate_context_tokens, find_cut_point};
 use super::compaction_exec::{
-    build_summarization_request, build_turn_prefix_request, compaction_entry_for,
-    complete_summary_call, details_for, file_ops_block, split_summary, summed_usage,
-    CompactionDetails, CompactionResult, SummaryDeltaSink, SummarySlice, NO_PRIOR_HISTORY,
+    CompactionDetails,
+    CompactionResult,
+    NO_PRIOR_HISTORY,
+    SummaryDeltaSink,
+    SummarySlice,
+    build_summarization_request,
+    build_turn_prefix_request,
+    compaction_entry_for,
+    complete_summary_call,
+    details_for,
+    file_ops_block,
+    split_summary,
+    summed_usage,
 };
-use super::compaction_utils;
+use super::{compaction_exec, compaction_utils};
 use crate::session::manager::SessionManager;
 
 // The bindings above re-anchor the child's `super::compaction_exec::` and
@@ -18,7 +27,8 @@ use crate::session::manager::SessionManager;
 mod summarization;
 pub(crate) use summarization::summarizer_request_tokens;
 use summarization::{
-    estimate_summary_request_tokens, history_summary_completion_budget,
+    estimate_summary_request_tokens,
+    history_summary_completion_budget,
     turn_prefix_summary_completion_budget,
 };
 
@@ -26,7 +36,7 @@ mod recent_state_anchor;
 
 // The re-exports keep every `compact_session::` path stable.
 mod prepare;
-pub use prepare::{compute_cut, prepare_compaction, CompactSkip, CompactionPreparation};
+pub use prepare::{CompactSkip, CompactionPreparation, compute_cut, prepare_compaction};
 
 #[cfg(test)]
 use super::{compaction, harness_digest, messages, session_message_to_loop};

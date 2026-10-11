@@ -6,10 +6,17 @@ use std::sync::{Arc, Mutex};
 use pa_types::sync::MutexExt;
 use serde_json::json;
 
-use crate::providers::anthropic::{stream_anthropic, AnthropicOptions};
+use crate::providers::anthropic::{AnthropicOptions, stream_anthropic};
 use crate::request_hooks::{
-    install_request_hooks, Admission, CallerOptions, LocalRefusal, OutgoingRequest, PendingRequest,
-    ProviderRequestHooks, RejectedRequest, Rejection,
+    Admission,
+    CallerOptions,
+    LocalRefusal,
+    OutgoingRequest,
+    PendingRequest,
+    ProviderRequestHooks,
+    RejectedRequest,
+    Rejection,
+    install_request_hooks,
 };
 use crate::types::{AssistantContent, Context, Model, StopReason, StreamOptions, TextContent};
 
@@ -542,10 +549,12 @@ async fn a_refused_request_is_never_sent_and_fails_with_the_refusal() {
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
     assert_eq!(message.stop_reason, StopReason::Error);
-    assert!(message
-        .error_message
-        .as_deref()
-        .is_some_and(|error| error.contains("blocked by policy")));
+    assert!(
+        message
+            .error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("blocked by policy"))
+    );
     assert_eq!(*bearers.lock_or_recover(), Vec::<String>::new());
 }
 

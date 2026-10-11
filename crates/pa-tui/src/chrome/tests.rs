@@ -213,9 +213,11 @@ fn activity_dock_frames_one_row_with_running_paused_and_goal_counts() {
         text,
         " \u{25c6} 0 subagents  \u{b7}  \u{25f7} 0 heartbeats  \u{b7}  \u{25b8} 0 shells  \u{b7}  \u{2699} 0 factory"
     );
-    assert!(frame[1]
-        .iter()
-        .all(|span| span.style.fg != theme.fg_style(ThemeColor::Success).fg));
+    assert!(
+        frame[1]
+            .iter()
+            .all(|span| span.style.fg != theme.fg_style(ThemeColor::Success).fg)
+    );
     // An overflowing row truncates INSIDE the width: the ellipsis
     // reserves its own column.
     let dock = ActivityDock {
@@ -627,9 +629,10 @@ fn speed_footer_is_one_dim_row_truncated_to_width() {
     assert!(!text.contains("…"));
 }
 
+use serde_json::json;
+
 use super::*;
 use crate::theme::{ColorMode, Theme};
-use serde_json::json;
 
 fn theme() -> Theme {
     Theme::builtin("prime", ColorMode::TrueColor)
@@ -657,9 +660,11 @@ fn splash_renders_logo_version_model_and_cwd() {
     assert!(lines.iter().any(|l| text(l).contains("prime agent v0.0.0")));
     assert!(lines.iter().any(|l| text(l).contains("model faux-1")));
     assert!(lines.iter().any(|l| text(l).contains("cwd /tmp/project")));
-    assert!(lines
-        .iter()
-        .any(|l| text(l).contains("\u{2597}\u{2584}\u{2584}")));
+    assert!(
+        lines
+            .iter()
+            .any(|l| text(l).contains("\u{2597}\u{2584}\u{2584}"))
+    );
 }
 
 #[test]

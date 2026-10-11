@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use crate::event_stream::AssistantMessageEventStream;
-use crate::test_mock_http::{serve, MockHttp, MockResponse};
+use crate::test_mock_http::{MockHttp, MockResponse, serve};
 use crate::types::{Context, Model, StreamOptions};
 
 fn model(api: &str, provider: &str, base_url: &str) -> Model {
@@ -48,14 +48,16 @@ async fn sent_content_type(
 #[tokio::test]
 async fn json_providers_send_an_application_json_content_type() {
     use crate::providers::azure_openai_responses::{
-        stream_azure_openai_responses, AzureOpenAIResponsesOptions,
+        AzureOpenAIResponsesOptions,
+        stream_azure_openai_responses,
     };
-    use crate::providers::google::{stream_google, GoogleOptions};
-    use crate::providers::google_vertex::{stream_google_vertex, GoogleVertexOptions};
+    use crate::providers::google::{GoogleOptions, stream_google};
+    use crate::providers::google_vertex::{GoogleVertexOptions, stream_google_vertex};
     use crate::providers::openai_completions::{
-        stream_openai_completions, OpenAICompletionsOptions,
+        OpenAICompletionsOptions,
+        stream_openai_completions,
     };
-    use crate::providers::openai_responses::{stream_openai_responses, OpenAIResponsesOptions};
+    use crate::providers::openai_responses::{OpenAIResponsesOptions, stream_openai_responses};
 
     let context = Context::default();
     let mut sent = Vec::new();
@@ -144,7 +146,8 @@ async fn json_providers_send_an_application_json_content_type() {
 #[tokio::test]
 async fn a_configured_content_type_is_kept_without_a_duplicate() {
     use crate::providers::openai_completions::{
-        stream_openai_completions, OpenAICompletionsOptions,
+        OpenAICompletionsOptions,
+        stream_openai_completions,
     };
     let server = rejecting_server().await;
     let mut base = base_options();

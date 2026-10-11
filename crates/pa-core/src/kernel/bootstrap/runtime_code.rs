@@ -190,8 +190,9 @@ if _PRIME_AGENT_SKILL_IMPORT_ERRORS:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn bootstrap_code_without_skills_binds_rlm() {
@@ -222,15 +223,24 @@ mod tests {
                 format!(
                     "{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}{{\"websearch\":\"No module named 'websearch'\"}}\n"
                 ),
-                Some(vec![("websearch".into(), "No module named 'websearch'".into())]),
+                Some(vec![(
+                    "websearch".into(),
+                    "No module named 'websearch'".into(),
+                )]),
             ),
             (
                 format!("noise\n{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}{{\"edit\":\"boom\"}}"),
                 Some(vec![("edit".into(), "boom".into())]),
             ),
             ("some unrelated kernel output".to_string(), None),
-            (format!("{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}not json"), None),
-            (format!("{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}{{}}"), None),
+            (
+                format!("{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}not json"),
+                None,
+            ),
+            (
+                format!("{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}{{}}"),
+                None,
+            ),
         ];
         for (stdout, expected) in cases {
             assert_eq!(

@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::menu_panel::{fill_row, hug_row, menu_list_layout, plain_cell, status_dot};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, truncate_line, wrap_text};
@@ -14,9 +14,18 @@ use crate::{Line, Span};
 mod data;
 
 pub use data::{
-    default_heartbeat_name, format_timestamp, next_run_label, parse_heartbeat_job,
-    parse_heartbeats, scope_heartbeats, session_label, single_line, sort_heartbeats, source_label,
-    HeartbeatEntry, HeartbeatJob,
+    HeartbeatEntry,
+    HeartbeatJob,
+    default_heartbeat_name,
+    format_timestamp,
+    next_run_label,
+    parse_heartbeat_job,
+    parse_heartbeats,
+    scope_heartbeats,
+    session_label,
+    single_line,
+    sort_heartbeats,
+    source_label,
 };
 
 mod schedule;
@@ -26,7 +35,13 @@ pub use schedule::human_schedule;
 mod render;
 
 use render::{
-    action_row, detail_block_lines, detail_pairs, error_line, hint_line, pane_header_lines, Columns,
+    Columns,
+    action_row,
+    detail_block_lines,
+    detail_pairs,
+    error_line,
+    hint_line,
+    pane_header_lines,
 };
 
 const PREFERRED_VISIBLE: usize = 8;

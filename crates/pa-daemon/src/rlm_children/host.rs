@@ -2,17 +2,49 @@
 //! (`spawn`, `create_session`, `list_subagents`, `interrupt_subagent`, `delete_subagent`,
 //! `collect`, `rename`) over the supervisor's child-sessions registry,
 //! with the spawn-admission helpers only this surface uses.
-use super::{
-    assert_thinking_supported, bail, create_default_rlm_subagent_session_name,
-    create_rlm_child_terminal_notice, json, now_ms, resolve_child_model, rlm_child_label,
-    spawn_name_unavailable, Arc, ChildCloseReason, ChildRecord, Context, DaemonCommand, Duration,
-    Instant, Mutex, Path, PathBuf, Result, RlmChildResult, RlmChildTerminalNotice,
-    RlmCreateSessionHandle, RlmCreateSessionRequest, RlmDeleteSubagentResult, RlmHostFuture,
-    RlmInterruptSubagentResult, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry, RlmSubagentHost,
-    SpawnNameReservationGuard, SupervisorChildSessions, SupervisorChildSessionsInner, Value,
-    INTERRUPT_RUN_MARKER, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS, WATCH_SETTLE_GRACE_MS,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    Arc,
+    ChildCloseReason,
+    ChildRecord,
+    Context,
+    DaemonCommand,
+    Duration,
+    INTERRUPT_RUN_MARKER,
+    Instant,
+    KILL_TIMEOUT_MS,
+    Mutex,
+    Path,
+    PathBuf,
+    RENAME_TIMEOUT_MS,
+    Result,
+    RlmChildResult,
+    RlmChildTerminalNotice,
+    RlmCreateSessionHandle,
+    RlmCreateSessionRequest,
+    RlmDeleteSubagentResult,
+    RlmHostFuture,
+    RlmInterruptSubagentResult,
+    RlmSpawnHandle,
+    RlmSpawnRequest,
+    RlmSubagentEntry,
+    RlmSubagentHost,
+    SpawnNameReservationGuard,
+    SupervisorChildSessions,
+    SupervisorChildSessionsInner,
+    Value,
+    WATCH_SETTLE_GRACE_MS,
+    assert_thinking_supported,
+    bail,
+    create_default_rlm_subagent_session_name,
+    create_rlm_child_terminal_notice,
+    json,
+    now_ms,
+    resolve_child_model,
+    rlm_child_label,
+    spawn_name_unavailable,
+};
 
 /// Resolve the child model with the daemon `allowedModels` allowlist enforced, refusing loudly with
 /// the typed error and the `model refused` event; the settings read runs on the blocking pool.
@@ -458,7 +490,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // run to abort.
                 Err(error) if format!("{error:#}").starts_with("Unknown active session:") => false,
                 Err(error) => {
-                    return Err(error).with_context(|| format!("interrupt RLM child \"{target}\""))
+                    return Err(error).with_context(|| format!("interrupt RLM child \"{target}\""));
                 }
             };
             if aborted && record.settled_status.is_none() {
@@ -656,11 +688,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                             .collect::<Vec<_>>();
                         match matches.len() {
                             0 => return Err(miss),
-                            1 => deleted_results.push(
-                                SupervisorChildSessions::deleted_collect_result(
-                                    &matches[0],
-                                ),
-                            ),
+                            1 => deleted_results
+                                .push(SupervisorChildSessions::deleted_collect_result(&matches[0])),
                             _ => bail!(
                                 "RLM child selector \"{target}\" is ambiguous in the current parent session"
                             ),
@@ -833,7 +862,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
             };
             if let Some(record) = &record {
                 if record.lock().await.closed_by_parent {
-                    bail!("rlm.rename can only rename the current session or one of its direct children");
+                    bail!(
+                        "rlm.rename can only rename the current session or one of its direct children"
+                    );
                 }
             }
             // The rename itself is daemon-owned: the supervisor's live

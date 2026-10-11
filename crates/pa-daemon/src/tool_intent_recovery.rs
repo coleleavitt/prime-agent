@@ -6,8 +6,9 @@
 //! runs continue on their own), and never while other work holds the
 //! boundary.
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
+
+use pa_types::sync::MutexExt;
 
 use crate::agent_engine::AgentSessionEngine;
 

@@ -4,21 +4,55 @@
 //! checker, the verdicts, the report renderer, and the CLI parsing. No
 //! test here spends tokens or needs a live model.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    build_baseline_prompt, build_broken_dag, build_builder_dag, build_collector_prompt,
-    build_factory_parent_prompt, build_files_node_prompt, build_harness_state_file,
-    build_pr_fixing_prompt_template, build_pr_manager_machine, build_pr_monitoring_prompt,
-    build_pr_reviewing_prompt_template, build_reference_factories, build_reference_parent_prompts,
-    build_report_node_prompt, build_resident_watcher_dag, build_review_sweep_dag,
-    build_review_sweep_fail_dag, build_reviewer_prompt_template, build_task_a_prompt,
-    build_task_b_prompt_template, build_watcher_prompt, builder_marker,
-    check_no_orchestration_code, check_replay_ledger, check_task_success, compute_verdicts,
-    parse_answer_line, parse_eval_args, parse_fenced_json, render_markdown_report,
-    review_issue_ids, run_replay_checks, serialize_eval_report, EvalArgsError, EvalArm,
-    EvalReportFile, FactoryEvalConfig, FactoryEvalTrialResult, ParsedAnswer, ReferenceFactoryKind,
-    TaskCheckOutcome, TrialVerdict, MAX_WIDTH, NODE_BUDGET_MS, REVIEW_FOREACH_MAX, RUN_BUDGET_MS,
+    EvalArgsError,
+    EvalArm,
+    EvalReportFile,
+    FactoryEvalConfig,
+    FactoryEvalTrialResult,
+    MAX_WIDTH,
+    NODE_BUDGET_MS,
+    ParsedAnswer,
+    REVIEW_FOREACH_MAX,
+    RUN_BUDGET_MS,
+    ReferenceFactoryKind,
+    TaskCheckOutcome,
+    TrialVerdict,
+    build_baseline_prompt,
+    build_broken_dag,
+    build_builder_dag,
+    build_collector_prompt,
+    build_factory_parent_prompt,
+    build_files_node_prompt,
+    build_harness_state_file,
+    build_pr_fixing_prompt_template,
+    build_pr_manager_machine,
+    build_pr_monitoring_prompt,
+    build_pr_reviewing_prompt_template,
+    build_reference_factories,
+    build_reference_parent_prompts,
+    build_report_node_prompt,
+    build_resident_watcher_dag,
+    build_review_sweep_dag,
+    build_review_sweep_fail_dag,
+    build_reviewer_prompt_template,
+    build_task_a_prompt,
+    build_task_b_prompt_template,
+    build_watcher_prompt,
+    builder_marker,
+    check_no_orchestration_code,
+    check_replay_ledger,
+    check_task_success,
+    compute_verdicts,
+    parse_answer_line,
+    parse_eval_args,
+    parse_fenced_json,
+    render_markdown_report,
+    review_issue_ids,
+    run_replay_checks,
+    serialize_eval_report,
 };
 
 const WIDTH: u64 = 6;
@@ -825,8 +859,10 @@ fn the_resident_watcher_prompt_replies_once_and_holds_its_turn_open() {
     assert!(watcher.contains("Do not end your turn before the sleep finishes"));
     // The pr-manager's monitoring state idles the same way with its own marker.
     let monitoring = build_pr_monitoring_prompt();
-    assert!(monitoring
-        .contains("agent_message.send(\"MERGE-READY swr-marker\", receiver_role=\"parent\")"));
+    assert!(
+        monitoring
+            .contains("agent_message.send(\"MERGE-READY swr-marker\", receiver_role=\"parent\")")
+    );
 }
 
 #[test]
@@ -985,18 +1021,24 @@ fn accepts_a_complete_review_sweep_and_rejects_a_missing_planted_issue() {
     let short = answer(&json!({ "issues": ["AUDIT-A1", "AUDIT-B2"], "state": "done" }));
     let outcome = check(&factory, short.as_ref(), Some(&review_sweep_ledger()));
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-B1")));
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-C1")));
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-D1")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-B1"))
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-C1"))
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-D1"))
+    );
 }
 
 #[test]
@@ -1030,10 +1072,12 @@ fn cross_checks_the_review_sweep_ledger_against_the_aggregator_preview() {
         answer(&json!({ "issues": review_issue_ids(), "state": "done" })).as_ref(),
         Some(&wrong_state),
     );
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("ledger state is failed, expected done")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("ledger state is failed, expected done"))
+    );
 }
 
 #[test]
@@ -1058,10 +1102,13 @@ fn checks_the_builder_markers_against_the_collector_preview() {
         Some(&ledger),
     );
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("swb-marker-2 missing from the collector answer preview")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem
+                .contains("swb-marker-2 missing from the collector answer preview"))
+    );
 }
 
 #[test]
@@ -1091,14 +1138,18 @@ fn checks_the_resident_teardown_tasks_settled_watcher_cancelled() {
     }));
     let outcome = check(&factory, good.as_ref(), Some(&bad_ledger));
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("expected stopped")));
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("watcher node is not cancelled")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("expected stopped"))
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("watcher node is not cancelled"))
+    );
 }
 
 #[test]
@@ -1126,10 +1177,12 @@ fn checks_the_escalation_probe_answer_and_ledger() {
         Some(&ledger),
     );
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("report node started despite the escalation pause")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("report node started despite the escalation pause"))
+    );
 }
 
 #[test]
@@ -1178,10 +1231,12 @@ fn baseline_arms_cross_check_the_collect_ledger_against_the_answer_ids() {
         Some(&short_ledger),
     );
     assert!(!missing.ok);
-    assert!(missing
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-B1 missing from the baseline collect ledger")));
+    assert!(
+        missing
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-B1 missing from the baseline collect ledger"))
+    );
 
     // An ANSWER id absent from the ledger must fail (the parent cannot invent it).
     let mut invented_issues: Vec<String> =
@@ -1193,10 +1248,13 @@ fn baseline_arms_cross_check_the_collect_ledger_against_the_answer_ids() {
         Some(&baseline_ledger),
     );
     assert!(!invented.ok);
-    assert!(invented
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-Z9 is not present in the baseline collect ledger")));
+    assert!(
+        invented
+            .problems
+            .iter()
+            .any(|problem| problem
+                .contains("AUDIT-Z9 is not present in the baseline collect ledger"))
+    );
 
     // A missing ledger fails completion instead of passing on the self-reported ANSWER.
     let no_ledger = check_baseline(
@@ -1205,10 +1263,12 @@ fn baseline_arms_cross_check_the_collect_ledger_against_the_answer_ids() {
         None,
     );
     assert!(!no_ledger.ok);
-    assert!(no_ledger
-        .problems
-        .iter()
-        .any(|problem| problem.contains("baseline collect ledger missing")));
+    assert!(
+        no_ledger
+            .problems
+            .iter()
+            .any(|problem| problem.contains("baseline collect ledger missing"))
+    );
 }
 
 #[test]
@@ -1240,10 +1300,11 @@ fn baseline_arms_check_builder_markers_and_the_resident_chain_against_the_collec
         Some(&short),
     );
     assert!(!missing.ok);
-    assert!(missing
-        .problems
-        .iter()
-        .any(|problem| problem.contains("swb-marker-2 missing from the baseline collect ledger")));
+    assert!(
+        missing.problems.iter().any(
+            |problem| problem.contains("swb-marker-2 missing from the baseline collect ledger")
+        )
+    );
 
     let resident = by_kind(ReferenceFactoryKind::ResidentWatcher);
     let resident_ledger = json!({ "task-a": "STEP swt-1", "task-b": "STEP swt-2" });
@@ -1261,10 +1322,12 @@ fn baseline_arms_check_builder_markers_and_the_resident_chain_against_the_collec
         Some(&resident_ledger),
     );
     assert!(!missing_task.ok);
-    assert!(missing_task
-        .problems
-        .iter()
-        .any(|problem| problem.contains("swt-2 missing from the ANSWER line")));
+    assert!(
+        missing_task
+            .problems
+            .iter()
+            .any(|problem| problem.contains("swt-2 missing from the ANSWER line"))
+    );
 }
 
 fn pr_answer(overrides: &Value) -> Option<ParsedAnswer> {
@@ -1303,26 +1366,32 @@ fn rejects_an_unapproved_final_verdict_wrong_rounds_and_missing_defects() {
         None,
     );
     assert!(!unapproved.ok);
-    assert!(unapproved
-        .problems
-        .iter()
-        .any(|problem| problem.contains("ANSWER approved is false, expected yes")));
+    assert!(
+        unapproved
+            .problems
+            .iter()
+            .any(|problem| problem.contains("ANSWER approved is false, expected yes"))
+    );
     let wrong_rounds = check(&factory, pr_answer(&json!({ "rounds": 3 })).as_ref(), None);
     assert!(!wrong_rounds.ok);
-    assert!(wrong_rounds
-        .problems
-        .iter()
-        .any(|problem| problem.contains("ANSWER rounds is 3, expected 2")));
+    assert!(
+        wrong_rounds
+            .problems
+            .iter()
+            .any(|problem| problem.contains("ANSWER rounds is 3, expected 2"))
+    );
     let missing = check(
         &factory,
         pr_answer(&json!({ "defects": ["AUDIT-A1"] })).as_ref(),
         None,
     );
     assert!(!missing.ok);
-    assert!(missing
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-B1 missing from the ANSWER line")));
+    assert!(
+        missing
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-B1 missing from the ANSWER line"))
+    );
 }
 
 #[test]
@@ -1348,10 +1417,12 @@ fn cross_checks_the_machine_ledger_review_rounds_the_fix_ledger_and_the_resident
     }
     let outcome = check(&factory, pr_answer(&json!({})).as_ref(), Some(&bad));
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("ledger reviewing entries_used is 3, expected 2")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("ledger reviewing entries_used is 3, expected 2"))
+    );
 
     // An unapproved final verdict in the reviewing answer fails even when the
     // ANSWER claims approval.
@@ -1368,10 +1439,12 @@ fn cross_checks_the_machine_ledger_review_rounds_the_fix_ledger_and_the_resident
     }
     let outcome = check(&factory, pr_answer(&json!({})).as_ref(), Some(&bad));
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem.contains("final reviewing verdict is not approved true")));
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|problem| problem.contains("final reviewing verdict is not approved true"))
+    );
 
     // A multi-line fenced verdict parses (the accepted review fix: a
     // pretty-printed verdict is a valid verdict).
@@ -1412,10 +1485,12 @@ fn accepts_the_baseline_arm_against_the_collect_dump_ids_rounds_no_inventions() 
     });
     let missing = check_baseline(&factory, pr_answer(&json!({})).as_ref(), Some(&short));
     assert!(!missing.ok);
-    assert!(missing
-        .problems
-        .iter()
-        .any(|problem| problem.contains("AUDIT-B1 missing from the baseline collect ledger")));
+    assert!(
+        missing
+            .problems
+            .iter()
+            .any(|problem| problem.contains("AUDIT-B1 missing from the baseline collect ledger"))
+    );
 
     // A rounds value the dump never recorded fails.
     let wrong_rounds = json!({
@@ -1428,11 +1503,9 @@ fn accepts_the_baseline_arm_against_the_collect_dump_ids_rounds_no_inventions() 
         Some(&wrong_rounds),
     );
     assert!(!outcome.ok);
-    assert!(outcome
-        .problems
-        .iter()
-        .any(|problem| problem
-            .contains("ANSWER rounds 2 is not present in the baseline collect ledger")));
+    assert!(outcome.problems.iter().any(|problem| {
+        problem.contains("ANSWER rounds 2 is not present in the baseline collect ledger")
+    }));
 }
 
 // -- the replay checker ---------------------------------------------------
@@ -1546,10 +1619,12 @@ fn flags_a_wait_settled_node_that_spawned_instances() {
     }));
     let result = check_replay_ledger(&ledger);
     assert!(!result.ok);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("settled a wait but spawned")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("settled a wait but spawned"))
+    );
 }
 
 #[test]
@@ -1563,10 +1638,12 @@ fn flags_transition_events_missing_their_from_to_endpoints() {
     first_fire.as_object_mut().expect("object").remove("from");
     let result = check_replay_ledger(&ledger);
     assert!(!result.ok);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("requires from and to states")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("requires from and to states"))
+    );
 }
 
 #[test]
@@ -1575,8 +1652,9 @@ fn cross_checks_usage_transitions_fired_against_the_transition_fired_events() {
     ledger["usage"]["transitions_fired"] = json!(3);
     let result = check_replay_ledger(&ledger);
     assert!(!result.ok);
-    assert!(result.problems.iter().any(|problem| problem
-        .contains("usage.transitions_fired 3 does not match 4 transition_fired event(s)")));
+    assert!(result.problems.iter().any(|problem| {
+        problem.contains("usage.transitions_fired 3 does not match 4 transition_fired event(s)")
+    }));
 }
 
 #[test]
@@ -1590,10 +1668,12 @@ fn flags_transitions_that_reference_unknown_states() {
     first_fire["to"] = json!("no-such-state");
     let result = check_replay_ledger(&ledger);
     assert!(!result.ok);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("transitions to unknown state \"no-such-state\"")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("transitions to unknown state \"no-such-state\""))
+    );
 }
 
 #[test]
@@ -1608,10 +1688,12 @@ fn rejects_a_ledger_that_does_not_match_the_status_shape() {
     for case in cases {
         let result = check_replay_ledger(&case);
         assert!(!result.ok, "shape must be rejected: {case}");
-        assert!(result
-            .problems
-            .iter()
-            .any(|problem| problem.contains("does not match the factory status shape")));
+        assert!(
+            result
+                .problems
+                .iter()
+                .any(|problem| problem.contains("does not match the factory status shape"))
+        );
     }
 }
 
@@ -1629,10 +1711,12 @@ fn flags_a_settled_done_event_without_a_duration() {
     }));
     let result = check_replay_ledger(&ledger);
     assert!(!result.ok);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("settles done without a duration_ms")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("settles done without a duration_ms"))
+    );
 }
 
 #[test]
@@ -1647,10 +1731,12 @@ fn flags_non_increasing_and_duplicate_event_seqs() {
         "usage": { "spawns": 0, "settled": 0, "tool_uses": 0, "max_parallel": 8, "running": 0 }
     }));
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("non-increasing seq")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("non-increasing seq"))
+    );
 }
 
 #[test]
@@ -1667,10 +1753,12 @@ fn flags_a_dropped_event_as_a_seq_gap_within_the_window() {
         "usage": { "spawns": 1, "settled": 1, "tool_uses": 0, "max_parallel": 8, "running": 0 }
     }));
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("seq gap: expected 3, got 4 (dropped event)")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("seq gap: expected 3, got 4 (dropped event)"))
+    );
 }
 
 #[test]
@@ -1712,14 +1800,18 @@ fn flags_unknown_event_kinds_and_stages() {
         "usage": { "spawns": 1, "settled": 1, "tool_uses": 0, "max_parallel": 8, "running": 0 }
     }));
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("unknown kind: \"teleported\"")));
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("unknown stage: \"hallucinated\"")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("unknown kind: \"teleported\""))
+    );
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("unknown stage: \"hallucinated\""))
+    );
 }
 
 #[test]
@@ -1728,14 +1820,19 @@ fn flags_usage_counts_that_disagree_with_the_event_stream() {
     ledger["usage"]["spawns"] = json!(5);
     ledger["usage"]["settled"] = json!(7);
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("usage.spawns 5 does not match 6 spawned event(s)")));
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("usage.settled 7 does not match 6 collect settlement(s)")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("usage.spawns 5 does not match 6 spawned event(s)"))
+    );
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem
+                .contains("usage.settled 7 does not match 6 collect settlement(s)"))
+    );
 }
 
 #[test]
@@ -1744,10 +1841,12 @@ fn flags_a_done_run_without_a_finished_milestone() {
     let events = ledger["events"].as_array_mut().expect("events");
     events.retain(|event| event["kind"] != "milestone");
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("run state done without a finished milestone")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("run state done without a finished milestone"))
+    );
 }
 
 #[test]
@@ -1768,8 +1867,9 @@ fn flags_a_spawned_instance_that_never_settles_on_a_completed_run() {
         "usage": { "spawns": 2, "settled": 1, "tool_uses": 0, "max_parallel": 8, "running": 0 }
     }));
     let result = check_replay_ledger(&ledger);
-    assert!(result.problems.iter().any(|problem| problem
-        .contains("spawned instance b#-1 never settled or cancelled (1 spawn event(s))")));
+    assert!(result.problems.iter().any(|problem| {
+        problem.contains("spawned instance b#-1 never settled or cancelled (1 spawn event(s))")
+    }));
 }
 
 #[test]
@@ -1780,14 +1880,18 @@ fn notes_a_truncated_event_window_instead_of_asserting_counts() {
     events.remove(0);
     // The count assertions must be skipped, but the truncation is noted.
     let result = check_replay_ledger(&ledger);
-    assert!(result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("event window is truncated (first seq is not 1)")));
-    assert!(!result
-        .problems
-        .iter()
-        .any(|problem| problem.contains("usage.spawns")));
+    assert!(
+        result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("event window is truncated (first seq is not 1)"))
+    );
+    assert!(
+        !result
+            .problems
+            .iter()
+            .any(|problem| problem.contains("usage.spawns"))
+    );
 }
 
 #[test]
@@ -2244,8 +2348,10 @@ fn renders_the_markdown_table_pair_comparison_and_verdict_rules() {
     assert!(markdown.contains("## Factory vs hand-written baseline (parent context tokens)"));
     assert!(markdown.contains("## Verdict rules (Notion spec, Proposed evaluation)"));
     assert!(markdown.contains("- no task-specific orchestration code in factory prompts (computed from the built prompts): PASS"));
-    assert!(markdown
-        .contains("- declared failure policy matches observed behavior (escalation): (PASS)"));
+    assert!(
+        markdown
+            .contains("- declared failure policy matches observed behavior (escalation): (PASS)")
+    );
     assert!(markdown.contains("- no node starts after a failed dry run: (not run)"));
     assert!(markdown.contains("- total budget overshoot (factory arms only): 0 ms (PASS)"));
     assert!(markdown.contains(

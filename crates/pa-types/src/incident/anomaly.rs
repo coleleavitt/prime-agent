@@ -1,11 +1,18 @@
 //! Anomaly computation from classified events (TS
 //! `computeIncidentAnomalies` / `latestIncidentStallTimeoutBySubject`).
 
-use super::{
-    burst_classes, IncidentCategory, IncidentEvent, IncidentSeverity, ERROR_BURST_THRESHOLD,
-    ERROR_BURST_WINDOW_MS, STALL_GAP_MS, TIMEOUT_STALL_WINDOW_MS,
-};
 use std::collections::HashMap;
+
+use super::{
+    ERROR_BURST_THRESHOLD,
+    ERROR_BURST_WINDOW_MS,
+    IncidentCategory,
+    IncidentEvent,
+    IncidentSeverity,
+    STALL_GAP_MS,
+    TIMEOUT_STALL_WINDOW_MS,
+    burst_classes,
+};
 
 /// Compact duration for spans and gaps: seconds, then minutes+seconds, then hours+minutes.
 #[must_use]
@@ -285,12 +292,16 @@ mod tests {
             timeout_event(subject, base + 2 * day),
         ];
         let anomalies = compute_incident_anomalies(&events);
-        assert!(anomalies
-            .iter()
-            .all(|anomaly| !anomaly.summary.contains("warnings/errors")));
-        assert!(anomalies
-            .iter()
-            .all(|anomaly| !anomaly.summary.contains("command timeouts")));
+        assert!(
+            anomalies
+                .iter()
+                .all(|anomaly| !anomaly.summary.contains("warnings/errors"))
+        );
+        assert!(
+            anomalies
+                .iter()
+                .all(|anomaly| !anomaly.summary.contains("command timeouts"))
+        );
     }
 
     #[test]
@@ -300,9 +311,11 @@ mod tests {
             .map(|index| burst_event("/tmp/prime-agent-501/daemon.sock", base + index * 60_000))
             .collect();
         let anomalies = compute_incident_anomalies(&events);
-        assert!(anomalies
-            .iter()
-            .any(|anomaly| anomaly.summary.contains("3 warnings/errors over 2m")));
+        assert!(
+            anomalies
+                .iter()
+                .any(|anomaly| anomaly.summary.contains("3 warnings/errors over 2m"))
+        );
     }
 
     #[test]

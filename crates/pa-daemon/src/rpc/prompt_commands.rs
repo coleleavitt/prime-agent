@@ -2,21 +2,21 @@
 //! execution the admitted turn hands back), `steer`/`follow_up`
 //! queueing, and the queued-work pump that delivers the agent's queues turn by turn.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use serde_json::Value;
-
-use pa_agent::types::AgentEvent;
-use pa_agent::types::AgentMessage;
+use pa_agent::types::{AgentEvent, AgentMessage};
 use pa_core::session_engine::session_commands::{
-    execute_session_command, session_command_echo_row, SessionCommandParams,
+    SessionCommandParams,
+    execute_session_command,
+    session_command_echo_row,
 };
 use pa_core::session_engine::session_events::agent_event_json;
 use pa_core::session_engine::{PromptOptions, PromptOutcome};
 use pa_types::session::CustomMessage;
+use serde_json::Value;
 
-use super::commands::{compaction_frame, kick_queue_pump, resume_pump, RpcState};
+use super::commands::{RpcState, compaction_frame, kick_queue_pump, resume_pump};
 use super::protocol::{self, ResponseData};
 
 /// `prompt`: admission-level success — the response fires once the admitted turn's run registers;

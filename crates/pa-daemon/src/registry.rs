@@ -5,10 +5,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_types::daemon::DaemonWorkerDescriptor;
 use serde_json::Value;
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -600,8 +600,9 @@ pub(crate) fn selector_matches(candidate: &str, suffix: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::Map;
+
+    use super::*;
 
     fn resident(worker_id: &str) -> Arc<ResidentWorker> {
         ResidentWorker::new(

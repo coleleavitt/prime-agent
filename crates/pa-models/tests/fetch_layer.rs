@@ -4,9 +4,10 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::{not_modified, ok_json, redirect, status};
 use pa_models::fetch::{CatalogFetcher, FetchOutcome};
-use std::time::Duration;
 
 #[tokio::test]
 async fn serves_200_bodies_with_etags_and_sends_catalog_headers() {

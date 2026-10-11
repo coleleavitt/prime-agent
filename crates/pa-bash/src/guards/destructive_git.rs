@@ -9,8 +9,8 @@
 
 use std::collections::BTreeMap;
 
-use super::git::{directories, git_call, probe, GitCall, STATUS_LIMITS};
-use super::{opaque, Check, Rule};
+use super::git::{GitCall, STATUS_LIMITS, directories, git_call, probe};
+use super::{Check, Rule, opaque};
 use crate::context::GuardContext;
 use crate::model::evidence::find_word;
 use crate::model::{Arg, Model, Via};
@@ -50,15 +50,19 @@ impl Rule for DestructiveGit {
                 Ok(dirs) => dirs,
                 Err(relocation) => {
                     return Some(refusal(
-                        &format!("it changes directory (or repository) first (`{relocation}` before `{shown}`), and the uncommitted changes of the repository it targets cannot be checked safely."),
+                        &format!(
+                            "it changes directory (or repository) first (`{relocation}` before `{shown}`), and the uncommitted changes of the repository it targets cannot be checked safely."
+                        ),
                         "Run the discard as its own command from the target directory, or retry with bash(command, allow_destructive_git=True).",
                         late,
-                    ))
+                    ));
                 }
             };
             if !call.replayable() || relocates_unreadably(&call) {
                 return Some(refusal(
-                    &format!("its repository is chosen by options or variables only known at run time (`{shown}`), and the uncommitted changes of the repository it targets cannot be checked safely."),
+                    &format!(
+                        "its repository is chosen by options or variables only known at run time (`{shown}`), and the uncommitted changes of the repository it targets cannot be checked safely."
+                    ),
                     "Run the discard as its own command from the target directory, or retry with bash(command, allow_destructive_git=True).",
                     late,
                 ));

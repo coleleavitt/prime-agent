@@ -5,11 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::pinning::{pin_catalog_models, PinnedTemplates};
+use crate::pinning::{PinnedTemplates, pin_catalog_models};
 use crate::prime_inference::is_private_prime_inference_model_id;
-use crate::schema::{parse_model_catalog, InvalidEntries};
-use crate::transports;
-use crate::Model;
+use crate::schema::{InvalidEntries, parse_model_catalog};
+use crate::{Model, transports};
 
 pub const PACKAGED_MODEL_CATALOG_FILE: &str = "models.bundled.json";
 
@@ -120,8 +119,9 @@ fn exe_dir_of(exe: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[cfg(unix)]
     #[test]

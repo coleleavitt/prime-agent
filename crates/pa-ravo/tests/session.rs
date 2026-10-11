@@ -8,21 +8,30 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use pa_ai::faux::{
-    faux_assistant_message, faux_text, register_faux_provider, FauxAssistantMessageOptions,
-    FauxProviderRegistration, FauxResponseStep, RegisterFauxProviderOptions,
+    FauxAssistantMessageOptions,
+    FauxProviderRegistration,
+    FauxResponseStep,
+    RegisterFauxProviderOptions,
+    faux_assistant_message,
+    faux_text,
+    register_faux_provider,
 };
 use pa_core::features::{
-    register_feature_status_sink, FeatureStatus, FeatureStatusSink, FeatureTelemetry,
-    SessionFeature, SessionFeatureContext,
+    FeatureStatus,
+    FeatureStatusSink,
+    FeatureTelemetry,
+    SessionFeature,
+    SessionFeatureContext,
+    register_feature_status_sink,
 };
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_ledger::ReplayCase;
 use pa_ravo::{RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const MODEL_ID: &str = "faux-ravo-1";
 
@@ -393,9 +402,11 @@ async fn malformed_commands_are_refused_before_a_run_starts() {
         .as_deref(),
         Some("RAVO's ARC-AGI evaluator (--arc-repo/--arc-game) is not part of this build")
     );
-    assert!(feature
-        .execute_slash_command(&harness.context, "dream", "")
-        .is_none());
+    assert!(
+        feature
+            .execute_slash_command(&harness.context, "dream", "")
+            .is_none()
+    );
     assert_eq!(harness.faux.call_count(), 0);
     assert!(harness.statuses.lock().unwrap().is_empty());
 }

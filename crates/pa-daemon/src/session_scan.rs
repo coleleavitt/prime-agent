@@ -8,13 +8,21 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use pa_core::session::catalog_cache::{
-    self, CatalogEntry, CatalogFile, CatalogFileKey, CatalogSessionRow, CatalogUsage,
+    self,
+    CatalogEntry,
+    CatalogFile,
+    CatalogFileKey,
+    CatalogSessionRow,
+    CatalogUsage,
     SessionCatalogCache,
 };
 
 use crate::session_store::{
-    parse_session_header_line, read_first_line_bounded_from, read_session_info_from, SessionInfo,
     SESSION_LIST_HEADER_READ_MAX_BYTES,
+    SessionInfo,
+    parse_session_header_line,
+    read_first_line_bounded_from,
+    read_session_info_from,
 };
 use crate::session_usage::SessionUsageSummary;
 
@@ -243,10 +251,12 @@ fn info_from_row(path: &Path, row: CatalogSessionRow) -> SessionInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::session_store::{read_session_info, session_file_name, SessionFile};
-    use serde_json::json;
     use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::session_store::{SessionFile, read_session_info, session_file_name};
 
     fn temp_dir() -> crate::test_support::TestDir {
         crate::test_support::TestDir::new("pa-daemon-scan-")

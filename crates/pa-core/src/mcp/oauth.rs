@@ -8,19 +8,26 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use tokio::time::Duration;
-
-use crate::auth::types::AuthCredential;
+use url::Url;
 
 use super::oauth_callback::{CallbackCode, CallbackPorts, CallbackServer};
 use super::oauth_discovery::{
-    canonical_resource, discover, exchange_token, generate_pkce, parse_redirect_input,
-    random_state, register_client, validated_https_url, AudienceMode, TokenResponse,
+    AudienceMode,
     TOKEN_EXPIRY_BUFFER_MS,
+    TokenResponse,
+    canonical_resource,
+    discover,
+    exchange_token,
+    generate_pkce,
+    parse_redirect_input,
+    random_state,
+    register_client,
+    validated_https_url,
 };
 use super::oauth_http::OAuthHttp;
-use url::Url;
+use crate::auth::types::AuthCredential;
 
 /// One MCP server's OAuth setup: builtin catalog entries and `--oauth`
 /// user servers both reduce to this.
@@ -500,10 +507,11 @@ pub async fn mcp_refresh_token(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mcp::oauth_http::{OAuthHttpRequest, OAuthHttpResponse};
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    use super::*;
+    use crate::mcp::oauth_http::{OAuthHttpRequest, OAuthHttpResponse};
 
     /// A scripted transport: url -> response. Unknown urls fail the
     /// request (the TS suite throws on unexpected fetches).
@@ -1678,10 +1686,12 @@ mod tests {
             .find(|(url, _)| url == ORIGIN_TOKEN)
             .cloned()
             .unwrap();
-        assert!(token_request
-            .1
-            .unwrap()
-            .contains("resource=https%3A%2F%2Fsrv.test"));
+        assert!(
+            token_request
+                .1
+                .unwrap()
+                .contains("resource=https%3A%2F%2Fsrv.test")
+        );
 
         // (The TS audience-mode equality fences on re-discovery — legacy
         // must re-discover as "exact", non-legacy modes must match — are

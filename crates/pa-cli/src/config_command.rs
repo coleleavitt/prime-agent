@@ -3,10 +3,13 @@
 
 use std::path::PathBuf;
 
-use pa_core::packages::{resource_config, PackageManager};
+use pa_core::packages::{PackageManager, resource_config};
 use pa_core::settings::SettingsManager;
 use pa_tui::config_selector::{
-    run_config_selector, ConfigSelector, ConfigSelectorOptions, SelectorRow,
+    ConfigSelector,
+    ConfigSelectorOptions,
+    SelectorRow,
+    run_config_selector,
 };
 use pa_tui::keybindings::KeybindingsManager;
 

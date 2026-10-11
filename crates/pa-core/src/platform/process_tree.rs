@@ -213,8 +213,9 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::*;
     use std::process::{Command, Stdio};
+
+    use super::*;
 
     fn alive(pid: u32) -> bool {
         running(pid)

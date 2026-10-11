@@ -10,8 +10,17 @@ use pa_agent::agent::{Agent, AgentOptions};
 use pa_agent::scripted::{ScriptStep, ScriptedProvider, ScriptedTurn};
 use pa_agent::stream::AssistantMessageEvent;
 use pa_agent::types::{
-    AgentEvent, AgentMessage, AssistantContent, AssistantMessage, Message, Model, StopReason,
-    TextContent, ThinkingContent, Usage, UsageCost,
+    AgentEvent,
+    AgentMessage,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    Usage,
+    UsageCost,
 };
 
 const CONTEXT_WINDOW: u64 = 100_000;

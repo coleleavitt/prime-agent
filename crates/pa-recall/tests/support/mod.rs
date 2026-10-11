@@ -6,15 +6,23 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use pa_core::features::{
-    SessionFeature, SessionFeatureContext, ToolCallObservation, ToolResultObservation,
+    SessionFeature,
+    SessionFeatureContext,
+    ToolCallObservation,
+    ToolResultObservation,
 };
 use pa_recall::{
-    write_recall_mark, MarkOutcome, MarkWriter, RecallClaimInput, RecallOptions, WorkspaceRecall,
+    MarkOutcome,
+    MarkWriter,
+    RecallClaimInput,
+    RecallOptions,
+    WorkspaceRecall,
     WrittenMark,
+    write_recall_mark,
 };
 
 pub const TSGO_CLAIM: &str = "npx tsgo --noEmit";

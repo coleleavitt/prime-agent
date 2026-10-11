@@ -2,7 +2,7 @@
 //! kernel venv dir, the writable-dir fallback, and the interpreter path.
 
 use super::store::VenvStore;
-use super::{anyhow, Path, PathBuf};
+use super::{Path, PathBuf, anyhow};
 
 pub(crate) fn expand_home(path: &str) -> PathBuf {
     if path == "~" {

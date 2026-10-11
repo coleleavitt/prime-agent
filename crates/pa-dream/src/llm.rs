@@ -18,26 +18,51 @@ use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
 
 use crate::child::{
-    retryable, run_structured_child, ChildOutcome, ChildRejection, ChildRuntimeScope,
-    JsonContainer, RunAgent, RunAgentStatus, ValidationError, PROPOSER_RETRIES,
+    ChildOutcome,
+    ChildRejection,
+    ChildRuntimeScope,
+    JsonContainer,
+    PROPOSER_RETRIES,
+    RunAgent,
+    RunAgentStatus,
+    ValidationError,
+    retryable,
+    run_structured_child,
 };
 use crate::collate::locale_compare;
 use crate::dreams::DreamProbationRecord;
 use crate::improve::{
-    dreamer_kind_of, propose_policies, terms_on_pool, CandidateInput, CandidateOrigin,
-    CandidateReason, CandidateVerdict, DreamerKind, DreamingScoreConfig, SpendCharge,
+    CandidateInput,
+    CandidateOrigin,
+    CandidateReason,
+    CandidateVerdict,
+    DreamerKind,
+    DreamingScoreConfig,
+    SpendCharge,
+    dreamer_kind_of,
+    propose_policies,
+    terms_on_pool,
 };
 use crate::json::{self, js_number, to_fixed};
 use crate::objective::{
-    pool_score_scale, ObjectiveScale, ReplayObjectiveConfig, DEFAULT_OBJECTIVE,
+    DEFAULT_OBJECTIVE,
+    ObjectiveScale,
+    ReplayObjectiveConfig,
+    pool_score_scale,
 };
 use crate::policy::{
-    parse_exploration_policy, policy_id, ExplorationPolicy, POLICY_BOUNDS, RECOVERY_POLICIES,
-    REPLAY_DEAD_FIELDS, SELECTION_RULES, STOP_RULES,
+    ExplorationPolicy,
+    POLICY_BOUNDS,
+    RECOVERY_POLICIES,
+    REPLAY_DEAD_FIELDS,
+    SELECTION_RULES,
+    STOP_RULES,
+    parse_exploration_policy,
+    policy_id,
 };
 use crate::proposer::{ProposalRejectReason, ProposalTally, ProposeOutcome, Proposer};
 use crate::rejections::{RejectionInput, RejectionLog, RejectionRole};
-use crate::replay::{simulate_policy, ReplayConfig};
+use crate::replay::{ReplayConfig, simulate_policy};
 use crate::rng::SeededRng;
 use crate::store::{DreamStoreError, RecordedTree};
 use crate::task::{Artifact, DynTask, ProposeParams};

@@ -14,12 +14,27 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use super::binding::{
-    char_prefix, guard_passes, is_rate_limit_error, json_repr, parse_json_output, py_json_dumps,
-    render_prompt, text_of, ANSWER_BINDING_CAP, ANSWER_CAPTURE_CAP,
+    ANSWER_BINDING_CAP,
+    ANSWER_CAPTURE_CAP,
+    char_prefix,
+    guard_passes,
+    is_rate_limit_error,
+    json_repr,
+    parse_json_output,
+    py_json_dumps,
+    render_prompt,
+    text_of,
 };
 use super::model::{
-    kind, EventAt, FactoryRun, JoinMark, NodeInstance, PendingEvaluation, RunState, StateEntry,
+    EventAt,
+    FactoryRun,
+    JoinMark,
+    NodeInstance,
+    PendingEvaluation,
+    RunState,
+    StateEntry,
     Status,
+    kind,
 };
 use super::ports::FactorySpawn;
 use super::{Inner, RunCell};

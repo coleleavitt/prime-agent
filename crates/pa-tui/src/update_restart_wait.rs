@@ -6,9 +6,9 @@
 
 use std::future::Future;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
-use crate::daemon_client::{is_update_restarting_rejection, RequestRejected};
+use crate::daemon_client::{RequestRejected, is_update_restarting_rejection};
 
 /// The update coordinator's worst case, the same budget attached
 /// sessions get to reconnect.
@@ -260,10 +260,7 @@ mod tests {
     #[tokio::test]
     async fn retries_every_restart_transient_failure_and_reports_the_wait() {
         let transient_failures: Vec<(&str, anyhow::Error)> = vec![
-            (
-                "the preparing rejection",
-                preparing_rejection(),
-            ),
+            ("the preparing rejection", preparing_rejection()),
             (
                 "connect refused",
                 anyhow!("Failed to connect to the Prime Agent daemon. Socket: /s."),
@@ -280,13 +277,12 @@ mod tests {
                 "pre-handshake closed",
                 anyhow!("the daemon connection closed before the handshake"),
             ),
-            (
-                "dead writer",
-                anyhow!("the daemon connection is closed"),
-            ),
+            ("dead writer", anyhow!("the daemon connection is closed")),
             (
                 "response timeout",
-                anyhow!("Timed out after 30000ms waiting for the Prime Agent daemon response. Socket: /s."),
+                anyhow!(
+                    "Timed out after 30000ms waiting for the Prime Agent daemon response. Socket: /s."
+                ),
             ),
             (
                 "connect timeout",
@@ -294,7 +290,9 @@ mod tests {
             ),
             (
                 "handshake timeout",
-                anyhow!("Timed out after 5000ms waiting for the Prime Agent daemon handshake. Socket: /s."),
+                anyhow!(
+                    "Timed out after 5000ms waiting for the Prime Agent daemon handshake. Socket: /s."
+                ),
             ),
             (
                 "unknown session",

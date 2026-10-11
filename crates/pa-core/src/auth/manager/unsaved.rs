@@ -3,7 +3,7 @@
 //! over the stored login they replace, saved again under a bounded backoff,
 //! and reported once, without a token value.
 
-use super::{parse_storage_data, refresh_flight, AuthCredential, AuthStorage, AuthStorageData};
+use super::{AuthCredential, AuthStorage, AuthStorageData, parse_storage_data, refresh_flight};
 use crate::auth::storage::UnsavedRefreshKept;
 use crate::platform::HeartbeatLock;
 

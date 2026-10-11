@@ -29,7 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FATTENING_TURNS: usize = 8;
 const FATTEN_REPLY_CHARS: usize = 6 * 1024 * 1024;

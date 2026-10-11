@@ -497,8 +497,9 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn initialize_result_matches_the_served_surface() {

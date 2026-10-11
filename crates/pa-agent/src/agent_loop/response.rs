@@ -4,14 +4,19 @@
 
 use std::sync::Arc;
 
-use crate::abort::{is_abort_error, AbortSignal};
-use crate::stream::{LlmContext, StreamFn, StreamRequestOptions, ToolDefinition};
-use crate::types::{
-    AgentContext, AgentEvent, AgentMessage, AssistantContent, AssistantMessage, StopReason, Usage,
-};
-
 use super::abort::{create_aborted_assistant_message, race_with_abort};
 use super::{AgentEventSink, AgentLoopConfig};
+use crate::abort::{AbortSignal, is_abort_error};
+use crate::stream::{LlmContext, StreamFn, StreamRequestOptions, ToolDefinition};
+use crate::types::{
+    AgentContext,
+    AgentEvent,
+    AgentMessage,
+    AssistantContent,
+    AssistantMessage,
+    StopReason,
+    Usage,
+};
 
 /// Attempts per turn before an empty final turn becomes an error (upstream
 /// #1896).
@@ -82,7 +87,7 @@ pub(crate) async fn stream_assistant_response(
                     return Err(anyhow::Error::new(EmptyTurnRetryFailure {
                         cause,
                         discarded_usage,
-                    }))
+                    }));
                 }
             };
         if is_empty_assistant_turn(&message)

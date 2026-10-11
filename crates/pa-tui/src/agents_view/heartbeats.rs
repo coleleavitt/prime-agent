@@ -1,5 +1,5 @@
 //! The heartbeat-catalog fetch for the agents-view rows' `◷ N` badges.
-use super::{mpsc, DaemonClient, DaemonCommand, UiInput};
+use super::{DaemonClient, DaemonCommand, UiInput, mpsc};
 
 /// The heartbeat-catalog fetch (TS `refreshHeartbeats` over
 /// `listDaemonHeartbeats`): the selector-less `heartbeats_list` the

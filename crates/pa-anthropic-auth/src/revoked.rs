@@ -14,11 +14,11 @@
 //!   rotation beside the store until a write saves it). It ends once saved.
 
 use anthropic::{Account, AccountStore, DeadRefreshTokens};
-use pa_core::auth::{clear_auth_notice, raise_auth_notice, AuthNotice};
+use pa_core::auth::{AuthNotice, clear_auth_notice, raise_auth_notice};
 use pa_types::sync::MutexExt;
 
-use crate::source::SharedStoreSource;
 use crate::PROVIDER_ID;
+use crate::source::SharedStoreSource;
 
 /// The conditions this process raised and that still stand.
 #[derive(Debug, Default)]

@@ -5,16 +5,22 @@ use std::sync::LazyLock;
 
 use base64::Engine as _;
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
+use crate::ProviderError;
 use crate::models::clamp_thinking_level;
 use crate::providers::transform_messages::transform_messages_with_normalizer;
 use crate::types::{
-    AssistantContent, CacheRetention, Context, Message, Model, ModelThinkingLevel, Tool,
+    AssistantContent,
+    CacheRetention,
+    Context,
+    Message,
+    Model,
+    ModelThinkingLevel,
+    Tool,
     UserMessageContent,
 };
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
-use crate::ProviderError;
 
 fn get_model_match_candidates(model_id: &str, model_name: Option<&str>) -> Vec<String> {
     let mut values = vec![model_id.to_string()];
@@ -143,7 +149,7 @@ fn create_image_block(mime_type: &str, data: &str) -> Result<Value, ProviderErro
         other => {
             return Err(ProviderError::Message(format!(
                 "Unknown image type: {other}"
-            )))
+            )));
         }
     };
     // Fail fast on invalid base64 so the request never leaves with bad bytes.
@@ -464,9 +470,10 @@ mod supports_always_on_adaptive_thinking_tests {
 
 #[cfg(test)]
 mod supports_prompt_caching_tests {
-    use super::supports_prompt_caching;
-    use crate::types::{zero_model_cost, Model, ModelCost, ModelInput};
     use pa_types::JsNumber;
+
+    use super::supports_prompt_caching;
+    use crate::types::{Model, ModelCost, ModelInput, zero_model_cost};
 
     fn bedrock_model(id: &str, name: &str, cost: ModelCost) -> Model {
         Model {

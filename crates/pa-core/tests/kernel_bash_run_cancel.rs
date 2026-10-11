@@ -12,9 +12,12 @@ use std::time::{Duration, Instant};
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Speaks protocol v5: ready, then per cell one `bash.run` host request
 /// (the cell code is the command), a `host_cancel` for it 300 ms later, and

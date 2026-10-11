@@ -8,14 +8,16 @@ mod common;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pa_models::cache::{CatalogCache, RefreshOptions, PUBLIC_SCOPE};
+use pa_models::cache::{CatalogCache, PUBLIC_SCOPE, RefreshOptions};
 use pa_models::fetch::CatalogFetcher;
-use pa_models::pinning::{parse_provider_model_catalog, PinnedTemplates};
+use pa_models::pinning::{PinnedTemplates, parse_provider_model_catalog};
 use pa_models::prime_inference::{
-    build_prime_inference_models, parse_prime_inference_model_catalog, PrimeInferenceCatalog,
+    PrimeInferenceCatalog,
     PrimeInferenceCredentials,
+    build_prime_inference_models,
+    parse_prime_inference_model_catalog,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A cache over the models catalog parse pipeline (the same closure
 /// `ModelCatalog` installs in production), aimed at the mock server.
@@ -147,11 +149,13 @@ async fn unsupported_future_version_keeps_last_good_silently() {
         "v3 payload silently keeps last-good"
     );
     let cache2 = models_cache(dir.path(), server.url("/catalog"));
-    assert!(cache2
-        .get(PUBLIC_SCOPE)
-        .expect("disk snapshot intact")
-        .iter()
-        .any(|m| m.id == "model-a"));
+    assert!(
+        cache2
+            .get(PUBLIC_SCOPE)
+            .expect("disk snapshot intact")
+            .iter()
+            .any(|m| m.id == "model-a")
+    );
 }
 
 #[tokio::test]
@@ -233,8 +237,8 @@ async fn network_failure_and_oversize_keep_state_unchanged() {
 
     let oversize = common::MockServer::start(vec![common::oversized_header()]).await;
     let big = models_cache(dir.path(), oversize.url("/catalog"));
-    assert!(big
-        .refresh(
+    assert!(
+        big.refresh(
             PUBLIC_SCOPE,
             RefreshOptions {
                 force: true,
@@ -242,7 +246,8 @@ async fn network_failure_and_oversize_keep_state_unchanged() {
             }
         )
         .await
-        .is_none());
+        .is_none()
+    );
     assert!(
         big.get(PUBLIC_SCOPE).is_none(),
         "oversized body never produces a snapshot"

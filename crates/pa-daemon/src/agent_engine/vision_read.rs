@@ -23,9 +23,9 @@
 
 use std::time::{Duration, Instant};
 
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::AgentSessionEngine;
 

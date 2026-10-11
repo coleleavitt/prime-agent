@@ -3,22 +3,25 @@
 //! returns, so a supervisor restart rebuilds its roster without losing
 //! sessions. The registration connection doubles as the liveness watch.
 
-use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Map, Value};
+use pa_types::platform::transport::{
+    AsyncReadHalf,
+    AsyncWriteHalf,
+    TransportStream,
+    connect_transport,
+};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::protocol::current_protocol_info;
 use crate::worker::WorkerConfig;
-use pa_types::platform::transport::{
-    connect_transport, AsyncReadHalf, AsyncWriteHalf, TransportStream,
-};
 
 /// The supervisor's definitive rejection of a registration: no daemon
 /// will ever adopt or route to the process again — the worker retires.
@@ -312,9 +315,10 @@ fn debug_log(message: &str) {
 
 #[cfg(test)]
 mod tests {
+    use pa_types::platform::transport::{TransportStream, bind_transport};
+
     use super::*;
     use crate::protocol::{DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION};
-    use pa_types::platform::transport::{bind_transport, TransportStream};
 
     /// Only the supervisor's unknown-worker verdict is definitive: the
     /// transient failures stay retryable, and the loop's own

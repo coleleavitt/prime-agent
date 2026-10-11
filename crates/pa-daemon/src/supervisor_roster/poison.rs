@@ -3,7 +3,9 @@
 //! its own (the long-lived supervisor would cascade one bug into an outage).
 use super::*;
 use crate::supervisor_roster_seed::tests::{
-    live_child_summary, register_root_worker, roster_fixture,
+    live_child_summary,
+    register_root_worker,
+    roster_fixture,
 };
 
 /// Poison `mutex` the way production would: a thread panics while it

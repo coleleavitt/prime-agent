@@ -5,12 +5,18 @@
 use std::sync::Arc;
 
 use pa_ai::oauth::{
-    refresh_anthropic_token, refresh_github_copilot_token, refresh_openai_codex_token,
-    refresh_xai_token, CodexHttp, ProviderHttp, ReqwestCodexHttp, ReqwestProviderHttp,
+    CodexHttp,
+    ProviderHttp,
+    ReqwestCodexHttp,
+    ReqwestProviderHttp,
+    refresh_anthropic_token,
+    refresh_github_copilot_token,
+    refresh_openai_codex_token,
+    refresh_xai_token,
 };
 
-use crate::auth::types::{AuthCredential, AuthStorageData};
 use crate::auth::OAuthRefreshError;
+use crate::auth::types::{AuthCredential, AuthStorageData};
 
 /// The Codex Subscription provider id (a wire identifier; branding
 /// never renames a provider id).

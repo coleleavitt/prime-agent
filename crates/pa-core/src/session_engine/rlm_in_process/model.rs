@@ -3,10 +3,9 @@
 //! registry the host owns (no daemon allowlist: the resident guest owns
 //! its model surface), plus the spawn-time thinking-support check.
 
-use pa_types::ai::Model;
-use pa_types::ai::{get_supported_thinking_levels, thinking_level_from_str};
+use pa_types::ai::{Model, get_supported_thinking_levels, thinking_level_from_str};
 
-use crate::kernel::rlm_runtime::{find_rlm_model_matches, RlmModelInfo};
+use crate::kernel::rlm_runtime::{RlmModelInfo, find_rlm_model_matches};
 use crate::models::registry::ModelRegistry;
 
 /// Close matches listed in model-resolution errors (TS suggestion limit).

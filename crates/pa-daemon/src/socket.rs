@@ -6,14 +6,17 @@
 use std::path::Path;
 use std::time::Duration;
 
+use anyhow::Result;
 #[cfg(unix)]
 use anyhow::anyhow;
-use anyhow::Result;
 
 #[cfg(unix)]
 pub use crate::platform::socket_dir;
 pub use crate::platform::{
-    default_daemon_socket_path, socket_identity, worker_socket_path, SocketIdentity,
+    SocketIdentity,
+    default_daemon_socket_path,
+    socket_identity,
+    worker_socket_path,
 };
 
 /// Try to connect to an endpoint within `timeout`; true when a peer accepts.
@@ -294,7 +297,7 @@ async fn prepare_locked_socket_path(path: &Path, lease: Option<&SocketLease>) ->
                 return Err(anyhow!(
                     "Daemon socket changed ownership while waiting for cleanup: {}",
                     path.display()
-                ))
+                ));
             }
         }
         if can_connect(path, Duration::from_millis(250)).await {
@@ -437,8 +440,9 @@ pub async fn bind_capture_gap() {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use pa_types::platform::transport::bind_transport;
+
+    use super::*;
 
     /// Bind and drop the listener: the socket file outlives the fd with
     /// nobody listening - exactly a crashed worker's residue.
@@ -552,6 +556,7 @@ mod tests {
     async fn dropping_the_listener_is_the_graceful_exit_close() {
         use std::io::Write;
         use std::os::fd::AsRawFd;
+
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         fn fd_exists(fd: std::os::fd::RawFd) -> bool {

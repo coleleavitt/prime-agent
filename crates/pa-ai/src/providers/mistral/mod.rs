@@ -3,21 +3,29 @@
 //! thinking text-block accumulation, tool-call argument streaming, the `x-affinity` KV-cache
 //! header, and usage accounting. Conversion lives in [`convert`], the streaming core in [`stream`].
 
-use serde_json::Map;
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
+    create_assistant_message_event_stream,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::simple_options::build_base_options;
 use crate::registry::Provider;
 use crate::types::{
-    error_reason, AssistantMessage, Context, Model, ModelThinkingLevel, SimpleStreamOptions,
-    StopReason, StreamOptions, Usage,
+    AssistantMessage,
+    Context,
+    Model,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Usage,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use serde_json::{json, Value};
 
 mod convert;
 mod stream;

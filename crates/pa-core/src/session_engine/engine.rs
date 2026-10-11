@@ -2,19 +2,18 @@
 //! The session subscribes persistence listeners on the caller's reactor, so
 //! `create_session` is async.
 
-use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use pa_agent::agent::{Agent, AgentInitialState, AgentOptions};
 use pa_agent::stream::StreamFn;
 use pa_agent::types::{Model, ThinkingLevel};
-
-use crate::resources::{load_resources, ResourceLoaderOptions};
-use crate::session::manager::SessionManager;
-use crate::skills::PromptTemplate;
+use pa_types::sync::MutexExt;
 
 use super::{AgentSession, PromptOptions, PromptOutcome};
+use crate::resources::{ResourceLoaderOptions, load_resources};
+use crate::session::manager::SessionManager;
+use crate::skills::PromptTemplate;
 
 /// The background MCP settle's per-server open bound (the kernel's
 /// `mcp_status` listing opens each not-yet-connected server bounded per
@@ -401,8 +400,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // its ledger recorded.
     let rlm_token_budget = {
         use super::rlm_token_budget::{
-            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig, RlmTokenBudgetLedger,
             RLM_TOKEN_BUDGET_FILE,
+            RlmTokenAllowance,
+            RlmTokenBudget,
+            RlmTokenBudgetConfig,
+            RlmTokenBudgetLedger,
         };
         let depth = config.rlm_depth.unwrap_or(0);
         let store = session_artifact_dir

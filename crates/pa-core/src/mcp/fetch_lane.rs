@@ -4,16 +4,16 @@
 //! TS parity (sanctioned divergence): the TS `SERVICE_CATALOG` is compile-time baked —
 //! TS never fetches at runtime.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use pa_models::cache::{CatalogCache, CatalogParse, RefreshOptions, PUBLIC_SCOPE};
-use pa_models::fetch::{CatalogFetcher, MCP_SERVICE_CATALOG_URL};
 use pa_models::CATALOG_REFRESH_INTERVAL_MS;
+use pa_models::cache::{CatalogCache, CatalogParse, PUBLIC_SCOPE, RefreshOptions};
+use pa_models::fetch::{CatalogFetcher, MCP_SERVICE_CATALOG_URL};
+use pa_types::sync::MutexExt;
 
-use super::catalog_schema::{parse_plugins_catalog, PluginsCatalog};
+use super::catalog_schema::{PluginsCatalog, parse_plugins_catalog};
 use super::remote_source::PLUGINS_CACHE_FILE;
 
 /// The plugins-catalog parse seam for the generic cache: the fetched payload parses through the
@@ -115,9 +115,10 @@ pub fn spawn_hourly_plugins_refresh(agent_dir: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
 
     /// The real shipped catalog payload (the fixture the schema's parity
     /// tests parse): what a fetch from the catalog repo returns.

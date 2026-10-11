@@ -9,9 +9,16 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::{InstructionsDir, Session};
-use crate::element::{flatten, Element, Observation, Pair, Rect};
+use crate::element::{Element, Observation, Pair, Rect, flatten};
 use crate::error::{
-    head, invalid, not_running, transport, unsupported, ComputerUseError, ErrorCode, Result,
+    ComputerUseError,
+    ErrorCode,
+    Result,
+    head,
+    invalid,
+    not_running,
+    transport,
+    unsupported,
 };
 use crate::permissions::PermissionState;
 use crate::platform::{Discovery, Platform, PlatformKind, Target};

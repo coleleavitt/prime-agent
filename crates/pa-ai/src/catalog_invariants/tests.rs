@@ -70,7 +70,9 @@ fn max_tokens_past_the_context_window_fails() {
     )];
     assert_eq!(
         validate_model_catalog(&models),
-        ["huggingface/thinkingmachines/Inkling-Small: maxTokens 1048576 exceeds contextWindow 524288"]
+        [
+            "huggingface/thinkingmachines/Inkling-Small: maxTokens 1048576 exceeds contextWindow 524288"
+        ]
     );
 }
 
@@ -143,7 +145,9 @@ fn a_codex_window_diverging_past_2x_fails_unless_verified() {
     ];
     assert_eq!(
         validate_model_catalog(&models),
-        ["openai-codex/gpt-5.6-sol: contextWindow 272000 diverges more than 2x from openai/gpt-5.6-sol (1050000)"]
+        [
+            "openai-codex/gpt-5.6-sol: contextWindow 272000 diverges more than 2x from openai/gpt-5.6-sol (1050000)"
+        ]
     );
 }
 

@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value};
 
 /// The CSS variables plus the three background colors the export template

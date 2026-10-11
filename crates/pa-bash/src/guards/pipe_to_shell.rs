@@ -4,7 +4,7 @@
 //! `bash <(curl URL)`, `eval "$(wget -qO- URL)"`), or piped into a command
 //! word only known at run time (`curl URL | $SHELL`).
 
-use super::{opaque, Check, Rule};
+use super::{Check, Rule, opaque};
 use crate::model::evidence::first_word;
 use crate::model::{Arg, Input, Invocation, Model, OpaqueKind};
 use crate::verdict::GuardKind;

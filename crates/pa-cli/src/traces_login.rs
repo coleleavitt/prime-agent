@@ -5,16 +5,23 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 
 use pa_core::agent_traces::resolve_traces_base_url;
 use pa_core::auth::{
-    check_prime_agent_traces_access, login_prime_agent_traces, AuthCredential, AuthStorage,
-    PrimeAccessError, PrimeAgentTracesCallbacks, PrimeAgentTracesLoginOptions, PrimeAuthInfo,
-    ReqwestPrimeHttp, DEFAULT_REQUEST_TIMEOUT_MS, PRIME_AGENT_TRACES_PROVIDER_ID,
+    AuthCredential,
+    AuthStorage,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+    PRIME_AGENT_TRACES_PROVIDER_ID,
     PRIME_AGENT_TRACES_PROVIDER_NAME,
+    PrimeAccessError,
+    PrimeAgentTracesCallbacks,
+    PrimeAgentTracesLoginOptions,
+    PrimeAuthInfo,
+    ReqwestPrimeHttp,
+    check_prime_agent_traces_access,
+    login_prime_agent_traces,
 };
-
 use pa_tui::auth_panel::{PastePromptTone, PasteStyle};
 use pa_tui::traces::TraceLoginOutcome;
 
@@ -260,11 +267,13 @@ impl TracesLoginUi for PanelTracesLoginUi {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rsa::pkcs8::DecodePublicKey;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use rsa::pkcs8::DecodePublicKey;
+
+    use super::*;
 
     type PrimeHttpResponse = pa_core::auth::PrimeHttpResponse;
 

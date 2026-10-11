@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::improve::{evidence_trees_of, CandidateVerdict, DreamerKind, LeverScanRecord};
+use crate::improve::{CandidateVerdict, DreamerKind, LeverScanRecord, evidence_trees_of};
 use crate::json;
-use crate::policy::{policy_id, ExplorationPolicy};
-use crate::store::{append_private, create_dir_private, DreamStoreError};
+use crate::policy::{ExplorationPolicy, policy_id};
+use crate::store::{DreamStoreError, append_private, create_dir_private};
 
 /// Where a line came from when the run is an experiment arm.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

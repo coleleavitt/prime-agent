@@ -4,7 +4,13 @@
 #[cfg(test)]
 use super::rt;
 use super::{
-    AgentMessage, DaemonClientCapability, Deserialize, JsonMap, Serialize, SnapshotPurpose, Value,
+    AgentMessage,
+    DaemonClientCapability,
+    Deserialize,
+    JsonMap,
+    Serialize,
+    SnapshotPurpose,
+    Value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

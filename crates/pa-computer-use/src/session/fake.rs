@@ -12,14 +12,29 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::{HostContext, Session, Timing};
-use crate::element::{flatten, Element, Observation, Pair, Rect};
-use crate::error::{not_running, ComputerUseError, Result};
+use crate::element::{Element, Observation, Pair, Rect, flatten};
+use crate::error::{ComputerUseError, Result, not_running};
 use crate::keymap::ParsedChord;
 use crate::permissions::{PermissionReport, PermissionState};
 use crate::platform::{
-    CaptureRequest, Captured, Clipboard, ClipboardSnapshot, Discovery, ElementActions, Fingerprint,
-    FocusControl, MouseButton, PasteFormat, Platform, PlatformKind, RecognizedText, RunningApp,
-    ScrollDirection, Target, TextRecognizer, Workspace,
+    CaptureRequest,
+    Captured,
+    Clipboard,
+    ClipboardSnapshot,
+    Discovery,
+    ElementActions,
+    Fingerprint,
+    FocusControl,
+    MouseButton,
+    PasteFormat,
+    Platform,
+    PlatformKind,
+    RecognizedText,
+    RunningApp,
+    ScrollDirection,
+    Target,
+    TextRecognizer,
+    Workspace,
 };
 use crate::policy::Policy;
 use crate::secure::Security;

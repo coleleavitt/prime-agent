@@ -8,10 +8,10 @@ mod sequence;
 mod state;
 
 pub(super) use class::{display_generics, parse_class, parse_er};
-pub(super) use sequence::{parse_sequence, NoteAnchor, SeqHead, SeqItem, Sequence};
+pub(super) use sequence::{NoteAnchor, SeqHead, SeqItem, Sequence, parse_sequence};
 pub(super) use state::parse_state;
 
-use super::graph::{parse_dir, Edge, Graph, Head, LineKind, Shape, MAX_GROUPS, MAX_GROUP_DEPTH};
+use super::graph::{Edge, Graph, Head, LineKind, MAX_GROUP_DEPTH, MAX_GROUPS, Shape, parse_dir};
 use super::js_text;
 use super::labels::{ascii_lower, clean_label, decode_html_entities, is_id_char, src_lines};
 

@@ -3,29 +3,38 @@
 //! over resolved descriptors with ENDPOINT PINNING (an installed record keeps
 //! its approved endpoint even when the catalog URL moves), the paste install.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use pa_types::sync::MutexExt;
+
 use super::catalog_plugin_views::{
-    build_connection_views, build_plugin_views, AcpServerRow, BuildViewsInputs, McpCredentialView,
-    McpPluginView, API_KEY_CREDENTIALS,
+    API_KEY_CREDENTIALS,
+    AcpServerRow,
+    BuildViewsInputs,
+    McpCredentialView,
+    McpPluginView,
+    build_connection_views,
+    build_plugin_views,
 };
 use super::catalog_schema::{AuthStrategy, SetupStatus};
 use super::catalog_status_views::SnapshotCredentials;
 use super::catalog_views::{is_pasteable_token_service, mcp_login_eligibility};
 use super::connection_store::{
-    new_pending_record, McpConnectionRecord, McpConnectionStatus as RecordStatus,
+    McpConnectionRecord,
+    McpConnectionStatus as RecordStatus,
     McpConnectionStore,
+    new_pending_record,
 };
 use super::probe::{McpEndpointProbe, PROBE_ERROR_UNAUTHORIZED};
 use super::service_catalog::{
-    default_local_catalog_source, resolve_mcp_service_catalog, LocalCatalogSource,
+    LocalCatalogSource,
     McpServiceDescriptor,
+    default_local_catalog_source,
+    resolve_mcp_service_catalog,
 };
-use super::McpServerConfig;
-use super::{McpManager, ResolvedIntegration};
+use super::{McpManager, McpServerConfig, ResolvedIntegration};
 use crate::auth::types::AuthCredential;
 
 /// The remote catalog seam: returns the parsed snapshot when one is

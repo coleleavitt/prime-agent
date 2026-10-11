@@ -4,10 +4,11 @@
 //! screen instead of leaving and re-entering it. The screen is entered once at the first surface
 //! and left once at the real exit; a view switch is a full repaint of the same buffer.
 
-use anyhow::Result;
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use std::io::stdout;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use anyhow::Result;
+use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 

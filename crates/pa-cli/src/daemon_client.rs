@@ -7,11 +7,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_types::daemon::{
-    DaemonCommand, DaemonProtocolInfo, DaemonResponse, DAEMON_PROTOCOL_VERSION,
+    DAEMON_PROTOCOL_VERSION,
+    DaemonCommand,
+    DaemonProtocolInfo,
+    DaemonResponse,
 };
-use pa_types::platform::transport::{connect_blocking, BlockingTransportStream};
+use pa_types::platform::transport::{BlockingTransportStream, connect_blocking};
 use serde_json::json;
 
 use crate::config;
@@ -265,8 +268,9 @@ fn node_connect_error(error: &std::io::Error, socket_path: &Path) -> String {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use std::os::unix::net::UnixListener;
+
+    use super::*;
 
     fn list_command(id: &str) -> DaemonCommand {
         DaemonCommand::List {

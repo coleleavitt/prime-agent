@@ -3,10 +3,11 @@
 //! selection over the dock's selectable spans. Markdown table cell selection is not ported; table
 //! rows select as plain text.
 
+use ratatui::style::{Modifier, Style};
+
 use crate::view::AgentView;
 use crate::width::{char_width, line_width, slice_line_by_column};
 use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
 
 pub(crate) const HEADER_ROWS: usize = 1;
 
@@ -713,10 +714,9 @@ impl AgentView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::Span;
     use crate::chat::ChatEntry;
     use crate::theme::{ColorMode, Theme};
-    use crate::Span;
 
     fn view() -> AgentView {
         AgentView::new(Theme::builtin("prime", ColorMode::TrueColor))

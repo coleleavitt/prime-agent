@@ -22,12 +22,13 @@
 )]
 #![cfg(unix)]
 
-use pa_types::platform::test_isolation::TestState;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+use pa_types::platform::test_isolation::TestState;
 
 mod attach;
 mod compaction;

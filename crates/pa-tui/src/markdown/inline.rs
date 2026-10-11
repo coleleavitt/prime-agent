@@ -1,6 +1,7 @@
+use ratatui::style::Modifier;
+
 use super::MarkdownStyle;
 use crate::{Line, Span};
-use ratatui::style::Modifier;
 /// Inline rendering: bold, italic, strikethrough, code, links.
 #[must_use]
 pub fn render_inline(text: &str, style: &MarkdownStyle) -> Line {

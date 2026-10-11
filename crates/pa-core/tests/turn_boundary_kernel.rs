@@ -15,13 +15,13 @@
 
 use std::path::{Path, PathBuf};
 
-use pa_agent::scripted::{tool_call_turn_steps, ScriptStep, ScriptedProvider, ScriptedTurn};
+use pa_agent::scripted::{ScriptStep, ScriptedProvider, ScriptedTurn, tool_call_turn_steps};
 use pa_agent::stream::AssistantMessageEvent;
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::turn_boundary::PendingRefine;
 use pa_core::session_engine::PromptOptions;
-use serde_json::{json, Value};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::turn_boundary::PendingRefine;
+use serde_json::{Value, json};
 
 /// The kernel Python with prime-agent-runtime installed (the interpreter the
 /// TS product's kernel venv bootstraps). Skipped (with a note) on machines

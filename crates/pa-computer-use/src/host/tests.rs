@@ -9,7 +9,7 @@ use super::*;
 use crate::permissions::MAC_HELP_LINES;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::process::script::Script;
-use crate::session::fake::{quick_timing, Env, RecordingTelemetry, BUNDLE};
+use crate::session::fake::{BUNDLE, Env, RecordingTelemetry, quick_timing};
 use crate::telemetry::{Outcome, TelemetryEvent};
 
 fn context(agent_dir: &std::path::Path, telemetry: Arc<RecordingTelemetry>) -> HostContext {

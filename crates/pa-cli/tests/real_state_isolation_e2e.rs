@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use pa_types::platform::test_isolation::{TestState, PROTECTED_HOME_ENV};
+use pa_types::platform::test_isolation::{PROTECTED_HOME_ENV, TestState};
 
 /// A fake real home holding the live-state files a leak would touch.
 fn sentinel_home(root: &Path) -> PathBuf {

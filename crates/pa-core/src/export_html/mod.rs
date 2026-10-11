@@ -6,23 +6,25 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use base64::Engine as _;
+use pa_types::session::FileEntry;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::Digest as _;
 
-use crate::session::manager::SessionManager;
-use pa_types::session::FileEntry;
-
 use self::theme::resolve_export_theme;
+use crate::session::manager::SessionManager;
 
 pub mod ansi_to_html;
 mod theme;
 pub mod tool_render;
 
 pub use self::tool_render::{
-    pre_render_custom_tools, RenderedToolHtml, RenderedToolResult, ToolHtmlRenderer,
+    RenderedToolHtml,
+    RenderedToolResult,
+    ToolHtmlRenderer,
+    pre_render_custom_tools,
 };
 
 /// The app name in generated export file names.
@@ -214,8 +216,9 @@ fn session_data_from_file(input_path: &Path) -> Result<SessionExportData> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
+
+    use super::*;
 
     fn fixture_session(dir: &Path) -> std::path::PathBuf {
         let path = dir.join("fixture-session.jsonl");

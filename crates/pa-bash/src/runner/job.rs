@@ -12,12 +12,11 @@ use std::io::{PipeReader, PipeWriter, Read, Write};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use serde_json::{json, Map, Value};
+use memchr::memmem;
+use serde_json::{Map, Value, json};
 
 use super::buffer::OutputBuffer;
 use super::clock::iso_utc;
-use memchr::memmem;
-
 use super::fence::MarkerScanner;
 use super::journal::Journal;
 use crate::platform::{self, ControlChannel, Process, Signal};

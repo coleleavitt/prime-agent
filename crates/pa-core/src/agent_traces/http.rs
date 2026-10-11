@@ -2,9 +2,10 @@
 //! `TraceHttp` trait + the reqwest transport, the URI-component encoding, the
 //! Retry-After parse, and the retry backoff.
 
-use super::*;
 use std::future::Future;
 use std::pin::Pin;
+
+use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceHttpResponse {

@@ -8,8 +8,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::catalog_schema::VerificationStatus;
-use super::catalog_schema::{AuthStrategy, ClientRegistration, McpServiceEntry, SetupStatus};
+use super::catalog_schema::{
+    AuthStrategy,
+    ClientRegistration,
+    McpServiceEntry,
+    SetupStatus,
+    VerificationStatus,
+};
 use super::connection_store::McpConnectionRecord;
 use super::local_catalog::load_local_service_catalog;
 

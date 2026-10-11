@@ -11,20 +11,36 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use pa_dream::child::{
-    ChildRuntimeScope, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult, RunAgentStatus,
+    ChildRuntimeScope,
+    RunAgent,
+    RunAgentOptions,
+    RunAgentRequest,
+    RunAgentResult,
+    RunAgentStatus,
 };
-use pa_dream::experiment::{read_experiment_result, ExperimentArm};
+use pa_dream::experiment::{ExperimentArm, read_experiment_result};
 use pa_dream::llm::{
-    DreamChildRole, DREAMER_PROMPT_HEADER, GUIDANCE_PROMPT_HEADER, PROPOSER_PROMPT_HEADER,
+    DREAMER_PROMPT_HEADER,
+    DreamChildRole,
+    GUIDANCE_PROMPT_HEADER,
+    PROPOSER_PROMPT_HEADER,
 };
 use pa_dream::rng::{Seed, SeededRng};
 use pa_dream::run_service::{
-    DreamChildOptions, DreamExperimentRequest, DreamRunKind, DreamRunPhase, DreamRunRequest,
-    DreamRunService, DreamRunServiceDeps, DreamRunStatus, DreamStopReason, RoleCappedRunner,
     DREAM_MAX_SEEDS,
+    DreamChildOptions,
+    DreamExperimentRequest,
+    DreamRunKind,
+    DreamRunPhase,
+    DreamRunRequest,
+    DreamRunService,
+    DreamRunServiceDeps,
+    DreamRunStatus,
+    DreamStopReason,
+    RoleCappedRunner,
 };
 use pa_dream::tasks::DreamTaskId;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 /// A runner that must never be called: the local path spends no token.
@@ -289,13 +305,17 @@ fn a_local_experiment_reports_arm_and_round_progress_and_its_result() {
         .filter_map(|update| update.round)
         .collect();
     assert!(rounds.contains(&1) && rounds.contains(&2));
-    assert!(updates
-        .iter()
-        .all(|update| update.kind == DreamRunKind::Experiment));
+    assert!(
+        updates
+            .iter()
+            .all(|update| update.kind == DreamRunKind::Experiment)
+    );
     assert_eq!(updates.last().unwrap().result_path, status.result_path);
-    assert!(updates
-        .windows(2)
-        .all(|pair| pair[1].best_node_score >= pair[0].best_node_score));
+    assert!(
+        updates
+            .windows(2)
+            .all(|pair| pair[1].best_node_score >= pair[0].best_node_score)
+    );
     assert!(!dir.path().join("trees").exists());
     let result = read_experiment_result(dir.path(), "sum-difference-s5-n2-1000").unwrap();
     assert_eq!(
@@ -307,11 +327,13 @@ fn a_local_experiment_reports_arm_and_round_progress_and_its_result() {
             .collect::<Vec<_>>(),
         vec![json!("dream"), json!("fixed")]
     );
-    assert!(result["arms"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|arm| arm["totals"]["tokens"] == json!(0)));
+    assert!(
+        result["arms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|arm| arm["totals"]["tokens"] == json!(0))
+    );
 }
 
 #[test]
@@ -430,10 +452,11 @@ fn a_cancel_at_the_first_arm_settles_cancelled_and_writes_no_result() {
     assert_eq!(status.phase, DreamRunPhase::Stopped);
     assert_eq!((status.error, status.result_path), (None, None));
     assert!(!service.running());
-    assert!(!dir
-        .path()
-        .join("experiments/sum-difference-s5-n4-1000/result.json")
-        .exists());
+    assert!(
+        !dir.path()
+            .join("experiments/sum-difference-s5-n4-1000/result.json")
+            .exists()
+    );
 }
 
 #[test]
@@ -729,14 +752,16 @@ fn a_cancel_after_the_first_seed_keeps_its_result_and_stops() {
         .join("experiments/sum-difference-s5-n2-1000/result.json");
     assert_eq!(status.result_paths, Some(vec![first.display().to_string()]));
     assert!(first.exists());
-    assert!(!dir
-        .path()
-        .join("experiments/sum-difference-s6-n2-1000/result.json")
-        .exists());
-    assert!(!dir
-        .path()
-        .join("experiments/sum-difference-s7-n2-1000")
-        .exists());
+    assert!(
+        !dir.path()
+            .join("experiments/sum-difference-s6-n2-1000/result.json")
+            .exists()
+    );
+    assert!(
+        !dir.path()
+            .join("experiments/sum-difference-s7-n2-1000")
+            .exists()
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@
 
 mod tabs;
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::wrap_text;
@@ -204,7 +204,14 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
             label: "Autocomplete max items",
             description: "Max visible items in autocomplete dropdown (3-20)",
             current: current.autocomplete_max_visible.to_string(),
-            values: Some(vec!["3".into(), "5".into(), "7".into(), "10".into(), "15".into(), "20".into()]),
+            values: Some(vec![
+                "3".into(),
+                "5".into(),
+                "7".into(),
+                "10".into(),
+                "15".into(),
+                "20".into(),
+            ]),
             submenu: None,
         },
         SettingsMenuRow {
@@ -252,7 +259,12 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
             label: "Transport",
             description: "Preferred transport for providers that support multiple transports",
             current: current.transport.clone(),
-            values: Some(vec!["sse".into(), "websocket".into(), "websocket-cached".into(), "auto".into()]),
+            values: Some(vec![
+                "sse".into(),
+                "websocket".into(),
+                "websocket-cached".into(),
+                "auto".into(),
+            ]),
             submenu: None,
         },
         SettingsMenuRow {
@@ -284,7 +296,13 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
             label: "Tree filter mode",
             description: "Default filter when opening /tree",
             current: current.tree_filter_mode.clone(),
-            values: Some(vec!["default".into(), "no-tools".into(), "user-only".into(), "labeled-only".into(), "all".into()]),
+            values: Some(vec![
+                "default".into(),
+                "no-tools".into(),
+                "user-only".into(),
+                "labeled-only".into(),
+                "all".into(),
+            ]),
             submenu: None,
         },
         SettingsMenuRow {

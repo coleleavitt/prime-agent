@@ -3,7 +3,13 @@
 //! the pick).
 
 use super::{
-    fuzzy_filter, scrub_controls, Line, PrimeTeamOption, PrimeTeamPick, SearchInput, Span,
+    Line,
+    PrimeTeamOption,
+    PrimeTeamPick,
+    SearchInput,
+    Span,
+    fuzzy_filter,
+    scrub_controls,
 };
 
 /// The mounted team picker: the search field over the personal-first rows.

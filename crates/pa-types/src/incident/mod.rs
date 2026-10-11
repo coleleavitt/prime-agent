@@ -8,16 +8,22 @@ mod classify;
 mod parse;
 mod patterns;
 
+use std::collections::HashSet;
+
 pub use anomaly::{
-    compute_incident_anomalies, format_incident_duration, latest_incident_stall_timeout_by_subject,
+    compute_incident_anomalies,
+    format_incident_duration,
+    latest_incident_stall_timeout_by_subject,
 };
 pub use classify::{
-    classify_incident_entry, collect_incident_events, collect_worker_pid_map,
-    worker_id_from_socket_path, WorkerPidMap, WorkerPidSighting,
+    WorkerPidMap,
+    WorkerPidSighting,
+    classify_incident_entry,
+    collect_incident_events,
+    collect_worker_pid_map,
+    worker_id_from_socket_path,
 };
 pub use parse::{parse_incident_daemon_log_line, parse_incident_log_line, timestamp_to_ms};
-
-use std::collections::HashSet;
 
 /// One severity band of a classified incident event (TS `IncidentSeverity`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

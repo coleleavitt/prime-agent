@@ -447,10 +447,11 @@ fn mutation_invalidates_every_detail_slot() {
     for detail in [Detail::Overview, Detail::Details, Detail::All] {
         view.detail = detail;
         let rows = view.render_frame(80, 24);
-        assert!(rows
-            .iter()
-            .flatten()
-            .any(|span| span.content.contains("new")));
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|span| span.content.contains("new"))
+        );
     }
     assert_eq!(ENTRY_RENDERS.with(std::cell::Cell::get), 3);
 }

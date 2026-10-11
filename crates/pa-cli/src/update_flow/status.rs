@@ -8,8 +8,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use pa_types::daemon::update_flow::{
-    UpdateId, UpdateProcessIdentity, UpdateState, UpdateStatus, UpdateStatusCounts,
     UPDATE_STATUS_FORMAT_VERSION,
+    UpdateId,
+    UpdateProcessIdentity,
+    UpdateState,
+    UpdateStatus,
+    UpdateStatusCounts,
 };
 use serde_json::json;
 use tokio::sync::Mutex;

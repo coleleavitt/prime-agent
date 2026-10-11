@@ -27,10 +27,15 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The wait for the recovered banner: the recovery's fixed poll finds the successor well inside
 /// this bound.

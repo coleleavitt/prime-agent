@@ -3,11 +3,11 @@
 //! (TS `attributeChildUsage`). Divergence: Rust children are separate
 //! worker processes, so the daemon's children registry delivers batches.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 
 use pa_types::ai::Usage;
 use pa_types::session::ChildUsageOrigin;
+use pa_types::sync::MutexExt;
 
 use crate::session::manager::SessionManager;
 
@@ -343,8 +343,9 @@ pub trait RlmChildUsageSink: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::ai::{AssistantMessage, StopReason, UsageCost};
+
+    use super::*;
 
     /// `Usage` block with a single cost total.
     fn usage_block(
@@ -724,8 +725,9 @@ mod tests {
             })
             .await;
         let rows = file_rows(&manager).await;
-        assert!(rows
-            .iter()
-            .all(|row| row["type"] != "child_usage_attributed"));
+        assert!(
+            rows.iter()
+                .all(|row| row["type"] != "child_usage_attributed")
+        );
     }
 }

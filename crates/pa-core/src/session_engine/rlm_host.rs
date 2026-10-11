@@ -14,24 +14,28 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
+use super::agent_messaging::assert_direct_agent_message_target;
 /// The typed spawn placement [`RlmSpawnRequest::target`] carries. Re-exported
 /// from the pure RLM-surface module (which owns the placement normalizer and
 /// the placement design note) so the request vocabulary imports from one
 /// place.
 pub use crate::kernel::rlm_runtime::RlmSpawnTarget;
 use crate::kernel::rlm_runtime::{
-    find_rlm_model_matches, kwargs_from_payload, normalize_requested_rlm_spawn_target,
-    normalize_requested_rlm_subagent_model, normalize_requested_rlm_subagent_session_name,
-    normalize_requested_rlm_subagent_thinking_level, RlmModelInfo, DEFAULT_RLM_MODEL_SEARCH_LIMIT,
+    DEFAULT_RLM_MODEL_SEARCH_LIMIT,
     MAX_RLM_MODEL_SEARCH_LIMIT,
+    RlmModelInfo,
+    find_rlm_model_matches,
+    kwargs_from_payload,
+    normalize_requested_rlm_spawn_target,
+    normalize_requested_rlm_subagent_model,
+    normalize_requested_rlm_subagent_session_name,
+    normalize_requested_rlm_subagent_thinking_level,
 };
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 use crate::models::registry::ModelRegistry;
-
-use super::agent_messaging::assert_direct_agent_message_target;
 
 /// Hard bound for one progress note; the throttle interval lives here too.
 pub const RLM_PROGRESS_NOTE_MAX_LENGTH: usize = 512;
@@ -976,10 +980,11 @@ fn reject_unsupported_kwargs(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::kernel::shared::HostRequestPayload;
     use crate::session::manager::SessionManager;
-    use std::sync::Arc;
 
     /// A host recording every call, answering with fixed handles.
     /// One recorded collect call: its targets and timeout.
@@ -1399,7 +1404,9 @@ mod tests {
     #[tokio::test]
     async fn spawns_draw_grants_from_the_delegation_budget() {
         use super::super::rlm_token_budget::{
-            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig,
+            RlmTokenAllowance,
+            RlmTokenBudget,
+            RlmTokenBudgetConfig,
         };
         let dir = tempfile::TempDir::new().unwrap();
         let host = RecordingHost::new();
@@ -1475,7 +1482,9 @@ mod tests {
     #[tokio::test]
     async fn an_explicit_token_budget_draws_its_grant_within_the_pool_and_cap() {
         use super::super::rlm_token_budget::{
-            RlmTokenAllowance, RlmTokenBudget, RlmTokenBudgetConfig,
+            RlmTokenAllowance,
+            RlmTokenBudget,
+            RlmTokenBudgetConfig,
         };
         async fn spawn(
             wiring: &crate::session_engine::runtime_wiring::SessionKernelWiring,

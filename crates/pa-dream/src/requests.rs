@@ -9,9 +9,12 @@ use serde_json::{Map, Value};
 use crate::experiment::ExperimentArm;
 use crate::policy::PRIMING_DIVERSE;
 use crate::run_service::{
-    DreamChildOptions, DreamExperimentRequest, DreamRunRequest, DREAM_MAX_SEEDS,
+    DREAM_MAX_SEEDS,
+    DreamChildOptions,
+    DreamExperimentRequest,
+    DreamRunRequest,
 };
-use crate::tasks::{DreamTaskId, DREAM_TASK_IDS};
+use crate::tasks::{DREAM_TASK_IDS, DreamTaskId};
 
 /// The thinking levels a child may run at (TS `THINKING_LEVELS`).
 pub const THINKING_LEVELS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -419,7 +422,7 @@ pub fn parse_dream_command(args: &str) -> Result<DreamCommand, String> {
                         _ => {
                             return Err(usage_with(
                                 "--arms expects distinct arms out of dream, fixed, dream-guided, fixed-guided",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -449,7 +452,7 @@ pub fn parse_dream_command(args: &str) -> Result<DreamCommand, String> {
                         _ => {
                             return Err(usage_with(
                                 "--seeds expects distinct non-negative integers",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -478,7 +481,7 @@ pub fn parse_dream_command(args: &str) -> Result<DreamCommand, String> {
                         return Err(usage_with(&format!(
                             "--thinking expects one of {}",
                             THINKING_LEVELS.join(", ")
-                        )))
+                        )));
                     }
                 }
             }
@@ -581,15 +584,39 @@ mod tests {
             }
         );
         for (payload, message) in [
-            (json!({"task": "nope"}), "dream.run task must be one of circle-packing, sum-difference, python-speedup, autocorrelation"),
-            (json!({"task": "sum-difference", "k1": 0}), "dream.run k1 must be a positive integer when provided"),
-            (json!({"task": "sum-difference", "seed": -1}), "dream.run seed must be a non-negative integer when provided"),
-            (json!({"task": "sum-difference", "llm_dreamer": "yes"}), "dream.run llm_dreamer must be a boolean when provided"),
-            (json!({"task": "sum-difference", "priming": "wide"}), "dream.run priming must be \"none\" or \"diverse\" when provided"),
-            (json!({"task": "sum-difference", "thinking": "huge"}), "dream.run thinking must be one of: off, minimal, low, medium, high, xhigh, max"),
-            (json!({"task": "sum-difference", "model": "  "}), "dream.run model must not be empty"),
+            (
+                json!({"task": "nope"}),
+                "dream.run task must be one of circle-packing, sum-difference, python-speedup, autocorrelation",
+            ),
+            (
+                json!({"task": "sum-difference", "k1": 0}),
+                "dream.run k1 must be a positive integer when provided",
+            ),
+            (
+                json!({"task": "sum-difference", "seed": -1}),
+                "dream.run seed must be a non-negative integer when provided",
+            ),
+            (
+                json!({"task": "sum-difference", "llm_dreamer": "yes"}),
+                "dream.run llm_dreamer must be a boolean when provided",
+            ),
+            (
+                json!({"task": "sum-difference", "priming": "wide"}),
+                "dream.run priming must be \"none\" or \"diverse\" when provided",
+            ),
+            (
+                json!({"task": "sum-difference", "thinking": "huge"}),
+                "dream.run thinking must be one of: off, minimal, low, medium, high, xhigh, max",
+            ),
+            (
+                json!({"task": "sum-difference", "model": "  "}),
+                "dream.run model must not be empty",
+            ),
         ] {
-            assert_eq!(parse_run_payload(&object(payload)).err().as_deref(), Some(message));
+            assert_eq!(
+                parse_run_payload(&object(payload)).err().as_deref(),
+                Some(message)
+            );
         }
     }
 
@@ -627,9 +654,9 @@ mod tests {
                 DreamTaskId::CirclePacking
             )))
         );
-        let Ok(DreamCommand::Run(run)) =
-            parse_dream_command("--task=sum-difference --seed 0 --iterations 2 --llm-dreamer --thinking HIGH --priming none")
-        else {
+        let Ok(DreamCommand::Run(run)) = parse_dream_command(
+            "--task=sum-difference --seed 0 --iterations 2 --llm-dreamer --thinking HIGH --priming none",
+        ) else {
             panic!("a run");
         };
         assert_eq!(
@@ -648,9 +675,9 @@ mod tests {
                 Some("high")
             )
         );
-        let Ok(DreamCommand::Experiment(experiment)) =
-            parse_dream_command("experiment --task autocorrelation --seeds 7,8 --arms dream,dream-guided --llm-proposer --rounds 3")
-        else {
+        let Ok(DreamCommand::Experiment(experiment)) = parse_dream_command(
+            "experiment --task autocorrelation --seeds 7,8 --arms dream,dream-guided --llm-proposer --rounds 3",
+        ) else {
             panic!("an experiment");
         };
         assert_eq!(experiment.seeds, Some(vec![7, 8]));

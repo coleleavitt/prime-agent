@@ -30,9 +30,12 @@ use std::time::{Duration, SystemTime};
 use sha2::Digest;
 
 use super::version::{BOOTSTRAP_SCHEMA, STATE_SNAPSHOT_REQUIREMENT};
-use super::{default_rlm_extra_uv_args, PYTHON_VERSION};
+use super::{PYTHON_VERSION, default_rlm_extra_uv_args};
 use crate::kernel::bootstrap::dir_lock::{
-    is_owner_alive, owner_content, parse_owner, try_bootstrap_lock,
+    is_owner_alive,
+    owner_content,
+    parse_owner,
+    try_bootstrap_lock,
 };
 
 /// The keyed venvs directory under the agent dir.

@@ -4,9 +4,10 @@
 //! un-tagged user text blocks and unknown entry types). Live sessions are opt-in with
 //! `PA_TYPES_LIVE_SESSIONS=1`; the default run is hermetic.
 
+use std::path::PathBuf;
+
 use pa_types::session::FileEntry;
 use serde_json::Value;
-use std::path::PathBuf;
 
 /// PR #277: the raw `OpenAI` wire value `tool_calls` deserializes through
 /// `StopReason`'s serde alias to the canonical `toolUse`. The corpus keeps

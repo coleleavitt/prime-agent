@@ -30,7 +30,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// How long `list --all` over 1,000 ledger children may take: the TS daemon
 /// answers the same shape in 0.78s; the bound stays generous for CI noise.

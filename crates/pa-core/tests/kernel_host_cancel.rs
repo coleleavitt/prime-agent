@@ -11,10 +11,14 @@ use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    host_handler, host_request_cancellation, ExecuteOptions, HostRequestHandlers,
-    KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
+    host_handler,
+    host_request_cancellation,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Speaks protocol v4: ready, then per cell one `host_request` (id `h-<cell
 /// id>`, payload type = the cell code), a `host_cancel` for it when the code

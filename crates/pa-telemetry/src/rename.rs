@@ -3,11 +3,9 @@
 //! Windows raises transient EPERM/EACCES/EBUSY when the rename destination
 //! is held open (antivirus, search indexer); Unix never retries.
 
-use std::fs;
-use std::io;
 use std::path::Path;
-use std::thread;
 use std::time::Duration;
+use std::{fs, io, thread};
 
 /// Total attempts before a transient rename failure surfaces.
 const WIN32_RENAME_ATTEMPTS: u32 = 5;

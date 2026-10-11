@@ -9,17 +9,19 @@
 //! seams exist — every product session is a daemon worker, and anything
 //! without the worker queue leaves the requests honestly unavailable.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::agent_watch::{
-    AgentWatchRegistry, AgentWatchSnapshot, AGENT_WATCH_MAX_TOTAL, AGENT_WATCH_POLL_INTERVAL_MS,
+    AGENT_WATCH_MAX_TOTAL,
+    AGENT_WATCH_POLL_INTERVAL_MS,
+    AgentWatchRegistry,
+    AgentWatchSnapshot,
 };
 
 /// The inbox listing seam: the `rlm.inbox.list` snapshot.

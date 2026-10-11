@@ -1,7 +1,6 @@
 //! Result-rendering helpers shared by tool renderers.
 
 use base64::Engine;
-
 use pa_types::ai::{ImageContent, TextContent, UserContentBlock};
 
 use crate::tools::shell_utils::sanitize_binary_output;

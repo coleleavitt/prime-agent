@@ -3,17 +3,17 @@
 //! One last-good snapshot per source URL; a scope change discards the
 //! previous view (an account's models never leak across scopes).
 
-use pa_types::sync::MutexExt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pa_types::sync::MutexExt;
 use serde::{Deserialize, Serialize};
 
+use crate::CATALOG_REFRESH_INTERVAL_MS;
 use crate::fetch::{CatalogFetcher, FetchOutcome};
 use crate::offline::is_catalog_offline;
-use crate::CATALOG_REFRESH_INTERVAL_MS;
 
 /// The unauthenticated scope shared by both remote catalog URLs.
 pub const PUBLIC_SCOPE: &str = "public";

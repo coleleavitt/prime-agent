@@ -13,7 +13,7 @@
 
 use std::fmt::Write as _;
 
-use super::super::pyvalue::{py_float_repr, PyValue};
+use super::super::pyvalue::{PyValue, py_float_repr};
 
 /// How deep containers may nest before the decoder gives up the way
 /// Python's recursion limit does (the limit is 1000 frames; the kernel's
@@ -473,7 +473,7 @@ fn write_json(value: &PyValue, out: &mut String) -> Result<(), String> {
                         return Err(format!(
                             "keys must be str, int, float, bool or None, not {}",
                             type_name(key)
-                        ))
+                        ));
                     }
                 };
                 push_ascii_string(out, &key);
@@ -489,7 +489,7 @@ fn write_json(value: &PyValue, out: &mut String) -> Result<(), String> {
             return Err(format!(
                 "Object of type {} is not JSON serializable",
                 type_name(value)
-            ))
+            ));
         }
     }
     Ok(())

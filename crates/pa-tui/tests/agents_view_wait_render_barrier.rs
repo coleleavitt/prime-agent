@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
 use pa_tui::interactive::SessionSelection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Longer than the retired budget-settle ordering's whole window, so a plan gated on the old
 /// 300ms settle deterministically ends before the catalog lands (the red the barrier removes).

@@ -19,10 +19,19 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use pa_sandbox::transport::{
-    ResponseChunks, SandboxTransport, StreamedResponse, TransportRequest, TransportResponse,
+    ResponseChunks,
+    SandboxTransport,
+    StreamedResponse,
+    TransportRequest,
+    TransportResponse,
 };
 use pa_sandbox::{
-    ClientOptions, PrimeSandboxClient, Sandbox, SandboxErrorCode, SandboxStatus, VmCreateRequest,
+    ClientOptions,
+    PrimeSandboxClient,
+    Sandbox,
+    SandboxErrorCode,
+    SandboxStatus,
+    VmCreateRequest,
     WaitOptions,
 };
 use serde_json::json;

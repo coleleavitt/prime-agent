@@ -5,16 +5,21 @@
 mod driver;
 mod gates;
 
+use std::collections::HashMap;
+
 pub use driver::{
-    AutonomousDriver, AutonomousFollowUp, AutonomousFollowUpFuture, AutonomousStopReason,
+    AutonomousDriver,
+    AutonomousFollowUp,
+    AutonomousFollowUpFuture,
+    AutonomousStopReason,
     ShellAutonomousDriver,
 };
 pub use gates::{
-    should_autonomously_continue, ChildProcessResult, GateCommandRunner, ShellGateRunner,
+    ChildProcessResult,
+    GateCommandRunner,
+    ShellGateRunner,
+    should_autonomously_continue,
 };
-
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_AUTONOMOUS_CONTINUATION_PROMPT: &str = "No human input is available in autonomous mode. Continue working until the host evaluator, verifier, or configured autonomous limits stop the run. If you were asking the user a question, make a reasonable assumption and verify it. If you believe you are blocked, prove it with host-observable evidence, preserve that evidence, and keep looking for safe progress while budget remains. Do not end the session yourself; the verifier/evaluator decides completion when configured gates pass.";
@@ -669,13 +674,19 @@ mod tests {
         };
         let text = build_autonomous_gate_failure_continuation(&failure, 3, 0);
         assert!(text.starts_with("[autonomous-continuation: gate-failed]\n\nAutonomous quality gate failed (attempt 2/3): `make check` exited with code 1.\n\nOutput:\nerror here\n"));
-        assert!(text.contains("Continue working. Fix the failure, then produce terminal evidence."));
+        assert!(
+            text.contains("Continue working. Fix the failure, then produce terminal evidence.")
+        );
         let mut short = state.clone();
         short.subagent_keep_alive_ms = 60_000;
-        assert!(create_autonomous_subagent_keep_alive_text(&short)
-            .contains("at least 1 minute without"));
-        assert!(create_autonomous_subagent_keep_alive_text(&state)
-            .contains("at least 25 minutes without"));
+        assert!(
+            create_autonomous_subagent_keep_alive_text(&short)
+                .contains("at least 1 minute without")
+        );
+        assert!(
+            create_autonomous_subagent_keep_alive_text(&state)
+                .contains("at least 25 minutes without")
+        );
     }
 
     #[test]

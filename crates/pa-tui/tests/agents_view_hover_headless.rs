@@ -25,10 +25,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pa_tui::agents_view::{
-    run_agents_view, AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode,
+    AgentsHeadlessPlan,
+    AgentsStep,
+    AgentsViewOptions,
+    AgentsViewUiMode,
+    run_agents_view,
 };
 use pa_tui::interactive::SessionSelection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Mouse tracking is process-global state, so the headless runs serialize through one lock (the
 /// click dispatch gates on it; tokio's, so the guard rides the run's awaits).

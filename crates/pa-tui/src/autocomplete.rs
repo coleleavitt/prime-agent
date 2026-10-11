@@ -5,10 +5,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use pa_types::slash_commands::SlashCommandRegistry;
+
 use crate::fuzzy::fuzzy_filter;
 use crate::width::str_width;
 use crate::{Line, Span};
-use pa_types::slash_commands::SlashCommandRegistry;
 
 mod fuzzy_file_search;
 pub use fuzzy_file_search::FileSearch;

@@ -14,12 +14,20 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use pa_core::kernel::shared::{
-    with_host_request_cancellation, HostRequestHandlers, HostRequestPayload, KernelEnvironment,
+    HostRequestHandlers,
+    HostRequestPayload,
+    KernelEnvironment,
+    with_host_request_cancellation,
 };
 use pa_core::mcp::{
-    EnvRef, McpManager, McpManagerOptions, McpOAuth, McpServerConfig, McpSessionOptions,
+    EnvRef,
+    McpManager,
+    McpManagerOptions,
+    McpOAuth,
+    McpServerConfig,
+    McpSessionOptions,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn python() -> Option<PathBuf> {
     pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
@@ -31,10 +39,12 @@ async fn fixture_env(python: &Path, environment: KernelEnvironment) -> Value {
         "svc".to_string(),
         McpServerConfig::Stdio {
             command: python.to_string_lossy().to_string(),
-            args: Some(vec![Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/mcp/stdio_server.py")
-                .to_string_lossy()
-                .to_string()]),
+            args: Some(vec![
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/mcp/stdio_server.py")
+                    .to_string_lossy()
+                    .to_string(),
+            ]),
             cwd: None,
             env: Some(HashMap::from([(
                 "FIXTURE_ENV".to_string(),

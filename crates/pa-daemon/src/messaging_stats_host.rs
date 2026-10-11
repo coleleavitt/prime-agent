@@ -9,12 +9,11 @@
 //! engine registers the handlers only when the seams exist — anything
 //! without the worker leaves the request honestly unavailable.
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
+use pa_types::sync::MutexExt;
 use serde_json::Value;
-
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
 
 use crate::agent_engine::AgentSessionEngine;
 

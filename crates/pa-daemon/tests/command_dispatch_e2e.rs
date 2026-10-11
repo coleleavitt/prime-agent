@@ -29,7 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// How long the mock holds the turn between its first chunk and the finish chunk:
 /// must exceed the TUI's 10s `UI_REQUEST_TIMEOUT_MS` so a serialized dispatch

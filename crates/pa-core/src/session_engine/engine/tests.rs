@@ -1,10 +1,11 @@
 //! The engine unit battery: the scripted tool loop, the child-depth
 //! stamp, the MCP-gating unlock, and the goal/heartbeat handler
 //! registration.
-use super::*;
-use crate::session_engine::tool_bridge::{bridge_tool, ToolDefinitionBridge};
-use crate::tools::tool_definition::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 use pa_agent::scripted::ScriptedProvider;
+
+use super::*;
+use crate::session_engine::tool_bridge::{ToolDefinitionBridge, bridge_tool};
+use crate::tools::tool_definition::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 
 fn echo_definition() -> ToolDefinition {
     ToolDefinition {
@@ -97,9 +98,11 @@ async fn engine_runs_tool_loop_and_persists() {
     // The system prompt is the layered assembly: static core layer
     // first, dynamic tail after.
     assert!(engine.system_prompt.starts_with("# prime-agent harness"));
-    assert!(engine
-        .system_prompt
-        .contains("Recursive agent depth: 0 (root)"));
+    assert!(
+        engine
+            .system_prompt
+            .contains("Recursive agent depth: 0 (root)")
+    );
 
     let outcome = engine
         .prompt("run the echo tool", PromptOptions::default())
@@ -197,9 +200,11 @@ async fn spawned_child_prompt_stamps_its_depth() {
     .await
     .unwrap();
 
-    assert!(engine
-        .system_prompt
-        .contains("Recursive agent depth: 2 (not root)"));
+    assert!(
+        engine
+            .system_prompt
+            .contains("Recursive agent depth: 2 (not root)")
+    );
     assert!(!engine.system_prompt.contains("depth: 0 (root)"));
 }
 

@@ -76,11 +76,7 @@ pub fn find_env_keys(provider: &str) -> Option<Vec<String>> {
         .filter(|env_var| std::env::var_os(env_var).is_some_and(|v| !v.is_empty()))
         .map(std::string::ToString::to_string)
         .collect();
-    if found.is_empty() {
-        None
-    } else {
-        Some(found)
-    }
+    if found.is_empty() { None } else { Some(found) }
 }
 
 /// Get an API key for a provider from known environment variables. Returns the sentinel

@@ -16,15 +16,20 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use pa_core::features::SessionFeatureContext;
-use pa_core::refinement::prompt_hook::{
-    HarnessPromptAdjustment, HarnessPromptHook, HarnessPromptSection,
-};
 use pa_core::refinement::HarnessState;
+use pa_core::refinement::prompt_hook::{
+    HarnessPromptAdjustment,
+    HarnessPromptHook,
+    HarnessPromptSection,
+};
 use serde_json::Value;
 
 use crate::store::read_trajectory_index;
 use crate::trajectory::{
-    trajectory_index_enabled_from_env, TrajectoryLabelKind, TrajectoryStoreFile, PRIME_CORPUS,
+    PRIME_CORPUS,
+    TrajectoryLabelKind,
+    TrajectoryStoreFile,
+    trajectory_index_enabled_from_env,
 };
 
 /// Heading of the digest's trajectory section.

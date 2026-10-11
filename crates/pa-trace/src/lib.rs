@@ -22,14 +22,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pa_types::trace_context::{TraceContext, TRACEPARENT_ENV};
-use tracing_subscriber::layer::SubscriberExt;
-
 pub use health::run_health_command;
-pub use layer::{TraceLayer, JSON_FIELD_SUFFIX};
-pub use otlp::{parse_otlp_headers, OtlpConfig, OtlpStats, OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV};
+pub use layer::{JSON_FIELD_SUFFIX, TraceLayer};
+pub use otlp::{OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV, OtlpConfig, OtlpStats, parse_otlp_headers};
+use pa_types::trace_context::{TRACEPARENT_ENV, TraceContext};
 pub use retained::{read_log_text, retained_log_files};
 pub use trace_command::run_trace_command;
+use tracing_subscriber::layer::SubscriberExt;
 
 /// How long an orderly exit waits for queued log lines and for the OTLP
 /// worker, each (TS `DEFAULT_OTLP_SHUTDOWN_TIMEOUT_MS`).

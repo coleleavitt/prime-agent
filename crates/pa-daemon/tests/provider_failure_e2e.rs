@@ -29,7 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Supervisor {
     child: Child,
@@ -482,10 +482,12 @@ fn provider_failure_is_retried_then_surfaced_to_attached_clients() {
         .collect();
     assert_eq!(starts[0]["attempt"], 1);
     assert_eq!(starts[0]["maxAttempts"], 2);
-    assert!(starts[0]["errorMessage"]
-        .as_str()
-        .expect("error message")
-        .contains("mock provider overloaded"));
+    assert!(
+        starts[0]["errorMessage"]
+            .as_str()
+            .expect("error message")
+            .contains("mock provider overloaded")
+    );
     assert_eq!(starts[1]["attempt"], 2);
     // Each retry start's delay sits in the ±20% jitter band around its ladder step (50ms then
     // 100ms).
@@ -507,10 +509,12 @@ fn provider_failure_is_retried_then_surfaced_to_attached_clients() {
         .expect("auto_retry_end");
     assert_eq!(end["success"], false);
     assert_eq!(end["attempt"], 2);
-    assert!(end["finalError"]
-        .as_str()
-        .expect("final error")
-        .contains("mock provider overloaded"));
+    assert!(
+        end["finalError"]
+            .as_str()
+            .expect("final error")
+            .contains("mock provider overloaded")
+    );
 
     let failure = client
         .events
@@ -520,10 +524,12 @@ fn provider_failure_is_retried_then_surfaced_to_attached_clients() {
             event["message"]["role"] == "assistant" && event["message"]["stopReason"] == "error"
         })
         .expect("failed assistant message_end");
-    assert!(failure["message"]["errorMessage"]
-        .as_str()
-        .expect("error message")
-        .contains("mock provider overloaded"));
+    assert!(
+        failure["message"]["errorMessage"]
+            .as_str()
+            .expect("error message")
+            .contains("mock provider overloaded")
+    );
 
     // The turn ends with the TS `turn_end` shape: the terminal frame carries the failed assistant
     // message as its payload (no separate error field).
@@ -535,10 +541,12 @@ fn provider_failure_is_retried_then_surfaced_to_attached_clients() {
         .expect("turn_end");
     assert_eq!(turn_end["message"]["role"], "assistant");
     assert_eq!(turn_end["message"]["stopReason"], "error");
-    assert!(turn_end["message"]["errorMessage"]
-        .as_str()
-        .expect("turn error")
-        .contains("mock provider overloaded"));
+    assert!(
+        turn_end["message"]["errorMessage"]
+            .as_str()
+            .expect("turn error")
+            .contains("mock provider overloaded")
+    );
     assert_eq!(turn_end.get("error"), None, "turn_end: {turn_end}");
     assert_eq!(
         turn_end["toolResults"].as_array().map(Vec::len),
@@ -570,10 +578,12 @@ fn provider_failure_is_retried_then_surfaced_to_attached_clients() {
             .contains("Retry failed after 2 attempts"),
         "outcome text: {outcome}"
     );
-    assert!(outcome["content"]
-        .as_str()
-        .expect("outcome text")
-        .contains("mock provider overloaded"));
+    assert!(
+        outcome["content"]
+            .as_str()
+            .expect("outcome text")
+            .contains("mock provider overloaded")
+    );
 }
 
 /// The 429-storm simulation (operator ruling 2026-09-23): a rate-limiting provider gets
@@ -1029,10 +1039,12 @@ fn provider_failure_surfaces_on_the_direct_transport_path() {
             event["message"]["role"] == "assistant" && event["message"]["stopReason"] == "error"
         })
         .expect("failed assistant message_end");
-    assert!(failure["message"]["errorMessage"]
-        .as_str()
-        .expect("error message")
-        .contains("mock provider overloaded"));
+    assert!(
+        failure["message"]["errorMessage"]
+            .as_str()
+            .expect("error message")
+            .contains("mock provider overloaded")
+    );
 
     assert_eq!(mock.count(), 3, "requests: initial + 2 retries");
 }

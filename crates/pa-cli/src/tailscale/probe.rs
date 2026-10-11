@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use pa_core::platform::{is_executable, is_executable_by_process};
 use serde_json::Value;
 
-use super::{run_tailscale, trim_trailing_dots, TailscaleProbe, TAILSCALE_BINARY};
+use super::{TAILSCALE_BINARY, TailscaleProbe, run_tailscale, trim_trailing_dots};
 
 /// Detect the CLI at `program` and, when present, this node's tailnet
 /// state. The detection seam the mesh builds on: the public commands pass

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use sha2::{Digest, Sha256};
 
 pub const AGENT_DIR_ENV: &str = "PRIME_AGENT_CODING_AGENT_DIR";
@@ -184,11 +184,12 @@ mod tests {
             Path::new("/ad"),
         );
         assert!(path.starts_with("/ad/logs"));
-        assert!(path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .contains("daemon.sock."));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("daemon.sock.")
+        );
         let other = daemon_log_path(
             Path::new("/tmp/prime-agent-2/daemon.sock"),
             Path::new("/ad"),

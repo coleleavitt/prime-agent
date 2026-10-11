@@ -8,9 +8,9 @@
 //! tests/differential/run.sh
 //! ```
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::providers::openai_completions::{stream_openai_completions, OpenAICompletionsOptions};
+use crate::providers::openai_completions::{OpenAICompletionsOptions, stream_openai_completions};
 use crate::types::{AssistantContent, Model, StopReason, StreamOptions};
 
 /// Mirrors the prime-inference catalog entry for `z-ai/glm-5.3-flash`.

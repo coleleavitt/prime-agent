@@ -4,19 +4,42 @@
 #[cfg(unix)]
 use super::launch_budget::WORKER_CONNECT_BACKOFF_MS;
 use super::launch_budget::{
-    DEFAULT_WORKER_CONNECT_TIMEOUT_MS, WORKER_CONNECT_PROBE_MS, WORKER_CONNECT_TIMEOUT_ENV,
+    DEFAULT_WORKER_CONNECT_TIMEOUT_MS,
+    WORKER_CONNECT_PROBE_MS,
+    WORKER_CONNECT_TIMEOUT_ENV,
 };
 #[cfg(not(unix))]
 use super::launch_budget::{WORKER_PROBE_BACKOFF_MAX_MS, WORKER_PROBE_BACKOFF_MIN_MS};
 use super::routing::WORKER_REQUEST_TIMEOUT_MS;
 use super::{
-    anyhow, create_command_payload, json, persist_worker, socket, util, Arc, Context,
-    DaemonCommand, DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand,
-    Duration, EngineModelSelection, Map, Ordering, Path, ResidentWorker, Result, RouteAdmission,
-    Supervisor, TempSync, TypedCreateRejection, Value, ROUTE_TIMEOUT_MS,
+    Arc,
+    Context,
+    DaemonCommand,
+    DaemonWorkerDescriptor,
+    DaemonWorkerLifecycle,
+    DurableDaemonCreateCommand,
+    Duration,
+    EngineModelSelection,
+    Map,
+    Ordering,
+    Path,
+    ROUTE_TIMEOUT_MS,
+    ResidentWorker,
+    Result,
+    RouteAdmission,
+    Supervisor,
+    TempSync,
+    TypedCreateRejection,
+    Value,
+    anyhow,
+    create_command_payload,
+    json,
+    persist_worker,
+    socket,
+    util,
 };
 use crate::lease::is_process_alive;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 
 impl Supervisor {
     /// Complete a tombstoned stop for a worker encountered at adoption: adoption
@@ -175,14 +198,10 @@ impl Supervisor {
                 None => {
                     return Err(anyhow!(
                         "Invalid thinking level \"{level}\". Valid values: off, minimal, low, medium, high, xhigh, max"
-                    ))
+                    ));
                 }
             },
-            Some(_) => {
-                return Err(anyhow!(
-                    "Invalid thinking level: expected a string"
-                ))
-            }
+            Some(_) => return Err(anyhow!("Invalid thinking level: expected a string")),
         };
         let model_selection = EngineModelSelection {
             provider: config_object

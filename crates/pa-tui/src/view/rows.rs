@@ -4,12 +4,11 @@
 //! a chat entry's cached layout rows.
 
 use super::AgentView;
-use crate::chat::{render_assistant, render_text_rows, render_user_block, ChatEntry};
-use crate::theme::ThemeColor;
-use crate::Line;
-
 #[cfg(test)]
 use super::layout;
+use crate::Line;
+use crate::chat::{ChatEntry, render_assistant, render_text_rows, render_user_block};
+use crate::theme::ThemeColor;
 
 /// TS `getSpacingContent`: an assistant message's conversation-spacing
 /// classification at the current detail level.

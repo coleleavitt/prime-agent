@@ -222,7 +222,14 @@ fn captured_window_matches_full_transcript_and_stats() {
             .unwrap()
             .unwrap();
         assert!(probe.read_stats().cache_hit);
-        eprintln!("phase={phase} full={full_elapsed:?} open={elapsed:?} bytes={} jsonl_bytes={} ranges={:?} entries={}/{}", path.metadata().unwrap().len(), probe.read_stats().jsonl_bytes, probe.read_stats().jsonl_ranges, window.entries.len(), full.entries.len());
+        eprintln!(
+            "phase={phase} full={full_elapsed:?} open={elapsed:?} bytes={} jsonl_bytes={} ranges={:?} entries={}/{}",
+            path.metadata().unwrap().len(),
+            probe.read_stats().jsonl_bytes,
+            probe.read_stats().jsonl_ranges,
+            window.entries.len(),
+            full.entries.len()
+        );
         if phase == "warm" {
             let original = std::fs::read(&path).unwrap();
             let started = std::time::Instant::now();

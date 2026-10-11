@@ -232,7 +232,9 @@ fn print_mode_goal_cap_reports_the_reason_and_exits_one() {
         &script,
     );
     assert_eq!(code, 1);
-    assert!(stderr.ends_with("Goal continuation cap reached: consecutive turns made no progress\n"));
+    assert!(
+        stderr.ends_with("Goal continuation cap reached: consecutive turns made no progress\n")
+    );
     assert!(stdout.is_empty());
 
     let session_id = read_entries(&session_files(home.path())[0])[0]["id"]
@@ -782,20 +784,26 @@ fn print_mode_json_streams_the_harness_digest_pair() {
     assert!(turn_start_at < digest_at && digest_at < user_at);
     let digest = &events[digest_at]["message"];
     assert!(digest["content"].is_string());
-    assert!(digest["content"]
-        .as_str()
-        .unwrap()
-        .starts_with("[harness-digest]"));
-    assert!(digest["content"]
-        .as_str()
-        .unwrap()
-        .ends_with("</harness_state>"));
+    assert!(
+        digest["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("[harness-digest]")
+    );
+    assert!(
+        digest["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("</harness_state>")
+    );
     assert_eq!(digest["display"], false);
     assert!(digest["details"]["digest"].is_string());
-    assert!(digest["details"]["digest"]
-        .as_str()
-        .unwrap()
-        .contains("# Continual Harness State"));
+    assert!(
+        digest["details"]["digest"]
+            .as_str()
+            .unwrap()
+            .contains("# Continual Harness State")
+    );
     let digest_end_at = events
         .iter()
         .position(|event| {

@@ -3,11 +3,10 @@
 //! registration errors over a bare engine (no children registry, no worker
 //! queue — exactly the honest-unavailability contract the bash notice
 //! handlers hold).
-use super::*;
-
+use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use serde_json::json;
 
-use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+use super::*;
 
 /// One bare engine with the digest seams + watch sink installed and its
 /// self-arc registered (the handler closures hold the engine weakly).

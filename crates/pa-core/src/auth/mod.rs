@@ -13,44 +13,92 @@ pub(crate) mod storage;
 pub(crate) mod types;
 
 pub use credential_source::{
-    credential_source, credential_source_providers, install_credential_source,
-    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, RemovedLogin,
-    SourcedCredential, StoredLoginCustody, StoredOAuthLogin,
+    CredentialSourceError,
+    CredentialSourceStatus,
+    ProviderCredentialSource,
+    RemovedLogin,
+    SourcedCredential,
+    StoredLoginCustody,
+    StoredOAuthLogin,
+    credential_source,
+    credential_source_providers,
+    install_credential_source,
 };
 pub use manager::{
-    oauth_refresh_failed_message, AuthApiKeyResult, AuthStorage, NoOAuth, OAuthIntegration,
+    AuthApiKeyResult,
+    AuthStorage,
+    NoOAuth,
+    OAuthIntegration,
     OAuthRefreshError,
+    oauth_refresh_failed_message,
 };
 pub use notices::{
-    clear_auth_notice, raise_auth_notice, register_auth_notice_sink, AuthNotice, AuthNoticeSink,
+    AuthNotice,
+    AuthNoticeSink,
+    clear_auth_notice,
+    raise_auth_notice,
+    register_auth_notice_sink,
 };
 pub use prime_directory::PrimeDirectorySelection;
 pub use prime_inference::{
-    check_prime_inference_access, default_prime_cli_config_path, fetch_prime_teams,
-    read_prime_cli_config, resolve_prime_inference_auth_config, PrimeAccessError,
-    PrimeAccessFailure, PrimeCliConfig, PrimeHttp, PrimeHttpResponse, PrimeInferenceAuthConfig,
-    ReqwestPrimeHttp, DEFAULT_PRIME_API_BASE_URL, DEFAULT_PRIME_FRONTEND_URL,
+    DEFAULT_PRIME_API_BASE_URL,
+    DEFAULT_PRIME_FRONTEND_URL,
     DEFAULT_REQUEST_TIMEOUT_MS,
+    PrimeAccessError,
+    PrimeAccessFailure,
+    PrimeCliConfig,
+    PrimeHttp,
+    PrimeHttpResponse,
+    PrimeInferenceAuthConfig,
+    ReqwestPrimeHttp,
+    check_prime_inference_access,
+    default_prime_cli_config_path,
+    fetch_prime_teams,
+    read_prime_cli_config,
+    resolve_prime_inference_auth_config,
 };
 pub use prime_inference_login::{
-    login_prime_inference, PrimeInferenceLoginCallbacks, PrimeInferenceLoginOptions,
-    PrimeInferenceLoginResult, PrimeInferenceLoginSource,
+    PrimeInferenceLoginCallbacks,
+    PrimeInferenceLoginOptions,
+    PrimeInferenceLoginResult,
+    PrimeInferenceLoginSource,
+    login_prime_inference,
 };
 pub use prime_traces::{
-    check_prime_agent_traces_access, login_prime_agent_traces, resolve_prime_agent_traces_base_url,
-    PrimeAgentTracesCallbacks, PrimeAgentTracesLoginOptions, PrimeAgentTracesLoginSource,
-    PrimeAuthInfo, PRIME_AGENT_TRACES_PROVIDER_ID, PRIME_AGENT_TRACES_PROVIDER_NAME,
+    PRIME_AGENT_TRACES_PROVIDER_ID,
+    PRIME_AGENT_TRACES_PROVIDER_NAME,
+    PrimeAgentTracesCallbacks,
+    PrimeAgentTracesLoginOptions,
+    PrimeAgentTracesLoginSource,
+    PrimeAuthInfo,
+    check_prime_agent_traces_access,
+    login_prime_agent_traces,
+    resolve_prime_agent_traces_base_url,
 };
 pub use provider_oauth::{
-    ProviderOAuth, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID,
+    ANTHROPIC_PROVIDER_ID,
+    GITHUB_COPILOT_PROVIDER_ID,
+    OPENAI_CODEX_PROVIDER_ID,
+    ProviderOAuth,
     XAI_PROVIDER_ID,
 };
 pub use storage::{
-    parse_storage_data, AuthStorageBackend, FileAuthStorageBackend, InMemoryAuthStorageBackend,
+    AuthStorageBackend,
+    FileAuthStorageBackend,
+    InMemoryAuthStorageBackend,
     UnsavedRefreshKept,
+    parse_storage_data,
 };
 pub use types::{
-    AuthCredential, AuthSource, AuthSourceToken, AuthStatus, AuthStorageData, PrimeTeamAssignment,
-    PrimeTeamCredential, StoredPrimeTeam, PRIME_INFERENCE_PROVIDER_ID, SERPER_CREDENTIAL_ID,
+    AuthCredential,
+    AuthSource,
+    AuthSourceToken,
+    AuthStatus,
+    AuthStorageData,
+    PRIME_INFERENCE_PROVIDER_ID,
+    PrimeTeamAssignment,
+    PrimeTeamCredential,
+    SERPER_CREDENTIAL_ID,
     SERPER_CREDENTIAL_NAME,
+    StoredPrimeTeam,
 };

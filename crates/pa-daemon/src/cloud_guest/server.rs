@@ -34,7 +34,7 @@ use anyhow::Result;
 #[cfg(test)]
 use pa_types::daemon::cloud::CloudCommandReceipt;
 use pa_types::daemon::cloud::{CloudCommandId, CloudCursor, CloudEvent, CloudSessionStatus};
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 use crate::cloud_guest::dispatch::{GuestDispatchOutcome, GuestSessionSnapshot};
 use crate::cloud_guest::journal::{ClaimedCommand, GuestCommandJournal};

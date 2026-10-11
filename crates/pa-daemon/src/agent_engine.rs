@@ -5,35 +5,49 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
-use crate::agent_messaging::{LinkAgentMessageController, LinkAgentObserveController};
-use crate::model_allowlist::DaemonAllowlist;
-use crate::overflow_compaction::{OverflowArmRun, OverflowRecovery};
 use pa_agent::abort::AbortController;
 use pa_agent::types::StopReason;
 use pa_core::kernel::shared::HostRequestHandlers;
 use pa_core::session_engine::agent_messaging::{
-    register_agent_message_host_handlers, register_agent_observe_host_handlers,
+    register_agent_message_host_handlers,
+    register_agent_observe_host_handlers,
 };
 use pa_core::session_engine::engine::{SessionEngine as CoreSessionEngine, SessionEngineConfig};
 use pa_core::session_engine::provider_adapter::{
-    json_round_trip, map_thinking_level, switchable_stream_fn, ProviderTarget,
+    ProviderTarget,
+    json_round_trip,
+    map_thinking_level,
+    switchable_stream_fn,
 };
 use pa_core::session_engine::session_commands::{
-    execute_session_command, SessionCommandExecution, SessionCommandParams,
+    SessionCommandExecution,
+    SessionCommandParams,
+    execute_session_command,
 };
 use pa_types::ai::Model;
+use serde_json::{Value, json};
 
+use crate::agent_messaging::{LinkAgentMessageController, LinkAgentObserveController};
 use crate::auto_compaction::AutoCompactionRun;
 use crate::engine::{
-    BranchSummaryOutcome, BranchSummaryRequest, BranchSummaryRun, CompactionOutcome,
-    CompactionRequest, CompactionRun, EngineEvent, EngineModelSelection, PromptRequest,
-    SessionEngine, SideQuestionOutcome, SideQuestionRequest,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    BranchSummaryRun,
+    CompactionOutcome,
+    CompactionRequest,
+    CompactionRun,
+    EngineEvent,
+    EngineModelSelection,
+    PromptRequest,
+    SessionEngine,
+    SideQuestionOutcome,
+    SideQuestionRequest,
 };
 use crate::goal_continuation::GoalBoundary;
 use crate::image_route::ImageRoute;
-use crate::rlm_children::{ParentIdentity, SupervisorChildSessions, DEFAULT_RLM_MAX_DEPTH};
+use crate::model_allowlist::DaemonAllowlist;
+use crate::overflow_compaction::{OverflowArmRun, OverflowRecovery};
+use crate::rlm_children::{DEFAULT_RLM_MAX_DEPTH, ParentIdentity, SupervisorChildSessions};
 
 // The test mass (the faux harness and the in-file unit battery) moved to
 // the child module at the same tree position (agent_engine::tests); the
@@ -51,8 +65,14 @@ mod lifecycle;
 mod turn_types;
 
 use turn_types::{
-    aborted_message, drop_trailing_assistant, retry_event_to_engine_event, BoundaryRun,
-    TurnAdmission, TurnOnce, TurnPrompt, TurnResult,
+    BoundaryRun,
+    TurnAdmission,
+    TurnOnce,
+    TurnPrompt,
+    TurnResult,
+    aborted_message,
+    drop_trailing_assistant,
+    retry_event_to_engine_event,
 };
 
 mod model;
@@ -65,12 +85,8 @@ mod config;
 mod artifacts;
 
 pub(crate) use artifacts::{artifact_reference, now_millis};
-
-pub use config::AgentEngineConfig;
-pub(crate) use config::AutonomousAdmission;
-pub(crate) use config::CreateSessionResources;
-pub(crate) use config::SandboxSlot;
-pub use config::SupervisorLinkConfig;
+pub use config::{AgentEngineConfig, SupervisorLinkConfig};
+pub(crate) use config::{AutonomousAdmission, CreateSessionResources, SandboxSlot};
 use config::{GoalRuntimeHandles, ProducerUsageSink, RestoredSessionModel, StartupScope};
 
 // The image-turn delegation dispatch seam (Kevin's product ruling for

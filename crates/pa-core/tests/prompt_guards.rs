@@ -18,7 +18,9 @@ use std::path::Path;
 use pa_core::prompts::layers::{CORE_LAYER, OPINIONATED_LAYER, USAGE_LAYER};
 use pa_core::prompts::model_prompts::MODEL_PROMPTS_TOML;
 use pa_core::prompts::system_prompt::{
-    system_prompt_breakdown, BuildSystemPromptOptions, SegmentKind,
+    BuildSystemPromptOptions,
+    SegmentKind,
+    system_prompt_breakdown,
 };
 use pa_core::skills::load_skills_from_dir;
 
@@ -788,9 +790,11 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
     );
     options.generic_mcp_servers = vec!["notion".into()];
     let second = system_prompt_breakdown(&options);
-    assert!(second
-        .assembled
-        .contains("await mcp.list_tools(\"notion\")"));
+    assert!(
+        second
+            .assembled
+            .contains("await mcp.list_tools(\"notion\")")
+    );
 }
 
 // Image input

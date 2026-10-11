@@ -18,15 +18,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::context::GuardContext;
-use crate::pipeline::{check, Allowances};
+use crate::pipeline::{Allowances, check};
 use crate::platform::Signal;
 use crate::run::RunCancel;
-use crate::runner::{iso_utc, Job, JobEvent, JobTable, SpawnError, SpawnRequest};
+use crate::runner::{Job, JobEvent, JobTable, SpawnError, SpawnRequest, iso_utc};
 use crate::script::Script;
-use crate::shell::{child_env, resolve_shell, ShellError};
+use crate::shell::{ShellError, child_env, resolve_shell};
 use crate::verdict::{GuardKind, Refusal};
 
 /// The request types [`handle`] serves (the host registers exactly these).

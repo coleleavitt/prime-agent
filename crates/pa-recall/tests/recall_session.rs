@@ -11,11 +11,11 @@ use std::time::Duration;
 use pa_agent::scripted::ScriptedProvider;
 use pa_agent::types::{AgentMessage, Message, ToolResultContent};
 use pa_core::features::SessionFeature;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::session_engine::PromptOptions;
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::{ExecutionMode, ToolDefinition, ToolExecutionResult};
-use pa_recall::{read_recall_mark, RecallOptions, WorkspaceRecall};
+use pa_recall::{RecallOptions, WorkspaceRecall, read_recall_mark};
 use support::*;
 
 /// A stand-in `ipython` tool: no kernel, just a cell result.

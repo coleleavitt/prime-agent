@@ -1,6 +1,8 @@
-use super::*;
-use pa_core::session_engine::rlm_usage::RlmChildUsageReport;
 use std::sync::Arc;
+
+use pa_core::session_engine::rlm_usage::RlmChildUsageReport;
+
+use super::*;
 
 /// A capturing sink: reports land in a shared vector for assertions.
 #[derive(Default)]

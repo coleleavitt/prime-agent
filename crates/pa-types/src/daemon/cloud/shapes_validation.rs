@@ -6,12 +6,22 @@ use serde_json::Value;
 
 use super::base::{CLOUD_CAPABILITY_KINDS, CLOUD_COMMAND_STATES};
 use super::checks::{
-    expect_boolean, expect_digest, expect_fields, expect_integer, expect_one_of, expect_string,
-    first_problem, optional_string, record_field,
+    expect_boolean,
+    expect_digest,
+    expect_fields,
+    expect_integer,
+    expect_one_of,
+    expect_string,
+    first_problem,
+    optional_string,
+    record_field,
 };
 use super::{
-    cloud_id_problem, CLOUD_MAX_CAPABILITIES, CLOUD_MAX_ERROR_CHARS,
-    CLOUD_MAX_RECEIPT_RESULT_CHARS, CLOUD_MAX_TIMESTAMP_CHARS,
+    CLOUD_MAX_CAPABILITIES,
+    CLOUD_MAX_ERROR_CHARS,
+    CLOUD_MAX_RECEIPT_RESULT_CHARS,
+    CLOUD_MAX_TIMESTAMP_CHARS,
+    cloud_id_problem,
 };
 
 /// TS `receiptProblem`.

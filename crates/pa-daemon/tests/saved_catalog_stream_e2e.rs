@@ -23,13 +23,14 @@
 )]
 #![cfg(unix)]
 
-use pa_types::platform::test_isolation::TestState;
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
+
+use pa_types::platform::test_isolation::TestState;
 
 struct Daemon {
     child: Child,

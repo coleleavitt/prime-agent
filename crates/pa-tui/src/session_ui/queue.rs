@@ -3,8 +3,17 @@
 //! (operator directive 2026-09-28: internal prompts render read-only — the system owns them); see
 //! [`crate::queued::QueueSelectionItem::internal`].
 use super::{
-    anyhow, AgentView, DaemonCommand, Duration, Map, QueueBrowseDirection, QueueLane, Result,
-    SessionUi, Value, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    DaemonCommand,
+    Duration,
+    Map,
+    QueueBrowseDirection,
+    QueueLane,
+    Result,
+    SessionUi,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    anyhow,
 };
 
 impl SessionUi {

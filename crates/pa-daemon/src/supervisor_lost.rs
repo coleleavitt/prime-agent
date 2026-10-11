@@ -3,13 +3,14 @@
 //! window (sessions persist on disk). Divergence from TS: this port implements the
 //! give-up branch directly, not the TS replacement-supervisor launch.
 
-use pa_types::sync::MutexExt;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::worker::{Worker, WORKER_SUPERVISOR_LOST_EXIT_MS_ENV};
+use pa_types::sync::MutexExt;
+
+use crate::worker::{WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, Worker};
 
 /// TS `DEFAULT_WORKER_SUPERVISOR_LOST_EXIT_MS`: five minutes.
 const DEFAULT_LOST_EXIT_MS: u64 = 5 * 60_000;

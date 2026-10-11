@@ -164,8 +164,9 @@ fn kill_group_id(_group: u32) {}
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
+
+    use super::*;
 
     fn context() -> GuardContext {
         let mut env = BTreeMap::new();

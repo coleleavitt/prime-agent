@@ -2,8 +2,9 @@
 //! run, the auto-compaction gate, the summary-delta sinks, the
 //! harness-digest snapshot, the error response, and the durable row's
 //! record.
-use super::*;
 use serde_json::Map;
+
+use super::*;
 
 #[tokio::test]
 async fn execute_compaction_persists_and_rebuilds() {
@@ -41,10 +42,12 @@ async fn execute_compaction_persists_and_rebuilds() {
     // call, no split marker.
     assert_eq!(registration.call_count(), 1);
     assert!(!run.result.summary.contains("Turn Context (split turn)"));
-    assert!(session
-        .get_entries()
-        .iter()
-        .any(|entry| matches!(entry, FileEntry::Compaction { .. })));
+    assert!(
+        session
+            .get_entries()
+            .iter()
+            .any(|entry| matches!(entry, FileEntry::Compaction { .. }))
+    );
     // The live context keeps the summary role; provider conversion
     // still formats it as a user turn.
     let rebuilt = rebuilt_context_after_compaction(&session);
@@ -542,10 +545,12 @@ async fn execute_compaction_fails_on_an_error_summarizer_response() {
         error.to_string(),
         "Summarization failed: summarizer exploded"
     );
-    assert!(session
-        .get_entries()
-        .iter()
-        .all(|entry| !matches!(entry, FileEntry::Compaction { .. })));
+    assert!(
+        session
+            .get_entries()
+            .iter()
+            .all(|entry| !matches!(entry, FileEntry::Compaction { .. }))
+    );
     registration.unregister();
 }
 

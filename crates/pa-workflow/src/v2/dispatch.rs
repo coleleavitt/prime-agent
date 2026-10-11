@@ -64,7 +64,7 @@ pub trait DispatchJournal {
     /// The facts cannot be read (the guard then treats the turn as
     /// possibly dispatched).
     fn read_dispatch_facts(&self, binding: &DispatchBinding)
-        -> Result<DispatchFacts, JournalError>;
+    -> Result<DispatchFacts, JournalError>;
 
     /// Atomically assert no `dispatching`/`provider_entered` fact, claim the
     /// exact outbox, and commit one fresh `dispatching` fact: the one
@@ -186,9 +186,10 @@ impl<J: DispatchJournal> RetainedDispatchGuard<J> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use super::*;
 
     /// An in-memory journal with the real journal's atomicity (one lock per
     /// mutation).

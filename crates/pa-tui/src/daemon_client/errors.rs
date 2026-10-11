@@ -1,6 +1,9 @@
 use anyhow::Result;
 use pa_types::daemon::{
-    DaemonCommand, DaemonErrorInfo, DaemonResponse, KERNEL_NOT_RUNNING_MESSAGE,
+    DaemonCommand,
+    DaemonErrorInfo,
+    DaemonResponse,
+    KERNEL_NOT_RUNNING_MESSAGE,
 };
 use serde_json::Value;
 /// Why a direct request failed: `NotSent` never reached the worker (safe to

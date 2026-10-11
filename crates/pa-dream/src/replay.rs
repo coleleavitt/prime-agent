@@ -10,13 +10,22 @@
 use serde::Serialize;
 
 use crate::interpreter::{
-    apply_stop_rule, assert_legal_batch, interpret_policy, Cell, LegalBatchError, ObservationView,
-    StopState, IMPROVE_EPS,
+    Cell,
+    IMPROVE_EPS,
+    LegalBatchError,
+    ObservationView,
+    StopState,
+    apply_stop_rule,
+    assert_legal_batch,
+    interpret_policy,
 };
 use crate::objective::{
-    compute_objective, pool_score_scale, ObjectiveBudget, ReplayObjectiveConfig,
+    ObjectiveBudget,
+    ReplayObjectiveConfig,
+    compute_objective,
+    pool_score_scale,
 };
-use crate::policy::{policy_id, ExplorationPolicy};
+use crate::policy::{ExplorationPolicy, policy_id};
 use crate::store::RecordedTree;
 
 /// One replay's accounting.

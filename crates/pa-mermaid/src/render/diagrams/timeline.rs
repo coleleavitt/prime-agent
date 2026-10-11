@@ -2,13 +2,12 @@
 //! period named on its first row. Ported from lovely-mermaid 0.3.3 `diagrams/timeline.ts`
 //! (Apache-2.0; see `LICENSE-lovely-mermaid`).
 
-use super::super::canvas::{draw_text, Canvas};
+use super::super::canvas::{Canvas, draw_text};
 use super::super::graph::MAX_EDGES;
-use super::super::js_text;
-use super::super::labels::{decode_html_entities, fit_label, MAX_LABEL};
+use super::super::labels::{MAX_LABEL, decode_html_entities, fit_label};
 use super::super::layout::width_of;
 use super::super::statements::{header_kind, statements_of};
-use super::super::Role;
+use super::super::{Role, js_text};
 use super::Drawn;
 
 pub(in crate::render) const HEADERS: &[&str] = &["timeline"];

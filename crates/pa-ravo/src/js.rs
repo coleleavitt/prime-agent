@@ -193,7 +193,9 @@ mod tests {
         ids.sort_by(|left, right| locale_compare(left, right));
         assert_eq!(
             ids,
-            ["a", "A", "a_b", "a-b", "a:b", "a1", "aa", "Aa", "ab", "b", "B"]
+            [
+                "a", "A", "a_b", "a-b", "a:b", "a1", "aa", "Aa", "ab", "b", "B"
+            ]
         );
     }
 

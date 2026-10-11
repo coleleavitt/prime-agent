@@ -3,8 +3,14 @@
 //! (TS `writeFileAtomicSync`).
 
 use super::{
-    serialize_entry, AgentMessage, FileEntry, Path, PathBuf, SessionManager,
-    SessionPersistListener, Write,
+    AgentMessage,
+    FileEntry,
+    Path,
+    PathBuf,
+    SessionManager,
+    SessionPersistListener,
+    Write,
+    serialize_entry,
 };
 
 impl SessionManager {

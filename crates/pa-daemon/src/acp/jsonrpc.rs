@@ -4,7 +4,7 @@
 //! Parse failures answer with the JSON-RPC error codes so a client never
 //! sees a dropped line.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The request could not be parsed as JSON.
 pub const PARSE_ERROR: i64 = -32700;
@@ -45,7 +45,7 @@ pub fn parse_line(line: &str) -> Result<Incoming, Value> {
                 PARSE_ERROR,
                 "Parse error",
                 None,
-            ))
+            ));
         }
     };
     let Value::Object(object) = value else {

@@ -3,13 +3,12 @@
 //!
 //! Parses raw lines rather than statements — the indentation is the grammar.
 
-use super::super::canvas::{draw_text, Canvas};
+use super::super::canvas::{Canvas, draw_text};
 use super::super::graph::MAX_NODES;
-use super::super::js_text;
-use super::super::labels::{clean_label, fit_label, src_lines, WRAP_WIDTH};
+use super::super::labels::{WRAP_WIDTH, clean_label, fit_label, src_lines};
 use super::super::layout::width_of;
 use super::super::statements::frontmatter_end;
-use super::super::Role;
+use super::super::{Role, js_text};
 use super::Drawn;
 
 pub(in crate::render) const HEADERS: &[&str] = &["mindmap"];

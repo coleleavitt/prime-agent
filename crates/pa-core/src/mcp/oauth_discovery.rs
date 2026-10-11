@@ -3,7 +3,7 @@
 //! registration, PKCE, and token exchange. Every request goes through the [`OAuthHttp`]
 //! seam; validation errors carry the TS wording.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use url::Url;

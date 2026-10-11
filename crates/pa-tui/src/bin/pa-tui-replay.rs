@@ -20,7 +20,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use pa_tui::app::{render_frame_text, run_app, AppOptions};
+use pa_tui::app::{AppOptions, render_frame_text, run_app};
 use pa_tui::session::{JsonlSessionStream, SessionStream, TranscriptItem};
 use pa_tui::theme::{ColorMode, Theme};
 use pa_tui::view::AgentView;

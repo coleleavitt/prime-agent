@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use serde_json::{Map, Number, Value};
 
-use crate::factory::pyvalue::{py_float_repr, py_repr, PyValue};
+use crate::factory::pyvalue::{PyValue, py_float_repr, py_repr};
 
 /// Local cap (characters) on a captured answer's PREVIEW: the
 /// `answer_captured` ledger event and the status node's `answer_preview`

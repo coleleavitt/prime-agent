@@ -2,8 +2,9 @@
 //! points, summarization prompts. The LLM summarizer call and file-op
 //! details land with the provider integration slice.
 
-use pa_types::session::{AgentMessage, FileEntry};
 use std::fmt::Write as _;
+
+use pa_types::session::{AgentMessage, FileEntry};
 
 pub const DEFAULT_RESERVE_TOKENS: u64 = 16_384;
 pub const DEFAULT_KEEP_RECENT_TOKENS: u64 = 20_000;
@@ -500,7 +501,8 @@ pub fn build_summarization_prompt(
     }
     .to_string();
     if let Some(custom_instructions) = custom_instructions {
-        let _ = write!(base,
+        let _ = write!(
+            base,
             "\n\n<user-instructions>\nThe user provided these instructions for this summary. Follow them with high priority while keeping the section format above: emphasize what they ask to focus on, and preserve verbatim anything they ask to remember.\n{custom_instructions}\n</user-instructions>"
         );
     }
@@ -509,8 +511,9 @@ pub fn build_summarization_prompt(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::EntryBase;
+
+    use super::*;
 
     fn message_entry(id: &str, parent: &str, message: AgentMessage) -> FileEntry {
         FileEntry::Message {

@@ -1,6 +1,6 @@
 //! Agent-engine artifact references: the sha256 artifact-id mint, the
 //! cwd-relative logical-path resolution, and the epoch-millis clock.
-use super::{json, Value};
+use super::{Value, json};
 
 /// One artifact reference: the sha256-derived id, the session, the type,
 /// and the logical path (cwd-relative, else the basename).

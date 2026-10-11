@@ -6,13 +6,21 @@
 #![allow(clippy::float_cmp)]
 
 use pa_dream::command::{
-    parse_dream_command_args, run_dream_command, DreamCommandIo, DreamCommandOptions,
-    DreamCommandUsageError, DreamPriming, DreamRunOutcome, DreamRunReport, DreamSubcommand,
-    DREAM_OPTIONS, DREAM_USAGE,
+    DREAM_OPTIONS,
+    DREAM_USAGE,
+    DreamCommandIo,
+    DreamCommandOptions,
+    DreamCommandUsageError,
+    DreamPriming,
+    DreamRunOutcome,
+    DreamRunReport,
+    DreamSubcommand,
+    parse_dream_command_args,
+    run_dream_command,
 };
 use pa_dream::experiment::ExperimentArm;
 use pa_dream::objective::ReplayObjectiveConfig;
-use pa_dream::tasks::{DreamTaskId, DREAM_TASK_IDS};
+use pa_dream::tasks::{DREAM_TASK_IDS, DreamTaskId};
 
 fn parse(args: &[&str]) -> Result<DreamCommandOptions, DreamCommandUsageError> {
     let args: Vec<String> = args.iter().map(ToString::to_string).collect();

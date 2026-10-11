@@ -3,16 +3,17 @@
 //! and the panel hosting that mounts each step's surface inside the splash
 //! (the flow never nests its panels, so one slot covers the sequence).
 
+use ratatui::style::Modifier;
+use tokio::sync::oneshot;
+
 use crate::auth_panel::PrimeTeamPick;
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::search_field_plain_row;
-use crate::onboarding::{highlight_wash, wrap_words, OnboardingDecision};
+use crate::onboarding::{OnboardingDecision, highlight_wash, wrap_words};
 use crate::onboarding_choice::OnboardingChoice;
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use ratatui::style::Modifier;
-use tokio::sync::oneshot;
 
 pub(crate) const PROVIDERS_PROMPT: &str = "Connect other providers, or continue.";
 pub(crate) const PROVIDERS_SEARCH_PLACEHOLDER: &str = "Search providers";

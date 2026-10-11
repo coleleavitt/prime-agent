@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{state_root_matches, DaemonStateRoot, DiscoveredDaemonProcess};
+use super::{DaemonStateRoot, DiscoveredDaemonProcess, state_root_matches};
 
 /// Linux comm names (and thus the process name `ss` reports) cap at 15 chars.
 const MAX_COMM_LENGTH: usize = 15;
@@ -420,7 +420,10 @@ mod tests {
         let listeners = parse_proc_net_unix(&sample);
         assert_eq!(
             listeners,
-            vec![("9703".to_string(), "/tmp/agent sandbox/daemon.sock".to_string())],
+            vec![(
+                "9703".to_string(),
+                "/tmp/agent sandbox/daemon.sock".to_string()
+            )],
             "the spaced path is kept whole; the non-UTF-8 row drops out alone, never rejecting the census"
         );
     }

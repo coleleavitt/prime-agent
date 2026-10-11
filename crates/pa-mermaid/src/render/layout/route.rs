@@ -1,12 +1,12 @@
 //! Box drawing and edge routing. Ported from lovely-mermaid 0.3.3 `layout.ts`
 //! (Apache-2.0; see `LICENSE-lovely-mermaid`).
 
-use super::super::canvas::{draw_text, draw_text_over_edges, Canvas, BLANK, D, L, R, U};
-use super::super::graph::{Edge, Head, LineKind, Shape};
-use super::super::labels::{fit_label, MAX_LABEL};
-use super::super::width::measured;
 use super::super::Role;
-use super::{edge_text, half, sat, width_of, PAD};
+use super::super::canvas::{BLANK, Canvas, D, L, R, U, draw_text, draw_text_over_edges};
+use super::super::graph::{Edge, Head, LineKind, Shape};
+use super::super::labels::{MAX_LABEL, fit_label};
+use super::super::width::measured;
+use super::{PAD, edge_text, half, sat, width_of};
 
 /// A node's box on the canvas.
 #[derive(Debug, Clone, Copy, Default)]

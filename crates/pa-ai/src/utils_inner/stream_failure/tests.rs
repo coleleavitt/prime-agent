@@ -1,7 +1,8 @@
 //! The stream-failure unit battery: the classification tables, the retry
 //! parsing, and the wire shapes.
-use super::*;
 use std::collections::HashMap;
+
+use super::*;
 
 #[test]
 fn classifies_provider_error_types() {

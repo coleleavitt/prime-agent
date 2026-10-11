@@ -2,8 +2,9 @@
 //! keyboard-shortcut reference rendered from the EFFECTIVE bindings, so
 //! user `keybindings.json` overrides show their keys in the guide.
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
 use std::fmt::Write;
+
+use crate::keybindings::{KeybindingsManager, format_key_text};
 
 /// TS `getAppKeyDisplay` / `getEditorKeyDisplay`: every effective key of
 /// the binding joined with `/`, each part formatted for display

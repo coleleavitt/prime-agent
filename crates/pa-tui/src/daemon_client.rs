@@ -3,35 +3,50 @@
 //! Non-response frames (session events, list progress, closing notices)
 //! are forwarded through an event channel so the UI can render live state.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::{
-    is_session_plane_daemon_command, DaemonCommand, DaemonCommandEnvelope, DaemonCommandFrameType,
-    DaemonProtocolInfo, DaemonResponse, DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION,
+    DAEMON_PROTOCOL_NAME,
+    DAEMON_PROTOCOL_VERSION,
+    DaemonCommand,
+    DaemonCommandEnvelope,
+    DaemonCommandFrameType,
+    DaemonProtocolInfo,
+    DaemonResponse,
+    is_session_plane_daemon_command,
 };
+use pa_types::sync::MutexExt;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::direct_transport::{
-    connect_direct, direct_attach_capabilities, read_session_transport_ticket,
-    supervisor_supports_direct, DirectLink, TICKET_TIMEOUT_MS,
+    DirectLink,
+    TICKET_TIMEOUT_MS,
+    connect_direct,
+    direct_attach_capabilities,
+    read_session_transport_ticket,
+    supervisor_supports_direct,
 };
 
 mod errors;
 #[cfg(all(test, unix))]
 mod tests;
 
-use errors::{command_type_debug, response_data_or_error, DirectRequestError};
+use errors::{DirectRequestError, command_type_debug, response_data_or_error};
 pub use errors::{
-    is_daemon_rejection, is_daemon_timeout, is_daemon_unreachable, is_kernel_not_running,
-    is_update_restarting_rejection, rejected_provider_unauthenticated, RequestRejected,
+    RequestRejected,
+    is_daemon_rejection,
+    is_daemon_timeout,
+    is_daemon_unreachable,
+    is_kernel_not_running,
+    is_update_restarting_rejection,
+    rejected_provider_unauthenticated,
 };
 
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;

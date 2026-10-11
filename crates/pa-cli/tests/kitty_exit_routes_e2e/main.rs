@@ -22,9 +22,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use serde_json::{json, Value};
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
+use serde_json::{Value, json};
 
 const KITTY_FLAGS_PUSH: &[u8] = b"\x1b[>7u";
 const KITTY_FLAGS_POP: &[u8] = b"\x1b[<u";
@@ -419,7 +420,8 @@ fn run_route(route: Route, known_terminal: bool) {
     }
     let depth = kitty_stack_depth(&stream);
     assert_eq!(
-        depth, 0,
+        depth,
+        0,
         "{}: the terminal's kitty-mode stack is {depth} deep after the exit — the shell receives CSI-u keys",
         route.name(),
     );
@@ -794,4 +796,4 @@ fn slave_as_stdio(slave: &OwnedFd) -> Stdio {
     slave.try_clone().expect("clone pty slave").into()
 }
 mod child;
-use child::{child_run, MockSupervisor};
+use child::{MockSupervisor, child_run};

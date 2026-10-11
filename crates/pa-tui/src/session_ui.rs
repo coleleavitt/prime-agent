@@ -22,85 +22,99 @@ mod settings;
 mod share;
 mod stream;
 
+use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, anyhow};
 pub(crate) use apply::CompactionAbortNote;
 use auth::{McpAuthIntent, PendingModelSignIn, SetModelOutcome};
 pub(crate) use bash::BashActivityUpdate;
 use bash::{ResyncBash, SideBashRun};
+use crossterm::event::KeyEvent;
 pub(crate) use factory::FactoryUpdate;
-use heartbeats::paused_heartbeat_count;
 pub(crate) use heartbeats::HeartbeatsUpdate;
+use heartbeats::paused_heartbeat_count;
+use keys::SelectionAutoScroll;
 /// The opening phase's echo gate (run.rs): the fresh-state projection of
 /// `handle_key`'s keymap-aware ladder — a claimed key queues behind the
 /// session open instead of echoing into the editor.
 pub(crate) use keys::opening_echo_key_claimed;
-use keys::SelectionAutoScroll;
-pub(crate) use model_picker::picker_viewport_rows;
-pub(crate) use model_picker::ModelCatalogUpdate;
-use panels::pop_superseded_attempt_row;
+pub(crate) use model_picker::{ModelCatalogUpdate, picker_viewport_rows};
+use pa_types::daemon::{CycleDirection, DaemonCommand};
+use pa_types::slash_commands::{SlashCommandExecution, SlashCommandRegistry};
 pub(crate) use panels::ActivityUpdates;
+use panels::pop_superseded_attempt_row;
 use prompt::PromptOrder;
-pub(crate) use prompt::PromptSubmitNote;
-pub(crate) use prompt::SubmitBehavior;
+pub(crate) use prompt::{PromptSubmitNote, SubmitBehavior};
+use serde_json::{Map, Value};
 use sessions_fork::{create_session, terminal_columns};
 use settings::PendingConfirm;
 pub(crate) use settings::ReloadNote;
 pub(crate) use share::{ShareNote, TracesUploadNote, UpdateNote};
 use share::{ShareRun, TraceUploadAllRun, TracesLoginIntent};
-use stream::already_running_warning;
 pub(crate) use stream::resume_hint_from_stats;
-use stream::streaming_tray_hint;
-use stream::LoaderTokenTracker;
-use stream::SpeedStats;
-
-use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
-
-use anyhow::{anyhow, Context, Result};
-use pa_types::daemon::{CycleDirection, DaemonCommand};
-use pa_types::slash_commands::{SlashCommandExecution, SlashCommandRegistry};
-use serde_json::{Map, Value};
+use stream::{LoaderTokenTracker, SpeedStats, already_running_warning, streaming_tray_hint};
+use tokio::sync::mpsc;
 
 use crate::bash_view::{BashView, BashViewAction};
 use crate::chat::{
-    ChatEntry, CompactionReason, CompactionState, MessageBlock, RetryState, StatusKind,
-    ToolResultView, WorkingState,
+    ChatEntry,
+    CompactionReason,
+    CompactionState,
+    MessageBlock,
+    RetryState,
+    StatusKind,
+    ToolResultView,
+    WorkingState,
 };
 use crate::choice_picker::{ChoicePickerAction, ChoicePurpose};
 use crate::click_dispatch::PressedClick;
 use crate::daemon_client::{DaemonClient, DaemonClientEvent};
 use crate::daemon_reconnect::RecoveryKind;
-use crate::effort_picker;
 use crate::export_share::{self, GhAuthStatus, GistOutcome};
-use crate::goal_surface::{format_goal_status, tray_goal_label, GoalPanel, GoalView};
+use crate::goal_surface::{GoalPanel, GoalView, format_goal_status, tray_goal_label};
 use crate::heartbeats_picker::{
-    parse_heartbeats, scope_heartbeats, sort_heartbeats, HeartbeatAction, HeartbeatEntry,
-    HeartbeatsPicker, HeartbeatsPickerAction,
+    HeartbeatAction,
+    HeartbeatEntry,
+    HeartbeatsPicker,
+    HeartbeatsPickerAction,
+    parse_heartbeats,
+    scope_heartbeats,
+    sort_heartbeats,
 };
 use crate::image_load::LoadedImage;
 use crate::image_markers::{
-    collect_marked_images, evict_images_to_budget, format_image_marker, image_marker_ids,
+    collect_marked_images,
+    evict_images_to_budget,
+    format_image_marker,
+    image_marker_ids,
     strip_image_markers,
 };
-use crate::info_commands;
 use crate::info_panel::{InfoContent, InfoPanelAction};
 use crate::interactive::{InteractiveOptions, ModelSelection, SessionSelection};
 use crate::keys::key_event_to_id;
 use crate::model_picker::{
-    CurrentModel, ModelPicker, ModelPickerAction, ModelPickerOptions, ModelSelectionApplied,
+    CurrentModel,
+    ModelPicker,
+    ModelPickerAction,
+    ModelPickerOptions,
+    ModelSelectionApplied,
 };
 use crate::prompt_stash::PromptStash;
 use crate::provider_auth::{AuthSelectorAction, AuthSelectorKind};
 use crate::queued::{QueueBrowseDirection, QueueLane};
 use crate::snapshot::{
-    assistant_message_parts, attach_data_from_response, event_to_update, reconstruct, TurnUpdate,
+    TurnUpdate,
+    assistant_message_parts,
+    attach_data_from_response,
+    event_to_update,
+    reconstruct,
 };
 use crate::tree_selector::{TreeSelector, TreeSelectorAction};
 use crate::user_message_selector::{UserMessageSelector, UserMessageSelectorAction};
 use crate::view::{AgentView, ShareLoader};
-
-use crossterm::event::KeyEvent;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use crate::{effort_picker, info_commands};
 
 /// Cap on any daemon request awaited on the key-handling path: the UI
 /// loop must stay responsive to Ctrl+C while a submission travels.

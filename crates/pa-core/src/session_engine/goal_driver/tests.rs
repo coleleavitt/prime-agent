@@ -1,10 +1,12 @@
 //! The goal driver's test battery.
 
+use std::fmt::Write as _;
+
+use pa_types::ai::UserContent;
+
 use super::*;
 use crate::goals::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
 use crate::session::manager::SessionManager;
-use pa_types::ai::UserContent;
-use std::fmt::Write as _;
 
 /// The latest persisted goal state with the terminal row reverted:
 /// the newest ACTIVE streak-3 row.
@@ -188,9 +190,11 @@ async fn compacted_goal_restore_and_mutation_do_not_hydrate_history() {
     driver.pause(&mut session, "pause").unwrap();
     assert_eq!(GoalDriver::load_persisted(&session).state(), driver.state());
     assert!(!session.is_full_history());
-    assert!(std::fs::read_to_string(&path)
-        .unwrap()
-        .starts_with(&original));
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with(&original)
+    );
 }
 
 #[test]
@@ -313,21 +317,27 @@ fn continuations_increment() {
     assert_eq!(driver.state().continuations_used, 1);
     // The first mint's admission releases the pending guard: the next boundary mints again.
     driver.continuation_consumed();
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 2);
     driver.pause(&mut session, "Paused by user").unwrap();
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_none()
+    );
     driver.start(&mut session, "work again", None).unwrap();
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 1);
     let reloaded = GoalDriver::load_persisted(&session);
     assert_eq!(reloaded.state().continuations_used, 1);
@@ -345,10 +355,12 @@ fn the_mint_refuses_and_finishes_on_an_errored_turn() {
         "402 Payment required: wallet drained",
         created_at as i64 + 1,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&corpse))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&corpse))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Error);
     assert_eq!(
         driver.state().last_error.as_deref(),
@@ -377,10 +389,12 @@ fn a_transient_provider_failure_pauses_the_goal_for_retry() {
             "Servers overloaded; retry later.",
             created_at + 1,
         );
-        assert!(driver
-            .next_continuation_message(&mut session, Some(&corpse))
-            .unwrap()
-            .is_none());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, Some(&corpse))
+                .unwrap()
+                .is_none()
+        );
         let paused = GoalState {
             active: false,
             status: GoalStatus::Paused,
@@ -399,12 +413,16 @@ fn a_transient_provider_failure_pauses_the_goal_for_retry() {
         assert!(!driver.owns_continuation_wakeup());
 
         // A failed turn never resumes it; a successful one does.
-        assert!(!driver
-            .resume_after_transient_failure(&mut session, &corpse)
-            .unwrap());
-        assert!(driver
-            .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 2))
-            .unwrap());
+        assert!(
+            !driver
+                .resume_after_transient_failure(&mut session, &corpse)
+                .unwrap()
+        );
+        assert!(
+            driver
+                .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 2))
+                .unwrap()
+        );
         assert_eq!(driver.state().status, GoalStatus::Active);
         assert_eq!(driver.state().last_reason, None);
         assert_eq!(driver.state().last_error, None);
@@ -426,9 +444,11 @@ fn a_transient_provider_failure_pauses_the_goal_for_retry() {
     driver.clear(&mut session).unwrap();
     driver.start(&mut session, "work", None).unwrap();
     driver.pause(&mut session, "Paused by user").unwrap();
-    assert!(!driver
-        .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 5))
-        .unwrap());
+    assert!(
+        !driver
+            .resume_after_transient_failure(&mut session, &test_empty_turn(created_at + 5))
+            .unwrap()
+    );
     assert_eq!(driver.state().status, GoalStatus::Paused);
     // A permanent failure (expired auth) still errors the goal.
     driver.clear(&mut session).unwrap();
@@ -460,26 +480,32 @@ fn a_rate_limited_turn_keeps_the_goal_alive() {
         "429 Too many concurrent requests",
         created_at as i64 + 1,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&parked))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&parked))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert!(driver.state().last_error.is_none());
     // Inside the refusal's backoff window even a progress row refuses.
     let wake_progress = test_progress_turn(created_at as i64 + 2);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&wake_progress))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&wake_progress))
+            .unwrap()
+            .is_none()
+    );
     // The park's wake, minutes later: both refusal windows have
     // elapsed, and the NEW progress turn mints.
     driver.no_progress_backoff_until_ms = 0;
     driver.parked_refusal_until_ms = 0;
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&wake_progress))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&wake_progress))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 1);
 }
 
@@ -492,17 +518,21 @@ fn no_output_turns_count_to_the_cap_and_backoff() {
     let empty_one = test_empty_turn(created_at as i64 + 1);
     // The streak is DURABLE (the persisted row carries it, so a worker
     // restart cannot reset the strikes).
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty_one))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty_one))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert_eq!(driver.state().continuations_used, 0);
     assert_eq!(driver.state().no_progress_streak, Some(1));
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty_one))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty_one))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().no_progress_streak, Some(1));
     // A rebuilt driver adopts the persisted strikes and the counted-turn key:
     // the same corpse never strikes twice across rebuilds.
@@ -520,26 +550,32 @@ fn no_output_turns_count_to_the_cap_and_backoff() {
     // A fresh corpse after the restart: counted again (the restart's
     // counted-turn key starts empty).
     let empty_two = test_empty_turn(created_at as i64 + 2);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty_two))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty_two))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().no_progress_streak, Some(2));
     assert_eq!(driver.state().status, GoalStatus::Active);
     // A progress turn resets the streak and mints.
     let progress = test_progress_turn(created_at as i64 + 3);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&progress))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&progress))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 2);
     assert_eq!(driver.state().no_progress_streak, Some(0));
     for offset in 4..=6 {
         let empty = test_empty_turn(created_at as i64 + offset);
-        assert!(driver
-            .next_continuation_message(&mut session, Some(&empty))
-            .unwrap()
-            .is_none());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, Some(&empty))
+                .unwrap()
+                .is_none()
+        );
     }
     assert_eq!(driver.state().status, GoalStatus::Error);
     assert_eq!(
@@ -565,19 +601,23 @@ fn a_stale_pre_goal_corpse_never_finishes_the_new_goal() {
         "an old corpse from before the goal began",
         created_at as i64 - 1000,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&stale))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&stale))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert_eq!(driver.state().continuations_used, 1);
     // A stale pre-goal EMPTY row does not count toward the cap either.
     driver.continuation_consumed();
     let stale_empty = test_empty_turn(created_at as i64 - 500);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&stale_empty))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&stale_empty))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().no_progress_streak, Some(0));
 }
 
@@ -588,10 +628,12 @@ fn a_replacement_goal_starts_with_a_fresh_streak() {
     driver.start(&mut session, "first", None).unwrap();
     let created_at = driver.state().created_at.unwrap();
     let empty = test_empty_turn(created_at as i64 + 1);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().no_progress_streak, Some(1));
     driver
         .finish_for_terminal_message(
@@ -606,10 +648,12 @@ fn a_replacement_goal_starts_with_a_fresh_streak() {
     let first_empty = test_empty_turn(fresh_created as i64 + 1);
     let second_empty = test_empty_turn(fresh_created as i64 + 2);
     for empty in [first_empty, second_empty] {
-        assert!(driver
-            .next_continuation_message(&mut session, Some(&empty))
-            .unwrap()
-            .is_none());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, Some(&empty))
+                .unwrap()
+                .is_none()
+        );
     }
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert_eq!(driver.state().no_progress_streak, Some(2));
@@ -636,10 +680,12 @@ fn rate_limit_and_empty_text_corpses_and_the_examined_gate() {
             "429 Too many concurrent requests",
             created_at as i64 + offset,
         );
-        assert!(driver
-            .next_continuation_message(&mut session, Some(&parked))
-            .unwrap()
-            .is_none());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, Some(&parked))
+                .unwrap()
+                .is_none()
+        );
     }
     assert_eq!(driver.no_progress_streak(), 0);
     assert_eq!(driver.state().status, GoalStatus::Active);
@@ -653,27 +699,33 @@ fn rate_limit_and_empty_text_corpses_and_the_examined_gate() {
             text_signature: None,
         },
     )];
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty_text))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty_text))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.no_progress_streak(), 1);
 
     // (3) The drop-revealed OLDER progress row: the examined gate
     // skips it — the strike survives.
     let older_progress = test_progress_turn(created_at as i64 + 5);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&older_progress))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&older_progress))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.no_progress_streak(), 1, "the older row never resets");
 
     // A NEWER progress row still resets.
     let newer_progress = test_progress_turn(created_at as i64 + 20);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&newer_progress))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&newer_progress))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.no_progress_streak(), 0);
     driver.continuation_consumed();
 }
@@ -689,10 +741,12 @@ fn a_terminal_error_sharing_the_millisecond_still_refuses() {
 
     // Strike one: a no-output turn at millisecond T (the examined key adopts T).
     let empty = test_empty_turn(created_at as i64 + 1000);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.no_progress_streak(), 1);
 
     // A TERMINAL provider error at the same millisecond T: the dedup alone
@@ -703,10 +757,12 @@ fn a_terminal_error_sharing_the_millisecond_still_refuses() {
         "402 Insufficient balance (team wallet drained)",
         created_at as i64 + 1000,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&same_ms_corpse))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&same_ms_corpse))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Error);
     assert_eq!(
         driver.state().last_error.as_deref(),
@@ -718,25 +774,29 @@ fn a_terminal_error_sharing_the_millisecond_still_refuses() {
     let mut driver = GoalDriver::new();
     driver.start(&mut session, "work", None).unwrap();
     let created_at = driver.state().created_at.unwrap();
-    assert!(driver
-        .next_continuation_message(
-            &mut session,
-            Some(&test_empty_turn(created_at as i64 + 2000))
-        )
-        .unwrap()
-        .is_none());
-    assert!(driver
-        .next_continuation_message(
-            &mut session,
-            Some(&test_error_turn(
-                "invalid_request",
-                Some(400),
-                "an earlier-ms terminal error",
-                created_at as i64 + 1999,
-            ))
-        )
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(
+                &mut session,
+                Some(&test_empty_turn(created_at as i64 + 2000))
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        driver
+            .next_continuation_message(
+                &mut session,
+                Some(&test_error_turn(
+                    "invalid_request",
+                    Some(400),
+                    "an earlier-ms terminal error",
+                    created_at as i64 + 1999,
+                ))
+            )
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Error);
 }
 
@@ -757,10 +817,12 @@ fn a_same_ms_pre_goal_corpse_never_judges_the_new_goal() {
         "a corpse from before the goal began, same millisecond",
         created_at as i64,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&same_ms))
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&same_ms))
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().status, GoalStatus::Active);
     driver.continuation_consumed();
 
@@ -771,10 +833,12 @@ fn a_same_ms_pre_goal_corpse_never_judges_the_new_goal() {
         "the goal's own corpse, one millisecond later",
         created_at as i64 + 1,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&next_ms))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&next_ms))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Error);
 }
 
@@ -787,10 +851,12 @@ fn a_parked_refusal_clears_an_earlier_strikes_window() {
 
     // Strike one: the backoff window arms.
     let empty = test_empty_turn(created_at as i64 + 1);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.no_progress_streak(), 1);
     assert!(driver.backoff_wake_at().is_some());
 
@@ -802,10 +868,12 @@ fn a_parked_refusal_clears_an_earlier_strikes_window() {
         "429 Too many concurrent requests",
         created_at as i64 + 2,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&parked))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&parked))
+            .unwrap()
+            .is_none()
+    );
     assert!(
         driver.backoff_wake_at().is_none(),
         "no wake during the park"
@@ -826,10 +894,12 @@ fn the_print_wake_take_yields_an_overdue_window_once() {
 
     // Strike one: the backoff window arms.
     let empty = test_empty_turn(created_at as i64 + 1);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&empty))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&empty))
+            .unwrap()
+            .is_none()
+    );
 
     // The settled boundary outlasted the window: the armed deadline sits
     // in the past, still non-zero.
@@ -853,21 +923,27 @@ fn the_rate_limit_refusal_sticks_across_reconsults() {
         "429 Too many concurrent requests",
         created_at as i64 + 1,
     );
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&parked))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&parked))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert_eq!(driver.no_progress_streak(), 0);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&parked))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&parked))
+            .unwrap()
+            .is_none()
+    );
     let older_progress = test_progress_turn(created_at as i64 - 1);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&older_progress))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&older_progress))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         driver.no_progress_streak(),
         0,
@@ -894,10 +970,12 @@ fn a_restored_goal_at_the_cap_finishes_at_the_first_consult() {
     let mut driver = GoalDriver::restore_persisted(rows);
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert_eq!(driver.no_progress_streak(), 3);
-    assert!(driver
-        .next_continuation_message(&mut session, Some(&test_empty_turn(created_at as i64 + 3)))
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, Some(&test_empty_turn(created_at as i64 + 3)))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().status, GoalStatus::Error);
     assert_eq!(
         driver.state().last_reason.as_deref(),
@@ -985,17 +1063,21 @@ fn owed_continuation_defers_and_delivers_once() {
     assert!(text.starts_with("[goal: continuation]"));
     assert_eq!(driver.state().continuations_used, 1);
     assert!(!driver.owes_continuation());
-    assert!(driver
-        .take_owed_continuation(&mut session, None)
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .take_owed_continuation(&mut session, None)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().continuations_used, 1);
     driver.mark_continuation_owed();
     driver.pause(&mut session, "Paused by user").unwrap();
-    assert!(driver
-        .take_owed_continuation(&mut session, None)
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .take_owed_continuation(&mut session, None)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(driver.state().continuations_used, 1);
     assert!(!driver.owes_continuation());
     driver.mark_continuation_owed();
@@ -1012,10 +1094,12 @@ fn rollback_continuation_mint_restores_the_count() {
     let mut session = persisted_session();
     let mut driver = GoalDriver::new();
     driver.start(&mut session, "work", None).unwrap();
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 1);
     driver.rollback_continuation_mint(&mut session).unwrap();
     assert_eq!(driver.state().continuations_used, 0);
@@ -1025,10 +1109,12 @@ fn rollback_continuation_mint_restores_the_count() {
             .continuations_used,
         0
     );
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 1);
 }
 
@@ -1104,10 +1190,12 @@ fn restore_persisted_adopts_the_state_without_rewriting_it() {
         continuations_used: 2,
         ..empty_goal_state()
     });
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(driver.state().continuations_used, 3);
 }
 
@@ -1419,10 +1507,12 @@ fn pending_continuation_never_re_arms() {
     let mut session = persisted_session();
     let mut driver = GoalDriver::new();
     driver.start(&mut session, "work", None).unwrap();
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert!(driver.pending_continuation());
     assert!(
         driver
@@ -1453,10 +1543,12 @@ fn pending_continuation_never_re_arms() {
         "a direct mint lands while an earlier arm waits"
     );
     assert!(driver.pending_continuation());
-    assert!(driver
-        .take_owed_continuation(&mut session, None)
-        .unwrap()
-        .is_none());
+    assert!(
+        driver
+            .take_owed_continuation(&mut session, None)
+            .unwrap()
+            .is_none()
+    );
     assert!(driver.owes_continuation());
     assert_eq!(driver.state().continuations_used, 2);
     driver.continuation_consumed();
@@ -1468,10 +1560,12 @@ fn pending_continuation_never_re_arms() {
     driver.rollback_continuation_mint(&mut session).unwrap();
     assert!(!driver.pending_continuation());
     assert_eq!(driver.state().continuations_used, 2);
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     assert!(driver.pending_continuation());
     driver.pause(&mut session, "Paused by user").unwrap();
     assert!(!driver.pending_continuation());
@@ -1484,10 +1578,12 @@ fn pending_continuation_never_re_arms() {
     );
     driver.start(&mut session, "again", None).unwrap();
     assert!(!driver.pending_continuation());
-    assert!(driver
-        .next_continuation_message(&mut session, None)
-        .unwrap()
-        .is_some());
+    assert!(
+        driver
+            .next_continuation_message(&mut session, None)
+            .unwrap()
+            .is_some()
+    );
     driver.clear(&mut session).unwrap();
     assert!(!driver.pending_continuation());
 }

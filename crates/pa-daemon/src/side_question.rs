@@ -2,21 +2,24 @@
 //! `start_side_question`/`abort_side_question` handlers with their exact
 //! error strings, and the `side_question_event` frames pushed to the supervisor.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use pa_core::session_engine::side_question::{SideQuestionSink, SideQuestionTurn};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 
 use crate::engine::{
-    side_question_event_value, SessionEngine, SideQuestionOutcome, SideQuestionRequest,
     SIDE_QUESTION_STATUS_RUNNING,
+    SessionEngine,
+    SideQuestionOutcome,
+    SideQuestionRequest,
+    side_question_event_value,
 };
-use crate::protocol::{response_failure, response_success, DaemonOutbound, DaemonResponse};
+use crate::protocol::{DaemonOutbound, DaemonResponse, response_failure, response_success};
 use crate::worker::{EventPump, OutboundFrame};
-use pa_core::session_engine::side_question::{SideQuestionSink, SideQuestionTurn};
 
 struct SideQuestionRun {
     client_id: String,
@@ -298,8 +301,15 @@ fn emit_side_question_frame(events: &Arc<EventPump>, active_session_id: &str, ev
 mod tests {
     use super::*;
     use crate::engine::{
-        BranchSummaryOutcome, BranchSummaryRequest, CompactionOutcome, CompactionRequest,
-        EngineEvent, PromptRequest, SessionEngine, SideQuestionOutcome, SideQuestionRequest,
+        BranchSummaryOutcome,
+        BranchSummaryRequest,
+        CompactionOutcome,
+        CompactionRequest,
+        EngineEvent,
+        PromptRequest,
+        SessionEngine,
+        SideQuestionOutcome,
+        SideQuestionRequest,
     };
 
     /// A side-question engine that parks until the abort lands, then settles

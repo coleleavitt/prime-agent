@@ -6,11 +6,11 @@
 mod support;
 
 use std::os::unix::fs::PermissionsExt as _;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
-use pa_recall::{read_recall_skip, recall_skip_path, MarkOutcome};
+use pa_recall::{MarkOutcome, read_recall_skip, recall_skip_path};
 use support::*;
 
 /// A directory whose `git` hangs on `status` and passes everything else to

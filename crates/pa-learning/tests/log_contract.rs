@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use pa_learning::{roll_up_learning_days, RefinementCommit};
+use pa_learning::{RefinementCommit, roll_up_learning_days};
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
 use tracing_subscriber::layer::SubscriberExt as _;
 

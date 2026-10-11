@@ -223,12 +223,16 @@ fn fork_from_copies_the_branch_under_a_fresh_header() {
     assert_eq!(header.rlm_depth, source.get_header().unwrap().rlm_depth);
 
     let entries = forked.get_all_entries();
-    assert!(entries
-        .iter()
-        .any(|entry| entry.id() == Some(user_id.as_str())));
-    assert!(entries
-        .iter()
-        .any(|entry| entry.id() == Some(assistant_id.as_str())));
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.id() == Some(user_id.as_str()))
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.id() == Some(assistant_id.as_str()))
+    );
     assert!(
         !entries
             .iter()

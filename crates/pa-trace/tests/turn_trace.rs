@@ -20,7 +20,10 @@ use pa_agent::scripted::ScriptedProvider;
 use pa_agent::types::{AgentTool, AgentToolResult, AgentToolUpdateCallback, Model, UsageCost};
 use pa_core::kernel::manager::ReplKernelManager;
 use pa_core::kernel::shared::{
-    ExecuteOptions, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 use pa_trace::{RecorderConfig, RecorderHandle};
 use regex::Regex;
@@ -279,7 +282,7 @@ fn a_turn_with_a_kernel_cell_reconstructs_as_one_trace_tree() {
 /// real reason (a reset, a refused connect, a peer that closed) survives.
 #[test]
 fn a_connection_failure_records_its_transport_cause_on_the_request_span() {
-    use pa_agent::scripted::{stream_failure_steps, ScriptStep, ScriptedTurn};
+    use pa_agent::scripted::{ScriptStep, ScriptedTurn, stream_failure_steps};
     use pa_agent::stream::AssistantMessageEvent;
 
     let dir = tempfile::tempdir().expect("tempdir");

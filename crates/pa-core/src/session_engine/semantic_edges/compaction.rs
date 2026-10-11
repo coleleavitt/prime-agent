@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use pa_agent::abort::AbortSignal;
 
-use super::{model_request_headers, SemanticEdgeLedgerEvent, SemanticEdgeRecorder};
+use super::{SemanticEdgeLedgerEvent, SemanticEdgeRecorder, model_request_headers};
 
 impl SemanticEdgeRecorder {
     /// Begin one compaction and return its RAII guard (TS `beginCompaction`):

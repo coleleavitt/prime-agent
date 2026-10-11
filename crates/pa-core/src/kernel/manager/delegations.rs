@@ -1,8 +1,15 @@
 //! `ReplKernelManager` delegations onto Inner.
 
 use super::{
-    AbortSignal, Arc, ExecuteOptions, Inner, InternalExecuteResult, ReplKernelManager, Request,
-    RestoreResult, SnapshotResult,
+    AbortSignal,
+    Arc,
+    ExecuteOptions,
+    Inner,
+    InternalExecuteResult,
+    ReplKernelManager,
+    Request,
+    RestoreResult,
+    SnapshotResult,
 };
 
 impl ReplKernelManager {

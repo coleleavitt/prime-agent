@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// OS authentication surfaces: always refused, whatever the file says.
 pub const SYSTEM_DENY: [&str; 2] = ["com.apple.loginwindow", "com.apple.ScreenSaver"];

@@ -2,9 +2,23 @@
 //! detail drill-in's pairs, and the action rows.
 
 use super::{
-    default_heartbeat_name, fill_row, hug_row, human_schedule, next_run_label, plain_cell,
-    session_label, single_line, source_label, status_dot, str_width, truncate_line, HeartbeatEntry,
-    Line, Span, Theme, ThemeColor,
+    HeartbeatEntry,
+    Line,
+    Span,
+    Theme,
+    ThemeColor,
+    default_heartbeat_name,
+    fill_row,
+    hug_row,
+    human_schedule,
+    next_run_label,
+    plain_cell,
+    session_label,
+    single_line,
+    source_label,
+    status_dot,
+    str_width,
+    truncate_line,
 };
 
 /// The table's column width caps: the schedule expression and the label

@@ -10,34 +10,51 @@ use std::path::{Path, PathBuf};
 use pa_types::js::js_trim;
 use serde_json::{Map, Value};
 
-use crate::dream_loop::{run_dream_loop, DreamLoopOptions, DreamLoopResult};
+use crate::dream_loop::{DreamLoopOptions, DreamLoopResult, run_dream_loop};
 use crate::dreams::DreamsLogContext;
 use crate::experiment::{
-    run_experiment, ExperimentArm, ExperimentArmResult, ExperimentBudget, ExperimentError,
-    ExperimentResult, ExperimentRoundRow, ExperimentRunOptions, ExperimentSpec, EXPERIMENT_ARMS,
-    GUIDED_ARM_REJECTION_MESSAGE, LOCAL_EXPERIMENT_ARMS,
+    EXPERIMENT_ARMS,
+    ExperimentArm,
+    ExperimentArmResult,
+    ExperimentBudget,
+    ExperimentError,
+    ExperimentResult,
+    ExperimentRoundRow,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    GUIDED_ARM_REJECTION_MESSAGE,
+    LOCAL_EXPERIMENT_ARMS,
+    run_experiment,
 };
-use crate::improve::{run_dreaming, CandidateReason, DreamingOptions};
+use crate::improve::{CandidateReason, DreamingOptions, run_dreaming};
 use crate::json::{self, js_number, to_fixed};
 use crate::objective::{
-    compute_objective, pool_score_scale, ObjectiveBudget, ReplayObjectiveConfig, DEFAULT_OBJECTIVE,
+    DEFAULT_OBJECTIVE,
+    ObjectiveBudget,
+    ReplayObjectiveConfig,
+    compute_objective,
+    pool_score_scale,
 };
-use crate::policy::{policy_id, ExplorationPolicy, DEFAULT_POLICY, PRIMING_DIVERSE};
+use crate::policy::{DEFAULT_POLICY, ExplorationPolicy, PRIMING_DIVERSE, policy_id};
 use crate::replay::simulate_policy_with_span;
 use crate::rng::{Seed, SeededRng};
-use crate::rollout::{run_online_exploration, ExploreOptions};
+use crate::rollout::{ExploreOptions, run_online_exploration};
 use crate::store::{
-    dream_dir, list_experiment_ids, list_trees, read_tree, DreamStoreError, RecordedTree,
+    DreamStoreError,
+    RecordedTree,
     TreeSummary,
+    dream_dir,
+    list_experiment_ids,
+    list_trees,
+    read_tree,
 };
-use crate::tasks::{resolve_task, resolve_task_n, DreamTaskId, DREAM_TASK_IDS};
+use crate::tasks::{DREAM_TASK_IDS, DreamTaskId, resolve_task, resolve_task_n};
 
 /// The one usage string (`help dream` prints it).
 pub const DREAM_USAGE: &str = "dream [rollout|replay|improve|loop|experiment|status|show] [--task <circle-packing|sum-difference|python-speedup|autocorrelation>] [--n <size>] [--seed <n>] [--seeds <a,b,c>] [--workers <n>] [--k1 <n>] [--k2 <n>] [--dreams <n>] [--beta1 <x>] [--beta2 <x>] [--beta3 <x>] [--iterations <n>] [--rounds <n>] [--arms <dream,fixed>] [--priming <none|diverse>] [--overwrite] [--tree <id>] [--dir <path>] [--llm-proposer] [--llm-dreamer] [--json]";
 
 /// The one-line summary `help` lists.
-pub const DREAM_SUMMARY: &str =
-    "Run the Dream-RSI explore/replay/improve loop, or its controlled experiment, on a local scored task";
+pub const DREAM_SUMMARY: &str = "Run the Dream-RSI explore/replay/improve loop, or its controlled experiment, on a local scored task";
 
 /// The `help dream` description.
 pub const DREAM_DESCRIPTION: &str = "Grows a discovery tree with a fixed, serializable exploration policy, freezes each tree into a zero-cost replay simulator, and improves the policy by local search over its typed parameters. The default subcommand is loop and the default task is circle-packing (n=26). experiment (alias compare) runs the paper's controlled comparison: every arm starts from the same policy, seed and per-round budget, and the fixed arm (Recursive Fixed Exploration) never dreams, so on a deterministically scored task round 1 is identical across arms by construction; python-speedup is wall-clock scored, so its round-1 scores differ within timing noise, and result.json records scoring as deterministic or timing. Per-round rows, the headline multipliers and a versioned result.json land under <dir>/experiments/<id>/ for evals/dream/plot_experiment.py; per arm, final policy is the last one deployed and selected policy is the post-hoc winner on the arm's own pool. The local proposer and local policy search spend no model tokens and use no network. --llm-proposer, --llm-dreamer and the dream-guided/fixed-guided arms require an in-session agent handler and are rejected by the standalone CLI.";
@@ -696,7 +713,10 @@ fn dreaming_line(row: &ExperimentRoundRow) -> Option<String> {
     Some(format!(
         "dreaming: candidates {}  eligible {eligible}  {}  measured trees {}/{}{lever}  dreamer {}{probation}",
         verdicts.len(),
-        winner.map_or_else(|| "tie (current kept)".to_string(), |winner| format!("winner {}", winner.policy_id)),
+        winner.map_or_else(
+            || "tie (current kept)".to_string(),
+            |winner| format!("winner {}", winner.policy_id)
+        ),
         dreaming.measured_trees,
         row.pool_size,
         dreaming.dreamer.as_str()

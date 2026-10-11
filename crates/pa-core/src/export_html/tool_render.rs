@@ -191,9 +191,10 @@ pub fn pre_render_custom_tools(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::super::ansi_to_html::ansi_lines_to_html;
     use super::*;
-    use serde_json::json;
 
     /// A test renderer: renders ANSI-styled call/result HTML for tools
     /// whose name starts with `custom`; nothing for anything else.
@@ -272,12 +273,16 @@ mod tests {
             entry["callHtml"],
             "<div class=\"ansi-line\"><span style=\"font-weight:bold\">custom_tool</span> tc1</div>"
         );
-        assert!(entry["resultHtmlCollapsed"]
-            .as_str()
-            .is_some_and(|html| html.contains("output")));
-        assert!(entry["resultHtmlExpanded"]
-            .as_str()
-            .is_some_and(|html| html.contains("more detail")));
+        assert!(
+            entry["resultHtmlCollapsed"]
+                .as_str()
+                .is_some_and(|html| html.contains("output"))
+        );
+        assert!(
+            entry["resultHtmlExpanded"]
+                .as_str()
+                .is_some_and(|html| html.contains("more detail"))
+        );
     }
 
     #[test]

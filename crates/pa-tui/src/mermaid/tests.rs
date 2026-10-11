@@ -2,8 +2,9 @@
 //! package itself under node (`scripts/mermaid-goldens.mjs`); the port must reproduce each
 //! row's spans, classes, width, and warnings exactly.
 
-use super::{render, render_cached, Art, ArtSpan, Cls};
 use serde_json::Value;
+
+use super::{Art, ArtSpan, Cls, render, render_cached};
 
 const GOLDENS: &str = include_str!("goldens.json");
 

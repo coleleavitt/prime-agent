@@ -7,10 +7,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::resolve::{
-    MetadataSource, PathMetadata, ResolvedPaths, ResolvedResource, ResourceOrigin, ResourceType,
-};
 use super::SourceScope;
+use super::resolve::{
+    MetadataSource,
+    PathMetadata,
+    ResolvedPaths,
+    ResolvedResource,
+    ResourceOrigin,
+    ResourceType,
+};
 use crate::settings::SettingsManager;
 
 /// One resource row: path, enablement, provenance, and display naming.
@@ -405,7 +410,7 @@ fn relative_path(base: &Path, target: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packages::resolve::{ResolvedResource, RESOURCE_TYPES};
+    use crate::packages::resolve::{RESOURCE_TYPES, ResolvedResource};
 
     fn metadata(
         source: MetadataSource,

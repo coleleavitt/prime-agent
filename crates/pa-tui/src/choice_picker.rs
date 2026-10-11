@@ -4,11 +4,11 @@
 //! apply; Esc cancels). Enter applies the picked row through the caller,
 //! which dispatches on the picker's purpose; the picker owns only list state.
 
+use crate::Line;
 use crate::config_selector::{ConfigSelector, SelectorAction, SelectorKind, SelectorRow};
 use crate::effort_picker::level_description;
 use crate::keybindings::KeybindingsManager;
 use crate::theme::Theme;
-use crate::Line;
 
 /// What the picked row applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

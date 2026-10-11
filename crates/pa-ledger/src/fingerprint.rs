@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::js::{
-    collapse_js_whitespace, js_len, js_prefix, js_trim, json_string, JS_WHITESPACE_CLASS,
+    JS_WHITESPACE_CLASS,
+    collapse_js_whitespace,
+    js_len,
+    js_prefix,
+    js_trim,
+    json_string,
 };
 
 /// Criterion ids of failure opponents in a RAVO gate: `failure:<id>`.

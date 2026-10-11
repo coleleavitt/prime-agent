@@ -1,10 +1,11 @@
 //! The reply composer family: the arm and its headline, the guards, the submit
 //! paths, the view commands, and the hint rows.
 
+use pa_types::daemon::StreamingBehavior;
+
 use super::*;
 use crate::agents_view::rename::{Rename, RenameTarget};
 use crate::agents_view::reply::{KillRequest, ReplyRequest, ReplySent};
-use pa_types::daemon::StreamingBehavior;
 
 /// One armed composer over the fixture's live parent row.
 fn armed_live() -> AgentsViewMode {

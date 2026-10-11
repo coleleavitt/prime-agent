@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::info::{session_info_cache, SessionScanState};
+use super::info::{SessionScanState, session_info_cache};
 
 /// The sidecar format version: a sidecar serves only at exactly this
 /// version; any other version (an older or a newer build's) is a cold

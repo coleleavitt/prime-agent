@@ -3,9 +3,9 @@
 
 use std::future::Future;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 
 pub const AGENT_MESSAGE_CUSTOM_TYPE: &str = "agent_message";
 /// The queue-strip preview label for a delivered agent message
@@ -525,10 +525,16 @@ pub fn register_agent_message_host_handlers<C: AgentMessageController + 'static>
 // every external agent_messaging:: path stable.
 mod observe;
 pub use observe::{
-    create_agent_observe_message_preview, normalize_observe_limit, normalize_observe_max_chars,
-    register_agent_observe_host_handlers, AgentFamilyStatus, AgentObserveActivity,
-    AgentObserveController, AgentObserveMessagePreview, AgentObservePendingToolCalls,
+    AgentFamilyStatus,
+    AgentObserveActivity,
+    AgentObserveController,
+    AgentObserveMessagePreview,
+    AgentObservePendingToolCalls,
     AgentObserveSummary,
+    create_agent_observe_message_preview,
+    normalize_observe_limit,
+    normalize_observe_max_chars,
+    register_agent_observe_host_handlers,
 };
 
 #[cfg(test)]

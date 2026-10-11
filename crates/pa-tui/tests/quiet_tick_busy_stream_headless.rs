@@ -9,10 +9,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The stream's cadence: intervals shorter than the tick's 50ms window, so stream wakes alone
 /// keep a per-iteration sleep from completing.

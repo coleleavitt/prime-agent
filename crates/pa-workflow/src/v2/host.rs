@@ -15,11 +15,16 @@ use std::sync::Arc;
 
 use pa_core::features::FeatureTelemetry;
 use pa_telemetry::Properties;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::schema;
 use super::wire::{
-    decode_public_request, public_error, validate_result, Action, ErrorCode, RequestError,
+    Action,
+    ErrorCode,
+    RequestError,
+    decode_public_request,
+    public_error,
+    validate_result,
 };
 
 /// The host-request type the runtime sends (`rlm/workflow_v2.py`).
@@ -100,11 +105,7 @@ pub fn answer(request: &Value) -> Answer {
             let reply = if named == Some(Action::Validate) {
                 validate_result(request_id, Err(&error))
             } else {
-                public_error(
-                    request_id,
-                    ErrorCode::InvalidDefinition,
-                    &error.to_string(),
-                )
+                public_error(request_id, ErrorCode::InvalidDefinition, &error.to_string())
             };
             Answer {
                 reply: Ok(reply),

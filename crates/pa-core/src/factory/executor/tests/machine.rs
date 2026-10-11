@@ -2,9 +2,9 @@
 //! `max_transitions`, stalls, optional inputs, residents, and the resume
 //! generation (ports of `FactoryExecutorTest`).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::fake::{done, entry_statuses, events_of, failed, node_status, running, strings, Case};
+use super::fake::{Case, done, entry_statuses, events_of, failed, node_status, running, strings};
 
 fn review_loop_machine() -> Value {
     json!({
@@ -168,9 +168,11 @@ async fn machine_max_entries_blocked_transition_quiesces_done() {
     assert_eq!(status["usage"]["transitions_fired"], 1);
     let blocked = case.all_events_of(&result, "transition_blocked");
     assert_eq!(blocked.len(), 2);
-    assert!(blocked
-        .iter()
-        .all(|event| event["to"] == "once" || event["to"] == "sink"));
+    assert!(
+        blocked
+            .iter()
+            .all(|event| event["to"] == "once" || event["to"] == "sink")
+    );
     assert_eq!(
         blocked[0]["detail"],
         "state 'sink' is at max_entries 1; transition 'once' -> 'sink' blocked"
@@ -255,10 +257,11 @@ async fn machine_max_transitions_pause_mid_settle_does_not_refire_on_resume() {
     let result = case.start().await;
     let paused = case.settle(&result).await;
     assert_eq!(paused["state"], "paused");
-    assert!(case
-        .host
-        .notice_kinds()
-        .contains(&"max_transitions_exceeded".to_string()));
+    assert!(
+        case.host
+            .notice_kinds()
+            .contains(&"max_transitions_exceeded".to_string())
+    );
     assert_eq!(node_status(&paused, "b")["entries_used"], 1);
     assert_eq!(node_status(&paused, "c")["entries_used"], 0);
     assert_eq!(paused["usage"]["transitions_fired"], 1);
@@ -289,10 +292,11 @@ async fn machine_join_paused_at_max_transitions_fires_after_resume() {
     let result = case.start().await;
     let paused = case.settle(&result).await;
     assert_eq!(paused["state"], "paused");
-    assert!(case
-        .host
-        .notice_kinds()
-        .contains(&"max_transitions_exceeded".to_string()));
+    assert!(
+        case.host
+            .notice_kinds()
+            .contains(&"max_transitions_exceeded".to_string())
+    );
     assert_eq!(node_status(&paused, "c")["entries_used"], 1);
     assert_eq!(paused["usage"]["transitions_fired"], 1);
     case.resume(&result).await.expect("resume");
@@ -636,8 +640,8 @@ async fn valueless_source(answer: &str, port: &str, port_type: &str) -> (Case, V
 }
 
 #[tokio::test]
-async fn machine_optional_input_over_a_settled_source_with_no_captured_value_binds_the_null_sentinel(
-) {
+async fn machine_optional_input_over_a_settled_source_with_no_captured_value_binds_the_null_sentinel()
+ {
     let (case, status) = valueless_source("", "go", "text").await;
     assert_eq!(status["state"], "failed");
     let opt = node_status(&status, "opt");
@@ -878,9 +882,11 @@ async fn long_state_ids_spawn_distinct_sibling_names() {
     let names = case.host.spawn_names();
     assert_eq!(names.len(), 2);
     assert_ne!(names[0], names[1]);
-    assert!(names
-        .iter()
-        .all(|name| name.starts_with("sw-collect-findings-") && name.len() <= 64));
+    assert!(
+        names
+            .iter()
+            .all(|name| name.starts_with("sw-collect-findings-") && name.len() <= 64)
+    );
     assert_eq!(
         node_status(&status, "collect-findings-pass-one")["status"],
         "done"

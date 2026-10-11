@@ -1,8 +1,8 @@
 //! A request written to a pooled connection the peer already closed is re-sent once on a fresh
 //! connection; anything else that fails without a response is not.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};

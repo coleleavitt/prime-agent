@@ -3,14 +3,20 @@
 //! dismissible notice line (worker crash, command-timeout burst, or an
 //! update restart).
 
-use pa_types::incident::{
-    collect_incident_events, collect_worker_pid_map, compute_incident_anomalies,
-    latest_incident_stall_timeout_by_subject, parse_incident_log_line, IncidentEvent,
-    IncidentLogEntry, IncidentSeverity,
-};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+
+use pa_types::incident::{
+    IncidentEvent,
+    IncidentLogEntry,
+    IncidentSeverity,
+    collect_incident_events,
+    collect_worker_pid_map,
+    compute_incident_anomalies,
+    latest_incident_stall_timeout_by_subject,
+    parse_incident_log_line,
+};
 
 /// Recent-log window, matching the `prime-agent incident` default.
 pub const INCIDENT_NOTICE_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;

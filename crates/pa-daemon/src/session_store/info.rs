@@ -4,8 +4,19 @@
 //! lookup.
 
 use super::{
-    fs, info_sidecar, list_sessions, normalize_state_status, Cow, Deserialize, HashMap, Path,
-    PathBuf, Serialize, SessionHeader, Usage, Value,
+    Cow,
+    Deserialize,
+    HashMap,
+    Path,
+    PathBuf,
+    Serialize,
+    SessionHeader,
+    Usage,
+    Value,
+    fs,
+    info_sidecar,
+    list_sessions,
+    normalize_state_status,
 };
 
 /// The durable metadata the daemon list surfaces for one session file.

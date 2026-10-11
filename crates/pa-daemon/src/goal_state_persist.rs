@@ -2,12 +2,16 @@
 //! persistence contract. The worker's session file is the one durable
 //! store; the engine's in-memory branch is fresh on every build, so a
 //! recovery rebuild rehydrates from the file's latest entry.
+use std::path::Path;
+
 use pa_core::goals::{
-    is_persisted_goal_state, normalize_goal_state, GoalState, GOAL_STATE_CUSTOM_TYPE,
+    GOAL_STATE_CUSTOM_TYPE,
+    GoalState,
+    is_persisted_goal_state,
+    normalize_goal_state,
 };
 use pa_types::session::FileEntry;
 use serde_json::Value;
-use std::path::Path;
 
 use crate::session_store::SessionFile;
 
@@ -72,10 +76,11 @@ fn goal_state_from_value(data: &Value) -> Option<GoalState> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use pa_core::goals::{empty_goal_state, GoalStatus};
+    use pa_core::goals::{GoalStatus, empty_goal_state};
     use pa_types::session::SessionHeader;
     use serde_json::json;
+
+    use super::*;
 
     fn custom_goal_entry(data: Value) -> FileEntry {
         FileEntry::Custom {

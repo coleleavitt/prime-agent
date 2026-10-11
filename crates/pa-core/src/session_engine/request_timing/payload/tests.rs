@@ -3,11 +3,13 @@
 //! the ring bound, the name uniqueness, and the dispatch-path contract
 //! (record never touches the filesystem).
 
-use super::*;
-use serde_json::json;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use serde_json::json;
+
+use super::*;
 
 /// The capture files' names, oldest first (the epoch-lead name order).
 pub(crate) fn payload_files(dir: &Path) -> Vec<String> {

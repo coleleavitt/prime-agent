@@ -2,19 +2,27 @@
 //! steering/follow-up/continuation message polling, and stop-hook
 //! evaluation.
 
-use crate::abort::AbortSignal;
-use crate::stream::StreamFn;
-use crate::types::{
-    AgentContext, AgentEvent, AgentMessage, AssistantMessage, ShouldStopAfterTurnContext,
-    StopReason, ToolCall, ToolResultMessage,
-};
-
 use super::abort::{
-    poll_messages_unless_aborted, race_with_abort, settle_post_turn, PostTurnResult,
+    PostTurnResult,
+    poll_messages_unless_aborted,
+    race_with_abort,
+    settle_post_turn,
 };
 use super::response::stream_assistant_response;
 use super::tools::execute_tool_calls;
 use super::{AgentEventSink, AgentLoopConfig};
+use crate::abort::AbortSignal;
+use crate::stream::StreamFn;
+use crate::types::{
+    AgentContext,
+    AgentEvent,
+    AgentMessage,
+    AssistantMessage,
+    ShouldStopAfterTurnContext,
+    StopReason,
+    ToolCall,
+    ToolResultMessage,
+};
 
 // Direct port of the TS turn loop.
 #[allow(clippy::too_many_lines)]

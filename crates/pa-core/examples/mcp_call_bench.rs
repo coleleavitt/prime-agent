@@ -19,7 +19,11 @@ use std::sync::{Arc, Mutex};
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 use pa_core::mcp::{McpManager, McpManagerOptions, McpOAuth, McpServerConfig, McpSessionOptions};
 

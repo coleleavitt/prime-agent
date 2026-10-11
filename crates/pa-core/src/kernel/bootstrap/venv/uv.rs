@@ -1,6 +1,6 @@
 //! The uv discovery concern: the PATH/PATHEXT executable search and the `ensure_uv` resolution.
 
-use super::{anyhow, home_dir, Path, PathBuf};
+use super::{Path, PathBuf, anyhow, home_dir};
 #[cfg(windows)]
 use crate::platform::process::windows_executable_candidates;
 

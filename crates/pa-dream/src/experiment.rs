@@ -17,23 +17,31 @@ use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::dream_loop::{
-    run_dream_loop, DreamHandlerCalls, DreamLoopOptions, DreamLoopResult, DreamRoundDreaming,
+    DreamHandlerCalls,
+    DreamLoopOptions,
+    DreamLoopResult,
+    DreamRoundDreaming,
+    run_dream_loop,
 };
 use crate::dreams::DreamsLogContext;
 use crate::improve::CandidateVerdict;
 use crate::json;
 use crate::llm_loop::{DreamInitialRollout, DreamPhase};
-use crate::objective::{ReplayObjectiveConfig, DEFAULT_OBJECTIVE};
-use crate::policy::{policy_id, ExplorationPolicy, StopRule, DEFAULT_POLICY};
+use crate::objective::{DEFAULT_OBJECTIVE, ReplayObjectiveConfig};
+use crate::policy::{DEFAULT_POLICY, ExplorationPolicy, StopRule, policy_id};
 use crate::proposer::{ProposalTally, RejectCounts};
 use crate::rng::Seed;
 use crate::rollout::{DreamClock, ScoreImprovement};
 use crate::store::{
-    create_dir_private, experiment_arm_dir, experiment_dir, experiment_result_path, write_private,
     DreamStoreError,
+    create_dir_private,
+    experiment_arm_dir,
+    experiment_dir,
+    experiment_result_path,
+    write_private,
 };
 use crate::task::DynTask;
-use crate::tasks::{resolve_task, resolve_task_n, DreamTaskId, TaskSizeError};
+use crate::tasks::{DreamTaskId, TaskSizeError, resolve_task, resolve_task_n};
 
 /// The result file's schema id.
 pub const EXPERIMENT_SCHEMA: &str = "prime-agent.dream.experiment/1";

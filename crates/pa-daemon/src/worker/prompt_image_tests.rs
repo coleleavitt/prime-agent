@@ -1,6 +1,7 @@
 //! Prompt-image parsing tests.
-use super::*;
 use serde_json::json;
+
+use super::*;
 
 #[test]
 fn parses_wire_images_and_drops_incomplete_entries() {

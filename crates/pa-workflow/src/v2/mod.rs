@@ -28,10 +28,9 @@ pub mod wire;
 
 use std::sync::Arc;
 
-use pa_core::features::SessionFeatureContext;
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
-
 pub use host::REQUEST_TYPE;
+use pa_core::features::SessionFeatureContext;
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 
 /// Register the V2 host request for one session.
 pub fn register_host_handlers(context: &SessionFeatureContext, handlers: &mut HostRequestHandlers) {

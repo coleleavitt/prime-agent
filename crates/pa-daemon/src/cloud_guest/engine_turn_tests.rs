@@ -15,7 +15,11 @@ use crate::agent_engine::{AgentEngineConfig, FAUX_TEST_LOCK};
 use crate::cloud_guest::dispatch::GuestExecutor;
 use crate::cloud_guest::executor::EngineGuestExecutor;
 use crate::cloud_guest::tests_support::{
-    boot_guest, open_request, prompt_request, LoopbackClient, TEST_TOKEN,
+    LoopbackClient,
+    TEST_TOKEN,
+    boot_guest,
+    open_request,
+    prompt_request,
 };
 
 fn faux_executor(cwd: &std::path::Path) -> Arc<EngineGuestExecutor> {

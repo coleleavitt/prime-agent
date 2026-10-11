@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 
 use pa_agent::agent_loop::{AfterToolCallFn, BeforeToolCallFn};
 use pa_agent::types::{AfterToolCallResult, AgentMessage, Message, ToolResultContent};
-
-use pa_telemetry::{base_properties, lookup, Properties, TelemetryClient};
+use pa_telemetry::{Properties, TelemetryClient, base_properties, lookup};
 
 use crate::kernel::shared::HostRequestHandlers;
 use crate::refinement::gate::RefinementGate;

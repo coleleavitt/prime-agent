@@ -82,8 +82,9 @@ impl TelemetrySink for NoTelemetry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn events_carry_the_catalogued_properties() {

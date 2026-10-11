@@ -47,7 +47,10 @@ use serde::Deserialize;
 use super::publish::{LockFailure, NativeWriteLock, ProperLock};
 use super::source::{CredentialBackend, NativeRaw};
 use super::{
-    NativeClaudeCredentialSource, NativeClaudeImport, NativePublish, NativePublishOutcome,
+    NativeClaudeCredentialSource,
+    NativeClaudeImport,
+    NativePublish,
+    NativePublishOutcome,
 };
 use crate::account::Account;
 use crate::error::{Error, Result};

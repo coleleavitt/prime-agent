@@ -5,8 +5,8 @@ use serde_json::json;
 
 use super::*;
 use crate::secure::SECURE_HANDOFF;
-use crate::session::fake::AxCall;
 use crate::session::ActionArg;
+use crate::session::fake::AxCall;
 use crate::testing::{element, with_changed_value};
 
 fn set_value(index: i64, value: &str) -> AppCall {

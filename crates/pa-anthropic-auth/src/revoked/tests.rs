@@ -7,7 +7,11 @@ use anthropic::token::Credential;
 use anthropic::{Account, AccountStore};
 use chrono::{Duration, Utc};
 use pa_core::auth::{
-    install_credential_source, AuthStorage, AuthStorageData, NoOAuth, ProviderCredentialSource,
+    AuthStorage,
+    AuthStorageData,
+    NoOAuth,
+    ProviderCredentialSource,
+    install_credential_source,
 };
 use pa_core::models::{ModelRegistry, ResolvedRequestAuth};
 use pa_types::sync::MutexExt;

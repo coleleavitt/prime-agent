@@ -116,8 +116,9 @@ fn js_to_string(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     /// The exact composition the TS `openai` SDK produces for an `OpenAI` error body and the TS
     /// provider surfaces verbatim (the parity harness's scripted overflow probe: `{"error":

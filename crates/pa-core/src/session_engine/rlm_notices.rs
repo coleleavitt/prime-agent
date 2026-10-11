@@ -2,10 +2,11 @@
 //! a child run ends without an explicit reply, fails, or is cancelled; this module owns
 //! the wire vocabulary, the content text, and the details block.
 
-use super::agent_messaging::sanitize_message_header_value;
 use pa_types::ai::UserContent;
 use pa_types::session::CustomMessage;
 use serde_json::json;
+
+use super::agent_messaging::sanitize_message_header_value;
 
 /// A child run that failed (TS `rlm_child_failure`).
 pub const RLM_CHILD_FAILURE_CUSTOM_TYPE: &str = "rlm_child_failure";

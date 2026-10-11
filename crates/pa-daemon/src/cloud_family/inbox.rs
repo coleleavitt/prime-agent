@@ -20,11 +20,12 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::cloud::CloudAgentMessageReceipt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{log::Admission, IncomingCloudMessage, DEFAULT_OUTBOX_RECORDS};
+use super::log::Admission;
+use super::{DEFAULT_OUTBOX_RECORDS, IncomingCloudMessage};
 
 /// One durably-admitted delivery slot: the request id plus its delivery
 /// parameters, and the receiver-admitted receipt once one exists.
@@ -194,7 +195,7 @@ impl CloudInboxLog {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(error).with_context(|| format!("open cloud inbox {}", path.display()))
+                return Err(error).with_context(|| format!("open cloud inbox {}", path.display()));
             }
         }
         // Private from its first write (the creation mode); a file left at
@@ -436,9 +437,10 @@ impl CloudInboxLog {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
 
     /// The temp root and the canonicalized placement path (the macOS temp
     /// root resolves through /var — a symlink — and the strict
@@ -573,9 +575,11 @@ mod tests {
         assert!(reloaded.admission("msgreq_unknown").is_none());
         // A receipt before admission is a protocol error.
         let mut fresh = CloudInboxLog::open(&dir.join("other.jsonl")).unwrap();
-        assert!(fresh
-            .record_receipt("never-admitted", receipt("x"))
-            .is_err());
+        assert!(
+            fresh
+                .record_receipt("never-admitted", receipt("x"))
+                .is_err()
+        );
     }
 
     /// The crash gap on disk: an admitted record without its receipt is

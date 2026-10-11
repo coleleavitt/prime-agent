@@ -3,11 +3,11 @@
 
 use std::collections::HashMap;
 
-use crate::theme::{Theme, ThemeColor};
-use crate::Line;
 use pa_types::session::{AgentMessage, FileEntry};
 use serde_json::Value;
 
+use crate::Line;
+use crate::theme::{Theme, ThemeColor};
 use crate::tree_nodes::TreeNodeData;
 
 /// Tool-call info collected from assistant messages (tree tool-result rows

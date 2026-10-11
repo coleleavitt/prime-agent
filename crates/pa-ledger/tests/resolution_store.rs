@@ -3,9 +3,16 @@
 use std::path::Path;
 
 use pa_ledger::{
-    find_repo_dir, open_resolution_store, resolution_dir, resolution_store_path, ResolutionCell,
-    ResolutionIndex, ResolutionIndexOptions, ResolutionOrigin, ResolutionStore,
     DEFAULT_MAX_RESOLUTIONS,
+    ResolutionCell,
+    ResolutionIndex,
+    ResolutionIndexOptions,
+    ResolutionOrigin,
+    ResolutionStore,
+    find_repo_dir,
+    open_resolution_store,
+    resolution_dir,
+    resolution_store_path,
 };
 
 const FAILING_CELL: &str = "agents = client.list_agents()";
@@ -66,9 +73,10 @@ fn a_fix_recorded_by_one_session_reaches_a_later_session_in_the_same_repo() {
         .unwrap();
     assert_eq!(hint.origin, ResolutionOrigin::Store);
     assert_eq!(hint.record.fix, FIX_CELL);
-    assert!(hint
-        .text
-        .ends_with("of an earlier session)\n</ipython_resolution_hint>"));
+    assert!(
+        hint.text
+            .ends_with("of an earlier session)\n</ipython_resolution_hint>")
+    );
 }
 
 #[test]
@@ -139,9 +147,11 @@ fn the_store_is_owner_only_because_a_record_holds_verbatim_cell_source() {
         pa_core::platform::file_mode(&resolution_dir(&agent)).map(|mode| mode & 0o777),
         Some(0o700)
     );
-    assert!(std::fs::read_to_string(path)
-        .unwrap()
-        .contains("client.agents()"));
+    assert!(
+        std::fs::read_to_string(path)
+            .unwrap()
+            .contains("client.agents()")
+    );
 }
 
 #[test]

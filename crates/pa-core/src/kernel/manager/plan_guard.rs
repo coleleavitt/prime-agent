@@ -2,8 +2,8 @@
 //! arms or disarms the runtime's write guard where no OS sandbox can enforce
 //! plan mode (see `crate::kernel::plan_guard`).
 
-use super::{anyhow, json, lock, oneshot, Arc, Duration, Inner, ReplKernelManager, Value};
-use crate::kernel::plan_guard::{mint_plan_guard_token, PLAN_GUARD_SETTLE_TIMEOUT_MS};
+use super::{Arc, Duration, Inner, ReplKernelManager, Value, anyhow, json, lock, oneshot};
+use crate::kernel::plan_guard::{PLAN_GUARD_SETTLE_TIMEOUT_MS, mint_plan_guard_token};
 
 impl Inner {
     /// Send the session's current plan-mode state to the running kernel and

@@ -6,11 +6,10 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use pa_types::ai::{Usage, UsageCost};
-use pa_types::JsNumber;
-use serde::{Deserialize, Serialize};
-
 use pa_core::session_engine::compaction_exec::{add_assistant_usage, subtract_assistant_usage};
+use pa_types::JsNumber;
+use pa_types::ai::{Usage, UsageCost};
+use serde::{Deserialize, Serialize};
 
 /// The token/cost summary the rows publish: `inputTokens` folds cache reads
 /// and writes into the input total; `cost` is the provider-billed total.
@@ -224,8 +223,9 @@ impl From<PersistedUsage> for Usage {
 /// `#[serde(with)]` for every persisted `Usage` field: the bits encoding
 /// above, behind the plain `Usage` field type.
 mod usage_bits {
-    use super::{PersistedUsage, Usage};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{PersistedUsage, Usage};
 
     // serde's `serialize_with` contract pins `&T` - the lint's by-value
     // form would not be callable as a serde attribute helper.
@@ -476,8 +476,9 @@ pub(crate) fn own_usage_summary_of(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::*;
-    use serde_json::{json, Value};
 
     fn usage(input: u64, output: u64, total: f64) -> Usage {
         serde_json::from_value(json!({

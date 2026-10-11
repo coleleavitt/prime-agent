@@ -7,16 +7,30 @@
 mod unix;
 #[cfg(unix)]
 pub(crate) use unix::{
-    has_controlling_terminal, pending_bytes, spawn, wait_readable, Control, ControlChannel,
-    Process, Spawned, STATUS_CHANNEL,
+    Control,
+    ControlChannel,
+    Process,
+    STATUS_CHANNEL,
+    Spawned,
+    has_controlling_terminal,
+    pending_bytes,
+    spawn,
+    wait_readable,
 };
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub(crate) use windows::{
-    has_controlling_terminal, pending_bytes, spawn, wait_readable, Control, ControlChannel,
-    Process, Spawned, STATUS_CHANNEL,
+    Control,
+    ControlChannel,
+    Process,
+    STATUS_CHANNEL,
+    Spawned,
+    has_controlling_terminal,
+    pending_bytes,
+    spawn,
+    wait_readable,
 };
 
 /// How a command's process tree is kept together as one signalable unit

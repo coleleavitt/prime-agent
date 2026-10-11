@@ -6,9 +6,8 @@
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
-use crate::worker::Lane;
-use crate::worker::{parse_prompt_images, TurnSettle, Worker};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
+use crate::worker::{Lane, TurnSettle, Worker, parse_prompt_images};
 
 /// The wire lane names: `"steering"` and `"followUp"`.
 fn wire_lane(value: Option<&Value>) -> Option<Lane> {
@@ -232,9 +231,11 @@ fn mutate_lane(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         let dir = crate::test_support::TestDir::new("pa-worker-qc-");

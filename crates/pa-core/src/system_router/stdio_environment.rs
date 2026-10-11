@@ -33,18 +33,20 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::anyhow;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio::time::Instant;
 
-use crate::platform::process::{kill_pid, Signal};
-
 use super::types::{
-    RouterCloseOptions, RouterEnvironment, RouterExecution, RouterObservation,
+    RouterCloseOptions,
+    RouterEnvironment,
+    RouterExecution,
+    RouterObservation,
     RouterSegmentEnvironment,
 };
+use crate::platform::process::{Signal, kill_pid};
 
 /// A reply line longer than this is a protocol violation, not a message to
 /// buffer (TS `MAX_REPLY_LINE_CHARS`).

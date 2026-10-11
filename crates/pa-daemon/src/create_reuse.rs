@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use pa_types::daemon::{DaemonCommand, DaemonSessionLifecycle};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::registry::ResidentWorker;
-use crate::supervisor::{Supervisor, ROUTE_TIMEOUT_MS, WORKER_NOT_CONNECTED};
+use crate::supervisor::{ROUTE_TIMEOUT_MS, Supervisor, WORKER_NOT_CONNECTED};
 
 /// How many settled teardown waits one open re-checks before it answers the typed
 /// `worker is {state}` error (a holder that never dies must not ping-pong the open).
@@ -419,27 +419,31 @@ mod tests {
     #[tokio::test]
     async fn the_owning_clients_reopen_reuses() {
         let resident = resident_with(Some("daemon-tui:1"), "live-id");
-        assert!(client_owned_conflict(
-            &resident,
-            Some(DaemonSessionLifecycle::ClientOwned),
-            "daemon-tui:1",
-            "/s.jsonl"
-        )
-        .await
-        .is_none());
+        assert!(
+            client_owned_conflict(
+                &resident,
+                Some(DaemonSessionLifecycle::ClientOwned),
+                "daemon-tui:1",
+                "/s.jsonl"
+            )
+            .await
+            .is_none()
+        );
     }
 
     #[tokio::test]
     async fn an_unowned_worker_is_reusable() {
         let resident = resident_with(None, "live-id");
-        assert!(client_owned_conflict(
-            &resident,
-            Some(DaemonSessionLifecycle::ClientOwned),
-            "daemon-tui:2",
-            "/s.jsonl"
-        )
-        .await
-        .is_none());
+        assert!(
+            client_owned_conflict(
+                &resident,
+                Some(DaemonSessionLifecycle::ClientOwned),
+                "daemon-tui:2",
+                "/s.jsonl"
+            )
+            .await
+            .is_none()
+        );
     }
 
     #[tokio::test]

@@ -5,10 +5,17 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{gate_python, options, slugify_request, SLUGIFY_SOURCE};
+use common::{SLUGIFY_SOURCE, gate_python, options, slugify_request};
 use pa_toolforge::{
-    load_ledger, publish, published_packages, GatePhase, PublishRequest, PublishResult,
-    PublishStatus, PublishedPackage, RejectionStage,
+    GatePhase,
+    PublishRequest,
+    PublishResult,
+    PublishStatus,
+    PublishedPackage,
+    RejectionStage,
+    load_ledger,
+    publish,
+    published_packages,
 };
 
 /// The gate's (phase, outcome, ok) triples, durations and details aside.
@@ -64,9 +71,11 @@ async fn publishes_when_the_exit_test_fails_without_and_passes_with() {
         std::fs::read_to_string(package_root.join("src/slugify/__init__.py")).unwrap(),
         SLUGIFY_SOURCE
     );
-    assert!(std::fs::read_to_string(package_root.join("_exit_test.py"))
-        .unwrap()
-        .contains("slugify.run"));
+    assert!(
+        std::fs::read_to_string(package_root.join("_exit_test.py"))
+            .unwrap()
+            .contains("slugify.run")
+    );
     // Nothing is left in staging.
     assert_eq!(
         std::fs::read_dir(dir.path().join("toolforge/staging"))
@@ -126,7 +135,9 @@ async fn rejects_an_exit_test_that_passes_without_the_implementation() {
     assert_eq!(result.rejection, Some(RejectionStage::Negative));
     assert_eq!(
         result.reason.as_deref(),
-        Some("negative run did not fail: the exit test must raise against a stub that implements nothing, but it passed. replay case completed without raising")
+        Some(
+            "negative run did not fail: the exit test must raise against a stub that implements nothing, but it passed. replay case completed without raising"
+        )
     );
     assert_eq!(
         gate_shape(&result),

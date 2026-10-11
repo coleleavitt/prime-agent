@@ -167,8 +167,9 @@ impl pa_core::session_engine::rlm_usage::RlmChildUsageSink for ProducerUsageSink
 
 #[cfg(test)]
 mod tests {
-    use super::CreateSessionResources;
     use serde::Deserialize as _;
+
+    use super::CreateSessionResources;
 
     /// The create payload's `executionMode` reaches the session telemetry;
     /// a create without one (an agent-spawned session) stays `None`

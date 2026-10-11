@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use super::{dim, grouped, js_to_fixed, raw_span, ClientLine, ClientSpan};
+use super::{ClientLine, ClientSpan, dim, grouped, js_to_fixed, raw_span};
 use crate::theme::ThemeColor;
 use crate::width::{char_width, str_width};
 const CONTEXT_BAR_WIDTH: usize = 10;

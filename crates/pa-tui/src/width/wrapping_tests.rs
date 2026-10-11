@@ -1,5 +1,6 @@
-use super::*;
 use ratatui::style::{Color, Style};
+
+use super::*;
 
 #[test]
 fn shared_wrap_matches_original_output_and_counts() {

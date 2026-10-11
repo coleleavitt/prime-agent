@@ -3,9 +3,11 @@
 //! session context, the model catalog, and the empty-loader shapes - over the
 //! shared `created_worker` fixtures.
 
-use super::*;
-use serde_json::json;
 use std::sync::Arc;
+
+use serde_json::json;
+
+use super::*;
 
 /// A created worker backed by an existing session file (so the artifact tree beside it resolves).
 async fn created_worker_at(root: &std::path::Path, session_file: &std::path::Path) -> Arc<Worker> {

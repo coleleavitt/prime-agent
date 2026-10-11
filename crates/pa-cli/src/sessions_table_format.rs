@@ -7,12 +7,18 @@ use pa_tui::ansi::strip_ansi;
 use pa_tui::info_commands::js_to_fixed;
 use pa_tui::width::truncate_to_width;
 use pa_types::daemon::agent_roster::{
-    classify_summary_value, session_activity_detail, AgentRosterStatus, SessionActivityOptions,
+    AgentRosterStatus,
+    SessionActivityOptions,
+    classify_summary_value,
+    session_activity_detail,
 };
 use serde_json::Value;
 
 use crate::daemon_session_list::{
-    format_session_age, format_session_display_id, format_table, string_field,
+    format_session_age,
+    format_session_display_id,
+    format_table,
+    string_field,
 };
 
 /// Display-width cap for free-text cells so one long line never stretches the row; wide glyphs
@@ -204,9 +210,10 @@ fn truncate_cell(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_tui::width::str_width;
     use serde_json::json;
+
+    use super::*;
 
     const NOW_MS: u64 = 1_780_056_000_000; // 2026-05-29T12:00:00.000Z
     const STALE_AT: &str = "2026-05-29T11:50:00.000Z";

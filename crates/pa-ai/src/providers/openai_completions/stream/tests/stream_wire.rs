@@ -3,9 +3,9 @@
 //! one `content-type: application/json` label, and a caller-configured
 //! content-type (`model.headers` or stream-options headers) still wins.
 
-use super::*;
-
 use std::net::SocketAddr;
+
+use super::*;
 
 /// The known-green SSE script from the tier pins (a content chunk, a
 /// usage chunk, `[DONE]`): the stream completes so the head capture and

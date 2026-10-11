@@ -1,14 +1,15 @@
 //! Sparse fullscreen windows. Unknown global row totals are resolved
 //! only for callers that require absolute coordinates.
-use super::{layout::EntryLayout, layout::EntryRows, layout::RowPack, AgentView};
+use super::AgentView;
+use super::layout::{EntryLayout, EntryRows, RowPack};
 use crate::chat::Detail;
 
 /// Row count above which the freed heap is returned to the OS
 /// immediately; only a resumed session's pad-scale row sets cross this.
 const HUGE_PACKED_ROWS: usize = 8192;
 
-use crate::chrome::render_splash;
 use crate::Line;
+use crate::chrome::render_splash;
 
 #[cfg(test)]
 thread_local! {

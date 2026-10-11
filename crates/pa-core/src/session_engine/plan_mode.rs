@@ -20,9 +20,8 @@ use std::sync::Arc;
 use pa_agent::agent_loop::BeforeToolCallFn;
 use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
 
-use crate::kernel::shared::HostRequestHandlers;
-
 pub use crate::kernel::plan_guard::PlanModeSwitch;
+use crate::kernel::shared::HostRequestHandlers;
 
 /// The durable row recording one plan-mode change (`details.enabled`).
 pub const PLAN_MODE_CHANGE_CUSTOM_TYPE: &str = "plan_mode_change";
@@ -238,8 +237,9 @@ pub fn gate_host_requests(handlers: &mut HostRequestHandlers, mode: &PlanModeSwi
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::{CustomMessageEntry, EntryBase};
+
+    use super::*;
 
     fn base() -> EntryBase {
         serde_json::from_value(serde_json::json!({ "id": "e" })).unwrap()

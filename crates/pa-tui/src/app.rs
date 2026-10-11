@@ -2,17 +2,19 @@
 //! [`SessionStream`]. Both the interactive product surface and the replay
 //! verifier binary run through this single loop.
 
+use std::io::stdout;
+use std::time::Duration;
+
+use anyhow::Result;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::terminal::{self};
+use ratatui::Terminal;
+
 use crate::editor::{Editor, EditorEvent};
 use crate::keys::key_event_to_id;
 use crate::session::{SessionEvent, SessionStream};
 use crate::theme::Theme;
 use crate::view::AgentView;
-use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal::{self};
-use ratatui::Terminal;
-use std::io::stdout;
-use std::time::Duration;
 
 pub struct AppOptions {
     pub theme: String,

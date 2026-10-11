@@ -2,13 +2,18 @@
 //! snapshot (static machine structure plus the live overlay), the watch
 //! signature, and the activity lane's wire conversion and frame cap.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use super::binding::{char_prefix, py_json_dumps, ANSWER_CAPTURE_CAP};
+use super::binding::{ANSWER_CAPTURE_CAP, char_prefix, py_json_dumps};
 use super::model::{FactoryRun, RunState, StateEntry, StateRun, Status};
 use crate::factory::spec::{
-    MAX_TRANSITIONS_CAP, NODE_LIFECYCLE_DEFAULT, NODE_RETRIES_DEFAULT, RUN_FAILURE_POLICY_DEFAULT,
-    RUN_MAX_CHILDREN_DEFAULT, RUN_MAX_PARALLEL_DEFAULT, STATE_MAX_ENTRIES_DEFAULT,
+    MAX_TRANSITIONS_CAP,
+    NODE_LIFECYCLE_DEFAULT,
+    NODE_RETRIES_DEFAULT,
+    RUN_FAILURE_POLICY_DEFAULT,
+    RUN_MAX_CHILDREN_DEFAULT,
+    RUN_MAX_PARALLEL_DEFAULT,
+    STATE_MAX_ENTRIES_DEFAULT,
     TRANSITION_ON_KINDS,
 };
 

@@ -1,7 +1,7 @@
 //! The agent-observe half: the family status and activity enums, the
 //! observe summary and preview types, the controller trait, the limit
 //! clamps, and the host-handler registration.
-use super::{host_handler, json, AgentFamilyRelationship, Future, HostRequestHandlers, Value};
+use super::{AgentFamilyRelationship, Future, HostRequestHandlers, Value, host_handler, json};
 
 /// The family lifecycle status every observation row carries: `running`
 /// while the agent has work in flight, `idle` for a resident-but-quiet

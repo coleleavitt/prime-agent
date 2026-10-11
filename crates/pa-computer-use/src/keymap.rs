@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
-use crate::error::{head, invalid, ComputerUseError};
+use crate::error::{ComputerUseError, head, invalid};
 use crate::pyfmt::repr_str;
 
 /// One canonical modifier.

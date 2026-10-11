@@ -1,14 +1,32 @@
 //! The worker's client-visible surface: summaries, snapshots, the
 //! roster push, and the event emission family.
-use super::lifecycle::active_lifecycle;
-use super::{
-    checkpoint_queue_recovery, create_daemon_event_meta, is_injected_prompt_item,
-    is_rlm_child_status_item, json, AgentConnectionState, Arc, DaemonOutbound,
-    DaemonSessionClosedReason, EventPump, Map, Mutex, OutboundFrame, QueueCheckpoint, QueueLanes,
-    QueuedItem, Result, SessionActionSnapshot, SessionCore, SessionEngine, Value, Worker,
-};
 use pa_types::sync::MutexExt;
 
+use super::lifecycle::active_lifecycle;
+use super::{
+    AgentConnectionState,
+    Arc,
+    DaemonOutbound,
+    DaemonSessionClosedReason,
+    EventPump,
+    Map,
+    Mutex,
+    OutboundFrame,
+    QueueCheckpoint,
+    QueueLanes,
+    QueuedItem,
+    Result,
+    SessionActionSnapshot,
+    SessionCore,
+    SessionEngine,
+    Value,
+    Worker,
+    checkpoint_queue_recovery,
+    create_daemon_event_meta,
+    is_injected_prompt_item,
+    is_rlm_child_status_item,
+    json,
+};
 use crate::types::SessionSummary;
 
 impl Worker {

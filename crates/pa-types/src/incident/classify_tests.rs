@@ -71,9 +71,11 @@ fn attributes_provider_failures_to_the_pid_owner() {
         provider_failure_line("2026-09-10T20:02:53.374Z", 53615),
     ];
     let events = collect_incident_events(&entries, &collect_worker_pid_map(&entries));
-    assert!(events
-        .iter()
-        .any(|event| event.summary.contains("for worker 5b1d3aeb91ee")));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.summary.contains("for worker 5b1d3aeb91ee"))
+    );
 }
 
 #[test]
@@ -166,9 +168,11 @@ fn classifies_worker_events_for_windows_named_pipe_sockets() {
         .map(|event| event.event_class.as_str())
         .collect();
     assert_eq!(classes, vec!["worker-start", "worker-crash"]);
-    assert!(events
-        .iter()
-        .all(|event| event.subject == "worker 5b1d3aeb91ee"));
+    assert!(
+        events
+            .iter()
+            .all(|event| event.subject == "worker 5b1d3aeb91ee")
+    );
 }
 
 #[test]
@@ -226,59 +230,65 @@ fn unknown_worker_diagnostics_key_on_the_worker_not_the_socket() {
         })
         .collect();
     let events = collect_incident_events(&entries, &collect_worker_pid_map(&entries));
-    assert!(events
-        .iter()
-        .all(|event| event.subject == "worker aaaaaaaaaaaa"));
+    assert!(
+        events
+            .iter()
+            .all(|event| event.subject == "worker aaaaaaaaaaaa")
+    );
     let anomalies = super::super::anomaly::compute_incident_anomalies(&events);
-    assert!(anomalies.iter().any(|anomaly| anomaly
-        .summary
-        .starts_with("worker aaaaaaaaaaaa: 3 warnings/errors over 2m")));
-    assert!(anomalies
-        .iter()
-        .all(|anomaly: &IncidentEvent| !anomaly.summary.contains(socket_path)));
+    assert!(anomalies.iter().any(|anomaly| {
+        anomaly
+            .summary
+            .starts_with("worker aaaaaaaaaaaa: 3 warnings/errors over 2m")
+    }));
+    assert!(
+        anomalies
+            .iter()
+            .all(|anomaly: &IncidentEvent| !anomaly.summary.contains(socket_path))
+    );
 }
 
 #[test]
 fn command_failures_classify_by_their_error_body() {
     let entry = |msg: &str| supervisor_line("2026-09-10T20:02:39.764Z", msg, &[]);
     let cases = [
-            (
-                "Supervisor command attach failed: Error: Timed out waiting for daemon worker response to attach",
-                "timeout",
-                IncidentSeverity::Error,
-                "command attach failed: timed out waiting for worker response",
-            ),
-            (
-                "Supervisor command list_agent_peers failed: Error: Worker authentication failed",
-                "auth",
-                IncidentSeverity::Error,
-                "command list_agent_peers failed: worker authentication failed",
-            ),
-            (
-                "Supervisor command send_message failed: Error: Session worker is starting",
-                "command-failure",
-                IncidentSeverity::Warn,
-                "command send_message failed: session worker is starting",
-            ),
-            (
-                "Supervisor command send_message failed: Error: the update is preparing an update for install",
-                "command-failure",
-                IncidentSeverity::Info,
-                "command send_message failed: update restart in preparation",
-            ),
-            (
-                "Supervisor command send_message failed: Error: Session worker is recovering",
-                "command-failure",
-                IncidentSeverity::Warn,
-                "command send_message failed: session worker is recovering",
-            ),
-            (
-                "Supervisor command send_message failed: Error: Unknown active session: aabbccddeeff",
-                "command-failure",
-                IncidentSeverity::Warn,
-                "command send_message failed: unknown active session aabbccddeeff",
-            ),
-        ];
+        (
+            "Supervisor command attach failed: Error: Timed out waiting for daemon worker response to attach",
+            "timeout",
+            IncidentSeverity::Error,
+            "command attach failed: timed out waiting for worker response",
+        ),
+        (
+            "Supervisor command list_agent_peers failed: Error: Worker authentication failed",
+            "auth",
+            IncidentSeverity::Error,
+            "command list_agent_peers failed: worker authentication failed",
+        ),
+        (
+            "Supervisor command send_message failed: Error: Session worker is starting",
+            "command-failure",
+            IncidentSeverity::Warn,
+            "command send_message failed: session worker is starting",
+        ),
+        (
+            "Supervisor command send_message failed: Error: the update is preparing an update for install",
+            "command-failure",
+            IncidentSeverity::Info,
+            "command send_message failed: update restart in preparation",
+        ),
+        (
+            "Supervisor command send_message failed: Error: Session worker is recovering",
+            "command-failure",
+            IncidentSeverity::Warn,
+            "command send_message failed: session worker is recovering",
+        ),
+        (
+            "Supervisor command send_message failed: Error: Unknown active session: aabbccddeeff",
+            "command-failure",
+            IncidentSeverity::Warn,
+            "command send_message failed: unknown active session aabbccddeeff",
+        ),
+    ];
     for (msg, event_class, severity, summary) in cases {
         let events = collect_incident_events(&[entry(msg)], &WorkerPidMap::default());
         assert_eq!(events.len(), 1, "{msg}");
@@ -314,9 +324,9 @@ fn recovery_breakdown_ranks_and_caps_the_operations() {
     );
     let events = collect_incident_events(&[entry], &WorkerPidMap::default());
     assert_eq!(
-            events[0].summary,
-            "worker 5b1d3aeb91ee recovered; 533 uncertain operations not replayed (tool_execution_start x408, auto_retry_end x62, agent_end x47, message_start x16)"
-        );
+        events[0].summary,
+        "worker 5b1d3aeb91ee recovered; 533 uncertain operations not replayed (tool_execution_start x408, auto_retry_end x62, agent_end x47, message_start x16)"
+    );
     // The cap kicks in past the fourth kind.
     let five_kinds = supervisor_line(
         "2026-09-10T20:23:29.521Z",
@@ -325,9 +335,9 @@ fn recovery_breakdown_ranks_and_caps_the_operations() {
     );
     let events = collect_incident_events(&[five_kinds], &WorkerPidMap::default());
     assert_eq!(
-            events[0].summary,
-            "worker 5b1d3aeb91ee recovered; 6 uncertain operations not replayed (b x2, a x1, c x1, d x1, +1 more)"
-        );
+        events[0].summary,
+        "worker 5b1d3aeb91ee recovered; 6 uncertain operations not replayed (b x2, a x1, c x1, d x1, +1 more)"
+    );
 }
 
 #[test]
@@ -365,17 +375,17 @@ fn passivation_tokens_skip_the_empty_name() {
 #[test]
 fn stack_frame_lines_belong_to_the_previous_event() {
     let entries = vec![
-            supervisor_line(
-                "2026-09-10T20:23:24.945Z",
-                "Session worker 5b1d3aeb91ee stderr: uncaught exception: Error: write EPIPE",
-                &[],
-            ),
-            supervisor_line(
-                "2026-09-10T20:23:24.946Z",
-                "Session worker 5b1d3aeb91ee stderr:     at afterWriteDispatched (node:internal/stream_base_commons:159:15)",
-                &[],
-            ),
-        ];
+        supervisor_line(
+            "2026-09-10T20:23:24.945Z",
+            "Session worker 5b1d3aeb91ee stderr: uncaught exception: Error: write EPIPE",
+            &[],
+        ),
+        supervisor_line(
+            "2026-09-10T20:23:24.946Z",
+            "Session worker 5b1d3aeb91ee stderr:     at afterWriteDispatched (node:internal/stream_base_commons:159:15)",
+            &[],
+        ),
+    ];
     let events = collect_incident_events(&entries, &WorkerPidMap::default());
     assert_eq!(events.len(), 1);
 }

@@ -5,14 +5,19 @@
 
 pub mod thinking_levels;
 
-pub use thinking_levels::{
-    clamp_thinking_level, get_supported_thinking_levels, models_are_equal, supports_thinking,
-    thinking_level_from_str, thinking_level_index, thinking_level_map, EXTENDED_THINKING_LEVELS,
-    SUPPORTED_THINKING_LEVELS,
-};
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use thinking_levels::{
+    EXTENDED_THINKING_LEVELS,
+    SUPPORTED_THINKING_LEVELS,
+    clamp_thinking_level,
+    get_supported_thinking_levels,
+    models_are_equal,
+    supports_thinking,
+    thinking_level_from_str,
+    thinking_level_index,
+    thinking_level_map,
+};
 
 use crate::{JsNumber, JsonMap};
 
@@ -688,14 +693,25 @@ pub enum ModelInput {
 }
 mod compat;
 pub use compat::{
-    AnthropicMessagesCompat, CacheControlFormat, CompatKind, MaxTokensField, ModelCompat,
-    OpenAiCompletionsCompat, OpenAiResponsesCompat, ThinkingFormat,
+    AnthropicMessagesCompat,
+    CacheControlFormat,
+    CompatKind,
+    MaxTokensField,
+    ModelCompat,
+    OpenAiCompletionsCompat,
+    OpenAiResponsesCompat,
+    ThinkingFormat,
 };
 
 mod routing;
 pub use routing::{
-    DataCollection, NumOrString, OpenRouterMaxPrice, OpenRouterRouting, OpenRouterSort,
-    OpenRouterThreshold, VercelGatewayRouting,
+    DataCollection,
+    NumOrString,
+    OpenRouterMaxPrice,
+    OpenRouterRouting,
+    OpenRouterSort,
+    OpenRouterThreshold,
+    VercelGatewayRouting,
 };
 /// `skip_serializing_if` predicate for [`Model::max_tokens_explicit`]: the
 /// wire/catalog JSON stays byte-identical for catalog models (the flag

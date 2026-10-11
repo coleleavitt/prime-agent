@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use pa_types::trace_context::TraceContext;
 use serde_json::{Map, Value};
 
+use crate::CommandOutcome;
 use crate::record::{SPAN_END_MSG, SPAN_START_MSG, TRACE_COMPONENT};
 use crate::retained::{join_paths, js_text, read_log_text, retained_log_files, terminal_safe};
-use crate::CommandOutcome;
 
 /// Fields rendered structurally; everything else prints as `key=value`.
 const RESERVED_LOG_FIELDS: [&str; 7] = [
@@ -504,7 +504,7 @@ pub fn run_trace_command(args: &[String], default_log: &Path) -> CommandOutcome 
     let options = match parse_trace_command_args(args) {
         Ok(options) => options,
         Err(reason) => {
-            return CommandOutcome::failure(vec![format!("Error: {reason}"), USAGE.to_string()])
+            return CommandOutcome::failure(vec![format!("Error: {reason}"), USAGE.to_string()]);
         }
     };
     let log_path = options
@@ -524,7 +524,7 @@ pub fn run_trace_command(args: &[String], default_log: &Path) -> CommandOutcome 
             return CommandOutcome::failure(vec![format!(
                 "Error: could not read {}: {error}",
                 join_paths(&files)
-            )])
+            )]);
         }
     };
     if lines.is_empty() {

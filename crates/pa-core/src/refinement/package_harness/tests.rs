@@ -1,12 +1,16 @@
 //! Port of the TS `package-harness.test.ts` mounting, validation,
 //! provenance, collision, shadowing, redaction and refinement-guard cases.
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::packages::resolve::{PathMetadata, ResourceOrigin};
-use crate::refinement::planner::{
-    apply_refinement_proposal, ApplyOptions, RefinementEdit, RefinementProposal,
-};
 use crate::refinement::RefinementAction;
-use std::collections::BTreeMap;
+use crate::refinement::planner::{
+    ApplyOptions,
+    RefinementEdit,
+    RefinementProposal,
+    apply_refinement_proposal,
+};
 
 fn write(path: &Path, content: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

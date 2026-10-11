@@ -70,11 +70,13 @@ impl SuspendSignals for ProcessSignals {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use anyhow::bail;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::MutexGuard;
+
+    use anyhow::bail;
+
+    use super::*;
 
     /// The mouse-tracking seam is process-global state, so the tests
     /// serialize through its own lock (shared with the `mouse_tracking`

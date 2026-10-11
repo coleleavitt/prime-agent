@@ -3,14 +3,14 @@
 //! reader before starting the next one. Readers run the TS paste heuristic,
 //! [`SequenceGuard`], and the enhanced-key dispatch filters.
 
-use pa_types::sync::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::sequence_guard::{GuardOutput, SequenceGuard};
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use pa_types::sync::MutexExt;
+
+use crate::sequence_guard::{GuardOutput, SequenceGuard};
 
 struct Reader {
     handle: std::thread::JoinHandle<()>,
@@ -477,8 +477,9 @@ fn is_raw_multiline_paste(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
         Event::Key(KeyEvent::new(code, modifiers))
@@ -847,9 +848,11 @@ mod tests {
         assert_eq!(key.code, KeyCode::Up);
         assert_eq!(key.modifiers, KeyModifiers::ALT);
         // The repaired Alt+Up is not a bare Esc press, so nothing is held.
-        assert!(guard
-            .flush_expired(now + crate::sequence_guard::HOLD)
-            .is_empty());
+        assert!(
+            guard
+                .flush_expired(now + crate::sequence_guard::HOLD)
+                .is_empty()
+        );
     }
 
     /// The repair never steals the guard's held sequence: a real partial read ends its write on
@@ -884,8 +887,10 @@ mod tests {
         };
         assert_eq!(key.code, KeyCode::Up);
         assert_eq!(key.modifiers, KeyModifiers::NONE);
-        assert!(guard
-            .flush_expired(now + crate::sequence_guard::HOLD)
-            .is_empty());
+        assert!(
+            guard
+                .flush_expired(now + crate::sequence_guard::HOLD)
+                .is_empty()
+        );
     }
 }

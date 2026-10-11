@@ -13,10 +13,9 @@
 
 use std::path::Path;
 
-use pa_core::session::manager::{capture_git_context, SessionManager};
-use pa_types::session::{AgentMessage, FileEntry};
-
 use pa_core::git_env::run_fixture_git as git;
+use pa_core::session::manager::{SessionManager, capture_git_context};
+use pa_types::session::{AgentMessage, FileEntry};
 
 fn init_repo(dir: &Path) {
     git(dir, &["init", "-q", "-b", "main"]);
@@ -222,10 +221,12 @@ fn no_git_state_entry_when_nothing_changed() {
         manager.record_git_state_if_changed(capture_git_context(repo.path()).unwrap()),
         None
     );
-    assert!(!manager
-        .get_entries()
-        .iter()
-        .any(|entry| matches!(entry, FileEntry::GitState { .. })));
+    assert!(
+        !manager
+            .get_entries()
+            .iter()
+            .any(|entry| matches!(entry, FileEntry::GitState { .. }))
+    );
 }
 
 #[test]
@@ -237,9 +238,11 @@ fn records_git_state_when_commit_changes() {
 
     let mut manager = SessionManager::persisted(repo.path(), sessions.path());
     let second_sha = commit(repo.path(), "second");
-    assert!(manager
-        .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
-        .is_some());
+    assert!(
+        manager
+            .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
+            .is_some()
+    );
     let entries = manager.get_entries();
     let git_states: Vec<_> = entries
         .iter()
@@ -269,16 +272,20 @@ fn re_records_git_state_on_branch_without_it_on_active_path() {
     let mut manager = SessionManager::persisted(repo.path(), sessions.path());
     let msg_id = manager.append_message(user("hi")).unwrap();
     commit(repo.path(), "second");
-    assert!(manager
-        .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
-        .is_some());
+    assert!(
+        manager
+            .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
+            .is_some()
+    );
 
     // Move the leaf before the git_state entry: the nearest git context on this path is the header
     // again, so a new entry must be appended rather than deduped against the sibling's.
     manager.branch(&msg_id);
-    assert!(manager
-        .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
-        .is_some());
+    assert!(
+        manager
+            .record_git_state_if_changed(capture_git_context(repo.path()).unwrap())
+            .is_some()
+    );
 }
 
 #[test]

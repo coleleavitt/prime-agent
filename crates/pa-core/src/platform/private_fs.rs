@@ -11,10 +11,9 @@
 
 use std::fs::File;
 use std::io;
-use std::path::Path;
-
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::path::Path;
 
 /// Open a directory for pinned-relative operations, refusing a symlink
 /// (`O_NOFOLLOW` + `O_DIRECTORY`): the ONE pathname resolution this

@@ -33,17 +33,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use pa_types::sync::MutexExt;
-use serde_json::{json, Map, Value};
-use tokio_util::sync::CancellationToken;
-
-use crate::kernel::shared::{
-    host_handler, host_request_cancellation, HostRequestHandlers, HostRequestPayload,
-    KernelEnvironment,
-};
 use connect::{KernelEnv, McpCredentials};
 use error::{McpErrorKind, McpSessionError};
 use generation::{Discovery, Generation, SharedGeneration, Target};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
+use tokio_util::sync::CancellationToken;
+
+use crate::kernel::shared::{
+    HostRequestHandlers,
+    HostRequestPayload,
+    KernelEnvironment,
+    host_handler,
+    host_request_cancellation,
+};
 
 /// A connection unused this long is closed (it reopens on next use).
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_mins(10);
@@ -520,7 +523,7 @@ impl Inner {
                 Some(_) => {
                     return Err(McpSessionError::value(
                         "MCP HTTP headers must contain strings",
-                    ))
+                    ));
                 }
             };
             let config = json!({

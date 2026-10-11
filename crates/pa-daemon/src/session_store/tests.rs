@@ -1,8 +1,9 @@
 //! The session-store unit battery: the store lifecycle, the bounded header readers, the
 //! attribution folds, the wire shapes, and the resumable scan.
 
-use super::*;
 use serde_json::json;
+
+use super::*;
 
 fn temp_dir() -> crate::test_support::TestDir {
     crate::test_support::TestDir::new("pa-daemon-test-")
@@ -293,12 +294,16 @@ fn marking_the_warning_persists_and_both_reopens_hydrate_it() {
     let fresh_path = dir.join(session_file_name(fresh.session_id()));
     fresh.set_path(fresh_path.clone());
     fresh.rewrite().unwrap();
-    assert!(!SessionFile::open(&fresh_path)
-        .unwrap()
-        .anthropic_warning_shown());
-    assert!(!SessionFile::open_windowed(&fresh_path)
-        .unwrap()
-        .anthropic_warning_shown());
+    assert!(
+        !SessionFile::open(&fresh_path)
+            .unwrap()
+            .anthropic_warning_shown()
+    );
+    assert!(
+        !SessionFile::open_windowed(&fresh_path)
+            .unwrap()
+            .anthropic_warning_shown()
+    );
 }
 
 /// The bots' round on the full open (the PR's Medium): the gate rides
@@ -379,12 +384,16 @@ fn an_off_branch_marker_never_hydrates_the_full_open_gate() {
         .join("\n"),
     )
     .unwrap();
-    assert!(SessionFile::open(&path_on)
-        .unwrap()
-        .anthropic_warning_shown());
-    assert!(SessionFile::open_windowed(&path_on)
-        .unwrap()
-        .anthropic_warning_shown());
+    assert!(
+        SessionFile::open(&path_on)
+            .unwrap()
+            .anthropic_warning_shown()
+    );
+    assert!(
+        SessionFile::open_windowed(&path_on)
+            .unwrap()
+            .anthropic_warning_shown()
+    );
 }
 
 #[test]
@@ -471,12 +480,14 @@ fn failed_persist_keeps_the_store_walkable() {
     let blocker = dir.join("blocked");
     fs::create_dir_all(&blocker).unwrap();
     session.set_path(blocker);
-    assert!(session
-        .persist_entry(
-            "message",
-            json!({ "message": { "role": "user", "content": "x" } })
-        )
-        .is_err());
+    assert!(
+        session
+            .persist_entry(
+                "message",
+                json!({ "message": { "role": "user", "content": "x" } })
+            )
+            .is_err()
+    );
     assert_eq!(
         session.entries().len(),
         1,
@@ -542,10 +553,12 @@ fn declaration_stamped_entry_survives_reload_as_the_same_identity() {
         "display": true,
         "details": { "reason": "threshold", "outcome": "failed" },
     });
-    assert!(!loaded
-        .entries()
-        .iter()
-        .any(|entry| entry.type_ == "custom_message" && entry.fields == failed));
+    assert!(
+        !loaded
+            .entries()
+            .iter()
+            .any(|entry| entry.type_ == "custom_message" && entry.fields == failed)
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

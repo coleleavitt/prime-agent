@@ -2,8 +2,9 @@
 //! package itself under node (`scripts/lovely-mermaid-goldens.mjs`); the port must
 //! reproduce each row's role runs, width, and warnings exactly.
 
-use super::{diagram_kind, render, render_cached, Art, ArtSpan, DiagramKind, Role};
 use serde_json::Value;
+
+use super::{Art, ArtSpan, DiagramKind, Role, diagram_kind, render, render_cached};
 
 const GOLDENS: &str = include_str!("goldens.json");
 

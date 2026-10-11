@@ -399,8 +399,10 @@ mod tests {
 
     #[test]
     fn job_notices_carry_byte_ranges_and_a_capped_command_label() {
-        assert!(format_job_watch_notice(123, 100, 4567, "echo long command")
-            .contains("[watch-job pid:123] output +4467 bytes (100..4567)"));
+        assert!(
+            format_job_watch_notice(123, 100, 4567, "echo long command")
+                .contains("[watch-job pid:123] output +4467 bytes (100..4567)")
+        );
         let long = "c".repeat(80);
         let notice = format_job_watch_notice(9, 0, 10, &long);
         assert!(notice.contains(&"c".repeat(60)));

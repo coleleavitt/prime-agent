@@ -4,18 +4,24 @@
 //! THE NO-AUTO-RESUME CONTRACT: a boot never creates a worker the user did
 //! not ask for; due heartbeats stay dormant (restore never fails the boot).
 
-use pa_types::sync::MutexExt;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use pa_types::daemon::update_flow::DaemonUpdateResume;
 use pa_types::daemon::update_flow::{
-    legacy_update_restart_status, legacy_update_restarts_dir, socket_update_dir, UpdateRoster,
-    UpdateRosterSession, UpdateStatusCounts, UpdateStatusFailure, UPDATE_ROSTER_ENV,
+    DaemonUpdateResume,
+    UPDATE_ROSTER_ENV,
+    UpdateRoster,
+    UpdateRosterSession,
+    UpdateStatusCounts,
+    UpdateStatusFailure,
+    legacy_update_restart_status,
+    legacy_update_restarts_dir,
+    socket_update_dir,
 };
 use pa_types::daemon::{DaemonCommand, UpdateId};
+use pa_types::sync::MutexExt;
 use serde_json::json;
 use tokio::sync::Notify;
 
@@ -855,9 +861,10 @@ impl Supervisor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::daemon::update_flow::UpdateStatusCounts;
     use serde_json::Map;
+
+    use super::*;
 
     /// A two-row roster (update `u-1`): row `a-1`, and row `durable-b`
     /// whose session-file stem (`b-2`) differs from its durable id.
@@ -1019,16 +1026,18 @@ mod tests {
         let mut row = two_row_roster().sessions.remove(0);
         row.queue.actions = json!({ "formatVersion": 1, "actions": [{"id": "queued"}] });
         let mut calls = Vec::new();
-        assert!(!restore_legacy_session(&row, None, "1.0.0", |command, _| {
-            calls.push(command);
-            std::future::ready(Ok(crate::protocol::response_success(
-                None,
-                command,
-                Some(json!({ "pauseId": "test-pause" })),
-            )))
-        })
-        .await
-        .unwrap());
+        assert!(
+            !restore_legacy_session(&row, None, "1.0.0", |command, _| {
+                calls.push(command);
+                std::future::ready(Ok(crate::protocol::response_success(
+                    None,
+                    command,
+                    Some(json!({ "pauseId": "test-pause" })),
+                )))
+            })
+            .await
+            .unwrap()
+        );
         assert!(calls.is_empty());
         row.should_resume = true;
         let mut failed_calls = Vec::new();

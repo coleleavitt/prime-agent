@@ -9,13 +9,24 @@ use serde_json::json;
 
 use super::AgentSession;
 use crate::refinement::executor::{
-    apply_refinement_plan, plan_refinement, review_auto_refine, AutoRefineReview,
-    AutoRefineReviewContext, RefineOptions as CoreRefineOptions, RefinementPlan,
+    AutoRefineReview,
+    AutoRefineReviewContext,
+    RefineOptions as CoreRefineOptions,
+    RefinementPlan,
+    apply_refinement_plan,
+    plan_refinement,
+    review_auto_refine,
 };
 use crate::refinement::gate::{GateAdmission, RefinementGateRequest, RefinementGating};
 use crate::refinement::{
-    append_global_refinement, format_refinement_notice_body, load_global_refinement_history,
-    load_harness_state, merge_harness_states, save_harness_state, HarnessScope, RefinementResult,
+    HarnessScope,
+    RefinementResult,
+    append_global_refinement,
+    format_refinement_notice_body,
+    load_global_refinement_history,
+    load_harness_state,
+    merge_harness_states,
+    save_harness_state,
 };
 use crate::session::manager::SessionManager;
 
@@ -941,11 +952,13 @@ pub fn default_refiner_call(api_key: Option<String>) -> crate::refinement::execu
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use pa_types::ai::{AssistantContentBlock, AssistantMessage, Model, StopReason, TextContent};
+    use tempfile::TempDir;
+
     use super::*;
     use crate::refinement::executor::RefinerFn;
-    use pa_types::ai::{AssistantContentBlock, AssistantMessage, Model, StopReason, TextContent};
-    use std::collections::BTreeMap;
-    use tempfile::TempDir;
 
     fn text_assistant(text: &str) -> AssistantMessage {
         AssistantMessage {
@@ -1340,10 +1353,12 @@ Reviewer instructions: record it"
         let harness_dir =
             crate::refinement::get_local_harness_state_dir(Some(session.get_session_dir()))
                 .unwrap();
-        assert!(load_harness_state(&harness_dir, HarnessScope::Local)
-            .entries
-            .values()
-            .all(BTreeMap::is_empty));
+        assert!(
+            load_harness_state(&harness_dir, HarnessScope::Local)
+                .entries
+                .values()
+                .all(BTreeMap::is_empty)
+        );
 
         let result = execute_refinement(
             &mut session,

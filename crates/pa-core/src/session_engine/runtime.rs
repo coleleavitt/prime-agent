@@ -8,16 +8,17 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use crate::cron::store::AgentCronJobStore;
-use crate::goals::GoalHostResponse;
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
-use crate::session::manager::SessionManager;
-
 use super::goal_driver::GoalDriver;
 use super::host_requests::{
-    handle_goal_host_request, handle_rlm_heartbeat_host_request, RlmHeartbeatMutationHook,
+    RlmHeartbeatMutationHook,
     SessionBinding,
+    handle_goal_host_request,
+    handle_rlm_heartbeat_host_request,
 };
+use crate::cron::store::AgentCronJobStore;
+use crate::goals::GoalHostResponse;
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
+use crate::session::manager::SessionManager;
 
 /// The host-side purge of queued goal-context turns: the queue lanes live in the daemon
 /// worker, so the completing kernel host request invokes this seam — dropping a

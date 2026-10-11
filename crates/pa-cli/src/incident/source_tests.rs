@@ -196,7 +196,9 @@ fn falls_back_when_agent_jsonl_is_empty_or_unreadable() {
             text.contains("worker crashed: uncaught exception: Error: write EPIPE"),
             "{text}"
         );
-        assert!(text.contains("worker 5b1d3aeb91ee recovered; 2 uncertain operations not replayed"));
+        assert!(
+            text.contains("worker 5b1d3aeb91ee recovered; 2 uncertain operations not replayed")
+        );
         // Empty agent.jsonl also triggers the fallback.
         std::fs::write(agent_dir.join("logs/agent.jsonl"), "").expect("truncate log");
         let text = report_text("2026-09-10T20:00", "2026-09-10T20:30");
@@ -243,9 +245,11 @@ fn reports_missing_logs_clearly() {
             session: None,
         };
         let now_ms = crate::util_time::now_ms() as i64;
-        assert!(incident_report_text(&options, None, now_ms)
-            .expect("the window resolves")
-            .is_none());
+        assert!(
+            incident_report_text(&options, None, now_ms)
+                .expect("the window resolves")
+                .is_none()
+        );
         let source = read_incident_log_entries();
         assert!(source.entries.is_empty());
         assert_eq!(source.scanned_count, 0);

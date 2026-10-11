@@ -16,15 +16,23 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::error::{invalid, transport, ComputerUseError, Result};
+use crate::error::{ComputerUseError, Result, invalid, transport};
 use crate::permissions::{PermissionReport, PermissionState};
 use crate::platform::{MouseButton, PasteFormat, Platform, PlatformKind, ScrollDirection};
 use crate::policy::Policy;
 use crate::session::{
-    apps_json, ActionArg, AppCall, HostContext, IndexArg, PointArg, Session, TargetArg, TextArg,
+    ActionArg,
+    AppCall,
+    HostContext,
+    IndexArg,
+    PointArg,
+    Session,
+    TargetArg,
+    TextArg,
     Timing,
+    apps_json,
 };
 use crate::spec::AppSpec;
 use crate::telemetry::TelemetrySink;

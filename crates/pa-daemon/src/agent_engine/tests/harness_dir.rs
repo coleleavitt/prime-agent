@@ -1,13 +1,19 @@
 //! The worker's global harness store is `<agentDir>/harness`, the directory the
 //! kernel (`rlm.harness`), print mode, the system-prompt digest, and TS v0.9.8
 //! `getGlobalHarnessStateDir()` all use, never the agent dir itself.
-use super::*;
-
 use pa_core::refinement::{
-    empty_harness_state, get_global_harness_state_dir, get_harness_state_path, load_harness_state,
-    save_harness_state, HarnessEntry, HarnessScope, RefinementKind,
+    HarnessEntry,
+    HarnessScope,
+    RefinementKind,
+    empty_harness_state,
+    get_global_harness_state_dir,
+    get_harness_state_path,
+    load_harness_state,
+    save_harness_state,
 };
-use pa_core::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
+use pa_core::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
+
+use super::*;
 
 fn reviewer() -> HarnessEntry {
     HarnessEntry {

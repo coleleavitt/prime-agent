@@ -2,9 +2,8 @@
 //! real engine sessions. The token-estimate helpers live in
 //! `pa_types::usage` (shared with pa-core's `compact.status` host request).
 
-use serde_json::{json, Value};
-
 use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
+use serde_json::{Value, json};
 
 use crate::session_store::{SessionEntry, SessionFile};
 

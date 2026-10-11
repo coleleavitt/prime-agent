@@ -1,7 +1,6 @@
 //! The `bash` tool: shell command execution with output truncation and a destructive-git dirty-tree
 //! guard (execution, guard, truncation, and formatting match the TS tool).
 
-use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::future::Future;
@@ -10,19 +9,33 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use pa_types::sync::MutexExt;
 use serde_json::json;
 
 use crate::tools::bash_guard::{
-    find_destructive_git_discard_commands, format_dirty_tree_refusal, is_truthy_env_value,
-    resolve_discard_probe_target, DiscardProbeResolution, BASH_DESTRUCTIVE_GIT_BYPASS_ENV,
+    BASH_DESTRUCTIVE_GIT_BYPASS_ENV,
+    DiscardProbeResolution,
+    find_destructive_git_discard_commands,
+    format_dirty_tree_refusal,
+    is_truthy_env_value,
+    resolve_discard_probe_target,
 };
 use crate::tools::output_accumulator::{OutputAccumulator, OutputAccumulatorOptions};
 use crate::tools::shell_utils::get_shell_env;
 use crate::tools::tool_definition::{
-    AbortSignal, OnUpdate, ToolContentBlock, ToolDefinition, ToolExecutionResult, ToolUpdate,
+    AbortSignal,
+    OnUpdate,
+    ToolContentBlock,
+    ToolDefinition,
+    ToolExecutionResult,
+    ToolUpdate,
 };
 use crate::tools::truncate::{
-    format_size, TruncatedBy, TruncationResult, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_LINES,
+    TruncatedBy,
+    TruncationResult,
+    format_size,
 };
 
 /// The default porcelain status command the guard probes with.

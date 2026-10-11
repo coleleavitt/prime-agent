@@ -6,12 +6,12 @@
 //! [`SESSION_RESYNC_REQUIRED`] frame once its queue drains (TS daemons queue a
 //! `resync` catch-up snapshot on backpressure and send it on `drain`).
 
-use pa_types::sync::MutexExt;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
-use tokio::sync::{mpsc, Notify};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
+use tokio::sync::{Notify, mpsc};
 
 /// The frame type telling a client it lost session events (its queue overflowed) and
 /// must re-fetch the session's state. Rust-only (the TS daemon streamed a `resync`

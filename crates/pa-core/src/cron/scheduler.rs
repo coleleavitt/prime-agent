@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::{Mutex, Notify};
 
@@ -335,10 +335,11 @@ impl<H: AgentCronSchedulerHooks + 'static> AgentCronScheduler<H> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
+
     use super::*;
     use crate::cron::store::CreateAgentCronJobInput;
     use crate::cron::{AgentCronJob, ScheduleKind};
-    use std::sync::atomic::AtomicUsize;
 
     struct CountingHooks {
         runs: Arc<AtomicUsize>,

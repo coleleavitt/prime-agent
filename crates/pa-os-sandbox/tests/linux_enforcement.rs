@@ -8,7 +8,12 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use pa_os_sandbox::{
-    Confinement, NetworkAccess, PreparedSandbox, SandboxError, SandboxPaths, SandboxPolicy,
+    Confinement,
+    NetworkAccess,
+    PreparedSandbox,
+    SandboxError,
+    SandboxPaths,
+    SandboxPolicy,
 };
 
 struct Layout {

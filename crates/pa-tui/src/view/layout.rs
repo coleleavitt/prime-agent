@@ -3,9 +3,9 @@
 //! `transcript_window`).
 
 use super::AgentView;
-use crate::chat::{render_loader, ChatEntry};
-use crate::chrome::render_splash;
 use crate::Line;
+use crate::chat::{ChatEntry, render_loader};
+use crate::chrome::render_splash;
 
 #[cfg(test)]
 thread_local! {

@@ -1,10 +1,20 @@
 //! Geometry uses the same wrapping traversal as painted Markdown rows.
+use ratatui::style::Style;
+
 use super::{
-    block_cache_key, code_rows, heading_spans, mermaid_blocks, parse_blocks, render_inline,
-    wrapped_span_count, Block, BlockKind, MarkdownBlockCache, MarkdownStyle,
+    Block,
+    BlockKind,
+    MarkdownBlockCache,
+    MarkdownStyle,
+    block_cache_key,
+    code_rows,
+    heading_spans,
+    mermaid_blocks,
+    parse_blocks,
+    render_inline,
+    wrapped_span_count,
 };
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 pub(super) struct WrapOutput<'a> {
     output: Option<&'a mut Vec<Line>>,

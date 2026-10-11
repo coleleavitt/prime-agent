@@ -6,10 +6,13 @@ use pa_types::session::{AgentMessage, CompactionSummaryMessage, FileEntry};
 
 use super::compaction::estimate_tokens;
 use super::compaction_utils::{
-    compute_file_lists, extract_file_ops_from_message, format_file_operations,
-    serialize_conversation, FileOperations,
+    FileOperations,
+    compute_file_lists,
+    extract_file_ops_from_message,
+    format_file_operations,
+    serialize_conversation,
 };
-use super::messages::{convert_to_llm, BRANCH_SUMMARY_PREFIX, BRANCH_SUMMARY_SUFFIX};
+use super::messages::{BRANCH_SUMMARY_PREFIX, BRANCH_SUMMARY_SUFFIX, convert_to_llm};
 
 /// Details stored on a branch summary entry.
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -416,7 +419,7 @@ pub async fn generate_branch_summary(
             return BranchSummaryResult {
                 error: Some(format!("{error:#}")),
                 ..Default::default()
-            }
+            };
         }
     };
     if response.stop_reason == pa_types::ai::StopReason::Aborted {
@@ -458,8 +461,9 @@ pub fn branch_summary_presentation(summary: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::EntryBase;
+
+    use super::*;
 
     fn entry(id: &str, parent: Option<&str>, message: AgentMessage) -> FileEntry {
         FileEntry::Message {

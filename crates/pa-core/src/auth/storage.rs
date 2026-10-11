@@ -1,13 +1,13 @@
 //! Auth storage backends: locked JSON file (0o600, atomic writes) and
 //! in-memory (tests, embedded hosts).
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use anyhow::Result;
+use pa_types::sync::MutexExt;
 
 use super::types::AuthStorageData;
 
@@ -118,8 +118,8 @@ pub trait AuthStorageBackend: Send + Sync {
     fn forget_unsaved_refresh(&self, _provider_id: &str, _content: &str) {}
 }
 
-use crate::platform::lock_dir::LockDir as LockGuard;
 use crate::platform::HeartbeatLock;
+use crate::platform::lock_dir::LockDir as LockGuard;
 
 /// Staleness for the sync auth lock (TS proper-lockfile default: 10s).
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10);

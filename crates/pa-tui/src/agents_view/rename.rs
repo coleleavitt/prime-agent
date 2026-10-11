@@ -1,13 +1,13 @@
 //! The rename flow: the ctrl+r composer over the prompt, the optimistic name overlay the
 //! confirm applies at once (upstream #2099), the wire dispatch that runs behind it, and the
 //! landed outcome's status.
+use pa_types::daemon::DaemonCommand;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use super::{AgentsViewMode, Composer, DaemonClient, UiInput};
 use crate::agents_view_forest::RowKind;
 use crate::editor::{Editor, EditorEvent};
-use pa_types::daemon::DaemonCommand;
-use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Rename {

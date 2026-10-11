@@ -3,17 +3,22 @@
 //! A transaction with watchdogs (spec §2): expiry aborts, deletes the prepared artifacts, and
 //! returns the supervisor to `Serving`.
 
-use pa_types::sync::MutexExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use pa_types::daemon::{
-    is_daemon_mutating_command, is_update_drain_command, socket_update_dir,
-    update_prepared_dir as prepared_dir_of, UpdateId, UpdatePreparedMarker, UpdateRoster,
+    UpdateId,
+    UpdatePreparedMarker,
+    UpdateRoster,
     UpdateTimeoutBudget,
+    is_daemon_mutating_command,
+    is_update_drain_command,
+    socket_update_dir,
+    update_prepared_dir as prepared_dir_of,
 };
+use pa_types::sync::MutexExt;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
@@ -569,13 +574,14 @@ impl MutationDrainLatch {
 mod tests {
     use std::future::Future;
     use std::pin::pin;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Wake, Waker};
 
-    use super::*;
-    use pa_types::daemon::{update_marker_path, update_roster_path, UpdateSupervisorIdentity};
+    use pa_types::daemon::{UpdateSupervisorIdentity, update_marker_path, update_roster_path};
     use serde_json::Map;
+
+    use super::*;
 
     fn budget() -> UpdateTimeoutBudget {
         // CI-scale budgets keep every test sub-second.

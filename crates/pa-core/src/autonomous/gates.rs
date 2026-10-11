@@ -7,8 +7,14 @@ use std::pin::Pin;
 use sha2::{Digest, Sha256};
 
 use super::{
-    now_millis, AgentAutonomousGateFailure, AutonomousDecision, AutonomousDecisionReason,
-    AutonomousGateResult, AutonomousLimitReason, AutonomousRuntimeState, GitWorktreeSnapshot,
+    AgentAutonomousGateFailure,
+    AutonomousDecision,
+    AutonomousDecisionReason,
+    AutonomousGateResult,
+    AutonomousLimitReason,
+    AutonomousRuntimeState,
+    GitWorktreeSnapshot,
+    now_millis,
 };
 
 /// Output cap for gate results surfaced in continuation text.
@@ -503,12 +509,15 @@ async fn read_pipe_capped<R: tokio::io::AsyncRead + Unpin>(mut pipe: Option<R>) 
 
 #[cfg(test)]
 mod tests {
+    use pa_types::ai::StopReason;
+
     use super::*;
     use crate::autonomous::{
-        create_autonomous_runtime_state, AgentAutonomousConfig, AgentAutonomousGateConfig,
+        AgentAutonomousConfig,
+        AgentAutonomousGateConfig,
         AutonomousDecisionReason,
+        create_autonomous_runtime_state,
     };
-    use pa_types::ai::StopReason;
 
     fn config(enabled: bool) -> AgentAutonomousConfig {
         AgentAutonomousConfig {
@@ -653,9 +662,11 @@ mod tests {
             failure.exit_text,
             "not rerun: workspace unchanged since previous failed gate"
         );
-        assert!(failure
-            .output
-            .starts_with("The autonomous gate was not rerun"));
+        assert!(
+            failure
+                .output
+                .starts_with("The autonomous gate was not rerun")
+        );
         let exhausted =
             should_autonomously_continue(&mut state, Some(StopReason::Stop), &runner).await;
         assert!(!exhausted.should_continue);

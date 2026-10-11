@@ -1,9 +1,22 @@
 //! The `/update`, `/traces`, `/copy`, `/export`, and `/share` runs — the
 //! spawned one-way tasks and their note outcomes.
 use super::{
-    export_share, key_event_to_id, AgentView, DaemonCommand, Duration, GhAuthStatus, GistOutcome,
-    InfoContent, KeyEvent, Map, Result, SessionUi, ShareLoader, StatusKind, Value,
+    AgentView,
+    DaemonCommand,
+    Duration,
+    GhAuthStatus,
+    GistOutcome,
+    InfoContent,
+    KeyEvent,
+    Map,
+    Result,
+    SessionUi,
+    ShareLoader,
+    StatusKind,
     UI_REQUEST_TIMEOUT_MS,
+    Value,
+    export_share,
+    key_event_to_id,
 };
 
 /// The `/share` upload task's report: the created gist or the failure

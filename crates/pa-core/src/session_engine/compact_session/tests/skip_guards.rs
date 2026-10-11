@@ -35,10 +35,12 @@ async fn execute_compaction_with_pre_aborted_signal_never_runs_the_summarizer() 
     .await
     .unwrap_err();
     assert!(pa_agent::abort::is_abort_error(&error), "{error:#}");
-    assert!(session
-        .get_entries()
-        .iter()
-        .all(|entry| !matches!(entry, FileEntry::Compaction { .. })));
+    assert!(
+        session
+            .get_entries()
+            .iter()
+            .all(|entry| !matches!(entry, FileEntry::Compaction { .. }))
+    );
     registration.unregister();
 }
 
@@ -126,10 +128,12 @@ async fn execute_compaction_skips_short_sessions() {
         outcome,
         CompactOutcome::Skipped("Session is too short to compact — try again once it grows")
     );
-    assert!(session
-        .get_entries()
-        .iter()
-        .all(|entry| !matches!(entry, FileEntry::Compaction { .. })));
+    assert!(
+        session
+            .get_entries()
+            .iter()
+            .all(|entry| !matches!(entry, FileEntry::Compaction { .. }))
+    );
     registration.unregister();
 }
 

@@ -7,7 +7,7 @@
 
 use serde_json::json;
 
-use crate::error::{unsupported, ComputerUseError};
+use crate::error::{ComputerUseError, unsupported};
 
 /// macOS marks password inputs `AXTextField` / `AXSecureTextField`.
 pub const MAC_SECURE_ROLE: &str = "AXTextField";

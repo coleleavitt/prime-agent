@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::git::{directories, git_call, probe, GitCall, UPSTREAM_LIMITS};
-use super::{opaque, Check, Rule};
+use super::git::{GitCall, UPSTREAM_LIMITS, directories, git_call, probe};
+use super::{Check, Rule, opaque};
 use crate::model::{Arg, Invocation, Via};
 use crate::verdict::GuardKind;
 
@@ -163,7 +163,7 @@ fn judge_invocation(
                 return Some(Refusal::Reason(format!(
                     "the push target \"{}\" cannot be verified statically (glob, substitution, or variable)",
                     refspec.shown()
-                )))
+                )));
             }
         };
         if let Some(refusal) = judge_forced_refspec(text, &call, check, probes) {
@@ -251,8 +251,12 @@ fn config_refusal(
             None => {
                 return Some(Refusal::Reason(format!(
                     "its inline config operand \"{}\" is only known at run time, so the configuration it applies -- which can arm a force push through remote.<name>.push or remote.<name>.mirror -- cannot be checked",
-                    call.configs.iter().find(|arg| arg.known().is_none()).map(|arg| arg.shown()).unwrap_or_default()
-                )))
+                    call.configs
+                        .iter()
+                        .find(|arg| arg.known().is_none())
+                        .map(|arg| arg.shown())
+                        .unwrap_or_default()
+                )));
             }
             Some(text) if is_mirror_or_push_key(&text) => return Some(mirror_config_refusal()),
             Some(_) => {}
@@ -323,7 +327,7 @@ fn judge_forced_refspec(
             Ok(Some((_, current))) if PROTECTED_BRANCHES.contains(&current.as_str()) => {
                 return Some(Refusal::Reason(format!(
                     "HEAD names the current branch \"{current}\""
-                )))
+                )));
             }
             Ok(_) => {}
             Err(refusal) => return Some(refusal),
@@ -631,7 +635,9 @@ fn expand_alias(
         {
             if mentions_push {
                 return Err(Refusal::Standalone(
-                    format!("it defines a git alias (`-c alias.{subcommand}=...`) that runs `{body}`, and the argv that alias expands to cannot be resolved safely."),
+                    format!(
+                        "it defines a git alias (`-c alias.{subcommand}=...`) that runs `{body}`, and the argv that alias expands to cannot be resolved safely."
+                    ),
                     "Run the push directly with the aliased name spelled out, or retry with",
                 ));
             }
@@ -649,7 +655,9 @@ fn expand_alias(
         subcommand = first;
     }
     Err(Refusal::Standalone(
-        format!("it defines a chain of git aliases (`-c alias.{subcommand}=...`) too long to follow, and the argv it expands to cannot be resolved safely."),
+        format!(
+            "it defines a chain of git aliases (`-c alias.{subcommand}=...`) too long to follow, and the argv it expands to cannot be resolved safely."
+        ),
         "Run the push directly with the aliased name spelled out, or retry with",
     ))
 }
@@ -664,7 +672,9 @@ fn configured_alias(
 ) -> Result<Option<String>, Refusal> {
     let unreadable = |why: &str| {
         Refusal::Standalone(
-            format!("its subcommand \"{name}\" is not one git runs itself, so a git alias may stand behind it, and {why}."),
+            format!(
+                "its subcommand \"{name}\" is not one git runs itself, so a git alias may stand behind it, and {why}."
+            ),
             "Spell out the real subcommand, or retry with",
         )
     };
@@ -691,7 +701,7 @@ fn configured_alias(
     for dir in dirs {
         match probe(check.context, &command, dir, UPSTREAM_LIMITS) {
             Ok(Some((body, _))) if !body.trim().is_empty() => {
-                return Ok(Some(body.trim().to_string()))
+                return Ok(Some(body.trim().to_string()));
             }
             Ok(_) => {}
             Err(()) => return Err(unreadable("reading the alias timed out")),

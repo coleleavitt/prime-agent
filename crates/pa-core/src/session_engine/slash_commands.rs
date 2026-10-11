@@ -4,9 +4,14 @@
 //! every surface).
 
 pub use pa_types::slash_commands::{
-    find_slash_command_suggestion, is_session_slash_command_name, parse_slash_command,
-    BuiltinSlashCommand, ResolvedSlashCommand, SlashCommandExecution, SlashCommandRegistry,
+    BuiltinSlashCommand,
+    ResolvedSlashCommand,
     SESSION_SLASH_COMMAND_NAMES,
+    SlashCommandExecution,
+    SlashCommandRegistry,
+    find_slash_command_suggestion,
+    is_session_slash_command_name,
+    parse_slash_command,
 };
 
 /// A parsed session slash command (compact/refine/goal/autonomous).

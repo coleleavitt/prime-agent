@@ -2,10 +2,11 @@
 //! the key loop, and the lazy tail window's scroll, load-more, and
 //! retry lifecycle.
 
+use serde_json::json;
+
 use super::*;
 use crate::keybindings::KeybindingsManager;
 use crate::theme::{ColorMode, Theme};
-use serde_json::json;
 
 fn kb() -> KeybindingsManager {
     KeybindingsManager::new()
@@ -101,10 +102,9 @@ fn the_list_renders_columned_rows_and_one_hint() {
         1,
         "the close hint appears once: {text:?}"
     );
-    assert!(text
-        .iter()
-        .any(|row| row
-            .contains("\u{2191}/\u{2193} move \u{b7} Enter open \u{b7} \u{2190}/Esc close")));
+    assert!(text.iter().any(|row| {
+        row.contains("\u{2191}/\u{2193} move \u{b7} Enter open \u{b7} \u{2190}/Esc close")
+    }));
     for line in &frame {
         assert!(crate::width::spans_width(line) <= 70);
     }
@@ -372,17 +372,21 @@ fn the_detail_status_color_codes_the_state() {
     view.handle_key("enter", &kb());
     let frame = view.render(&theme(), 70, &kb());
     let metadata = row_text(&frame, "running").expect("the metadata row");
-    assert!(metadata
-        .iter()
-        .any(|span| span.style == theme().fg_style(ThemeColor::Success)));
+    assert!(
+        metadata
+            .iter()
+            .any(|span| span.style == theme().fg_style(ThemeColor::Success))
+    );
 
     let mut view = BashView::new(failed_activities(), 40);
     view.handle_key("enter", &kb());
     let frame = view.render(&theme(), 70, &kb());
     let metadata = row_text(&frame, "exit 2").expect("the failed metadata row");
-    assert!(metadata
-        .iter()
-        .any(|span| span.style == theme().fg_style(ThemeColor::Error)));
+    assert!(
+        metadata
+            .iter()
+            .any(|span| span.style == theme().fg_style(ThemeColor::Error))
+    );
 }
 
 #[test]
@@ -443,9 +447,10 @@ fn a_refresh_keeps_the_surviving_selection() {
     assert_eq!(view.mode, Mode::List);
     let frame = view.render(&theme(), 70, &kb());
     let text = frame_text(&frame);
-    assert!(text
-        .iter()
-        .any(|row| row.contains("No background commands")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("No background commands"))
+    );
 }
 
 #[test]

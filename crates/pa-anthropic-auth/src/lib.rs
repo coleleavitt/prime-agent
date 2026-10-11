@@ -21,7 +21,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use pa_agent::types::AgentMessage;
 use pa_core::features::{
-    FeatureCommandOutcome, FeatureFuture, FeatureStatus, SessionFeature, SessionFeatureContext,
+    FeatureCommandOutcome,
+    FeatureFuture,
+    FeatureStatus,
+    SessionFeature,
+    SessionFeatureContext,
 };
 use pa_telemetry::Properties;
 use pa_types::slash_commands::{BuiltinSlashCommand, SlashCommandExecution};
@@ -46,7 +50,7 @@ mod test_support;
 pub use login::{NewLogin, StoredLogin};
 pub use pi::PiConfig;
 pub use quota::QUOTA_RESERVE_ENV;
-pub use source::{SharedStoreConfig, SharedStoreSource, SourceUsage, STORE_LABEL};
+pub use source::{STORE_LABEL, SharedStoreConfig, SharedStoreSource, SourceUsage};
 
 /// The provider id the store serves.
 pub const PROVIDER_ID: &str = "anthropic";

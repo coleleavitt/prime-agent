@@ -18,25 +18,39 @@
 
 use tokio_util::sync::CancellationToken;
 
-use crate::child::{ChildRuntimeScope, RunAgent, DEFAULT_CHILD_TOKEN_BUDGET};
-use crate::dream_loop::{priming_tree_id, DreamHandlerCalls, DreamLoopResult};
+use crate::child::{ChildRuntimeScope, DEFAULT_CHILD_TOKEN_BUDGET, RunAgent};
+use crate::dream_loop::{DreamHandlerCalls, DreamLoopResult, priming_tree_id};
 use crate::dreams::DreamsLogContext;
 use crate::experiment::{
-    run_experiment_with_hooks, ExperimentArm, ExperimentArmMode, ExperimentArmPlan,
-    ExperimentArmProgress, ExperimentArmRunner, ExperimentError, ExperimentHooks, ExperimentPlan,
-    ExperimentResult, ExperimentRunOptions, ExperimentSpec, EXPERIMENT_ARMS,
+    EXPERIMENT_ARMS,
+    ExperimentArm,
+    ExperimentArmMode,
+    ExperimentArmPlan,
+    ExperimentArmProgress,
+    ExperimentArmRunner,
+    ExperimentError,
+    ExperimentHooks,
+    ExperimentPlan,
+    ExperimentResult,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    run_experiment_with_hooks,
 };
-use crate::llm::{dream_abort, LlmProposer, LlmProposerOptions, SemanticGuidance};
+use crate::llm::{LlmProposer, LlmProposerOptions, SemanticGuidance, dream_abort};
 use crate::llm_loop::{
-    merge_primed_rollouts, run_dream_loop_with_agent, CountingRunner, DreamInitialRollout,
-    DreamLoopWithAgentOptions, DreamProgressEvent,
+    CountingRunner,
+    DreamInitialRollout,
+    DreamLoopWithAgentOptions,
+    DreamProgressEvent,
+    merge_primed_rollouts,
+    run_dream_loop_with_agent,
 };
 use crate::policy::ExplorationPolicy;
 use crate::proposer::Proposer;
-use crate::rejections::{rejections_path, RejectionLog};
+use crate::rejections::{RejectionLog, rejections_path};
 use crate::rng::SeededRng;
-use crate::rollout::{run_online_exploration, DreamClock, ExploreOptions, ExploreResult};
-use crate::store::{copy_tree, DreamStoreError};
+use crate::rollout::{DreamClock, ExploreOptions, ExploreResult, run_online_exploration};
+use crate::store::{DreamStoreError, copy_tree};
 use crate::tasks::{resolve_task_n, task_prompt_context};
 
 /// Guided arms are the semantic-guidance ablation of the LLM PROPOSER.

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::fingerprint::{FailureFingerprint, FailureKind};
-use crate::js::{js_len, js_trim, json_string, JS_WHITESPACE_CLASS};
+use crate::js::{JS_WHITESPACE_CLASS, js_len, js_trim, json_string};
 
 /// Distinct cases a record keeps per fingerprint; the oldest is evicted first.
 pub const MAX_REPLAY_CASES: usize = 8;

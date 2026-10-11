@@ -254,17 +254,14 @@ pub fn split_repeated(data: &[KeyId], keybinding_id: &str) -> Option<Vec<KeyId>>
         .filter(|k| k.as_str() == keybinding_id)
         .cloned()
         .collect();
-    if hits.len() > 1 {
-        Some(hits)
-    } else {
-        None
-    }
+    if hits.len() > 1 { Some(hits) } else { None }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
 
     /// Shift-modified printables must reach the editor as their produced character: the kitty
     /// `report alternate keys` flag carries the shifted character (`shift+=` arrives as `CSI

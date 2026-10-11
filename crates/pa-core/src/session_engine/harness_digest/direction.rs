@@ -1,10 +1,11 @@
 //! Digest window-direction oracles: the window is the NEWEST four
 //! user/assistant texts, newest first (TS `.slice(-4).reverse()`).
 
+use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage};
+
 use super::*;
 use crate::refinement::HarnessEntry;
 use crate::session::manager::SessionManager;
-use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage};
 
 /// One wire user row (the writer's shape).
 fn wire_user(text: &str) -> pa_types::session::AgentMessage {

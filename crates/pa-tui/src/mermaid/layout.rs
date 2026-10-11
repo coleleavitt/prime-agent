@@ -14,11 +14,11 @@ mod group;
 mod route;
 
 pub(super) use group::layout_grouped;
-pub(super) use route::{draw_box, Placed};
+pub(super) use route::{Placed, draw_box};
 
 use super::canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK};
 use super::graph::{ClassInfo, Dir, Edge, Graph, LineKind};
-use super::labels::{fit_label, wrap_label, MAX_LABEL, MAX_LINES, WRAP_WIDTH};
+use super::labels::{MAX_LABEL, MAX_LINES, WRAP_WIDTH, fit_label, wrap_label};
 use super::parse::display_generics;
 use super::width::string_width;
 
@@ -43,11 +43,7 @@ pub(super) fn half(n: i64) -> i64 {
 /// JS `Math.round`: halves round toward positive infinity.
 fn js_round(x: f64) -> f64 {
     let floor = x.floor();
-    if x - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
+    if x - floor >= 0.5 { floor + 1.0 } else { floor }
 }
 
 fn width_of(s: &str) -> i64 {

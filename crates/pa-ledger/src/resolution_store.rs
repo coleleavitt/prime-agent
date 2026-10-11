@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::fingerprint::hex;
-use crate::resolution::{bound_records, ResolutionRecord, ResolutionStore};
+use crate::resolution::{ResolutionRecord, ResolutionStore, bound_records};
 
 /// The store directory's name under the agent dir.
 pub const RESOLUTION_DIR_NAME: &str = "resolution";

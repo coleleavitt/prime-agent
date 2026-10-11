@@ -4,16 +4,19 @@
 //! clears when the route settles; `cancel_prompt_admission` answers the
 //! TS status ladder.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
-use crate::protocol::{response_failure, response_line, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_line, response_success};
 use crate::supervisor::{
-    client_command_payload, client_route_timeout, Supervisor, ROUTE_TIMEOUT_MS,
+    ROUTE_TIMEOUT_MS,
+    Supervisor,
+    client_command_payload,
+    client_route_timeout,
 };
 use crate::worker::Worker;
 
@@ -286,7 +289,7 @@ impl Supervisor {
         let (command_type, mut payload) = match client_command_payload(command, client_id) {
             Ok(payload) => payload,
             Err(error) => {
-                return Self::admission_failure(&command_id, &type_name, &error.to_string())
+                return Self::admission_failure(&command_id, &type_name, &error.to_string());
             }
         };
         payload["admissionId"] = json!(worker_admission_id);
@@ -427,7 +430,7 @@ impl Supervisor {
                 {
                     Ok(response) => response,
                     Err(error) => {
-                        return Self::admission_failure(command_id, type_name, &error.to_string())
+                        return Self::admission_failure(command_id, type_name, &error.to_string());
                     }
                 };
                 // The mapped status updates the supervisor record (TS

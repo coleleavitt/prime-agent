@@ -8,12 +8,12 @@ mod common;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use common::{gate_python, recording_installer, SLUGIFY_DOC, SLUGIFY_EXIT_TEST, SLUGIFY_SOURCE};
+use common::{SLUGIFY_DOC, SLUGIFY_EXIT_TEST, SLUGIFY_SOURCE, gate_python, recording_installer};
 use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_telemetry::Properties;
-use pa_toolforge::{ToolforgeFeature, ToolforgeOverrides, PUBLISH_REQUEST};
-use serde_json::{json, Value};
+use pa_toolforge::{PUBLISH_REQUEST, ToolforgeFeature, ToolforgeOverrides};
+use serde_json::{Value, json};
 
 type Tracked = Arc<Mutex<Vec<(String, Properties)>>>;
 

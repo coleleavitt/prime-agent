@@ -3,26 +3,34 @@
 //! cursor, and the upload-all sweep with the rate-limit gate.
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[cfg(test)]
 mod tests;
 
 mod http;
+use http::{RETRIABLE_HTTP_STATUSES, is_retriable_transport_error, trace_upload_retry_delay};
 pub use http::{
-    encode_uri_component, read_response_message, retry_after_delay, ReqwestTraceHttp, TraceHttp,
-    TraceHttpError, TraceHttpResponse,
+    ReqwestTraceHttp,
+    TraceHttp,
+    TraceHttpError,
+    TraceHttpResponse,
+    encode_uri_component,
+    read_response_message,
+    retry_after_delay,
 };
-use http::{is_retriable_transport_error, trace_upload_retry_delay, RETRIABLE_HTTP_STATUSES};
 
 mod upload_all;
 pub use upload_all::{
-    find_trace_files, session_artifacts_root, upload_all_traces, TraceRequestGate,
+    TraceRequestGate,
     TraceUploadAllOptions,
+    find_trace_files,
+    session_artifacts_root,
+    upload_all_traces,
 };
 
 mod continuous;
@@ -30,7 +38,7 @@ pub use continuous::{ContinuousTraceUpload, TraceConsentSnapshot};
 
 mod upload;
 use upload::perform_agent_trace_upload;
-pub use upload::{upload_trace_file, TraceUploadOptions};
+pub use upload::{TraceUploadOptions, upload_trace_file};
 
 pub const MAX_TRACE_BYTES: u64 = 20 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 15_000;
@@ -626,7 +634,7 @@ pub async fn preview_trace_file(
             Err(error) => {
                 return TracePreviewResult::Failed {
                     message: error.to_string(),
-                }
+                };
             }
         }
         if body.trim().is_empty() {

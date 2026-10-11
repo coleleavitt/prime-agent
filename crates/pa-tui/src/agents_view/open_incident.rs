@@ -2,8 +2,18 @@
 //! finish bookkeeping and the scope back/root navigation) and the incident-notice surface (the
 //! structured-log poll, the dismissal, and the panel render).
 use super::{
-    ancestor_session_ids, has_session_children, scope_ancestors, AgentsViewMode, AgentsViewRow,
-    Line, OpenedRow, PathBuf, RowKind, SessionSelection, Value, ANCHOR_LOADING_HINT,
+    ANCHOR_LOADING_HINT,
+    AgentsViewMode,
+    AgentsViewRow,
+    Line,
+    OpenedRow,
+    PathBuf,
+    RowKind,
+    SessionSelection,
+    Value,
+    ancestor_session_ids,
+    has_session_children,
+    scope_ancestors,
 };
 
 impl AgentsViewMode {

@@ -33,10 +33,15 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The rule row's glyph: the settings page's bars (the search field's borders, the detail block's
 /// separator).
@@ -624,9 +629,11 @@ fn tab_and_the_number_keys_move_the_tabs_not_the_arrows() {
     assert!(!after_right.iter().any(|row| row.contains("Transport")));
     let after_tab = frame_with(&frames, "Transport");
     assert!(after_tab.iter().any(|row| row.contains("Thinking level")));
-    assert!(frame_with(&frames, "Warnings")
-        .iter()
-        .any(|row| row.contains("Quiet startup")));
+    assert!(
+        frame_with(&frames, "Warnings")
+            .iter()
+            .any(|row| row.contains("Quiet startup"))
+    );
     // The retired fullscreen row is not there.
     let display = frame_with(&frames, "Mermaid diagrams");
     assert!(display.iter().any(|row| row.contains("Theme")));
@@ -670,9 +677,10 @@ fn opening_into_a_setting_keeps_the_bar_and_the_padding() {
     // The session's levels (from the connection state) render through the shared menu-row grammar.
     assert!(rows.iter().any(|row| row.contains("\u{203a} low")));
     assert!(rows.iter().any(|row| row.contains("high")));
-    assert!(rows
-        .iter()
-        .any(|row| row.starts_with("  Enter select · Esc back")));
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("  Enter select · Esc back"))
+    );
 }
 
 /// A toggle for an unsupported mode is worse than none.

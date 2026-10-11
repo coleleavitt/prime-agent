@@ -29,7 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Per-request answer delay: holds each response so prompts park behind the busy turn.
 const ANSWER_DELAY_MS: u64 = 1200;

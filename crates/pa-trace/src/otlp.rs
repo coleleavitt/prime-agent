@@ -12,9 +12,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::record::{js_number, SpanIds};
+use crate::record::{SpanIds, js_number};
 
 /// The collector base URL; `/v1/traces` and `/v1/metrics` are appended.
 pub const OTLP_ENDPOINT_ENV: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";

@@ -3,9 +3,9 @@
 //! Each handler answers the exact TS wire shape; the behavior lives in
 //! the engine seams and the supervisor-backed children registry.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 impl Worker {
@@ -99,9 +99,11 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         let dir = crate::test_support::TestDir::new("pa-worker-rlm-");

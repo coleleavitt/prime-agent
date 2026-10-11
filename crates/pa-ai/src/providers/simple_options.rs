@@ -1,7 +1,11 @@
 //! Shared simple-stream option assembly.
 
 use crate::types::{
-    Model, ModelThinkingLevel, SimpleStreamOptions, StreamOptions, ThinkingBudgets,
+    Model,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StreamOptions,
+    ThinkingBudgets,
 };
 
 /// The default ceiling on requested output tokens (TS
@@ -165,8 +169,9 @@ pub fn effective_request_max_tokens(model: &Model, reasoning: ModelThinkingLevel
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn model(api: &str, id: &str, max_tokens: u64) -> Model {
         serde_json::from_value(json!({

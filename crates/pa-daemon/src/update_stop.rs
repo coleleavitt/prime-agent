@@ -92,8 +92,9 @@ async fn stop_one<T: WorkerStopTransport + Sync>(
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::*;
     use serde_json::Map;
+
+    use super::*;
 
     /// A fake worker: `acks[i]` decides whether the shutdown request
     /// succeeds; `exits[i]` whether the process exits in budget. The

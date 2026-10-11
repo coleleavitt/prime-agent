@@ -207,9 +207,11 @@ mod tests {
             "the shared scroll row replaces the per-row metadata:\n{rendered:?}"
         );
         assert!(!rendered.iter().any(|row| row.contains("Message 1 of")));
-        assert!(rendered
-            .iter()
-            .any(|row| row.contains("\u{2191}/\u{2193} navigate · Enter select · Esc close")));
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("\u{2191}/\u{2193} navigate · Enter select · Esc close"))
+        );
     }
 
     #[test]
@@ -236,8 +238,10 @@ mod tests {
         let selector = UserMessageSelector::new(Vec::new());
         let lines = selector.render(&theme(), 80, &kb());
         let rendered: Vec<String> = lines.iter().map(row_text).collect();
-        assert!(rendered
-            .iter()
-            .any(|row| row.contains("No user messages found")));
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("No user messages found"))
+        );
     }
 }

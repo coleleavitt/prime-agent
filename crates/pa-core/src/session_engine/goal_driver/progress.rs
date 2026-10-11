@@ -3,7 +3,7 @@
 //! no-progress streak with its doubling backoff, and the order-safety
 //! rules.
 
-use super::{now_millis, GoalDriver};
+use super::{GoalDriver, now_millis};
 use crate::goals::{GoalState, GoalStatus};
 use crate::session::manager::SessionManager;
 use crate::session_engine::provider_retry::provider_stream_failure_kind;

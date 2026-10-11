@@ -1,17 +1,51 @@
 //! Log-entry classification into incident events (TS `classifyIncidentEntry` and its helpers).
 
+use std::collections::HashMap;
+
 use super::patterns::{
-    ADOPT_FAILED, AUTH_FAILED, CATCH_UP, CRASH_LINE, CRASH_PREFIX, DAEMON_COMMAND, EVICTED_EMPTY,
-    EVICTED_IDLE, FAILED_AFTER_RETRIES, HEARTBEATS_LIST, MIGRATED, PASSIVATED, RECLAIMED,
-    RECOVERED, RECOVERED_PLAIN, RECOVER_FAILED, REPLACEMENT, SHUTDOWN_EXIT, SIGNAL_SHUTDOWN,
-    STACK_FRAME, STARTUP_FAILED, STDERR_FORWARD, STOP_REQUESTED, SUPERVISOR_COMMAND,
-    SUPERVISOR_LISTENING, UNKNOWN_SESSION, UNRESPONSIVE, WOKE, WORKER_LISTENING, WORKER_SOCKET,
+    ADOPT_FAILED,
+    AUTH_FAILED,
+    CATCH_UP,
+    CRASH_LINE,
+    CRASH_PREFIX,
+    DAEMON_COMMAND,
+    EVICTED_EMPTY,
+    EVICTED_IDLE,
+    FAILED_AFTER_RETRIES,
+    HEARTBEATS_LIST,
+    MIGRATED,
+    PASSIVATED,
+    RECLAIMED,
+    RECOVER_FAILED,
+    RECOVERED,
+    RECOVERED_PLAIN,
+    REPLACEMENT,
+    SHUTDOWN_EXIT,
+    SIGNAL_SHUTDOWN,
+    STACK_FRAME,
+    STARTUP_FAILED,
+    STDERR_FORWARD,
+    STOP_REQUESTED,
+    SUPERVISOR_COMMAND,
+    SUPERVISOR_LISTENING,
+    UNKNOWN_SESSION,
+    UNRESPONSIVE,
+    WOKE,
+    WORKER_LISTENING,
+    WORKER_SOCKET,
 };
 use super::{
-    error_message, first_line, lifecycle_classes, truncate_text, IncidentCategory, IncidentEvent,
-    IncidentLogEntry, IncidentSeverity, RECOVERY_BREAKDOWN_LIMIT, SUMMARY_TRUNCATION,
+    IncidentCategory,
+    IncidentEvent,
+    IncidentLogEntry,
+    IncidentSeverity,
+    RECOVERY_BREAKDOWN_LIMIT,
+    SUMMARY_TRUNCATION,
+    error_message,
+    first_line,
+    lifecycle_classes,
+    truncate_text,
 };
-use std::collections::HashMap;
 
 /// The worker id a socket path names, if any (TS `workerIdFromSocketPath`): splits on both
 /// separators, so Windows named-pipe paths resolve on any platform.

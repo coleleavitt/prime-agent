@@ -10,13 +10,26 @@ use tokio::sync::watch;
 
 use crate::abort::{AbortController, AbortSignal};
 use crate::agent_loop::{
-    AfterToolCallFn, AgentEventSink, AgentLoopConfig, BeforeToolCallFn, ConvertToLlmFn,
-    GetContinuationMessagesFn, PollMessagesFn, ShouldStopAfterTurnFn, ShouldStopBeforeTurnFn,
+    AfterToolCallFn,
+    AgentEventSink,
+    AgentLoopConfig,
+    BeforeToolCallFn,
+    ConvertToLlmFn,
+    GetContinuationMessagesFn,
+    PollMessagesFn,
+    ShouldStopAfterTurnFn,
+    ShouldStopBeforeTurnFn,
     TransformContextFn,
 };
 use crate::stream::StreamFn;
 use crate::types::{
-    AgentEvent, AgentMessage, AgentTool, ImageContent, Model, ThinkingLevel, ToolExecutionMode,
+    AgentEvent,
+    AgentMessage,
+    AgentTool,
+    ImageContent,
+    Model,
+    ThinkingLevel,
+    ToolExecutionMode,
     Usage,
 };
 

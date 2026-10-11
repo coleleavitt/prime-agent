@@ -3,10 +3,16 @@
 //! per-request fields, `settings.imageModel`, the catalog, and the auth
 //! probe; the resolver returns the image-capable model or an actionable error.
 
-use pa_types::ai::{clamp_thinking_level, supports_fast_mode, ServiceTier};
+use pa_types::ai::{
+    Model,
+    ModelInput,
+    ModelThinkingLevel,
+    ServiceTier,
+    clamp_thinking_level,
+    supports_fast_mode,
+};
 
 use super::resolver::find_exact_model_reference_match;
-use pa_types::ai::{Model, ModelInput, ModelThinkingLevel};
 
 /// The model serving a routed image turn, with the session's per-request
 /// fields clamped to what it supports (TS `AgentModelOverride`'s fields).

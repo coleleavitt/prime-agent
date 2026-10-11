@@ -17,8 +17,9 @@
 //! (package 1, here 2). ASCII, Latin, CJK, Hangul syllables, and emoji — ZWJ sequences,
 //! flags, keycaps, skin tones, VS16 — agree; the golden corpus covers CJK and emoji labels.
 
-use crate::width::grapheme_width;
 use unicode_segmentation::UnicodeSegmentation;
+
+use crate::width::grapheme_width;
 
 /// Grapheme clusters of `s` paired with their display width.
 pub(super) fn measured(s: &str) -> impl Iterator<Item = (&str, usize)> {

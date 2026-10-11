@@ -1,8 +1,12 @@
 //! The live-event decoder: the `TurnUpdate` vocabulary (session-event
 //! wire shapes) and the `event_to_update` fold.
 use super::{
-    assistant_value_to_entries, queue_lane, queue_lane_indices, starting_from_actions, ChatEntry,
+    ChatEntry,
     Value,
+    assistant_value_to_entries,
+    queue_lane,
+    queue_lane_indices,
+    starting_from_actions,
 };
 
 /// One live session event decoded for the transcript (the `event` field of

@@ -8,14 +8,24 @@ use std::future::Future;
 use pa_agent::abort::AbortSignal;
 use pa_agent::types::{AssistantMessage, StopReason};
 
-use super::provider_park::{is_quota_block_failure, ParkDecisionCallback};
+use super::provider_park::{ParkDecisionCallback, is_quota_block_failure};
 use super::provider_retry::{
-    has_provider_stream_failure, is_agent_lifecycle_failure, is_connection_failure,
-    is_context_overflow_failure, is_faux_provider_queue_exhausted,
-    is_permanent_provider_failure_kind, is_unsupported_tool_failure, jittered_delay_ms,
-    provider_retry_delay, provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
-    provider_stream_failure_status, retry_jitter_rand01, ProviderRetryDelay, ProviderRetryPolicy,
     CONNECTION_RETRY_MAX_DELAY_MS,
+    ProviderRetryDelay,
+    ProviderRetryPolicy,
+    has_provider_stream_failure,
+    is_agent_lifecycle_failure,
+    is_connection_failure,
+    is_context_overflow_failure,
+    is_faux_provider_queue_exhausted,
+    is_permanent_provider_failure_kind,
+    is_unsupported_tool_failure,
+    jittered_delay_ms,
+    provider_retry_delay,
+    provider_stream_failure_kind,
+    provider_stream_failure_retry_after_ms,
+    provider_stream_failure_status,
+    retry_jitter_rand01,
 };
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).

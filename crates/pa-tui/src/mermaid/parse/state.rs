@@ -1,7 +1,7 @@
 //! The state-diagram grammar. Ported from grok-mermaid 0.2.3 `parse.ts` (Apache-2.0; see
 //! `LICENSE-grok-mermaid`).
 
-use super::super::graph::{parse_dir, Edge, Graph, Head, LineKind, Shape};
+use super::super::graph::{Edge, Graph, Head, LineKind, Shape, parse_dir};
 use super::super::js_text;
 use super::super::labels::{ascii_lower, decode_html_entities};
 use super::{drop_style_tags, first_word, header_kind, non_empty, split_once, statements_of};

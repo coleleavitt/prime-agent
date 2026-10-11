@@ -1,8 +1,9 @@
 //! Compact-session tests, the cut-math family: the cut-and-tokens
 //! computation, the entry-message extraction, the tokens-before
 //! anchoring, and the summary-request window estimate.
-use super::*;
 use pa_types::session::EntryBase;
+
+use super::*;
 
 #[test]
 fn cut_and_tokens_computed_from_entries() {

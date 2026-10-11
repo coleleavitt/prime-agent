@@ -1,7 +1,7 @@
 //! The reconnect machinery: the update-restart resume window, the unexpected-loss hiccup loop, and
 //! the announced shutdown's bounded recovery.
 
-use super::{mpsc, AgentView, DaemonClient, DaemonClientEvent, Duration, RecoveryKind, SessionUi};
+use super::{AgentView, DaemonClient, DaemonClientEvent, Duration, RecoveryKind, SessionUi, mpsc};
 
 /// The in-flight reconnect attempt's connect leg: a spawned task's bounded
 /// `DaemonClient::connect_with_retry` result (fresh client plus its event receiver).

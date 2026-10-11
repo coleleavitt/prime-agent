@@ -2,8 +2,15 @@
 //! customs, attributions, session info/state - and the leaf/label mutators.
 
 use super::{
-    format_iso_now, generate_id, AgentMessage, ChildUsageOrigin, EntryBase, FileEntry,
-    SessionManager, SessionState, SessionStateStatus,
+    AgentMessage,
+    ChildUsageOrigin,
+    EntryBase,
+    FileEntry,
+    SessionManager,
+    SessionState,
+    SessionStateStatus,
+    format_iso_now,
+    generate_id,
 };
 
 impl SessionManager {

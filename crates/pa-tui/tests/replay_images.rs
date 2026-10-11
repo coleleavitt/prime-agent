@@ -18,7 +18,7 @@
 // The wrappers preserve a uniform Result-returning API surface.
 #![allow(clippy::unnecessary_wraps)]
 
-use pa_tui::session::{parse_jsonl, JsonlSessionStream, SessionStream};
+use pa_tui::session::{JsonlSessionStream, SessionStream, parse_jsonl};
 use pa_tui::theme::{ColorMode, Theme};
 use pa_tui::view::AgentView;
 

@@ -2099,8 +2099,9 @@ fn cap_string(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn the_catalog_is_the_low_frequency_set() {

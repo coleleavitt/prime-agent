@@ -9,15 +9,25 @@ use output::render_output;
 use serde_json::Value;
 
 use super::ipython_details::{
-    format_duration, is_agent_message_receipt, is_edit_confirmation, parse_sent_agent_message,
-    read_background_shell, BackgroundShell, BashCommands, IpythonDetails, IpythonError,
+    BackgroundShell,
+    BashCommands,
+    IpythonDetails,
+    IpythonError,
+    format_duration,
+    is_agent_message_receipt,
+    is_edit_confirmation,
+    parse_sent_agent_message,
+    read_background_shell,
 };
 use super::layout::RowOutput;
-use super::{highlight, ToolCallCard};
+use super::{ToolCallCard, highlight};
 use crate::chat::Detail;
 use crate::code_preview::{
-    parse_ipython_bash_cell, preview_bash_command, preview_ipython_code, python_statement_lines,
     CodePreviewLanguage,
+    parse_ipython_bash_cell,
+    preview_bash_command,
+    preview_ipython_code,
+    python_statement_lines,
 };
 use crate::custom_message::AgentMessageDirection;
 use crate::error_summary::{normalize_error_details, summarize_error_details};

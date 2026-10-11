@@ -5,12 +5,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use pa_agent::stream::{
-    AssistantMessageEvent, LlmContext, ModelStream, StreamFn, StreamRequestOptions,
+    AssistantMessageEvent,
+    LlmContext,
+    ModelStream,
+    StreamFn,
+    StreamRequestOptions,
 };
 use pa_agent::types::{AssistantMessage, Model, StopReason};
 use sha2::{Digest as _, Sha256};
 
-use super::{model_request_headers, SemanticEdgeRecorder};
+use super::{SemanticEdgeRecorder, model_request_headers};
 
 /// Bind a stream function to one session's recorder (TS
 /// `wrapStreamFnWithSemanticEdges`; the Rust engine wraps it OUTERMOST,

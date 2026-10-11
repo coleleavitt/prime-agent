@@ -24,16 +24,20 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
-use serde_json::{json, Value};
-
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
+use serde_json::{Value, json};
 
 /// Enable is `?1002h`, `?1003h` (the hover affordance), then `?1006h`; disable reverses.
 const MOUSE_ENABLE: &str = "\x1b[?1002h\x1b[?1003h\x1b[?1006h";

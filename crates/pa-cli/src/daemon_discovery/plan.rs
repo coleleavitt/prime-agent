@@ -153,8 +153,9 @@ pub(crate) fn plan_shutdown_all(daemons: &[DaemonInfo], force: bool) -> Vec<Reap
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     fn daemon(
         socket: &str,

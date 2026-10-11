@@ -9,7 +9,7 @@
 use serde_json::json;
 
 use crate::element::Pair;
-use crate::error::{invalid, Result};
+use crate::error::{Result, invalid};
 use crate::keymap::{Modifier, ParsedChord};
 use crate::platform::{MouseButton, ScrollDirection};
 
@@ -182,7 +182,9 @@ mod tests {
             .collect();
         assert_eq!(
             keysyms,
-            ["a", "Z", "9", "U0020", "U0021", "Return", "Tab", "U00E9", "U1F600"]
+            [
+                "a", "Z", "9", "U0020", "U0021", "Return", "Tab", "U00E9", "U1F600"
+            ]
         );
         for character in ['\u{1b}', '\r', '\u{7f}'] {
             assert_eq!(

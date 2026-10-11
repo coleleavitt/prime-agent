@@ -3,11 +3,12 @@
 //! equivalent of the daemon host's `ChildRecord` (same wire semantics,
 //! live child introspection instead of worker round trips).
 
+use std::sync::{Arc, Weak};
+
 use pa_types::ai::Usage;
 use pa_types::session::ChildUsageOrigin;
 use pa_types::sync::MutexExt;
-use std::sync::{Arc, Weak};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 use super::InProcessRlmHost;
 use crate::session_engine::engine::SessionEngine;
@@ -663,5 +664,7 @@ impl super::InProcessRlmHost {
 /// `formatAgentSessionNameUnavailable`): one source so the reservation
 /// refusal and the availability check stay byte-identical.
 pub(crate) fn spawn_name_unavailable(name: &str, depth: u32) -> String {
-    format!("Agent name \"{name}\" is unavailable: an agent of that name already exists at depth {depth} under this parent")
+    format!(
+        "Agent name \"{name}\" is unavailable: an agent of that name already exists at depth {depth} under this parent"
+    )
 }

@@ -20,13 +20,13 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
-use anthropic::claude_version::{fetch_latest_claude_code_version_from, ClaudeCodeVersionTracker};
+use anthropic::claude_version::{ClaudeCodeVersionTracker, fetch_latest_claude_code_version_from};
 use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOptions};
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
 
-use crate::quota::{poll_usage, PollRun, QuotaTracker, StoreWrite};
 use crate::SharedStoreConfig;
+use crate::quota::{PollRun, QuotaTracker, StoreWrite, poll_usage};
 
 /// The least time between two usage polls (the plugins' `API_CALL_GAP_MS`).
 const POLL_GAP: StdDuration = StdDuration::from_secs(1);

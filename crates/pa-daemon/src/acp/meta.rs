@@ -4,7 +4,7 @@
 //! client reads them; non-standard fields never appear at an ACP root.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Reverse-domain namespace for every prime-agent `_meta` payload.
 pub const PRIME_AGENT_META_NAMESPACE: &str = "ai.primeintellect.prime-agent";
@@ -225,7 +225,7 @@ pub fn acp_stop_reason_for_status(
     status: Option<&pa_core::autonomous::AgentAutonomousStatus>,
     assistant_stop_reason: Option<pa_types::ai::StopReason>,
 ) -> super::types::AcpStopReason {
-    use pa_core::autonomous::{autonomous_limit_reason_of_status, AutonomousLimitReason};
+    use pa_core::autonomous::{AutonomousLimitReason, autonomous_limit_reason_of_status};
     use pa_types::ai::StopReason;
     if cancelled {
         return super::types::AcpStopReason::Cancelled;
@@ -289,9 +289,10 @@ mod tests {
         // message: the explicit cancel and the enabled run's own limits
         // stay ahead of the final assistant stop reason (the e2e covers
         // the disabled-status and below-mapping cases).
-        use super::super::types::AcpStopReason;
         use pa_core::autonomous::{AgentAutonomousStatus, AutonomousLimits, NormalizedGateConfig};
         use pa_types::ai::StopReason;
+
+        use super::super::types::AcpStopReason;
         let status = |enabled: bool, turns_used: u64| AgentAutonomousStatus {
             enabled,
             continuations_used: 0,

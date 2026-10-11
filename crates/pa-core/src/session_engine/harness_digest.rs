@@ -8,14 +8,17 @@ use std::path::PathBuf;
 use pa_agent::types::{AgentMessage, Message, UserContent, UserPart};
 use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};
 
+use super::messages::{COMPACTION_SUMMARY_PREFIX, HARNESS_DIGEST_PREFIX, HARNESS_DIGEST_SUFFIX};
 use crate::refinement::prompt_hook::HarnessPromptHooks;
 use crate::refinement::ranking::{
-    adjusted_harness_digest_fingerprint, format_harness_state_for_prompt, harness_query_terms,
-    HarnessDigestRenderFlags, HarnessQueryTerms, HarnessStatePromptOptions,
+    HarnessDigestRenderFlags,
+    HarnessQueryTerms,
+    HarnessStatePromptOptions,
+    adjusted_harness_digest_fingerprint,
+    format_harness_state_for_prompt,
+    harness_query_terms,
 };
-use crate::refinement::{load_harness_state, merge_harness_states, HarnessScope};
-
-use super::messages::{COMPACTION_SUMMARY_PREFIX, HARNESS_DIGEST_PREFIX, HARNESS_DIGEST_SUFFIX};
+use crate::refinement::{HarnessScope, load_harness_state, merge_harness_states};
 
 #[cfg(test)]
 mod direction;

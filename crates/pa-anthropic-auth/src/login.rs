@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use anthropic::credentials::{publish_native_login, read_claude_code_identity, ClaudeCodeIdentity};
+use anthropic::credentials::{ClaudeCodeIdentity, publish_native_login, read_claude_code_identity};
 use anthropic::token::{AccessToken, Credential, OAuthTokens, RefreshToken, TokenAccount};
 use anthropic::{Account, AccountStore};
 use chrono::{TimeZone, Utc};

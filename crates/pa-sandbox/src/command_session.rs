@@ -37,7 +37,13 @@
 use std::collections::BTreeMap;
 
 use crate::proto::{
-    canonical_uuid_key, require_nul_free_string, ProtoError, Reader, Writer, WIRE_LEN, WIRE_VARINT,
+    ProtoError,
+    Reader,
+    WIRE_LEN,
+    WIRE_VARINT,
+    Writer,
+    canonical_uuid_key,
+    require_nul_free_string,
 };
 
 /// The signals the `CommandSession` service delivers; values are the
@@ -800,9 +806,11 @@ mod tests {
             .unwrap();
         assert_eq!(event, CommandSessionEvent::Start { pid: 4242 });
         // An empty envelope decodes to no event.
-        assert!(decode_command_session_event_response(&[], "StartResponse")
-            .unwrap()
-            .is_none());
+        assert!(
+            decode_command_session_event_response(&[], "StartResponse")
+                .unwrap()
+                .is_none()
+        );
         // A start member carrying no pid defaults to 0.
         let body = response_body(1, &[]);
         let event = decode_command_session_event_response(&body, "StartResponse")

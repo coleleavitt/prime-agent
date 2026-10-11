@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSubagentHost};
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
-use pa_tui::subagents::{count_descendants, SessionIdentity};
-use serde_json::{json, Value};
+use pa_tui::subagents::{SessionIdentity, count_descendants};
+use serde_json::{Value, json};
 
 struct Supervisor {
     child: Child,

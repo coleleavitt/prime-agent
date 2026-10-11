@@ -5,22 +5,30 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use pa_types::ai::{
-    CompatKind, Model, ModelCompat, ModelThinkingLevel, OpenAiResponsesCompat, ThinkingLevelMap,
+    CompatKind,
+    Model,
+    ModelCompat,
+    ModelThinkingLevel,
+    OpenAiResponsesCompat,
+    ThinkingLevelMap,
 };
-
-use crate::auth::manager::AuthStorage;
-use crate::auth::types::{AuthCredential, PRIME_INFERENCE_PROVIDER_ID};
 
 use super::catalog_chain;
-use super::custom::{apply_model_override, load_custom_models, merge_compat, CustomModelsResult};
+use super::custom::{CustomModelsResult, apply_model_override, load_custom_models, merge_compat};
 use super::prime_inference::is_private_prime_inference_model;
 use super::private_auth::{
-    fetch_authorized_private_prime_inference_models, is_offline_mode_enabled,
-    private_prime_authorization_fingerprint, read_private_prime_authorization_cache,
-    write_private_prime_authorization_cache, PrivatePrimeAuthorizationCache,
-    PRIVATE_BACKGROUND_TIMEOUT_MS, PRIVATE_MODEL_TIMEOUT_MS,
+    PRIVATE_BACKGROUND_TIMEOUT_MS,
+    PRIVATE_MODEL_TIMEOUT_MS,
     PRIVATE_PRIME_AUTHORIZATION_CACHE_TTL_MS,
+    PrivatePrimeAuthorizationCache,
+    fetch_authorized_private_prime_inference_models,
+    is_offline_mode_enabled,
+    private_prime_authorization_fingerprint,
+    read_private_prime_authorization_cache,
+    write_private_prime_authorization_cache,
 };
+use crate::auth::manager::AuthStorage;
+use crate::auth::types::{AuthCredential, PRIME_INFERENCE_PROVIDER_ID};
 
 /// Request-auth bits a provider can configure in models.json.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

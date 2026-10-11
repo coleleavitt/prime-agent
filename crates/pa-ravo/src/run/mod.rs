@@ -26,49 +26,106 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use pa_core::refinement::planner::{
-    apply_refinement_proposal, count_valid_refinement_edits, normalize_refinement_proposal,
-    ApplyOptions, RefinementProposal,
+    ApplyOptions,
+    RefinementProposal,
+    apply_refinement_proposal,
+    count_valid_refinement_edits,
+    normalize_refinement_proposal,
 };
-use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
+use pa_core::refinement::ranking::{HarnessStatePromptOptions, format_harness_state_for_prompt};
 use pa_core::refinement::{
-    load_harness_state, save_harness_state, HarnessScope, HarnessState, RefinementAction,
+    HarnessScope,
+    HarnessState,
+    RefinementAction,
+    load_harness_state,
+    save_harness_state,
 };
 use pa_ledger::{
-    failure_opponent_id, format_failure_ledger_for_prompt, recurring_failures, FailureRecord,
+    FailureRecord,
+    failure_opponent_id,
+    format_failure_ledger_for_prompt,
+    recurring_failures,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use self::context::{
-    build_bounded_context_view, render_context, BoundedContextView, ContextArchive, ContextAtom,
-    ContextAtomKind, ContextViewLimits,
+    BoundedContextView,
+    ContextArchive,
+    ContextAtom,
+    ContextAtomKind,
+    ContextViewLimits,
+    build_bounded_context_view,
+    render_context,
 };
 use self::controller::{
-    empty_error_budget, run_ravo_controller, stop_name, ChildCallOptions, ChildFuture, ChildResult,
-    ControllerCheckpoint, ControllerHooks, ControllerOptions, ControllerProposal,
-    DiagnosticFeedback, EvaluatorKind, EvaluatorSpec, GateOutcome, InspectionFindings, Observation,
-    ProgressEvent, RavoPhase, RavoPlan, RavoStopReason, SupervisorAdvice, SupervisorSignal,
+    ChildCallOptions,
+    ChildFuture,
+    ChildResult,
+    ControllerCheckpoint,
+    ControllerHooks,
+    ControllerOptions,
+    ControllerProposal,
+    DiagnosticFeedback,
+    EvaluatorKind,
+    EvaluatorSpec,
+    GateOutcome,
+    InspectionFindings,
+    Observation,
+    ProgressEvent,
+    RavoPhase,
+    RavoPlan,
+    RavoStopReason,
+    SupervisorAdvice,
+    SupervisorSignal,
+    empty_error_budget,
+    run_ravo_controller,
+    stop_name,
 };
 use crate::authority::{
-    failure_opponent_fingerprint, is_failure_opponent_id, normalize_assisted_ravo_state,
+    failure_opponent_fingerprint,
+    is_failure_opponent_id,
+    normalize_assisted_ravo_state,
 };
 use crate::gate::{
-    carry_observed_recurrences, parse_judge_verdict, ravo_fast_screen, set_stored_ravo_state,
-    stored_ravo_state, without_observed_recurrences, RAVO_DEFAULT_CONFIG, RAVO_KEY,
+    RAVO_DEFAULT_CONFIG,
+    RAVO_KEY,
     RAVO_SEED_CRITERIA,
+    carry_observed_recurrences,
+    parse_judge_verdict,
+    ravo_fast_screen,
+    set_stored_ravo_state,
+    stored_ravo_state,
+    without_observed_recurrences,
 };
 use crate::js::{canonical_json, js_round, sha256_hex};
 use crate::reducer::{
-    ravo_extend_opponents, ravo_mark_provisional, ravo_step, GateStatus, RavoCriterionObservation,
-    RavoEvaluation, RavoGateCertificate, RavoOpponentPool, RavoProposal, RavoState,
+    GateStatus,
+    RavoCriterionObservation,
+    RavoEvaluation,
+    RavoGateCertificate,
+    RavoOpponentPool,
+    RavoProposal,
+    RavoState,
+    ravo_extend_opponents,
+    ravo_mark_provisional,
+    ravo_step,
 };
 use crate::referee::{
-    adjudicate_failure_claims, failure_opponent_passed, is_referee_opponent_id, referee_detail,
-    referee_opponent_fingerprint, referee_opponent_id, referee_opponent_passed,
-    referee_verdict_is_evidence, skill_imports_of, RefereeVerdict, RefereeVerdictStatus,
+    RefereeVerdict,
+    RefereeVerdictStatus,
     ReplayRunner,
+    adjudicate_failure_claims,
+    failure_opponent_passed,
+    is_referee_opponent_id,
+    referee_detail,
+    referee_opponent_fingerprint,
+    referee_opponent_id,
+    referee_opponent_passed,
+    referee_verdict_is_evidence,
+    skill_imports_of,
 };
-use crate::trust::{empty_entry_trust, TRUST_KEY};
+use crate::trust::{TRUST_KEY, empty_entry_trust};
 
 /// The run's defaults (TS `RAVO_RUN_DEFAULTS`).
 pub const RAVO_RUN_MAX_ROUNDS: u64 = 4;
@@ -793,7 +850,7 @@ impl RunHooks {
                             return ChildResult::Completed {
                                 value,
                                 tokens: spent,
-                            }
+                            };
                         }
                         Err(error) => ("error".to_string(), 0, Some(error)),
                     }
@@ -1516,11 +1573,15 @@ impl ControllerHooks for RunHooks {
                         let verdicts = self.referee(proposal).await;
                         let verdict = verdicts.get(fingerprint);
                         let detail = match verdict {
-                            Some(verdict) if verdict.status != RefereeVerdictStatus::NotApplicable => {
+                            Some(verdict)
+                                if verdict.status != RefereeVerdictStatus::NotApplicable =>
+                            {
                                 format!("{fingerprint}: {}", verdict.detail)
                             }
                             _ if claimed => format!("proposal claims to address {fingerprint}"),
-                            _ => format!("recurring failure {fingerprint} is not addressed (set addressedFingerprints)"),
+                            _ => format!(
+                                "recurring failure {fingerprint} is not addressed (set addressedFingerprints)"
+                            ),
                         };
                         return completed(Observation {
                             status: pass_or_fail(failure_opponent_passed(claimed, verdict)),

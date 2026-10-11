@@ -9,13 +9,16 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{
-    ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
+    ClientOptions,
+    NamedPipeClient,
+    NamedPipeServer,
+    ServerOptions,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::transport::BlockingTransportStream;
-use super::windows_security::{verify_pipe_owner, OwnerOnlySecurity};
+use super::windows_security::{OwnerOnlySecurity, verify_pipe_owner};
 
 /// `winerror.h` `ERROR_PIPE_BUSY`: the pipe name exists but no instance is
 /// listening (pinned constant, no windows-sys dependency).

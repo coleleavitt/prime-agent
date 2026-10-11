@@ -25,7 +25,7 @@
 
 use serde_json::Value;
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::truncate_line;
 use crate::{Line, Span};
@@ -35,8 +35,14 @@ mod diagram;
 mod tests;
 
 use diagram::{
-    edge_marker, node_glyph, run_state_color, FactoryEdge, FactoryNodeState, FactoryState,
-    FactoryTransition, FactoryUsage,
+    FactoryEdge,
+    FactoryNodeState,
+    FactoryState,
+    FactoryTransition,
+    FactoryUsage,
+    edge_marker,
+    node_glyph,
+    run_state_color,
 };
 
 /// The refresh cadence's watch bound (ms): the kernel's own collect poll

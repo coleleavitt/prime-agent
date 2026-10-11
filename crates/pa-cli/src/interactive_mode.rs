@@ -8,12 +8,12 @@ use std::pin::Pin;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use pa_core::session::discovery::{ResolvedSession, resolve_session_path};
+use pa_tui::interactive::{InteractiveOptions, ModelSelection, SessionSelection, UiMode};
 
 use crate::config;
 use crate::mode::RunOptions;
-use pa_core::session::discovery::{resolve_session_path, ResolvedSession};
-use pa_tui::interactive::{InteractiveOptions, ModelSelection, SessionSelection, UiMode};
 
 mod daemon;
 

@@ -6,14 +6,17 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::workspace_trust::WorkspaceTrustStatus;
-
 use super::load::from_value_lenient;
 use super::merge::{deep_merge, migrate};
 use super::storage::{SettingsScope, SettingsStorage};
 use super::types::{
-    QueueModeSetting, Settings, ThinkingLevelSetting, TransportSetting, UpdateChannel,
+    QueueModeSetting,
+    Settings,
+    ThinkingLevelSetting,
+    TransportSetting,
+    UpdateChannel,
 };
+use crate::workspace_trust::WorkspaceTrustStatus;
 
 pub const RECENT_MODELS_LIMIT: usize = 20;
 pub const DEFAULT_IDLE_EVICTION_MINUTES: u64 = 90;

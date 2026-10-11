@@ -9,12 +9,25 @@ use std::time::Duration;
 
 use pa_agent::stream::{LlmContext, StreamFn, StreamRequestOptions};
 use pa_agent::types::{
-    AssistantContent, AssistantMessage, Message, Model, StopReason, UserContent, UserMessage,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    Model,
+    StopReason,
+    UserContent,
+    UserMessage,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::wire::{
-    FailureReason, Finality, ResultText, Terminal, UnknownReason, Usage, ZeroCost, MAX_SAFE_INTEGER,
+    FailureReason,
+    Finality,
+    MAX_SAFE_INTEGER,
+    ResultText,
+    Terminal,
+    UnknownReason,
+    Usage,
+    ZeroCost,
 };
 
 const MAX_COST: f64 = 1e15;

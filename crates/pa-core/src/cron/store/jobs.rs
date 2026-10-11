@@ -5,16 +5,32 @@
 use uuid::Uuid;
 
 use super::state::{
-    claim_due_in_state, compare_optional_iso, normalize_optional_label,
-    recover_interrupted_in_state, resolve_path,
+    claim_due_in_state,
+    compare_optional_iso,
+    normalize_optional_label,
+    recover_interrupted_in_state,
+    resolve_path,
 };
 use super::{
-    iso_from_millis, now_millis, AgentCronDispatch, AgentCronJobStore, CancelJobsFilter,
-    CreateAgentCronJobInput, DispatchResultOptions, RecordRunOptions, SessionBinding,
+    AgentCronDispatch,
+    AgentCronJobStore,
+    CancelJobsFilter,
+    CreateAgentCronJobInput,
+    DispatchResultOptions,
+    RecordRunOptions,
+    SessionBinding,
+    iso_from_millis,
+    now_millis,
 };
 use crate::cron::{
-    is_due_job, next_run_at_for_schedule, next_run_at_in_phase, parse_agent_cron_schedule,
-    parse_iso_millis, AgentCronJob, JobStatus, ScheduleKind,
+    AgentCronJob,
+    JobStatus,
+    ScheduleKind,
+    is_due_job,
+    next_run_at_for_schedule,
+    next_run_at_in_phase,
+    parse_agent_cron_schedule,
+    parse_iso_millis,
 };
 
 impl AgentCronJobStore {
@@ -610,10 +626,12 @@ mod tests {
         let now = 1_700_000_000_000;
         let job = store.create(&input("tick", "every 10m", now)).unwrap();
         let scheduled_next = now + 600_000;
-        assert!(store
-            .defer_next_run(&job.id, now + 60_000)
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .defer_next_run(&job.id, now + 60_000)
+                .unwrap()
+                .is_none()
+        );
         let current = store.list().pop().expect("job kept");
         assert_eq!(
             crate::cron::parse_iso_millis(current.next_run_at.as_deref().unwrap()),
@@ -628,10 +646,12 @@ mod tests {
             crate::cron::parse_iso_millis(updated.next_run_at.as_deref().unwrap()),
             Some(deferred)
         );
-        assert!(store
-            .defer_next_run(&job.id, now + 120_000)
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .defer_next_run(&job.id, now + 120_000)
+                .unwrap()
+                .is_none()
+        );
         let current = store.list().pop().expect("job kept");
         assert_eq!(
             crate::cron::parse_iso_millis(current.next_run_at.as_deref().unwrap()),
@@ -640,9 +660,11 @@ mod tests {
         // Cancelled jobs are never deferred. Fresh clock: the jobs file merges on
         // `updatedAt` freshness, so a stale stamp would lose the cancel.
         store.cancel(&job.id, now_millis()).unwrap();
-        assert!(store
-            .defer_next_run(&job.id, now + 2_000_000)
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .defer_next_run(&job.id, now + 2_000_000)
+                .unwrap()
+                .is_none()
+        );
     }
 }

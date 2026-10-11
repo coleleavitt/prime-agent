@@ -1,8 +1,9 @@
 //! The TS log-message regexes (src/cli/incident.ts) the classifier
 //! matches against, kept 1:1 with their TypeScript sources.
 
-use regex::Regex;
 use std::sync::LazyLock;
+
+use regex::Regex;
 
 pub(super) static WORKER_SOCKET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:prime-agent-)?worker-[0-9a-f]+-([0-9a-f]{12})(?:\.sock)?$")

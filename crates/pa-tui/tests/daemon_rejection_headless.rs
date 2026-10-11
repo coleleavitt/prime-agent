@@ -26,10 +26,15 @@ use std::sync::{Arc, Mutex};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The real worker admission refusal (`QUEUED_INPUT_SUSPENDED`), the stand-in for every daemon-side
 /// "alive but refusing THIS request".

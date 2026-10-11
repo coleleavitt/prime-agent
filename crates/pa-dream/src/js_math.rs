@@ -190,11 +190,7 @@ fn rem_pio2_medium(x: f64) -> (i32, f64, f64) {
         }
     }
     let y1 = (r - y0) - w;
-    if hx < 0 {
-        (-n, -y0, -y1)
-    } else {
-        (n, y0, y1)
-    }
+    if hx < 0 { (-n, -y0, -y1) } else { (n, y0, y1) }
 }
 
 /// V8 `__kernel_cos`.

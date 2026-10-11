@@ -7,11 +7,11 @@
 
 use std::path::Path;
 
+use ratatui::style::Style;
 use serde_json::Value;
 
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 mod context_tree;
 #[cfg(test)]
@@ -19,8 +19,7 @@ mod tests;
 
 #[cfg(test)]
 use context_tree::truncate_plain;
-
-pub use context_tree::{context_tree_rows, ContextTreeScope};
+pub use context_tree::{ContextTreeScope, context_tree_rows};
 
 /// One styled segment of a client info row: text plus its theme color
 /// (`None` keeps the default foreground).

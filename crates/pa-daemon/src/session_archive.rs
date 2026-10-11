@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_core::settings::SessionArchivePolicy;
 
 use crate::lease::canonical_session_path;
@@ -274,8 +274,9 @@ pub(crate) async fn run_archive_sweep(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
+
+    use super::*;
 
     fn candidate(id: &str, days_ago: u64, protected: bool, now: SystemTime) -> SweepCandidate {
         SweepCandidate {

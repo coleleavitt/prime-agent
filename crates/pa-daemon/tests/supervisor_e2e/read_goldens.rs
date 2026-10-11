@@ -81,9 +81,11 @@ fn session_stats_and_header_match_live_daemon_goldens() {
     assert_eq!(header["version"], 3);
     assert_eq!(header["id"], session_uuid.as_str());
     assert_eq!(header["cwd"], dir.path().to_string_lossy().to_string());
-    assert!(header["timestamp"]
-        .as_str()
-        .is_some_and(|v| v.ends_with('Z')));
+    assert!(
+        header["timestamp"]
+            .as_str()
+            .is_some_and(|v| v.ends_with('Z'))
+    );
     let header_keys: Vec<&str> = header
         .as_object()
         .expect("header object")
@@ -108,10 +110,12 @@ fn session_stats_and_header_match_live_daemon_goldens() {
     assert_eq!(stats["success"], true, "get_session_stats failed: {stats}");
     let data = &stats["data"];
     assert_eq!(data["sessionId"], session_uuid.as_str());
-    assert!(data["sessionFile"]
-        .as_str()
-        .and_then(|path| Path::new(path).extension())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")));
+    assert!(
+        data["sessionFile"]
+            .as_str()
+            .and_then(|path| Path::new(path).extension())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+    );
     assert_eq!(data["userMessages"], 1);
     assert_eq!(data["assistantMessages"], 1);
     assert_eq!(data["toolCalls"], 0);

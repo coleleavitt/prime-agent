@@ -3,15 +3,20 @@
 //! session-end finalize surface, and the kernel `telemetry.emit` bridge.
 use std::time::Duration;
 
-use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_agent::stream::AssistantMessageEvent;
 use pa_agent::types::{
-    AgentMessage, AssistantContent, Message as LoopMessage, StopReason, TextContent,
-    ToolResultContent, Usage,
+    AgentMessage,
+    AssistantContent,
+    Message as LoopMessage,
+    StopReason,
+    TextContent,
+    ToolResultContent,
+    Usage,
 };
 use pa_telemetry::{MockSink, TelemetryClient, TelemetryClientConfig};
 
 use super::*;
+use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 
 /// Tests that resolve the env-gated switch need the three override vars
 /// cleared (the Cargo test config sets `DO_NOT_TRACK`); restore after.
@@ -256,9 +261,11 @@ async fn emits_aggregate_metrics_without_content() {
     );
     // Deferred finalize: AgentEnd alone must not seal the run yet (the
     // post-run compaction window stays open).
-    assert!(event_properties(&fixture.mock, "agent run completed")
-        .await
-        .is_empty());
+    assert!(
+        event_properties(&fixture.mock, "agent run completed")
+            .await
+            .is_empty()
+    );
 
     fixture.clock.set(1_200);
     let telemetry = SessionTelemetry::detached(
@@ -320,9 +327,11 @@ async fn post_run_compaction_counts_into_the_open_run() {
             messages: Vec::new(),
         },
     );
-    assert!(event_properties(&fixture.mock, "agent run completed")
-        .await
-        .is_empty());
+    assert!(
+        event_properties(&fixture.mock, "agent run completed")
+            .await
+            .is_empty()
+    );
 
     // The scheduled compaction drains between AgentEnd and the next run.
     let telemetry = SessionTelemetry::detached(
@@ -371,9 +380,10 @@ async fn compaction_between_runs_is_not_counted() {
     emit(&fixture, AgentEvent::AgentStart);
     telemetry.note_compaction(Some(45));
     let runs = event_properties(&fixture.mock, "agent run completed").await;
-    assert!(runs
-        .iter()
-        .all(|run| run["compaction_count"] == serde_json::json!(0)));
+    assert!(
+        runs.iter()
+            .all(|run| run["compaction_count"] == serde_json::json!(0))
+    );
 }
 
 #[tokio::test]
@@ -1135,11 +1145,15 @@ async fn legacy_events_reach_the_analytics_endpoint_in_the_ts_shape() {
             );
         }
         assert_eq!(properties["execution_mode"], "interactive");
-        assert!(["linux", "darwin", "win32", "freebsd", "android"]
-            .contains(&properties["os_family"].as_str().unwrap()));
         assert!(
-            ["x64", "arm64", "ia32", "arm", "s390x", "ppc64", "riscv64", "loong64"]
-                .contains(&properties["architecture"].as_str().unwrap())
+            ["linux", "darwin", "win32", "freebsd", "android"]
+                .contains(&properties["os_family"].as_str().unwrap())
+        );
+        assert!(
+            [
+                "x64", "arm64", "ia32", "arm", "s390x", "ppc64", "riscv64", "loong64"
+            ]
+            .contains(&properties["architecture"].as_str().unwrap())
         );
     }
     let run = events

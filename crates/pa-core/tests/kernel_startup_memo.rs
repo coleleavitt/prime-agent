@@ -35,6 +35,7 @@
 //! venv); like `kernel_stop_revive.rs`, these tests skip (with a note) on
 //! machines without a live install so the suite stays hermetic elsewhere.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,7 +43,6 @@ use std::time::Duration;
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{ExecuteOptions, ExecuteStatus};
 use pa_core::kernel::state_snapshot::snapshot_path_in;
-use std::os::unix::fs::PermissionsExt;
 
 /// The kernel Python with prime-agent-runtime installed (see
 /// `kernel_stop_revive.rs`); skipped with a note when absent.

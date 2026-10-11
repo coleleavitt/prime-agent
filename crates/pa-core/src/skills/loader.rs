@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use super::Skill;
 use super::diagnostics::{ResourceCollision, ResourceDiagnostic};
 use super::discovery::{load_skill_from_file, load_skills_from_dir};
-use super::Skill;
 
 pub struct LoadSkillsOptions {
     /// Working directory for project-local skills.
@@ -242,9 +242,10 @@ pub fn load_skills(options: &LoadSkillsOptions) -> LoadSkillsResult {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::skills::SourceScope;
-    use std::fs;
 
     fn write_skill(dir: &Path, name: &str, description: &str) {
         let skill_dir = dir.join(name);
@@ -282,10 +283,12 @@ mod tests {
         // The user-scope skill wins; the project copy reports a collision.
         let beta = result.skills.iter().find(|s| s.name == "beta").unwrap();
         assert_eq!(beta.source_info.scope, SourceScope::User);
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|d| matches!(d, ResourceDiagnostic::Collision { .. })));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, ResourceDiagnostic::Collision { .. }))
+        );
     }
 
     #[test]

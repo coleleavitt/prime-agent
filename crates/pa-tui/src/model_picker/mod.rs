@@ -8,8 +8,11 @@ mod render;
 use std::collections::{HashMap, HashSet};
 
 use pa_types::ai::{
-    clamp_thinking_level, get_supported_thinking_levels, Model, ModelThinkingLevel,
+    Model,
+    ModelThinkingLevel,
     PRIME_INFERENCE_PROVIDER_ID,
+    clamp_thinking_level,
+    get_supported_thinking_levels,
 };
 
 use crate::keybindings::KeybindingsManager;
@@ -77,7 +80,7 @@ mod search;
 mod sort;
 
 use scope::ModelScope;
-use search::{score_model_search, SearchMatch};
+use search::{SearchMatch, score_model_search};
 use sort::{natural_cmp, version_desc, version_key};
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::prime_inference::{normalize_base_url, string_field, DEFAULT_PRIME_API_BASE_URL};
+use super::prime_inference::{DEFAULT_PRIME_API_BASE_URL, normalize_base_url, string_field};
 
 /// What a directory context selects for Prime Inference.
 #[derive(Clone, PartialEq, Eq)]
@@ -187,8 +187,9 @@ pub(crate) fn resolve_directory_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     /// A home with the global `.prime` (saved contexts `customer` on
     /// production and `dev` off it) and a repo at `home/code/repo`.

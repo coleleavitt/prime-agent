@@ -624,13 +624,15 @@ mod tests {
             field_ids,
             ["GITHUB_PAT_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"]
         );
-        assert!(github
-            .setup
-            .fields
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .all(|f| f.credential_set.as_deref() == Some("github-pat")));
+        assert!(
+            github
+                .setup
+                .fields
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .all(|f| f.credential_set.as_deref() == Some("github-pat"))
+        );
     }
 
     /// Fail-closed: one malformed entry rejects the ENTIRE file (plugins do

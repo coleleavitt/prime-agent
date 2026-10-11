@@ -7,7 +7,7 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Run one request through the one-shot: (exit code, stdout reply, stderr).
 fn one_shot(request: &Value) -> (Option<i32>, Option<Value>, String) {

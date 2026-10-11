@@ -9,12 +9,15 @@ use std::collections::{HashMap, HashSet};
 
 use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
 
-use crate::session::{create_custom_message, parse_session_entries};
-
 use super::{
-    AGENT_MESSAGE_CUSTOM_TYPE, AGENT_MESSAGE_KEY_FIELD, NOTICE_CONSUMED_CUSTOM_TYPE,
-    NOTICE_CONSUMED_KEYS_FIELD, NOTICE_KEY_FIELD, TERMINAL_NOTICE_CUSTOM_TYPES,
+    AGENT_MESSAGE_CUSTOM_TYPE,
+    AGENT_MESSAGE_KEY_FIELD,
+    NOTICE_CONSUMED_CUSTOM_TYPE,
+    NOTICE_CONSUMED_KEYS_FIELD,
+    NOTICE_KEY_FIELD,
+    TERMINAL_NOTICE_CUSTOM_TYPES,
 };
+use crate::session::{create_custom_message, parse_session_entries};
 
 /// One file-backed terminal-notice row.
 pub(super) struct FileNoticeRow {

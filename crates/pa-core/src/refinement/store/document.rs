@@ -21,8 +21,13 @@ use serde_json::{Map, Value};
 
 use super::pyfmt;
 use crate::refinement::{
-    empty_harness_state, HarnessEntry, HarnessRefinementEvent, HarnessScope, HarnessState,
-    RefinementKind, REFINEMENT_KINDS,
+    HarnessEntry,
+    HarnessRefinementEvent,
+    HarnessScope,
+    HarnessState,
+    REFINEMENT_KINDS,
+    RefinementKind,
+    empty_harness_state,
 };
 
 /// Entry keys the store models; every other key on an entry is carried in
@@ -360,8 +365,9 @@ pub(crate) fn write_harness_state_file(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn temp_store() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -516,10 +522,12 @@ mod tests {
         std::fs::write(&real, "{}").unwrap();
         std::os::unix::fs::symlink(&real, &path).unwrap();
         write_harness_state_file(&path, &empty_harness_state()).unwrap();
-        assert!(std::fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(
             std::fs::read_to_string(&real).unwrap(),
             format!(

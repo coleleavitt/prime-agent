@@ -24,8 +24,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
-use pa_tui::interactive::SessionSelection;
-use pa_tui::interactive::UiMode;
+use pa_tui::interactive::{SessionSelection, UiMode};
 
 struct Supervisor {
     child: Child,
@@ -134,15 +133,18 @@ fn write_fixture(
     }
     let _ = write!(content, ",\"rlmDepth\":{rlm_depth}}}");
     content.push('\n');
-    let _ = writeln!(content,
+    let _ = writeln!(
+        content,
         "{{\"type\":\"session_info\",\"id\":\"{id}-info\",\"timestamp\":\"2024-01-01T00:00:00.000Z\",\"name\":\"{name}\"}}"
     );
     for (index, (user, assistant)) in turns.iter().enumerate() {
-        let _ = writeln!(content,
+        let _ = writeln!(
+            content,
             "{{\"type\":\"message\",\"id\":\"{id}-m{index}u\",\"timestamp\":\"2024-01-01T00:00:0{index}.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"{user}\",\"timestamp\":{}}}}}",
             index * 1000
         );
-        let _ = writeln!(content,
+        let _ = writeln!(
+            content,
             "{{\"type\":\"message\",\"id\":\"{id}-m{index}a\",\"timestamp\":\"2024-01-01T00:00:0{index}.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{assistant}\"}}],\"timestamp\":{}}}}}",
             index * 1000 + 1
         );

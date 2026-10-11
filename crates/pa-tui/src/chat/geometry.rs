@@ -1,7 +1,10 @@
 //! Shared chat framing decisions and count-only geometry.
 use super::{AssistantMessage, Detail, MessageBlock};
 use crate::markdown::{
-    markdown_row_count, markdown_row_count_tagged, MarkdownBlockCache, MarkdownStyle,
+    MarkdownBlockCache,
+    MarkdownStyle,
+    markdown_row_count,
+    markdown_row_count_tagged,
 };
 use crate::theme::{Theme, ThemeColor};
 

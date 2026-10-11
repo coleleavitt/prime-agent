@@ -15,33 +15,49 @@ use std::sync::{Arc, Mutex};
 
 use pa_dream::child::{ChildRuntimeScope, RunAgentStatus};
 use pa_dream::dream_loop::{
-    dream_run_id, priming_tree_id, run_dream_loop, DreamHandlerCalls, DreamLoopOptions,
-    DreamLoopResult, DreamRoundRecord, DreamRoundTokens,
+    DreamHandlerCalls,
+    DreamLoopOptions,
+    DreamLoopResult,
+    DreamRoundRecord,
+    DreamRoundTokens,
+    dream_run_id,
+    priming_tree_id,
+    run_dream_loop,
 };
-use pa_dream::dreams::{dreams_path, read_dreams_log, DreamsLogContext, DreamsLogLine};
+use pa_dream::dreams::{DreamsLogContext, DreamsLogLine, dreams_path, read_dreams_log};
 use pa_dream::improve::{CandidateOrigin, CandidateReason, DreamerKind};
 use pa_dream::json;
 use pa_dream::llm::{
-    DreamChildRole, GuidanceInsights, LlmProposer, LlmProposerOptions, SemanticGuidance,
-    DREAMER_PROMPT_HEADER, GUIDANCE_PROMPT_HEADER, PROPOSER_PROMPT_HEADER,
+    DREAMER_PROMPT_HEADER,
+    DreamChildRole,
+    GUIDANCE_PROMPT_HEADER,
+    GuidanceInsights,
+    LlmProposer,
+    LlmProposerOptions,
+    PROPOSER_PROMPT_HEADER,
+    SemanticGuidance,
 };
 use pa_dream::llm_loop::{
-    merge_primed_rollouts, run_dream_loop_with_agent, DreamInitialRollout,
-    DreamLoopWithAgentOptions, DreamPhase, DreamProgressEvent,
+    DreamInitialRollout,
+    DreamLoopWithAgentOptions,
+    DreamPhase,
+    DreamProgressEvent,
+    merge_primed_rollouts,
+    run_dream_loop_with_agent,
 };
 use pa_dream::objective::DEFAULT_OBJECTIVE;
-use pa_dream::policy::{policy_id, ExplorationPolicy, StopRule, DEFAULT_POLICY, PRIMING_DIVERSE};
+use pa_dream::policy::{DEFAULT_POLICY, ExplorationPolicy, PRIMING_DIVERSE, StopRule, policy_id};
 use pa_dream::proposer::{ProposalRejectReason, ProposalTally};
-use pa_dream::rejections::{read_rejections, rejections_path, RejectionRole};
+use pa_dream::rejections::{RejectionRole, read_rejections, rejections_path};
 use pa_dream::rng::{Seed, SeededRng};
-use pa_dream::rollout::{run_online_exploration, ExploreOptions};
+use pa_dream::rollout::{ExploreOptions, run_online_exploration};
 use pa_dream::store::{list_trees, read_tree};
 use pa_dream::task::{ArtifactShapeError, DynTask, Evaluation, ProposeParams, ScoredTask};
 use pa_dream::tasks::autocorrelation::Autocorrelation;
-use pa_dream::tasks::{resolve_task, task_prompt_context, DreamTaskId};
-use serde_json::{json, Value};
-use support::spans::{capture, named, SpanRecord};
-use support::stub::{Answer, Stub, DEFAULT_INSIGHTS};
+use pa_dream::tasks::{DreamTaskId, resolve_task, task_prompt_context};
+use serde_json::{Value, json};
+use support::spans::{SpanRecord, capture, named};
+use support::stub::{Answer, DEFAULT_INSIGHTS, Stub};
 use tokio_util::sync::CancellationToken;
 
 const FIXED_CLOCK: u64 = 1_700_000_000_000;
@@ -324,13 +340,15 @@ fn the_local_path_is_the_local_loop_byte_for_byte_with_priming_charged_to_round_
         the(&spans, "dream.run").attr("dream.priming_policies"),
         Some(&json!(2))
     );
-    assert!(result
-        .rounds
-        .iter()
-        .all(|round| round.tokens == DreamRoundTokens::default()
-            && round.handler_calls == DreamHandlerCalls::default()
-            && round.proposals == ProposalTally::default()
-            && round.agent_generated_calls == 0));
+    assert!(
+        result
+            .rounds
+            .iter()
+            .all(|round| round.tokens == DreamRoundTokens::default()
+                && round.handler_calls == DreamHandlerCalls::default()
+                && round.proposals == ProposalTally::default()
+                && round.agent_generated_calls == 0)
+    );
     assert!(!dir.path().join("rejections").exists());
     // The fixed control charges the same priming without freezing a pool.
     let fixed_dir = tempfile::tempdir().unwrap();
@@ -511,12 +529,14 @@ fn a_dreamed_winner_on_probation_is_reverted_and_the_next_dreamer_is_told() {
             true
         )
     );
-    assert!(result.rounds[3]
-        .dreaming
-        .as_ref()
-        .unwrap()
-        .probation
-        .is_none());
+    assert!(
+        result.rounds[3]
+            .dreaming
+            .as_ref()
+            .unwrap()
+            .probation
+            .is_none()
+    );
     assert_eq!(result.probation_reverts, 1);
     assert_eq!(result.final_policy_id, initial);
     assert_eq!(
@@ -680,10 +700,12 @@ fn the_fixed_control_never_dreams_and_shares_iteration_0_with_a_dreaming_run() {
     }
     let redeploys = named(&spans, "dream.redeploy");
     assert_eq!(redeploys.len(), 2);
-    assert!(redeploys
-        .iter()
-        .all(|span| span.attr("dream.fixed_policy") == Some(&json!(true))
-            && span.attr("dream.policy_id") == Some(&json!(fixed.initial_policy_id))));
+    assert!(
+        redeploys
+            .iter()
+            .all(|span| span.attr("dream.fixed_policy") == Some(&json!(true))
+                && span.attr("dream.policy_id") == Some(&json!(fixed.initial_policy_id)))
+    );
 
     let dreaming_stub = Stub::new()
         .proposer(|_| Answer::ok(ARTIFACT, 10))
@@ -745,12 +767,14 @@ fn per_role_tokens_and_calls_sum_to_the_run_totals_and_the_initial_policy_heads_
             .collect::<Vec<_>>(),
         vec![0, 300, 300]
     );
-    assert!(result
-        .rounds
-        .iter()
-        .all(|round| round.tokens.rollout == u64::from(round.probes) * 7
-            && round.tokens.guidance == 0
-            && round.handler_calls.guidance == 0));
+    assert!(
+        result
+            .rounds
+            .iter()
+            .all(|round| round.tokens.rollout == u64::from(round.probes) * 7
+                && round.tokens.guidance == 0
+                && round.handler_calls.guidance == 0)
+    );
 }
 
 #[test]
@@ -812,9 +836,12 @@ fn every_child_result_is_counted_per_round_and_rejections_land_under_the_run_key
             .map(|round| round.proposals.local_fallbacks)
             .sum::<u64>()
     );
-    assert!(logged
-        .iter()
-        .all(|line| line.input.reason == ProposalRejectReason::Shape && line.input.excerpt == bad));
+    assert!(
+        logged
+            .iter()
+            .all(|line| line.input.reason == ProposalRejectReason::Shape
+                && line.input.excerpt == bad)
+    );
     let mut iterations: Vec<u32> = logged.iter().map(|line| line.input.iteration).collect();
     iterations.sort_unstable();
     iterations.dedup();
@@ -979,9 +1006,11 @@ fn a_shared_initial_rollout_is_adopted_as_round_1_and_a_missing_one_is_refused()
         }),
         ..options(&missing, task.as_ref(), empty.path())
     });
-    assert!(refused.err().is_some_and(|error| error
-        .to_string()
-        .contains("shared initial rollout nope is not in the store")));
+    assert!(refused.err().is_some_and(|error| {
+        error
+            .to_string()
+            .contains("shared initial rollout nope is not in the store")
+    }));
     assert_eq!(missing.total_calls(), 0);
 }
 
@@ -1063,16 +1092,20 @@ fn the_dreams_log_verdicts_and_spans_carry_every_step_and_the_dreamer_sees_its_h
         .collect();
     let candidates = named(&spans, "dream.candidate");
     assert_eq!(candidates.len(), 8);
-    assert!(candidates
-        .iter()
-        .all(|span| span.parent.is_some_and(|id| dream_ids.contains(&id))));
+    assert!(
+        candidates
+            .iter()
+            .all(|span| span.parent.is_some_and(|id| dream_ids.contains(&id)))
+    );
     assert_eq!(
         candidates
             .iter()
             .map(|span| span.attr("dream.origin").cloned().unwrap())
             .collect::<Vec<_>>(),
-        ["llm", "local", "local", "local", "llm", "local", "local", "local"]
-            .map(|origin| json!(origin))
+        [
+            "llm", "local", "local", "local", "llm", "local", "local", "local"
+        ]
+        .map(|origin| json!(origin))
     );
     let prompts = stub.prompts(DreamChildRole::Dreamer);
     assert_eq!(prompts.len(), 2);
@@ -1134,9 +1167,12 @@ fn a_run_label_keys_the_logs_and_the_child_scope_lands_on_the_root() {
     );
     assert_eq!(result.run_id, run_id);
     let rejections = read_rejections(&rejections_path(dir.path(), &run_id)).unwrap();
-    assert!(rejections
-        .iter()
-        .any(|line| line.input.role.is_none() && line.input.reason == ProposalRejectReason::Shape));
+    assert!(
+        rejections
+            .iter()
+            .any(|line| line.input.role.is_none()
+                && line.input.reason == ProposalRejectReason::Shape)
+    );
     assert_eq!(
         rejections
             .iter()
@@ -1155,16 +1191,19 @@ fn a_run_label_keys_the_logs_and_the_child_scope_lands_on_the_root() {
     );
     let dreaming = result.rounds[1].dreaming.as_ref().unwrap();
     assert_eq!(dreaming.dreamer, DreamerKind::Local);
-    assert!(dreaming
-        .candidate_verdicts
-        .iter()
-        .all(|verdict| verdict.origin == CandidateOrigin::Local));
+    assert!(
+        dreaming
+            .candidate_verdicts
+            .iter()
+            .all(|verdict| verdict.origin == CandidateOrigin::Local)
+    );
     let lines = read_dreams_log(&dreams_path(dir.path(), &run_id)).unwrap();
     assert!(!lines.is_empty());
     let text = std::fs::read_to_string(dreams_path(dir.path(), &run_id)).unwrap();
-    assert!(text
-        .lines()
-        .all(|line| line.contains(r#""experimentId":"exp 1","arm":"dream""#)));
+    assert!(
+        text.lines()
+            .all(|line| line.contains(r#""experimentId":"exp 1","arm":"dream""#))
+    );
     let run = the(&spans, "dream.run");
     for (key, value) in [
         ("dream.run_id", json!(run_id)),
@@ -1324,9 +1363,11 @@ fn injected_insights_reach_every_later_prompt_after_the_header_and_leave_iterati
     let guided_prompts = guided.prompts(DreamChildRole::Proposer);
     let plain_prompts = plain.prompts(DreamChildRole::Proposer);
     assert_eq!(guided_prompts[..first], plain_prompts[..first]);
-    assert!(!plain_prompts
-        .iter()
-        .any(|prompt| prompt.contains(GUIDANCE_PREFIX)));
+    assert!(
+        !plain_prompts
+            .iter()
+            .any(|prompt| prompt.contains(GUIDANCE_PREFIX))
+    );
     let later = &guided_prompts[first..];
     assert!(!later.is_empty());
     for prompt in later {
@@ -1338,10 +1379,12 @@ fn injected_insights_reach_every_later_prompt_after_the_header_and_leave_iterati
     assert!(later.iter().any(|prompt| prompt.contains("Iteration 1:")));
     assert!(later.iter().any(|prompt| prompt.contains("Iteration 2:")));
     assert_eq!(guided.calls(DreamChildRole::Guidance), 0);
-    assert!(guided_run
-        .rounds
-        .iter()
-        .all(|round| round.tokens.guidance == 0 && round.handler_calls.guidance == 0));
+    assert!(
+        guided_run
+            .rounds
+            .iter()
+            .all(|round| round.tokens.guidance == 0 && round.handler_calls.guidance == 0)
+    );
     assert_eq!(
         *inputs.lock().unwrap(),
         vec![
@@ -1370,9 +1413,11 @@ fn one_guidance_child_per_iteration_is_spanned_and_accounted() {
     });
     assert_eq!(stub.calls(DreamChildRole::Guidance), 2);
     let prompts = stub.prompts(DreamChildRole::Guidance);
-    assert!(prompts
-        .iter()
-        .all(|prompt| prompt.starts_with(GUIDANCE_PROMPT_HEADER) && prompt.contains("\"trees\"")));
+    assert!(
+        prompts.iter().all(
+            |prompt| prompt.starts_with(GUIDANCE_PROMPT_HEADER) && prompt.contains("\"trees\"")
+        )
+    );
     assert_eq!(
         result
             .rounds
@@ -1412,12 +1457,16 @@ fn one_guidance_child_per_iteration_is_spanned_and_accounted() {
     assert!(guidance.iter().all(|span| span.parent == Some(run.id)));
     let first = usize::try_from(result.rounds[0].handler_calls.proposer).unwrap();
     let proposer = stub.prompts(DreamChildRole::Proposer);
-    assert!(proposer[first..]
-        .iter()
-        .all(|prompt| prompt.contains(DEFAULT_INSIGHTS)));
-    assert!(!proposer[..first]
-        .iter()
-        .any(|prompt| prompt.contains(GUIDANCE_PREFIX)));
+    assert!(
+        proposer[first..]
+            .iter()
+            .all(|prompt| prompt.contains(DEFAULT_INSIGHTS))
+    );
+    assert!(
+        !proposer[..first]
+            .iter()
+            .any(|prompt| prompt.contains(GUIDANCE_PREFIX))
+    );
 }
 
 #[test]
@@ -1443,16 +1492,20 @@ fn a_failing_writer_falls_back_to_empty_guidance_and_an_aborted_one_aborts_the_r
             .collect::<Vec<_>>(),
         vec![(0, 0), (2, 8), (2, 8)]
     );
-    assert!(!failing
-        .prompts(DreamChildRole::Proposer)
-        .iter()
-        .any(|prompt| prompt.contains(GUIDANCE_PREFIX)));
+    assert!(
+        !failing
+            .prompts(DreamChildRole::Proposer)
+            .iter()
+            .any(|prompt| prompt.contains(GUIDANCE_PREFIX))
+    );
     let guidance = named(&spans, "dream.llm_guidance");
     assert_eq!(guidance.len(), 2);
-    assert!(guidance
-        .iter()
-        .all(|span| span.attr("dream.llm_fallback") == Some(&json!(true))
-            && span.attr("dream.tokens") == Some(&json!(8))));
+    assert!(
+        guidance
+            .iter()
+            .all(|span| span.attr("dream.llm_fallback") == Some(&json!(true))
+                && span.attr("dream.tokens") == Some(&json!(8)))
+    );
 
     let aborting = Stub::new()
         .proposer(|_| Answer::ok(ARTIFACT, 10))
@@ -1489,14 +1542,13 @@ fn every_child_prompt_starts_with_its_role_header() {
     assert!(!stub.prompts(DreamChildRole::Proposer).is_empty());
     assert_eq!(stub.prompts(DreamChildRole::Dreamer).len(), 1);
     assert_eq!(stub.prompts(DreamChildRole::Guidance).len(), 1);
-    assert!(stub
-        .prompts(DreamChildRole::Proposer)
-        .iter()
-        .all(|prompt| prompt
+    assert!(stub.prompts(DreamChildRole::Proposer).iter().all(|prompt| {
+        prompt
             .lines()
             .next()
             .unwrap()
-            .starts_with(PROPOSER_PROMPT_HEADER)));
+            .starts_with(PROPOSER_PROMPT_HEADER)
+    }));
     assert_eq!(
         stub.prompts(DreamChildRole::Dreamer)[0].lines().next(),
         Some(DREAMER_PROMPT_HEADER)

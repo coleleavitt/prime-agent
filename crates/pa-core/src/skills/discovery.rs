@@ -4,10 +4,15 @@ use std::path::{Path, PathBuf};
 
 use super::diagnostics::ResourceDiagnostic;
 use super::frontmatter::parse_frontmatter;
-use super::skill_markdown_name;
 use super::{
-    create_synthetic_source_info, validate_skill_description, validate_skill_name, Skill,
-    SkillKind, SkillPythonMetadata, SourceScope,
+    Skill,
+    SkillKind,
+    SkillPythonMetadata,
+    SourceScope,
+    create_synthetic_source_info,
+    skill_markdown_name,
+    validate_skill_description,
+    validate_skill_name,
 };
 
 /// Sources that pick up a synthetic scope.

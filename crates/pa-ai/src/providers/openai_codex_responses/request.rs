@@ -4,9 +4,8 @@
 use base64::Engine as _;
 use serde_json::Value;
 
-use crate::utils_inner::diagnostics::now_ms;
-
 use crate::providers::openai_codex_responses::websocket::OPENAI_BETA_RESPONSES_WEBSOCKETS;
+use crate::utils_inner::diagnostics::now_ms;
 
 pub const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub const JWT_CLAIM_PATH: &str = "https://api.openai.com/auth";
@@ -221,8 +220,10 @@ mod tests {
         };
         assert_eq!(get("OpenAI-Beta"), OPENAI_BETA_RESPONSES_WEBSOCKETS);
         assert_eq!(get("session_id"), "req-1");
-        assert!(!headers
-            .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case("accept")));
+        assert!(
+            !headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("accept"))
+        );
     }
 }

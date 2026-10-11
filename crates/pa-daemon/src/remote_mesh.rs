@@ -7,13 +7,13 @@
 //! loop; a scan runs at most once per TTL when a consumer asks, and
 //! concurrent consumers coalesce onto the in-flight scan.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pa_types::daemon::agent_roster::AgentRosterEntry;
-use serde_json::{json, Map, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 
 /// Session facts a remote daemon publishes over the mesh (TS
 /// `RemoteAgentSessionSummary`; the discovery source's snapshot shape).

@@ -1,9 +1,8 @@
 //! Layered system-prompt assembly: static layer files first (cacheable),
 //! every session-specific value last. See the parent module docs.
 
-use crate::skills::{format_skills_for_prompt, Skill};
-
 use super::layers;
+use crate::skills::{Skill, format_skills_for_prompt};
 
 /// The bundled skill the refinement trigger guidance keys on.
 pub const REFINE_SKILL_NAME: &str = "refine";
@@ -410,9 +409,10 @@ fn format_generic_mcp_guidance(servers: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::skills::{create_synthetic_source_info, SkillKind, SourceScope};
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::skills::{SkillKind, SourceScope, create_synthetic_source_info};
 
     fn skill(name: &str, import: Option<&str>) -> Skill {
         Skill {
@@ -498,10 +498,14 @@ mod tests {
             right.assembled[..right.cached_prefix_len]
         );
         assert_eq!(left.cached_prefix_len, right.cached_prefix_len);
-        assert!(right.assembled[right.cached_prefix_len..]
-            .contains("Enabled generic MCP servers: `slack`"));
-        assert!(right.assembled[right.cached_prefix_len..]
-            .contains("You are a child agent spawned by the lead."));
+        assert!(
+            right.assembled[right.cached_prefix_len..]
+                .contains("Enabled generic MCP servers: `slack`")
+        );
+        assert!(
+            right.assembled[right.cached_prefix_len..]
+                .contains("You are a child agent spawned by the lead.")
+        );
     }
 
     #[test]
@@ -535,12 +539,16 @@ mod tests {
         assert!(names.contains(&"mcp-servers"));
         assert!(names.contains(&"additional-guidance"));
         assert!(breakdown.assembled.contains("# Generic MCP Connections"));
-        assert!(breakdown
-            .assembled
-            .contains("Enabled generic MCP servers: `t`."));
-        assert!(breakdown
-            .assembled
-            .contains("# Additional Guidance\n\n- be careful"));
+        assert!(
+            breakdown
+                .assembled
+                .contains("Enabled generic MCP servers: `t`.")
+        );
+        assert!(
+            breakdown
+                .assembled
+                .contains("# Additional Guidance\n\n- be careful")
+        );
     }
 
     #[test]

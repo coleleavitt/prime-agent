@@ -5,10 +5,10 @@
 
 use serde_json::Value;
 
-use super::layout::{panel_content_width, RowOutput};
+use super::layout::{RowOutput, panel_content_width};
 use super::{ToolCallCard, ToolResultView};
 use crate::chat::Detail;
-use crate::code_preview::{preview_bash_command, CodePreviewLanguage};
+use crate::code_preview::{CodePreviewLanguage, preview_bash_command};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{wrap_text, wrapped_text_count};
 use crate::{Line, Span};
@@ -221,9 +221,10 @@ fn truncation_warning(result: &ToolResultView) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::theme::{ColorMode, Theme};
-    use serde_json::json;
 
     fn theme() -> Theme {
         Theme::builtin("prime", ColorMode::TrueColor)

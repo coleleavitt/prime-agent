@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Supervisor {
     child: Child,
@@ -192,9 +192,11 @@ fn offline_daemon_serves_the_bundled_catalog_fallback() {
         "the bundled catalog must serve as the offline fallback (got {} models)",
         models.len()
     );
-    assert!(models
-        .iter()
-        .any(|model| model["id"] == "mock-1" && model["provider"] == "prime-inference"));
+    assert!(
+        models
+            .iter()
+            .any(|model| model["id"] == "mock-1" && model["provider"] == "prime-inference")
+    );
     let fable = models
         .iter()
         .find(|model| {
@@ -213,10 +215,12 @@ fn offline_daemon_serves_the_bundled_catalog_fallback() {
         .filter_map(Value::as_str)
         .collect();
     assert_eq!(providers, vec!["prime-inference"]);
-    assert!(models.iter().all(|model| !model["id"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("internal/")));
+    assert!(models.iter().all(|model| {
+        !model["id"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("internal/")
+    }));
 
     assert!(
         !agent_dir.join("prime-inference-models-cache.json").exists(),

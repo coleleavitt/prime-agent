@@ -2,9 +2,10 @@
 //! (the layered redesign supersedes TS-prompt parity); the golden pins the Rust prompt itself so
 //! any layer edit is a visible, reviewed change. Regenerate with `PA_UPDATE_GOLDEN=1 cargo test`.
 
-use pa_core::prompts::system_prompt::{build_system_prompt, BuildSystemPromptOptions};
-use pa_core::skills::load_skills_from_dir;
 use std::path::Path;
+
+use pa_core::prompts::system_prompt::{BuildSystemPromptOptions, build_system_prompt};
+use pa_core::skills::load_skills_from_dir;
 
 const GOLDEN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

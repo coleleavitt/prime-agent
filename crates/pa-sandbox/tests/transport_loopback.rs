@@ -6,9 +6,12 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{json_response, oversized_stream, redirect_response, text_response, MockServer};
+use common::{MockServer, json_response, oversized_stream, redirect_response, text_response};
 use pa_sandbox::transport::{
-    ReqwestSandboxTransport, SandboxTransport, TransportRequest, MAX_JSON_BODY_BYTES,
+    MAX_JSON_BODY_BYTES,
+    ReqwestSandboxTransport,
+    SandboxTransport,
+    TransportRequest,
 };
 use pa_sandbox::types::Method;
 use pa_sandbox::{ClientOptions, PrimeSandboxClient, SandboxErrorCode};

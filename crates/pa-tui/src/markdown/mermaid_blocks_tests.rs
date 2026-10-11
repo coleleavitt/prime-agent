@@ -2,10 +2,11 @@
 //! holds, per case, the markdown TS rewrote the assistant text into and the block structure
 //! marked lexed from it (`scripts/mermaid-goldens.mjs`).
 
-use super::mermaid_blocks::{apply, apply_with, ArtRow, MermaidMode, MermaidRender};
+use serde_json::Value;
+
+use super::mermaid_blocks::{ArtRow, MermaidMode, MermaidRender, apply, apply_with};
 use super::*;
 use crate::theme::{ColorMode, Theme, ThemeColor};
-use serde_json::Value;
 
 const TRANSFORM_GOLDENS: &str = include_str!("mermaid_transform_goldens.json");
 
@@ -254,11 +255,17 @@ fn the_row_count_matches_the_painted_rows() {
 // ------------------------------------------------------------ installed renderer
 
 pub(crate) mod installed {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::diagram::{
-        DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel,
+        DiagramLayout,
+        DiagramNotice,
+        DiagramRenderer,
+        DiagramRole,
+        DiagramSpan,
+        NoticeLevel,
     };
-    use std::collections::HashMap;
 
     const DIAGRAM_GOLDENS: &str = include_str!("diagram_transform_goldens.json");
 

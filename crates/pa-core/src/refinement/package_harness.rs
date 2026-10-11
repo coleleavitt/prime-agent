@@ -19,11 +19,11 @@
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{empty_harness_state, HarnessEntry, HarnessState, RefinementKind};
-use crate::packages::resolve::{MetadataSource, ResolvedResource};
+use super::{HarnessEntry, HarnessState, RefinementKind, empty_harness_state};
 use crate::packages::SourceScope;
+use crate::packages::resolve::{MetadataSource, ResolvedResource};
 use crate::skills::diagnostics::{ResourceCollision, ResourceDiagnostic};
 
 /// Package entries are pure content overlays: a fixed timestamp keeps the
@@ -268,7 +268,7 @@ fn validate_entry(
         Some(_) => {
             return Err(
                 "package harness entry path must be a nonempty string when provided".to_string(),
-            )
+            );
         }
     };
     let reference = object(record.get("reference"), "reference")?;
@@ -282,7 +282,7 @@ fn validate_entry(
                 return Err(
                     "package harness entry version must be a positive integer when provided"
                         .to_string(),
-                )
+                );
             }
         },
     };

@@ -42,8 +42,16 @@ pub(crate) struct TmuxClient {
 pub(crate) fn parse_tmux_client(answer: &str) -> Option<TmuxClient> {
     let line = answer.lines().next()?;
     let fields: Vec<&str> = line.split('\t').collect();
-    let [termname, termtype, features, passthrough, top, left, status, position] =
-        fields.as_slice()
+    let [
+        termname,
+        termtype,
+        features,
+        passthrough,
+        top,
+        left,
+        status,
+        position,
+    ] = fields.as_slice()
     else {
         return None;
     };
@@ -210,7 +218,9 @@ cstyle,extkeys,focus,margins,overline,hyperlinks,osc7,sync,usstyle,progressbar";
         // carries `Tc` (the live kitty 0.46.2 answer lists no `RGB`), a
         // generic TERM without the feature gets 256 colours.
         assert_eq!(
-            terminal("xterm-kitty\tkitty(0.46.2)\tbpaste,ccolour,clipboard,cstyle,focus,title\ton\t0\t0\ton\tbottom"),
+            terminal(
+                "xterm-kitty\tkitty(0.46.2)\tbpaste,ccolour,clipboard,cstyle,focus,title\ton\t0\t0\ton\tbottom"
+            ),
             tmux(ImageProtocol::Kitty, 0, 0)
         );
         assert_eq!(

@@ -2,7 +2,7 @@
 //! `/settings` rows). Every setter writes the global scope like the TS `markModified` + `save`
 //! pair; every getter reads the merged effective settings with the TS defaults.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::manager::SettingsManager;
 

@@ -14,9 +14,9 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use pa_core::factory::library::{cli_dispatch, Fs, LibraryDirs};
+use pa_core::factory::library::{Fs, LibraryDirs, cli_dispatch};
 use pa_core::factory::pyvalue::PyValue;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// One machine as the kernel lists it (`cli_dispatch`'s `list` op).
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -444,19 +444,25 @@ mod tests {
         assert_eq!(parse_factory_command(&arg(&[])), Err(String::new()));
         let unknown = parse_factory_command(&arg(&["run"]));
         assert!(unknown.is_err());
-        assert!(unknown
-            .unwrap_err()
-            .contains("Unknown factory command: run"));
+        assert!(
+            unknown
+                .unwrap_err()
+                .contains("Unknown factory command: run")
+        );
         let missing_out = parse_factory_command(&arg(&["export", "sweep"]));
         assert!(missing_out.is_err());
-        assert!(missing_out
-            .unwrap_err()
-            .starts_with("Usage: prime-agent factory export"));
+        assert!(
+            missing_out
+                .unwrap_err()
+                .starts_with("Usage: prime-agent factory export")
+        );
         let dangling_out = parse_factory_command(&arg(&["export", "sweep", "--out"]));
         assert!(dangling_out.is_err());
-        assert!(dangling_out
-            .unwrap_err()
-            .starts_with("--out requires a file path"));
+        assert!(
+            dangling_out
+                .unwrap_err()
+                .starts_with("--out requires a file path")
+        );
         let extra = parse_factory_command(&arg(&["list", "extra"]));
         assert!(extra.is_err());
     }

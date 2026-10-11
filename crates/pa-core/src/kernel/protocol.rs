@@ -4,10 +4,9 @@
 //! arrive as newline-delimited JSON objects on the runtime's private protocol dup of
 //! fd 1. See `prime-agent-runtime/src/rlm/repl.md`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::kernel::shared::parse_sent_agent_message;
-use crate::kernel::shared::KernelSentAgentMessage;
+use crate::kernel::shared::{KernelSentAgentMessage, parse_sent_agent_message};
 
 /// Protocol version the manager speaks; the runtime announces its own in the
 /// `ready` event and the handshake must match exactly. Version 4 adds the
@@ -324,8 +323,9 @@ pub fn late_sent_agent_message(id: Option<&str>, data: &Value) -> Option<KernelS
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn parses_ready() {

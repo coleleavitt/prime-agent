@@ -1,7 +1,9 @@
+use std::collections::{HashMap, HashSet};
+
+use serde_json::json;
+
 use super::*;
 use crate::agents_view_state::reconcile_unified_sessions;
-use serde_json::json;
-use std::collections::{HashMap, HashSet};
 
 fn roster_entry(agent: &str, status: &str, summary: &serde_json::Value) -> serde_json::Value {
     json!({ "agentId": agent, "status": status, "summary": summary })

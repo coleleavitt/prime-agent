@@ -2,8 +2,9 @@
 //! guard, the recency-anchor selection, the previous-summary
 //! file-block stripping, the update-mode boundary, and the fallback +
 //! guard arms — over raw session entries with explicit ids.
-use super::*;
 use pa_types::session::EntryBase;
+
+use super::*;
 
 /// The split arm of the skip guard: a mid-turn cut with no history still has
 /// the turn prefix to summarize, so the compaction prepares.

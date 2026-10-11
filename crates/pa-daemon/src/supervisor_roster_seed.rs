@@ -3,13 +3,13 @@
 //! edge-only family seed, and the bounded background hydration that
 //! fills their durable display rows.
 
-use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pa_types::daemon::agent_roster::{roster_agent_id_for_summary, AgentRosterEntry};
-use serde_json::{json, Value};
+use pa_types::daemon::agent_roster::{AgentRosterEntry, roster_agent_id_for_summary};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::lease::canonical_session_path;
 use crate::rlm_ledger::RlmLedgerEdge;
@@ -482,12 +482,13 @@ pub(crate) fn family_descends_from(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use pa_types::daemon::agent_roster::AgentRosterStatus;
+    use serde_json::Map;
+
     use super::*;
     use crate::registry::ResidentWorker;
     use crate::rlm_ledger::RlmLedgerEdge;
     use crate::supervisor::ClientRouting;
-    use pa_types::daemon::agent_roster::AgentRosterStatus;
-    use serde_json::Map;
 
     fn edge(child_id: &str, parent: &str, child: &str, depth: u32, name: &str) -> RlmLedgerEdge {
         RlmLedgerEdge {

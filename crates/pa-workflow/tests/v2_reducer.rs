@@ -7,10 +7,14 @@ mod v2_support;
 
 use pa_workflow::v2::projection::ProjectionKind;
 use pa_workflow::v2::reducer::{
-    check_terminalized_outcome, projection, reduce_run, revalidate_aggregate, ReducerCode,
+    ReducerCode,
     ReducerError,
+    check_terminalized_outcome,
+    projection,
+    reduce_run,
+    revalidate_aggregate,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use v2_support::{ctrl_event, definition, evidence, host_event, turn_data, turn_settlement};
 
 fn code(result: Result<impl std::fmt::Debug, ReducerError>) -> ReducerCode {
@@ -139,14 +143,16 @@ fn out_of_vocabulary_duplicate_and_uncoupled_projections_are_refused() {
             "{kind:?} {phase} {intent} {outcome:?} {conditions:?}"
         );
     }
-    assert!(projection(
-        ProjectionKind::Run,
-        "quarantined",
-        "none",
-        None,
-        &strings(&["integrity_failed"])
-    )
-    .is_ok());
+    assert!(
+        projection(
+            ProjectionKind::Run,
+            "quarantined",
+            "none",
+            None,
+            &strings(&["integrity_failed"])
+        )
+        .is_ok()
+    );
 }
 
 #[test]

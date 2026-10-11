@@ -2,18 +2,17 @@
 //! the interactive flow, persist the endpoint-bound credential, and wire the
 //! `mcp.begin_login` host request in product paths.
 
-use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex, Weak};
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
+use pa_types::sync::MutexExt;
 
-use crate::auth::types::AuthCredential;
-use crate::auth::{AuthStorage, OAuthIntegration};
-
-use super::oauth::{mcp_login, McpLoginUi, McpOAuthConfig};
+use super::McpManager;
+use super::oauth::{McpLoginUi, McpOAuthConfig, mcp_login};
 use super::oauth_callback::CallbackPorts;
 use super::oauth_http::OAuthHttp;
-use super::McpManager;
+use crate::auth::types::AuthCredential;
+use crate::auth::{AuthStorage, OAuthIntegration};
 
 /// One server's login execution: the resolved OAuth config plus the auth store. Detached from the
 /// manager on purpose — the flow awaits UI input, so no manager lock may be held across it.
@@ -217,12 +216,14 @@ impl OAuthIntegration for McpOAuth {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::json;
+
     use super::*;
     use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
     use crate::mcp::oauth_http::{OAuthHttpResponse, ReqwestOAuthHttp};
     use crate::mcp::{McpManagerOptions, McpServerConfig};
-    use serde_json::json;
-    use std::collections::HashMap;
 
     /// A scripted transport (url -> response); unknown urls fail.
     struct ScriptedHttp(HashMap<String, OAuthHttpResponse>);

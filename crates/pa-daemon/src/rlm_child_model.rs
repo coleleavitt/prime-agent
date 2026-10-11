@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use pa_ai::models::{get_supported_thinking_levels, thinking_level_from_str};
-use pa_core::kernel::rlm_runtime::{find_rlm_model_matches, RlmModelInfo};
+use pa_core::kernel::rlm_runtime::{RlmModelInfo, find_rlm_model_matches};
 
 /// Close matches listed in model-resolution errors.
 const MODEL_ERROR_SUGGESTION_LIMIT: usize = 3;
@@ -209,9 +209,10 @@ pub fn cap_text(text: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::model_allowlist::DaemonAllowlist;
-    use serde_json::json;
 
     /// A models.json custom provider, like the pa-core registry tests.
     fn write_catalog(dir: &Path) {
@@ -442,22 +443,26 @@ mod tests {
             &dir.path().join("models.json"),
             &pa_core::models::PrivatePrimeAuthorizationCache {
                 fingerprint,
-                models: vec![serde_json::from_value(json!({
-                    "id": "internal/glm-5.3-fast", "name": "GLM 5.3 Fast",
-                    "api": "openai-completions", "provider": "prime-inference",
-                    "baseUrl": "https://api.pinference.ai/api/v1",
-                    "reasoning": true, "input": ["text"],
-                    "cost": { "input": 0.42, "output": 2.1, "cacheRead": 0, "cacheWrite": 0 },
-                    "contextWindow": 400_000, "maxTokens": 131_072
-                }))
-                .unwrap()],
+                models: vec![
+                    serde_json::from_value(json!({
+                        "id": "internal/glm-5.3-fast", "name": "GLM 5.3 Fast",
+                        "api": "openai-completions", "provider": "prime-inference",
+                        "baseUrl": "https://api.pinference.ai/api/v1",
+                        "reasoning": true, "input": ["text"],
+                        "cost": { "input": 0.42, "output": 2.1, "cacheRead": 0, "cacheWrite": 0 },
+                        "contextWindow": 400_000, "maxTokens": 131_072
+                    }))
+                    .unwrap(),
+                ],
                 refreshed_at: 1,
             },
         );
 
-        assert!(catalog_models(dir.path())
-            .iter()
-            .any(|model| model.id == "internal/glm-5.3-fast"));
+        assert!(
+            catalog_models(dir.path())
+                .iter()
+                .any(|model| model.id == "internal/glm-5.3-fast")
+        );
         let resolved = resolve_child_model(
             dir.path(),
             Some("prime-inference/internal/glm-5.3-fast"),

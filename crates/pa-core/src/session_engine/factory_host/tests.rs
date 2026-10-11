@@ -5,11 +5,10 @@
 
 use std::path::Path;
 
-use serde_json::{json, Map};
-
-use crate::refinement::{empty_harness_state, save_harness_state, HarnessEntry, RefinementKind};
+use serde_json::{Map, json};
 
 use super::{FactoryActivityRequest, FactoryHost, FactoryHostConfig};
+use crate::refinement::{HarnessEntry, RefinementKind, empty_harness_state, save_harness_state};
 
 const MODELS_JSON: &str = r#"{
   "providers": {

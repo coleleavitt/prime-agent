@@ -24,33 +24,80 @@ mod trajectory;
 
 use std::path::PathBuf;
 
-pub use chart::{render_ascii_chart, ChartOptions, ChartSeries};
+pub use chart::{ChartOptions, ChartSeries, render_ascii_chart};
 pub use feature::LearningFeature;
 pub use index::{
-    normalize_day, read_learning_index, roll_up_learning_days, seal_learning_days,
-    span_fingerprint_key, write_learning_day, FingerprintDayStats, LearningDay, RefinementCommit,
-    RollUp, SealResult, SpanKey, LEARNING_INDEX_SCHEMA, REFINEMENT_COMMITTED_MSG, TURN_SPAN_NAME,
+    FingerprintDayStats,
+    LEARNING_INDEX_SCHEMA,
+    LearningDay,
+    REFINEMENT_COMMITTED_MSG,
+    RefinementCommit,
+    RollUp,
+    SealResult,
+    SpanKey,
+    TURN_SPAN_NAME,
+    normalize_day,
+    read_learning_index,
+    roll_up_learning_days,
+    seal_learning_days,
+    span_fingerprint_key,
+    write_learning_day,
 };
 pub use prompt::{
-    format_trajectory_lines, trajectory_class_for_entries, trajectory_internalized_fingerprints,
-    trajectory_prompt_adjustment, EntryClass, InternalizedReminders, TrajectoryPromptHook,
-    MAX_TRAJECTORY_LINES, TRAJECTORY_SECTION_HEADING,
+    EntryClass,
+    InternalizedReminders,
+    MAX_TRAJECTORY_LINES,
+    TRAJECTORY_SECTION_HEADING,
+    TrajectoryPromptHook,
+    format_trajectory_lines,
+    trajectory_class_for_entries,
+    trajectory_internalized_fingerprints,
+    trajectory_prompt_adjustment,
 };
 pub use report::{
-    build_learning_report, mann_whitney_one_sided, normal_cdf, CohortStats, FingerprintTrend,
-    LearningDayPoint, LearningReport, MannWhitney, Window, DEFAULT_MIN_COHORT_N, RATE_DENOMINATOR,
+    CohortStats,
+    DEFAULT_MIN_COHORT_N,
+    FingerprintTrend,
+    LearningDayPoint,
+    LearningReport,
+    MannWhitney,
+    RATE_DENOMINATOR,
+    Window,
+    build_learning_report,
+    mann_whitney_one_sided,
+    normal_cdf,
 };
 pub use store::{
-    agent_log_path, learning_dir, learning_index_dir, read_backfill_days, read_trajectory_index,
-    trajectory_backfill_dir, trajectory_index_path, write_trajectory_index,
+    agent_log_path,
+    learning_dir,
+    learning_index_dir,
+    read_backfill_days,
+    read_trajectory_index,
+    trajectory_backfill_dir,
+    trajectory_index_path,
+    write_trajectory_index,
 };
 pub use trajectory::{
-    iso_week, iso_week_of_millis, matches_security_class, seal_trajectory_windows,
-    trajectory_index_enabled, trajectory_index_enabled_from_env, CorpusDay, SealTrajectoryOptions,
-    TrajectoryFingerprintWindow, TrajectoryLabel, TrajectoryLabelKind, TrajectoryRateWindow,
-    TrajectoryStoreFile, TrajectoryWindow, DEFAULT_MAX_TRAJECTORY_WINDOWS,
-    DEFAULT_MIN_TRAJECTORY_WINDOWS, DEFAULT_TRAJECTORY_INTERNALIZED_GAP, PRIME_CORPUS,
-    TRAJECTORY_INDEX_ENV, TRAJECTORY_STORE_VERSION,
+    CorpusDay,
+    DEFAULT_MAX_TRAJECTORY_WINDOWS,
+    DEFAULT_MIN_TRAJECTORY_WINDOWS,
+    DEFAULT_TRAJECTORY_INTERNALIZED_GAP,
+    PRIME_CORPUS,
+    SealTrajectoryOptions,
+    TRAJECTORY_INDEX_ENV,
+    TRAJECTORY_STORE_VERSION,
+    TrajectoryFingerprintWindow,
+    TrajectoryLabel,
+    TrajectoryLabelKind,
+    TrajectoryRateWindow,
+    TrajectoryStoreFile,
+    TrajectoryWindow,
+    iso_week,
+    iso_week_of_millis,
+    matches_security_class,
+    seal_trajectory_windows,
+    trajectory_index_enabled,
+    trajectory_index_enabled_from_env,
 };
 
 /// Why the index could not be sealed.

@@ -1,12 +1,32 @@
 //! The `/tree` and `/fork` selectors and the tree navigation, `/clone`, and
 //! the session resume/list/switch surfaces.
-use super::{
-    anyhow, info_commands, key_event_to_id, AgentView, DaemonClient, DaemonCommand, DockFold,
-    Duration, ForkLaunch, InfoContent, InteractiveOptions, KeyEvent, Map, RebuildKind, Result,
-    SessionSelection, SessionUi, TreeSelector, TreeSelectorAction, UserMessageSelector,
-    UserMessageSelectorAction, Value, UI_REQUEST_TIMEOUT_MS,
-};
 use pa_types::daemon::DaemonSessionLifecycle;
+
+use super::{
+    AgentView,
+    DaemonClient,
+    DaemonCommand,
+    DockFold,
+    Duration,
+    ForkLaunch,
+    InfoContent,
+    InteractiveOptions,
+    KeyEvent,
+    Map,
+    RebuildKind,
+    Result,
+    SessionSelection,
+    SessionUi,
+    TreeSelector,
+    TreeSelectorAction,
+    UI_REQUEST_TIMEOUT_MS,
+    UserMessageSelector,
+    UserMessageSelectorAction,
+    Value,
+    anyhow,
+    info_commands,
+    key_event_to_id,
+};
 
 impl SessionUi {
     // Session-tree navigation (/tree, /fork, /clone)

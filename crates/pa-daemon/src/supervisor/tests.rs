@@ -1,7 +1,7 @@
-use super::*;
-
 use proptest::prelude::*;
 use proptest::test_runner::RngSeed;
+
+use super::*;
 
 /// The cargo test config sets `DO_NOT_TRACK=1`; the daemon's live
 /// recording gate reads it (env before settings). Tests that exercise
@@ -395,12 +395,16 @@ fn saved_session_rows_carry_the_persisted_thinking_level() {
     draft.rewrite().unwrap();
     let draft_info = crate::session_store::read_session_info(&draft_path).unwrap();
     assert_eq!(draft_info.thinking_level, None);
-    assert!(saved_session_summary(&draft_info)
-        .get("thinkingLevel")
-        .is_none());
-    assert!(saved_session_row(&draft_info)
-        .get("thinkingLevel")
-        .is_none());
+    assert!(
+        saved_session_summary(&draft_info)
+            .get("thinkingLevel")
+            .is_none()
+    );
+    assert!(
+        saved_session_row(&draft_info)
+            .get("thinkingLevel")
+            .is_none()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1195,7 +1199,9 @@ async fn a_prepare_update_id_that_escapes_the_prepared_dir_is_refused() {
             response_failure(
                 Some("c1"),
                 "prepare_update_restart",
-                &format!("prepare_update_restart updateId {update_id:?} is not a plain name (letters, digits, '.', '_', '-')"),
+                &format!(
+                    "prepare_update_restart updateId {update_id:?} is not a plain name (letters, digits, '.', '_', '-')"
+                ),
                 None,
             ),
             "updateId {update_id:?}"

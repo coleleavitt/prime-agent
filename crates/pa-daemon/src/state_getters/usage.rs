@@ -1,7 +1,7 @@
 //! The usage math: the model registry resolution the create path shares, the TS
 //! `Usage` wire shape (`empty_usage`), the add/subtract folds, and the own/total +
 //! by-model attribution computations.
-use super::{json, ModelRegistry, Value};
+use super::{ModelRegistry, Value, json};
 
 /// The worker's model registry (auth storage + `models.json`, the
 /// private-authorization cache adopted so create-time resolution agrees).

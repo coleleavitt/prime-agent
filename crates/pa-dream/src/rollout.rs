@@ -13,11 +13,17 @@ use serde::Serialize;
 
 use crate::improve::CandidateOrigin;
 use crate::interpreter::{
-    apply_stop_rule, assert_legal_batch, interpret_policy, project_propose_params, Cell,
-    ObservationView, StopState, IMPROVE_EPS,
+    Cell,
+    IMPROVE_EPS,
+    ObservationView,
+    StopState,
+    apply_stop_rule,
+    assert_legal_batch,
+    interpret_policy,
+    project_propose_params,
 };
 use crate::json::canonical_json;
-use crate::policy::{policy_id, sha256_hex, ExplorationPolicy};
+use crate::policy::{ExplorationPolicy, policy_id, sha256_hex};
 use crate::proposer::{LocalProposer, Proposer};
 use crate::records::{NodeOrigin, RevealRecord, RevealTag, TreeHeaderRecord, TreeTag};
 use crate::rng::{Seed, SeededRng};

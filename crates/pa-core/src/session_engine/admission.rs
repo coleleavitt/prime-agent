@@ -1,7 +1,13 @@
 use super::slash_commands::parse_session_command;
 use super::{
-    session_message_to_loop, user_prompt_message, AgentSession, PromptOptions, PromptOutcome,
-    SessionAgentMessage, SessionSlashCommand, StreamingBehavior,
+    AgentSession,
+    PromptOptions,
+    PromptOutcome,
+    SessionAgentMessage,
+    SessionSlashCommand,
+    StreamingBehavior,
+    session_message_to_loop,
+    user_prompt_message,
 };
 
 impl AgentSession {
@@ -244,7 +250,9 @@ impl AgentSession {
                         }
                         None
                     } else {
-                        anyhow::bail!("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
+                        anyhow::bail!(
+                            "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+                        );
                     }
                 }
                 Err(error) => {

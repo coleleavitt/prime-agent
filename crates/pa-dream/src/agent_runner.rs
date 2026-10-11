@@ -17,17 +17,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pa_agent::abort::AbortController;
-use pa_agent::agent_loop::{run_agent_loop, AgentLoopConfig};
+use pa_agent::agent_loop::{AgentLoopConfig, run_agent_loop};
 use pa_agent::stream::StreamFn;
 use pa_agent::types::{
-    AgentContext, AgentMessage, AssistantContent, Message, StopReason, UserContent, UserMessage,
+    AgentContext,
+    AgentMessage,
+    AssistantContent,
+    Message,
+    StopReason,
+    UserContent,
+    UserMessage,
 };
 use pa_core::models::ModelRegistry;
 use pa_core::session_engine::provider_adapter::stream_once;
 use pa_core::session_engine::rlm_in_process::{assert_thinking_supported, resolve_child_model};
 
 use crate::child::{
-    capped_max_tokens, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult, RunAgentStatus,
+    RunAgent,
+    RunAgentOptions,
+    RunAgentRequest,
+    RunAgentResult,
+    RunAgentStatus,
+    capped_max_tokens,
 };
 
 /// The session facts a child resolves against.
@@ -115,7 +126,7 @@ impl RunAgent for AgentRunAgent {
                 return RunAgentResult {
                     error: Some(error),
                     ..RunAgentResult::empty(RunAgentStatus::Error)
-                }
+                };
             }
         };
         self.runtime.block_on(run_child(request, options, cleared))

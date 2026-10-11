@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::circle_packing::refine_depth;
 use crate::rng::SeededRng;

@@ -9,11 +9,11 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::executor::snapshot::{cap_factory_frame, wire_payload};
 use super::executor::{FactoryExecutor, FactoryRefusal, ResolvedSubagent, RunRequest};
-use super::pyvalue::{py_repr, py_str_repr, PyValue};
+use super::pyvalue::{PyValue, py_repr, py_str_repr};
 
 /// The single refusal every gated factory surface answers while the
 /// `factory.enabled` setting is off.
@@ -115,7 +115,7 @@ pub async fn activity(
             Some(_) => {
                 return Err(refusal(format!(
                     "factory activity {key} must be a string when provided"
-                )))
+                )));
             }
         }
     }

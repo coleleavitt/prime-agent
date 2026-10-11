@@ -1,16 +1,34 @@
 //! The engine's lifecycle surface: the constructor and the session
 //! build/adopt/retire cycle, the closed-state markers, the skill
 //! expansion and session-command funnels, and the kernel host wiring.
-use super::{
-    execute_session_command, json_round_trip, map_thinking_level,
-    register_agent_message_host_handlers, register_agent_observe_host_handlers,
-    switchable_stream_fn, AgentEngineConfig, AgentSessionEngine, Arc, CoreSessionEngine,
-    EngineModelSelection, HostRequestHandlers, LinkAgentMessageController,
-    LinkAgentObserveController, Model, OverflowRecovery, ProducerUsageSink, ProviderTarget,
-    QuotaParkState, SessionCommandExecution, SessionCommandParams, SessionEngineConfig,
-    SupervisorChildSessions, Value,
-};
 use pa_types::sync::{MutexExt, RwLockExt};
+
+use super::{
+    AgentEngineConfig,
+    AgentSessionEngine,
+    Arc,
+    CoreSessionEngine,
+    EngineModelSelection,
+    HostRequestHandlers,
+    LinkAgentMessageController,
+    LinkAgentObserveController,
+    Model,
+    OverflowRecovery,
+    ProducerUsageSink,
+    ProviderTarget,
+    QuotaParkState,
+    SessionCommandExecution,
+    SessionCommandParams,
+    SessionEngineConfig,
+    SupervisorChildSessions,
+    Value,
+    execute_session_command,
+    json_round_trip,
+    map_thinking_level,
+    register_agent_message_host_handlers,
+    register_agent_observe_host_handlers,
+    switchable_stream_fn,
+};
 
 /// The instruction the floor appends to a bare skill invocation: ask what
 /// the user wants first, never an imperative to execute.
@@ -1055,10 +1073,11 @@ impl AgentSessionEngine {
 
 #[cfg(test)]
 mod decision_reply_tests {
-    use super::*;
-    use crate::worker::{Worker, WorkerConfig};
     use pa_core::kernel::shared::HostRequestPayload;
     use serde_json::json;
+
+    use super::*;
+    use crate::worker::{Worker, WorkerConfig};
 
     #[tokio::test]
     async fn child_decision_replies_reach_the_loop_without_queuing_a_parent_turn() {

@@ -4,16 +4,35 @@
 
 use std::path::Path;
 
-use pa_types::daemon::update_flow::{
-    prepared_marker_expiry, socket_update_dir, update_intent_path, update_marker_path,
-    update_prepared_dir, update_roster_path, update_status_path, update_transition_allowed,
-    PreparedMarkerExpiry, UpdateHeartbeatDeliveryMode, UpdateHeartbeatStatus, UpdateId,
-    UpdateIntent, UpdatePreparedMarker, UpdateProcessIdentity, UpdateRoster, UpdateRosterBinary,
-    UpdateRosterHeartbeat, UpdateRosterSessionKind, UpdateRosterSubagentStatus, UpdateState,
-    UpdateStatus, UpdateSupervisorIdentity, UpdateTimeoutBudget, UPDATE_ROSTER_FORMAT_VERSION,
-    UPDATE_STATUS_FORMAT_VERSION,
-};
 use pa_types::JsonMap;
+use pa_types::daemon::update_flow::{
+    PreparedMarkerExpiry,
+    UPDATE_ROSTER_FORMAT_VERSION,
+    UPDATE_STATUS_FORMAT_VERSION,
+    UpdateHeartbeatDeliveryMode,
+    UpdateHeartbeatStatus,
+    UpdateId,
+    UpdateIntent,
+    UpdatePreparedMarker,
+    UpdateProcessIdentity,
+    UpdateRoster,
+    UpdateRosterBinary,
+    UpdateRosterHeartbeat,
+    UpdateRosterSessionKind,
+    UpdateRosterSubagentStatus,
+    UpdateState,
+    UpdateStatus,
+    UpdateSupervisorIdentity,
+    UpdateTimeoutBudget,
+    prepared_marker_expiry,
+    socket_update_dir,
+    update_intent_path,
+    update_marker_path,
+    update_prepared_dir,
+    update_roster_path,
+    update_status_path,
+    update_transition_allowed,
+};
 
 /// Lossless round-trip contract (crate-wide): parse, serialize, re-parse,
 /// require equality with the original JSON value.
@@ -97,9 +116,11 @@ fn spec_roster_example_roundtrips_losslessly() {
     assert_eq!(roster.format_version, UPDATE_ROSTER_FORMAT_VERSION);
     assert_eq!(roster.sessions.len(), 1);
     assert_eq!(roster.sessions[0].kind, UpdateRosterSessionKind::TopLevel);
-    assert!(roster.sessions[0].queue.next_turn[0]
-        .custom_type
-        .contains("queued"));
+    assert!(
+        roster.sessions[0].queue.next_turn[0]
+            .custom_type
+            .contains("queued")
+    );
     assert_eq!(
         roster.subagents[0].status,
         UpdateRosterSubagentStatus::Completed

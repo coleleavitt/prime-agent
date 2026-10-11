@@ -1,16 +1,40 @@
 //! One agent turn: the runner that admits queued input, drives the
 //! engine, and settles the result.
-use super::{
-    checkpoint_queue_recovery, compact_action_label, create_daemon_event_meta,
-    emit_refinement_event_for_session, emit_refinement_row, gather_delivery_batch, json, oneshot,
-    session_snapshot, AgentMessageDigest, AssistantSnapshot, DaemonOutbound, EngineEvent,
-    EventPump, Lane, Map, Notify, OutboundFrame, PromptRequest, QueueCheckpoint, QueuedItem,
-    Result, SessionActionSnapshot, SessionCore, SessionEngine, TurnSettle, Value,
-    WorkerRecoveryJournal, ABORTED_TURN_SETTLE_ERROR,
-};
+use std::sync::{Arc, Mutex};
+
 use pa_types::sync::MutexExt;
 
-use std::sync::{Arc, Mutex};
+use super::{
+    ABORTED_TURN_SETTLE_ERROR,
+    AgentMessageDigest,
+    AssistantSnapshot,
+    DaemonOutbound,
+    EngineEvent,
+    EventPump,
+    Lane,
+    Map,
+    Notify,
+    OutboundFrame,
+    PromptRequest,
+    QueueCheckpoint,
+    QueuedItem,
+    Result,
+    SessionActionSnapshot,
+    SessionCore,
+    SessionEngine,
+    TurnSettle,
+    Value,
+    WorkerRecoveryJournal,
+    checkpoint_queue_recovery,
+    compact_action_label,
+    create_daemon_event_meta,
+    emit_refinement_event_for_session,
+    emit_refinement_row,
+    gather_delivery_batch,
+    json,
+    oneshot,
+    session_snapshot,
+};
 
 pub(super) struct TurnRunner {
     pub(crate) core: Arc<Mutex<SessionCore>>,

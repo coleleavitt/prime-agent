@@ -1,6 +1,7 @@
+use serde_json::json;
+
 use super::*;
 use crate::theme::{ColorMode, Theme};
-use serde_json::json;
 
 fn theme() -> Theme {
     Theme::builtin("prime", ColorMode::TrueColor)

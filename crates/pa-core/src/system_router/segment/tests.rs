@@ -8,7 +8,10 @@ use serde_json::json;
 use super::super::decide::RouterDecisionFn;
 use super::super::test_support as support;
 use super::super::types::{
-    parse_system_router_run_spec, RouterRunStatus, RouterSegmentEnvironment, FINISH_ACTION,
+    FINISH_ACTION,
+    RouterRunStatus,
+    RouterSegmentEnvironment,
+    parse_system_router_run_spec,
 };
 use super::*;
 

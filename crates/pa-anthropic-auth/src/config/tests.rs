@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anthropic::killswitch::{
-    KillswitchConfig, KillswitchThresholds, DEFAULT_KILLSWITCH_THRESHOLDS,
+    DEFAULT_KILLSWITCH_THRESHOLDS,
+    KillswitchConfig,
+    KillswitchThresholds,
 };
 use anthropic::quota::QuotaPolicy;
 use anthropic::sticky_routing::RoutingMode;

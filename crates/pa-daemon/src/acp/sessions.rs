@@ -8,23 +8,31 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use super::daemon::{
-    clear_connection_servers, fetch_rlm_children, release_session_input_pause,
-    replace_connection_servers, DaemonAcpOptions, DaemonAcpState, DaemonBinding, DaemonLink,
+    DaemonAcpOptions,
+    DaemonAcpState,
+    DaemonBinding,
+    DaemonLink,
     HostedSession,
+    clear_connection_servers,
+    fetch_rlm_children,
+    release_session_input_pause,
+    replace_connection_servers,
 };
-use super::jsonrpc;
 use super::meta::{self, PrimeAgentEventPhase, PrimeAgentSessionMeta};
 use super::producer::{self, UpdateProducer};
-use super::types;
 use super::wire_config::{
-    fetch_available_models, fetch_connection_state, picker_options_from_state,
-    state_context_window, HostedConfig,
+    HostedConfig,
+    fetch_available_models,
+    fetch_connection_state,
+    picker_options_from_state,
+    state_context_window,
 };
 use super::wire_events::{self, WireMappingState};
+use super::{jsonrpc, types};
 
 /// What one admission binds: `session/new` hosts the connection's current
 /// daemon session; `session/load` hosts a saved one whose transcript replays
@@ -207,9 +215,11 @@ async fn saved_session_rows(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     let mut rows: Vec<Value> = response
         .data
@@ -403,9 +413,11 @@ async fn live_session_for_file(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     let canonical =
         |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -437,9 +449,11 @@ async fn fetch_messages(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     Ok(response
         .data

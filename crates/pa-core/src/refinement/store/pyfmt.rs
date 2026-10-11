@@ -323,8 +323,9 @@ pub(crate) fn compact_stamp_now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn repr_matches_python() {

@@ -87,12 +87,14 @@ pub(crate) fn format_daemon_list_table(daemons: &[DaemonInfo]) -> String {
         })
         .collect();
     // Two spaces between columns.
-    let mut lines = vec![headers
-        .iter()
-        .enumerate()
-        .map(|(column, header)| pad_end(header, widths[column]))
-        .collect::<Vec<_>>()
-        .join("  ")];
+    let mut lines = vec![
+        headers
+            .iter()
+            .enumerate()
+            .map(|(column, header)| pad_end(header, widths[column]))
+            .collect::<Vec<_>>()
+            .join("  "),
+    ];
     for row in &rows {
         lines.push(
             row.iter()
@@ -230,10 +232,12 @@ mod tests {
         .join("  ");
         let mut lines = table.split('\n');
         assert_eq!(lines.next().unwrap(), expected_header);
-        assert!(lines
-            .next()
-            .unwrap()
-            .starts_with("/tmp/prime-agent-1000/daemon.sock *  42   0.1.0"));
+        assert!(
+            lines
+                .next()
+                .unwrap()
+                .starts_with("/tmp/prime-agent-1000/daemon.sock *  42   0.1.0")
+        );
         assert!(table.ends_with("* default background service"));
     }
 

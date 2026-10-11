@@ -2,7 +2,7 @@
 //! TS problem strings, UTF-16 unit bounds at the astral boundary, and
 //! canonical JSON stability.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -183,8 +183,10 @@ fn event_validation_problem_strings_match_ts() {
         problem(&json!({"sequence": 1})).unwrap(),
         "event.recordedAt must be a string of 1-64 characters"
     );
-    assert_eq!(problem(&json!({"sequence": 1, "recordedAt": "x"})).unwrap(),
-        "event.kind must be one of command_accepted, command_state, session_status, output_delta, session_entry, session_event, session_meta, roster_delta, child_update, usage, family_roster_request, agent_message_request");
+    assert_eq!(
+        problem(&json!({"sequence": 1, "recordedAt": "x"})).unwrap(),
+        "event.kind must be one of command_accepted, command_state, session_status, output_delta, session_entry, session_event, session_meta, roster_delta, child_update, usage, family_roster_request, agent_message_request"
+    );
     assert_eq!(
         problem(&json!({"sequence": 0, "kind": "family_roster_request", "recordedAt": "x", "requestId": "f", "fromRemoteSessionId": "r"}))
             .unwrap(),
@@ -206,11 +208,13 @@ fn event_validation_problem_strings_match_ts() {
         "event.message must be a string of 1-65536 characters"
     );
     // Known non-family kinds are out of this slice's scope.
-    assert!(problem(
-        &json!({"sequence": 1, "kind": "session_status", "recordedAt": "x", "status": "idle"})
-    )
-    .unwrap()
-    .starts_with("event.kind must be one of"));
+    assert!(
+        problem(
+            &json!({"sequence": 1, "kind": "session_status", "recordedAt": "x", "status": "idle"})
+        )
+        .unwrap()
+        .starts_with("event.kind must be one of")
+    );
 }
 
 #[test]

@@ -1,15 +1,20 @@
 //! Public command routing.
 
-use crate::daemon_discovery;
 use std::collections::HashSet;
 
-use crate::args::{parse_args, INTERNAL_RUNTIME_COMMAND_MARKER};
-
+use crate::args::{INTERNAL_RUNTIME_COMMAND_MARKER, parse_args};
 use crate::command_registry::{
-    find_command_suggestion, format_command_help, format_top_level_help, get_child_command_specs,
-    get_command_spec, is_help_command_request, public_command_names, REMOVED_COMMAND_NAMES,
+    REMOVED_COMMAND_NAMES,
+    find_command_suggestion,
+    format_command_help,
+    format_top_level_help,
+    get_child_command_specs,
+    get_command_spec,
+    is_help_command_request,
+    public_command_names,
 };
 use crate::config::APP_NAME;
+use crate::daemon_discovery;
 use crate::global_flags::{extract_help_command_path, rotate_global_flags_before_command};
 use crate::mcp_command::run_mcp_management_command;
 use crate::package_command::handle_package_command;
@@ -578,7 +583,7 @@ fn run_incident_command(args: &[String]) -> PublicCommandResult {
             return fail(
                 error.to_string(),
                 Some(format!("Run \"{APP_NAME} help incident\" for usage.")),
-            )
+            );
         }
     };
     // Resolve once: re-resolving later can cross UTC midnight and render a different window than
@@ -590,7 +595,7 @@ fn run_incident_command(args: &[String]) -> PublicCommandResult {
             return fail(
                 error.to_string(),
                 Some(format!("Run \"{APP_NAME} help incident\" for usage.")),
-            )
+            );
         }
     };
     if let Err(error) = crate::incident::run_incident(&options, Some(window)) {
@@ -1208,31 +1213,37 @@ mod update_options_tests {
         let invocation = parse(&["--archive", "/tmp/payload"]).unwrap();
         assert_eq!(invocation.source, None);
         // The source must be an http(s) URL and must not appear alone.
-        assert!(parse(&[
-            "--archive",
-            "/tmp/payload",
-            "--source",
-            "file:///tmp/payload"
-        ])
-        .is_none());
+        assert!(
+            parse(&[
+                "--archive",
+                "/tmp/payload",
+                "--source",
+                "file:///tmp/payload"
+            ])
+            .is_none()
+        );
         assert!(parse(&["--source", "https://example.com"]).is_none());
         // The direct install is exclusive with the channel and rollback.
-        assert!(parse(&[
-            "--archive",
-            "/tmp/payload",
-            "--source",
-            "https://example.com",
-            "--nightly"
-        ])
-        .is_none());
-        assert!(parse(&[
-            "--archive",
-            "/tmp/payload",
-            "--source",
-            "https://example.com",
-            "--rollback"
-        ])
-        .is_none());
+        assert!(
+            parse(&[
+                "--archive",
+                "/tmp/payload",
+                "--source",
+                "https://example.com",
+                "--nightly"
+            ])
+            .is_none()
+        );
+        assert!(
+            parse(&[
+                "--archive",
+                "/tmp/payload",
+                "--source",
+                "https://example.com",
+                "--rollback"
+            ])
+            .is_none()
+        );
         // A missing value fails.
         assert!(parse(&["--archive"]).is_none());
         assert!(parse(&["--archive", "--source"]).is_none());

@@ -6,20 +6,46 @@
 mod v2_support;
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use pa_workflow::v2::reducer::ReducerCode;
 use pa_workflow::v2::store::{
-    AcceptanceDecision, Acknowledgement, ClaimedOperation, CommandEffect, Decision,
-    FilesystemSpace, OperationKind, OperationOutcome, OutboxEnqueue, Store, StoreCode, StoreError,
-    StoreOptions, Table, STORE_APPLICATION_ID, STORE_CAPACITY, STORE_FILE_NAME, STORE_USER_VERSION,
+    AcceptanceDecision,
+    Acknowledgement,
+    ClaimedOperation,
+    CommandEffect,
+    Decision,
+    FilesystemSpace,
+    OperationKind,
+    OperationOutcome,
+    OutboxEnqueue,
+    STORE_APPLICATION_ID,
+    STORE_CAPACITY,
+    STORE_FILE_NAME,
+    STORE_USER_VERSION,
+    Store,
+    StoreCode,
+    StoreError,
+    StoreOptions,
+    Table,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use v2_support::{
-    create_effect, create_request, ctrl_event, drive_to_admission_bound, events, evidence,
-    host_event, open_writer, options, post_request, store_root, turn_data, turn_settlement,
     TestClock,
+    create_effect,
+    create_request,
+    ctrl_event,
+    drive_to_admission_bound,
+    events,
+    evidence,
+    host_event,
+    open_writer,
+    options,
+    post_request,
+    store_root,
+    turn_data,
+    turn_settlement,
 };
 
 fn code(error: &StoreError) -> Option<StoreCode> {
@@ -42,7 +68,7 @@ fn counts(store: &Store, tables: &[Table]) -> Vec<u64> {
 #[cfg(unix)]
 #[test]
 fn the_probe_finds_wal_full_and_immediate_writes() {
-    use pa_workflow::v2::store::{probe_capability, CapabilityProbe};
+    use pa_workflow::v2::store::{CapabilityProbe, probe_capability};
     assert_eq!(
         probe_capability(),
         CapabilityProbe {
@@ -77,7 +103,9 @@ fn open_creates_an_owner_only_tagged_versioned_store() {
             scalar("PRAGMA application_id"),
             scalar("PRAGMA user_version"),
             // 15 domain tables + store_migrations
-            scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"),
+            scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ),
         ),
         (STORE_APPLICATION_ID, STORE_USER_VERSION, 16)
     );

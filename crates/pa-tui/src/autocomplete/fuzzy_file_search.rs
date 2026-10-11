@@ -14,8 +14,12 @@ use ignore::{WalkBuilder, WalkState};
 use regex::RegexBuilder;
 
 use super::{
-    build_completion_value, expand_home_path, parse_path_prefix, CompletionItem, SuggestionKind,
+    CompletionItem,
+    SuggestionKind,
     Suggestions,
+    build_completion_value,
+    expand_home_path,
+    parse_path_prefix,
 };
 
 /// fd's `--max-results`: the walk stops once this many entries match.

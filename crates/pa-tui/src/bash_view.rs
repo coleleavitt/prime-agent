@@ -5,9 +5,14 @@
 
 use serde_json::Value;
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::menu_panel::{
-    fill_row, hug_row, menu_list_layout, plain_cell, scrub_controls, status_dot,
+    fill_row,
+    hug_row,
+    menu_list_layout,
+    plain_cell,
+    scrub_controls,
+    status_dot,
 };
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, truncate_line, wrap_text};
@@ -18,8 +23,14 @@ mod render;
 #[cfg(test)]
 use render::format_duration;
 use render::{
-    action_row, clean_line, error_line, hint_line, marker_line, metadata_row, pane_header_lines,
     Columns,
+    action_row,
+    clean_line,
+    error_line,
+    hint_line,
+    marker_line,
+    metadata_row,
+    pane_header_lines,
 };
 
 const PREFERRED_VISIBLE: usize = 8;
@@ -567,7 +578,7 @@ impl BashView {
         let output_rows = budget.saturating_sub(command_rows);
         let mut lines = Vec::new();
         lines.push(vec![
-            theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1)))
+            theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1))),
         ]);
         lines.push(metadata_row(theme, width, activity));
         if command_rows > 0 {

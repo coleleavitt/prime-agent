@@ -3,11 +3,13 @@
 //! items. Decoding is lenient — plain-string or block content, with or
 //! without `type` tags — because the harness and the real engine both emit.
 
-use crate::chat::{AssistantMessage, ChatEntry, MessageBlock, ToolCallCard, ToolResultView};
+use std::collections::HashMap;
+
 use pa_types::daemon::{DaemonEventCursor, DaemonReplayInfo};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+
+use crate::chat::{AssistantMessage, ChatEntry, MessageBlock, ToolCallCard, ToolResultView};
 
 /// The slim attach result: the `data` object of a successful `attach`
 /// response (`createAttachResult` wire shape).
@@ -531,15 +533,26 @@ pub fn attach_data_from_response(data: Value) -> anyhow::Result<AttachData> {
 }
 
 pub use decoder::{
-    custom_message_entries, event_to_update, message_text, message_value_to_entries,
-    user_display_text, working_message_from_update, RetryStartReason, TurnUpdate,
+    RetryStartReason,
+    TurnUpdate,
+    custom_message_entries,
+    event_to_update,
+    message_text,
+    message_value_to_entries,
+    user_display_text,
+    working_message_from_update,
 };
 mod decoder;
 
 pub use tool_fold::{
-    apply_streamed_tool_card, apply_tool_execution_start, assistant_error_row,
-    assistant_message_parts, assistant_value_to_entries, is_superseded_attempt_row,
-    settle_pending_tool_cards, AssistantErrorRow,
+    AssistantErrorRow,
+    apply_streamed_tool_card,
+    apply_tool_execution_start,
+    assistant_error_row,
+    assistant_message_parts,
+    assistant_value_to_entries,
+    is_superseded_attempt_row,
+    settle_pending_tool_cards,
 };
 mod tool_fold;
 

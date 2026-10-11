@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct MockSupervisor {
     listener: UnixListener,

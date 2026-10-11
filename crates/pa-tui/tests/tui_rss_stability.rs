@@ -25,10 +25,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Resident memory of this process in bytes.
 fn resident_bytes() -> u64 {
@@ -364,10 +369,12 @@ fn interactive_session_rss_plateaus_over_long_stream() {
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
     let recorded = std::sync::Arc::clone(&samples);
-    let rss_thread = std::thread::spawn(move || loop {
-        recorded.lock().unwrap().push(resident_bytes());
-        if stop_rx.recv_timeout(Duration::from_millis(100)).is_ok() {
-            break;
+    let rss_thread = std::thread::spawn(move || {
+        loop {
+            recorded.lock().unwrap().push(resident_bytes());
+            if stop_rx.recv_timeout(Duration::from_millis(100)).is_ok() {
+                break;
+            }
         }
     });
 

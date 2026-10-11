@@ -1,8 +1,20 @@
 //! Teardown: graceful shutdown, resource cleanup, and process killing.
 
 use super::{
-    json, live_kernels, lock, oneshot, orphan_journal, Arc, Duration, Inner, KernelShutdownOptions,
-    KernelState, MemoSlot, Signal, HOST_REQUEST_SHUTDOWN_TIMEOUT_MS, KERNEL_SHUTDOWN_TIMEOUT_MS,
+    Arc,
+    Duration,
+    HOST_REQUEST_SHUTDOWN_TIMEOUT_MS,
+    Inner,
+    KERNEL_SHUTDOWN_TIMEOUT_MS,
+    KernelShutdownOptions,
+    KernelState,
+    MemoSlot,
+    Signal,
+    json,
+    live_kernels,
+    lock,
+    oneshot,
+    orphan_journal,
 };
 
 impl Inner {

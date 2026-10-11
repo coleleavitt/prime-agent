@@ -6,7 +6,9 @@ use std::sync::Arc;
 use super::now_ms;
 use super::registry::{InProcessChildRecord, NoticeKind};
 use crate::session_engine::rlm_notices::{
-    create_rlm_child_failure_message, create_rlm_child_terminal_notice, RlmChildTerminalNotice,
+    RlmChildTerminalNotice,
+    create_rlm_child_failure_message,
+    create_rlm_child_terminal_notice,
 };
 
 pub(super) fn terminal_row(

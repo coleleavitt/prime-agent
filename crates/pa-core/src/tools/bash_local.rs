@@ -2,11 +2,9 @@
 //! streams stdout+stderr through one ordered channel, kills the whole group on timeout or abort,
 //! and resolves with the exit code (`None` when killed by a signal).
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-
-use std::sync::atomic::Ordering;
 
 use crate::tools::bash::{BashOperations, ExecFuture, ExecOptions};
 use crate::tools::shell_utils::{get_shell_config, get_shell_env, kill_process_tree};

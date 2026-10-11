@@ -3,9 +3,11 @@
 //! `test/test_harness.py` is the end-to-end parity oracle; these pin the
 //! request contract and the behaviours that oracle cannot reach.
 
-use super::*;
-use serde_json::json;
 use std::time::Duration;
+
+use serde_json::json;
+
+use super::*;
 
 struct Store {
     _dir: tempfile::TempDir,

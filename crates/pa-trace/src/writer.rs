@@ -3,8 +3,8 @@
 //! ever waits on the disk. The worker starts with the first record; a
 //! process that records nothing starts no thread and opens no file.
 
-use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::OnceLock;
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::Duration;
 
 use crate::log_file::RotatingLog;

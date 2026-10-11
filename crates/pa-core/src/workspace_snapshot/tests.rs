@@ -6,17 +6,29 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::git::{git_command, parse_status, GitStatus, HeadTreeEntry, StatusEntry};
+use super::git::{GitStatus, HeadTreeEntry, StatusEntry, git_command, parse_status};
 #[cfg(unix)]
 use super::git::{read_head_tree, read_worktree_status};
 use super::manifest::{is_safe_relative_path, symlink_target_stays_inside};
 use super::{
-    build_manifest, capture_leaf, create_workspace_snapshot, git_blob_oid, is_secret_path,
-    verify_workspace_snapshot, Baseline, BaselineMode, CapturedEntry, ExcludeReason, ExcludedEntry,
-    LeafOutcome, SnapshotError, SnapshotLimits, SnapshotManifest,
+    Baseline,
+    BaselineMode,
+    CapturedEntry,
+    ExcludeReason,
+    ExcludedEntry,
+    LeafOutcome,
+    SnapshotError,
+    SnapshotLimits,
+    SnapshotManifest,
+    build_manifest,
+    capture_leaf,
+    create_workspace_snapshot,
+    git_blob_oid,
+    is_secret_path,
+    verify_workspace_snapshot,
 };
 #[cfg(unix)]
-use super::{open_leaf, OpenLeaf};
+use super::{OpenLeaf, open_leaf};
 
 #[cfg(unix)]
 fn git(dir: &Path, args: &[&str]) {
@@ -460,10 +472,12 @@ async fn snapshot_never_reads_behind_symlinked_ancestors() {
         )
     );
     // No file content was staged at all, victim's or otherwise.
-    assert!(std::fs::read_dir(staging.path().join("blobs"))
-        .unwrap()
-        .next()
-        .is_none());
+    assert!(
+        std::fs::read_dir(staging.path().join("blobs"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
     assert!(verify_workspace_snapshot(staging.path()).is_ok());
 }
 

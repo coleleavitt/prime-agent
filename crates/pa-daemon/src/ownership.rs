@@ -5,15 +5,14 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
 use pa_types::daemon::{DaemonCommand, DaemonWorkerLifecycle};
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::descriptor::persist_worker;
 use crate::protocol::{response_failure, response_line, response_success};
 use crate::registry::ResidentWorker;
-use crate::supervisor::{Supervisor, ROUTE_TIMEOUT_MS};
+use crate::supervisor::{ROUTE_TIMEOUT_MS, Supervisor};
 
 impl Supervisor {
     /// Resolve the resident a `retry_worker` targets: the direct match on

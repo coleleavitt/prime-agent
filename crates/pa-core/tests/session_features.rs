@@ -10,12 +10,15 @@ use std::time::{Duration, Instant};
 use pa_agent::scripted::ScriptedProvider;
 use pa_agent::types::{AgentMessage, Message, ToolResultContent};
 use pa_core::features::{
-    FeatureFuture, SessionFeature, SessionFeatureContext, ToolCallObservation,
+    FeatureFuture,
+    SessionFeature,
+    SessionFeatureContext,
+    ToolCallObservation,
     ToolResultObservation,
 };
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::session_engine::PromptOptions;
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 
 #[derive(Debug, Clone, PartialEq)]

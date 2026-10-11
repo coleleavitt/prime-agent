@@ -8,11 +8,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::session::CustomMessage;
-use crate::JsonMap;
-
 use super::artifact::UpdateId;
 use super::marker::UpdateSupervisorIdentity;
+use crate::JsonMap;
+use crate::session::CustomMessage;
 
 /// `roster.json` schema revision (spec §8: `format_version`-gated).
 pub const UPDATE_ROSTER_FORMAT_VERSION: u64 = 1;

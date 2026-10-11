@@ -5,14 +5,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use pa_types::daemon::{
-    UpdateId, UpdateRoster, UpdateRosterBinary, UpdateRosterInFlight, UpdateRosterQueue,
-    UpdateRosterSession, UpdateRosterSessionKind, UpdateSupervisorIdentity,
     UPDATE_ROSTER_FORMAT_VERSION,
+    UpdateId,
+    UpdateRoster,
+    UpdateRosterBinary,
+    UpdateRosterInFlight,
+    UpdateRosterQueue,
+    UpdateRosterSession,
+    UpdateRosterSessionKind,
+    UpdateSupervisorIdentity,
 };
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -311,15 +317,17 @@ mod tests {
     #[test]
     fn conversion_rejects_cycles_instead_of_hanging_during_restore_ordering() {
         let manifest = json!({"formatVersion": 1, "createdAt": "now", "sessions": [session("parent", &json!({"kind": "subagent", "parentSessionId": "parent"}))]});
-        assert!(convert(
-            &manifest,
-            &json!({}),
-            &UpdateId("u".into()),
-            Path::new("/s"),
-            None
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("cyclic"));
+        assert!(
+            convert(
+                &manifest,
+                &json!({}),
+                &UpdateId("u".into()),
+                Path::new("/s"),
+                None
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("cyclic")
+        );
     }
 }

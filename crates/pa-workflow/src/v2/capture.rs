@@ -10,10 +10,9 @@
 //! Every record is sealed with a digest over its RFC 8785 bytes without the
 //! digest field, byte-compatible with the TS producer.
 
+use pa_types::ai::{AssistantContentBlock, StopReason, Usage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use pa_types::ai::{AssistantContentBlock, StopReason, Usage};
 
 use super::wire;
 
@@ -657,7 +656,7 @@ impl TerminalCaptureSlot {
         let owned = match (self.ambiguous_reason(), &self.first_owned) {
             (None, Some(owned)) => owned,
             (reason, _) => {
-                return self.ambiguous(reason.unwrap_or(AmbiguousCaptureReason::MissingTerminal))
+                return self.ambiguous(reason.unwrap_or(AmbiguousCaptureReason::MissingTerminal));
             }
         };
         let Some(usage) = normalize_usage(&owned.usage, Finality::Final) else {

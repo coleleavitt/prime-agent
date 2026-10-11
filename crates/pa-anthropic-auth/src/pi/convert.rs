@@ -11,15 +11,20 @@
 
 use anthropic::cch::{js_json_stringify, reset_billing_header_cch};
 use anthropic::claude_code::order_claude_code_body;
-use anthropic::models::{clamp_effort_for_model, resolve_thinking_shape, ThinkingShape};
+use anthropic::models::{ThinkingShape, clamp_effort_for_model, resolve_thinking_shape};
 use pa_ai::request_hooks::RequestSource;
 use pa_ai::types::{
-    AssistantContent, AssistantMessage, Message, Tool, ToolResultMessage, UserMessageContent,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    Tool,
+    ToolResultMessage,
+    UserMessageContent,
     UserOrToolContent,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::shape::{billing_text, metadata_user_id, ShapeIdentity};
+use crate::shape::{ShapeIdentity, billing_text, metadata_user_id};
 
 /// The paragraph of pi's system prompt Anthropic rejects in `system[]`.
 const PI_DOCS_ANCHOR: &str = "Pi documentation";

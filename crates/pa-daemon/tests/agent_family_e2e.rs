@@ -31,14 +31,16 @@ use std::time::{Duration, Instant};
 
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_core::session_engine::agent_messaging::{
-    register_agent_message_host_handlers, AgentFamilyRelationship, AgentMessageController,
+    AgentFamilyRelationship,
+    AgentMessageController,
+    register_agent_message_host_handlers,
 };
 use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSubagentHost};
 use pa_daemon::agent_messaging::LinkAgentMessageController;
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,

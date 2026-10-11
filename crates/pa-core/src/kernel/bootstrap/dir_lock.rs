@@ -6,7 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::venv::{
-    BOOTSTRAP_LOCK_NAME, BOOTSTRAP_LOCK_RETRY_MS, BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS,
+    BOOTSTRAP_LOCK_NAME,
+    BOOTSTRAP_LOCK_RETRY_MS,
+    BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS,
 };
 
 /// The recorded owner still holds the lock (TS `isProcessIdentityAlive`): its

@@ -13,7 +13,7 @@ mod wire_events;
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn internal_error(id: &Value, details: &str) -> Value {
     jsonrpc::error_response(

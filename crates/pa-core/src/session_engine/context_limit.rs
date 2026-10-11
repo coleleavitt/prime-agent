@@ -10,9 +10,9 @@
 use pa_types::session::{CustomMessage, FileEntry};
 use pa_types::sync::MutexExt;
 
-use super::compaction::{self, CompactionSettings};
-use super::messages::{create_context_cap_clamp_notice, CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE};
 use super::AgentSession;
+use super::compaction::{self, CompactionSettings};
+use super::messages::{CONTEXT_CAP_CLAMP_NOTICE_CUSTOM_TYPE, create_context_cap_clamp_notice};
 
 /// The durable session-override entry (`{ "maxContextTokens": n | null }`;
 /// `null` records an explicit `/context-limit off`).

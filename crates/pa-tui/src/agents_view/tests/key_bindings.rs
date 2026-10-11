@@ -1,9 +1,8 @@
 //! The key wiring: user overrides over the inert defaults, the page keys,
 //! the double ctrl+c exit, and the kitty releases.
 
-use super::*;
-
 use super::super::rename::RenameTarget;
+use super::*;
 
 #[test]
 fn open_key_override_fires_and_the_default_is_inert() {

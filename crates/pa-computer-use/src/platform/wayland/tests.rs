@@ -7,7 +7,15 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::fakes::{
-    editor_app, floaty_app, niri_window, rendered, FakeAtSpi, FakeNiri, Input, InputRecorder, Node,
+    FakeAtSpi,
+    FakeNiri,
+    Input,
+    InputRecorder,
+    Node,
+    editor_app,
+    floaty_app,
+    niri_window,
+    rendered,
 };
 use super::input::{KeyStroke, PointerTarget};
 use super::*;
@@ -892,9 +900,11 @@ fn grim_missing_failing_or_writing_nothing_is_a_transport_error() {
 #[test]
 fn the_lock_reads_logind() {
     assert!(!world().platform.screen_locked());
-    assert!(world_with(FakeNiri::default(), FakeAtSpi::default(), &[])
-        .platform
-        .screen_locked());
+    assert!(
+        world_with(FakeNiri::default(), FakeAtSpi::default(), &[])
+            .platform
+            .screen_locked()
+    );
 }
 
 #[test]
@@ -908,14 +918,16 @@ fn the_status_reports_real_capabilities_and_names_missing_pieces() {
         (json!("ok"), json!("ok"))
     );
     assert_eq!(status["input"], json!({"pointer": "ok", "keyboard": "ok"}));
-    assert!(status["help"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .contains("floating"));
+    assert!(
+        status["help"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("floating")
+    );
     let world = world_with(FakeNiri::default(), FakeAtSpi::default(), &[]);
     *world.platform.bus().unavailable.lock().unwrap() =
         Some("AT-SPI: the accessibility bus is unreachable".to_string());
@@ -1134,10 +1146,12 @@ fn the_hit_test_refuses_layers_borders_and_covering_windows() {
             ),
         );
     });
-    let mut refusals = vec![world
-        .platform
-        .click(11, (100.0, 100.0), MouseButton::Left, 1)
-        .unwrap_err()];
+    let mut refusals = vec![
+        world
+            .platform
+            .click(11, (100.0, 100.0), MouseButton::Left, 1)
+            .unwrap_err(),
+    ];
     for hit in [
         json!({"output": "eDP-1", "window_id": null, "window_local": null, "is_input": false,
                "layer": {"namespace": "waybar", "layer": "Top"}}),

@@ -8,7 +8,7 @@
 
 use std::path::{Component, Path};
 
-use super::{opaque, Check, Rule};
+use super::{Check, Rule, opaque};
 use crate::model::evidence::find_command_word;
 use crate::model::files::join;
 use crate::model::value::pattern_matches;
@@ -95,7 +95,7 @@ fn is_dump(invocation: &Invocation) -> bool {
                 Some(flag)
                     if flag.starts_with('-') && !flag.starts_with("--") && flag.contains('i') =>
                 {
-                    return false
+                    return false;
                 }
                 Some(text) if text.starts_with('-') || text.contains('=') => {}
                 // A word that may be a command.

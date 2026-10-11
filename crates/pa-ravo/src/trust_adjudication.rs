@@ -14,19 +14,33 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use indexmap::IndexMap;
 use pa_core::refinement::HarnessScope;
 use pa_ledger::{
-    apply_replay_verifications, replay_probe_of, FailureLedger, FailureRecord, ReplayCase,
+    FailureLedger,
+    FailureRecord,
+    ReplayCase,
     ReplayVerification,
+    apply_replay_verifications,
+    replay_probe_of,
 };
 use tracing::Instrument;
 
 use crate::js::locale_compare;
 use crate::referee::{
-    adjudicate_failure_claims, replay_applies_to_skill_imports, RefereeVerdictStatus, ReplayRunner,
+    RefereeVerdictStatus,
+    ReplayRunner,
+    adjudicate_failure_claims,
+    replay_applies_to_skill_imports,
 };
 use crate::trust::{
-    current_skill_imports, parse_harness_entry_ref, same_modules, TrustAdjudicationStatus,
-    TrustEntries, TrustOutcome, TrustWindow, TrustWindowEvidence, TrustWindows,
     MAX_TRUST_ADJUDICATION_RUNS,
+    TrustAdjudicationStatus,
+    TrustEntries,
+    TrustOutcome,
+    TrustWindow,
+    TrustWindowEvidence,
+    TrustWindows,
+    current_skill_imports,
+    parse_harness_entry_ref,
+    same_modules,
 };
 
 /// Replays planned (and awaiting) per batch.
@@ -479,9 +493,9 @@ mod tests {
     use std::pin::Pin;
     use std::sync::Mutex;
 
-    use pa_core::refinement::{empty_harness_state, HarnessState, RefinementKind};
+    use pa_core::refinement::{HarnessState, RefinementKind, empty_harness_state};
     use pa_ledger::FailureFingerprint;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::referee::{ReplayEnvironment, ReplayOutcome};

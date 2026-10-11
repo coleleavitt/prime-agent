@@ -4,11 +4,16 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use pa_telemetry::{
-    AnalyticsSink, Properties, SinkOutcome, TelemetryClient, TelemetryClientConfig, TelemetryEvent,
+    AnalyticsSink,
+    Properties,
+    SinkOutcome,
+    TelemetryClient,
+    TelemetryClientConfig,
+    TelemetryEvent,
     TelemetrySink,
 };
 use serde_json::json;
@@ -60,9 +65,11 @@ async fn batch_posts_the_exact_ts_request() {
     assert_eq!(outcome, SinkOutcome::Sent);
 
     let request = rx.recv().expect("stub captured request");
-    assert!(request
-        .request_line
-        .starts_with("POST /api/v1/agent-analytics/events "));
+    assert!(
+        request
+            .request_line
+            .starts_with("POST /api/v1/agent-analytics/events ")
+    );
     assert_eq!(
         header(&request.headers, "content-type"),
         Some("application/json")

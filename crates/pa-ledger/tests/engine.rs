@@ -8,12 +8,16 @@ use std::time::Duration;
 
 use pa_agent::scripted::ScriptedProvider;
 use pa_core::features::SessionFeature;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::session_engine::PromptOptions;
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::{ExecutionMode, ToolDefinition};
 use pa_ledger::{
-    fingerprint_failure, FailureKind, FailureLedgerFeature, HarnessDocument, LedgerOptions,
+    FailureKind,
+    FailureLedgerFeature,
+    HarnessDocument,
+    LedgerOptions,
+    fingerprint_failure,
 };
 
 fn failing_definition() -> ToolDefinition {

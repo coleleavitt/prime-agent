@@ -2,10 +2,11 @@
 //! Regexes keep JavaScript semantics (whitespace/word classes, UTF-16
 //! string indexing).
 
+use pa_types::sync::MutexExt;
+
 use super::python::preview_python_code;
 #[cfg(test)]
 use super::python::{preview_ipython_code, python_statement_lines};
-use pa_types::sync::MutexExt;
 
 const DESCRIPTOR_MAX_WIDTH: usize = 64;
 

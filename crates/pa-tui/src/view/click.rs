@@ -372,7 +372,10 @@ mod tests {
     fn a_click_expands_the_custom_message_rows() {
         use super::super::expansion::tests::transcript_text;
         use crate::custom_message::{
-            InjectedPromptKind, InjectedPromptRow, RefinementOutcomeRow, SkillInvocationRow,
+            InjectedPromptKind,
+            InjectedPromptRow,
+            RefinementOutcomeRow,
+            SkillInvocationRow,
         };
         let rows = [
             (

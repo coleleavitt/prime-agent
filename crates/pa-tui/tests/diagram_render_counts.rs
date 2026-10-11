@@ -5,8 +5,8 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use pa_tui::diagram::{set_render_counting, take_render_counts, RenderCounts};
-use pa_tui::markdown::{render_markdown, MarkdownStyle, MermaidMode};
+use pa_tui::diagram::{RenderCounts, set_render_counting, take_render_counts};
+use pa_tui::markdown::{MarkdownStyle, MermaidMode, render_markdown};
 
 const TWO_DIAGRAMS: &str = "Flow:\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\nThen:\n\n\
 ```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n";

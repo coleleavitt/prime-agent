@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 mod auth;
 mod convert;
@@ -17,30 +17,50 @@ mod h2;
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::providers::bedrock::auth::{resolve_credentials, resolve_endpoint, sigv4_headers};
 use crate::providers::bedrock::convert::{
-    convert_messages, convert_tool_config, map_stop_reason, map_thinking_level_to_effort,
-    supports_always_on_adaptive_thinking, BedrockToolChoice,
+    BedrockToolChoice,
+    convert_messages,
+    convert_tool_config,
+    map_stop_reason,
+    map_thinking_level_to_effort,
+    supports_always_on_adaptive_thinking,
 };
 pub(crate) use crate::providers::bedrock::convert::{
-    is_anthropic_claude_model, supports_adaptive_thinking,
+    is_anthropic_claude_model,
+    supports_adaptive_thinking,
 };
-use crate::providers::bedrock::events::{handle_event, BedrockStreamState};
+use crate::providers::bedrock::events::{BedrockStreamState, handle_event};
 use crate::providers::bedrock::eventstream::EventStreamDecoder;
 use crate::providers::simple_options::{build_base_options, clamp_reasoning};
 use crate::registry::Provider;
 use crate::types::{
-    done_reason, error_reason, AssistantMessage, CacheRetention, Context, Model,
-    ModelThinkingLevel, SimpleStreamOptions, StopReason, StreamOptions, ThinkingBudgets, Usage,
+    AssistantMessage,
+    CacheRetention,
+    Context,
+    Model,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    ThinkingBudgets,
+    Usage,
+    done_reason,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::stream_failure::{
-    record_stream_failure, stream_failure_from_stop_reason, ConnectionErrorProfile, ProviderError,
+    ConnectionErrorProfile,
+    ProviderError,
     ProviderHttpError,
+    record_stream_failure,
+    stream_failure_from_stop_reason,
 };
 
 pub const API_BEDROCK_CONVERSE_STREAM: &str = "bedrock-converse-stream";
@@ -845,7 +865,8 @@ impl Provider for BedrockConverseStreamProvider {
 mod tests {
     use super::*;
     use crate::providers::bedrock::auth::{
-        get_standard_bedrock_endpoint_region, should_use_explicit_bedrock_endpoint,
+        get_standard_bedrock_endpoint_region,
+        should_use_explicit_bedrock_endpoint,
     };
 
     /// The TS `formatBedrockError` shape for an HTTP-level failure: the AWS SDK exception name
@@ -1006,7 +1027,11 @@ mod tests {
 
     fn image_context(mime_type: &str, data: &str) -> Context {
         use crate::types::{
-            ImageContent, Message, UserMessage, UserMessageContent, UserOrToolContent,
+            ImageContent,
+            Message,
+            UserMessage,
+            UserMessageContent,
+            UserOrToolContent,
         };
         Context {
             system_prompt: None,

@@ -12,7 +12,7 @@
 use pa_core::update::homebrew;
 use pa_core::update::install::current_platform_alias;
 use pa_core::update::installer::{self, InstallerOutput};
-use pa_core::update::release::{artifact_for_platform, LatestRelease};
+use pa_core::update::release::{LatestRelease, artifact_for_platform};
 use pa_core::update::version::UpdateChannel;
 
 /// TS self-update's no-install exit code: the package manager owns this update.
@@ -223,7 +223,11 @@ pub fn run_local(prefix: &std::path::Path, archive: Option<&std::path::Path>) ->
                 // run that does not exist.
                 println!(
                     "the {} continues in the background after this command exits — Windows only releases the payload once this process does",
-                    if archive.is_some() { "archive install" } else { "rollback" }
+                    if archive.is_some() {
+                        "archive install"
+                    } else {
+                        "rollback"
+                    }
                 );
                 return 0;
             }
@@ -335,9 +339,9 @@ fn check_verdict(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use pa_core::update::release::ReleaseArtifact;
+
+    use super::*;
 
     /// A release with a build for this platform.
     fn release(version: &str) -> LatestRelease {

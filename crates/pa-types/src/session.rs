@@ -6,10 +6,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ai::{
-    AssistantMessage, ServiceTier, ToolResultMessage, Usage, UserContent, UserMessage,
-};
 use crate::JsonMap;
+use crate::ai::{
+    AssistantMessage,
+    ServiceTier,
+    ToolResultMessage,
+    Usage,
+    UserContent,
+    UserMessage,
+};
 
 /// Git repository identity captured alongside session headers and `git_state` entries.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

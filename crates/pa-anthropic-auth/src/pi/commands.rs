@@ -5,10 +5,10 @@
 //! the plugin's settings file the requests read. Same arguments, same
 //! text.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::convert::CacheMode;
-use super::settings::{request_settings, PluginSettings, SettingsError};
+use super::settings::{PluginSettings, SettingsError, request_settings};
 
 /// `/claude-fast`.
 pub(crate) const FAST_COMMAND: &str = "claude-fast";
@@ -59,11 +59,7 @@ pub(crate) fn parse_cache(args: &str) -> Action {
 }
 
 fn enabled_word(enabled: bool) -> &'static str {
-    if enabled {
-        "enabled"
-    } else {
-        "disabled"
-    }
+    if enabled { "enabled" } else { "disabled" }
 }
 
 /// `buildFastModeStatusSummary`.

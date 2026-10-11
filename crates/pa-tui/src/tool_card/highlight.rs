@@ -4,9 +4,10 @@
 //! backslash escapes keep the string color (cli-highlight renders those
 //! scopes with the identity function).
 
+use ratatui::style::Style;
+
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 /// The resolved `syntax*` theme colors the scopes render with, shared
 /// by every surface that renders highlighted code.
@@ -393,19 +394,11 @@ fn string_at(text: &str, i: usize) -> Option<usize> {
         }
         cursor += ch.len_utf8();
     }
-    if triple {
-        Some(text.len() - i)
-    } else {
-        None
-    }
+    if triple { Some(text.len() - i) } else { None }
 }
 
 fn quote_char(byte: u8) -> char {
-    if byte == b'\'' {
-        '\''
-    } else {
-        '"'
-    }
+    if byte == b'\'' { '\'' } else { '"' }
 }
 
 /// Highlight python `code` into per-line spans. The whole block is one
@@ -679,10 +672,11 @@ mod tests {
         assert!(toks.contains(&("0x1F".into(), Scope::Number)));
         assert!(toks.contains(&("1.5e3j".into(), Scope::Number)));
         assert!(toks.contains(&("'boom'".into(), Scope::String)));
-        assert!(toks
-            .iter()
-            .filter(|(t, _)| t.contains("ValueError"))
-            .all(|(_, s)| *s == Scope::Plain));
+        assert!(
+            toks.iter()
+                .filter(|(t, _)| t.contains("ValueError"))
+                .all(|(_, s)| *s == Scope::Plain)
+        );
     }
 
     #[test]

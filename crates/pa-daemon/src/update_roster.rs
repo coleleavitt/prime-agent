@@ -10,15 +10,26 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use pa_core::cron::store::read_scheduled_jobs_artifact;
 use pa_types::daemon::{
-    UpdateHeartbeatDeliveryMode, UpdateHeartbeatStatus, UpdateId, UpdateRoster, UpdateRosterBinary,
-    UpdateRosterHeartbeat, UpdateRosterInFlight, UpdateRosterQueue, UpdateRosterSession,
-    UpdateRosterSessionKind, UpdateRosterSubagent, UpdateRosterSubagentStatus, UpdateRosterWorker,
-    UpdateSupervisorIdentity, UPDATE_ROSTER_FORMAT_VERSION,
+    UPDATE_ROSTER_FORMAT_VERSION,
+    UpdateHeartbeatDeliveryMode,
+    UpdateHeartbeatStatus,
+    UpdateId,
+    UpdateRoster,
+    UpdateRosterBinary,
+    UpdateRosterHeartbeat,
+    UpdateRosterInFlight,
+    UpdateRosterQueue,
+    UpdateRosterSession,
+    UpdateRosterSessionKind,
+    UpdateRosterSubagent,
+    UpdateRosterSubagentStatus,
+    UpdateRosterWorker,
+    UpdateSupervisorIdentity,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::lease::canonical_session_path;
-use crate::rlm_ledger::{read_rlm_subagent_display, RlmSpawnLedger};
+use crate::rlm_ledger::{RlmSpawnLedger, read_rlm_subagent_display};
 use crate::util::iso_from_unix_ms;
 
 /// One resident worker's collected data for the roster: its durable

@@ -21,16 +21,23 @@ mod pyjson;
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Map, Value};
-
-use super::pyvalue::{decode_node_table, encode_node_table, py_str_repr, PyValue};
-use super::spec::validate_factory_spec;
-use machine_file::{dumps_pretty, py_str, single_line};
 use machine_file::{
-    machine_description_errors, machine_name_errors, parse_machine_file, render_machine_file,
-    MachineFile, RenderFields, MACHINE_FILE_NAME,
+    MACHINE_FILE_NAME,
+    MachineFile,
+    RenderFields,
+    dumps_pretty,
+    machine_description_errors,
+    machine_name_errors,
+    parse_machine_file,
+    py_str,
+    render_machine_file,
+    single_line,
 };
 pub use pyfs::{Fs, FsError};
+use serde_json::{Map, Value, json};
+
+use super::pyvalue::{PyValue, decode_node_table, encode_node_table, py_str_repr};
+use super::spec::validate_factory_spec;
 
 /// An exception a library operation raises in the kernel.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,10 +143,10 @@ fn read_library_machine(fs: &Fs, path: &Path) -> Result<(Option<MachineFile>, St
     let text = match fs.read_text(path) {
         Ok(text) => text,
         Err(error @ FsError::Os { .. }) => {
-            return Ok((None, format!("{label}: unreadable ({error})")))
+            return Ok((None, format!("{label}: unreadable ({error})")));
         }
         Err(error @ FsError::Decode { .. }) => {
-            return Ok((None, format!("{label}: not valid UTF-8 ({error})")))
+            return Ok((None, format!("{label}: not valid UTF-8 ({error})")));
         }
     };
     let (machine, errors) = parse_machine_file(&text, &label.to_string())?;

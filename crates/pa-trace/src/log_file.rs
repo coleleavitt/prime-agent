@@ -199,7 +199,7 @@ impl RotationLock {
                 Ok(()) => {
                     return Ok(Some(RotationLock {
                         path: path.to_path_buf(),
-                    }))
+                    }));
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     let stale = fs::metadata(path)
@@ -302,8 +302,9 @@ fn set_owner_only_dir(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Read;
+
+    use super::*;
 
     fn read(path: &Path) -> String {
         fs::read_to_string(path).unwrap_or_default()

@@ -4,14 +4,12 @@
 //! A terminal has no circle worth drawing; bars carry the same information in less space.
 //! Lenient: an unreadable statement is dropped and recorded.
 
-use super::super::canvas::{draw_text, Canvas};
+use super::super::canvas::{Canvas, draw_text};
 use super::super::graph::MAX_NODES;
-use super::super::js_number;
-use super::super::js_text;
 use super::super::labels::{clean_label, fit_label};
 use super::super::layout::width_of;
 use super::super::statements::{header_kind, quote_mask, statements_of};
-use super::super::Role;
+use super::super::{Role, js_number, js_text};
 use super::Drawn;
 
 pub(in crate::render) const HEADERS: &[&str] = &["pie"];

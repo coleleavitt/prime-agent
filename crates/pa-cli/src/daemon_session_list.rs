@@ -1,8 +1,9 @@
 //! Session-list rendering for the `list` command: summary validation,
 //! display ids, and the fixed-column table.
 
-use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde_json::Value;
 
 const DISPLAY_ID_LENGTH: usize = 12;
 
@@ -445,8 +446,9 @@ pub(crate) fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn summary() -> Value {
         json!({

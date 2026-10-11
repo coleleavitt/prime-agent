@@ -12,15 +12,20 @@ use pa_agent::types::Model as AgentModel;
 use serde_json::json;
 
 use super::family::{FamilySelf, InProcessFamilyController};
-use super::{InProcessRlmHost, InProcessRlmHostConfig, DEFAULT_RLM_MAX_DEPTH};
+use super::{DEFAULT_RLM_MAX_DEPTH, InProcessRlmHost, InProcessRlmHostConfig};
 use crate::models::registry::ModelRegistry;
 use crate::session::manager::{NewSessionOptions, SessionManager};
 use crate::session_engine::agent_messaging::{
-    AgentMessageController, AgentMessageSendInput, AgentObserveController,
+    AgentMessageController,
+    AgentMessageSendInput,
+    AgentObserveController,
 };
-use crate::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
+use crate::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
 use crate::session_engine::rlm_host::{
-    RlmChildResult, RlmCreateSessionRequest, RlmSpawnRequest, RlmSubagentHost,
+    RlmChildResult,
+    RlmCreateSessionRequest,
+    RlmSpawnRequest,
+    RlmSubagentHost,
 };
 use crate::session_engine::rlm_in_process::StreamFnFactory;
 
@@ -2791,9 +2796,11 @@ async fn a_torn_tail_after_a_notice_row_repairs_on_open() {
         file.write_all(br#"{"type":"custom_message","id":"torn"#)
             .unwrap();
     }
-    assert!(std::fs::read_to_string(&parent_file)
-        .unwrap()
-        .ends_with("torn"));
+    assert!(
+        std::fs::read_to_string(&parent_file)
+            .unwrap()
+            .ends_with("torn")
+    );
     // The open repairs the torn tail; the canonical notice row survives.
     let facts = rig.into_facts().await;
     let _reopened =

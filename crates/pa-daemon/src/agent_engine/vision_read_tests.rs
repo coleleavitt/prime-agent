@@ -1,10 +1,13 @@
+use pa_core::kernel::shared::HostRequestPayload;
+
 use super::*;
 use crate::agent_engine::image_delegation::tests::{
-    delegating_engine_with_socket, image_content, register_text_only_battery_model,
     ScriptedSupervisor,
+    delegating_engine_with_socket,
+    image_content,
+    register_text_only_battery_model,
 };
 use crate::agent_engine::tests::FAUX_TEST_LOCK;
-use pa_core::kernel::shared::HostRequestPayload;
 
 fn png(data: &str) -> Value {
     json!({ "data": data, "mime_type": "image/png" })

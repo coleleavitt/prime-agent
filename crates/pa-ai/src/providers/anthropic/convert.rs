@@ -1,10 +1,16 @@
 //! Anthropic Messages conversion: content blocks, messages, and tools.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::providers::anthropic::{to_claude_code_name, CacheControl};
+use crate::providers::anthropic::{CacheControl, to_claude_code_name};
 use crate::types::{
-    AssistantContent, Context, Message, Model, StopReason, Tool, UserMessageContent,
+    AssistantContent,
+    Context,
+    Message,
+    Model,
+    StopReason,
+    Tool,
+    UserMessageContent,
     UserOrToolContent,
 };
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;

@@ -18,10 +18,10 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The child plus the tempdir it runs in.
 struct AcpChild {
@@ -488,9 +488,11 @@ fn acp_cwd_mismatch_is_reported_not_adopted() {
     assert_eq!(meta["requested"], "/tmp");
     // The actual cwd is the temp dir the client runs in; only the mismatch shape is asserted here
     // (the value is tempdir-random).
-    assert!(meta["actual"]
-        .as_str()
-        .is_some_and(|actual| actual.starts_with(std::path::MAIN_SEPARATOR)));
+    assert!(
+        meta["actual"]
+            .as_str()
+            .is_some_and(|actual| actual.starts_with(std::path::MAIN_SEPARATOR))
+    );
 }
 
 #[test]
@@ -1135,9 +1137,11 @@ fn acp_daemon_attached_default_session_persists_and_resumes() {
             .is_some_and(|dir| dir.ends_with("agent/sessions")),
         "the session is saved in the session dir: {session_file}"
     );
-    assert!(std::fs::read_to_string(&session_file)
-        .unwrap()
-        .contains("Name a river."));
+    assert!(
+        std::fs::read_to_string(&session_file)
+            .unwrap()
+            .contains("Name a river.")
+    );
     let descriptor = worker_descriptor(&home_path);
     assert_eq!(descriptor["telemetryDisabled"], json!(true), "{descriptor}");
     assert!(
@@ -1548,9 +1552,9 @@ fn shutdown_sandboxed_daemon(socket: &std::path::Path) {
         return;
     };
     let frame = format!(
-            "{{\"type\":\"command\",\"id\":\"shutdown-test\",\"protocol\":{{\"name\":\"prime-agent.daemon\",\"version\":{}}},\"command\":{{\"type\":\"shutdown\"}}}}\n",
-            pa_types::daemon::DAEMON_PROTOCOL_VERSION
-        );
+        "{{\"type\":\"command\",\"id\":\"shutdown-test\",\"protocol\":{{\"name\":\"prime-agent.daemon\",\"version\":{}}},\"command\":{{\"type\":\"shutdown\"}}}}\n",
+        pa_types::daemon::DAEMON_PROTOCOL_VERSION
+    );
     let _ = stream.write_all(frame.as_bytes());
     let _ = stream.flush();
 }

@@ -37,11 +37,13 @@ fn message(role: &str, fields: &Value) -> Value {
 fn store_with(entries: &[(&str, Value)]) -> SessionFile {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let path = dir.path().join("session.jsonl");
-    let mut lines = vec![json!({
-        "type": "session", "version": 3, "id": "s1",
-        "timestamp": "2026-09-16T02:10:02.842Z", "cwd": "/tmp",
-    })
-    .to_string()];
+    let mut lines = vec![
+        json!({
+            "type": "session", "version": 3, "id": "s1",
+            "timestamp": "2026-09-16T02:10:02.842Z", "cwd": "/tmp",
+        })
+        .to_string(),
+    ];
     let mut parent_id = Option::<String>::None;
     for (index, (type_, fields)) in entries.iter().enumerate() {
         let id = format!("e{index}");

@@ -5,12 +5,21 @@ use uuid::Uuid;
 
 use super::state::normalize_optional_label;
 use super::{
-    iso_from_millis, now_millis, AgentCronJobStore, CreateAgentCronJobInput,
+    AgentCronJobStore,
+    CreateAgentCronJobInput,
     HeartbeatManagementAction,
+    iso_from_millis,
+    now_millis,
 };
 use crate::cron::{
-    is_heartbeat_cron_job, next_run_at_for_schedule, parse_agent_cron_schedule, parse_iso_millis,
-    AgentCronJob, JobStatus, ScheduleKind, DEFAULT_HEARTBEAT_DELIVERY_MODE,
+    AgentCronJob,
+    DEFAULT_HEARTBEAT_DELIVERY_MODE,
+    JobStatus,
+    ScheduleKind,
+    is_heartbeat_cron_job,
+    next_run_at_for_schedule,
+    parse_agent_cron_schedule,
+    parse_iso_millis,
 };
 
 impl AgentCronJobStore {
@@ -338,8 +347,10 @@ mod tests {
         assert_eq!(cancelled_first.status, JobStatus::Cancelled);
         let cleared = store.clear_heartbeat("live-1", now + 4).unwrap().unwrap();
         assert_eq!(cleared.status, JobStatus::Cancelled);
-        assert!(store
-            .create_heartbeat(&input("nope", "in 10m", now))
-            .is_err());
+        assert!(
+            store
+                .create_heartbeat(&input("nope", "in 10m", now))
+                .is_err()
+        );
     }
 }

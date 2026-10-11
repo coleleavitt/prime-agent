@@ -4,16 +4,28 @@
 
 mod support;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pa_core::features::SessionFeature;
 use pa_recall::{
-    is_fully_verifiable, read_recall_mark, read_recall_skip, recall_mark_path, recall_skip_path,
-    render_recall_block, witness_workspace, workspace_digest, ClaimStatus, MarkOutcome,
-    MarkSkipReason, MarkWriter, RecallMarkFile, SkipReason, RECALL_BLOCK_MAX_BYTES,
+    ClaimStatus,
+    MarkOutcome,
+    MarkSkipReason,
+    MarkWriter,
+    RECALL_BLOCK_MAX_BYTES,
     RECALL_DIGEST_ALGORITHM,
+    RecallMarkFile,
+    SkipReason,
+    is_fully_verifiable,
+    read_recall_mark,
+    read_recall_skip,
+    recall_mark_path,
+    recall_skip_path,
+    render_recall_block,
+    witness_workspace,
+    workspace_digest,
 };
 use support::*;
 
@@ -971,8 +983,10 @@ async fn keeps_a_claim_current_when_the_workspace_matches_it_exactly_after_a_par
         .unwrap();
     assert_eq!(report.unverifiable, ["z.txt"]);
     assert_eq!(statuses(&report), [ClaimStatus::Current]);
-    assert!(render_recall_block(&report, RECALL_BLOCK_MAX_BYTES)
-        .contains(&format!("- CURRENT: `{TSGO_CLAIM}`")));
+    assert!(
+        render_recall_block(&report, RECALL_BLOCK_MAX_BYTES)
+            .contains(&format!("- CURRENT: `{TSGO_CLAIM}`"))
+    );
 
     write(&repo.join("z.txt"), "zulu, edited after the claim\n");
     let edited = witness_workspace(&root(&repo), &partial.mark, &agent)
@@ -1095,8 +1109,10 @@ async fn bounds_the_unrecorded_paths_when_a_commits_new_paths_cancel_their_count
     assert!(block.contains(
         "Unverifiable, not listed: up to 50 paths the mark left unrecorded (some may be among the listed paths)."
     ));
-    assert!(render_recall_block(&report, 300)
-        .contains("Changed: 50. Unverifiable: 0 (up to 50 unrecorded)."));
+    assert!(
+        render_recall_block(&report, 300)
+            .contains("Changed: 50. Unverifiable: 0 (up to 50 unrecorded).")
+    );
 }
 
 #[tokio::test]
@@ -1179,10 +1195,15 @@ async fn does_not_count_unrecorded_paths_again_once_a_commit_names_them_changed(
     assert_eq!(report.unrecorded_up_to, Some(50));
     let block = render_recall_block(&report, RECALL_BLOCK_MAX_BYTES);
     assert!(!block.contains("Unverifiable, not listed: 50 paths"));
-    assert!(block
-        .contains("up to 50 paths the mark left unrecorded (some may be among the listed paths)"));
-    assert!(render_recall_block(&report, 300)
-        .contains("Changed: 50. Unverifiable: 0 (up to 50 unrecorded)."));
+    assert!(
+        block.contains(
+            "up to 50 paths the mark left unrecorded (some may be among the listed paths)"
+        )
+    );
+    assert!(
+        render_recall_block(&report, 300)
+            .contains("Changed: 50. Unverifiable: 0 (up to 50 unrecorded).")
+    );
 }
 
 fn cell_facts() -> serde_json::Value {

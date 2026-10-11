@@ -7,11 +7,11 @@
 
 use std::collections::BTreeMap;
 
-use anthropic::token::{AccessToken, Credential};
 use anthropic::AccountStore;
+use anthropic::token::{AccessToken, Credential};
 use chrono::{FixedOffset, TimeZone, Utc};
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::prewarm::prewarm_headers;
 use super::*;
@@ -582,9 +582,11 @@ fn a_kept_session_is_prewarmed_with_the_store_s_current_token() {
         (requests[1].bearer(), prewarm),
         ("sk-ant-oat01-cachekeep-rotated-000".to_string(), expected)
     );
-    assert!(requests[1]
-        .header("anthropic-beta")
-        .is_some_and(|betas| betas.split(',').any(|beta| beta == EXTENDED_TTL_BETA)));
+    assert!(
+        requests[1]
+            .header("anthropic-beta")
+            .is_some_and(|betas| betas.split(',').any(|beta| beta == EXTENDED_TTL_BETA))
+    );
     // The session's cache was renewed: an hour from the prewarm, renewed
     // again five minutes before.
     assert_eq!(

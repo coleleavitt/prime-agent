@@ -1,12 +1,12 @@
 //! Chat chrome: the pinned top bar, brand splash header, prompt context
 //! line, and the tray line under the editor.
 
-use crate::width::str_width;
-use crate::{Line, Span};
 use ratatui::style::Style;
 use serde_json::Value;
 
 use crate::theme::{Theme, ThemeBg, ThemeColor};
+use crate::width::str_width;
+use crate::{Line, Span};
 
 /// The compact 7-row brand butterfly.
 pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(

@@ -1,17 +1,46 @@
 //! The child-lifecycle concern: session creation (create/launch), the
 //! prompt/kill/close routing, settle watching with its notices, and the
 //! spawn-admission outbox types (`CreatedSessionIds`, `CreatedChild`).
-use super::{
-    anyhow, cap_text, compact_rlm_text, create_rlm_child_failure_message,
-    create_rlm_child_terminal_notice, json, now_ms, Arc, ChildCloseReason, ChildRecord, Context,
-    CustomMessage, DaemonCommand, DaemonSessionLifecycle, Duration, Map, Mutex, ParentIdentity,
-    Path, PromptInput, Result, RlmChildTerminalNotice, SupervisorChildSessionsInner, Value,
-    ANSWER_TEXT_MAX_CHARS, CREATE_TIMEOUT_MS, IDLE_WAIT_GRACE_MS, KILL_TIMEOUT_MS,
-    NOTICE_DELIVERY_TIMEOUT_MS, PROMPT_TIMEOUT_MS, RUNTIME_METADATA_PROMPT_MAX, STATE_TIMEOUT_MS,
-    WATCH_MAX_UNREACHABLE_POLLS, WATCH_POLL_INTERVAL_MS, WATCH_SETTLE_GRACE_MS,
-    WATCH_WAIT_SLICE_MS,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    ANSWER_TEXT_MAX_CHARS,
+    Arc,
+    CREATE_TIMEOUT_MS,
+    ChildCloseReason,
+    ChildRecord,
+    Context,
+    CustomMessage,
+    DaemonCommand,
+    DaemonSessionLifecycle,
+    Duration,
+    IDLE_WAIT_GRACE_MS,
+    KILL_TIMEOUT_MS,
+    Map,
+    Mutex,
+    NOTICE_DELIVERY_TIMEOUT_MS,
+    PROMPT_TIMEOUT_MS,
+    ParentIdentity,
+    Path,
+    PromptInput,
+    RUNTIME_METADATA_PROMPT_MAX,
+    Result,
+    RlmChildTerminalNotice,
+    STATE_TIMEOUT_MS,
+    SupervisorChildSessionsInner,
+    Value,
+    WATCH_MAX_UNREACHABLE_POLLS,
+    WATCH_POLL_INTERVAL_MS,
+    WATCH_SETTLE_GRACE_MS,
+    WATCH_WAIT_SLICE_MS,
+    anyhow,
+    cap_text,
+    compact_rlm_text,
+    create_rlm_child_failure_message,
+    create_rlm_child_terminal_notice,
+    json,
+    now_ms,
+};
 
 /// Parsed ids of one created child session.
 struct CreatedSessionIds {
@@ -306,14 +335,16 @@ impl SupervisorChildSessionsInner {
         // delegation path rides the actual image bytes natively; every
         // text-only caller admits an empty list.
         let wire_images = (!images.is_empty()).then(|| {
-            json!(images
-                .iter()
-                .map(|image| json!({
-                    "type": "image",
-                    "data": image.data,
-                    "mimeType": image.mime_type,
-                }))
-                .collect::<Vec<_>>())
+            json!(
+                images
+                    .iter()
+                    .map(|image| json!({
+                        "type": "image",
+                        "data": image.data,
+                        "mimeType": image.mime_type,
+                    }))
+                    .collect::<Vec<_>>()
+            )
         });
         // Cloned per call: the closure may run twice (the retry below).
         let make_command = |selector: &str| DaemonCommand::Prompt {

@@ -107,8 +107,9 @@ pub fn migrate(document: &mut serde_json::Map<String, Value>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn merge_prefers_overrides_and_merges_nested() {

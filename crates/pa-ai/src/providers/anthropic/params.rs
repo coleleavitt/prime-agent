@@ -1,11 +1,15 @@
 //! Anthropic Messages request params assembly.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::providers::anthropic::convert::{convert_messages, convert_tools};
 use crate::providers::anthropic::{
-    get_anthropic_compat, is_always_on_adaptive_thinking_model, supports_adaptive_thinking,
-    AnthropicOptions, AnthropicThinkingDisplay, CacheControl,
+    AnthropicOptions,
+    AnthropicThinkingDisplay,
+    CacheControl,
+    get_anthropic_compat,
+    is_always_on_adaptive_thinking_model,
+    supports_adaptive_thinking,
 };
 use crate::types::{Context, Model};
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;

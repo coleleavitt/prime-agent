@@ -178,8 +178,9 @@ pub fn trim_loop(message: &mut AssistantMessage, found: &RepetitionLoop) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fmt::Write as _;
+
+    use super::*;
 
     fn config() -> RepetitionGuardConfig {
         RepetitionGuardConfig::default()

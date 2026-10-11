@@ -7,7 +7,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 
 use common::{gate_python, options, slugify_request};
-use pa_toolforge::{publish, GatePhase, PublishRequest, PublishStatus};
+use pa_toolforge::{GatePhase, PublishRequest, PublishStatus, publish};
 
 #[tokio::test]
 async fn the_exit_test_inherits_variables_and_the_users_python_path() {

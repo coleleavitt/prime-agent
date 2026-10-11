@@ -12,11 +12,14 @@ use std::time::Duration;
 use pa_agent::types::{AgentEvent, StopReason};
 use pa_types::session::{ChildUsageOrigin, FileEntry};
 
-use super::registry::{compact_rlm_text, record_matches, InProcessChildRecord, NoticeKind};
-use super::{now_ms, InProcessRlmHost};
+use super::registry::{InProcessChildRecord, NoticeKind, compact_rlm_text, record_matches};
+use super::{InProcessRlmHost, now_ms};
 use crate::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE;
 use crate::session_engine::rlm_host::{
-    RlmChildResult, RlmDeleteSubagentResult, RlmHostFuture, RlmInterruptSubagentResult,
+    RlmChildResult,
+    RlmDeleteSubagentResult,
+    RlmHostFuture,
+    RlmInterruptSubagentResult,
     RlmSubagentEntry,
 };
 /// Settle-poll slice while the child still runs (the daemon watcher's
@@ -780,10 +783,12 @@ pub(super) fn delete_subagent(
             // close signal: the winner gets its full retry burst first.
             record.mark_closed().await;
             if !admitted {
-                anyhow::bail!(record
-                    .parked_error()
-                    .await
-                    .unwrap_or_else(|| "terminal notice admission is pending".to_string()));
+                anyhow::bail!(
+                    record
+                        .parked_error()
+                        .await
+                        .unwrap_or_else(|| "terminal notice admission is pending".to_string())
+                );
             }
             #[cfg(test)]
             host.pause_child_gate(super::ChildGatePoint::BeforePublish {
@@ -817,10 +822,12 @@ pub(super) fn delete_subagent(
                     }
                 }
                 if record.is_running().await {
-                    anyhow::bail!(record
-                        .parked_error()
-                        .await
-                        .unwrap_or_else(|| "terminal notice admission is pending".to_string()));
+                    anyhow::bail!(
+                        record
+                            .parked_error()
+                            .await
+                            .unwrap_or_else(|| "terminal notice admission is pending".to_string())
+                    );
                 }
             }
             record.mark_closed().await;

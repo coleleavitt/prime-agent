@@ -1,9 +1,10 @@
 //! Report tests, asserted on plain text like the TS `stripAnsi`
 //! comparisons.
 
-use super::*;
 use pa_types::incident::parse_incident_log_line;
 use serde_json::json;
+
+use super::*;
 
 const SINCE_MS: i64 = 1_789_070_400_000; // 2026-09-10T20:00:00Z
 const UNTIL_MS: i64 = 1_789_072_200_000; // 2026-09-10T20:30:00Z
@@ -204,7 +205,11 @@ fn a_clean_run_shows_no_anomalies() {
             "Session worker 477fef4e85a8 stderr: Prime Agent daemon listening on /tmp/prime-agent-501/worker-a-477fef4e85a8.sock",
             &json!({}),
         ),
-        supervisor_line("2026-09-10T20:02:00.000Z", "Migrated 2 scheduled jobs into session artifacts", &json!({})),
+        supervisor_line(
+            "2026-09-10T20:02:00.000Z",
+            "Migrated 2 scheduled jobs into session artifacts",
+            &json!({}),
+        ),
         supervisor_line(
             "2026-09-10T20:10:00.000Z",
             "Session worker 477fef4e85a8 stderr: shutdown command received over socket; 1 active session(s) will be closed",
@@ -267,7 +272,9 @@ fn reconstructs_the_incident_narrative_in_one_report() {
     assert!(text.contains("/tmp/prime-agent-501/daemon.sock: 5 command timeouts over 19m18s"));
     assert!(text.contains("session 2339fb7da605: 3 command timeouts over 10m7s"));
     assert!(text.contains("provider stream failure (rate_limit 429) for worker 5b1d3aeb91ee (x24"));
-    assert!(text.contains("provider stream failure (server_error 504) for worker 5b1d3aeb91ee (x6"));
+    assert!(
+        text.contains("provider stream failure (server_error 504) for worker 5b1d3aeb91ee (x6")
+    );
 }
 
 #[test]

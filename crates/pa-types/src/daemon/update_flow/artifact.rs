@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::JsonMap;
-
 use super::state::UpdateState;
+use crate::JsonMap;
 
 /// Opaque update identifier (a `UUIDv7` in practice), typed so status records, artifact paths, and
 /// prepare transactions cannot mix it up with session ids.

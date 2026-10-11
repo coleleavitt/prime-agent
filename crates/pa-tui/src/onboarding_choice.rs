@@ -2,11 +2,12 @@
 //! options in the same selection language as the pickers, and an optional
 //! grey footnote. The onboarding splash mounts one per question.
 
+use ratatui::style::{Modifier, Style};
+
 use crate::onboarding::{highlight_wash, wrap_words};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
 
 /// Selection-row metrics (TS `OnboardingChoiceComponent`).
 const CHOICE_MARKER_WIDTH: usize = 2;

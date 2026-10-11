@@ -5,23 +5,26 @@
 //! mid-stream does not disturb an attached client. Every failure to
 //! establish the direct link degrades silently to supervisor routing.
 
-use pa_types::sync::MutexExt;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use pa_types::daemon::{
-    framing, DaemonClientCapability, DaemonPeerCommand, DaemonPeerTransportTicket,
+    DaemonClientCapability,
+    DaemonPeerCommand,
+    DaemonPeerTransportTicket,
+    framing,
 };
 use pa_types::platform::transport::connect_transport;
-use serde_json::{json, Map, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use crate::daemon_client::{client_event_from_value, DaemonClientEvent, Shared};
+use crate::daemon_client::{DaemonClientEvent, Shared, client_event_from_value};
 
 /// The worker socket connect budget.
 const CONNECT_TIMEOUT_MS: u64 = 1_000;

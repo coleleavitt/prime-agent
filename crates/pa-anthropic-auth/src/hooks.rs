@@ -9,20 +9,25 @@
 use std::sync::atomic::Ordering;
 
 use anthropic::quota::{is_quota_bearing_header_frame, normalize_quota_headers};
-use anthropic::refresh::{classify_refresh_failure, RefreshFailure};
+use anthropic::refresh::{RefreshFailure, classify_refresh_failure};
 use anthropic::{AccountStore, SharedRefreshOptions};
 use pa_ai::request_hooks::{
-    Admission, OutgoingRequest, PendingRequest, ProviderRequestHooks, RejectedRequest, Rejection,
+    Admission,
+    OutgoingRequest,
+    PendingRequest,
+    ProviderRequestHooks,
+    RejectedRequest,
+    Rejection,
 };
 use pa_ai::types::{Model, ProviderResponse};
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
+use crate::SharedStoreSource;
 use crate::quota::cooldown_until;
 use crate::routing::RouteRequest;
 use crate::shape::ShapeIdentity;
-use crate::source::{block_on_own_runtime, PollWait, UsageEvent};
-use crate::SharedStoreSource;
+use crate::source::{PollWait, UsageEvent, block_on_own_runtime};
 
 impl SharedStoreSource {
     /// The store's token for the request now: the routing order's pick

@@ -42,9 +42,11 @@ mod tests {
 
         assert!(!agent_dir.join("prime-inference-models-cache.json").exists());
         assert!(!agent_dir.join("agent-traces-outbox.json").exists());
-        assert!(models_dir
-            .join("prime-inference-models-cache.json")
-            .exists());
+        assert!(
+            models_dir
+                .join("prime-inference-models-cache.json")
+                .exists()
+        );
         assert!(outbox_dir.join("hash.json").exists());
         assert!(agent_dir.join("cron-jobs.json").exists());
         assert!(agent_dir.join("harness/refinements.jsonl").exists());

@@ -8,13 +8,25 @@
 //! run to settle (abort-aware, reusing the settle watcher's slice and
 //! unreachable-poll constants - no new timeout bound), and capture the
 //! full answer text (uncapped; the roster preview compacts it).
+use pa_types::sync::MutexExt;
+
 use super::{
-    create_default_rlm_subagent_session_name, json, now_ms, rlm_child_label, Arc, ChildCloseReason,
-    ChildRecord, Duration, Mutex, SupervisorChildSessions, SupervisorChildSessionsInner,
-    WATCH_MAX_UNREACHABLE_POLLS, WATCH_POLL_INTERVAL_MS, WATCH_SETTLE_GRACE_MS,
+    Arc,
+    ChildCloseReason,
+    ChildRecord,
+    Duration,
+    Mutex,
+    SupervisorChildSessions,
+    SupervisorChildSessionsInner,
+    WATCH_MAX_UNREACHABLE_POLLS,
+    WATCH_POLL_INTERVAL_MS,
+    WATCH_SETTLE_GRACE_MS,
+    create_default_rlm_subagent_session_name,
+    json,
+    now_ms,
+    rlm_child_label,
 };
 use crate::rlm_child_model::compact_rlm_text;
-use pa_types::sync::MutexExt;
 
 /// One image-turn delegation request: the child runs `model` (the resolved
 /// `settings.imageModel` selector with the thinking level the resolver
@@ -120,7 +132,7 @@ impl SupervisorChildSessionsInner {
             Err(error) => {
                 return ImageDelegationOutcome::Failed {
                     error: format!("create the image-model child session dir: {error:#}"),
-                }
+                };
             }
         };
         let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());

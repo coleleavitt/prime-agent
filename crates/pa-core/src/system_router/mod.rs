@@ -28,5 +28,5 @@ pub(crate) mod test_support;
 // The host bridge consumes the module through these three names only; the
 // rest of the subsystem stays on its internal module paths (the unit
 // batteries reach it through their parent modules' own imports).
-pub use segment::{run_router_segment, RouterSegmentOptions};
+pub use segment::{RouterSegmentOptions, run_router_segment};
 pub use types::parse_system_router_run_spec;

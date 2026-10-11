@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::error::transport;
-use crate::permissions::{PermissionState, MAC_HELP_LINES};
+use crate::permissions::{MAC_HELP_LINES, PermissionState};
 use crate::policy::SYSTEM_DENY;
 use crate::telemetry::{Outcome, TelemetryEvent};
 

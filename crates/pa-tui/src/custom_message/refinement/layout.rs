@@ -1,8 +1,23 @@
 //! Shared refinement rendering traversal and count-only geometry.
 use super::{
-    line_diff, pad_with, spacer, str_width, text_rows, truncate_line, wrap_line, wrap_text,
-    ColorMode, Detail, DiffOp, Line, RefinementEditRow, RefinementOutcomeRow, Span, Theme, ThemeBg,
+    ColorMode,
+    Detail,
+    DiffOp,
+    Line,
+    RefinementEditRow,
+    RefinementOutcomeRow,
+    Span,
+    Theme,
+    ThemeBg,
     ThemeColor,
+    line_diff,
+    pad_with,
+    spacer,
+    str_width,
+    text_rows,
+    truncate_line,
+    wrap_line,
+    wrap_text,
 };
 
 enum Output {

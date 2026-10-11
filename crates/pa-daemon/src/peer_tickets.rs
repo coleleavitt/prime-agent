@@ -12,20 +12,23 @@
 //! TS refuses tickets for client-owned workers (`ownerClientId`); the Rust
 //! supervisor has not ported that refusal yet (a disclosed divergence).
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_types::daemon::{
-    DaemonPeerTransportTicket, DaemonWorkerCommand, DaemonWorkerLifecycle, DaemonWorkerPeerGrant,
+    DaemonPeerTransportTicket,
+    DaemonWorkerCommand,
+    DaemonWorkerLifecycle,
+    DaemonWorkerPeerGrant,
 };
+use serde_json::Map;
 
 use crate::backpressure::RouteAdmission;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::registry::ResidentWorker;
 use crate::supervisor::Supervisor;
 use crate::util;
-use serde_json::Map;
 
 /// TS `PEER_TRANSPORT_GRANT_TTL_MS`: how long a minted grant stays valid.
 pub(crate) const PEER_TRANSPORT_GRANT_TTL_MS: u64 = 10_000;
@@ -304,10 +307,13 @@ mod tests {
 
     #[tokio::test]
     async fn worker_peer_ticket_auth_and_self_target() {
-        use crate::registry::ResidentWorker;
         use pa_types::daemon::{
-            DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand,
+            DaemonWorkerDescriptor,
+            DaemonWorkerLifecycle,
+            DurableDaemonCreateCommand,
         };
+
+        use crate::registry::ResidentWorker;
 
         let tokenized = |worker_id: &str, token: &str| {
             ResidentWorker::new(

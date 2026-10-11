@@ -2,9 +2,24 @@
 //! supersession/awaiting.
 
 use super::{
-    anyhow, live_kernels, lock, AbortSignal, Arc, AtomicBool, ExecuteOptions, ExecuteStatus, Inner,
-    KernelStartOptions, KernelState, MemoSlot, Ordering, RepairHandle, RepairOwner, Request,
-    Signal, REPAIR_STEP_TIMEOUT_MS,
+    AbortSignal,
+    Arc,
+    AtomicBool,
+    ExecuteOptions,
+    ExecuteStatus,
+    Inner,
+    KernelStartOptions,
+    KernelState,
+    MemoSlot,
+    Ordering,
+    REPAIR_STEP_TIMEOUT_MS,
+    RepairHandle,
+    RepairOwner,
+    Request,
+    Signal,
+    anyhow,
+    live_kernels,
+    lock,
 };
 
 impl Inner {
@@ -243,7 +258,7 @@ impl Inner {
     async fn reprovision_fresh_kernel(self: &Arc<Self>) -> bool {
         if self.options.snapshot.is_some() && lock(&self.guarded).pending_restore {
             self.perform_restore(true).await; // clears pendingRestore on success
-                                              // Corrupted during the restore: the spawned repair owns the kernel now.
+            // Corrupted during the restore: the spawned repair owns the kernel now.
             if lock(&self.guarded).protocol_repair.is_some()
                 || lock(&self.guarded).state != KernelState::Running
             {

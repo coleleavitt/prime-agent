@@ -1,15 +1,15 @@
 //! The store in the provider's requests: a temporary store, a loopback
 //! token endpoint and a mock Messages endpoint.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anthropic::AccountStore;
 use chrono::Duration;
 use pa_types::sync::MutexExt;
 
-use crate::test_support::*;
 use crate::SharedStoreSource;
+use crate::test_support::*;
 
 /// The store's source installed (credential source and request hooks) for
 /// a provider id of the test's own.

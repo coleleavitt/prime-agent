@@ -47,27 +47,58 @@ pub fn version() -> &'static str {
 }
 
 pub use catalog::{
-    catalog, feature_outcome_key, input_stage_key, lookup, sanitize, EventRule, PropKind,
-    PropertyRule, AUTH_CATEGORIES, BUILD_CHANNELS, ERROR_CATEGORIES, ERROR_SUBTYPES, FEATURE_NAMES,
-    FEATURE_OUTCOMES, INPUT_STAGES, INSTALLATION_ACTIONS, INSTALLATION_OUTCOMES,
-    INSTALLATION_REASONS, INSTALLATION_SOURCES, INSTALLATION_STAGES, MODEL_CATEGORIES,
-    ONBOARDING_ENTRY_REASONS, ONBOARDING_OUTCOMES, ONBOARDING_STAGES, PROVIDER_CATEGORIES,
-    READY_KINDS, RUN_TRIGGERS, STARTUP_KINDS, STARTUP_OUTCOMES, STARTUP_STAGES, STOP_REASONS,
-    TERMINAL_OUTCOMES, TOOL_CATEGORIES, WORKLOAD_ORIGINS,
+    AUTH_CATEGORIES,
+    BUILD_CHANNELS,
+    ERROR_CATEGORIES,
+    ERROR_SUBTYPES,
+    EventRule,
+    FEATURE_NAMES,
+    FEATURE_OUTCOMES,
+    INPUT_STAGES,
+    INSTALLATION_ACTIONS,
+    INSTALLATION_OUTCOMES,
+    INSTALLATION_REASONS,
+    INSTALLATION_SOURCES,
+    INSTALLATION_STAGES,
+    MODEL_CATEGORIES,
+    ONBOARDING_ENTRY_REASONS,
+    ONBOARDING_OUTCOMES,
+    ONBOARDING_STAGES,
+    PROVIDER_CATEGORIES,
+    PropKind,
+    PropertyRule,
+    READY_KINDS,
+    RUN_TRIGGERS,
+    STARTUP_KINDS,
+    STARTUP_OUTCOMES,
+    STARTUP_STAGES,
+    STOP_REASONS,
+    TERMINAL_OUTCOMES,
+    TOOL_CATEGORIES,
+    WORKLOAD_ORIGINS,
+    catalog,
+    feature_outcome_key,
+    input_stage_key,
+    lookup,
+    sanitize,
 };
 pub use client::{TelemetryClient, TelemetryClientConfig};
 pub use env::parse_bool_override;
 pub use event::TelemetryEvent;
 pub use events::{
-    AgentInstallationStage, AgentStartupStage, OnboardingStage, RunTrigger, ToolCategory,
+    AgentInstallationStage,
+    AgentStartupStage,
+    OnboardingStage,
+    RunTrigger,
+    ToolCategory,
     UpdateHomebrewRefusal,
 };
 pub use install_id::{existing_install_id, install_id};
-pub use platform::{base_properties, SCHEMA_VERSION};
+pub use platform::{SCHEMA_VERSION, base_properties};
 pub use properties::Properties;
 pub use rename::rename_onto;
 pub use sink::{SinkOutcome, TelemetrySink};
-pub use sinks::{AnalyticsSink, FileSink, MockSink, NoopSink, RecordedBatch, ANALYTICS_ENDPOINT};
+pub use sinks::{ANALYTICS_ENDPOINT, AnalyticsSink, FileSink, MockSink, NoopSink, RecordedBatch};
 
 #[cfg(test)]
 mod tests {

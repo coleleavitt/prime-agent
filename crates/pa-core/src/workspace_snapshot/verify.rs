@@ -9,11 +9,18 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::manifest::{
-    is_safe_relative_path, symlink_target_stays_inside, Baseline, CapturedEntry, ExcludedEntry,
-    SnapshotManifest, BLOBS_DIR, MANIFEST_FILE, MANIFEST_VERSION,
-};
 use super::SnapshotError;
+use super::manifest::{
+    BLOBS_DIR,
+    Baseline,
+    CapturedEntry,
+    ExcludedEntry,
+    MANIFEST_FILE,
+    MANIFEST_VERSION,
+    SnapshotManifest,
+    is_safe_relative_path,
+    symlink_target_stays_inside,
+};
 
 /// The length of a git commit id.
 const COMMIT_HEX_LEN: usize = 40;

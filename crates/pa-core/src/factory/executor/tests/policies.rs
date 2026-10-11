@@ -3,11 +3,19 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::fake::{
-    done, events_of, failed, instance_statuses, node_status, running, strings, Case, Event,
+    Case,
+    Event,
     SleepMode,
+    done,
+    events_of,
+    failed,
+    instance_statuses,
+    node_status,
+    running,
+    strings,
 };
 use crate::factory::executor::{BACKOFF_MAX_ATTEMPTS, EVENT_WINDOW, POLL_TIMEOUT_MS};
 
@@ -202,10 +210,11 @@ async fn run_budget_pauses_and_notifies_then_resume_completes() {
     let result = case.start().await;
     let paused = case.settle(&result).await;
     assert_eq!(paused["state"], "paused");
-    assert!(case
-        .host
-        .notice_kinds()
-        .contains(&"budget_exceeded".to_string()));
+    assert!(
+        case.host
+            .notice_kinds()
+            .contains(&"budget_exceeded".to_string())
+    );
     assert_eq!(case.host.spawn_calls("b"), Vec::<Value>::new());
     let milestone = events_of(&paused, "milestone")
         .into_iter()
@@ -245,10 +254,11 @@ async fn admission_phase_stops_at_the_run_budget_boundary() {
     assert_eq!(case.host.calls_of("rlm.run").len(), 2);
     let status = case.status(&Case::run_id(&result));
     assert_eq!(status["state"], "paused");
-    assert!(case
-        .host
-        .notice_kinds()
-        .contains(&"budget_exceeded".to_string()));
+    assert!(
+        case.host
+            .notice_kinds()
+            .contains(&"budget_exceeded".to_string())
+    );
     let c = node_status(&status, "c");
     assert_eq!(c["status"], "running");
     assert_eq!(c["instances"][0]["status"], "pending");
@@ -333,10 +343,11 @@ async fn foreach_children_count_against_the_run_max_children_budget() {
     let result = case.start().await;
     let paused = case.settle(&result).await;
     assert_eq!(paused["state"], "paused");
-    assert!(case
-        .host
-        .notice_kinds()
-        .contains(&"max_children_exceeded".to_string()));
+    assert!(
+        case.host
+            .notice_kinds()
+            .contains(&"max_children_exceeded".to_string())
+    );
     assert_eq!(paused["usage"]["spawns"], 2);
     let fan = node_status(&paused, "fan");
     assert_eq!(
@@ -697,16 +708,20 @@ async fn rate_limit_backoff_exhaustion_fails_node() {
     assert_eq!(case.host.spawn_calls("b").len(), 5);
     let b = node_status(&status, "b");
     assert_eq!(b["status"], "error");
-    assert!(b["error"]
-        .as_str()
-        .unwrap()
-        .contains("spawn admission failed"));
+    assert!(
+        b["error"]
+            .as_str()
+            .unwrap()
+            .contains("spawn admission failed")
+    );
     assert_eq!(status["state"], "failed");
     let sleeps = case.sleeps();
     assert!(!sleeps.is_empty());
-    assert!(sleeps
-        .iter()
-        .all(|delay| *delay <= POLL_TIMEOUT_MS as f64 / 1000.0));
+    assert!(
+        sleeps
+            .iter()
+            .all(|delay| *delay <= POLL_TIMEOUT_MS as f64 / 1000.0)
+    );
     assert!((sleeps.iter().sum::<f64>() - (1.0 + 2.0 + 4.0 + 8.0)).abs() < 1e-9);
 }
 
@@ -758,11 +773,13 @@ async fn scale_chain_100_completes() {
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
     assert_eq!(status["nodes"].as_array().unwrap().len(), 100);
-    assert!(status["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|node| node["status"] == "done"));
+    assert!(
+        status["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node["status"] == "done")
+    );
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
 
@@ -782,11 +799,13 @@ async fn scale_fan_1000_completes() {
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
     assert_eq!(status["nodes"].as_array().unwrap().len(), 1000);
-    assert!(status["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|node| node["status"] == "done"));
+    assert!(
+        status["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node["status"] == "done")
+    );
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
 
@@ -820,26 +839,29 @@ async fn status_marks_events_delivered_and_unknown_run_raises() {
     assert_eq!(EVENT_WINDOW, 200);
     assert!(status["events"].as_array().unwrap().len() <= EVENT_WINDOW);
     assert_eq!(case.host.notice_kinds(), strings(&["finished"]));
-    assert!(case
-        .executor
-        .status("no-such-run")
-        .unwrap_err()
-        .0
-        .contains("unknown factory run"));
-    assert!(case
-        .executor
-        .stop("no-such-run")
-        .await
-        .unwrap_err()
-        .0
-        .contains("unknown factory run"));
-    assert!(case
-        .executor
-        .resume("no-such-run")
-        .await
-        .unwrap_err()
-        .0
-        .contains("unknown factory run"));
+    assert!(
+        case.executor
+            .status("no-such-run")
+            .unwrap_err()
+            .0
+            .contains("unknown factory run")
+    );
+    assert!(
+        case.executor
+            .stop("no-such-run")
+            .await
+            .unwrap_err()
+            .0
+            .contains("unknown factory run")
+    );
+    assert!(
+        case.executor
+            .resume("no-such-run")
+            .await
+            .unwrap_err()
+            .0
+            .contains("unknown factory run")
+    );
 }
 
 #[tokio::test]
@@ -890,10 +912,12 @@ async fn dead_bridge_keeps_the_milestone_in_the_ledger() {
     let raw = case.all_events_of(&result, "milestone");
     assert_eq!(raw.len(), 1);
     assert_eq!(raw[0]["stage"], "recorded");
-    assert!(raw[0]["detail"]
-        .as_str()
-        .unwrap()
-        .contains("state a failed"));
+    assert!(
+        raw[0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("state a failed")
+    );
     let paused = case.settle(&result).await;
     assert_eq!(paused["state"], "paused");
     let milestones = events_of(&paused, "milestone");

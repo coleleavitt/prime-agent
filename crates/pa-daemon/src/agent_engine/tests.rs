@@ -4,8 +4,9 @@
 #[cfg(test)]
 pub(crate) static FAUX_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-use super::*;
 use serde_json::Map;
+
+use super::*;
 
 mod abort;
 mod autonomous;

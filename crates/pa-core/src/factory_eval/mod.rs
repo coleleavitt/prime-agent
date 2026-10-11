@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Per-node wall-clock budget (admission to settlement) declared on every
 /// task node.
@@ -2255,11 +2255,13 @@ pub fn check_task_success(
                 // The fix ledger: the fixing node's captured previews plus
                 // every fixing answer_captured event must carry all planted
                 // defect ids.
-                let mut fix_texts: Vec<String> = vec![fixing
-                    .and_then(|node| node.get("answer_preview"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()];
+                let mut fix_texts: Vec<String> = vec![
+                    fixing
+                        .and_then(|node| node.get("answer_preview"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                ];
                 if let Some(events) = ledger.get("events").and_then(Value::as_array) {
                     for event in events {
                         let is_fix_captured = event.get("kind").and_then(Value::as_str)
@@ -3352,11 +3354,7 @@ pub fn resolve_factory_kernel_python(
 }
 
 fn path_sep() -> &'static str {
-    if cfg!(windows) {
-        ";"
-    } else {
-        ":"
-    }
+    if cfg!(windows) { ";" } else { ":" }
 }
 
 /// The venv recipe the fail-fast message carries (the TS-era recipe, still

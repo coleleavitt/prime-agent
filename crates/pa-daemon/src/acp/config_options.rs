@@ -193,8 +193,9 @@ pub async fn publish_config_options(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn model(provider: &str, id: &str, name: &str, reasoning: bool) -> Model {
         Model {

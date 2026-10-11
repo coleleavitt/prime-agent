@@ -8,11 +8,18 @@ use std::sync::Once;
 
 use pa_tui::chat::Detail;
 use pa_tui::diagram::{
-    install_diagram_renderer, AlreadyInstalled, DiagramLayout, DiagramNotice, DiagramRenderer,
-    DiagramRole, DiagramSpan, DiagramSurface, NoticeLevel,
+    AlreadyInstalled,
+    DiagramLayout,
+    DiagramNotice,
+    DiagramRenderer,
+    DiagramRole,
+    DiagramSpan,
+    DiagramSurface,
+    NoticeLevel,
+    install_diagram_renderer,
 };
 use pa_tui::markdown::MermaidMode;
-use pa_tui::session::{parse_jsonl, JsonlSessionStream, SessionStream};
+use pa_tui::session::{JsonlSessionStream, SessionStream, parse_jsonl};
 use pa_tui::side_question::{SideQuestionPane, SideQuestionTurn};
 use pa_tui::theme::{ColorMode, Theme};
 use pa_tui::view::AgentView;

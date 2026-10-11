@@ -14,7 +14,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Fields 5-7 of `/proc/<pid>/stat`: process group, session, tty number.
 fn group_session_tty(pid: u32) -> (String, String, String) {

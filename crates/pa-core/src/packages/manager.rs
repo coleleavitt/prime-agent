@@ -5,12 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
-use super::git;
-use super::npm;
 pub use super::source::UserOrProject;
-use super::source::{parse_source, GitSource, NpmSource, ParsedSource, SourceScope};
+use super::source::{GitSource, NpmSource, ParsedSource, SourceScope, parse_source};
+use super::{git, npm};
 use crate::settings::SettingsManager;
 
 /// Progress actions reported to the callback.
@@ -702,22 +701,26 @@ mod tests {
             Some(dir.path().join("cwd").join("local-pkg").as_path())
         );
 
-        assert!(manager
-            .remove_and_persist(
-                &dir.path()
-                    .join("cwd")
-                    .join("local-pkg")
-                    .display()
-                    .to_string(),
-                UserOrProject::User
-            )
-            .unwrap());
+        assert!(
+            manager
+                .remove_and_persist(
+                    &dir.path()
+                        .join("cwd")
+                        .join("local-pkg")
+                        .display()
+                        .to_string(),
+                    UserOrProject::User
+                )
+                .unwrap()
+        );
         assert!(manager.list_configured_packages().is_empty());
         assert_eq!(read_settings(&dir)["packages"], serde_json::json!([]));
 
-        assert!(!manager
-            .remove_and_persist("./local-pkg", UserOrProject::User)
-            .unwrap());
+        assert!(
+            !manager
+                .remove_and_persist("./local-pkg", UserOrProject::User)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -786,9 +789,11 @@ mod tests {
         manager
             .install_and_persist("./remove-pkg", UserOrProject::User)
             .unwrap();
-        assert!(manager
-            .remove_and_persist("./remove-pkg/", UserOrProject::User)
-            .unwrap());
+        assert!(
+            manager
+                .remove_and_persist("./remove-pkg/", UserOrProject::User)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -811,8 +816,12 @@ mod tests {
         // absolute equivalent does.
         assert!(!manager.remove_source_from_settings("./filtered-pkg", UserOrProject::User));
         let agent_local = dir.path().join("agent").join("filtered-pkg");
-        assert!(manager
-            .remove_source_from_settings(&agent_local.display().to_string(), UserOrProject::User));
+        assert!(
+            manager.remove_source_from_settings(
+                &agent_local.display().to_string(),
+                UserOrProject::User
+            )
+        );
         assert!(manager.list_configured_packages().is_empty());
     }
 

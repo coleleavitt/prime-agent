@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::HostRequestHandlers;
-use pa_core::{create_ipython_tool_definition, IpythonToolOptions, ToolContentBlock};
-use serde_json::{json, Value};
+use pa_core::{IpythonToolOptions, ToolContentBlock, create_ipython_tool_definition};
+use serde_json::{Value, json};
 
 fn kernel_python() -> Option<PathBuf> {
     pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")

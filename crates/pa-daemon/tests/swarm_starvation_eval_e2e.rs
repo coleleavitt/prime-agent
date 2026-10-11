@@ -40,12 +40,20 @@ use std::time::{Duration, Instant};
 
 use pa_core::swarm_eval::transcript::snapshot_from_transcript;
 use pa_core::swarm_eval::{
-    build_child_prompt, build_orchestrator_prompt, evaluate_messaging_defense_lines,
-    parse_answer_line, render_markdown_report, seeded_secrets, trial_result_from_snapshot,
-    ArrivalPattern, MessageSize, MessagingDefenseLineLimits, SwarmEvalConfig,
+    ArrivalPattern,
+    MessageSize,
+    MessagingDefenseLineLimits,
+    SwarmEvalConfig,
+    build_child_prompt,
+    build_orchestrator_prompt,
+    evaluate_messaging_defense_lines,
+    parse_answer_line,
+    render_markdown_report,
+    seeded_secrets,
+    trial_result_from_snapshot,
 };
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,

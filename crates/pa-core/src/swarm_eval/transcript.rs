@@ -25,13 +25,11 @@
 //! (`last5m = total`) and stay zero (`sends`) respectively, and are unused by
 //! the defense lines.
 
+use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
 use serde_json::Value;
 
-use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
-
-use crate::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE;
-
 use super::{ArrivalCounts, ContextShape, MessagingStatsSnapshot, SendCounts, StepCounts};
+use crate::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE;
 
 /// Build a messaging snapshot from the session transcript and the working
 /// context token estimate.

@@ -5,10 +5,10 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::session_archive::restore_session;
-use crate::session_store::{list_sessions, SessionInfo};
+use crate::session_store::{SessionInfo, list_sessions};
 
 /// One selector match against saved sessions: the session id is addressable
 /// by prefix, the name only exactly; more than one match is ambiguous.
@@ -66,9 +66,10 @@ pub(crate) fn resolve_saved_session(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::session_store::{session_file_name, SessionFile};
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::session_store::{SessionFile, session_file_name};
 
     fn temp_dir() -> crate::test_support::TestDir {
         crate::test_support::TestDir::new("pa-catalog-")

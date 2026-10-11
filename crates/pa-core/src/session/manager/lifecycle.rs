@@ -4,10 +4,24 @@
 #[cfg(test)]
 use super::repair::repair_jsonl_damage;
 use super::{
-    capture_git_context, create_session_id, format_iso_now, get_session_file_path,
-    is_valid_rlm_depth, load_entries_from_file, migrate_to_current_version,
-    resolve_session_rlm_depth, root_rlm_depth_from_env, AgentMessage, FileEntry, HashMap,
-    NewSessionOptions, Path, PathBuf, SessionHeader, SessionManager, CURRENT_SESSION_VERSION,
+    AgentMessage,
+    CURRENT_SESSION_VERSION,
+    FileEntry,
+    HashMap,
+    NewSessionOptions,
+    Path,
+    PathBuf,
+    SessionHeader,
+    SessionManager,
+    capture_git_context,
+    create_session_id,
+    format_iso_now,
+    get_session_file_path,
+    is_valid_rlm_depth,
+    load_entries_from_file,
+    migrate_to_current_version,
+    resolve_session_rlm_depth,
+    root_rlm_depth_from_env,
 };
 
 /// The fork's branch copy: drop the source header and its `git_state` rows,

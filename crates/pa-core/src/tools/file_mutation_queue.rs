@@ -1,11 +1,11 @@
 //! Serialize file mutation operations targeting the same file: different files run
 //! in parallel; the same file (after resolving symlinks) runs in arrival order.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+use pa_types::sync::MutexExt;
 use tokio::sync::Mutex;
 
 /// Global registry of per-file mutation queues.
@@ -57,8 +57,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[tokio::test]
     async fn serializes_same_file() {

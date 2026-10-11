@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::providers::mistral::MistralOptions;
 use crate::types::{Context, Message, Model, ModelExt, Tool};

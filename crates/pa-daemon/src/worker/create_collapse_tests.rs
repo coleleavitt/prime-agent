@@ -7,8 +7,13 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::engine::{
-    BranchSummaryOutcome, BranchSummaryRequest, CompactionOutcome, CompactionRequest, EngineEvent,
-    PromptRequest, ScriptedEngine,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    CompactionOutcome,
+    CompactionRequest,
+    EngineEvent,
+    PromptRequest,
+    ScriptedEngine,
 };
 use crate::worker::WorkerConfig;
 

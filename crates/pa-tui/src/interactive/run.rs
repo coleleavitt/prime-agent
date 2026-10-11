@@ -1,16 +1,40 @@
 //! The interactive run's entry points and open routes, the terminal/headless surface loop with the
 //! reconnect and settle gates, and the loop's timing constants.
 
+use anyhow::Context;
+
 use super::{
-    apply_startup_chrome, arm_shutdown_recovery, check_tmux_keyboard_setup, mpsc,
-    run_onboarding_phase, spawn_session_reader, AgentView, DaemonClient, Duration, ExitGuard,
-    HeadlessSettle, Instant, InteractiveOptions, InteractiveOutcome, PaneDrive, ReconnectConnect,
-    ReconnectLoop, RecoveryKind, Renderer, Result, SessionReconnect, SessionSelection, SessionUi,
-    TerminalHandoff, UiInput, UiMode, VecDeque, SESSION_RECONNECT_ATTEMPT_TIMEOUT_S,
+    AgentView,
+    DaemonClient,
+    Duration,
+    ExitGuard,
+    HeadlessSettle,
+    Instant,
+    InteractiveOptions,
+    InteractiveOutcome,
+    PaneDrive,
+    ReconnectConnect,
+    ReconnectLoop,
+    RecoveryKind,
+    Renderer,
+    Result,
+    SESSION_RECONNECT_ATTEMPT_TIMEOUT_S,
+    SessionReconnect,
+    SessionSelection,
+    SessionUi,
     TELEMETRY_EXIT_TIMEOUT_MS,
+    TerminalHandoff,
+    UiInput,
+    UiMode,
+    VecDeque,
+    apply_startup_chrome,
+    arm_shutdown_recovery,
+    check_tmux_keyboard_setup,
+    mpsc,
+    run_onboarding_phase,
+    spawn_session_reader,
 };
 use crate::suspend::SuspendTerminal;
-use anyhow::Context;
 
 /// Headless-only bound on the exit gate after [`UiInput::HeadlessDone`]: a settle member that never
 /// drains would otherwise park the run forever; green settles take milliseconds.
@@ -373,9 +397,9 @@ async fn run_interactive_surface(
                             Some(first) => first,
                             None => DaemonClient::connect(&options.socket_path)
                                 .await
-                                .with_context(|| {
-                                    "the interactive UI could not attach to the daemon"
-                                })?,
+                                .with_context(
+                                    || "the interactive UI could not attach to the daemon",
+                                )?,
                         };
                         let session = SessionUi::open(
                             client,

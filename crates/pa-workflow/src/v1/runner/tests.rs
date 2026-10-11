@@ -7,8 +7,14 @@ use std::sync::{Arc, Mutex};
 
 use pa_agent::stream::{AssistantMessageEvent, LlmContext, ModelStream, StreamFn};
 use pa_agent::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, ToolCall,
-    Usage as AgentUsage, UsageCost,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    ToolCall,
+    Usage as AgentUsage,
+    UsageCost,
 };
 use tokio::sync::Notify;
 

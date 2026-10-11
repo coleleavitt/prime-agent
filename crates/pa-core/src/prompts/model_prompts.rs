@@ -442,22 +442,28 @@ files = ["shared.md", "user-only.md"]
             dir.path(),
         );
         assert!(resolution.extras.is_none());
-        assert!(resolution
-            .errors
-            .iter()
-            .any(|error| error.contains("missing-user.md")));
-        assert!(resolution
-            .errors
-            .iter()
-            .any(|error| error.contains("missing-shipped.md")));
+        assert!(
+            resolution
+                .errors
+                .iter()
+                .any(|error| error.contains("missing-user.md"))
+        );
+        assert!(
+            resolution
+                .errors
+                .iter()
+                .any(|error| error.contains("missing-shipped.md"))
+        );
 
         let dir = user_layer("not a rule map [");
         let resolution = resolve_model_prompts(None, "", &[], dir.path());
         assert!(resolution.extras.is_none());
-        assert!(resolution
-            .errors
-            .iter()
-            .any(|error| error.contains(USER_MODEL_PROMPTS_TOML)));
+        assert!(
+            resolution
+                .errors
+                .iter()
+                .any(|error| error.contains(USER_MODEL_PROMPTS_TOML))
+        );
     }
 
     #[test]
@@ -550,10 +556,12 @@ files = ["shared.md", "user-only.md"]
                 );
             } else {
                 assert!(resolution.extras.is_none());
-                assert!(resolution
-                    .errors
-                    .iter()
-                    .any(|error| error.contains("outside the agent directory")));
+                assert!(
+                    resolution
+                        .errors
+                        .iter()
+                        .any(|error| error.contains("outside the agent directory"))
+                );
             }
         }
     }
@@ -597,10 +605,12 @@ files = ["shared.md", "user-only.md"]
             std::fs::remove_file(&path).unwrap();
             writer.join().unwrap();
             assert!(resolution.extras.is_none());
-            assert!(resolution
-                .errors
-                .iter()
-                .any(|error| error.contains("expected a regular file")));
+            assert!(
+                resolution
+                    .errors
+                    .iter()
+                    .any(|error| error.contains("expected a regular file"))
+            );
         }
     }
 }

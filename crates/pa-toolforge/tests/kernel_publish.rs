@@ -13,13 +13,13 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use common::{recording_installer, SLUGIFY_DOC, SLUGIFY_EXIT_TEST, SLUGIFY_SOURCE};
-use pa_agent::scripted::{tool_call_turn_steps, ScriptedProvider, ScriptedTurn};
+use common::{SLUGIFY_DOC, SLUGIFY_EXIT_TEST, SLUGIFY_SOURCE, recording_installer};
+use pa_agent::scripted::{ScriptedProvider, ScriptedTurn, tool_call_turn_steps};
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
 use pa_core::session_engine::PromptOptions;
-use pa_toolforge::{ledger_path, load_ledger, PublishStatus, ToolforgeFeature, ToolforgeOverrides};
-use serde_json::{json, Value};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_toolforge::{PublishStatus, ToolforgeFeature, ToolforgeOverrides, ledger_path, load_ledger};
+use serde_json::{Value, json};
 
 /// The bootstrapped kernel python (`PA_CORE_KERNEL_PYTHON`, else the venv
 /// under `HOME`).

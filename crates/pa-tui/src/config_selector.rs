@@ -3,13 +3,14 @@
 //! caller supplies flat rows; this module owns filtering, selection, and
 //! the terminal loop, rendered through the shared menu-panel grammar.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use crossterm::event::{Event, KeyEvent};
 use crossterm::terminal::{self};
 use ratatui::Terminal;
-use std::time::{Duration, Instant};
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::keys::key_event_to_id;
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
@@ -757,15 +758,21 @@ mod tests {
             .iter()
             .map(|line| line.iter().map(|span| span.content.as_str()).collect())
             .collect();
-        assert!(rendered
-            .iter()
-            .any(|row| row.contains("Resource Configuration")));
-        assert!(rendered
-            .iter()
-            .any(|row| row.contains("\u{203a} [x] Kernel")));
-        assert!(rendered
-            .iter()
-            .any(|row| row.contains("Space toggle · Esc close")));
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("Resource Configuration"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("\u{203a} [x] Kernel"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("Space toggle · Esc close"))
+        );
     }
 }
 

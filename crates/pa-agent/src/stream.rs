@@ -3,9 +3,10 @@
 //! encoded as a terminal `error` event, not thrown; a Rust `StreamFn` may
 //! still return `Err`, which the loop treats as a run failure.
 
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Notify};
+
+use serde::{Deserialize, Serialize};
+use tokio::sync::{Notify, mpsc};
 
 use crate::types::{AssistantMessage, Model, StopReason, ThinkingLevel, ToolCall};
 

@@ -6,28 +6,44 @@
 //! baseline it was judged against.
 
 use pa_core::refinement::executor::RefinerFn;
-use pa_core::refinement::planner::{count_valid_refinement_edits, RefinementProposal};
+use pa_core::refinement::planner::{RefinementProposal, count_valid_refinement_edits};
 use pa_core::refinement::{HarnessScope, HarnessState};
-use pa_ledger::{failure_opponent_id, format_failure_ledger_for_prompt, FailureRecord};
+use pa_ledger::{FailureRecord, failure_opponent_id, format_failure_ledger_for_prompt};
 use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::authority::{
-    authorize_assisted_ravo, empty_assisted_ravo_state, failure_opponent_fingerprint,
-    is_failure_opponent_id, normalize_assisted_ravo_state, AssistedRavoAuthorization,
-    AssistedRavoObservation, AuthorityInput, UnclaimedCommitPolicy,
+    AssistedRavoAuthorization,
+    AssistedRavoObservation,
+    AuthorityInput,
     DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+    UnclaimedCommitPolicy,
+    authorize_assisted_ravo,
+    empty_assisted_ravo_state,
+    failure_opponent_fingerprint,
+    is_failure_opponent_id,
+    normalize_assisted_ravo_state,
 };
 use crate::js::{js_round, js_tail};
 use crate::reducer::{
-    ravo_best_score, ravo_extend_opponents, GateStatus, RavoConfig, RavoRejection, RavoState,
+    GateStatus,
+    RavoConfig,
+    RavoRejection,
+    RavoState,
     RavoWindowClock,
+    ravo_best_score,
+    ravo_extend_opponents,
 };
 use crate::referee::{
-    adjudicate_failure_claims, is_referee_opponent_id, referee_opponent_id,
-    referee_verdict_is_evidence, skill_imports_of, RefereeVerdict, RefereeVerdictStatus,
+    RefereeVerdict,
+    RefereeVerdictStatus,
     ReplayRunner,
+    adjudicate_failure_claims,
+    is_referee_opponent_id,
+    referee_opponent_id,
+    referee_verdict_is_evidence,
+    skill_imports_of,
 };
 use crate::trust::TRUST_KEY;
 
@@ -42,8 +58,7 @@ pub const RAVO_DEFAULT_CONFIG: RavoConfig = RavoConfig {
 };
 
 /// The rationale of an approval the harness moved out from under.
-pub const RAVO_BASELINE_CHANGED_RATIONALE: &str =
-    "RAVO authorization no longer matches the complete proposal and current harness baseline; retry /refine";
+pub const RAVO_BASELINE_CHANGED_RATIONALE: &str = "RAVO authorization no longer matches the complete proposal and current harness baseline; retry /refine";
 
 /// The seed criteria and what the judge is told each one means.
 pub const RAVO_SEED_CRITERIA: [(&str, &str); 5] = [
@@ -953,7 +968,7 @@ pub fn judge_conversation_text(messages: &[pa_types::session::AgentMessage]) -> 
 
 #[cfg(test)]
 mod tests {
-    use pa_core::refinement::{empty_harness_state, HarnessEntry, RefinementKind};
+    use pa_core::refinement::{HarnessEntry, RefinementKind, empty_harness_state};
     use serde_json::json;
 
     use super::*;

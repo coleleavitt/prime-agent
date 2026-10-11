@@ -4,16 +4,19 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
 use pa_types::daemon::DaemonWorkerLifecycle;
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::protocol::{
-    command_type_name, response_failure, response_line, response_success, DaemonResponse,
+    DaemonResponse,
+    command_type_name,
+    response_failure,
+    response_line,
+    response_success,
 };
 use crate::registry::ResidentWorker;
-use crate::supervisor::{client_command_payload, Supervisor, ROUTE_TIMEOUT_MS};
+use crate::supervisor::{ROUTE_TIMEOUT_MS, Supervisor, client_command_payload};
 
 impl Supervisor {
     /// A live, connected, non-stopping resident (TS `isLiveWorker`).

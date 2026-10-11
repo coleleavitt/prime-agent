@@ -24,13 +24,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use serde_json::{json, Value};
-
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
+use serde_json::{Value, json};
 
 /// Answering like a kitty terminal keeps the probe's bounded wait from adding its full budget.
 const KITTY_QUERY: &[u8] = b"\x1b[?u";

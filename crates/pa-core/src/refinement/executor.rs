@@ -1,17 +1,30 @@
 //! The refinement executor: plan a refinement (rollback or LLM pass), re-read the harness store,
 //! apply the proposal, and record the result.
 
-use super::planner::{
-    apply_refinement_proposal, parse_proposal, refinement_request, rollback_proposal, ApplyOptions,
-    RefinementProposal, AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS, AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
-    REFINEMENT_MAX_OUTPUT_TOKENS, REFINEMENT_SYSTEM_PROMPT,
-};
-use super::{
-    infer_refinement_result_scope, merge_refinement_history, HarnessScope, HarnessState,
-    RefinementKind, RefinementResult, REFINEMENT_KINDS,
-};
 use pa_types::ai::AssistantMessage;
 use pa_types::session::AgentMessage;
+
+use super::planner::{
+    AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS,
+    AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
+    ApplyOptions,
+    REFINEMENT_MAX_OUTPUT_TOKENS,
+    REFINEMENT_SYSTEM_PROMPT,
+    RefinementProposal,
+    apply_refinement_proposal,
+    parse_proposal,
+    refinement_request,
+    rollback_proposal,
+};
+use super::{
+    HarnessScope,
+    HarnessState,
+    REFINEMENT_KINDS,
+    RefinementKind,
+    RefinementResult,
+    infer_refinement_result_scope,
+    merge_refinement_history,
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct RefineOptions {
@@ -519,8 +532,9 @@ pub async fn review_auto_refine(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::ai::{AssistantContentBlock, TextContent};
+
+    use super::*;
 
     fn text_message(text: &str) -> AssistantMessage {
         AssistantMessage {
@@ -617,9 +631,11 @@ mod tests {
     fn refinement_ids_are_canonical() {
         let id = generate_refinement_id();
         assert!(id.starts_with("refine_"));
-        assert!(id["refine_".len()..]
-            .chars()
-            .all(|char| char.is_ascii_digit()));
+        assert!(
+            id["refine_".len()..]
+                .chars()
+                .all(|char| char.is_ascii_digit())
+        );
     }
 
     fn entry(kind: RefinementKind, id: &str, content: &str) -> super::super::HarnessEntry {
@@ -970,9 +986,11 @@ mod tests {
         assert_eq!(asked[0].0, "stub review system");
         assert!(asked[0].1.ends_with("\n\nstub guidance"));
         assert_eq!(asked[1].0, AUTO_REFINE_REVIEW_SYSTEM_PROMPT);
-        assert!(asked[1]
-            .1
-            .ends_with(&format!("\n\n{AUTO_REFINE_REVIEW_GUIDANCE}")));
+        assert!(
+            asked[1]
+                .1
+                .ends_with(&format!("\n\n{AUTO_REFINE_REVIEW_GUIDANCE}"))
+        );
     }
 
     fn test_model() -> pa_types::ai::Model {

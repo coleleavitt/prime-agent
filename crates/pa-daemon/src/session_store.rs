@@ -4,10 +4,6 @@
 //! product is load-bearing: TUI reattach, checkpoint/resume, and external
 //! tooling read the same files.
 
-use anyhow::{anyhow, Context, Result};
-use pa_types::ai::Usage;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
@@ -15,6 +11,11 @@ use std::fs;
 #[allow(unused_imports)]
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, anyhow};
+use pa_types::ai::Usage;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 #[cfg(test)]
 #[path = "session_store_info_tests.rs"]
@@ -36,13 +37,19 @@ pub(crate) use index::new_entry_id;
 // The read arm lives in session_store::read; the facade re-exports keep the crate paths stable.
 mod read;
 
-pub(crate) use read::{
-    copy_as_new_session, parse_session_header_line, read_first_line_bounded,
-    read_first_line_bounded_from,
-};
 pub use read::{
-    is_valid_session_file, parse_session_entries, read_session_header, read_session_header_bounded,
-    session_file_name, SESSION_LIST_HEADER_READ_MAX_BYTES,
+    SESSION_LIST_HEADER_READ_MAX_BYTES,
+    is_valid_session_file,
+    parse_session_entries,
+    read_session_header,
+    read_session_header_bounded,
+    session_file_name,
+};
+pub(crate) use read::{
+    copy_as_new_session,
+    parse_session_header_line,
+    read_first_line_bounded,
+    read_first_line_bounded_from,
 };
 
 // The write arm lives in session_store::write; the facade re-export keeps the API path stable.
@@ -53,12 +60,11 @@ pub use write::session_header_line;
 // The loaded-session view lives in session_store::view; the facade bindings keep callers in scope.
 mod view;
 
-use view::{message_text, normalize_state_status};
-
 // The message-role helper's remaining bare-path callers are the test children; the binding
 // rides the test builds only.
 #[cfg(test)]
 use view::message_role;
+use view::{message_text, normalize_state_status};
 
 // The per-file info scan lives in session_store::info; the facade re-exports keep the paths stable.
 mod info;
@@ -67,16 +73,27 @@ mod info;
 mod info_sidecar;
 
 pub(crate) use info::read_session_info_from;
+pub use info::{
+    SESSION_LIST_SEARCH_TEXT_MAX_CHARS,
+    SessionInfo,
+    find_most_recent_session_for_cwd,
+    read_session_info,
+};
 #[cfg(test)]
 use info::{
-    append_capped_search_text, fold_scan_entry, message_content_text, raw_string, raw_u64,
-    session_info_cache, SessionInfoEntry, SessionInfoGeneration, SessionInfoScanCache,
-    SessionScanAccumulator, SessionScanState, SESSION_SCAN_MAX_CACHED_STATES,
+    SESSION_SCAN_MAX_CACHED_STATES,
     SESSION_SCAN_RESUME_TAIL_BYTES,
-};
-pub use info::{
-    find_most_recent_session_for_cwd, read_session_info, SessionInfo,
-    SESSION_LIST_SEARCH_TEXT_MAX_CHARS,
+    SessionInfoEntry,
+    SessionInfoGeneration,
+    SessionInfoScanCache,
+    SessionScanAccumulator,
+    SessionScanState,
+    append_capped_search_text,
+    fold_scan_entry,
+    message_content_text,
+    raw_string,
+    raw_u64,
+    session_info_cache,
 };
 pub(crate) use info_sidecar::persist_info_sidecar;
 

@@ -6,10 +6,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
 use pa_types::session::FileEntry;
 use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
+use serde_json::{Value, json};
 
 use super::commands::RpcState;
 use super::protocol::ResponseData;

@@ -198,7 +198,7 @@ impl InfoPanel {
         let end = (self.scroll + visible).min(total);
         let mut lines: Vec<Line> = Vec::with_capacity(FIXED_FRAME_ROWS_WITH_TITLE + visible + 1);
         lines.push(vec![
-            theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1)))
+            theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1))),
         ]);
         if let Some(title) = &self.title {
             let title: Line = vec![

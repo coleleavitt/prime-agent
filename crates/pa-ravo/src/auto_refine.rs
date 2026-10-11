@@ -120,12 +120,16 @@ mod tests {
     #[test]
     fn the_review_prompt_asks_for_a_scope() {
         let policy = GlobalDefaultAutoRefine;
-        assert!(policy
-            .review_system_prompt()
-            .ends_with("  \"scope\": \"local\"|\"global\"\n}"));
-        assert!(policy
-            .review_system_prompt()
-            .contains("Scope defaults to global (cross-session) — the permissive default."));
+        assert!(
+            policy
+                .review_system_prompt()
+                .ends_with("  \"scope\": \"local\"|\"global\"\n}")
+        );
+        assert!(
+            policy
+                .review_system_prompt()
+                .contains("Scope defaults to global (cross-session) — the permissive default.")
+        );
         assert!(policy
             .review_guidance()
             .starts_with("Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns."));

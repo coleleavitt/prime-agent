@@ -471,7 +471,7 @@ pub fn filter_empty_sessions(records: &[UnifiedRecord], preserved: &[&str]) -> V
         .collect()
 }
 
-pub use crate::agents_view_search::{parse_search_query, ParsedSearchQuery, SessionSearchText};
+pub use crate::agents_view_search::{ParsedSearchQuery, SessionSearchText, parse_search_query};
 
 /// The keys by which a record's parent is referenced.
 fn parent_keys(record: &UnifiedRecord) -> Vec<String> {
@@ -868,9 +868,10 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::agents_view_forest::session_title;
-    use serde_json::json;
 
     fn roster_entry(agent: &str, status: &str, summary: &Value) -> Value {
         json!({ "agentId": agent, "status": status, "summary": summary })
@@ -989,9 +990,11 @@ mod tests {
         );
         let bare = vec![json!({ "id": "s3", "path": "/x/s3.jsonl", "messageCount": 3 })];
         let records = reconcile_unified_sessions(&[], &bare);
-        assert!(summary_for_record(&records[0])
-            .get("thinkingLevel")
-            .is_none());
+        assert!(
+            summary_for_record(&records[0])
+                .get("thinkingLevel")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1664,7 +1667,9 @@ mod tests {
         let headings: Vec<&str> = layout.legend.split_whitespace().collect();
         assert_eq!(
             headings,
-            ["Session", "Model", "Cwd", "Input", "Output", "Context", "Cost", "Age"]
+            [
+                "Session", "Model", "Cwd", "Input", "Output", "Context", "Cost", "Age"
+            ]
         );
         let parent = rows
             .iter()

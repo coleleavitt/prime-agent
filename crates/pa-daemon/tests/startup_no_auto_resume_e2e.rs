@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,

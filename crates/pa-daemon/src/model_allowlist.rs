@@ -2,12 +2,12 @@
 //! the worker-side model-resolution seams refuse a model outside the
 //! allowlist loudly (never a fallback) and emit the adoption event
 //! (`model refused`).
-use anyhow::Result;
-use pa_types::sync::MutexExt;
 use std::path::Path;
 
+use anyhow::Result;
 use pa_core::models::ModelAllowlistRefusal;
 use pa_telemetry::TelemetryClient;
+use pa_types::sync::MutexExt;
 
 /// The daemon allowlist's loaded state (settings `allowedModels`, global
 /// scope). A security guardrail fails CLOSED: a settings document that

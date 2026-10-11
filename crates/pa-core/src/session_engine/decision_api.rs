@@ -10,14 +10,14 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use pa_types::ai::{ModelInput, StopReason};
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::{Value, json};
 
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
-use crate::models::{find_exact_model_reference_match, ModelRegistry};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
+use crate::models::{ModelRegistry, find_exact_model_reference_match};
 
 /// The bundled skill the setting gates.
 pub const DECISION_API_SKILL_NAME: &str = "decision-api";
@@ -103,12 +103,16 @@ fn parse_decision_request(
         );
     };
     if criteria_value.is_empty() {
-        bail!("the \"action\" question's \"criteria\" object is empty; a decision needs actions to choose from");
+        bail!(
+            "the \"action\" question's \"criteria\" object is empty; a decision needs actions to choose from"
+        );
     }
     let mut criteria = Vec::with_capacity(criteria_value.len());
     for (name, applies) in criteria_value {
         let Some(when) = applies.as_str() else {
-            bail!("the \"criteria\" entry {name:?} must be a string describing when the action applies, not {applies}");
+            bail!(
+                "the \"criteria\" entry {name:?} must be a string describing when the action applies, not {applies}"
+            );
         };
         if name.is_empty() {
             bail!("the \"criteria\" object has an empty action name");
@@ -127,7 +131,9 @@ fn parse_decision_request(
             }
             for image in list {
                 let Some(url) = image.as_str() else {
-                    bail!("decision images must be data URL strings like \"data:image/png;base64,...\", got {image}");
+                    bail!(
+                        "decision images must be data URL strings like \"data:image/png;base64,...\", got {image}"
+                    );
                 };
                 images.push(parse_image_data_url(url)?);
             }
@@ -589,9 +595,10 @@ pub(crate) fn register_decision_api_handler(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::kernel::shared::{HostHandlerFuture, HostRequestPayload};
-    use std::path::Path;
 
     /// The registered `decision_api.decide`, called with a payload's data.
     fn decider(cwd: &Path, agent_dir: &Path) -> impl Fn(Value) -> HostHandlerFuture {

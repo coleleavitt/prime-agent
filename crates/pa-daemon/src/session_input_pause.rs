@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 /// One held pause: a client-owned lease dedupes by session/owner/key;
@@ -260,9 +260,11 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         let dir = crate::test_support::TestDir::new("pa-worker-pause-");

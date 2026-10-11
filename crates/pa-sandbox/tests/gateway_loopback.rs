@@ -12,11 +12,17 @@ mod common;
 
 use std::time::Duration;
 
-use common::{json_response, raw_response, redirect_response, text_response, MockServer};
+use common::{MockServer, json_response, raw_response, redirect_response, text_response};
 use pa_sandbox::transport::TransportResponse;
 use pa_sandbox::{
-    ClientOptions, ExecRequest, GatewayAuth, GatewayOptions, PrimeSandboxClient, SandboxErrorCode,
-    UploadRequest, MAX_TRANSFER_BYTES,
+    ClientOptions,
+    ExecRequest,
+    GatewayAuth,
+    GatewayOptions,
+    MAX_TRANSFER_BYTES,
+    PrimeSandboxClient,
+    SandboxErrorCode,
+    UploadRequest,
 };
 use serde_json::json;
 
@@ -536,7 +542,11 @@ mod scripted {
 
     use pa_sandbox::error::SandboxError;
     use pa_sandbox::transport::{
-        ResponseChunks, SandboxTransport, StreamedResponse, TransportRequest, TransportResponse,
+        ResponseChunks,
+        SandboxTransport,
+        StreamedResponse,
+        TransportRequest,
+        TransportResponse,
     };
 
     pub struct ScriptedTransport {

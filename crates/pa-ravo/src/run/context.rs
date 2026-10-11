@@ -3,7 +3,7 @@
 //! task first, then the champion and the constraints, each cut to the
 //! byte, token and per-item bounds, with a digest over the view.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::js::{json_string, locale_compare, sha256_hex};
 

@@ -13,7 +13,7 @@
 
 use anthropic::quota::{QuotaMoney, QuotaSnapshot, QuotaWindow, ScopedQuotaWindow};
 use chrono::{DateTime, Utc};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::commands::merge_section;
 use super::settings::{PluginSettings, SettingsError};
@@ -108,9 +108,15 @@ pub(crate) fn current_routing_mode(config: &Map<String, Value>) -> &'static str 
 
 fn routing_behavior(mode: &str) -> &'static str {
     match mode {
-        "fallback-first" => "Try usable fallback accounts before the main account. If no fallback succeeds, try the main account.",
-        "sticky-balanced" => "Assign each session to a quota-weighted OAuth account, keep it sticky across transient failures, and migrate only for confirmed long-lived exhaustion or permanent account failure.",
-        _ => "Try the main account first. Use fallback accounts only when quota policy or fallback errors require it.",
+        "fallback-first" => {
+            "Try usable fallback accounts before the main account. If no fallback succeeds, try the main account."
+        }
+        "sticky-balanced" => {
+            "Assign each session to a quota-weighted OAuth account, keep it sticky across transient failures, and migrate only for confirmed long-lived exhaustion or permanent account failure."
+        }
+        _ => {
+            "Try the main account first. Use fallback accounts only when quota policy or fallback errors require it."
+        }
     }
 }
 

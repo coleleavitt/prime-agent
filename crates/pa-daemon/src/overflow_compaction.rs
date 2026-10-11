@@ -3,17 +3,16 @@
 //! once, and the turn re-issues on the compacted context. One attempt per
 //! overflow; a new prompt or a settled non-error turn resets it.
 
+use pa_agent::abort::AbortController;
+use pa_core::session_engine::TrailingAssistantFilter;
+use pa_core::session_engine::compact_session::CompactOutcome;
+use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
+use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::engine::EngineEvent;
-use pa_agent::abort::AbortController;
-use pa_core::session_engine::compact_session::CompactOutcome;
-use pa_core::session_engine::messages::CompactionOutcomeKind;
-use pa_core::session_engine::messages::CompactionOutcomeReason;
-use pa_core::session_engine::provider_adapter::json_round_trip;
-use pa_core::session_engine::TrailingAssistantFilter;
 
 /// The failure text when one compact-and-retry attempt could not save the
 /// turn.
@@ -397,12 +396,11 @@ impl AgentSessionEngine {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use crate::agent_engine::tests::{admit, faux_engine_with_settings};
-    use crate::agent_engine::FAUX_TEST_LOCK;
-    use crate::agent_engine::{AgentEngineConfig, AgentSessionEngine};
-    use crate::engine::EngineEvent;
-    use crate::engine::SessionEngine;
-    use serde_json::{json, Value};
+    use crate::agent_engine::{AgentEngineConfig, AgentSessionEngine, FAUX_TEST_LOCK};
+    use crate::engine::{EngineEvent, SessionEngine};
 
     /// The TS overflow error shape: an Anthropic token-overflow message.
     /// `delay_ms` paces the stream so the settled message timestamp lands

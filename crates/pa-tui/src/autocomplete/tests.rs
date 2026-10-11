@@ -134,9 +134,11 @@ fn tier_argument_completions_list_filter_and_mark_current() {
             .collect::<Vec<_>>(),
         ["default", "flex", "priority", "auto"]
     );
-    assert!(items
-        .iter()
-        .any(|item| item.description.as_deref() == Some("tier (current)")));
+    assert!(
+        items
+            .iter()
+            .any(|item| item.description.as_deref() == Some("tier (current)"))
+    );
     // A term filters by prefix.
     let suggestions = provider.get_suggestions(&["/tier pr".to_string()], 0, 8, false);
     let items = ready(suggestions).items;
@@ -148,9 +150,11 @@ fn tier_argument_completions_list_filter_and_mark_current() {
         ["priority"]
     );
     // A term with no match answers nothing.
-    assert!(provider
-        .get_suggestions(&["/tier zz".to_string()], 0, 8, false)
-        .is_none());
+    assert!(
+        provider
+            .get_suggestions(&["/tier zz".to_string()], 0, 8, false)
+            .is_none()
+    );
 }
 
 #[test]
@@ -189,13 +193,17 @@ fn path_completion_lists_directories_first() {
             > values.iter().position(|v| *v == "./src/").unwrap()
     );
     // Non-path tokens do not trigger on natural typing.
-    assert!(provider
-        .get_suggestions(&["hello wor".to_string()], 0, 9, false)
-        .is_none());
+    assert!(
+        provider
+            .get_suggestions(&["hello wor".to_string()], 0, 9, false)
+            .is_none()
+    );
     // ...but an explicit request (Tab) completes any token.
-    assert!(provider
-        .get_suggestions(&["hello ma".to_string()], 0, 8, true)
-        .is_some());
+    assert!(
+        provider
+            .get_suggestions(&["hello ma".to_string()], 0, 8, true)
+            .is_some()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -255,9 +263,11 @@ fn dotfiles_list_only_for_a_dot_prefix_anchor() {
     // A bare `.` is the dot-name browse; a bare `..` searches a `..`
     // filename prefix, so nothing matches.
     assert_eq!(values("."), [".claude/", ".hidden"]);
-    assert!(provider
-        .get_suggestions(&["..".to_string()], 0, 2, true)
-        .is_none());
+    assert!(
+        provider
+            .get_suggestions(&["..".to_string()], 0, 2, true)
+            .is_none()
+    );
     assert_eq!(values("./.cl"), ["./.claude/"]);
     assert_eq!(values(".h"), [".hidden"]);
     // A trailing `.` after a separator is the same explicit dot-name

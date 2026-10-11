@@ -330,8 +330,9 @@ pub fn published_packages(agent_dir: &Path) -> Vec<PublishedPackage> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn record(name: &str, status: PublishStatus, version: u64) -> LedgerRecord {
         LedgerRecord {

@@ -11,19 +11,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::anyhow;
-use serde_json::{json, Value};
+use pa_core::session_engine::agent_messaging::{
+    AgentFamilyRelationship,
+    AgentMessageController,
+    AgentMessageSendInput,
+};
+use pa_core::session_engine::side_question::SideQuestionSink;
+use serde_json::{Value, json};
 
 use crate::agent_messaging::LinkAgentMessageController;
 use crate::async_safe_runtime::AsyncSafeRuntime;
 use crate::engine::{
-    AssistantSnapshot, BranchSummaryOutcome, BranchSummaryRequest, CompactionOutcome,
-    CompactionRequest, EngineEvent, PromptRequest, SessionEngine, SideQuestionOutcome,
+    AssistantSnapshot,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    CompactionOutcome,
+    CompactionRequest,
+    EngineEvent,
+    PromptRequest,
+    SessionEngine,
+    SideQuestionOutcome,
     SideQuestionRequest,
 };
-use pa_core::session_engine::agent_messaging::{
-    AgentFamilyRelationship, AgentMessageController, AgentMessageSendInput,
-};
-use pa_core::session_engine::side_question::SideQuestionSink;
 
 /// One stored goal: the seq contract lives in the routing seam — a goal with
 /// an older seq than the stored one loses.
@@ -435,12 +444,14 @@ mod tests {
                 "type": "choice", "criteria": {"left": "go left", "right": "go right"}
             }}
         });
-        assert!(engine.accept_goal(
-            &json!({
-                "type":"decision_api.goal","seq":2,"goal":"follow the target"
-            })
-            .to_string()
-        ));
+        assert!(
+            engine.accept_goal(
+                &json!({
+                    "type":"decision_api.goal","seq":2,"goal":"follow the target"
+                })
+                .to_string()
+            )
+        );
         // The goal flows through latest_goal into the served state; the
         // request itself stays untouched until the serve call.
         assert_eq!(engine.latest_goal().as_deref(), Some("follow the target"));

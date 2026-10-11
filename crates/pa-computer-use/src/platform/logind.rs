@@ -1,7 +1,7 @@
 //! The Linux session lock, shared by the X11 and Wayland backends: logind's
 //! `LockedHint`, which niri and the common X11 lockers maintain.
 
-use crate::process::{optional_tool, run_tool, Tools, TOOL_TIMEOUT};
+use crate::process::{TOOL_TIMEOUT, Tools, optional_tool, run_tool};
 
 /// Whether the session is locked, failing closed: a missing `loginctl`, a
 /// failed read, unparsable output, or a session that is not `Active`

@@ -36,11 +36,16 @@ fn run_lock() -> MutexGuard<'static, ()> {
 }
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
 use pa_types::ai::Model;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The SGR left press / release pair a real terminal sends with ?1002+?1006 tracking active
 /// (one-based screen cells).

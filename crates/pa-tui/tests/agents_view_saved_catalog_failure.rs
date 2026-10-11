@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
 use pa_tui::interactive::SessionSelection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The failure the daemon answers `list_saved_sessions` with (the honest terminal error class: the
 /// scan itself refused).

@@ -374,8 +374,9 @@ fn error_page(message: &str, details: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     fn live(state: &str) -> (AnthropicCallbackServer, u16) {
         let server = AnthropicCallbackServer::bind("127.0.0.1", 0, state)

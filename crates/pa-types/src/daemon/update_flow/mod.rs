@@ -11,20 +11,45 @@ mod roster;
 mod state;
 
 pub use artifact::{
-    legacy_update_restart_status, legacy_update_restarts_dir, socket_update_dir,
-    update_intent_path, update_marker_path, update_prepared_dir, update_restarts_dir,
-    update_roster_path, update_status_path, DaemonUpdateResume, UpdateId, UpdateIntent,
-    UpdateProcessIdentity, UpdateStatus, UpdateStatusCounts, UpdateStatusFailure,
-    UPDATE_ROSTER_ENV, UPDATE_STATUS_FORMAT_VERSION,
+    DaemonUpdateResume,
+    UPDATE_ROSTER_ENV,
+    UPDATE_STATUS_FORMAT_VERSION,
+    UpdateId,
+    UpdateIntent,
+    UpdateProcessIdentity,
+    UpdateStatus,
+    UpdateStatusCounts,
+    UpdateStatusFailure,
+    legacy_update_restart_status,
+    legacy_update_restarts_dir,
+    socket_update_dir,
+    update_intent_path,
+    update_marker_path,
+    update_prepared_dir,
+    update_restarts_dir,
+    update_roster_path,
+    update_status_path,
 };
-pub use budget::{UpdateTimeoutBudget, UPDATE_ENV_PREFIX};
+pub use budget::{UPDATE_ENV_PREFIX, UpdateTimeoutBudget};
 pub use marker::{
-    prepared_marker_expiry, PreparedMarkerExpiry, UpdatePreparedMarker, UpdateSupervisorIdentity,
+    PreparedMarkerExpiry,
+    UpdatePreparedMarker,
+    UpdateSupervisorIdentity,
+    prepared_marker_expiry,
 };
 pub use roster::{
-    UpdateHeartbeatDeliveryMode, UpdateHeartbeatStatus, UpdateRoster, UpdateRosterBinary,
-    UpdateRosterHeartbeat, UpdateRosterInFlight, UpdateRosterQueue, UpdateRosterSession,
-    UpdateRosterSessionKind, UpdateRosterSubagent, UpdateRosterSubagentStatus, UpdateRosterWorker,
     UPDATE_ROSTER_FORMAT_VERSION,
+    UpdateHeartbeatDeliveryMode,
+    UpdateHeartbeatStatus,
+    UpdateRoster,
+    UpdateRosterBinary,
+    UpdateRosterHeartbeat,
+    UpdateRosterInFlight,
+    UpdateRosterQueue,
+    UpdateRosterSession,
+    UpdateRosterSessionKind,
+    UpdateRosterSubagent,
+    UpdateRosterSubagentStatus,
+    UpdateRosterWorker,
 };
-pub use state::{update_transition_allowed, UpdateState};
+pub use state::{UpdateState, update_transition_allowed};

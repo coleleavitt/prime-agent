@@ -2,9 +2,12 @@
 //! toggle entries through `/harness enable|disable`, and fold every result
 //! back (the rows stay off the transcript; outside the selector a result is
 //! an ephemeral note).
-use super::{key_event_to_id, AgentView, KeyEvent, Result, SessionUi, SubmitBehavior};
+use super::{AgentView, KeyEvent, Result, SessionUi, SubmitBehavior, key_event_to_id};
 use crate::harness_selector::{
-    toggle_command, HarnessResult, HarnessSelector, HarnessSelectorAction,
+    HarnessResult,
+    HarnessSelector,
+    HarnessSelectorAction,
+    toggle_command,
 };
 use crate::view::HarnessSelectorState;
 

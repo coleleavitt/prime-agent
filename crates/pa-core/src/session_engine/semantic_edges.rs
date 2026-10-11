@@ -28,9 +28,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+pub(crate) use compaction::{SemanticCompaction, summary_slice_call};
 use serde::{Deserialize, Serialize};
-
-pub(crate) use compaction::{summary_slice_call, SemanticCompaction};
 pub(crate) use stream::wrap_stream_fn;
 
 /// The outbound request-id header (TS `MODEL_REQUEST_ID_HEADER`).

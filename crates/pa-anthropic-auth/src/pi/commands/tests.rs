@@ -31,10 +31,12 @@ fn every_command_prints_and_writes_what_pi_does() {
             );
         }
         // The lock is released.
-        assert!(!directory
-            .path()
-            .join("anthropic-auth.json.config-write.lock")
-            .exists());
+        assert!(
+            !directory
+                .path()
+                .join("anthropic-auth.json.config-write.lock")
+                .exists()
+        );
     }
 }
 
@@ -62,9 +64,11 @@ fn a_command_waits_for_a_live_lock() {
         })
     };
     // The writer is still waiting while the lock is held.
-    assert!(receiver
-        .recv_timeout(std::time::Duration::from_millis(200))
-        .is_err());
+    assert!(
+        receiver
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err()
+    );
     assert!(!path.exists());
     std::fs::remove_file(&lock).expect("release the lock");
     writer

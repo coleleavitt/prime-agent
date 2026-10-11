@@ -5,14 +5,24 @@
 //! `Node::sections`: `[title, attrs, methods]`, the title being the optional
 //! `«annotation»` line over the class name.
 
-use super::super::graph::{parse_dir, Edge, Graph, Head, LineKind, Node, Shape, MAX_MEMBERS};
+use super::super::graph::{Edge, Graph, Head, LineKind, MAX_MEMBERS, Node, Shape, parse_dir};
 use super::super::js_text;
 use super::super::labels::{
-    ascii_lower, clean_label, decode_html_entities, display_generics, is_id_char,
+    ascii_lower,
+    clean_label,
+    decode_html_entities,
+    display_generics,
+    is_id_char,
 };
 use super::super::layout::layout_class;
 use super::super::statements::{
-    first_word, header_kind, is_class_assign, non_empty, quote_mask, split_colon, statements_of,
+    first_word,
+    header_kind,
+    is_class_assign,
+    non_empty,
+    quote_mask,
+    split_colon,
+    statements_of,
     take_tags,
 };
 use super::Drawn;
@@ -96,7 +106,7 @@ fn parse_class(src: &str) -> Option<Graph> {
             }
             // Styles, notes, namespaces, and link targets draw nothing of their own.
             "classdef" | "note" | "callback" | "style" | "namespace" | "}" | "link" | "click" => {
-                continue
+                continue;
             }
             "cssclass" => {
                 let rest = st[first_word(st).len()..].replace('"', "");

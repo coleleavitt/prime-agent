@@ -12,47 +12,66 @@ use pa_types::daemon::DaemonCommand;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::agents_view_forest::{
-    ancestor_session_ids, build_rows, compute_rollups, has_session_children, resolve_selection,
-    scope_ancestors, scope_root, scope_to_subtree, AgentsViewRow, RowKind, ScopeRoot, SelectionKey,
-};
-use crate::agents_view_state::truncate_text;
-use crate::agents_view_state::{
-    build_layout, filter_empty_sessions, filter_unified_sessions, parse_search_query,
-    reconcile_unified_sessions, section_title, RowLayout, Section,
-};
-
+use crate::Line;
 /// The scope a scoped view opened on (TS `AgentsViewScopeKey` plus the display name): lists this
 /// session's descendants; the back key returns to it.
 pub use crate::agents_view_forest::AgentsViewScope;
 pub use crate::agents_view_forest::SelectionKey as AgentsViewSelectionKey;
+use crate::agents_view_forest::{
+    AgentsViewRow,
+    RowKind,
+    ScopeRoot,
+    SelectionKey,
+    ancestor_session_ids,
+    build_rows,
+    compute_rollups,
+    has_session_children,
+    resolve_selection,
+    scope_ancestors,
+    scope_root,
+    scope_to_subtree,
+};
+use crate::agents_view_state::{
+    RowLayout,
+    Section,
+    build_layout,
+    filter_empty_sessions,
+    filter_unified_sessions,
+    parse_search_query,
+    reconcile_unified_sessions,
+    section_title,
+    truncate_text,
+};
 use crate::daemon_client::{DaemonClient, DaemonClientEvent};
 use crate::interactive::SessionSelection;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{pad_line, str_width};
-use crate::Line;
 mod data_input;
 
 mod open_incident;
 
 mod render;
+use render::Renderer;
 #[cfg(test)]
 use render::cell;
-use render::Renderer;
 
 mod delete;
 mod heartbeats;
 
 #[cfg(test)]
 use delete::no_effect_summary;
-use delete::{spawn_delete_dispatch, DeleteAction, PendingDelete};
+use delete::{DeleteAction, PendingDelete, spawn_delete_dispatch};
 
 mod rename;
-use rename::{spawn_rename_dispatch, Rename};
+use rename::{Rename, spawn_rename_dispatch};
 
 mod reply;
 use reply::{
-    spawn_headline_fetch, spawn_kill_dispatch, spawn_reply_dispatch, KillRequest, ReplyRequest,
+    KillRequest,
+    ReplyRequest,
+    spawn_headline_fetch,
+    spawn_kill_dispatch,
+    spawn_reply_dispatch,
 };
 
 mod status;

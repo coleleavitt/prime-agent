@@ -8,8 +8,12 @@ use std::path::{Path, PathBuf};
 
 use crate::skills::diagnostics::ResourceDiagnostic;
 use crate::skills::{
-    load_prompt_templates, load_skills, LoadPromptTemplatesOptions, LoadSkillsOptions,
-    PromptTemplate, Skill,
+    LoadPromptTemplatesOptions,
+    LoadSkillsOptions,
+    PromptTemplate,
+    Skill,
+    load_prompt_templates,
+    load_skills,
 };
 
 /// AGENTS.md-family candidates, in priority order.
@@ -318,8 +322,9 @@ fn discover_config_file(cwd: Option<&Path>, agent_dir: &Path, name: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
 
     #[test]
     fn context_files_global_then_ancestors_root_first() {
@@ -503,9 +508,11 @@ mod tests {
             alpha[0].source_info.scope,
             crate::skills::SourceScope::Project
         );
-        assert!(resources
-            .skill_diagnostics
-            .iter()
-            .any(|d| matches!(d, ResourceDiagnostic::Collision { .. })));
+        assert!(
+            resources
+                .skill_diagnostics
+                .iter()
+                .any(|d| matches!(d, ResourceDiagnostic::Collision { .. }))
+        );
     }
 }

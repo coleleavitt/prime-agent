@@ -702,9 +702,11 @@ fn running_children_owe_the_continuation_and_settle_delivers_it() {
         .unwrap()
         .clone()
         .expect("goal runtime");
-    assert!(engine
-        .runtime
-        .block_on(async { handles.driver.lock().await.owes_continuation() }));
+    assert!(
+        engine
+            .runtime
+            .block_on(async { handles.driver.lock().await.owes_continuation() })
+    );
     engine
         .runtime
         .block_on(async { children.cancel_child_run("child-1").await });
@@ -719,18 +721,22 @@ fn running_children_owe_the_continuation_and_settle_delivers_it() {
         panic!("expected exactly the owed continuation: {work:?}");
     };
     assert!(follow_up.request.message.contains("[goal: continuation]"));
-    assert!(follow_up
-        .request
-        .message
-        .contains("ship behind the children"));
+    assert!(
+        follow_up
+            .request
+            .message
+            .contains("ship behind the children")
+    );
     assert_eq!(
         follow_up.request.custom_message.as_ref().unwrap()["details"]["continuationsUsed"],
         serde_json::json!(1)
     );
     drop(work);
-    assert!(!engine
-        .runtime
-        .block_on(async { handles.driver.lock().await.owes_continuation() }));
+    assert!(
+        !engine
+            .runtime
+            .block_on(async { handles.driver.lock().await.owes_continuation() })
+    );
     assert_eq!(engine.goal_state_value()["continuationsUsed"], 1);
 }
 

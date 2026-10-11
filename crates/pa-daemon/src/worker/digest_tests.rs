@@ -570,11 +570,13 @@ async fn watch_events_respect_the_inbox_admission_cap() {
         json!(total),
         "the capped watch event landed"
     );
-    assert!(snapshot["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|entry| entry["kind"] != json!("watch")));
+    assert!(
+        snapshot["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["kind"] != json!("watch"))
+    );
 }
 
 /// A session replacement resets the lane (the TS replacement built a new

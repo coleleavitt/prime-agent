@@ -392,10 +392,12 @@ pub(crate) fn complete(
 ) -> pa_ai::types::AssistantMessage {
     let context = pa_ai::types::Context {
         system_prompt: Some("You help.".to_string()),
-        messages: vec![serde_json::from_value(serde_json::json!({
-            "role": "user", "content": "Say hello to the world, please.", "timestamp": 0
-        }))
-        .expect("a user message")],
+        messages: vec![
+            serde_json::from_value(serde_json::json!({
+                "role": "user", "content": "Say hello to the world, please.", "timestamp": 0
+            }))
+            .expect("a user message"),
+        ],
         tools: None,
     };
     let options = pa_ai::types::SimpleStreamOptions {

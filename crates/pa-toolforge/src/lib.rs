@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext};
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use serde_json::Value;
 
 mod gate;
@@ -29,13 +29,27 @@ mod publish;
 
 pub use gate::DEFAULT_GATE_TIMEOUT;
 pub use ledger::{
-    ledger_path, load_ledger, published_packages, GatePhase, GateRun, Ledger, LedgerRecord,
-    PublishStatus, PublishedPackage,
+    GatePhase,
+    GateRun,
+    Ledger,
+    LedgerRecord,
+    PublishStatus,
+    PublishedPackage,
+    ledger_path,
+    load_ledger,
+    published_packages,
 };
-pub use name::{validate_name, RESERVED_IMPORT_NAMES};
+pub use name::{RESERVED_IMPORT_NAMES, validate_name};
 pub use publish::{
-    kernel_venv_installer, publish, InstallFuture, PackageInstaller, PromoteStep, PublishOptions,
-    PublishRequest, PublishResult, RejectionStage,
+    InstallFuture,
+    PackageInstaller,
+    PromoteStep,
+    PublishOptions,
+    PublishRequest,
+    PublishResult,
+    RejectionStage,
+    kernel_venv_installer,
+    publish,
 };
 
 /// The kernel host request this crate serves.

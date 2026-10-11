@@ -24,7 +24,10 @@ use crate::account::{Account, QUOTA_OBSERVATION_MAX_AGE_SECS};
 use crate::error::Error;
 use crate::oauth::OAuthClient;
 use crate::refresh::{
-    RefreshFailure, RefreshSource, SharedRefreshOptions, classify_refresh_failure,
+    RefreshFailure,
+    RefreshSource,
+    SharedRefreshOptions,
+    classify_refresh_failure,
 };
 use crate::routing::refresh_exclusion;
 use crate::store::AccountStore;

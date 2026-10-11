@@ -4,14 +4,14 @@
 //! connection-unique, so two connections of a client never share a pause.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::protocol::{response_failure, response_line, response_success};
-use crate::supervisor::{Supervisor, ROUTE_TIMEOUT_MS};
+use crate::supervisor::{ROUTE_TIMEOUT_MS, Supervisor};
 
 /// Per-client-connection state the pause leases read: the connection
 /// identity the lease keys embed, the epoch a detach bumps (in-flight

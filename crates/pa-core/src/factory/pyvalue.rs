@@ -16,7 +16,7 @@
 
 use std::fmt::Write as _;
 
-use serde_json::{json, Map, Number, Value};
+use serde_json::{Map, Number, Value, json};
 
 /// One Python value, as the validator sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -441,7 +441,7 @@ pub fn decode_node_table(table: &Value) -> Result<PyValue, NodeTableError> {
             other => {
                 return Err(table_error(format!(
                     "node {index} has unknown tag {other:?}"
-                )))
+                )));
             }
         };
         built[index] = Some(value);

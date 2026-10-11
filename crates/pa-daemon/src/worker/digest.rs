@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 use super::{QueueCheckpoint, QueuePriority, QueuedItem, SessionCore, TurnPolicy};
@@ -1602,12 +1602,14 @@ mod tests {
             std::sync::Arc::new(std::sync::Mutex::new(None)),
             std::sync::Arc::new(tokio::sync::Notify::new()),
         );
-        assert!(digest
-            .configure_pin("digest")
-            .unwrap()
-            .get("digest")
-            .and_then(Value::as_bool)
-            .unwrap_or(false));
+        assert!(
+            digest
+                .configure_pin("digest")
+                .unwrap()
+                .get("digest")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        );
         let digested = digest
             .route_inbound_message(
                 "agentmsg_1",

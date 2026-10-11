@@ -3,7 +3,7 @@
 //! Response `data` distinguishes an absent key (TS `success(id, command)`)
 //! from a JSON `null`, which the TS client treats differently.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// The RPC response data channel: absent (key omitted) or present (possibly JSON null).
 #[derive(Debug, Clone, PartialEq)]

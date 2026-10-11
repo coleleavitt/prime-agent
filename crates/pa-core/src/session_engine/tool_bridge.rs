@@ -6,8 +6,11 @@ use std::sync::Arc;
 
 use pa_agent::abort::AbortSignal;
 use pa_agent::types::{
-    AgentTool, AgentToolResult, AgentToolUpdateCallback,
-    ToolExecutionMode as LoopToolExecutionMode, ToolResultContent,
+    AgentTool,
+    AgentToolResult,
+    AgentToolUpdateCallback,
+    ToolExecutionMode as LoopToolExecutionMode,
+    ToolResultContent,
 };
 
 use crate::tools::tool_definition::{ExecutionMode, ToolDefinition, ToolExecutionResult};

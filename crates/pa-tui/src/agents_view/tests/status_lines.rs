@@ -287,9 +287,11 @@ fn a_passivated_summary_clears_the_sub_line() {
     let mut baseline = status_mode(&["a", "b"], "a", &[]);
     let mut mode = status_mode(&["a", "b"], "a", &[("stub", Some("stub running"))]);
     let (lines, _) = mode.render_frame(120, 30);
-    assert!(flat_frame(&lines)
-        .iter()
-        .any(|line| line.contains("stub running")));
+    assert!(
+        flat_frame(&lines)
+            .iter()
+            .any(|line| line.contains("stub running"))
+    );
     let mut passivated = parent_summary("a");
     let object = passivated.as_object_mut().expect("object");
     object.remove("activeSessionId");

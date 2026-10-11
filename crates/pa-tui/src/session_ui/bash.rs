@@ -1,9 +1,22 @@
 //! `!`/`!!` user-bash runs with their start/output/end application and
 //! flush, the kernel-bash registry, and the bash view.
 use super::{
-    already_running_warning, key_event_to_id, picker_viewport_rows, AgentView, BashView,
-    BashViewAction, ChatEntry, DaemonCommand, Duration, KeyEvent, Map, Result, SessionUi,
-    StatusKind, Value, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    BashView,
+    BashViewAction,
+    ChatEntry,
+    DaemonCommand,
+    Duration,
+    KeyEvent,
+    Map,
+    Result,
+    SessionUi,
+    StatusKind,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    already_running_warning,
+    key_event_to_id,
+    picker_viewport_rows,
 };
 
 /// Kernel-bash channel frames: list snapshots refresh the dock and the open view, a landed tail

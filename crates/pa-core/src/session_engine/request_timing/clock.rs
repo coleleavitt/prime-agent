@@ -2,11 +2,20 @@
 //! outcome + timing state machine, and the phase entries' emit (TS
 //! `RequestTiming`).
 
-use super::{
-    elapsed_ms, json, round_ms, Instant, Map, Mutex, PromptBuildTiming, RequestTimingLog,
-    StreamRequestOptions, Value,
-};
 use pa_agent::types::Usage;
+
+use super::{
+    Instant,
+    Map,
+    Mutex,
+    PromptBuildTiming,
+    RequestTimingLog,
+    StreamRequestOptions,
+    Value,
+    elapsed_ms,
+    json,
+    round_ms,
+};
 
 /// Provider request identity fields shared by every phase entry.
 #[derive(Debug, Clone)]

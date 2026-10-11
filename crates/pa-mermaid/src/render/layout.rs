@@ -16,17 +16,17 @@ mod group;
 mod route;
 mod tracks;
 
-pub(super) use group::layout_grouped;
-pub(super) use route::{draw_box, Placed};
-
 use std::collections::HashMap;
+
+pub(super) use group::layout_grouped;
+use route::LaneLabel;
+pub(super) use route::{Placed, draw_box};
+use tracks::{TrackSpan, assign_tracks};
 
 use super::canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK};
 use super::graph::{Dir, Edge, Graph, LineKind};
-use super::labels::{fit_label, wrap_label, MAX_LABEL, MAX_LINES, WRAP_WIDTH};
+use super::labels::{MAX_LABEL, MAX_LINES, WRAP_WIDTH, fit_label, wrap_label};
 use super::width::string_width;
-use route::LaneLabel;
-use tracks::{assign_tracks, TrackSpan};
 
 /// Cells of padding between a box border and its text.
 pub(super) const PAD: i64 = 1;
@@ -49,11 +49,7 @@ pub(super) fn half(n: i64) -> i64 {
 /// JS `Math.round`: halves round toward positive infinity.
 fn js_round(x: f64) -> f64 {
     let floor = x.floor();
-    if x - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
+    if x - floor >= 0.5 { floor + 1.0 } else { floor }
 }
 
 pub(super) fn width_of(s: &str) -> i64 {

@@ -1,11 +1,14 @@
-use super::*;
-use crate::session_engine::messages::{
-    convert_to_llm, create_compaction_outcome_message, CompactionOutcomeKind,
-    CompactionOutcomeReason,
-};
 use pa_agent::agent::{AgentInitialState, AgentOptions};
 use pa_agent::scripted::ScriptedProvider;
 use pa_types::ai::AssistantMessage;
+
+use super::*;
+use crate::session_engine::messages::{
+    CompactionOutcomeKind,
+    CompactionOutcomeReason,
+    convert_to_llm,
+    create_compaction_outcome_message,
+};
 
 fn test_model() -> pa_agent::types::Model {
     serde_json::from_value(serde_json::json!({
@@ -418,9 +421,11 @@ async fn refine_pushed_live_context_matches_a_full_rebuild_byte_for_byte() {
         custom_types(&candidate[candidate.len() - 2..]),
         vec!["refinement_outcome", "refinement_notice"]
     );
-    assert!(custom_types(&candidate)
-        .iter()
-        .all(|custom_type| custom_type != "prime-agent.refinement"));
+    assert!(
+        custom_types(&candidate)
+            .iter()
+            .all(|custom_type| custom_type != "prime-agent.refinement")
+    );
 }
 
 #[tokio::test]

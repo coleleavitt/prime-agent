@@ -8,11 +8,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use pa_types::daemon::update_flow::{UpdateState, UpdateStatus, UpdateTimeoutBudget};
 
-use super::intent::{acquire, hand_over, release, status_path_for, AcquireOutcome};
-use super::plan::{plan, UpdatePlan};
+use super::intent::{AcquireOutcome, acquire, hand_over, release, status_path_for};
+use super::plan::{UpdatePlan, plan};
 use super::report::UpdateReport;
-use super::status::UPDATE_TELEMETRY_STATE_NAMES;
-use super::status::{read_status, StatusWriter};
+use super::status::{StatusWriter, UPDATE_TELEMETRY_STATE_NAMES, read_status};
 
 /// The tail loop budgets: 30 minutes of progress, 3 minutes of heartbeat liveness.
 const TAIL_PROGRESS_TIMEOUT_MS: u64 = 30 * 60_000;

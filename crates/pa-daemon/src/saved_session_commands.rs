@@ -6,13 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
-
 use pa_types::daemon::DaemonCommand;
+use serde_json::{Map, Value, json};
 
 use crate::lease::canonical_session_path;
-use crate::protocol::{response_failure, response_line, response_success, DaemonResponse};
-use crate::session_store::{read_session_info, SessionFile};
+use crate::protocol::{DaemonResponse, response_failure, response_line, response_success};
+use crate::session_store::{SessionFile, read_session_info};
 use crate::supervisor::Supervisor;
 use crate::worker::Worker;
 
@@ -387,7 +386,7 @@ impl Supervisor {
                         None,
                     ))],
                     false,
-                )
+                );
             }
         };
         // The reservation ladder wraps the whole arm — the offline catalog
@@ -933,8 +932,9 @@ impl Worker {
 
 #[cfg(test)]
 mod tombstone_usage_tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     /// The two phases in one call; the real delete handler keeps them
     /// SPLIT. Only the tests use the combined shape.

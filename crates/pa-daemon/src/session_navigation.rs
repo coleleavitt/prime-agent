@@ -3,14 +3,14 @@
 //! validated BEFORE the teardown (a failed prepare leaves the old session
 //! untouched); tree moves are NOT replacements — the kernel stays warm.
 
-use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::engine::SessionEngine;
-use crate::protocol::{response_failure, response_success, DaemonErrorInfo, DaemonResponse};
-use crate::session_store::{session_file_name, SessionFile};
+use crate::protocol::{DaemonErrorInfo, DaemonResponse, response_failure, response_success};
+use crate::session_store::{SessionFile, session_file_name};
 use crate::worker::{SessionCore, Worker};
 
 /// A prepared replacement session: the opened file, plus the session cwd the
@@ -156,7 +156,7 @@ impl SessionNavigation {
                         "new_session",
                         "Session is still initializing",
                         None,
-                    ))
+                    ));
                 }
             }
         };
@@ -467,9 +467,11 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         let dir = crate::test_support::TestDir::new("pa-worker-nav-");
@@ -1225,9 +1227,11 @@ mod trace_replacement_tests {
         ));
         drop(live);
         // A cancelled predecessor cannot transfer its registry slot again.
-        assert!(controller
-            .rebind(dir.path(), &dir.path().join("probe.jsonl"))
-            .is_some());
+        assert!(
+            controller
+                .rebind(dir.path(), &dir.path().join("probe.jsonl"))
+                .is_some()
+        );
         assert!(!agent_dir.join("agent-traces-outbox").exists());
     }
 }

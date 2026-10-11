@@ -8,17 +8,19 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use serde_json::{json, Value};
-
-use crate::cron::store::{
-    AgentCronJobStore, CreateAgentCronJobInput, RlmHeartbeatStatusUpdate, RlmHeartbeatUpdate,
-};
-use crate::cron::{AgentCronJob, DeliveryMode, JobStatus};
-use crate::goals::{goal_host_response, GoalHostResponse, GoalState, GoalStatus};
-use crate::session::manager::SessionManager;
-use pa_telemetry::{base_properties, lookup, TelemetryClient};
+use pa_telemetry::{TelemetryClient, base_properties, lookup};
+use serde_json::{Value, json};
 
 use super::goal_driver::GoalDriver;
+use crate::cron::store::{
+    AgentCronJobStore,
+    CreateAgentCronJobInput,
+    RlmHeartbeatStatusUpdate,
+    RlmHeartbeatUpdate,
+};
+use crate::cron::{AgentCronJob, DeliveryMode, JobStatus};
+use crate::goals::{GoalHostResponse, GoalState, GoalStatus, goal_host_response};
+use crate::session::manager::SessionManager;
 
 /// The `snake_case` heartbeat payload returned to the skill.
 pub fn rlm_heartbeat_host_response(job: &AgentCronJob) -> Value {
@@ -465,10 +467,11 @@ fn store_now() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use pa_telemetry::{MockSink, TelemetryClientConfig, TelemetrySink};
+
     use super::*;
     use crate::cron::store::AgentCronJobStore;
     use crate::session::manager::SessionManager;
-    use pa_telemetry::{MockSink, TelemetryClientConfig, TelemetrySink};
 
     fn persisted_session() -> SessionManager {
         let dir = crate::test_support::ThreadTempDir::new();
@@ -531,19 +534,23 @@ mod tests {
             &mut session,
         )
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("token_budget must be an integer"));
+        assert!(
+            error
+                .to_string()
+                .contains("token_budget must be an integer")
+        );
         // goal.complete carries the completion budget report.
         let response =
             handle_goal_host_request("goal.complete", &json!({}), &mut driver, &mut session)
                 .unwrap();
         assert_eq!(response.goal.unwrap().status, GoalStatus::Complete);
-        assert!(response
-            .completion_budget_report
-            .as_deref()
-            .unwrap()
-            .starts_with("Goal achieved."));
+        assert!(
+            response
+                .completion_budget_report
+                .as_deref()
+                .unwrap()
+                .starts_with("Goal achieved.")
+        );
         // Completing with no goal errors.
         let mut bare = GoalDriver::new();
         let mut other_session = persisted_session();
@@ -600,10 +607,12 @@ mod tests {
             Some("Paused by agent: waiting for the API key")
         );
         // A paused goal mints no continuation.
-        assert!(driver
-            .next_continuation_message(&mut session, None)
-            .unwrap()
-            .is_none());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, None)
+                .unwrap()
+                .is_none()
+        );
         let error = handle_goal_host_request(
             "goal.pause",
             &json!({ "reason": "again" }),
@@ -619,10 +628,12 @@ mod tests {
         let response =
             handle_goal_host_request("goal.resume", &json!({}), &mut driver, &mut session).unwrap();
         assert_eq!(response.goal.unwrap().status, GoalStatus::Active);
-        assert!(driver
-            .next_continuation_message(&mut session, None)
-            .unwrap()
-            .is_some());
+        assert!(
+            driver
+                .next_continuation_message(&mut session, None)
+                .unwrap()
+                .is_some()
+        );
         let error = handle_goal_host_request("goal.resume", &json!({}), &mut driver, &mut session)
             .unwrap_err();
         assert_eq!(
@@ -738,9 +749,11 @@ mod tests {
             &bind,
         )
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("unknown RLM heartbeat request type"));
+        assert!(
+            error
+                .to_string()
+                .contains("unknown RLM heartbeat request type")
+        );
     }
 
     fn telemetry_client(mock: &std::sync::Arc<MockSink>) -> TelemetryClient {

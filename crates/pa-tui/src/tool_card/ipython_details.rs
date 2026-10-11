@@ -357,10 +357,12 @@ mod tests {
         }))
         .expect("missing target falls back to unknown");
         assert_eq!(unknown.counterpart, "unknown");
-        assert!(parse_sent_agent_message(&serde_json::json!({
-            "id": "agentmsg_5",
-            "deliveryStatus": "delivered",
-        }))
-        .is_none());
+        assert!(
+            parse_sent_agent_message(&serde_json::json!({
+                "id": "agentmsg_5",
+                "deliveryStatus": "delivered",
+            }))
+            .is_none()
+        );
     }
 }

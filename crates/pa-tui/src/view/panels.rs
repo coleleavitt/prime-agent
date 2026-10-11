@@ -3,13 +3,13 @@
 //! subagent summary box (TS `SubagentSummaryLine`) — plus the share
 //! loader and reload-box panels.
 
+use ratatui::style::Style;
+
 use super::click::{ClickAction, DockClickRegion, EditorClickSurface};
-use super::editor_surface;
-use super::{AgentView, ShareLoader};
+use super::{AgentView, ShareLoader, editor_surface};
 use crate::chrome::{render_prompt_context, render_tray_with_hint};
 use crate::theme::ThemeColor;
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 impl AgentView {
     pub fn render_dock(&mut self, width: usize) -> Vec<Line> {

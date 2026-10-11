@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Each test boots a live supervisor, worker, and kernel; this std lock runs them one at a time
 /// so their boot budgets do not compete with each other.

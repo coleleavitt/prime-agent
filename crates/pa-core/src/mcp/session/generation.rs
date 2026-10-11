@@ -7,18 +7,25 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CancelledNotificationParam, ClientConfig,
-    ClientRequest, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+    CallToolRequest,
+    CallToolRequestParams,
+    CancelledNotificationParam,
+    ClientConfig,
+    ClientRequest,
+    Implementation,
+    ListToolsResult,
+    PaginatedRequestParams,
+    ProtocolVersion,
 };
 use rmcp::service::{PeerRequestOptions, RunningService, ServiceError};
-use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::{RoleClient, ServiceExt as _};
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::connect::{self, StdioLaunch};
-use super::diagnostic::{sanitize_diagnostic, ORIGINAL_ERROR_BYTE_LIMIT};
+use super::diagnostic::{ORIGINAL_ERROR_BYTE_LIMIT, sanitize_diagnostic};
 use super::error::{McpErrorKind, McpSessionError};
 use super::http_client::McpHttpClient;
 use super::result::{parse_call_result, tool_entry};

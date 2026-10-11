@@ -21,22 +21,33 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use pa_types::trace_context::{
-    TraceContext, FORWARDED_RECORD_FIELD, FORWARDED_RECORD_TARGET, REMOTE_PARENT_FIELD,
+    FORWARDED_RECORD_FIELD,
+    FORWARDED_RECORD_TARGET,
+    REMOTE_PARENT_FIELD,
     SPAN_ATTRIBUTES_TARGET,
+    TraceContext,
 };
 use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::subscriber::Interest;
 use tracing::{Event, Metadata, Subscriber};
+use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Layer;
 
 use crate::otlp::{FinishedSpan, OtlpExporter};
 use crate::record::{
-    child_context, duration_ms, js_number, Entry, Level, ProcessContext, SpanIds, SPAN_END_MSG,
-    SPAN_START_MSG, TRACE_COMPONENT,
+    Entry,
+    Level,
+    ProcessContext,
+    SPAN_END_MSG,
+    SPAN_START_MSG,
+    SpanIds,
+    TRACE_COMPONENT,
+    child_context,
+    duration_ms,
+    js_number,
 };
 use crate::writer::LogWriter;
 
@@ -149,11 +160,7 @@ impl TraceLayer {
                     fields.insert("error".to_string(), Value::String(error));
                 }
             }
-            if failed {
-                Level::Warn
-            } else {
-                Level::Info
-            }
+            if failed { Level::Warn } else { Level::Info }
         } else {
             let known = FORWARDED_DIAGNOSTICS
                 .iter()

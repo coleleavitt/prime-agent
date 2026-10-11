@@ -2,9 +2,9 @@
 //! window byte-identically without a re-render, and every changed
 //! transcript, changed render shape, or post-adopt mutation re-renders.
 //! The served-path assertions ride the test-only `ENTRY_RENDERS` counter.
-use super::super::expansion::tests::finished_tool_card;
-use super::super::layout::{EntryLayout, ENTRY_RENDERS};
 use super::super::AgentView;
+use super::super::expansion::tests::finished_tool_card;
+use super::super::layout::{ENTRY_RENDERS, EntryLayout};
 use super::*;
 use crate::chat::{ChatEntry, StatusKind};
 use crate::theme::{ColorMode, Theme};

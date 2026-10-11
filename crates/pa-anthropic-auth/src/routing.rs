@@ -46,13 +46,21 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anthropic::access::{access_candidates, AccessErrorKind, AccessRequest};
+use anthropic::access::{AccessErrorKind, AccessRequest, access_candidates};
 use anthropic::killswitch::killswitch_retry_after_secs;
 use anthropic::quota::{QuotaSnapshot, QuotaWindowName};
 use anthropic::sticky_routing::{
-    decide_sticky_quota_failure, sticky_no_route, sticky_quota_snapshot_is_fresh,
-    sticky_retry_after_with_jitter, sticky_route_family_for_model, RoutingMode, StickyPolicy,
-    StickyQuotaFailureDecision, StickyResolveRequest, StickyRouteCandidate, StickySessionRouter,
+    RoutingMode,
+    StickyPolicy,
+    StickyQuotaFailureDecision,
+    StickyResolveRequest,
+    StickyRouteCandidate,
+    StickySessionRouter,
+    decide_sticky_quota_failure,
+    sticky_no_route,
+    sticky_quota_snapshot_is_fresh,
+    sticky_retry_after_with_jitter,
+    sticky_route_family_for_model,
 };
 use anthropic::{Account, AccountStore};
 use chrono::{DateTime, Utc};

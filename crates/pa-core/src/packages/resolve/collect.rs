@@ -8,8 +8,12 @@ use super::discovery::{collect_resource_files, read_pi_manifest};
 use super::manager::collect_files_from_paths;
 use super::patterns::{apply_patterns, has_glob_pattern, is_override_pattern};
 use super::{
-    resource_type_dir_name, PackageFilter, PathMetadata, ResourceAccumulator, ResourceType,
     PACKAGE_RESOURCE_TYPES,
+    PackageFilter,
+    PathMetadata,
+    ResourceAccumulator,
+    ResourceType,
+    resource_type_dir_name,
 };
 
 impl PackageManager {

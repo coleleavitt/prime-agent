@@ -316,8 +316,9 @@ fn with_stop_reason_aborted(mut message: AssistantMessage) -> AssistantMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_agent::types::{AssistantContent, AssistantMessageDiagnostic, TextContent, Usage};
+
+    use super::*;
 
     fn error_message(
         kind: Option<&str>,
@@ -517,9 +518,10 @@ mod tests {
     /// (the fleet's death shape, replayed).
     #[tokio::test]
     async fn a_dropped_sse_stream_retries_and_completes_on_the_retry() {
-        use crate::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
         use pa_agent::stream::{LlmContext, StreamRequestOptions};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        use crate::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
 
         // The dropped body: a thinking delta, then the connection ends
         // mid-block (no `finish_reason`, no `[DONE]`).

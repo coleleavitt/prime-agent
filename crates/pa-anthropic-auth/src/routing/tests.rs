@@ -10,8 +10,8 @@ use pa_core::auth::ProviderCredentialSource;
 use pa_types::sync::MutexExt;
 use serde_json::json;
 
-use crate::test_support::*;
 use crate::SharedStoreSource;
+use crate::test_support::*;
 
 const RATE_LIMITED: &str =
     r#"{"type":"error","error":{"type":"rate_limit_error","message":"rate limited"}}"#;

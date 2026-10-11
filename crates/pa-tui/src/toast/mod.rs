@@ -7,8 +7,9 @@
 
 use std::time::{Duration, Instant};
 
-use crate::{Line, Span};
 use ratatui::style::Style;
+
+use crate::{Line, Span};
 
 /// How long a toast stays on screen before it auto-dismisses.
 pub const TOAST_TTL: Duration = Duration::from_secs(3);

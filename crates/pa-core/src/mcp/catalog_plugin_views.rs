@@ -3,18 +3,24 @@
 
 use std::collections::HashMap;
 
+use super::McpServerConfig;
 use super::catalog_schema::{AuthStrategy, SetupStatus};
 use super::catalog_status_views::{
-    account_states_for, http_connection_status, HttpStatusOptions, McpConnectionStatus,
+    HttpStatusOptions,
+    McpConnectionStatus,
     SnapshotCredentials,
+    account_states_for,
+    http_connection_status,
 };
 use super::catalog_views::{
-    fresh_mcp_login_allowed, is_pasteable_token_service, mcp_login_eligibility,
-    reserved_mcp_ownership, ReservedOwnership,
+    ReservedOwnership,
+    fresh_mcp_login_allowed,
+    is_pasteable_token_service,
+    mcp_login_eligibility,
+    reserved_mcp_ownership,
 };
 use super::connection_store::McpConnectionRecord;
 use super::service_catalog::{DescriptorTransport, McpServiceDescriptor};
-use super::McpServerConfig;
 
 /// The pinned-definition hint: shown when a connection record outlives its catalog entry. The claim
 /// "the catalog source is unavailable" is honest only when a validated remote catalog snapshot is

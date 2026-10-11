@@ -2,11 +2,11 @@
 //! wrapper, `settlePostTurn`, `pollMessagesUnlessAborted`, and aborted
 //! assistant-message construction.
 
-use crate::abort::{is_abort_error, AbortSignal, ABORT_ERROR_MESSAGE};
-use crate::types::{AgentMessage, AssistantContent, AssistantMessage, StopReason};
 use std::future::Future;
 
 use super::{AgentLoopConfig, PollMessagesFn};
+use crate::abort::{ABORT_ERROR_MESSAGE, AbortSignal, is_abort_error};
+use crate::types::{AgentMessage, AssistantContent, AssistantMessage, StopReason};
 
 pub(crate) async fn race_with_abort<T>(
     operation: impl Future<Output = anyhow::Result<T>>,

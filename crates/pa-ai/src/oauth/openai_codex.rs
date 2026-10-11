@@ -13,8 +13,8 @@ use rand::Rng;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use super::callback::CodexCallbackServer;
 use super::CodexHttp;
+use super::callback::CodexCallbackServer;
 
 pub const OPENAI_CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -408,12 +408,14 @@ async fn refresh_access_token(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::oauth::CodexHttpResponse;
-    use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
     use tokio::io::AsyncWriteExt as _;
+
+    use super::*;
+    use crate::oauth::CodexHttpResponse;
 
     /// Every flow binds the one fixed redirect port while the tests run on parallel threads: each
     /// flow stages it under this lock. The guard is held across the flow's awaits by design.

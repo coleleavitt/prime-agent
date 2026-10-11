@@ -430,9 +430,11 @@ async fn an_environment_failure_is_reported_at_each_phase() {
     .unwrap();
     assert_eq!(result.status, RouterRunStatus::Failed);
     assert_eq!(result.reason, "environment_error");
-    assert!(result
-        .summary
-        .contains("failed resetting at segment start: no rom"));
+    assert!(
+        result
+            .summary
+            .contains("failed resetting at segment start: no rom")
+    );
 
     let execute_env = support::ScriptedEnvironment::with_observation(support::observation("x"))
         .then_execute_error("adapter crashed");

@@ -1,10 +1,12 @@
 //! Consent-gated automatic delivery. The detached process-wide runtime owns all
 //! reads, recovery and delivery; hosts only record bounded intent and wake it.
-use super::*;
 use std::io::Read;
 use std::sync::{Mutex, OnceLock, Weak};
 use std::time::Duration;
+
 use tokio::time::Instant;
+
+use super::*;
 
 const DEBOUNCE: Duration = Duration::from_secs(1);
 const MIN_INTERVAL: Duration = Duration::from_secs(60);
@@ -230,7 +232,7 @@ impl ContinuousTraceUpload {
         let Ok(consent) = self.consent.lock() else {
             return;
         };
-        if !consent.0 || consent.1 .0.iter().any(Result::is_err) {
+        if !consent.0 || consent.1.0.iter().any(Result::is_err) {
             return;
         }
         drop(consent);

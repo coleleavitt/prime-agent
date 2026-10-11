@@ -8,7 +8,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::stream::{AssistantMessageEvent, LlmContext, ModelStream, StreamFn};
 use crate::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, ToolCall, Usage,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    ToolCall,
+    Usage,
 };
 
 /// One step in a scripted turn.

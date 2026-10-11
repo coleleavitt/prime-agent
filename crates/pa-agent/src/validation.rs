@@ -380,7 +380,7 @@ fn type_matches(ty: &str, value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::validate_tool_arguments;
 

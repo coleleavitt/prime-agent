@@ -14,10 +14,14 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
-use crate::fingerprint::{failure_opponent_id, FailureFingerprint, FailureKind};
-use crate::js::{collapse_js_whitespace, js_len, js_prefix, js_trim, JS_WHITESPACE_CLASS};
+use crate::fingerprint::{FailureFingerprint, FailureKind, failure_opponent_id};
+use crate::js::{JS_WHITESPACE_CLASS, collapse_js_whitespace, js_len, js_prefix, js_trim};
 use crate::replay::{
-    merge_replay_case, normalize_replay_cases, replay_probe_of, verified_replay_cases, ReplayCase,
+    ReplayCase,
+    merge_replay_case,
+    normalize_replay_cases,
+    replay_probe_of,
+    verified_replay_cases,
 };
 
 /// Occurrences at which an actionable fingerprint recurs.

@@ -12,36 +12,68 @@ use std::sync::Arc;
 
 use pa_dream::child::{ChildRuntimeScope, RunAgentStatus};
 use pa_dream::improve::{
-    propose_policies, run_dreaming, CandidateInput, CandidateOrigin, CandidateReason,
-    CandidateSource, DreamerKind, DreamingOptions,
+    CandidateInput,
+    CandidateOrigin,
+    CandidateReason,
+    CandidateSource,
+    DreamerKind,
+    DreamingOptions,
+    propose_policies,
+    run_dreaming,
 };
 use pa_dream::interpreter::project_propose_params;
 use pa_dream::json;
 use pa_dream::llm::{
-    build_dream_prompt, build_dreamer_input, build_guidance_input, history_of,
-    parse_candidate_array, propose_policies_with_agent, DreamChildRole, DreamerContext,
-    DroppedCandidate, LlmDreamerOptions, LlmProposer, LlmProposerOptions, DREAMER_PROMPT_HEADER,
-    PROPOSER_JSON_ONLY, PROPOSER_PROMPT_HEADER,
+    DREAMER_PROMPT_HEADER,
+    DreamChildRole,
+    DreamerContext,
+    DroppedCandidate,
+    LlmDreamerOptions,
+    LlmProposer,
+    LlmProposerOptions,
+    PROPOSER_JSON_ONLY,
+    PROPOSER_PROMPT_HEADER,
+    build_dream_prompt,
+    build_dreamer_input,
+    build_guidance_input,
+    history_of,
+    parse_candidate_array,
+    propose_policies_with_agent,
 };
 use pa_dream::objective::ReplayObjectiveConfig;
 use pa_dream::policy::{
-    policy_id, ExplorationPolicy, SelectionRule, StopRule, DEFAULT_POLICY, REPLAY_DEAD_FIELDS,
+    DEFAULT_POLICY,
+    ExplorationPolicy,
+    REPLAY_DEAD_FIELDS,
+    SelectionRule,
+    StopRule,
+    policy_id,
 };
 use pa_dream::proposer::{
-    LocalProposer, ProposalRejectReason, ProposalTally, ProposeOutcome, Proposer,
+    LocalProposer,
+    ProposalRejectReason,
+    ProposalTally,
+    ProposeOutcome,
+    Proposer,
 };
 use pa_dream::records::{NodeRecord, TreeHeaderRecord};
 use pa_dream::rejections::{
-    excerpt_of, read_rejections, rejections_path, ProposalRejection, RejectionInput, RejectionLog,
-    RejectionRole, REJECTION_EXCERPT_CHARS,
+    ProposalRejection,
+    REJECTION_EXCERPT_CHARS,
+    RejectionInput,
+    RejectionLog,
+    RejectionRole,
+    excerpt_of,
+    read_rejections,
+    rejections_path,
 };
 use pa_dream::rng::{Seed, SeededRng};
-use pa_dream::rollout::{run_online_exploration, ExploreOptions};
-use pa_dream::store::{list_trees, read_tree, DreamStoreError, RecordedTree};
+use pa_dream::rollout::{ExploreOptions, run_online_exploration};
+use pa_dream::store::{DreamStoreError, RecordedTree, list_trees, read_tree};
 use pa_dream::task::DynTask;
 use pa_dream::tasks::autocorrelation::Autocorrelation;
-use pa_dream::tasks::{resolve_task, task_prompt_context, DreamTaskId};
-use serde_json::{json, Value};
+use pa_dream::tasks::{DreamTaskId, resolve_task, task_prompt_context};
+use serde_json::{Value, json};
 use support::spans::{capture, named};
 use support::stub::{Answer, Stub};
 use tokio_util::sync::CancellationToken;
@@ -603,9 +635,11 @@ fn the_dreamer_keeps_in_bounds_candidates_names_every_drop_and_tops_up_locally()
         "{}",
         dreamed.dropped[0].reason
     );
-    assert!(dreamed.dropped[1]
-        .reason
-        .contains("unknown policy field: sneaky"));
+    assert!(
+        dreamed.dropped[1]
+            .reason
+            .contains("unknown policy field: sneaky")
+    );
     assert!(
         dreamed.dropped[2]
             .reason
@@ -622,9 +656,11 @@ fn the_dreamer_keeps_in_bounds_candidates_names_every_drop_and_tops_up_locally()
             origin: CandidateOrigin::Llm
         }
     );
-    assert!(dreamed.candidates[1..]
-        .iter()
-        .all(|candidate| candidate.origin == CandidateOrigin::Local));
+    assert!(
+        dreamed.candidates[1..]
+            .iter()
+            .all(|candidate| candidate.origin == CandidateOrigin::Local)
+    );
     assert_eq!(
         ids(&dreamed.candidates[1..]),
         local_ids(&DEFAULT_POLICY, 3, 1)
@@ -684,9 +720,11 @@ fn the_dreamer_falls_back_locally_when_everything_is_dropped_or_the_call_fails()
         ),
         (600, 2, 0, 4)
     );
-    assert!(dropped.dropped[0]
-        .reason
-        .contains("unknown policy field: sneaky"));
+    assert!(
+        dropped.dropped[0]
+            .reason
+            .contains("unknown policy field: sneaky")
+    );
     assert!(
         dropped.dropped[1].reason.contains("beta must be within"),
         "{}",
@@ -731,10 +769,12 @@ fn the_dreamer_falls_back_locally_when_everything_is_dropped_or_the_call_fails()
             (Some(RejectionRole::Dreamer), 3, 0, 2, true),
         ]
     );
-    assert!(logged
-        .iter()
-        .all(|line| line.input.reason == ProposalRejectReason::Shape
-            && line.input.status == RunAgentStatus::Completed));
+    assert!(
+        logged
+            .iter()
+            .all(|line| line.input.reason == ProposalRejectReason::Shape
+                && line.input.status == RunAgentStatus::Completed)
+    );
     let error = logged[0].input.error.as_deref().unwrap();
     assert!(
         error.starts_with(
@@ -939,9 +979,11 @@ fn parse_candidate_array_keeps_accepted_entries_and_names_every_drop() {
         "{}",
         parsed.dropped[0].reason
     );
-    assert!(parsed.dropped[1]
-        .reason
-        .contains("policy must be a JSON object"));
+    assert!(
+        parsed.dropped[1]
+            .reason
+            .contains("policy must be a JSON object")
+    );
 }
 
 fn grow_pool(dir: &std::path::Path, seed: i64) -> Vec<RecordedTree> {
@@ -1102,11 +1144,13 @@ fn the_dreamer_prompt_states_the_rules_the_pool_and_the_history_in_order() {
     for tree in &pool {
         assert!(prompt.contains(&format!("- {}: N ", tree.header.tree_id)));
     }
-    assert!(prompt
-        .lines()
-        .last()
-        .unwrap()
-        .contains("Return exactly one JSON array and nothing else"));
+    assert!(
+        prompt
+            .lines()
+            .last()
+            .unwrap()
+            .contains("Return exactly one JSON array and nothing else")
+    );
     let at = |needle: &str| prompt.find(needle).unwrap();
     let order = [
         at("Named-rule fields"),
@@ -1198,9 +1242,11 @@ fn a_strictly_worse_or_collapsing_or_malformed_policy_is_never_deployed() {
             .unwrap();
     assert_eq!(ids(&dreamed.candidates), local_ids(&current, 1, 3));
     assert_eq!(dreamed.dreamer, DreamerKind::Local);
-    assert!(dreamed.dropped[0]
-        .reason
-        .contains("unknown policy field: exfiltrate"));
+    assert!(
+        dreamed.dropped[0]
+            .reason
+            .contains("unknown policy field: exfiltrate")
+    );
 }
 
 fn node(id: &str, parent: Option<&str>, seq: u32, score: f64) -> NodeRecord {
@@ -1279,10 +1325,12 @@ fn the_guidance_digest_is_deterministic_bounded_and_scalar() {
         format!("{}...", &full[..16])
     );
     assert_eq!(synth.top_nodes[1].artifact_json, json::stringify(&blobs[1]));
-    assert!(build_guidance_input(&pool, "sum-difference", 3, 0, 16)
-        .trees
-        .iter()
-        .all(|tree| tree.top_nodes.is_empty()));
+    assert!(
+        build_guidance_input(&pool, "sum-difference", 3, 0, 16)
+            .trees
+            .iter()
+            .all(|tree| tree.top_nodes.is_empty())
+    );
 
     // An in-memory tree has no blob loader: the artifact is an empty string.
     let digest = build_guidance_input(&synth_pool(), "sum-difference", 1, 3, 2000);

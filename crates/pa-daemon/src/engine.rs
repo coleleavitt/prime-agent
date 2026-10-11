@@ -11,19 +11,42 @@ use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_core::session_engine::provider_retry::{ProviderRetryPolicy, UNBOUNDED_BACKOFF_MS};
 use pa_core::session_engine::side_question::{SideQuestionSink, SideQuestionTurn};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 mod wire;
 pub use scripted::ScriptedEngine;
 pub(crate) use wire::session_wire_value;
 pub use wire::{
-    empty_resource_snapshot, side_question_event_value, AssistantSnapshot, BashCompletionNotice,
-    BashCompletionSink, BashConsumedNotice, BashConsumedSink, BranchSummaryOutcome,
-    BranchSummaryRequest, BranchSummaryRun, CompactionOutcome, CompactionRequest, CompactionRun,
-    EngineEvent, EngineModelSelection, GoalAdmissionSink, GoalContinuation, GoalTurnEndWork,
-    PromptBatchRow, PromptRequest, RlmSessionIdentity, SavedSessionContext, SemanticSpawnOrigin,
-    SessionInputProbe, SideQuestionOutcome, SideQuestionRequest, SIDE_QUESTION_STATUS_CANCELLED,
-    SIDE_QUESTION_STATUS_COMPLETE, SIDE_QUESTION_STATUS_ERROR, SIDE_QUESTION_STATUS_RUNNING,
+    AssistantSnapshot,
+    BashCompletionNotice,
+    BashCompletionSink,
+    BashConsumedNotice,
+    BashConsumedSink,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    BranchSummaryRun,
+    CompactionOutcome,
+    CompactionRequest,
+    CompactionRun,
+    EngineEvent,
+    EngineModelSelection,
+    GoalAdmissionSink,
+    GoalContinuation,
+    GoalTurnEndWork,
+    PromptBatchRow,
+    PromptRequest,
+    RlmSessionIdentity,
+    SIDE_QUESTION_STATUS_CANCELLED,
+    SIDE_QUESTION_STATUS_COMPLETE,
+    SIDE_QUESTION_STATUS_ERROR,
+    SIDE_QUESTION_STATUS_RUNNING,
+    SavedSessionContext,
+    SemanticSpawnOrigin,
+    SessionInputProbe,
+    SideQuestionOutcome,
+    SideQuestionRequest,
+    empty_resource_snapshot,
+    side_question_event_value,
 };
 
 mod scripted;
@@ -162,7 +185,7 @@ pub trait SessionEngine: Send + Sync {
     /// Run one compaction (`compact` command): summarize the pre-cut
     /// history. The engine owns the model call; `signal` aborts the run.
     fn run_compaction(&self, request: CompactionRequest, signal: &AbortSignal)
-        -> CompactionOutcome;
+    -> CompactionOutcome;
 
     /// Abort the in-flight automatic compaction — TS `abortCompaction`
     /// also aborts the auto controller, not just the manual run.

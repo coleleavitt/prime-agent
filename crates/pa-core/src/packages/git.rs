@@ -6,10 +6,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::npm;
 use super::process::{run_command, run_command_capture};
 use super::source::{GitSource, SourceScope};
-use super::NETWORK_TIMEOUT_MS;
+use super::{NETWORK_TIMEOUT_MS, npm};
 
 pub fn git_install_path(
     source: &GitSource,

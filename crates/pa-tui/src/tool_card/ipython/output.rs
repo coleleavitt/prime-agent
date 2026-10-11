@@ -1,9 +1,22 @@
 //! Expanded cell output; painting and counting share the same output decisions.
 
 use super::{
-    add_wrapped, is_agent_message_receipt, is_edit_confirmation, normalize_error_details,
-    str_width, summarize_error_details, IpythonDetails, IpythonError, Line, RowOutput, Span, Theme,
-    ThemeColor, ToolCallCard, Value, OUTPUT_INDENT,
+    IpythonDetails,
+    IpythonError,
+    Line,
+    OUTPUT_INDENT,
+    RowOutput,
+    Span,
+    Theme,
+    ThemeColor,
+    ToolCallCard,
+    Value,
+    add_wrapped,
+    is_agent_message_receipt,
+    is_edit_confirmation,
+    normalize_error_details,
+    str_width,
+    summarize_error_details,
 };
 
 /// `splitTraceback`: the lines before the traceback opener are ordinary

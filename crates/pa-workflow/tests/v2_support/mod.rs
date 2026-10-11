@@ -5,16 +5,31 @@
 #![allow(dead_code)] // each test binary uses its own subset
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use pa_workflow::v2::reducer::RunAggregate;
 use pa_workflow::v2::store::{
-    AcceptanceDecision, Acknowledgement, ChildTurnBinding, ClaimedOperation, Clock, CommandEffect,
-    Decision, EventRow, FilesystemProbe, FilesystemSpace, OperationKind, OperationOutcome,
-    OutboxEnqueue, RunBudget, Store, StoreError, StoreOptions, TombstoneBinding,
+    AcceptanceDecision,
+    Acknowledgement,
+    ChildTurnBinding,
+    ClaimedOperation,
+    Clock,
+    CommandEffect,
+    Decision,
+    EventRow,
+    FilesystemProbe,
+    FilesystemSpace,
+    OperationKind,
+    OperationOutcome,
+    OutboxEnqueue,
+    RunBudget,
+    Store,
+    StoreError,
+    StoreOptions,
+    TombstoneBinding,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 pub const RECORDED_AT: &str = "2026-09-15T00:00:00.000Z";

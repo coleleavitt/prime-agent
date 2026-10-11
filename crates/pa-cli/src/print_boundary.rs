@@ -6,15 +6,15 @@
 
 use std::path::PathBuf;
 
+use pa_core::session_engine::TrailingAssistantFilter;
 use pa_core::session_engine::compact_session::{CompactOutcome, CompactRun};
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_core::session_engine::provider_retry::is_context_overflow_failure;
-use pa_core::session_engine::TrailingAssistantFilter;
 use pa_types::ai::Model;
 use pa_types::session::AgentMessage as SessionAgentMessage;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 mod events;
 
@@ -22,10 +22,9 @@ use events::{compaction_end_success_event, compaction_start_event};
 
 mod compaction_arms;
 
-use compaction_arms::{OverflowBoundary, OverflowOutcome, OverflowRecovery};
-
 #[cfg(test)]
 use compaction_arms::OVERFLOW_RECOVERY_FAILED_MESSAGE;
+use compaction_arms::{OverflowBoundary, OverflowOutcome, OverflowRecovery};
 
 mod autorefine;
 

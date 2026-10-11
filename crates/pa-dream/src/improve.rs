@@ -15,17 +15,33 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::objective::{
-    compute_objective_terms, objective_budget_of, pool_score_scale, ObjectiveBudget,
-    ObjectiveEvidence, ObjectiveScale, ObjectiveTerms, ReplayObjectiveConfig, DEFAULT_OBJECTIVE,
+    DEFAULT_OBJECTIVE,
+    ObjectiveBudget,
+    ObjectiveEvidence,
+    ObjectiveScale,
+    ObjectiveTerms,
+    ReplayObjectiveConfig,
+    compute_objective_terms,
+    objective_budget_of,
+    pool_score_scale,
 };
 use crate::policy::{
-    bound_of, clamp_policy, differs_only_in_replay_dead_fields, policy_fields_differing, policy_id,
-    ExplorationPolicy, PolicyField, POLICY_BOUNDS, REPLAY_DEAD_FIELDS, SELECTION_RULES, STOP_RULES,
+    ExplorationPolicy,
+    POLICY_BOUNDS,
+    PolicyField,
+    REPLAY_DEAD_FIELDS,
+    SELECTION_RULES,
+    STOP_RULES,
+    bound_of,
+    clamp_policy,
+    differs_only_in_replay_dead_fields,
+    policy_fields_differing,
+    policy_id,
 };
-use crate::replay::{simulate_policy, ReplayConfig, ReplayResult};
+use crate::replay::{ReplayConfig, ReplayResult, simulate_policy};
 use crate::rng::SeededRng;
 use crate::store::RecordedTree;
 

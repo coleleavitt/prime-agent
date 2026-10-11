@@ -15,25 +15,36 @@ mod update;
 #[cfg(test)]
 mod tests;
 
-pub use manager::{
-    BundledSkillsDir, ConfiguredPackage, PackageManager, PackageManagerOptions, PackageUpdate,
-    ProgressAction, ProgressEvent, ProgressEventKind, UserOrProject,
-};
-pub use resolve::{
-    MetadataSource, MissingSourceAction, PathMetadata, ResolvedPaths, ResolvedResource,
-    ResourceOrigin, ResourceType,
-};
-pub(crate) use source::is_local_path;
-pub use source::{parse_git_url, GitSource, LocalSource, NpmSource, ParsedSource, SourceScope};
-
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-/// The TS `CONFIG_DIR_NAME` (project-local settings/packages root).
-pub use crate::settings::CONFIG_DIR_NAME;
-
+pub use manager::{
+    BundledSkillsDir,
+    ConfiguredPackage,
+    PackageManager,
+    PackageManagerOptions,
+    PackageUpdate,
+    ProgressAction,
+    ProgressEvent,
+    ProgressEventKind,
+    UserOrProject,
+};
 /// Network probe timeout for npm/git operations (10s).
 pub(crate) use npm::NETWORK_TIMEOUT_MS;
+pub use resolve::{
+    MetadataSource,
+    MissingSourceAction,
+    PathMetadata,
+    ResolvedPaths,
+    ResolvedResource,
+    ResourceOrigin,
+    ResourceType,
+};
+pub(crate) use source::is_local_path;
+pub use source::{GitSource, LocalSource, NpmSource, ParsedSource, SourceScope, parse_git_url};
+
+/// The TS `CONFIG_DIR_NAME` (project-local settings/packages root).
+pub use crate::settings::CONFIG_DIR_NAME;
 
 /// True when `PI_OFFLINE` disables all package network operations.
 pub(crate) fn is_offline_mode_enabled() -> bool {

@@ -2,19 +2,26 @@
 //! text signatures, foreign tool-call id normalization. The stream event processor lives in
 //! [`crate::providers::openai_responses_stream`].
 
-use serde_json::{json, Map, Value};
-
-use crate::providers::transform_messages::transform_messages_with_normalizer;
-use crate::types::{
-    AssistantContent, AssistantMessage, Context, Model, ModelExt, TextSignaturePhase, Tool,
-};
-use crate::utils_inner::hash::short_hash;
-use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
+use serde_json::{Map, Value, json};
 
 pub use crate::providers::openai_responses_hooks::ReasoningSummary;
 pub use crate::providers::openai_responses_stream::{
-    apply_service_tier_pricing, ResponsesStreamHooks, ResponsesStreamProcessor,
+    ResponsesStreamHooks,
+    ResponsesStreamProcessor,
+    apply_service_tier_pricing,
 };
+use crate::providers::transform_messages::transform_messages_with_normalizer;
+use crate::types::{
+    AssistantContent,
+    AssistantMessage,
+    Context,
+    Model,
+    ModelExt,
+    TextSignaturePhase,
+    Tool,
+};
+use crate::utils_inner::hash::short_hash;
+use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 
 pub(crate) fn encode_text_signature_v1(id: &str, phase: Option<TextSignaturePhase>) -> String {
     let mut payload = Map::new();
@@ -383,8 +390,15 @@ pub fn convert_responses_tools(
 mod tests {
     use super::*;
     use crate::types::{
-        Message, StopReason, TextContent, ToolCall, ToolResultMessage, Usage, UserMessage,
-        UserMessageContent, UserOrToolContent,
+        Message,
+        StopReason,
+        TextContent,
+        ToolCall,
+        ToolResultMessage,
+        Usage,
+        UserMessage,
+        UserMessageContent,
+        UserOrToolContent,
     };
 
     fn codex_model() -> Model {

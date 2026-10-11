@@ -3,12 +3,13 @@
 //! containing `owner.json`, acquired by an atomic rename; stale owners are
 //! reclaimed, and a guard lock serializes lease updates.
 
-use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const SESSION_LEASES_ENABLED_ENV: &str = "PRIME_AGENT_INTERNAL_SESSION_LEASES";
 pub const SESSION_LEASE_OWNER_ID_ENV: &str = "PRIME_AGENT_INTERNAL_SESSION_LEASE_OWNER_ID";

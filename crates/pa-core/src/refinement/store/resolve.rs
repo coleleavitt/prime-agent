@@ -11,15 +11,23 @@
 //! is what the client ships to `factory.run`: the spec id, the
 //! `{"spec", "subagents"}` node table, and a library run's origin.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::validate::Arg;
 use super::{
-    store_target, type_error, value_error, with_store, Outcome, Request, Session, StoreError,
-    StoreErrorKind, StoreTarget,
+    Outcome,
+    Request,
+    Session,
+    StoreError,
+    StoreErrorKind,
+    StoreTarget,
+    store_target,
+    type_error,
+    value_error,
+    with_store,
 };
-use crate::factory::library::{resolve_machine, Fs, FsError, LibraryDirs, Raise};
-use crate::factory::pyvalue::{decode_node_table, encode_node_table, PyValue};
+use crate::factory::library::{Fs, FsError, LibraryDirs, Raise, resolve_machine};
+use crate::factory::pyvalue::{PyValue, decode_node_table, encode_node_table};
 use crate::refinement::{HarnessEntry, RefinementKind};
 
 /// `_strip_scope_prefix`: an id shown as `local:<id>`/`global:<id>` routes

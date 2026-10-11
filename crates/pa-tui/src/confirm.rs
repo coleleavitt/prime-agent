@@ -2,11 +2,11 @@
 //! the message as its description lines, and a small option list that
 //! answers the pending question.
 
+use crate::Line;
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::{hint_row, key_hint, menu_row};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::truncate_line;
-use crate::Line;
 
 /// The image-routing fallback's "send the text without the image" choice
 /// (the markers and bytes stay out of the submitted turn).
@@ -222,13 +222,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.iter().any(|row| row.contains("Session cwd not found")));
-        assert!(text
-            .iter()
-            .any(|row| row.contains("continue in current cwd")));
+        assert!(
+            text.iter()
+                .any(|row| row.contains("continue in current cwd"))
+        );
         assert!(text.iter().any(|row| row.contains("› Yes")));
         assert!(text.iter().any(|row| row.contains("  No")));
-        assert!(text
-            .iter()
-            .any(|row| row.contains("↑/↓ navigate · Enter select · Esc close")));
+        assert!(
+            text.iter()
+                .any(|row| row.contains("↑/↓ navigate · Enter select · Esc close"))
+        );
     }
 }

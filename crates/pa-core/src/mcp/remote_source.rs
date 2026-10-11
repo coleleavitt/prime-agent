@@ -5,11 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-
-use super::catalog_schema::{parse_plugins_catalog, PluginsCatalog};
 use pa_models::cache::PUBLIC_SCOPE;
 use pa_models::fetch::MCP_SERVICE_CATALOG_URL;
+use serde::Deserialize;
+
+use super::catalog_schema::{PluginsCatalog, parse_plugins_catalog};
 
 /// The validated last-good disk cache the fetch lane writes; the plugins
 /// side only reads it.
@@ -117,10 +117,12 @@ mod tests {
     fn snapshot_envelope_serves() {
         let bytes = snapshot_file(&serde_json::json!([cache_only_entry()]));
         let snapshot = snapshot_catalog(&bytes).expect("the fetch lane's snapshot serves");
-        assert!(snapshot
-            .entries
-            .iter()
-            .any(|entry| entry.server == "cache-only"));
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .any(|entry| entry.server == "cache-only")
+        );
     }
 
     /// Last-good: TS `CatalogCache.get` serves a snapshot at ANY age — the refresh cadence belongs
@@ -198,10 +200,12 @@ mod tests {
         )
         .expect("write the historical-location snapshot");
         let snapshot = cache_plugins_snapshot(&agent).expect("the historical location serves");
-        assert!(snapshot
-            .entries
-            .iter()
-            .any(|entry| entry.server == "cache-only"));
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .any(|entry| entry.server == "cache-only")
+        );
 
         // The primary path wins over the historical ones.
         std::fs::write(
@@ -219,9 +223,11 @@ mod tests {
         )
         .expect("write primary snapshot");
         let snapshot = cache_plugins_snapshot(&agent).expect("the primary path serves");
-        assert!(snapshot
-            .entries
-            .iter()
-            .any(|entry| entry.server == "primary-only"));
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .any(|entry| entry.server == "primary-only")
+        );
     }
 }

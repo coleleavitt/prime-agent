@@ -187,14 +187,19 @@ pub fn credential_source_providers() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use pa_types::sync::MutexExt;
 
     use super::*;
     use crate::auth::{
-        AuthApiKeyResult, AuthSource, AuthSourceToken, AuthStatus, AuthStorage, AuthStorageData,
+        AuthApiKeyResult,
+        AuthSource,
+        AuthSourceToken,
+        AuthStatus,
+        AuthStorage,
+        AuthStorageData,
         NoOAuth,
     };
 

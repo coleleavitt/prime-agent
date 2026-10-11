@@ -4,18 +4,28 @@
 
 use std::sync::Arc;
 
-use crate::abort::AbortSignal;
-use crate::types::{
-    AgentContext, AgentEvent, AgentTool, AgentToolResult, AssistantMessage, ToolCall,
-    ToolExecutionMode, ToolResultContent, ToolResultMessage,
-};
-
 use super::run::clone_context;
 use super::tool_call::{
-    create_tool_result_message, emit_tool_execution_end, emit_tool_result_message,
-    execute_prepared_tool_call, finalize_executed_tool_call, prepare_tool_call,
+    create_tool_result_message,
+    emit_tool_execution_end,
+    emit_tool_result_message,
+    execute_prepared_tool_call,
+    finalize_executed_tool_call,
+    prepare_tool_call,
 };
 use super::{AgentEventSink, AgentLoopConfig};
+use crate::abort::AbortSignal;
+use crate::types::{
+    AgentContext,
+    AgentEvent,
+    AgentTool,
+    AgentToolResult,
+    AssistantMessage,
+    ToolCall,
+    ToolExecutionMode,
+    ToolResultContent,
+    ToolResultMessage,
+};
 
 pub(crate) struct ExecutedToolCallBatch {
     pub(crate) messages: Vec<ToolResultMessage>,

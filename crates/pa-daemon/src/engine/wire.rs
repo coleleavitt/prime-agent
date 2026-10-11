@@ -1,7 +1,7 @@
 //! The engine wire types: the prompt records, the event stream shape, the
 //! goal-continuation + bash-notice plumbing, the RLM session identity, and
 //! the compaction/branch-summary/side-question records.
-use super::{json, json_round_trip, Arc, SideQuestionTurn, Value};
+use super::{Arc, SideQuestionTurn, Value, json, json_round_trip};
 
 /// One user prompt accepted by the engine.
 #[derive(Debug, Clone)]

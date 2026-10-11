@@ -1,11 +1,12 @@
 //! The interactive-mode unit battery: the session flag mapping, the continue-recent
 //! view target, the onboarding gate, and the startup fork/select contracts.
 
-use super::*;
 // The tests call the trait methods directly (the impl header alone
 // does not import them).
 use pa_tui::interactive::OnboardingSink;
 use serde_json::Map;
+
+use super::*;
 
 #[test]
 fn session_flags_map_to_selections() {
@@ -849,22 +850,30 @@ fn a_fork_launch_never_opens_the_agents_view() {
     let mut options = run_options_for_continue(std::path::Path::new("/does/not/matter"));
     options.agents_view_requested = true;
     assert!(
-        should_open_agents_view(&options, /*onboarding_pending*/ false, /*continue_view*/ false,),
+        should_open_agents_view(
+            &options, /*onboarding_pending*/ false, /*continue_view*/ false,
+        ),
         "an explicit agents request still opens the view"
     );
     options.session.resume_bare = true;
     assert!(
-        should_open_agents_view(&options, /*onboarding_pending*/ false, /*continue_view*/ false,),
+        should_open_agents_view(
+            &options, /*onboarding_pending*/ false, /*continue_view*/ false,
+        ),
         "a bare --resume still opens the view"
     );
     options.session.resume_bare = false;
     options.session.fork = Some("source".to_string());
     assert!(
-        !should_open_agents_view(&options, /*onboarding_pending*/ false, /*continue_view*/ false,),
+        !should_open_agents_view(
+            &options, /*onboarding_pending*/ false, /*continue_view*/ false,
+        ),
         "a fork opens its target, never the agents view"
     );
     assert!(
-        should_open_agents_view(&options, /*onboarding_pending*/ false, /*continue_view*/ true,),
+        should_open_agents_view(
+            &options, /*onboarding_pending*/ false, /*continue_view*/ true,
+        ),
         "a --continue with a saved candidate still opens the view"
     );
 }

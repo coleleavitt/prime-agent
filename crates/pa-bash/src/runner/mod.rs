@@ -20,18 +20,17 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
-
-use crate::context::GuardContext;
-use crate::pipeline::{check, Allowances};
-use crate::platform::{self, Signal};
-use crate::sandbox::JobSandbox;
-use crate::script::Script;
-use crate::shell::{child_env, resolve_shell, ShellError};
-
 pub(crate) use clock::iso_utc;
 pub(crate) use job::{Job, JobEvent};
 pub(crate) use pyjson::{dumps as python_json, splitlines};
+use serde_json::{Map, Value, json};
+
+use crate::context::GuardContext;
+use crate::pipeline::{Allowances, check};
+use crate::platform::{self, Signal};
+use crate::sandbox::JobSandbox;
+use crate::script::Script;
+use crate::shell::{ShellError, child_env, resolve_shell};
 
 /// Finished jobs kept listable after their group is reaped.
 const HISTORY_CAP: usize = 64;

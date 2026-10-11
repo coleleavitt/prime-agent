@@ -45,17 +45,6 @@
 // there. The windows cross-check still builds the bin: its offline
 // `--replay` mode is pure ledger analysis, and the live entry point
 // refuses cleanly at startup.
-#[cfg(unix)]
-use pa_core::factory_eval::{
-    build_baseline_prompt, build_factory_parent_prompt, build_harness_state_file,
-    build_reference_factories, check_replay_ledger, check_task_success, find_reference_factory,
-    parse_answer_line, render_markdown_report, serialize_eval_report, EvalArm,
-    FactoryEvalTrialResult, ReferenceFactoryKind, TrialVerdict, FACTORY_KERNEL_VENV_RECIPE,
-};
-use pa_core::factory_eval::{parse_eval_args, run_replay_checks, EvalArgsError, FactoryEvalConfig};
-#[cfg(unix)]
-use serde_json::json;
-use serde_json::Value;
 use std::fs;
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
@@ -65,6 +54,29 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 #[cfg(unix)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use pa_core::factory_eval::{EvalArgsError, FactoryEvalConfig, parse_eval_args, run_replay_checks};
+#[cfg(unix)]
+use pa_core::factory_eval::{
+    EvalArm,
+    FACTORY_KERNEL_VENV_RECIPE,
+    FactoryEvalTrialResult,
+    ReferenceFactoryKind,
+    TrialVerdict,
+    build_baseline_prompt,
+    build_factory_parent_prompt,
+    build_harness_state_file,
+    build_reference_factories,
+    check_replay_ledger,
+    check_task_success,
+    find_reference_factory,
+    parse_answer_line,
+    render_markdown_report,
+    serialize_eval_report,
+};
+use serde_json::Value;
+#[cfg(unix)]
+use serde_json::json;
 
 /// A blocking JSONL client for the eval's dedicated supervisor socket.
 #[cfg(unix)]

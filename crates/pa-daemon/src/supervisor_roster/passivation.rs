@@ -2,12 +2,18 @@
 //! stop-path passivation (the anchored-child preservation, the live-field
 //! stripping, the family pruning), the rewrite/diff-baseline snapshots, and
 //! the registration-mark + re-registration rules.
+use pa_types::daemon::agent_roster::AgentRosterStatus;
+
 use super::*;
 use crate::supervisor_roster_seed::tests::{
-    append_family_edge, drain_pending_seeds_for_tests, live_child_summary, register_root_worker,
-    roster_fixture, roster_row_for_child, write_display_file,
+    append_family_edge,
+    drain_pending_seeds_for_tests,
+    live_child_summary,
+    register_root_worker,
+    roster_fixture,
+    roster_row_for_child,
+    write_display_file,
 };
-use pa_types::daemon::agent_roster::AgentRosterStatus;
 
 /// `roster_subscribe` is a pure in-memory snapshot: a family the
 /// ledger knows (with readable transcripts, unseeded) never enters
@@ -610,15 +616,18 @@ async fn stop_removes_unanchored_children_and_passivates_the_top_level_row() {
             .is_some_and(|ids| ids.len() == 1),
         "the queued/ephemeral row dies: {pushes:?}"
     );
-    assert!(supervisor
-        .roster
-        .lock()
-        .unwrap()
-        .entries()
-        .iter()
-        .all(
-            |entry| entry.summary.get("rlmChildId").and_then(Value::as_str) != Some("sub-queued")
-        ));
+    assert!(
+        supervisor
+            .roster
+            .lock()
+            .unwrap()
+            .entries()
+            .iter()
+            .all(
+                |entry| entry.summary.get("rlmChildId").and_then(Value::as_str)
+                    != Some("sub-queued")
+            )
+    );
 
     // A LATER stop's unowned sweep never revisits the passivated
     // top-level row (the sweep's business is the dead seeded

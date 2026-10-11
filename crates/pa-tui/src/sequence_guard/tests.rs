@@ -1,5 +1,6 @@
-use super::*;
 use crossterm::event::{MouseEvent as CtMouse, MouseEventKind as CtMouseKind};
+
+use super::*;
 
 fn esc_press() -> Event {
     Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
@@ -506,9 +507,11 @@ fn a_held_esc_flushes_as_the_key_press_at_the_deadline() {
     let mut guard = SequenceGuard::default();
     let now = Instant::now();
     assert!(guard.feed(esc_press(), now).is_empty());
-    assert!(guard
-        .flush_expired((now + HOLD).checked_sub(Duration::from_millis(1)).unwrap())
-        .is_empty());
+    assert!(
+        guard
+            .flush_expired((now + HOLD).checked_sub(Duration::from_millis(1)).unwrap())
+            .is_empty()
+    );
     assert_eq!(
         guard.flush_expired(now + HOLD),
         vec![GuardOutput::Event(esc_press())]
@@ -560,11 +563,13 @@ fn esc_then_a_mouse_report_flushes_the_esc_and_passes_the_report() {
     );
     assert_eq!(
         reports(&outputs),
-        vec![mouse::from_crossterm(match &wheel {
-            Event::Mouse(mouse) => *mouse,
-            _ => unreachable!("the fixture is a mouse event"),
-        })
-        .expect("wheel decodes")]
+        vec![
+            mouse::from_crossterm(match &wheel {
+                Event::Mouse(mouse) => *mouse,
+                _ => unreachable!("the fixture is a mouse event"),
+            })
+            .expect("wheel decodes")
+        ]
     );
 }
 
@@ -574,16 +579,20 @@ fn a_half_assembled_sequence_is_dropped_at_the_deadline_never_typed() {
     let now = Instant::now();
     assert!(guard.feed(esc_press(), now).is_empty());
     for (offset, c) in ['[', '<', '6', '4'].iter().enumerate() {
-        assert!(guard
-            .feed(
-                char_press(*c),
-                now + Duration::from_millis(offset as u64 + 1)
-            )
-            .is_empty());
+        assert!(
+            guard
+                .feed(
+                    char_press(*c),
+                    now + Duration::from_millis(offset as u64 + 1)
+                )
+                .is_empty()
+        );
     }
-    assert!(guard
-        .flush_expired(now + HOLD + Duration::from_millis(4))
-        .is_empty());
+    assert!(
+        guard
+            .flush_expired(now + HOLD + Duration::from_millis(4))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -721,9 +730,11 @@ fn an_expired_half_assembled_sequence_drops_and_the_key_types() {
     let mut guard = SequenceGuard::default();
     let now = Instant::now();
     assert!(guard.feed(esc_press(), now).is_empty());
-    assert!(guard
-        .feed(char_press('['), now + Duration::from_millis(1))
-        .is_empty());
+    assert!(
+        guard
+            .feed(char_press('['), now + Duration::from_millis(1))
+            .is_empty()
+    );
     assert_eq!(
         guard.feed(char_press('x'), now + HOLD + Duration::from_millis(2)),
         vec![GuardOutput::Event(char_press('x'))]
@@ -911,10 +922,12 @@ fn modify_other_keys_shift_enter_survives_every_read_boundary() {
             editor.handle_input(&crate::keys::key_event_to_id(&key).expect("key id"));
         }
         assert_eq!(editor.get_lines(), vec!["a", "b"], "split at {split}");
-        assert!(editor
-            .take_events()
-            .iter()
-            .all(|event| !matches!(event, crate::editor::EditorEvent::Submitted(_))));
+        assert!(
+            editor
+                .take_events()
+                .iter()
+                .all(|event| !matches!(event, crate::editor::EditorEvent::Submitted(_)))
+        );
     }
 }
 

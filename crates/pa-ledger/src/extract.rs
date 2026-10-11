@@ -3,13 +3,23 @@
 //! messages that ended with `stopReason: "error"`.
 
 use pa_agent::types::{
-    AgentMessage, AssistantMessage, Message, StopReason, ToolResultContent, ToolResultMessage,
+    AgentMessage,
+    AssistantMessage,
+    Message,
+    StopReason,
+    ToolResultContent,
+    ToolResultMessage,
 };
 use serde_json::Value;
 
 use crate::fingerprint::{
-    clip_excerpt, fingerprint_failure, parse_python_traceback, tool_error_text, FailureFingerprint,
-    FailureKind, ParsedTraceback,
+    FailureFingerprint,
+    FailureKind,
+    ParsedTraceback,
+    clip_excerpt,
+    fingerprint_failure,
+    parse_python_traceback,
+    tool_error_text,
 };
 use crate::js::js_trim;
 use crate::ledger::FailureObservation;

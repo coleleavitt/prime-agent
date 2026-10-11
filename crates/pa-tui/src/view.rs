@@ -3,12 +3,12 @@
 //! The session loop folds events into the view; this module owns row
 //! geometry and scroll behavior only.
 
+use crate::Line;
 use crate::chat::{ChatEntry, CompactionState, Detail, WorkingState};
-use crate::chrome::{conversation_detail_status, ChromeState};
+use crate::chrome::{ChromeState, conversation_detail_status};
 use crate::editor::Editor;
 use crate::session::TranscriptItem;
 use crate::theme::Theme;
-use crate::Line;
 
 pub(crate) mod click;
 pub(crate) mod editor_surface;

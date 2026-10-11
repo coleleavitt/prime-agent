@@ -3,15 +3,15 @@
 //! daemon has a private catalog layer per session in one process; the Rust
 //! daemon runs one worker per session, so the disk caches carry the state.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use pa_models::{ModelCatalog, PrimeCredentials};
+use pa_types::sync::MutexExt;
 
-use crate::auth::types::PRIME_INFERENCE_PROVIDER_ID;
 use crate::auth::AuthStorage;
+use crate::auth::types::PRIME_INFERENCE_PROVIDER_ID;
 
 /// The models cache dir for a `models.json` path: `<agent-dir>/models` — both catalog caches live
 /// beside `models.json`.

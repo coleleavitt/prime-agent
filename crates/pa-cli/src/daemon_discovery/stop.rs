@@ -23,15 +23,25 @@ use serde::Serialize;
 
 use super::format::{print_reap_report, print_shutdown_report};
 use super::kill::{
-    force_kill_daemon, force_stop_tracked_workers, kill_daemon, remove_socket_file,
+    force_kill_daemon,
+    force_stop_tracked_workers,
+    kill_daemon,
+    remove_socket_file,
     terminate_verified_residuals,
 };
 use super::plan::{
-    plan_reap, plan_shutdown_all, plan_shutdown_confirmation, ReapActionKind,
+    ReapActionKind,
     ShutdownConfirmationPlan,
+    plan_reap,
+    plan_shutdown_all,
+    plan_shutdown_confirmation,
 };
 use super::{
-    discover_daemons, is_daemon_process_listening, probe_daemon, DaemonInfo, DaemonStateRoot,
+    DaemonInfo,
+    DaemonStateRoot,
+    discover_daemons,
+    is_daemon_process_listening,
+    probe_daemon,
 };
 
 /// `status`: the daemons discovered in the given state root as JSON or

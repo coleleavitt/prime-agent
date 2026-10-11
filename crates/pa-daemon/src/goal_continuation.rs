@@ -3,8 +3,9 @@
 //! or a live background `bash()` handle until they settle. The goal
 //! takes exclusive priority over autonomous continuation.
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
+
+use pa_types::sync::MutexExt;
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::engine::{GoalContinuation, GoalTurnEndWork, PromptRequest};
@@ -480,7 +481,10 @@ mod tests {
 
     use super::*;
     use crate::agent_engine::tests::{
-        admit, faux_engine_with_settings, goal_admission_collector, FAUX_TEST_LOCK,
+        FAUX_TEST_LOCK,
+        admit,
+        faux_engine_with_settings,
+        goal_admission_collector,
     };
     use crate::engine::EngineEvent;
 
@@ -561,10 +565,12 @@ mod tests {
             panic!("expected exactly the owed continuation: {work:?}");
         };
         assert!(follow_up.request.message.contains("[goal: continuation]"));
-        assert!(follow_up
-            .request
-            .message
-            .contains("ship behind the bash handle"));
+        assert!(
+            follow_up
+                .request
+                .message
+                .contains("ship behind the bash handle")
+        );
         assert_eq!(
             follow_up.request.custom_message.as_ref().unwrap()["details"]["continuationsUsed"],
             serde_json::json!(1)

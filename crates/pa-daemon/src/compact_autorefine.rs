@@ -99,12 +99,11 @@ impl AgentSessionEngine {
 
 #[cfg(test)]
 mod tests {
-    use crate::agent_engine::tests::{admit, faux_engine_with_settings};
-    use crate::agent_engine::AgentSessionEngine;
-    use crate::agent_engine::FAUX_TEST_LOCK;
-    use crate::engine::SessionEngine;
-    use crate::engine::{CompactionOutcome, CompactionRequest, EngineEvent};
     use serde_json::json;
+
+    use crate::agent_engine::tests::{admit, faux_engine_with_settings};
+    use crate::agent_engine::{AgentSessionEngine, FAUX_TEST_LOCK};
+    use crate::engine::{CompactionOutcome, CompactionRequest, EngineEvent, SessionEngine};
 
     /// The faux model's per-request output budget (maxTokens `16_384` under the `32_000` cap):
     /// threshold fixtures subtract it from the window alongside the headroom.
@@ -490,7 +489,8 @@ mod tests {
 
     fn refine_command() -> pa_core::session_engine::slash_commands::SessionSlashCommand {
         use pa_core::session_engine::slash_commands::{
-            parse_session_command, SlashCommandRegistry,
+            SlashCommandRegistry,
+            parse_session_command,
         };
         parse_session_command(&SlashCommandRegistry::builtin(), "/refine")
             .expect("the test text is a session command")

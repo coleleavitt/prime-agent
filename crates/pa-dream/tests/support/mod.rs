@@ -8,10 +8,10 @@ pub mod stub;
 use std::path::PathBuf;
 
 use pa_dream::improve::{CandidateInput, CandidateSource};
-use pa_dream::policy::{ExplorationPolicy, DEFAULT_POLICY};
+use pa_dream::policy::{DEFAULT_POLICY, ExplorationPolicy};
 use pa_dream::records::{NodeRecord, NodeTag, TreeHeaderRecord, TreeRecord, TreeTag};
 use pa_dream::rng::{Seed, SeededRng};
-use pa_dream::store::{parse_records, RecordedTree};
+use pa_dream::store::{RecordedTree, parse_records};
 
 /// A header for a synthetic tree.
 pub fn header(tree_id: &str, w: u32) -> TreeHeaderRecord {

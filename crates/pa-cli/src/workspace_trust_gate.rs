@@ -304,8 +304,9 @@ fn command_summary(status: &WorkspaceTrustStatus, decision: TrustDecision) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_core::workspace_trust::GatedItem;
+
+    use super::*;
 
     fn status(state: TrustState) -> WorkspaceTrustStatus {
         WorkspaceTrustStatus {

@@ -4,17 +4,26 @@
 
 use std::sync::Arc;
 
-use crate::abort::{is_abort_error, AbortSignal};
-use crate::types::{
-    AfterToolCallContext, AgentContext, AgentEvent, AgentMessage, AgentTool, AgentToolResult,
-    AgentToolUpdateCallback, AssistantContent, AssistantMessage, BeforeToolCallContext, StopReason,
-    ToolCall, ToolResultMessage,
-};
-
 use super::abort::race_with_abort;
 use super::run::clone_context;
 use super::tools::{FinalizedToolCallOutcome, Preparation, PreparedToolCall};
 use super::{AgentEventSink, AgentLoopConfig};
+use crate::abort::{AbortSignal, is_abort_error};
+use crate::types::{
+    AfterToolCallContext,
+    AgentContext,
+    AgentEvent,
+    AgentMessage,
+    AgentTool,
+    AgentToolResult,
+    AgentToolUpdateCallback,
+    AssistantContent,
+    AssistantMessage,
+    BeforeToolCallContext,
+    StopReason,
+    ToolCall,
+    ToolResultMessage,
+};
 
 /// Tool lookup, `prepareArguments`, schema validation, and the
 /// `beforeToolCall` hook. Never fails; errors become immediate error tool

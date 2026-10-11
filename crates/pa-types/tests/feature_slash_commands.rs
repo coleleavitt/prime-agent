@@ -3,8 +3,12 @@
 //! the builtin's. (Its own test binary: the registration is process-wide.)
 
 use pa_types::slash_commands::{
-    feature_slash_commands, is_session_slash_command_name, register_feature_slash_commands,
-    BuiltinSlashCommand, SlashCommandExecution, SlashCommandRegistry,
+    BuiltinSlashCommand,
+    SlashCommandExecution,
+    SlashCommandRegistry,
+    feature_slash_commands,
+    is_session_slash_command_name,
+    register_feature_slash_commands,
 };
 
 #[test]

@@ -5,9 +5,16 @@
 use pa_types::session::CustomMessage;
 
 use crate::goals::{
-    create_goal_context_message, empty_goal_state, goal_token_delta_for_usage,
-    normalize_goal_state, validate_goal_budget, validate_goal_objective, GoalContextKind,
-    GoalState, GoalStatus, GOAL_STATE_CUSTOM_TYPE,
+    GOAL_STATE_CUSTOM_TYPE,
+    GoalContextKind,
+    GoalState,
+    GoalStatus,
+    create_goal_context_message,
+    empty_goal_state,
+    goal_token_delta_for_usage,
+    normalize_goal_state,
+    validate_goal_budget,
+    validate_goal_objective,
 };
 use crate::session::manager::SessionManager;
 
@@ -79,10 +86,12 @@ fn now_millis() -> u64 {
 mod progress;
 
 use progress::CONTINUATION_NO_PROGRESS_CAP;
-pub use progress::{terminal_provider_failure, turn_produced_no_output};
 pub use progress::{
-    CONTINUATION_NO_PROGRESS_CAP_REASON, GOAL_BACKOFF_WAKE_CRON_LABEL,
+    CONTINUATION_NO_PROGRESS_CAP_REASON,
+    GOAL_BACKOFF_WAKE_CRON_LABEL,
     GOAL_BACKOFF_WAKE_MARKER_TEXT,
+    terminal_provider_failure,
+    turn_produced_no_output,
 };
 
 impl GoalDriver {

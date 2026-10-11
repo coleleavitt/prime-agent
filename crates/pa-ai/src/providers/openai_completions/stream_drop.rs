@@ -8,11 +8,13 @@
 //! completed message. Each dropped shape pins the retryable `stream_drop`
 //! failure; each healthy shape pins no drop.
 
+use std::net::SocketAddr;
+
+use serde_json::Value;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use super::*;
 use crate::event_stream::AssistantMessageEventExt;
-use serde_json::Value;
-use std::net::SocketAddr;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Serve one SSE response body for the provider's POST and return the
 /// bound address (one connection per spawned server).
@@ -141,11 +143,13 @@ async fn a_stream_dropped_mid_text_classifies_as_stream_drop() {
         panic!("a dropped stream must terminate with an error event");
     };
     assert_eq!(error.stop_reason, StopReason::Error);
-    assert!(error
-        .error_message
-        .as_deref()
-        .unwrap_or_default()
-        .contains("text block"));
+    assert!(
+        error
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("text block")
+    );
     assert_eq!(failure_kind(&error).as_deref(), Some("stream_drop"));
 }
 
@@ -158,11 +162,13 @@ async fn an_empty_body_is_a_stream_drop_not_an_empty_turn() {
         panic!("an empty body must terminate with an error event");
     };
     assert_eq!(error.stop_reason, StopReason::Error);
-    assert!(error
-        .error_message
-        .as_deref()
-        .unwrap_or_default()
-        .contains("before any response content"));
+    assert!(
+        error
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("before any response content")
+    );
     assert_eq!(failure_kind(&error).as_deref(), Some("stream_drop"));
 }
 
@@ -288,8 +294,9 @@ async fn the_done_marker_ends_a_stream_whose_body_stays_open() {
     };
     assert_eq!(message.stop_reason, StopReason::ToolUse);
     assert_eq!(message.error_message, None);
-    assert!(message
-        .content
-        .iter()
-        .any(|block| matches!(block, AssistantContent::ToolCall(call) if call.name == "ipython")));
+    assert!(
+        message.content.iter().any(
+            |block| matches!(block, AssistantContent::ToolCall(call) if call.name == "ipython")
+        )
+    );
 }

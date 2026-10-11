@@ -5,11 +5,10 @@
 use pa_types::ai::Model;
 use pa_types::sync::MutexExt;
 
-use crate::refinement::executor::AutoRefineReview;
-use crate::refinement::RefinementResult;
-
-use super::refine::{now_millis, AutoRefineRound};
 use super::AgentSession;
+use super::refine::{AutoRefineRound, now_millis};
+use crate::refinement::RefinementResult;
+use crate::refinement::executor::AutoRefineReview;
 
 /// The boundary a pending trigger is serviced at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

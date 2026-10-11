@@ -543,11 +543,13 @@ mod tests {
             );
         }
         // A 64-byte label and a trailing hyphen are also invalid.
-        assert!(validate_egress_list(
-            &[format!("{}.example.com", "a".repeat(64))],
-            "networkAllowlist"
-        )
-        .is_err());
+        assert!(
+            validate_egress_list(
+                &[format!("{}.example.com", "a".repeat(64))],
+                "networkAllowlist"
+            )
+            .is_err()
+        );
         assert!(
             validate_egress_list(&["bad-.example.com".to_string()], "networkAllowlist").is_err()
         );

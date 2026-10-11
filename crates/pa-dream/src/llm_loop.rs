@@ -20,33 +20,67 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
 
-use crate::child::DEFAULT_CHILD_TOKEN_BUDGET;
-use crate::child::{ChildRuntimeScope, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult};
-use crate::dream_loop::{
-    dream_run_id, freeze_pool, judge_probation, merged_round_curve, priming_tree_id,
-    DreamHandlerCalls, DreamLoopResult, DreamMode, DreamRoundDreaming, DreamRoundRecord,
-    DreamRoundTokens,
+use crate::child::{
+    ChildRuntimeScope,
+    DEFAULT_CHILD_TOKEN_BUDGET,
+    RunAgent,
+    RunAgentOptions,
+    RunAgentRequest,
+    RunAgentResult,
 };
-use crate::dreams::{dreams_path, DreamStepInput, DreamsLog, DreamsLogContext};
+use crate::dream_loop::{
+    DreamHandlerCalls,
+    DreamLoopResult,
+    DreamMode,
+    DreamRoundDreaming,
+    DreamRoundRecord,
+    DreamRoundTokens,
+    dream_run_id,
+    freeze_pool,
+    judge_probation,
+    merged_round_curve,
+    priming_tree_id,
+};
+use crate::dreams::{DreamStepInput, DreamsLog, DreamsLogContext, dreams_path};
 use crate::improve::{
-    run_dreaming, select_best_policy, CandidateInput, CandidateReason, CandidateSource,
-    DreamResult, DreamingOptions, DreamingScoreConfig,
+    CandidateInput,
+    CandidateReason,
+    CandidateSource,
+    DreamResult,
+    DreamingOptions,
+    DreamingScoreConfig,
+    run_dreaming,
+    select_best_policy,
 };
 use crate::llm::{
-    build_guidance_input, dream_abort, history_of, propose_policies_with_agent, resolve_guidance,
-    revoked_history_entry, DreamHistoryEntry, DreamerContext, LlmDreamerOptions, LlmProposer,
-    LlmProposerOptions, SemanticGuidance, DEFAULT_GUIDANCE_MAX_ARTIFACT_CHARS,
+    DEFAULT_GUIDANCE_MAX_ARTIFACT_CHARS,
     DEFAULT_GUIDANCE_TOP_K,
+    DreamHistoryEntry,
+    DreamerContext,
+    LlmDreamerOptions,
+    LlmProposer,
+    LlmProposerOptions,
+    SemanticGuidance,
+    build_guidance_input,
+    dream_abort,
+    history_of,
+    propose_policies_with_agent,
+    resolve_guidance,
+    revoked_history_entry,
 };
 use crate::objective::ReplayObjectiveConfig;
-use crate::policy::{policy_id, ExplorationPolicy};
+use crate::policy::{ExplorationPolicy, policy_id};
 use crate::proposer::{ProposalTally, Proposer};
-use crate::rejections::{rejections_path, RejectionLog};
+use crate::rejections::{RejectionLog, rejections_path};
 use crate::rng::{Seed, SeededRng};
 use crate::rollout::{
-    run_online_exploration, DreamClock, ExploreOptions, ExploreResult, ScoreImprovement,
+    DreamClock,
+    ExploreOptions,
+    ExploreResult,
+    ScoreImprovement,
+    run_online_exploration,
 };
-use crate::store::{tree_path, DreamStoreError, RecordedTree};
+use crate::store::{DreamStoreError, RecordedTree, tree_path};
 use crate::task::DynTask;
 
 /// Which phase of the loop just began.

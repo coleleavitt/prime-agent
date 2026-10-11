@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::machine_file::dumps_pretty;
 use super::pyfs::Fs;
@@ -198,15 +198,21 @@ fn malformed_machine_files_name_every_defect() {
         ),
         (
             machine_text("---\ndescription: \"bad \\x\"\n---", &spec_body),
-            vec!["test-MACHINE.md: frontmatter description has an invalid double-quoted value (Invalid \\escape: line 1 column 6 (char 5))"],
+            vec![
+                "test-MACHINE.md: frontmatter description has an invalid double-quoted value (Invalid \\escape: line 1 column 6 (char 5))",
+            ],
         ),
         (
             machine_text(FRONTMATTER, "No spec here."),
-            vec!["test-MACHINE.md: MACHINE.md requires exactly one fenced ```machine-spec block; found none"],
+            vec![
+                "test-MACHINE.md: MACHINE.md requires exactly one fenced ```machine-spec block; found none",
+            ],
         ),
         (
             machine_text(FRONTMATTER, &format!("{spec_body}\n{spec_body}")),
-            vec!["test-MACHINE.md: MACHINE.md requires exactly one fenced ```machine-spec block; found 2"],
+            vec![
+                "test-MACHINE.md: MACHINE.md requires exactly one fenced ```machine-spec block; found 2",
+            ],
         ),
         (
             machine_text(FRONTMATTER, "```machine-spec\n{}"),
@@ -218,14 +224,21 @@ fn malformed_machine_files_name_every_defect() {
         ),
         (
             machine_text(FRONTMATTER, "```machine-spec\n[1, 2]\n```"),
-            vec!["test-MACHINE.md: the ```machine-spec block must contain a JSON object, got a list"],
+            vec![
+                "test-MACHINE.md: the ```machine-spec block must contain a JSON object, got a list",
+            ],
         ),
         (
             machine_text(FRONTMATTER, "```machine-spec\nnot json\n```"),
-            vec!["test-MACHINE.md: the ```machine-spec block must contain a JSON object (Expecting value: line 1 column 1 (char 0))"],
+            vec![
+                "test-MACHINE.md: the ```machine-spec block must contain a JSON object (Expecting value: line 1 column 1 (char 0))",
+            ],
         ),
         (
-            machine_text("---\nname: Sweep-\ndescription: \"two\\nlines\"\n---", &spec_body),
+            machine_text(
+                "---\nname: Sweep-\ndescription: \"two\\nlines\"\n---",
+                &spec_body,
+            ),
             vec![
                 "machine name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)",
                 "machine name must not end with a hyphen",
@@ -495,11 +508,12 @@ fn relative_paths_are_the_kernels_not_the_hosts() {
         export_library_machine(&fs, &py(&json!("sweep")), &out, &dirs, false),
         Ok(json!({"name": "sweep", "path": "exports/sweep.MACHINE.md", "source": "library"}))
     );
-    assert!(dir
-        .path()
-        .join("exports")
-        .join("sweep.MACHINE.md")
-        .is_file());
+    assert!(
+        dir.path()
+            .join("exports")
+            .join("sweep.MACHINE.md")
+            .is_file()
+    );
 }
 
 #[test]
@@ -554,9 +568,11 @@ fn an_entry_or_run_exports_byte_pretty_and_names_what_cannot_become_a_machine() 
             .map(|result| result["source"].clone()),
         Ok(json!("spec"))
     );
-    assert!(std::fs::read_to_string(&run_out)
-        .expect("run export")
-        .contains("description: factory run run-1\n"));
+    assert!(
+        std::fs::read_to_string(&run_out)
+            .expect("run export")
+            .contains("description: factory run run-1\n")
+    );
 }
 
 #[test]

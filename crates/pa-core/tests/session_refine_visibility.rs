@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use pa_agent::scripted::ScriptedProvider;
 use pa_core::features::{SessionFeature, SessionFeatureContext};
-use pa_core::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
+use pa_core::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
 
 /// Records the kernel's bound Python skills; gates nothing.
 #[derive(Default)]

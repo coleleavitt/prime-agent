@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const GOAL_STATE_CUSTOM_TYPE: &str = "thread_goal_state";
 const OBJECTIVE: &str = "ship the goal-recovery port";

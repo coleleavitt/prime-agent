@@ -2,9 +2,8 @@
 use std::path::Path;
 use std::time::Instant;
 
-use pa_core::session::{
-    build_session_context, parse_session_entries, window::WindowedSessionStore,
-};
+use pa_core::session::window::WindowedSessionStore;
+use pa_core::session::{build_session_context, parse_session_entries};
 
 fn main() -> anyhow::Result<()> {
     for arg in std::env::args().skip(1) {
@@ -45,7 +44,15 @@ fn main() -> anyhow::Result<()> {
                 context.service_tier == baseline.service_tier,
                 "tier mismatch"
             );
-            println!("pass={pass} elapsed_ms={elapsed_ms:.3} retained_entries={} context_bytes={} parity=exact cache_hit={} jsonl_bytes={} cache_bytes={} ranges={:?}", window.entries().len(), expected.len(), reads.cache_hit, reads.jsonl_bytes, reads.cache_bytes, reads.jsonl_ranges);
+            println!(
+                "pass={pass} elapsed_ms={elapsed_ms:.3} retained_entries={} context_bytes={} parity=exact cache_hit={} jsonl_bytes={} cache_bytes={} ranges={:?}",
+                window.entries().len(),
+                expected.len(),
+                reads.cache_hit,
+                reads.jsonl_bytes,
+                reads.cache_bytes,
+                reads.jsonl_ranges
+            );
         }
     }
     Ok(())

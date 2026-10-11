@@ -1,7 +1,7 @@
 //! Generic tool-panel rendering and count-only geometry share one preview traversal.
 
-use super::layout::{panel_content_width, RowOutput};
 use super::ToolCallCard;
+use super::layout::{RowOutput, panel_content_width};
 use crate::chat::Detail;
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
@@ -107,9 +107,10 @@ fn fallback_preview(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::theme::{ColorMode, Theme};
-    use serde_json::json;
 
     fn theme() -> Theme {
         Theme::builtin("prime", ColorMode::TrueColor)

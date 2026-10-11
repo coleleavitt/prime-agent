@@ -5,16 +5,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use serde_json::Value;
 use tokio::sync::mpsc;
 
-use serde_json::Value;
-
 use crate::providers::openai_codex_responses::errors::CodexStreamError;
-use crate::providers::openai_codex_responses::websocket::{
-    ContinuationState, WorkerCommand, SESSION_WEBSOCKET_CACHE_TTL_MS,
-};
-
 pub use crate::providers::openai_codex_responses::websocket::WebSocketDebugStats;
+use crate::providers::openai_codex_responses::websocket::{
+    ContinuationState,
+    SESSION_WEBSOCKET_CACHE_TTL_MS,
+    WorkerCommand,
+};
 
 pub struct CachedConnection {
     /// Command channel to the connection's worker task.

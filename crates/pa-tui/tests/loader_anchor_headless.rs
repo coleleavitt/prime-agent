@@ -25,10 +25,15 @@ use std::path::PathBuf;
 
 use crossterm::event::KeyCode;
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// One mock daemon: serves one client connection, answering the attach with a mid-turn snapshot
 /// whose user message is `prompt_age_ms` old.

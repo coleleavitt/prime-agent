@@ -23,8 +23,8 @@
 mod policy;
 mod render;
 
-pub use policy::{layout, rotate_flowchart, Axis, Layout, Notice, NoticeLevel, Rotated};
-pub use render::{diagram_kind, render, render_cached, Art, ArtSpan, DiagramKind, Role};
+pub use policy::{Axis, Layout, Notice, NoticeLevel, Rotated, layout, rotate_flowchart};
+pub use render::{Art, ArtSpan, DiagramKind, Role, diagram_kind, render, render_cached};
 
 /// Install the display width of one grapheme cluster the art is measured with, so a
 /// diagram judged to fit really fits the host's rows. The first install wins (`false`

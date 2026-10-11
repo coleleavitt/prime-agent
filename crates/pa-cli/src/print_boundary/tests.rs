@@ -1,8 +1,9 @@
-use super::*;
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
 use pa_types::session::FileEntry;
 use serde_json::json;
+
+use super::*;
 
 /// The faux model's per-request output budget: threshold fixtures
 /// subtract it from the window alongside the headroom.
@@ -573,16 +574,18 @@ async fn autonomous_continuation_turns_cross_the_boundary_arms() {
     assert!(user_texts(&engine).await[1].starts_with("[autonomous-continuation]"));
     // The limit stop surfaces only through the headless exit contract:
     // no durable `autonomous_status` row.
-    assert!(engine
-        .session
-        .entries()
-        .await
-        .into_iter()
-        .all(|entry| !matches!(
-            &entry,
-            pa_types::session::FileEntry::CustomMessage { payload, .. }
-                if payload.custom_type == "autonomous_status"
-        )));
+    assert!(
+        engine
+            .session
+            .entries()
+            .await
+            .into_iter()
+            .all(|entry| !matches!(
+                &entry,
+                pa_types::session::FileEntry::CustomMessage { payload, .. }
+                    if payload.custom_type == "autonomous_status"
+            ))
+    );
     let stderr = run
         .exit_stderr()
         .await

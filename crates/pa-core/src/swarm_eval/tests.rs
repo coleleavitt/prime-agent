@@ -365,15 +365,17 @@ fn rejects_a_sweep_that_overflows_the_derived_trial_seed() {
     );
     // Sane sweeps (including every default size and a negative seed) still
     // parse.
-    assert!(parse_eval_args(&args(&[
-        "--model",
-        "m",
-        "--seed",
-        "-9223372036854775808",
-        "--sizes",
-        "2,5,10,20,40"
-    ]))
-    .is_ok());
+    assert!(
+        parse_eval_args(&args(&[
+            "--model",
+            "m",
+            "--seed",
+            "-9223372036854775808",
+            "--sizes",
+            "2,5,10,20,40"
+        ]))
+        .is_ok()
+    );
 }
 
 #[test]

@@ -195,11 +195,18 @@ pub fn agent_event_json(event: &AgentEvent) -> Option<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_agent::stream::AssistantMessageEvent;
     use pa_agent::types::{
-        AgentEvent, AgentMessage, AssistantContent, AssistantMessage, TextContent, ToolCall, Usage,
+        AgentEvent,
+        AgentMessage,
+        AssistantContent,
+        AssistantMessage,
+        TextContent,
+        ToolCall,
+        Usage,
     };
+
+    use super::*;
 
     /// A minimal partial assistant message (the faux wire fields).
     fn partial(content: Vec<AssistantContent>) -> AssistantMessage {
@@ -370,19 +377,25 @@ mod tests {
             );
         }
         // Terminal events never ride a message_update.
-        assert!(assistant_message_event_json(&AssistantMessageEvent::Start {
-            partial: message.clone(),
-        })
-        .is_none());
-        assert!(assistant_message_event_json(&AssistantMessageEvent::Done {
-            reason: pa_agent::types::StopReason::Stop,
-            message: message.clone(),
-        })
-        .is_none());
-        assert!(assistant_message_event_json(&AssistantMessageEvent::Error {
-            reason: pa_agent::types::StopReason::Error,
-            error: message,
-        })
-        .is_none());
+        assert!(
+            assistant_message_event_json(&AssistantMessageEvent::Start {
+                partial: message.clone(),
+            })
+            .is_none()
+        );
+        assert!(
+            assistant_message_event_json(&AssistantMessageEvent::Done {
+                reason: pa_agent::types::StopReason::Stop,
+                message: message.clone(),
+            })
+            .is_none()
+        );
+        assert!(
+            assistant_message_event_json(&AssistantMessageEvent::Error {
+                reason: pa_agent::types::StopReason::Error,
+                error: message,
+            })
+            .is_none()
+        );
     }
 }

@@ -161,8 +161,9 @@ fn vercel_gateway_routing_valid(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn compat(value: Value) -> serde_json::Map<String, Value> {
         match value {

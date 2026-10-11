@@ -22,31 +22,35 @@ mod service_catalog;
 mod session;
 mod url_checks;
 
-pub use catalog_plugin_views::{McpCredentialView, API_KEY_CREDENTIALS};
-pub use catalog_views::{
-    mcp_credential_field_prompt_label, mcp_paste_credential, McpPasteCredential,
-};
-pub use fetch_lane::{spawn_hourly_plugins_refresh, startup_plugins_refresh};
-pub use login::{wire_begin_login, McpLoginContext, McpOAuth};
-pub use manager_catalog::{
-    install_static_token, remove_mcp_connection, McpConnectionHandles, PasteInstallInputs,
-    StaticTokenInstall,
-};
-pub use oauth::{mcp_login, mcp_refresh_token, McpLoginUi, McpOAuthConfig};
-pub use oauth_callback::CallbackPorts;
-pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
-use pa_types::sync::MutexExt;
-pub use session::{McpSessionOptions, McpSessions, DEFAULT_IDLE_TIMEOUT};
-
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
+pub use catalog_plugin_views::{API_KEY_CREDENTIALS, McpCredentialView};
+pub use catalog_views::{
+    McpPasteCredential,
+    mcp_credential_field_prompt_label,
+    mcp_paste_credential,
+};
+pub use fetch_lane::{spawn_hourly_plugins_refresh, startup_plugins_refresh};
+pub use login::{McpLoginContext, McpOAuth, wire_begin_login};
+pub use manager_catalog::{
+    McpConnectionHandles,
+    PasteInstallInputs,
+    StaticTokenInstall,
+    install_static_token,
+    remove_mcp_connection,
+};
+pub use oauth::{McpLoginUi, McpOAuthConfig, mcp_login, mcp_refresh_token};
+pub use oauth_callback::CallbackPorts;
+pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
+use pa_types::sync::MutexExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+pub use session::{DEFAULT_IDLE_TIMEOUT, McpSessionOptions, McpSessions};
 
 use crate::auth::manager::AuthStorage;
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 
 /// A built-in MCP integration we ship a skill package for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1201,9 +1205,11 @@ mod tests {
             http_config("https://evil.example/mcp", None, None),
         );
         let manager = manager_with(Some(override_servers));
-        assert!(!manager
-            .get_enabled_persistent_generic_servers()
-            .contains(&"linear".to_string()));
+        assert!(
+            !manager
+                .get_enabled_persistent_generic_servers()
+                .contains(&"linear".to_string())
+        );
     }
 
     #[test]
@@ -1451,9 +1457,11 @@ mod tests {
         .await
         .unwrap();
         let plugins = result["plugins"].as_array().expect("plugins");
-        assert!(plugins
-            .iter()
-            .any(|entry| entry["serviceId"] == json!("linear")));
+        assert!(
+            plugins
+                .iter()
+                .any(|entry| entry["serviceId"] == json!("linear"))
+        );
         assert_eq!(result["nextCursor"], serde_json::Value::Null);
         for bad in [json!(["query", ""]), json!({}), json!({ "query": "   " })] {
             let error = search(crate::kernel::shared::HostRequestPayload {
@@ -1523,9 +1531,11 @@ mod tests {
         let connections = result["connections"].as_array().expect("connections");
         let mut ids = Vec::new();
         for entry in connections {
-            assert!(entry["connectionId"]
-                .as_str()
-                .is_some_and(|id| !id.is_empty()));
+            assert!(
+                entry["connectionId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+            );
             assert!(entry["status"].as_str().is_some());
             assert!(entry["transport"].as_str().is_some());
             ids.push(entry["connectionId"].as_str().unwrap().to_string());

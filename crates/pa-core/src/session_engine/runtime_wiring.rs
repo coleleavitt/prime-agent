@@ -8,23 +8,27 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use super::runtime::QueuedGoalContextPurge;
+use super::host_requests::SessionBinding;
+use super::rlm_host::{RlmHostBridge, RlmSubagentHost, register_rlm_host_handlers};
+use super::runtime::{QueuedGoalContextPurge, SessionRuntime};
 use crate::cron::store::AgentCronJobStore;
 use crate::kernel::bootstrap::KernelPythonSkill;
 use crate::kernel::provisioner::{
-    IpythonKernelProvisioner as KernelProvisioner, IpythonKernelProvisionerOptions,
+    IpythonKernelProvisioner as KernelProvisioner,
+    IpythonKernelProvisionerOptions,
 };
 use crate::kernel::shared::HostRequestHandlers;
 use crate::session::manager::SessionManager;
-use crate::skills::{get_python_skill_runtime_info, Skill};
+use crate::skills::{Skill, get_python_skill_runtime_info};
 use crate::tools::ipython::{
-    IpythonKernelProvisioner, IpythonToolOptions, KernelAttachment, KernelErrorInfo,
-    KernelExecError, KernelExecuteOptions, KernelExecutor,
+    IpythonKernelProvisioner,
+    IpythonToolOptions,
+    KernelAttachment,
+    KernelErrorInfo,
+    KernelExecError,
+    KernelExecuteOptions,
+    KernelExecutor,
 };
-
-use super::host_requests::SessionBinding;
-use super::rlm_host::{register_rlm_host_handlers, RlmHostBridge, RlmSubagentHost};
-use super::runtime::SessionRuntime;
 
 /// RLM inputs the session composition supplies: a shared model registry and the daemon
 /// child-session host; defaults derive from `agent_dir` or the no-children behavior.

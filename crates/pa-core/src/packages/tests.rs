@@ -5,10 +5,10 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::packages::PackageManager;
 #[cfg(unix)]
 use crate::packages::exe_dir_of;
 use crate::packages::source::{GitSource, SourceScope, UserOrProject};
-use crate::packages::PackageManager;
 use crate::settings::SettingsManager;
 
 /// Minimal npm replacement: bash script with the fixture paths embedded, so
@@ -167,9 +167,11 @@ fn npm_install_list_remove_flow() {
     assert!(!manager.add_source_to_settings("npm:fake-pkg@2.0.0", UserOrProject::User));
     assert_eq!(manager.list_configured_packages().len(), 1);
 
-    assert!(manager
-        .remove_and_persist("npm:fake-pkg", UserOrProject::User)
-        .unwrap());
+    assert!(
+        manager
+            .remove_and_persist("npm:fake-pkg", UserOrProject::User)
+            .unwrap()
+    );
     assert!(manager.list_configured_packages().is_empty());
     let log = sandbox.log();
     assert!(log.contains("npm install -g fake-pkg\n"), "{log}");

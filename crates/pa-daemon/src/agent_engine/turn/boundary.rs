@@ -1,8 +1,9 @@
 //! The turn boundary: the boundary run (compaction + overflow arms +
 //! goal continuation), the stale boundary-request drop, and the
 //! auto-compaction abort clear.
-use super::{AbortController, AgentSessionEngine, BoundaryRun, EngineEvent, Value};
 use pa_types::sync::MutexExt;
+
+use super::{AbortController, AgentSessionEngine, BoundaryRun, EngineEvent, Value};
 
 impl AgentSessionEngine {
     /// Clear the automatic-compaction abort slot when `controller`'s run

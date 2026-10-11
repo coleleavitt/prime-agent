@@ -16,8 +16,17 @@ use std::process::Command;
 use std::sync::Arc;
 
 use landlock::{
-    Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset,
-    RulesetAttr, RulesetCreatedAttr, ABI,
+    ABI,
+    Access,
+    AccessFs,
+    AccessNet,
+    CompatLevel,
+    Compatible,
+    PathBeneath,
+    PathFd,
+    Ruleset,
+    RulesetAttr,
+    RulesetCreatedAttr,
 };
 
 use crate::policy::NetworkAccess;
@@ -235,7 +244,12 @@ fn add_rule(
 /// sockets without `socket(2)`), fail with `EPERM`; everything else passes.
 fn socket_filter(arch: seccompiler::TargetArch) -> Result<seccompiler::BpfProgram, SandboxError> {
     use seccompiler::{
-        SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter, SeccompRule,
+        SeccompAction,
+        SeccompCmpArgLen,
+        SeccompCmpOp,
+        SeccompCondition,
+        SeccompFilter,
+        SeccompRule,
     };
     let filter_error = |error: seccompiler::BackendError| setup_error("seccomp filter", error);
     let not_unix = SeccompCondition::new(

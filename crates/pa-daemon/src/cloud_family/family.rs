@@ -7,13 +7,14 @@
 //! so a cloud row's family view can never cross families on a name
 //! collision.
 
+use std::path::Path;
+
 use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_types::daemon::agent_roster::classify_summary_value;
 use pa_types::daemon::cloud::{CloudFamilyRow, CloudFamilyRowStatus};
 use serde_json::Value;
 
 use crate::lease::canonical_session_path;
-use std::path::Path;
 
 /// TS `AGENT_FAMILY_REACH_ERROR`: the refusal a cross-boundary send earns
 /// when the target is outside the source's nuclear family.

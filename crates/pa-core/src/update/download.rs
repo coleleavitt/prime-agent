@@ -6,10 +6,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
 
-use super::install::{current_platform_alias, RELEASE_ASSETS};
+use super::install::{RELEASE_ASSETS, current_platform_alias};
 
 /// The download + staging budget (spec §9 `Downloading`): one wall-clock
 /// budget shared by all attempts (default 300 s, 3 attempts).
@@ -786,9 +786,11 @@ mod tests {
         let payload = fixture_payload(dir.path(), "payload", "not a version");
         let root = dir.path().join("install-root");
         std::fs::create_dir_all(&root).unwrap();
-        assert!(stage_local_payload(&payload, &root, "https://example.com")
-            .await
-            .is_err());
+        assert!(
+            stage_local_payload(&payload, &root, "https://example.com")
+                .await
+                .is_err()
+        );
     }
 
     #[test]

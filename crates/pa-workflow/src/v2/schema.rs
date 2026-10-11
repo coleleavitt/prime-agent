@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use serde_json::{Map, Value};
 
-use super::wire::{canonical_json, WireError};
+use super::wire::{WireError, canonical_json};
 
 /// The schema bytes, exactly as the runtime packages them.
 pub const SCHEMA_JSON: &str =

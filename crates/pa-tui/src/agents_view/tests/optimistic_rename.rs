@@ -2,9 +2,8 @@
 //! submitted and input stays live while the daemon's write runs; truth confirms the overlay, a
 //! failure reverts it, and one writer per session lets the newest name land last.
 
-use super::*;
-
 use super::super::rename::RenameTarget;
+use super::*;
 
 fn shown_name(mode: &AgentsViewMode, session_id: &str) -> Option<String> {
     mode.rows

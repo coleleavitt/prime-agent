@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use anyhow::Context as _;
 
-use super::{fs, Deserialize, HashMap, Path, PathBuf, Result, Serialize, Value};
+use super::{Deserialize, HashMap, Path, PathBuf, Result, Serialize, Value, fs};
 
 /// One legacy `rlm-subagents.jsonl` registry entry (the pre-ledger topology
 /// store; still read for seeding and hydration metadata). The fields beyond

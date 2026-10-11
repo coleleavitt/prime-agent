@@ -1,7 +1,7 @@
 //! The crash-repair + load concern: the serialized-entry wire, the bounded
 //! damage scan, the torn-tail repair, and the header-validating load.
 
-use super::{parse_session_entries, FileEntry, Path};
+use super::{FileEntry, Path, parse_session_entries};
 
 pub(super) fn serialize_entry(entry: &FileEntry) -> String {
     serde_json::to_string(entry).unwrap_or_default()

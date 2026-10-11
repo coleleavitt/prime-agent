@@ -2,18 +2,30 @@
 //! message/tool/usage conversion in [`convert`], params and header assembly in [`params`], the
 //! SDK-shaped error surface in [`errors`], and the chunk-driven streaming core in [`stream`].
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
+    create_assistant_message_event_stream,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::simple_options::build_base_options;
 use crate::registry::Provider;
 use crate::types::{
-    AssistantContent, AssistantMessage, CacheRetention, Context, Model, ModelExt,
-    ModelThinkingLevel, SimpleStreamOptions, StopReason, StreamOptions, Usage, UsageCost,
+    AssistantContent,
+    AssistantMessage,
+    CacheRetention,
+    Context,
+    Model,
+    ModelExt,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Usage,
+    UsageCost,
 };
 
 mod convert;

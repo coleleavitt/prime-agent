@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FATTENING_TURNS: usize = 3;
 const FATTEN_REPLY_CHARS: usize = 4 * 1024 * 1024;

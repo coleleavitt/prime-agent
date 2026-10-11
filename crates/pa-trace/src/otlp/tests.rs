@@ -156,12 +156,16 @@ fn exports_a_full_batch_as_otlp_json_traces_and_delta_metrics() {
         vec!["/v1/metrics", "/v1/traces"]
     );
     for request in &requests {
-        assert!(request
-            .headers
-            .contains(&("x-team".to_string(), "core".to_string())));
-        assert!(request
-            .headers
-            .contains(&("content-type".to_string(), "application/json".to_string())));
+        assert!(
+            request
+                .headers
+                .contains(&("x-team".to_string(), "core".to_string()))
+        );
+        assert!(
+            request
+                .headers
+                .contains(&("content-type".to_string(), "application/json".to_string()))
+        );
     }
     let resource = json!({"attributes": [
         {"key": "service.name", "value": {"stringValue": "prime-agent"}},

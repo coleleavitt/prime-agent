@@ -6,12 +6,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use pa_types::daemon::DaemonWorkerDescriptor;
+use serde_json::{Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::registry::ResidentWorker;
-use crate::supervisor::{Supervisor, ROUTE_TIMEOUT_MS};
-use pa_types::daemon::DaemonWorkerDescriptor;
+use crate::supervisor::{ROUTE_TIMEOUT_MS, Supervisor};
 
 /// Retries for a child that could not be closed at death time (the kill route can
 /// arrive before the worker's socket exists).

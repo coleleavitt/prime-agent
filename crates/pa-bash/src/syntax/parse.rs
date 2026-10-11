@@ -10,8 +10,20 @@
 //! in the text (a here-document opener costs one line scan for its body).
 
 use super::ast::{
-    AndOr, AssignValue, Assignment, Command, Connector, HereDoc, List, Part, Pipeline, Quoting,
-    Redirect, RedirectOp, SimpleCommand, Word,
+    AndOr,
+    AssignValue,
+    Assignment,
+    Command,
+    Connector,
+    HereDoc,
+    List,
+    Part,
+    Pipeline,
+    Quoting,
+    Redirect,
+    RedirectOp,
+    SimpleCommand,
+    Word,
 };
 
 /// Nesting bound for substitutions and compound commands. Deeper text is

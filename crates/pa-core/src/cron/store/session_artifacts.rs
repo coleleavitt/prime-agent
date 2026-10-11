@@ -7,11 +7,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::state::{
-    merge_fresh_jobs, read_jobs_state, recover_interrupted_in_state, with_state_locks,
+    merge_fresh_jobs,
+    read_jobs_state,
+    recover_interrupted_in_state,
+    with_state_locks,
     write_jobs_state,
 };
 use super::{
-    AgentCronDispatchRecord, AgentCronJobStore, CronJobsState, SESSION_SCHEDULED_JOBS_FILENAME,
+    AgentCronDispatchRecord,
+    AgentCronJobStore,
+    CronJobsState,
+    SESSION_SCHEDULED_JOBS_FILENAME,
 };
 use crate::cron::AgentCronJob;
 
@@ -168,7 +174,7 @@ pub fn read_scheduled_jobs_artifact(path: &Path) -> Vec<AgentCronJob> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cron::store::{input, CancelJobsFilter, SessionBinding};
+    use crate::cron::store::{CancelJobsFilter, SessionBinding, input};
 
     #[test]
     fn session_artifact_partitioning() {

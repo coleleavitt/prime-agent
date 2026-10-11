@@ -11,20 +11,32 @@ use pa_agent::abort::AbortSignal;
 use pa_types::ai::Model;
 use tokio::time::Instant;
 
-use crate::session_engine::provider_retry::ProviderRetryPolicy;
-
 use super::action_space::compile_action_space;
 use super::decide::{
-    create_model_decision_function, router_thinking_level, RouterDecisionContext, RouterDecisionFn,
+    RouterDecisionContext,
+    RouterDecisionFn,
+    create_model_decision_function,
+    router_thinking_level,
 };
 use super::r#loop::{
-    race, run_system_router_loop, Race, SystemRouterLoopOptions, ROUTER_CLOSE_GRACE_MS,
+    ROUTER_CLOSE_GRACE_MS,
+    Race,
+    SystemRouterLoopOptions,
+    race,
+    run_system_router_loop,
 };
 use super::stdio_environment::StdioRouterEnvironment;
 use super::types::{
-    parse_environment_actions, ParsedSystemRouterRunSpec, RouterCloseOptions, RouterModelInfo,
-    RouterRunStatus, RouterSegmentEnvironment, RouterUsage, SystemRouterRunResult,
+    ParsedSystemRouterRunSpec,
+    RouterCloseOptions,
+    RouterModelInfo,
+    RouterRunStatus,
+    RouterSegmentEnvironment,
+    RouterUsage,
+    SystemRouterRunResult,
+    parse_environment_actions,
 };
+use crate::session_engine::provider_retry::ProviderRetryPolicy;
 
 /// One segment run's resolved model, auth, and environment seam.
 pub struct RouterSegmentOptions {
@@ -138,7 +150,7 @@ async fn run_segment(
             return Ok(segment_aborted_result(
                 &options.model,
                 "Router aborted during adapter init.",
-            ))
+            ));
         }
         Race::Deadline => anyhow::bail!(
             "environment adapter init exceeded the segment timeout of {}ms",

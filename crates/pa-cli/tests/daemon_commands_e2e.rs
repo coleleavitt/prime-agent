@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Env keys this box's own worker sets; they must not leak into spawned
 /// daemons. `PI_PACKAGE_DIR` too: a Rust-checkout value kills the TS CLI.

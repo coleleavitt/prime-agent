@@ -7,17 +7,35 @@ use serde_json::Value;
 
 use super::base::CLOUD_SESSION_STATUSES;
 use super::checks::{
-    expect_boolean, expect_digest, expect_fields, expect_integer, expect_one_of, expect_string,
-    first_problem, optional_string, record_field,
+    expect_boolean,
+    expect_digest,
+    expect_fields,
+    expect_integer,
+    expect_one_of,
+    expect_string,
+    first_problem,
+    optional_string,
+    record_field,
 };
 use super::shapes_validation::receipt_problem;
 use super::validation::cloud_family_event_problem;
 use super::{
-    canonical_json, cloud_id_problem, CLOUD_EVENT_KINDS, CLOUD_MAX_ARTIFACT_REFS,
-    CLOUD_MAX_CAPABILITIES, CLOUD_MAX_ENTRY_JSON_CHARS, CLOUD_MAX_ID_CHARS, CLOUD_MAX_META_CHARS,
-    CLOUD_MAX_MODEL_ID_CHARS, CLOUD_MAX_OUTPUT_CHARS, CLOUD_MAX_PATH_CHARS,
-    CLOUD_MAX_PREVIEW_CHARS, CLOUD_MAX_ROSTER_ROWS, CLOUD_MAX_SESSION_EVENT_BYTES,
-    CLOUD_MAX_SESSION_NAME_CHARS, CLOUD_MAX_TIMESTAMP_CHARS,
+    CLOUD_EVENT_KINDS,
+    CLOUD_MAX_ARTIFACT_REFS,
+    CLOUD_MAX_CAPABILITIES,
+    CLOUD_MAX_ENTRY_JSON_CHARS,
+    CLOUD_MAX_ID_CHARS,
+    CLOUD_MAX_META_CHARS,
+    CLOUD_MAX_MODEL_ID_CHARS,
+    CLOUD_MAX_OUTPUT_CHARS,
+    CLOUD_MAX_PATH_CHARS,
+    CLOUD_MAX_PREVIEW_CHARS,
+    CLOUD_MAX_ROSTER_ROWS,
+    CLOUD_MAX_SESSION_EVENT_BYTES,
+    CLOUD_MAX_SESSION_NAME_CHARS,
+    CLOUD_MAX_TIMESTAMP_CHARS,
+    canonical_json,
+    cloud_id_problem,
 };
 
 /// TS `cloudEventProblem`: runtime validation for one event; `None` means

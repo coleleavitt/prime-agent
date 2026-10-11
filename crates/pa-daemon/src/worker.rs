@@ -7,11 +7,11 @@ mod env;
 mod session_core;
 
 pub(crate) use config::WorkerConfig;
-use pa_types::sync::MutexExt;
 // KillCloseReason is read only by the commands module (via `use super::*`), so allow the unused
 // import.
 #[allow(unused_imports)]
 use env::KillCloseReason;
+use pa_types::sync::MutexExt;
 pub(crate) mod input;
 mod lifecycle;
 mod summary;
@@ -22,22 +22,38 @@ pub(crate) use connection::{AuthOutcome, ConnectionSink, EventPump, OutboundFram
 
 mod digest;
 
-pub(crate) use digest::AgentMessageDigest;
 #[cfg(test)]
 pub(crate) use digest::AGENT_MESSAGE_INBOX_ENTRY_CUSTOM_TYPE;
+pub(crate) use digest::AgentMessageDigest;
 
 mod queue;
 
-pub use queue::Lane;
-pub use queue::QueuePriority;
 pub(crate) use queue::{
-    admit_autonomous_follow_up, admit_bash_completion_notice, admit_goal_follow_up,
-    checkpoint_queue_recovery, enqueue_priority, gather_delivery_batch, parse_custom_message,
-    parse_prompt_images, queue_lanes, record_queue_checkpoint_locked, restore_queue_snapshot,
-    restored_turn_policy, withdraw_bash_completion_notice, QueueCheckpoint, QueueLanes, QueuedItem,
-    TurnPolicy, TurnSettle, ABORTED_TURN_SETTLE_ERROR, PROMPT_ABORTED_BEFORE_DELIVERY,
-    QUEUED_INPUT_SUSPENDED, QUEUED_PROMPT_DELETED, SIDE_QUESTION_SETTLE_TIMEOUT,
+    ABORTED_TURN_SETTLE_ERROR,
+    PROMPT_ABORTED_BEFORE_DELIVERY,
+    QUEUED_INPUT_SUSPENDED,
+    QUEUED_PROMPT_DELETED,
+    QueueCheckpoint,
+    QueueLanes,
+    QueuedItem,
+    SIDE_QUESTION_SETTLE_TIMEOUT,
+    TurnPolicy,
+    TurnSettle,
+    admit_autonomous_follow_up,
+    admit_bash_completion_notice,
+    admit_goal_follow_up,
+    checkpoint_queue_recovery,
+    enqueue_priority,
+    gather_delivery_batch,
+    parse_custom_message,
+    parse_prompt_images,
+    queue_lanes,
+    record_queue_checkpoint_locked,
+    restore_queue_snapshot,
+    restored_turn_policy,
+    withdraw_bash_completion_notice,
 };
+pub use queue::{Lane, QueuePriority};
 
 mod create;
 mod turn;
@@ -46,22 +62,20 @@ use create::{active_session_id_of, worker_server_capabilities};
 // session_summary/SummaryInputs serve the in-crate test modules only, so allow the unused import.
 #[allow(unused_imports)]
 pub(crate) use summary::{
-    compact_action_label, emit_worker_event_with, persist_custom_row, push_roster_delta,
-    session_snapshot, session_summary, RosterPushContext, SummaryInputs,
+    RosterPushContext,
+    SummaryInputs,
+    compact_action_label,
+    emit_worker_event_with,
+    persist_custom_row,
+    push_roster_delta,
+    session_snapshot,
+    session_summary,
 };
 use turn::TurnRunner;
 
 mod commands;
 mod session_cwd;
 
-pub use env::{
-    WORKER_ACTIVE_SESSION_ID_ENV, WORKER_CWD_ENV, WORKER_DECISION_CHILD_ENV,
-    WORKER_INSTANCE_ID_ENV, WORKER_RECOVERY_JOURNAL_ENV, WORKER_ROLE_ENV, WORKER_SCRIPT_ENV,
-    WORKER_SOCKET_ENV, WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
-    WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
-};
-use serde_json::Map;
-pub(crate) use session_core::SessionCore;
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`).
 #[allow(unused_imports)]
@@ -70,37 +84,71 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+pub use env::{
+    WORKER_ACTIVE_SESSION_ID_ENV,
+    WORKER_CWD_ENV,
+    WORKER_DECISION_CHILD_ENV,
+    WORKER_INSTANCE_ID_ENV,
+    WORKER_RECOVERY_JOURNAL_ENV,
+    WORKER_ROLE_ENV,
+    WORKER_SCRIPT_ENV,
+    WORKER_SOCKET_ENV,
+    WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+    WORKER_SUPERVISOR_SOCKET_ENV,
+    WORKER_TELEMETRY_DISABLED_ENV,
+    WORKER_TOKEN_ENV,
+};
 use pa_core::session_engine::agent_messaging::{
-    AgentFamilyRelationship, AgentMessagePromptPayload, AGENT_MESSAGE_SOURCE,
+    AGENT_MESSAGE_SOURCE,
+    AgentFamilyRelationship,
+    AgentMessagePromptPayload,
     DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
 };
-use pa_types::platform::transport::{bind_transport, TransportStream};
-use serde_json::{json, Value};
-use tokio::sync::{broadcast, oneshot, Notify};
+use pa_types::platform::transport::{TransportStream, bind_transport};
+use serde_json::{Map, Value, json};
+pub(crate) use session_core::SessionCore;
+use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::agent_engine::{AgentEngineConfig, AgentSessionEngine, SupervisorLinkConfig};
 use crate::autonomous_continuation::AUTONOMOUS_QUEUE_KEY;
 use crate::engine::{
-    AssistantSnapshot, EngineEvent, EngineModelSelection, PromptRequest, RlmSessionIdentity,
-    ScriptedEngine, SessionEngine,
+    AssistantSnapshot,
+    EngineEvent,
+    EngineModelSelection,
+    PromptRequest,
+    RlmSessionIdentity,
+    ScriptedEngine,
+    SessionEngine,
 };
-use crate::framing::{write_frame, write_frame_segments, DEFAULT_PRIVATE_FRAME_LIMITS};
+use crate::framing::{DEFAULT_PRIVATE_FRAME_LIMITS, write_frame, write_frame_segments};
 use crate::journal::WorkerRecoveryJournal;
 use crate::paths;
 use crate::peer::{
-    peer_command_allowed, worker_peer_command_allowed, ConnectionRole, PeerGrantStore,
+    ConnectionRole,
     PEER_COMMAND_NOT_ALLOWED,
+    PeerGrantStore,
+    peer_command_allowed,
+    worker_peer_command_allowed,
 };
 use crate::protocol::{
-    app_version, create_daemon_event_meta, create_daemon_replay_info, current_protocol_info,
-    default_client_capabilities, normalize_client_capabilities, response_failure, response_success,
-    DaemonOutbound, DaemonResponse, DaemonResumeCursor, DaemonSessionClosedReason,
-    DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION,
+    DAEMON_SCHEMA_ID,
+    DAEMON_SCHEMA_REVISION,
+    DaemonOutbound,
+    DaemonResponse,
+    DaemonResumeCursor,
+    DaemonSessionClosedReason,
+    app_version,
+    create_daemon_event_meta,
+    create_daemon_replay_info,
+    current_protocol_info,
+    default_client_capabilities,
+    normalize_client_capabilities,
+    response_failure,
+    response_success,
 };
 use crate::registration::RegistrationHandle;
-use crate::session_store::{session_file_name, SessionFile};
-
+use crate::session_store::{SessionFile, session_file_name};
 use crate::types::{AgentConnectionState, SessionActionSnapshot};
 
 pub struct Worker {

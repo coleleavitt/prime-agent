@@ -11,7 +11,7 @@
 //! - a later request replays that marker as the `fallback` block when it
 //!   goes to a fallback model again, and drops it otherwise.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::convert::family;
 

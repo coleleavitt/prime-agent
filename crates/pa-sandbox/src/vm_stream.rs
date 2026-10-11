@@ -25,19 +25,28 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::command_session::{
-    decode_command_session_event_response, CommandSessionEvent, EndEvent,
+    CommandSessionEvent,
+    EndEvent,
+    decode_command_session_event_response,
 };
 use crate::proto::{
-    encode_connect_frame, ConnectFrameDecoder, CONNECT_FRAME_COMPRESSED,
+    CONNECT_FRAME_COMPRESSED,
     CONNECT_FRAME_END_OF_STREAM,
+    ConnectFrameDecoder,
+    encode_connect_frame,
 };
 use crate::transport::{SandboxTransport, StreamedResponse, TransportRequest};
 use crate::types::Method;
 use crate::vm_error::CommandSessionError;
-use crate::vm_process::{with_auth_retry_on, ClientInner, GatewayAuthSource};
+use crate::vm_process::{ClientInner, GatewayAuthSource, with_auth_retry_on};
 use crate::vm_wire::{
-    error_from_status_body, is_media_type, parse_end_of_stream, proto_fault, read_error_preview,
-    rpc_url, stream_headers,
+    error_from_status_body,
+    is_media_type,
+    parse_end_of_stream,
+    proto_fault,
+    read_error_preview,
+    rpc_url,
+    stream_headers,
 };
 
 /// One queue item the stream pump produces.

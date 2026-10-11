@@ -25,9 +25,10 @@ mod parse;
 mod tests;
 mod width;
 
-use pa_types::sync::MutexExt;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
+
+use pa_types::sync::MutexExt;
 
 /// Semantic class of a run of cells; the caller maps classes to its theme.
 ///

@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 /// The `--version`/`--help` probe timeout (both probes, 10 s).
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);

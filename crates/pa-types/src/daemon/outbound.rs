@@ -4,9 +4,20 @@
 #[cfg(test)]
 use super::rt;
 use super::{
-    AgentMessage, DaemonClientId, DaemonCommandId, DaemonEventCursor, DaemonEventId,
-    DaemonEventMeta, DaemonEventSequence, DaemonProtocolInfo, DaemonReplayInfo,
-    DaemonServerCapability, Deserialize, JsonMap, Serialize, Value,
+    AgentMessage,
+    DaemonClientId,
+    DaemonCommandId,
+    DaemonEventCursor,
+    DaemonEventId,
+    DaemonEventMeta,
+    DaemonEventSequence,
+    DaemonProtocolInfo,
+    DaemonReplayInfo,
+    DaemonServerCapability,
+    Deserialize,
+    JsonMap,
+    Serialize,
+    Value,
 };
 
 // Responses and outbound events
@@ -425,8 +436,9 @@ pub enum DaemonOutbound {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn response_and_error_info_roundtrip() {

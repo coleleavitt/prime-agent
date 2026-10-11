@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -130,7 +130,9 @@ async fn serve(
     let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     state.lock_or_recover().requests.push(Recorded { headers });
     let response = if let Some(target) = &behavior.redirect_to {
-        format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
     } else {
         match method.as_str() {
             "POST" => answer(&body, &state, &behavior),

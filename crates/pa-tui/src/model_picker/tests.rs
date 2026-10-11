@@ -490,9 +490,10 @@ fn unconfigured_providers_mark_require_sign_in_and_sort_last() {
     let mut picker = ModelPicker::new(options);
     let rows = frame_text(&mut picker);
 
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("require sign in \u{b7} other")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("require sign in \u{b7} other"))
+    );
     assert!(rows.iter().any(|row| row.contains("Mock 1")));
 }
 

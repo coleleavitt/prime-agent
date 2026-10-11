@@ -105,11 +105,7 @@ impl Containment {
             Some(value) if value == "0" => false,
             _ => env("CARGO_MANIFEST_DIR").is_some(),
         };
-        if under_test {
-            harness
-        } else {
-            Self::product()
-        }
+        if under_test { harness } else { Self::product() }
     }
 
     pub(crate) fn forbids(&self, path: &Path) -> bool {

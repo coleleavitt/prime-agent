@@ -1,10 +1,31 @@
 //! The slash-command ladder (`handle_slash`), the builtin client-command dispatch tail, the
 //! command-catalog refresh/fold, and the shared connection-state read.
 use super::{
-    create_session, effort_picker, info_commands, terminal_columns, AgentView, AuthSelectorKind,
-    ChatEntry, CommandCatalogUpdate, DaemonCommand, DockFold, Duration, ForkLaunch, InfoContent,
-    Map, ModelSwitchScope, PendingConfirm, RebuildKind, Result, SessionUi, SlashCommandExecution,
-    SlashCommandRegistry, StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    AuthSelectorKind,
+    ChatEntry,
+    CommandCatalogUpdate,
+    DaemonCommand,
+    DockFold,
+    Duration,
+    ForkLaunch,
+    InfoContent,
+    Map,
+    ModelSwitchScope,
+    PendingConfirm,
+    RebuildKind,
+    Result,
+    SessionUi,
+    SlashCommandExecution,
+    SlashCommandRegistry,
+    StatusKind,
+    SubmitBehavior,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    create_session,
+    effort_picker,
+    info_commands,
+    terminal_columns,
 };
 
 impl SessionUi {

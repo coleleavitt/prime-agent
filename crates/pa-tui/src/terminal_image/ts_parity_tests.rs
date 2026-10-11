@@ -2,9 +2,10 @@
 //! the output of `git show v0.9.8:packages/tui/src/terminal-image.ts` run
 //! under node (`ts_goldens.gen.mts` regenerates it).
 
-use super::*;
 use base64::Engine;
 use serde_json::Value;
+
+use super::*;
 
 fn goldens() -> Value {
     serde_json::from_str(include_str!("ts_goldens.json")).expect("the goldens parse")

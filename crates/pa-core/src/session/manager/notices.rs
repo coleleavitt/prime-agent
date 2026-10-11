@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use pa_types::session::{CustomEntry, CustomMessage, CustomMessageEntry, FileEntry};
 
-use super::{serialize_entry, SessionManager};
+use super::{SessionManager, serialize_entry};
 use crate::platform::sync_dir;
 
 // The file-scan concern (the notice state parsed from the session
@@ -37,14 +37,18 @@ use crate::platform::sync_dir;
 // (session::manager::notices::scan).
 mod scan;
 use scan::{
-    keyed_message_id, last_assistant_entry_id, notice_key_of, scan_notice_content, FileNoticeScan,
+    FileNoticeScan,
+    keyed_message_id,
+    last_assistant_entry_id,
+    notice_key_of,
+    scan_notice_content,
 };
 
 // The durable-tail concern (file/truncation sync, pre-append tail
 // hygiene, and the post-failure reconcile) lives in the child module
 // at the same tree position (session::manager::notices::tail).
 mod tail;
-use tail::{ensure_clean_tail, poisoned_error, reconcile_tail, sync_file, ReconciledTail};
+use tail::{ReconciledTail, ensure_clean_tail, poisoned_error, reconcile_tail, sync_file};
 
 // The test-build fault hooks for the strict append; pub(crate) so
 // manager.rs can lift them for the engine's in-process host tests.
@@ -1017,8 +1021,8 @@ mod tests {
         let content = read_file(&file);
         let entries = parse_session_entries(&content);
         assert_eq!(entries.len(), 3); // header + thinking + notice
-                                      // The landed row is indexed on the live branch despite the
-                                      // pending directory sync: the leaf resolves to the durable row.
+        // The landed row is indexed on the live branch despite the
+        // pending directory sync: the leaf resolves to the durable row.
         assert_eq!(manager.get_leaf_id(), entries[2].id());
         let keys: Vec<String> = manager
             .unconsumed_terminal_notices()

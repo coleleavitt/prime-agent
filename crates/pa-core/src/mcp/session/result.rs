@@ -3,7 +3,7 @@
 //! else its content blocks as the Python SDK's `model_dump(mode="json")`
 //! dicts; a server-flagged error raises `McpToolError`.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::error::{McpErrorKind, McpSessionError};
 

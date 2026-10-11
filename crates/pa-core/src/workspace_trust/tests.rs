@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::resources::{load_resources, ResourceLoaderOptions};
+use crate::resources::{ResourceLoaderOptions, load_resources};
 use crate::settings::SettingsManager;
 
 struct Fixture {
@@ -199,10 +199,12 @@ fn untrusted_system_prompt_files_and_prompt_templates_are_not_loaded() {
     let untrusted = load();
     assert_eq!(untrusted.system_prompt.as_deref(), Some("global system"));
     assert_eq!(untrusted.append_system_prompt, Vec::<String>::new());
-    assert!(untrusted
-        .prompts
-        .iter()
-        .all(|prompt| prompt.name != "review"));
+    assert!(
+        untrusted
+            .prompts
+            .iter()
+            .all(|prompt| prompt.name != "review")
+    );
 
     assert_eq!(
         fixture.trust().gated,

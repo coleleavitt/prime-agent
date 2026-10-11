@@ -11,19 +11,28 @@
 //! different request is a conflict and is never re-admitted.
 
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::cloud::{
-    canonical_json, cloud_digest, cloud_id_problem, cloud_request_digest, cloud_request_problem,
-    is_cloud_digest, CloudCommandId, CloudCommandReceipt, CloudCommandRequest, CloudCommandState,
-    CLOUD_MAX_ERROR_CHARS, CLOUD_MAX_RECEIPT_RESULT_CHARS,
+    CLOUD_MAX_ERROR_CHARS,
+    CLOUD_MAX_RECEIPT_RESULT_CHARS,
+    CloudCommandId,
+    CloudCommandReceipt,
+    CloudCommandRequest,
+    CloudCommandState,
+    canonical_json,
+    cloud_digest,
+    cloud_id_problem,
+    cloud_request_digest,
+    cloud_request_problem,
+    is_cloud_digest,
 };
-use serde_json::{json, Value};
-use std::io::Write as _;
+use serde_json::{Value, json};
 
 use crate::cloud_guest::now_iso;
-use crate::journal::{append_record, rewrite_records, Finalize};
+use crate::journal::{Finalize, append_record, rewrite_records};
 
 /// Rewrite the journal atomically once this many records have accumulated
 /// (TS `COMPACT_AFTER_RECORDS`).

@@ -6,15 +6,18 @@
 
 use std::sync::Arc;
 
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::jsonrpc;
 use super::meta::{
-    prime_agent_meta, PrimeAgentEventPhase, PrimeAgentOutcome, PrimeAgentSessionMeta,
     PRIME_AGENT_META_NAMESPACE,
+    PrimeAgentEventPhase,
+    PrimeAgentOutcome,
+    PrimeAgentSessionMeta,
+    prime_agent_meta,
 };
 use super::types::AcpSessionUpdate;
-use serde_json::{json, Value};
 
 /// How updates leave the producer: an ordered write queue shared with the
 /// response writer, so responses and notifications interleave in

@@ -10,18 +10,24 @@ use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
 
 use crate::kernel::bootstrap::{
-    build_rlm_bootstrap_code, parse_unavailable_python_skills, KernelBootstrapProgressHandler,
-    KernelPythonSkill, UnavailablePythonSkills,
+    KernelBootstrapProgressHandler,
+    KernelPythonSkill,
+    UnavailablePythonSkills,
+    build_rlm_bootstrap_code,
+    parse_unavailable_python_skills,
 };
 use crate::kernel::cancellation::AbortSignal;
 use crate::kernel::manager::{KernelStartOptions, ReplKernelManager};
-use crate::kernel::shared::ExecuteStatus;
 use crate::kernel::shared::{
-    ExecuteOptions, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
-    KernelSnapshotConfig, BOOTSTRAP_EXECUTION_TIMEOUT_MS,
+    BOOTSTRAP_EXECUTION_TIMEOUT_MS,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
+    KernelSnapshotConfig,
 };
-use crate::kernel::state_snapshot::RestoreResult;
-use crate::kernel::state_snapshot::{manifest_path_in, snapshot_path_in};
+use crate::kernel::state_snapshot::{RestoreResult, manifest_path_in, snapshot_path_in};
 
 /// Above core count because boots are IO-bound, capped so a fan-out can't
 /// thrash the FS past the ready-handshake window.
@@ -1647,11 +1653,13 @@ mod tests {
             provisioner.lock_state().pending_stop.is_some(),
             "a flushing teardown gates the revival on its own flush"
         );
-        assert!(!provisioner
-            .lock_state()
-            .pending_stop
-            .as_ref()
-            .is_some_and(|g| *g.borrow()));
+        assert!(
+            !provisioner
+                .lock_state()
+                .pending_stop
+                .as_ref()
+                .is_some_and(|g| *g.borrow())
+        );
         drop(gate);
         // A boot kill() invalidated must never flush: the replacement
         // generation is already restoring the same on-disk payload.

@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pa_dream::command::{run_dream_command, DreamCommandIo, DreamRunReport};
+use pa_dream::command::{DreamCommandIo, DreamRunReport, run_dream_command};
 
 /// The process's stdout/stderr and the wall clock, frozen per run by the command.
 struct StdIo;
@@ -89,9 +89,10 @@ fn track(report: &DreamRunReport, elapsed: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_dream::command::{DreamRunOutcome, DreamSubcommand};
     use pa_dream::tasks::DreamTaskId;
+
+    use super::*;
 
     #[test]
     fn the_event_carries_only_its_catalogued_vocabulary_and_counts() {

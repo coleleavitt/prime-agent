@@ -11,11 +11,20 @@ use serde::Deserialize;
 
 use crate::abort::AbortSignal;
 use crate::stream::{
-    event_stream, AssistantMessageEvent, AssistantMessageEventStreamHandle, LlmContext,
+    AssistantMessageEvent,
+    AssistantMessageEventStreamHandle,
+    LlmContext,
     StreamRequestOptions,
+    event_stream,
 };
 use crate::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
     Usage,
 };
 
@@ -907,13 +916,15 @@ impl Default for StreamingJsonAccumulator {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
     use super::*;
     use crate::abort::AbortSignal;
     use crate::stream::{LlmContext, ModelStream, StreamRequestOptions};
     use crate::types::ThinkingLevel;
-    use std::time::Duration;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
 
     /// Serve the SSE body for the proxy's POST. `truncate` claims a larger
     /// Content-Length than the bytes actually sent, so the client's body

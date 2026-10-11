@@ -1,10 +1,10 @@
 //! The interactive client-settings seam implementation: every call opens the
 //! file-backed settings manager over the run's directories.
 
-use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Result;
 use pa_tui::client_settings::ClientSettings;
 
 /// The seam handle the interactive run carries.

@@ -1,11 +1,10 @@
 //! Public entry points of the agent loop.
 
+use super::run::run_loop;
+use super::{AgentEventSink, AgentLoopConfig};
 use crate::abort::AbortSignal;
 use crate::stream::StreamFn;
 use crate::types::{AgentContext, AgentEvent, AgentMessage};
-
-use super::run::run_loop;
-use super::{AgentEventSink, AgentLoopConfig};
 
 /// Start an agent loop with new prompt messages. Returns every message produced by the run.
 ///

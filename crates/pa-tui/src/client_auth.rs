@@ -95,8 +95,9 @@ pub async fn run_mcp_auth_command(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Mutex;
+
+    use super::*;
 
     /// A panel handle over a dead channel: the dispatch tests script the
     /// hook, so no request ever crosses the channel.

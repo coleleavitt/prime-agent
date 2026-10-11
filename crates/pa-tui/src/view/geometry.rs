@@ -143,14 +143,20 @@ impl AgentView {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use proptest::test_runner::RngSeed;
+
     use super::*;
     use crate::chat::{
-        AssistantMessage, Detail, MessageBlock, StatusKind, ToolCallCard, ToolResultView,
+        AssistantMessage,
+        Detail,
+        MessageBlock,
+        StatusKind,
+        ToolCallCard,
+        ToolResultView,
     };
     use crate::custom_message::*;
     use crate::theme::{ColorMode, Theme};
-    use proptest::prelude::*;
-    use proptest::test_runner::RngSeed;
 
     /// Arbitrary markdown soup: inline noise (wide, combining, emoji,
     /// ZWJ, tabs), very long lines, and block starts (fences, tables,

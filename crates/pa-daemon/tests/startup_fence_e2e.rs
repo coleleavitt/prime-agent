@@ -31,7 +31,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The registry override both the supervisor boot and this test honor (TS
 /// `PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_REGISTRY_DIR`): an isolated

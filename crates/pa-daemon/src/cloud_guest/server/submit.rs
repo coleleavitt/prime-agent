@@ -8,8 +8,14 @@
 
 use anyhow::Context as _;
 use pa_types::daemon::cloud::{
-    serialize_cloud_message, CloudCommand, CloudCommandReceipt, CloudCursor, CloudEvent,
-    CloudMessage, CloudSessionState, CLOUD_MAX_QUEUED_COMMANDS,
+    CLOUD_MAX_QUEUED_COMMANDS,
+    CloudCommand,
+    CloudCommandReceipt,
+    CloudCursor,
+    CloudEvent,
+    CloudMessage,
+    CloudSessionState,
+    serialize_cloud_message,
 };
 
 use crate::cloud_guest::journal::GuestAdmission;

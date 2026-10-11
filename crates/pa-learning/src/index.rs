@@ -16,8 +16,8 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::json::{number, stringify_pretty};
 use crate::LearningError;
+use crate::json::{number, stringify_pretty};
 
 /// `schema` of a sealed day.
 pub const LEARNING_INDEX_SCHEMA: u64 = 1;

@@ -154,10 +154,11 @@ fn unquoted_heredoc_bodies_parse_substitutions() {
         panic!("simple");
     };
     let body = &command.redirects[0].heredoc.as_ref().expect("heredoc").body;
-    assert!(body
-        .parts
-        .iter()
-        .any(|part| matches!(part, Part::Command { .. })));
+    assert!(
+        body.parts
+            .iter()
+            .any(|part| matches!(part, Part::Command { .. }))
+    );
 }
 
 #[test]
@@ -200,11 +201,21 @@ fn substitutions_nest() {
 #[test]
 fn compound_commands() {
     assert_eq!(
-        simple("if a; then b; elif c; then d; else e; fi; while f; do g; done; for x in 1 2; do h $x; done; { i; }; (j); f() { k; }"),
+        simple(
+            "if a; then b; elif c; then d; else e; fi; while f; do g; done; for x in 1 2; do h $x; done; { i; }; (j); f() { k; }"
+        ),
         vec![
-            words(&["a"]), words(&["b"]), words(&["c"]), words(&["d"]), words(&["e"]),
-            words(&["f"]), words(&["g"]), vec!["h".to_string(), "<$x>".to_string()],
-            words(&["i"]), words(&["j"]), words(&["k"]),
+            words(&["a"]),
+            words(&["b"]),
+            words(&["c"]),
+            words(&["d"]),
+            words(&["e"]),
+            words(&["f"]),
+            words(&["g"]),
+            vec!["h".to_string(), "<$x>".to_string()],
+            words(&["i"]),
+            words(&["j"]),
+            words(&["k"]),
         ]
     );
 }
@@ -323,7 +334,9 @@ fn probe_corpus_for_dropped_text() {
 
 #[test]
 fn declaration_builtins_take_compound_assignments() {
-    let parsed = parse("declare -A urls=(\n  [\"a\"]=\"https://x\"\n  [b]=$(c)\n)\nfor k in \"${!urls[@]}\"; do curl -s \"${urls[$k]}\"; done");
+    let parsed = parse(
+        "declare -A urls=(\n  [\"a\"]=\"https://x\"\n  [b]=$(c)\n)\nfor k in \"${!urls[@]}\"; do curl -s \"${urls[$k]}\"; done",
+    );
     assert!(parsed.complete);
     assert_eq!(
         simple("declare -A m=( [k]=v ); echo ok")[1],

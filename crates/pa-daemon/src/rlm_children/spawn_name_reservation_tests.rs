@@ -1,11 +1,13 @@
-use super::*;
-use crate::protocol::{response_failure, response_success};
+use std::sync::Arc;
+
 use pa_core::kernel::rlm_runtime::RlmSpawnTarget;
 use pa_types::platform::transport::bind_transport;
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
+
+use super::*;
+use crate::protocol::{response_failure, response_success};
 
 /// The gated fake supervisor: every `create` reports through `create_seen_tx` and parks until the
 /// shared verdict channel answers; everything else answers like the watcher tests' supervisor.

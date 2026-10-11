@@ -2,9 +2,9 @@
 //! whose only provider keeps failing hands the turn to the next configured
 //! model on the same conversation, and the settle restores the session model.
 
-use crate::agent_engine::{tests::FAUX_TEST_LOCK, AgentEngineConfig, AgentSessionEngine};
-use crate::engine::SessionEngine as _;
-use crate::engine::{EngineEvent, EngineModelSelection, PromptRequest};
+use crate::agent_engine::tests::FAUX_TEST_LOCK;
+use crate::agent_engine::{AgentEngineConfig, AgentSessionEngine};
+use crate::engine::{EngineEvent, EngineModelSelection, PromptRequest, SessionEngine as _};
 
 fn faux_model(id: &str) -> pa_ai::faux::FauxModelDefinition {
     pa_ai::faux::FauxModelDefinition {

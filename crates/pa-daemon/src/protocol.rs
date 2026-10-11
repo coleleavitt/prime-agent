@@ -5,14 +5,34 @@
 //! constructors.
 
 pub use pa_types::daemon::{
-    DaemonClosingReason, DaemonCommand, DaemonCommandEnvelope as WireCommandEnvelope,
-    DaemonCommandFrameType, DaemonErrorInfo, DaemonEventCursor, DaemonEventId, DaemonEventMeta,
-    DaemonEventSequence, DaemonOutbound, DaemonProtocolInfo, DaemonReplayInfo, DaemonReplayStatus,
-    DaemonResponse, DaemonResumeCursor, DaemonRuntimeIdentity, DaemonSavedSessionInfo,
-    DaemonServerCapability, DaemonSessionClosedReason, DaemonSessionSnapshot,
-    DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand,
-    AGENT_PEER_LIST_REQUEST_TIMEOUT_MS, DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION,
-    DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION,
+    AGENT_PEER_LIST_REQUEST_TIMEOUT_MS,
+    DAEMON_PROTOCOL_NAME,
+    DAEMON_PROTOCOL_VERSION,
+    DAEMON_SCHEMA_ID,
+    DAEMON_SCHEMA_REVISION,
+    DaemonClosingReason,
+    DaemonCommand,
+    DaemonCommandEnvelope as WireCommandEnvelope,
+    DaemonCommandFrameType,
+    DaemonErrorInfo,
+    DaemonEventCursor,
+    DaemonEventId,
+    DaemonEventMeta,
+    DaemonEventSequence,
+    DaemonOutbound,
+    DaemonProtocolInfo,
+    DaemonReplayInfo,
+    DaemonReplayStatus,
+    DaemonResponse,
+    DaemonResumeCursor,
+    DaemonRuntimeIdentity,
+    DaemonSavedSessionInfo,
+    DaemonServerCapability,
+    DaemonSessionClosedReason,
+    DaemonSessionSnapshot,
+    DaemonWorkerDescriptor,
+    DaemonWorkerLifecycle,
+    DurableDaemonCreateCommand,
 };
 use serde_json::Value;
 
@@ -252,7 +272,7 @@ fn parse_daemon_command_value(
                 Some(_) => {
                     return Err(EnvelopeParseError::Invalid(
                         "clientId must be a string".into(),
-                    ))
+                    ));
                 }
             };
             let command_value = obj.remove("command").ok_or_else(|| {
@@ -1073,8 +1093,9 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn kernel_bash_activity_commands_are_session_scoped() {

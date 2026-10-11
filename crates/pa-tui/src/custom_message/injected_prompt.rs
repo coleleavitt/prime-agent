@@ -18,15 +18,19 @@
 //! TS binary still renders the `♥` heart. The TS side is expected to
 //! adopt the same glyph.
 
+use serde_json::Value;
+
 use super::render::{spacer, text_rows, truncate_text};
 use super::{
-    custom_content_text, GOAL_CONTEXT_CUSTOM_TYPE, HEARTBEAT_PROMPT_CUSTOM_TYPE,
-    IPYTHON_STATE_RESTORED_CUSTOM_TYPE, PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE,
+    GOAL_CONTEXT_CUSTOM_TYPE,
+    HEARTBEAT_PROMPT_CUSTOM_TYPE,
+    IPYTHON_STATE_RESTORED_CUSTOM_TYPE,
+    PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE,
+    custom_content_text,
 };
 use crate::chat::Detail;
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use serde_json::Value;
 
 /// One injected prompt row; the kind picks the header shape, `body`
 /// renders as markdown when expanded.
@@ -250,10 +254,10 @@ fn goal_meta(objective: &str) -> String {
 mod tests {
 
     use super::*;
+    use crate::Span;
     use crate::chat::Detail;
     use crate::theme::{ColorMode, Theme};
     use crate::width::str_width;
-    use crate::Span;
 
     fn theme() -> Theme {
         Theme::builtin("prime", ColorMode::TrueColor)

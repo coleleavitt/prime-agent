@@ -3,8 +3,19 @@
 //! fullscreen toggle is retired (the operator's 2026-09-28 ruling removed
 //! the setting and the command).
 use super::{
-    key_event_to_id, AgentView, DaemonCommand, Duration, KeyEvent, Map, PathBuf, Result, SessionUi,
-    StatusKind, SubmitBehavior, Value, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    DaemonCommand,
+    Duration,
+    KeyEvent,
+    Map,
+    PathBuf,
+    Result,
+    SessionUi,
+    StatusKind,
+    SubmitBehavior,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    key_event_to_id,
 };
 
 /// The `/reload` task's report: the daemon reloaded the session's live

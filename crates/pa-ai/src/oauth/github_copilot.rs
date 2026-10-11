@@ -491,13 +491,14 @@ fn status_text(status: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::oauth::ProviderHttpResponse;
     use std::collections::{HashMap, VecDeque};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::oauth::ProviderHttpResponse;
 
     /// Queued responses per url (popped in order), a static map, and a
     /// catch-all default for the model-policy POSTs.
@@ -705,16 +706,20 @@ mod tests {
         assert_eq!(credentials.refresh, "gh-token");
         assert_eq!(credentials.enterprise_url, None);
         let device = &http.bodies_for("https://github.com/login/device/code")[0];
-        assert!(device
-            .body
-            .as_deref()
-            .unwrap()
-            .contains("client_id=Iv1.b507a08c87ecfe98"));
-        assert!(device
-            .body
-            .as_deref()
-            .unwrap()
-            .contains("scope=read%3Auser"));
+        assert!(
+            device
+                .body
+                .as_deref()
+                .unwrap()
+                .contains("client_id=Iv1.b507a08c87ecfe98")
+        );
+        assert!(
+            device
+                .body
+                .as_deref()
+                .unwrap()
+                .contains("scope=read%3Auser")
+        );
         let poll = &http.bodies_for("https://github.com/login/oauth/access_token")[1];
         let body = poll.body.as_deref().unwrap();
         assert!(body.contains("device_code=dev-1"));
@@ -748,17 +753,20 @@ mod tests {
             assert_eq!(policy.method, ProviderHttpMethod::Post);
             assert_eq!(policy.body.as_deref(), Some(r#"{"state":"enabled"}"#));
             assert!(policy.headers.iter().any(|(key, _)| key == "openai-intent"));
-            assert!(policy
-                .headers
-                .iter()
-                .any(|(key, _)| key == "x-interaction-type"));
+            assert!(
+                policy
+                    .headers
+                    .iter()
+                    .any(|(key, _)| key == "x-interaction-type")
+            );
         }
-        assert!(ui
-            .progress
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|message| message == "Enabling models..."));
+        assert!(
+            ui.progress
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|message| message == "Enabling models...")
+        );
     }
 
     #[tokio::test]
@@ -787,9 +795,11 @@ mod tests {
             Some("company.ghe.com")
         );
         assert_eq!(credentials.access, "copilot-e");
-        assert!(!http
-            .bodies_for("https://copilot-api.company.ghe.com/models/")
-            .is_empty());
+        assert!(
+            !http
+                .bodies_for("https://copilot-api.company.ghe.com/models/")
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -3,12 +3,12 @@
 //! boundary by wire-shape (JSON) round-trip; shared by pa-cli and
 //! pa-daemon.
 
-use pa_types::sync::RwLockExt;
 use std::sync::Arc;
 
 use pa_agent::stream::{LlmContext, ModelStream, StreamFn, StreamRequestOptions};
 use pa_agent::types::{Model as AgentModel, ThinkingLevel};
 use pa_types::ai::Model;
+use pa_types::sync::RwLockExt;
 
 /// Wire-shape conversion at the pa-agent/pa-ai boundary: both sides
 /// serialize to the same camelCase wire shapes.

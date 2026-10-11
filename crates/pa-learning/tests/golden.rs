@@ -9,15 +9,29 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use pa_core::refinement::HarnessState;
-use pa_learning::command::{run_learning_command, LearningCommandIo};
+use pa_learning::command::{LearningCommandIo, run_learning_command};
 use pa_learning::{
-    build_learning_report, mann_whitney_one_sided, matches_security_class, normal_cdf,
-    normalize_day, read_learning_index, render_ascii_chart, roll_up_learning_days,
-    seal_learning_days, seal_trajectory_windows, span_fingerprint_key,
-    trajectory_class_for_entries, trajectory_internalized_fingerprints, ChartOptions, ChartSeries,
-    CorpusDay, LearningDay, LearningReport, SealTrajectoryOptions,
+    ChartOptions,
+    ChartSeries,
+    CorpusDay,
+    LearningDay,
+    LearningReport,
+    SealTrajectoryOptions,
+    build_learning_report,
+    mann_whitney_one_sided,
+    matches_security_class,
+    normal_cdf,
+    normalize_day,
+    read_learning_index,
+    render_ascii_chart,
+    roll_up_learning_days,
+    seal_learning_days,
+    seal_trajectory_windows,
+    span_fingerprint_key,
+    trajectory_class_for_entries,
+    trajectory_internalized_fingerprints,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 /// Whole-value equality where a number may differ from the fixture by the
@@ -434,15 +448,16 @@ fn rotated_generations_roll_up_like_the_ts_product() {
         .iter()
         .map(|day| {
             let mut value = day.to_json();
-            value["sourceFiles"] = json!(day
-                .source_files
-                .iter()
-                .map(|file| Path::new(file)
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned())
-                .collect::<Vec<_>>());
+            value["sourceFiles"] = json!(
+                day.source_files
+                    .iter()
+                    .map(|file| Path::new(file)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned())
+                    .collect::<Vec<_>>()
+            );
             value
         })
         .collect();

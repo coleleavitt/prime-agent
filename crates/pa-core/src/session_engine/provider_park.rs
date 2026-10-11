@@ -210,13 +210,18 @@ pub fn quota_parked_final_error(abort: &str, resume_at_ms: u64, error: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::session_engine::provider_retry::provider_stream_failure_details;
     use pa_agent::types::{
-        AssistantContent, AssistantMessage, AssistantMessageDiagnostic, StopReason, TextContent,
+        AssistantContent,
+        AssistantMessage,
+        AssistantMessageDiagnostic,
+        StopReason,
+        TextContent,
         Usage,
     };
     use pa_types::session::{CustomEntry, EntryBase, FileEntry};
+
+    use super::*;
+    use crate::session_engine::provider_retry::provider_stream_failure_details;
 
     fn policy() -> ProviderParkPolicy {
         DEFAULT_PROVIDER_PARK_POLICY

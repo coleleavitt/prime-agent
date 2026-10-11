@@ -468,9 +468,11 @@ fn retire_clears_the_provider_target_for_the_replacement_build() {
     engine
         .runtime
         .block_on(async { engine.retire_session_runtime().await });
-    assert!(engine
-        .runtime
-        .block_on(async { engine.session.lock().await.is_none() }));
+    assert!(
+        engine
+            .runtime
+            .block_on(async { engine.session.lock().await.is_none() })
+    );
 
     let model = engine
         .session_model()
@@ -1012,9 +1014,11 @@ fn requested_compaction_aborted_mid_run_records_the_cancelled_outcome() {
     {
         let guard = engine.session.blocking_lock();
         let core = guard.as_deref().expect("session built");
-        assert!(!engine
-            .runtime
-            .block_on(async { core.turn_boundary.compaction_scheduled().await }));
+        assert!(
+            !engine
+                .runtime
+                .block_on(async { core.turn_boundary.compaction_scheduled().await })
+        );
     }
     assert!(
         events

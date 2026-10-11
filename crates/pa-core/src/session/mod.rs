@@ -9,12 +9,16 @@ mod window_cache;
 
 use std::collections::HashMap;
 
-use pa_types::session::EntryBase;
+use pa_types::JsonMap;
 use pa_types::session::{
-    AgentMessage, CompactionEntry, CompactionSummaryMessage, CustomMessage, CustomMessageEntry,
+    AgentMessage,
+    CompactionEntry,
+    CompactionSummaryMessage,
+    CustomMessage,
+    CustomMessageEntry,
+    EntryBase,
     FileEntry,
 };
-use pa_types::JsonMap;
 
 /// Current on-disk session format version.
 pub const CURRENT_SESSION_VERSION: u32 = 3;
@@ -502,9 +506,9 @@ fn empty_context() -> SessionContext {
 
 #[cfg(test)]
 mod context_tests {
-    use super::build_session_context;
-    use super::parse_session_entries;
     use pa_types::session::AgentMessage;
+
+    use super::{build_session_context, parse_session_entries};
 
     fn assistant_json(id: &str, parent: &str, model: &str, usage_in: u64) -> String {
         serde_json::json!({

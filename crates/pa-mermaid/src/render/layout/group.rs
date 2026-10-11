@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use super::super::canvas::Canvas;
 use super::super::graph::{Edge, Graph, Node, Shape};
-use super::{layout_canvas, orient, NodeExtra};
+use super::{NodeExtra, layout_canvas, orient};
 
 /// One thing laid out in a scope: a node, or a nested subgraph's frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

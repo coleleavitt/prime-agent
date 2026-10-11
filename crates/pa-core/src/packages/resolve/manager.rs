@@ -3,21 +3,29 @@
 //! refresh), settings top-level arrays, and package resource collection
 //! (manifest, convention directories, and filter patterns).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::super::source::{parse_source, GitSource, NpmSource, ParsedSource, SourceScope};
-use super::super::PackageManager;
-use super::super::{git, npm};
-use std::collections::HashMap;
-
+use super::super::source::{GitSource, NpmSource, ParsedSource, SourceScope, parse_source};
+use super::super::{PackageManager, git, npm};
 use super::discovery::collect_resource_files;
 use super::patterns::{apply_patterns, split_patterns};
 use super::{
-    settings_array, to_resolved_paths, top_level_metadata, ConfiguredSource, MetadataSource,
-    MissingSourceAction, PackageFilter, PathMetadata, ResolvedPaths, ResourceAccumulator,
-    ResourceOrigin, ResourceType, RESOURCE_TYPES,
+    ConfiguredSource,
+    MetadataSource,
+    MissingSourceAction,
+    PackageFilter,
+    PathMetadata,
+    RESOURCE_TYPES,
+    ResolvedPaths,
+    ResourceAccumulator,
+    ResourceOrigin,
+    ResourceType,
+    settings_array,
+    to_resolved_paths,
+    top_level_metadata,
 };
 
 /// Parse the object (filter) form of a `packages` settings entry.

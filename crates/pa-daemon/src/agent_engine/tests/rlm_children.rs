@@ -318,18 +318,22 @@ fn can_passivate_worker_mirrors_the_release_gates_and_adds_the_registry_rule() {
         probe_fired.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Box::pin(std::future::ready(()))
     }));
-    assert!(engine
-        .runtime
-        .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine)));
+    assert!(
+        engine
+            .runtime
+            .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine))
+    );
     // A live background bash handle blocks the passivation, and the release consumes
     // the same gate: the probe never fires while a handle runs.
     *engine
         .background_bash_probe
         .lock()
         .expect("background bash probe lock") = Some(std::sync::Arc::new(|| true));
-    assert!(!engine
-        .runtime
-        .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine)));
+    assert!(
+        !engine
+            .runtime
+            .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine))
+    );
     engine
         .runtime
         .block_on(crate::engine::SessionEngine::release_settled_child_kernel(
@@ -344,9 +348,11 @@ fn can_passivate_worker_mirrors_the_release_gates_and_adds_the_registry_rule() {
         .registered_jobs_probe
         .lock()
         .expect("registered jobs probe lock") = Some(std::sync::Arc::new(|| true));
-    assert!(!engine
-        .runtime
-        .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine)));
+    assert!(
+        !engine
+            .runtime
+            .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine))
+    );
     engine
         .runtime
         .block_on(crate::engine::SessionEngine::release_settled_child_kernel(
@@ -373,9 +379,11 @@ fn can_passivate_worker_mirrors_the_release_gates_and_adds_the_registry_rule() {
             .await;
         children.settle_test_child("child-session").await;
     });
-    assert!(!engine
-        .runtime
-        .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine)));
+    assert!(
+        !engine
+            .runtime
+            .block_on(crate::engine::SessionEngine::can_passivate_worker(&*engine))
+    );
     engine
         .runtime
         .block_on(crate::engine::SessionEngine::release_settled_child_kernel(

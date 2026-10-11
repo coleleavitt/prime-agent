@@ -24,14 +24,18 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
 use nix::unistd::Pid;
-use serde_json::{json, Value};
-
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
+use serde_json::{Value, json};
 
 /// The child-mode socket: set (with the socket path) only when this very binary is re-executed as
 /// the product-under-test.

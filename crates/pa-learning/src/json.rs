@@ -125,8 +125,9 @@ pub(crate) fn js_number(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn pretty_output_is_json_stringify_with_two_spaces() {

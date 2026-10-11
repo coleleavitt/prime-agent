@@ -8,8 +8,9 @@
 //! [`install`] registers the handlers right after the socket binds.
 
 use std::sync::Arc;
+
 #[cfg(unix)]
-use tokio::signal::unix::{signal, Signal, SignalKind};
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::supervisor::Supervisor;
 

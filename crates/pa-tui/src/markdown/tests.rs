@@ -428,10 +428,12 @@ fn python_fence_lang_matches_the_hljs_aliases() {
         );
     }
     let uniform = render_markdown("```python foo=1\nx = 'y'\n```", 40, &style);
-    assert!(uniform[0]
-        .iter()
-        .skip(1)
-        .all(|s| s.style == style.code_block));
+    assert!(
+        uniform[0]
+            .iter()
+            .skip(1)
+            .all(|s| s.style == style.code_block)
+    );
 }
 
 #[test]

@@ -57,17 +57,28 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::command_session::{
-    encode_connect_request, encode_send_input_request, encode_send_signal_request,
-    encode_start_request, encode_update_request, InputChannel, PtySize, StartRequest, VmSignal,
+    InputChannel,
+    PtySize,
+    StartRequest,
+    VmSignal,
+    encode_connect_request,
+    encode_send_input_request,
+    encode_send_signal_request,
+    encode_start_request,
+    encode_update_request,
 };
 use crate::gateway::{GatewayAuth, GatewayOptions};
 use crate::proto::{ProtoError, ProtoErrorKind};
 use crate::transport::{SandboxTransport, TransportRequest};
 use crate::types::Method;
 use crate::vm_error::{CommandSessionError, CommandSessionErrorCode};
-use crate::vm_stream::{await_started, spawn_stream, CommandSessionStream, PumpConfig};
+use crate::vm_stream::{CommandSessionStream, PumpConfig, await_started, spawn_stream};
 use crate::vm_wire::{
-    decode_empty_message, error_from_status_body, is_media_type, read_error_preview, rpc_url,
+    decode_empty_message,
+    error_from_status_body,
+    is_media_type,
+    read_error_preview,
+    rpc_url,
     unary_headers,
 };
 

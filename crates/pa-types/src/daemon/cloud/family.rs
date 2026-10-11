@@ -11,8 +11,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::canonical_json;
-use super::CLOUD_MAX_RECEIPT_RESULT_CHARS;
+use super::{CLOUD_MAX_RECEIPT_RESULT_CHARS, canonical_json};
 use crate::JsonMap;
 
 // ---------------------------------------------------------------------------

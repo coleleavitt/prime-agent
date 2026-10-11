@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::ledger::{normalize_failure_ledger, FailureLedger};
+use crate::ledger::{FailureLedger, normalize_failure_ledger};
 
 /// The harness state directory's name under an agent or session artifact dir.
 pub const HARNESS_STATE_DIR_NAME: &str = "harness";

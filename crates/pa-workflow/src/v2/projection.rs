@@ -184,8 +184,9 @@ pub fn assert_run_terminalized_outcome_equality(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn projection(phase: &str, intent: &str, outcome: Option<&str>, conditions: &[&str]) -> Value {
         json!({ "phase": phase, "intent": intent, "outcome": outcome, "conditions": conditions })

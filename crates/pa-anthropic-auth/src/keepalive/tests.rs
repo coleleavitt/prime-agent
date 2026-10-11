@@ -3,8 +3,8 @@
 
 use std::sync::atomic::Ordering;
 
-use anthropic::token::Credential;
 use anthropic::AccountStore;
+use anthropic::token::Credential;
 use chrono::{Duration, Utc};
 
 use super::KeepAliveTick;

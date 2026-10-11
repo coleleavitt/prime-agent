@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,
@@ -406,7 +406,9 @@ fn a_descriptorless_leftover_dies_and_its_session_resumes() {
     let daemon2 = spawn_daemon(&socket, &agent_dir);
     if !wait_gone(worker_process_id, Instant::now() + Duration::from_secs(20)) {
         force_kill(worker_process_id);
-        panic!("the descriptorless leftover worker survived the next daemon cycle (the registration heal or the boot reap must clear it)");
+        panic!(
+            "the descriptorless leftover worker survived the next daemon cycle (the registration heal or the boot reap must clear it)"
+        );
     }
 
     let mut client = Client::connect(&socket);
@@ -518,7 +520,9 @@ fn an_owned_stop_kills_a_worker_that_missed_the_shutdown() {
     assert_eq!(stopped["success"], true, "owned stop failed: {stopped}");
     if !wait_gone(worker_process_id, Instant::now() + Duration::from_secs(5)) {
         force_kill(worker_process_id);
-        panic!("the stopped worker outlived its stop — the per-session stop must escalate (SIGKILL) instead of stranding a live lease holder");
+        panic!(
+            "the stopped worker outlived its stop — the per-session stop must escalate (SIGKILL) instead of stranding a live lease holder"
+        );
     }
 
     // The frozen worker's lease released with its death: the session file

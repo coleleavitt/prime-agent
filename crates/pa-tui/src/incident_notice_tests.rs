@@ -56,7 +56,10 @@ fn supervisor_start_line(base_ms: i64, minutes_ago: i64, generation: &str) -> In
 
 fn failed_start_line(base_ms: i64, minutes_ago: i64) -> IncidentLogEntry {
     log_line(&[
-        ("ts", serde_json::json!(ts_ago(base_ms, minutes_ago * 60_000))),
+        (
+            "ts",
+            serde_json::json!(ts_ago(base_ms, minutes_ago * 60_000)),
+        ),
         (
             "component",
             serde_json::json!("coding-agent.daemon-supervisor"),
@@ -73,7 +76,10 @@ fn failed_start_line(base_ms: i64, minutes_ago: i64) -> IncidentLogEntry {
 
 fn command_timeout_line(base_ms: i64, minutes_ago: i64, socket_path: &str) -> IncidentLogEntry {
     log_line(&[
-        ("ts", serde_json::json!(ts_ago(base_ms, minutes_ago * 60_000))),
+        (
+            "ts",
+            serde_json::json!(ts_ago(base_ms, minutes_ago * 60_000)),
+        ),
         (
             "component",
             serde_json::json!("coding-agent.daemon-supervisor"),
@@ -81,7 +87,9 @@ fn command_timeout_line(base_ms: i64, minutes_ago: i64, socket_path: &str) -> In
         ("socketPath", serde_json::json!(socket_path)),
         (
             "msg",
-            serde_json::json!("Supervisor command attach failed: Error: Timed out waiting for daemon worker response to attach\n    at Timeout._onTimeout (node:internal/timers:618:7)"),
+            serde_json::json!(
+                "Supervisor command attach failed: Error: Timed out waiting for daemon worker response to attach\n    at Timeout._onTimeout (node:internal/timers:618:7)"
+            ),
         ),
     ])
 }
@@ -119,9 +127,11 @@ fn anchors_each_subjects_timeout_burst_at_its_own_clusters_latest_timeout() {
     };
     assert_eq!(by_subject(DAEMON_SOCKET).time_ms, BASE_MS - 20 * 60_000);
     assert_eq!(by_subject(other_socket).time_ms, BASE_MS - 5 * 60_000);
-    assert!(by_subject(spaced_socket)
-        .text
-        .contains("3 command timeouts over 20m"));
+    assert!(
+        by_subject(spaced_socket)
+            .text
+            .contains("3 command timeouts over 20m")
+    );
     assert_eq!(by_subject(spaced_socket).time_ms, BASE_MS - 180 * 60_000);
 }
 
@@ -152,14 +162,16 @@ fn derives_an_update_restart_only_from_repeated_successful_starts() {
         derive_incident_notices(&[supervisor_start_line(BASE_MS, 60, "e14de15c")], BASE_MS)
             .is_empty()
     );
-    assert!(derive_incident_notices(
-        &[
-            failed_start_line(BASE_MS, 30),
-            supervisor_start_line(BASE_MS, 20, "e14de15c"),
-        ],
-        BASE_MS
-    )
-    .is_empty());
+    assert!(
+        derive_incident_notices(
+            &[
+                failed_start_line(BASE_MS, 30),
+                supervisor_start_line(BASE_MS, 20, "e14de15c"),
+            ],
+            BASE_MS
+        )
+        .is_empty()
+    );
 }
 
 #[test]

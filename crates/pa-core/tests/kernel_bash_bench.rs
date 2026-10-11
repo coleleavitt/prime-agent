@@ -22,7 +22,11 @@ use std::time::Duration;
 use pa_core::kernel::bootstrap::build_rlm_bootstrap_code;
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 
 fn kernel_python() -> Option<PathBuf> {

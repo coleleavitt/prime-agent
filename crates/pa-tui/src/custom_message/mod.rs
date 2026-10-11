@@ -37,14 +37,13 @@ pub(crate) mod refinement;
 pub(crate) mod render;
 pub mod skill_invocation;
 
-pub use skill_invocation::{skill_invocation_entries, SkillInvocationRow};
-
 use injected_prompt::injected_prompt_row;
 pub use injected_prompt::{InjectedPromptKind, InjectedPromptRow};
+use serde_json::Value;
+pub use skill_invocation::{SkillInvocationRow, skill_invocation_entries};
 
 use crate::chat::{ChatEntry, StatusKind};
 use crate::theme::ThemeColor;
-use serde_json::Value;
 
 /// Custom types with a dedicated component (pa-core owns the engine-side
 /// vocabulary, the render dispatch owns these).
@@ -178,7 +177,8 @@ pub struct PanelPreview {
 /// generic panel. Non-display rows render nothing.
 pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
     use pa_types::slash_commands::{
-        SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
+        SESSION_SLASH_COMMAND_CUSTOM_TYPE,
+        SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
     };
     let custom_type = message
         .get("customType")
@@ -522,9 +522,10 @@ pub(crate) fn custom_content_text(message: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::{Line, Span};
-    use serde_json::json;
 
     fn decoded(message: &serde_json::Value) -> Vec<ChatEntry> {
         custom_message_entries(message)

@@ -79,11 +79,7 @@ pub enum TreeError {
 }
 
 fn finite_score(score: f64) -> f64 {
-    if score.is_finite() {
-        score
-    } else {
-        0.0
-    }
+    if score.is_finite() { score } else { 0.0 }
 }
 
 /// A growing discovery tree. Nodes are held in seq order.

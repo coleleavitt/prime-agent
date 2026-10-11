@@ -9,19 +9,33 @@
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::app::{IndexArg, PointArg, Shot};
 use super::{AppState, Session};
 use crate::element::Rect;
 use crate::error::{
-    head, invalid, transport, unsupported, ComputerUseError, ErrorCode, Result, ERROR_LIMIT,
+    ComputerUseError,
+    ERROR_LIMIT,
+    ErrorCode,
+    Result,
+    head,
+    invalid,
+    transport,
+    unsupported,
 };
 use crate::keymap::parse_chord;
 use crate::permissions::PermissionState;
 use crate::platform::{
-    CaptureRequest, Captured, ElementActions, MouseButton, PasteFormat, Platform, PlatformKind,
-    RecognizedText, ScrollDirection,
+    CaptureRequest,
+    Captured,
+    ElementActions,
+    MouseButton,
+    PasteFormat,
+    Platform,
+    PlatformKind,
+    RecognizedText,
+    ScrollDirection,
 };
 use crate::pyfmt::repr_str;
 use crate::secure::{refuse_secure_focus, refuse_secure_write};
@@ -638,7 +652,7 @@ impl<P: Platform> Session<P> {
     fn paste(&self, app: &AppState<P::Element>, text: &str, format: PasteFormat) -> Result<()> {
         let clipboard = match self.platform.kind() {
             PlatformKind::X11 => {
-                return Err(x11_gap("paste", "type the text with type_text instead"))
+                return Err(x11_gap("paste", "type the text with type_text instead"));
             }
             PlatformKind::Wayland => {
                 return Err(wayland_gap(

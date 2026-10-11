@@ -10,11 +10,15 @@ use std::time::Instant;
 
 use pa_agent::agent_loop::{ConvertToLlmFn, TransformContextFn};
 use pa_agent::stream::{
-    AssistantMessageEvent, ModelStream, OnPayloadHook, OnResponseHook, StreamFn,
+    AssistantMessageEvent,
+    ModelStream,
+    OnPayloadHook,
+    OnResponseHook,
+    StreamFn,
     StreamRequestOptions,
 };
 use pa_agent::types::StopReason;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::session::manager::format_iso;
 

@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use pa_core::kernel::shared::{ExecuteOptions, ExecuteStatus};
 use pa_core::os_sandbox::SessionSandbox;
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
-use pa_core::session_engine::session_commands::{execute_session_command, SessionCommandParams};
-use pa_core::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
+use pa_core::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
+use pa_core::session_engine::session_commands::{SessionCommandParams, execute_session_command};
+use pa_core::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 use pa_types::ai::UserContent;
 
 fn kernel_python() -> Option<PathBuf> {

@@ -4,7 +4,7 @@
 //! Python-semantics cases (opaque values, NaN, non-string keys, depth)
 //! without a Python process.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -132,10 +132,22 @@ fn node_cap_and_ids() {
 #[test]
 fn subagent_forms() {
     let cases = [
-        (json!({ "id": "a" }), "node a requires a subagent: a harness subagent id/title string or an inline object with a prompt"),
-        (json!({ "id": "a", "subagent": { "prompt": "  \t " } }), "node a inline subagent requires a non-empty prompt"),
-        (json!({ "id": "a", "subagent": { "prompt": "p", "model": 5 } }), "node a inline subagent model must be a non-empty string when provided"),
-        (json!({ "id": "a", "subagent": { "prompt": "p", "name": "  " } }), "node a inline subagent name must be a non-empty string when provided"),
+        (
+            json!({ "id": "a" }),
+            "node a requires a subagent: a harness subagent id/title string or an inline object with a prompt",
+        ),
+        (
+            json!({ "id": "a", "subagent": { "prompt": "  \t " } }),
+            "node a inline subagent requires a non-empty prompt",
+        ),
+        (
+            json!({ "id": "a", "subagent": { "prompt": "p", "model": 5 } }),
+            "node a inline subagent model must be a non-empty string when provided",
+        ),
+        (
+            json!({ "id": "a", "subagent": { "prompt": "p", "name": "  " } }),
+            "node a inline subagent name must be a non-empty string when provided",
+        ),
     ];
     for (bad, expected) in cases {
         assert_eq!(spec_errors(&json!({ "nodes": [bad] })), [expected]);
@@ -165,7 +177,9 @@ fn suffixed_name_collisions_reject_both_directions() {
     ] });
     assert_eq!(
         machine_errors(&shadowing),
-        ["state b subagent name 'foo-i1' collides with the suffixed spawn labels of state 'a' (configured 'foo'): re-entry, foreach, and retries name children 'foo'-i<n> and 'foo'-a<n>"]
+        [
+            "state b subagent name 'foo-i1' collides with the suffixed spawn labels of state 'a' (configured 'foo'): re-entry, foreach, and retries name children 'foo'-i<n> and 'foo'-a<n>"
+        ]
     );
     let reverse = json!({ "states": [
         { "id": "a", "entry": true, "subagent": { "prompt": "p", "name": "foo-a2" } },
@@ -173,7 +187,9 @@ fn suffixed_name_collisions_reject_both_directions() {
     ] });
     assert_eq!(
         machine_errors(&reverse),
-        ["state b subagent name 'foo' suffixed by re-entry, foreach, and retries ('foo'-i<n>, 'foo'-a<n>) collides with state 'a' (configured 'foo-a2')"]
+        [
+            "state b subagent name 'foo' suffixed by re-entry, foreach, and retries ('foo'-i<n>, 'foo'-a<n>) collides with state 'a' (configured 'foo-a2')"
+        ]
     );
 }
 
@@ -351,10 +367,22 @@ fn canonicalize_applies_defaults_and_joins_errors() {
 #[test]
 fn guard_rules() {
     let cases = [
-        (guarded("eq", PyValue::List(vec![])), "transitions[0] when.op 'eq' requires a scalar value"),
-        (guarded("gt", PyValue::Str("x".into())), "transitions[0] when.op 'gt' requires a numeric value"),
-        (guarded("contains", PyValue::List(vec![])), "transitions[0] when.op 'contains' requires a non-empty list value"),
-        (guarded("bogus", PyValue::None), "transitions[0] when.op must be one of ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'exists', 'contains'], got 'bogus'"),
+        (
+            guarded("eq", PyValue::List(vec![])),
+            "transitions[0] when.op 'eq' requires a scalar value",
+        ),
+        (
+            guarded("gt", PyValue::Str("x".into())),
+            "transitions[0] when.op 'gt' requires a numeric value",
+        ),
+        (
+            guarded("contains", PyValue::List(vec![])),
+            "transitions[0] when.op 'contains' requires a non-empty list value",
+        ),
+        (
+            guarded("bogus", PyValue::None),
+            "transitions[0] when.op must be one of ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'exists', 'contains'], got 'bogus'",
+        ),
     ];
     for (machine, expected) in cases {
         assert_eq!(validate_factory_machine(&machine), [expected]);
@@ -370,7 +398,9 @@ fn guard_rules() {
     ], "transitions": [{ "from": ["a", "b"], "to": "c", "when": { "output": "x", "op": "exists" } }] });
     assert_eq!(
         machine_errors(&join_guard),
-        ["transitions[0] with multiple from-states cannot carry a when guard; use single-state transitions for guards"]
+        [
+            "transitions[0] with multiple from-states cannot carry a when guard; use single-state transitions for guards"
+        ]
     );
 }
 
@@ -461,7 +491,9 @@ fn opaque_values_read_as_no_json_shape() {
     ]);
     assert_eq!(
         validate_factory_spec(&policy),
-        ["run failure_policy must be one of ['fail_fast', 'continue', 'escalate'], got ('continue',)"]
+        [
+            "run failure_policy must be one of ['fail_fast', 'continue', 'escalate'], got ('continue',)"
+        ]
     );
 }
 
@@ -475,7 +507,9 @@ fn self_inputs_must_be_optional() {
     ], "transitions": [{ "from": "a", "to": "loop" }, { "from": "loop", "to": "loop" }] });
     assert_eq!(
         machine_errors(&required),
-        ["state loop input 'prev' cannot require itself: mark the self-input optional - a required one can never bind on the state's first entry"]
+        [
+            "state loop input 'prev' cannot require itself: mark the self-input optional - a required one can never bind on the state's first entry"
+        ]
     );
 }
 

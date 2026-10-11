@@ -10,10 +10,10 @@ use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
-use crate::git::{run_git, GitFailure};
+use crate::git::{GitFailure, run_git};
 
 pub const RECALL_DIGEST_ALGORITHM: &str = "sha256-128";
 pub const RECALL_UNVERIFIABLE: &str = "unverifiable";

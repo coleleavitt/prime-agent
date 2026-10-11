@@ -3,12 +3,11 @@
 //! from the worker's persisted session store, the engine seams, and the
 //! model registry.
 
-use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
-
 use pa_core::models::ModelRegistry;
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 impl Worker {
@@ -286,7 +285,10 @@ impl Worker {
 mod usage;
 
 pub(crate) use usage::{
-    compute_own_and_total_usage, compute_own_usage_by_model, empty_usage, worker_model_registry,
+    compute_own_and_total_usage,
+    compute_own_usage_by_model,
+    empty_usage,
+    worker_model_registry,
 };
 
 // The getter battery lives in state_getters::state_getters_tests.

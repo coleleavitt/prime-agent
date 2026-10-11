@@ -11,19 +11,33 @@ use std::path::Path;
 
 use pa_dream::dream_loop::DreamHandlerCalls;
 use pa_dream::experiment::{
-    compute_headline, exact_probes_to_target, k1_stop_rule_note, plan_experiment,
-    read_experiment_result, run_experiment, timing_scoring_note, ExperimentArm, ExperimentArmMode,
-    ExperimentArmResult, ExperimentArmTotals, ExperimentBudget, ExperimentError,
-    ExperimentRoundRow, ExperimentRunOptions, ExperimentSpec, PolicyScoreOnOwnPool,
-    EXPERIMENT_ARMS, OBJECTIVE_NOTE,
+    EXPERIMENT_ARMS,
+    ExperimentArm,
+    ExperimentArmMode,
+    ExperimentArmResult,
+    ExperimentArmTotals,
+    ExperimentBudget,
+    ExperimentError,
+    ExperimentRoundRow,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    OBJECTIVE_NOTE,
+    PolicyScoreOnOwnPool,
+    compute_headline,
+    exact_probes_to_target,
+    k1_stop_rule_note,
+    plan_experiment,
+    read_experiment_result,
+    run_experiment,
+    timing_scoring_note,
 };
-use pa_dream::policy::{ExplorationPolicy, StopRule, DEFAULT_POLICY};
+use pa_dream::policy::{DEFAULT_POLICY, ExplorationPolicy, StopRule};
 use pa_dream::proposer::RejectCounts;
 use pa_dream::rng::Seed;
 use pa_dream::rollout::ScoreImprovement;
 use pa_dream::store::{list_experiment_ids, list_trees};
 use pa_dream::tasks::DreamTaskId;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXED_CLOCK: u64 = 1_700_000_000_000;
 
@@ -74,9 +88,11 @@ fn every_arm_gets_its_own_store_an_identical_round_1_and_the_fixed_arm_never_dre
     assert_eq!(fixed.rounds[0].round_best, dream.rounds[0].round_best);
     for arm in &result.arms {
         let store = dir.path().join(&arm.store_dir).join("trees");
-        assert!(store
-            .join(format!("{}.jsonl", arm.rounds[0].tree_id))
-            .exists());
+        assert!(
+            store
+                .join(format!("{}.jsonl", arm.rounds[0].tree_id))
+                .exists()
+        );
     }
     let first_tree = |arm: &ExperimentArmResult| {
         std::fs::read(
@@ -197,13 +213,17 @@ fn the_k1_note_fires_only_for_a_beta_driven_stop_rule_that_cannot_fire() {
         beta,
         ..DEFAULT_POLICY
     };
-    assert!(k1_stop_rule_note(6, &DEFAULT_POLICY)
-        .expect("note")
-        .starts_with("k1 6 <= initialPolicy.beta 6: patience can never stop"));
+    assert!(
+        k1_stop_rule_note(6, &DEFAULT_POLICY)
+            .expect("note")
+            .starts_with("k1 6 <= initialPolicy.beta 6: patience can never stop")
+    );
     assert_eq!(k1_stop_rule_note(7, &DEFAULT_POLICY), None);
-    assert!(k1_stop_rule_note(3, &with(StopRule::FixedRounds, 4))
-        .expect("note")
-        .contains("fixed-rounds can never stop a rollout before the round cap"));
+    assert!(
+        k1_stop_rule_note(3, &with(StopRule::FixedRounds, 4))
+            .expect("note")
+            .contains("fixed-rounds can never stop a rollout before the round cap")
+    );
     assert_eq!(k1_stop_rule_note(1, &with(StopRule::Never, 6)), None);
     assert_eq!(k1_stop_rule_note(1, &with(StopRule::Threshold, 6)), None);
 }

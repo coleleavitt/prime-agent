@@ -13,12 +13,12 @@
 //! output's logical origin, plus the tile position, plus the window's offset
 //! in its tile.
 
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::element::Rect;
-use crate::error::{head, transport, Result, ERROR_LIMIT};
+use crate::error::{ERROR_LIMIT, Result, head, transport};
 
 /// Sends one request line and returns the reply bytes (faked in tests).
 pub(crate) trait NiriTransport: Send + Sync {
@@ -174,7 +174,7 @@ impl<N: NiriTransport> Niri<N> {
                 return Err(transport(format!(
                     "niri IPC refused the {name} request: {}",
                     head(&reason, ERROR_LIMIT)
-                )))
+                )));
             }
             Ok(ok) => ok,
         };

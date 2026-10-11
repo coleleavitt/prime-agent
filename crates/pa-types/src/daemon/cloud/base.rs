@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::family::{
-    CloudAgentMessageSender, CloudFamilyInfo, CloudFamilyRelationship, CloudFamilyRow,
+    CloudAgentMessageSender,
+    CloudFamilyInfo,
+    CloudFamilyRelationship,
+    CloudFamilyRow,
 };
 use crate::JsonMap;
 
@@ -36,8 +39,7 @@ pub const CLOUD_COMMAND_STATES: &str = "accepted, running, completed, failed, ca
 /// TS `CLOUD_CAPABILITIES`, joined exactly as the TS validator reports it.
 /// This slice ships the wire list and its validation only — no side
 /// advertises or negotiates capabilities.
-pub const CLOUD_CAPABILITY_KINDS: &str =
-    "event_stream, command_receipts, session_entries, session_events, roster_stream, family_messages, extension_ui, artifact_refs";
+pub const CLOUD_CAPABILITY_KINDS: &str = "event_stream, command_receipts, session_entries, session_events, roster_stream, family_messages, extension_ui, artifact_refs";
 
 /// TS `CloudSessionStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,9 +3,10 @@
 //! is the verifier. Live descriptors are real daemon state, opt-in with `PA_TYPES_LIVE_WORKERS=1`;
 //! the default run is hermetic.
 
+use std::path::PathBuf;
+
 use pa_types::daemon::DaemonWorkerDescriptor;
 use serde_json::Value;
-use std::path::PathBuf;
 
 fn roundtrip_descriptor(raw: &str, path: &std::path::Path) {
     let parsed: DaemonWorkerDescriptor = serde_json::from_str(raw)

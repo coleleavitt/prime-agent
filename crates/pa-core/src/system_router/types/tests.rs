@@ -1,6 +1,6 @@
 //! Spec parsing and action-space validation battery.
 
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::*;
 
@@ -232,7 +232,10 @@ fn the_action_space_rejects_each_malformed_shape() {
             json!({}),
             "system_router.run actions must be a non-empty object of actions, or omitted when the environment supplies its own",
         ),
-        (json!("press_a"), "system_router.run actions must be a non-empty object of actions, or omitted when the environment supplies its own"),
+        (
+            json!("press_a"),
+            "system_router.run actions must be a non-empty object of actions, or omitted when the environment supplies its own",
+        ),
         (
             json!({ "press_a": "press" }),
             "system_router.run action \"press_a\" must be an object",

@@ -18,10 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use pa_core::session::catalog_cache::{CatalogEntry, CatalogFile, SessionCatalogCache};
-
 use format::IndexedEntry;
 pub use format::{SESSION_INDEX_FILE, SESSION_SEARCH_INDEX_FILE};
+use pa_core::session::catalog_cache::{CatalogEntry, CatalogFile, SessionCatalogCache};
 
 /// The persisted catalog index of every session directory this process
 /// lists. Cloning shares the index (the composition root keeps a clone to

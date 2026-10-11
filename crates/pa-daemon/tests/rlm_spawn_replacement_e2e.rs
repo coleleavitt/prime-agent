@@ -33,7 +33,7 @@ use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSuba
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,

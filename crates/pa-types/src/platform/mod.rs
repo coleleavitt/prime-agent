@@ -20,12 +20,19 @@ mod windows_security;
 pub use dirs::{agent_dir, home_dir};
 pub use identity::socket_identity;
 pub use process::{
-    ignore_sigint_for_suspend, is_process_alive, process_start_id, restore_default_sigint,
+    ignore_sigint_for_suspend,
+    is_process_alive,
+    process_start_id,
+    restore_default_sigint,
     stop_own_process_group,
 };
 pub use transport::{
-    bind_transport, connect_blocking, connect_transport, BlockingTransportStream,
-    TransportListener, TransportStream,
+    BlockingTransportStream,
+    TransportListener,
+    TransportStream,
+    bind_transport,
+    connect_blocking,
+    connect_transport,
 };
 pub use windows_console::{init as console_init, restore as console_restore};
 #[cfg(windows)]

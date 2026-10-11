@@ -18,10 +18,16 @@
 //! caller's (see `hooks.rs`). Golden: `tests/fixtures/golden/`.
 
 use anthropic::claude_code::{
-    encode_header_value, stainless_arch, stainless_os, CLAUDE_CODE_STAINLESS_PACKAGE_VERSION,
-    CLAUDE_CODE_STAINLESS_RUNTIME_VERSION, CONTEXT_1M_BETA, EFFORT_BETA, FAST_MODE_BETA,
+    CLAUDE_CODE_STAINLESS_PACKAGE_VERSION,
+    CLAUDE_CODE_STAINLESS_RUNTIME_VERSION,
+    CONTEXT_1M_BETA,
+    EFFORT_BETA,
+    FAST_MODE_BETA,
+    encode_header_value,
+    stainless_arch,
+    stainless_os,
 };
-use anthropic::claude_version::{claude_code_user_agent, UserAgentDetails};
+use anthropic::claude_version::{UserAgentDetails, claude_code_user_agent};
 use anthropic::models::model_supports_context_1m;
 use serde_json::Value;
 

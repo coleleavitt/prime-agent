@@ -1,9 +1,10 @@
 //! API provider registry: providers register stream functions per `api` identifier;
 //! `stream()`/`complete()` resolve the provider for a model and forward.
 
-use pa_types::sync::RwLockExt;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
+
+use pa_types::sync::RwLockExt;
 
 use crate::event_stream::AssistantMessageEventStream;
 use crate::types::{Context, Model, SimpleStreamOptions, StreamOptions};

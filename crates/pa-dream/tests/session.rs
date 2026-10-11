@@ -7,17 +7,26 @@
 use std::sync::{Arc, Mutex};
 
 use pa_ai::faux::{
-    faux_assistant_message, faux_text, register_faux_provider, FauxAssistantMessageOptions,
-    FauxProviderRegistration, FauxResponseStep, RegisterFauxProviderOptions,
+    FauxAssistantMessageOptions,
+    FauxProviderRegistration,
+    FauxResponseStep,
+    RegisterFauxProviderOptions,
+    faux_assistant_message,
+    faux_text,
+    register_faux_provider,
 };
 use pa_core::features::{
-    register_feature_status_sink, FeatureStatus, FeatureStatusSink, FeatureTelemetry,
-    SessionFeature, SessionFeatureContext,
+    FeatureStatus,
+    FeatureStatusSink,
+    FeatureTelemetry,
+    SessionFeature,
+    SessionFeatureContext,
+    register_feature_status_sink,
 };
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
-use pa_dream::session::{DreamFeature, DREAM_REQUEST_TYPES};
+use pa_dream::session::{DREAM_REQUEST_TYPES, DreamFeature};
 use pa_dream::store::{list_trees, read_tree};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const MODEL_ID: &str = "faux-dream-1";
 const SMALL: &str =
@@ -174,13 +183,15 @@ async fn a_local_dream_command_completes_at_zero_tokens_and_reports_its_end() {
             .map(|line| line.starts_with("dream rollout it0 best ")),
         Some(true)
     );
-    assert!(statuses
-        .last()
-        .unwrap()
-        .line
-        .as_deref()
-        .unwrap()
-        .starts_with("dream "));
+    assert!(
+        statuses
+            .last()
+            .unwrap()
+            .line
+            .as_deref()
+            .unwrap()
+            .starts_with("dream ")
+    );
     assert_eq!(
         statuses.last().unwrap().status["stopReason"],
         json!("completed")
@@ -253,8 +264,16 @@ async fn the_kernel_requests_start_report_and_refuse_like_the_ts_session() {
     let feature = DreamFeature::new();
     let handlers = harness.handlers(&feature);
     for (request, payload, message) in [
-        ("dream.run", json!({ "task": "nope" }), "dream.run task must be one of circle-packing, sum-difference, python-speedup, autocorrelation"),
-        ("dream.experiment", json!({ "task": "sum-difference", "seed": 1, "seeds": [2] }), "dream.experiment takes either seed or seeds, not both"),
+        (
+            "dream.run",
+            json!({ "task": "nope" }),
+            "dream.run task must be one of circle-packing, sum-difference, python-speedup, autocorrelation",
+        ),
+        (
+            "dream.experiment",
+            json!({ "task": "sum-difference", "seed": 1, "seeds": [2] }),
+            "dream.experiment takes either seed or seeds, not both",
+        ),
     ] {
         let error = call(&handlers, request, payload).await.unwrap_err();
         assert_eq!(error.to_string(), message);
@@ -268,10 +287,12 @@ async fn the_kernel_requests_start_report_and_refuse_like_the_ts_session() {
     .unwrap();
     assert_eq!(started["started"], json!(true));
     assert_eq!(started["seeds"], json!(2));
-    assert!(started["note"]
-        .as_str()
-        .unwrap()
-        .contains("(2 seeds, run sequentially)"));
+    assert!(
+        started["note"]
+            .as_str()
+            .unwrap()
+            .contains("(2 seeds, run sequentially)")
+    );
     let status = call(&handlers, "dream.status", json!({})).await.unwrap();
     assert_eq!(status["runId"], started["runId"]);
     assert_eq!(status["kind"], json!("experiment"));
@@ -321,9 +342,11 @@ async fn a_child_session_gets_no_dream_surface() {
         refused.as_deref(),
         Some("Dream-RSI is not available in this session")
     );
-    assert!(feature
-        .execute_slash_command(&harness.context, "other", "")
-        .is_none());
+    assert!(
+        feature
+            .execute_slash_command(&harness.context, "other", "")
+            .is_none()
+    );
     assert!(!harness.dir.path().join("agent/dream").exists());
     let usage = feature
         .execute_slash_command(&harness_with_depth0(&harness), "dream", "--bogus")

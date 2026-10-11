@@ -3,9 +3,18 @@
 //! boundary.
 
 use super::{
-    compaction_end_success_event, compaction_start_event, is_context_overflow_failure,
-    json_round_trip, CompactOutcome, CompactionOutcomeKind, CompactionOutcomeReason, Model,
-    SessionAgentMessage, SessionEngine, TrailingAssistantFilter, TurnBoundary,
+    CompactOutcome,
+    CompactionOutcomeKind,
+    CompactionOutcomeReason,
+    Model,
+    SessionAgentMessage,
+    SessionEngine,
+    TrailingAssistantFilter,
+    TurnBoundary,
+    compaction_end_success_event,
+    compaction_start_event,
+    is_context_overflow_failure,
+    json_round_trip,
 };
 
 /// The failure text when one compact-and-retry attempt could not save

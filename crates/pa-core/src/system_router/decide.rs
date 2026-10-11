@@ -10,16 +10,22 @@ use std::sync::Arc;
 use pa_agent::abort::AbortSignal;
 use pa_agent::types::{AssistantContent, AssistantMessage, StopReason};
 use pa_types::ai::{
-    ImageContent, Message, Model, ModelInput, ModelThinkingLevel, TextContent, UserContent,
-    UserContentBlock, UserMessage,
+    ImageContent,
+    Message,
+    Model,
+    ModelInput,
+    ModelThinkingLevel,
+    TextContent,
+    UserContent,
+    UserContentBlock,
+    UserMessage,
 };
 use serde_json::{Map, Value};
 
-use crate::session_engine::provider_adapter::json_round_trip;
-use crate::session_engine::provider_retry::{complete_with_provider_retry, ProviderRetryPolicy};
-
 use super::action_space::CompiledAction;
 use super::types::RouterUsage;
+use crate::session_engine::provider_adapter::json_round_trip;
+use crate::session_engine::provider_retry::{ProviderRetryPolicy, complete_with_provider_retry};
 
 /// Output cap for one decision call. The decision object itself is a few
 /// dozen tokens, but mandatory-reasoning models still spend output tokens on

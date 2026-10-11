@@ -3,16 +3,16 @@
 //! their exact TS shapes, the `isCompacting` state flag, and the durable
 //! compaction entry the worker appends to the session store.
 
-use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Map, Value};
+use pa_agent::abort::AbortController;
+use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 
 use crate::engine::{CompactionOutcome, CompactionRequest, SessionEngine};
 use crate::protocol::DaemonOutbound;
 use crate::worker::{EventPump, OutboundFrame, SessionCore};
-use pa_agent::abort::AbortController;
-use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 
 /// The worker's compaction machinery: the live-run abort slot plus the
 /// compaction flow. One slot per session, replaced by each new run.

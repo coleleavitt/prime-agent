@@ -4,8 +4,13 @@
 //! observed is reported unscored rather than counted as an improvement.
 
 use pa_learning::{
-    build_learning_report, normalize_day, read_learning_index, write_learning_day,
-    FingerprintDayStats, LearningDay, RefinementCommit,
+    FingerprintDayStats,
+    LearningDay,
+    RefinementCommit,
+    build_learning_report,
+    normalize_day,
+    read_learning_index,
+    write_learning_day,
 };
 use serde_json::json;
 

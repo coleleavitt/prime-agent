@@ -2,7 +2,7 @@
 //! `model refused` surfaces the supervisor and model-allowlist seams call
 //! once per lifecycle event. Counts/categories only, never session
 //! payload (the module's privacy contract).
-use super::{base_properties, model_category, provider_category, TelemetryClient, Value};
+use super::{TelemetryClient, Value, base_properties, model_category, provider_category};
 
 /// Track the supervision summary (`daemon event`, kind `summary`): the
 /// frequent supervision events of one window as `<kind>_count`

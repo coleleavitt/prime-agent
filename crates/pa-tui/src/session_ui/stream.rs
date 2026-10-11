@@ -264,7 +264,7 @@ mod streaming_tray_hint_tests {
 
 #[cfg(test)]
 mod loader_token_tests {
-    use super::{format_rate, LoaderTokenTracker, SpeedStats};
+    use super::{LoaderTokenTracker, SpeedStats, format_rate};
 
     #[test]
     fn coalesced_frames_count_from_the_message_not_deltas() {

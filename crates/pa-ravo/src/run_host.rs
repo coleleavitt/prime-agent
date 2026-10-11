@@ -16,19 +16,29 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use pa_core::features::{
-    FeatureCommandOutcome, FeatureFuture, FeatureStatus, FeatureTelemetry, SessionFeatureContext,
+    FeatureCommandOutcome,
+    FeatureFuture,
+    FeatureStatus,
+    FeatureTelemetry,
+    SessionFeatureContext,
 };
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use pa_core::models::ModelRegistry;
 use pa_telemetry::Properties;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::command::{completion_text, parse_ravo_command, ravo_status_line, started_text};
 use crate::referee::ReplayRunner;
 use crate::run::{
-    parse_ravo_run_payload, ModelFailure, ModelReply, RavoModel, RavoRunRequest, RavoRunService,
-    RunServiceDeps, RunStores,
+    ModelFailure,
+    ModelReply,
+    RavoModel,
+    RavoRunRequest,
+    RavoRunService,
+    RunServiceDeps,
+    RunStores,
+    parse_ravo_run_payload,
 };
 
 /// The adoption event: one finished `ravo.run` or `/ravo`.

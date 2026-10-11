@@ -25,30 +25,52 @@ mod wl;
 
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use self::atspi::{Accessibility, AtSpi};
-use self::input::{chord_stroke, keysym_for_char, KeyStroke, PointerTarget, VirtualInput};
+use self::input::{KeyStroke, PointerTarget, VirtualInput, chord_stroke, keysym_for_char};
 use self::niri::{Niri, NiriTransport, WindowGeometry, WindowRecord};
 use crate::capture::CaptureDir;
-use crate::element::{cap, Observation, Pair, Rect};
+use crate::element::{Observation, Pair, Rect, cap};
 use crate::error::{
-    head, invalid, not_running, transport, unsupported, ComputerUseError, ErrorCode, Result,
+    ComputerUseError,
+    ErrorCode,
+    Result,
+    head,
+    invalid,
+    not_running,
+    transport,
+    unsupported,
 };
 use crate::keymap::ParsedChord;
 use crate::permissions::{
-    PermissionReport, PermissionState, WAYLAND_APPS_HELP_LINE, WAYLAND_UPSTREAM_HELP_LINE,
+    PermissionReport,
+    PermissionState,
+    WAYLAND_APPS_HELP_LINE,
+    WAYLAND_UPSTREAM_HELP_LINE,
 };
-use crate::platform::logind;
 use crate::platform::{
-    AppEntry, CaptureRequest, Captured, Discovery, ElementActions, FieldFocus, Fingerprint,
-    FocusControl, MouseButton, Platform, PlatformKind, ScrollDirection, Target, WindowCandidate,
+    AppEntry,
+    CaptureRequest,
+    Captured,
+    Discovery,
+    ElementActions,
+    FieldFocus,
+    Fingerprint,
+    FocusControl,
+    MouseButton,
+    Platform,
+    PlatformKind,
+    ScrollDirection,
+    Target,
+    WindowCandidate,
     WindowDirectory,
+    logind,
 };
-use crate::process::{optional_tool, run_tool, Tools, TOOL_TIMEOUT};
+use crate::process::{TOOL_TIMEOUT, Tools, optional_tool, run_tool};
 use crate::pyfmt::{casefold, fixed0, repr_float};
-use crate::secure::{refuse_secure_focus, Security};
-use crate::spec::{is_blank, AppSpec, SpecKey, SpecShape};
+use crate::secure::{Security, refuse_secure_focus};
+use crate::spec::{AppSpec, SpecKey, SpecShape, is_blank};
 
 const MAX_OBSERVE: Duration = Duration::from_secs(3);
 const MAX_FOCUS_SEARCH: Duration = Duration::from_secs(1);
@@ -996,10 +1018,10 @@ pub(crate) mod native {
     use std::path::Path;
     use std::time::Duration;
 
+    use super::WaylandPlatform;
     use super::bus::BusAtSpi;
     use super::niri::SocketTransport;
-    use super::wl::{session_input, WaylandInput};
-    use super::WaylandPlatform;
+    use super::wl::{WaylandInput, session_input};
     use crate::capture::CaptureDir;
     use crate::process::SystemTools;
 

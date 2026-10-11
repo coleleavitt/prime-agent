@@ -2,12 +2,30 @@
 //! description helpers.
 
 use super::{
-    anyhow, json, lock, merge_signals, oneshot, AbortSignal, ActiveExecution, Arc, AsyncWriteExt,
-    Duration, ExecBuffers, ExecuteOptions, ExecuteResult, ExecuteStatus, Instant,
-    InternalExecuteResult, KernelStartOptions, KernelState, Mutex, ReplKernelManager, Request,
-    DEFAULT_MAX_OUTPUT_CHARS, KERNEL_ABORT_GRACE_MS,
+    AbortSignal,
+    ActiveExecution,
+    Arc,
+    AsyncWriteExt,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    Duration,
+    ExecBuffers,
+    ExecuteOptions,
+    ExecuteResult,
+    ExecuteStatus,
+    Instant,
+    InternalExecuteResult,
+    KERNEL_ABORT_GRACE_MS,
+    KernelStartOptions,
+    KernelState,
+    Mutex,
+    ReplKernelManager,
+    Request,
+    anyhow,
+    json,
+    lock,
+    merge_signals,
+    oneshot,
 };
-
 pub(crate) use crate::platform::process::Signal;
 
 /// Granularity of the host-request-aware execution timer: how often it
@@ -419,8 +437,9 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn bounded_execute_settles_when_kernel_stops_reading_stdin() {
-        use super::*;
         use std::os::unix::fs::PermissionsExt;
+
+        use super::*;
 
         let dir = tempfile::TempDir::new().expect("temp dir");
         let python = dir.path().join("ready-but-not-reading");
@@ -470,8 +489,9 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cancelled_request_write_retires_the_kernel() {
-        use super::*;
         use std::os::unix::fs::PermissionsExt;
+
+        use super::*;
 
         // Protocol v5: ready, then idles without reading stdin until the
         // sibling "go" file appears, then answers execute frames, ignores

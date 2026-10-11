@@ -495,7 +495,9 @@ fn install_rust_sh_honors_the_uv_bin_dir_knob() {
         "the knob must be documented in the header's Configuration block"
     );
     assert!(
-        text.contains("elif [ -x \"${HOME}/.local/bin/${uv_name}\" ] && [ \"$uv_under_store\" = \"no\" ]"),
+        text.contains(
+            "elif [ -x \"${HOME}/.local/bin/${uv_name}\" ] && [ \"$uv_under_store\" = \"no\" ]"
+        ),
         "the sh's uv discovery must fall back to the canonical ~/.local/bin uv when the knob redirects the target (no duplicate install) - but NEVER in the store-alias shape (a uv inside the shared store must not carry uv's python writes back into it)"
     );
     assert!(
@@ -515,7 +517,9 @@ fn install_rust_sh_honors_the_uv_bin_dir_knob() {
         "the knob must refuse the PATH separator (a target with a colon corrupts every PATH export and prepend)"
     );
     assert!(
-        text.contains("uv_on_path()") && text.contains("uv_on_path_entry") && text.contains("[ -f \"${uv_on_path_entry}/${uv_on_path_name}\" ]"),
+        text.contains("uv_on_path()")
+            && text.contains("uv_on_path_entry")
+            && text.contains("[ -f \"${uv_on_path_entry}/${uv_on_path_name}\" ]"),
         "the sh's uv-on-PATH check must SCAN PATH for an executable file itself: command -v also reports exported shell FUNCTIONS (and a bare-name result can hit a cwd decoy), which no child process can resolve"
     );
     assert!(
@@ -542,8 +546,7 @@ fn install_rust_sh_honors_the_uv_bin_dir_knob() {
         "the PATH entries must be split by parameter expansion alone (never globbed)"
     );
     assert!(
-        text.contains("uv_on_path_rest=\"${PATH}:\"")
-            && text.contains("[ -z \"${PATH+x}\" ]"),
+        text.contains("uv_on_path_rest=\"${PATH}:\"") && text.contains("[ -z \"${PATH+x}\" ]"),
         "the lookup must DISTINGUISH an UNSET PATH (the child resolves nothing: no match, no abort) from a SET-EMPTY one (the child resolves the cwd: the sentinel colon visits it), and every component including a trailing or sole empty one gets its own iteration"
     );
     assert!(
@@ -559,7 +562,9 @@ fn install_rust_sh_honors_the_uv_bin_dir_knob() {
         "no bare command -v result may become uv_bin"
     );
     assert!(
-        text.contains("|| { [ \"$uv_under_store\" = \"no\" ] && [ -x \"${HOME}/.local/bin/${uv_name}\" ]; }") ,
+        text.contains(
+            "|| { [ \"$uv_under_store\" = \"no\" ] && [ -x \"${HOME}/.local/bin/${uv_name}\" ]; }"
+        ),
         "the 'uv found' and pre-warm gates must see a default-location uv only outside the store-alias shape"
     );
     assert!(
@@ -578,7 +583,8 @@ fn install_rust_sh_honors_the_uv_bin_dir_knob() {
         "the sh's PATH guidance must cover the custom uv target too (a documented install target must stay discoverable)"
     );
     assert!(
-        text.contains("incoming_path=\"${PATH:-}\"") && text.contains("case \":$incoming_path:\" in"),
+        text.contains("incoming_path=\"${PATH:-}\"")
+            && text.contains("case \":$incoming_path:\" in"),
         "the incoming-PATH capture must also survive an unset PATH under set -u (the whole installer continues past the uv helper); the guidance compares against the INCOMING PATH (the pre-warm's temporary prepend must never suppress the persistent-PATH guidance)"
     );
 }
@@ -833,7 +839,8 @@ fn windows_install_e2e_builds_the_shipped_link_mode() {
         "the e2e must gate on the uv executable the ps1 route promises to install"
     );
     assert!(
-        harness.contains(".Trim().StartsWith($scratch, [System.StringComparison]::OrdinalIgnoreCase)"),
+        harness
+            .contains(".Trim().StartsWith($scratch, [System.StringComparison]::OrdinalIgnoreCase)"),
         "the e2e must strip exactly its own scratch-prefixed PATH entries from the CURRENT user PATH (never a stale snapshot restore)"
     );
 }
@@ -884,7 +891,8 @@ fn windows_e2e_harnesses_strip_only_their_own_path_entries() {
             );
         }
         assert!(
-            !harness.contains("[Environment]::SetEnvironmentVariable('Path', $userPathBefore, 'User')"),
+            !harness
+                .contains("[Environment]::SetEnvironmentVariable('Path', $userPathBefore, 'User')"),
             "{harness_name}'s cleanup must not restore a stale whole-value snapshot (it clobbers external changes and flattens the kind)"
         );
     }
@@ -1113,7 +1121,8 @@ fn windows_install_e2e_gates_the_uv_install_on_a_fresh_runner() {
     // degradation note (offline is a supported state of the best-effort
     // branch - the install.ps1 flow treats it as non-fatal by design).
     assert!(
-        harness.contains("if (-not $uvWasOnPath -and -not $uvLanded -and -not $degradedHonestly) {"),
+        harness
+            .contains("if (-not $uvWasOnPath -and -not $uvLanded -and -not $degradedHonestly) {"),
         "the uv gate must demand the online install OR the honest degradation, never astral.sh luck"
     );
     assert!(

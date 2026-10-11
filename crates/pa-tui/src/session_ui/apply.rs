@@ -1,10 +1,26 @@
 //! The streamed-event pump: client events, turn updates, assistant/tool
 //! rows, compaction aborts, and the telemetry seams.
 use super::{
-    assistant_message_parts, event_to_update, pop_superseded_attempt_row, AgentView, ChatEntry,
-    CompactionReason, CompactionState, DaemonClientEvent, DaemonCommand, Duration, Map,
-    MessageBlock, Result, RetryState, SessionUi, StatusKind, ToolResultView, TurnUpdate, Value,
+    AgentView,
+    ChatEntry,
+    CompactionReason,
+    CompactionState,
+    DaemonClientEvent,
+    DaemonCommand,
+    Duration,
+    Map,
+    MessageBlock,
+    Result,
+    RetryState,
+    SessionUi,
+    StatusKind,
+    ToolResultView,
+    TurnUpdate,
     UI_REQUEST_TIMEOUT_MS,
+    Value,
+    assistant_message_parts,
+    event_to_update,
+    pop_superseded_attempt_row,
 };
 
 /// One backgrounded compaction-abort outcome: a failed abort surfaces as

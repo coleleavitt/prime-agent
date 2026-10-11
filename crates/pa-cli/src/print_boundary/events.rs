@@ -2,8 +2,13 @@
 //! and the json-mode emission methods.
 
 use super::{
-    json, CompactRun, CompactionOutcomeKind, CompactionOutcomeReason, SessionEngine, TurnBoundary,
+    CompactRun,
+    CompactionOutcomeKind,
+    CompactionOutcomeReason,
+    SessionEngine,
+    TurnBoundary,
     Value,
+    json,
 };
 
 /// The `compaction_start` event: the reason plus the consumed

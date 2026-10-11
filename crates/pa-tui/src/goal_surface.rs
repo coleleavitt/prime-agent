@@ -2,7 +2,7 @@
 //! label. Pure state and formatting; the session view owns the
 //! transcript rows.
 
-use pa_types::goal::{empty_goal_state, GoalState, GoalStatus};
+use pa_types::goal::{GoalState, GoalStatus, empty_goal_state};
 
 /// The announcement dedupe snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +213,7 @@ pub fn render_goal_panel(
     let goal = &panel.goal;
     let mut lines: Vec<Line> = Vec::new();
     lines.push(vec![
-        theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1)))
+        theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width.max(1))),
     ]);
     lines.push(crate::width::truncate_line(
         &vec![

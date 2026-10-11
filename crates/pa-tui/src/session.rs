@@ -3,9 +3,10 @@
 //! `SessionStream` is the seam the interactive mode and the replay binary
 //! share; `JsonlSessionStream` implements it over pa-types session entries.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use pa_types::session::{AgentMessage, FileEntry};
-use std::path::Path;
 
 /// A transcript item rendered by the agent view.
 #[derive(Debug, Clone, PartialEq)]
@@ -130,7 +131,7 @@ pub fn parse_jsonl(raw: &str) -> Result<Vec<FileEntry>> {
             Ok(entry) => entries.push(entry),
             Err(e) => {
                 return Err(anyhow::anyhow!("line {}: {}", i + 1, e))
-                    .with_context(|| format!("parsing session entry {}", i + 1))
+                    .with_context(|| format!("parsing session entry {}", i + 1));
             }
         }
     }
@@ -380,8 +381,10 @@ mod tests {
             },
         };
         let items = entry_to_items(&entry);
-        let [TranscriptItem::CustomRow { entry: card }, TranscriptItem::CustomRow { entry: args }] =
-            items.as_slice()
+        let [
+            TranscriptItem::CustomRow { entry: card },
+            TranscriptItem::CustomRow { entry: args },
+        ] = items.as_slice()
         else {
             panic!("skill items: {items:?}");
         };
@@ -407,10 +410,13 @@ mod tests {
         let line = r#"{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"probe the replay trace","thinkingSignature":"sig-1"},{"type":"text","text":"body after thinking"},{"type":"toolCall","id":"toolu_1","name":"bash","arguments":{"command":"ls"}}],"api":"openai-completions","provider":"prime-inference","model":"m","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"toolUse","timestamp":1},"id":"e1"}"#;
         let entries = parse_jsonl(line).unwrap();
         let items = entry_to_items(&entries[0]);
-        let [TranscriptItem::Assistant {
-            blocks,
-            has_tool_calls,
-        }, TranscriptItem::ToolCall { name, .. }] = items.as_slice()
+        let [
+            TranscriptItem::Assistant {
+                blocks,
+                has_tool_calls,
+            },
+            TranscriptItem::ToolCall { name, .. },
+        ] = items.as_slice()
         else {
             panic!("replay items: {items:?}");
         };

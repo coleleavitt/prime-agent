@@ -2,10 +2,11 @@
 //! through — the bordered search field, the `›`-marker menu rows with right-aligned trailing
 //! segments, the shared truncate/pad budgeting, and the status rows every menu frame shares.
 
+use ratatui::style::Style;
+
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, truncate_line};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 const FIELD_PROMPT: &str = "> ";
 

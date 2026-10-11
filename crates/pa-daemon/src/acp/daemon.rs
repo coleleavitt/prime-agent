@@ -20,27 +20,36 @@
 //! `get_available_models` for discovery, `set_model` /
 //! `set_thinking_level` for the applied selection.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pa_types::daemon::{
-    DaemonCommand, DaemonCommandEnvelope, DaemonCommandFrameType, DaemonProtocolInfo,
-    DaemonResponse, DaemonSessionLifecycle, DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION,
+    DAEMON_PROTOCOL_NAME,
+    DAEMON_PROTOCOL_VERSION,
+    DaemonCommand,
+    DaemonCommandEnvelope,
+    DaemonCommandFrameType,
+    DaemonProtocolInfo,
+    DaemonResponse,
+    DaemonSessionLifecycle,
 };
-use serde_json::{json, Map, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use super::jsonrpc::{self, Incoming};
 use super::meta::{self, PrimeAgentEventPhase, PrimeAgentOutcome, PrimeAgentSessionMeta};
 use super::producer::{self, UpdateProducer};
 use super::sessions::{
-    bound_daemon_session, handle_session_list, handle_session_load, handle_session_new,
+    bound_daemon_session,
+    handle_session_list,
+    handle_session_load,
+    handle_session_new,
 };
 use super::types;
-use super::wire_config::{handle_set_config_option, refresh_wire_config, HostedConfig};
+use super::wire_config::{HostedConfig, handle_set_config_option, refresh_wire_config};
 use super::wire_events::{self, WireMappingState};
 
 /// Response timeout for session-scoped commands.
@@ -172,9 +181,11 @@ impl DaemonLink {
     pub(crate) async fn request_ok(&self, command: DaemonCommand) -> anyhow::Result<()> {
         let response = self.request(command).await?;
         if !response.success {
-            anyhow::bail!(response
-                .error
-                .unwrap_or_else(|| "unknown error".to_string()));
+            anyhow::bail!(
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
         }
         Ok(())
     }
@@ -640,9 +651,11 @@ async fn bind_daemon_session(
             if response.success {
                 Ok(())
             } else {
-                Err(anyhow::anyhow!(response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())))
+                Err(anyhow::anyhow!(
+                    response
+                        .error
+                        .unwrap_or_else(|| "unknown error".to_string())
+                ))
             }
         });
     if let Err(error) = attached {
@@ -997,9 +1010,11 @@ async fn acquire_stop_input_pause(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     let pause_id = response
         .data
@@ -1506,9 +1521,11 @@ async fn fetch_autonomous_status(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     Ok(serde_json::from_value(
         response.data.unwrap_or(Value::Null),
@@ -1535,9 +1552,11 @@ pub(super) async fn fetch_rlm_children(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "unknown error".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
     }
     response
         .data

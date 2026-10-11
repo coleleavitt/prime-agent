@@ -1,9 +1,11 @@
 //! Log-line parsing for the incident classifier (TS `parseIncidentLogLine` /
 //! `parseIncidentDaemonLogLine` and the `timestampToMs` helper).
 
-use super::IncidentLogEntry;
-use regex::Regex;
 use std::sync::LazyLock;
+
+use regex::Regex;
+
+use super::IncidentLogEntry;
 
 /// `[<ISO>] supervisor: <msg>` or `[<ISO>] <msg>` (TS `parseIncidentDaemonLogLine`).
 static DAEMON_LINE: LazyLock<Regex> =

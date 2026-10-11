@@ -11,11 +11,11 @@ use std::sync::LazyLock;
 
 use pa_types::incident::timestamp_to_ms;
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
+use crate::CommandOutcome;
 use crate::record::format_iso_from_ms;
 use crate::retained::{join_paths, read_log_text, retained_log_files, terminal_safe};
-use crate::CommandOutcome;
 
 const DEFAULT_SINCE_MS: i64 = 24 * 60 * 60 * 1000;
 const DEFAULT_STUCK_AFTER_MS: i64 = 10 * 60 * 1000;
@@ -888,7 +888,7 @@ pub fn run_health_command(args: &[String], default_log: &Path, now_ms: i64) -> C
     let options = match parse_health_args(args) {
         Ok(options) => options,
         Err(reason) => {
-            return CommandOutcome::failure(vec![format!("Error: {reason}"), USAGE.to_string()])
+            return CommandOutcome::failure(vec![format!("Error: {reason}"), USAGE.to_string()]);
         }
     };
     let log_path = options
@@ -909,7 +909,7 @@ pub fn run_health_command(args: &[String], default_log: &Path, now_ms: i64) -> C
             return CommandOutcome::failure(vec![format!(
                 "Error: could not read {}: {error}",
                 join_paths(&files)
-            )])
+            )]);
         }
     };
     let summary = summarize(&read, now_ms, &options, &files, cutoff_ms);

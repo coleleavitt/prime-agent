@@ -4,8 +4,16 @@
 #[cfg(test)]
 use super::rt;
 use super::{
-    AgentMessage, DaemonClientCapability, DaemonClientId, DaemonCommandId, DaemonProtocolInfo,
-    DaemonResumeCursor, Deserialize, JsonMap, Serialize, Value,
+    AgentMessage,
+    DaemonClientCapability,
+    DaemonClientId,
+    DaemonCommandId,
+    DaemonProtocolInfo,
+    DaemonResumeCursor,
+    Deserialize,
+    JsonMap,
+    Serialize,
+    Value,
 };
 
 /// `type: "command"` envelope wrapping a [`DaemonCommand`].

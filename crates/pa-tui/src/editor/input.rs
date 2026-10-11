@@ -421,9 +421,11 @@ mod tests {
         );
         e.handle_input("enter");
         let events = e.take_events();
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, EditorEvent::Submitted(_))));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, EditorEvent::Submitted(_)))
+        );
         assert_eq!(e.get_text(), "/goal ");
     }
 

@@ -4,8 +4,8 @@
 //! the caret, a picker row moves the selection.
 
 use crate::session_ui::SessionUi;
-use crate::view::click::ClickAction;
 use crate::view::AgentView;
+use crate::view::click::ClickAction;
 
 /// The click target recorded at a plain left press: the row the press landed on and the
 /// target's action (the release must land on the same row for it to fire).

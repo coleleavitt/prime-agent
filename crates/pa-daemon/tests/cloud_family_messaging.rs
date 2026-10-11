@@ -31,19 +31,33 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::oneshot;
-
 use pa_daemon::cloud_family::{
-    AgentMessageLookup, CloudDeliveryError, CloudFamilyDelivery, CloudFamilyRequestError,
-    CloudFamilyRequestOutcome, CloudFamilyRequester, CloudFamilyResponder, FamilyRequestLog,
-    FamilyResultLog, FamilyResultSubmitter, HandleOutcome, IncomingCloudMessage, ResolveOutcome,
+    AgentMessageLookup,
+    CloudDeliveryError,
+    CloudFamilyDelivery,
+    CloudFamilyRequestError,
+    CloudFamilyRequestOutcome,
+    CloudFamilyRequester,
+    CloudFamilyResponder,
+    FamilyRequestLog,
+    FamilyResultLog,
+    FamilyResultSubmitter,
+    HandleOutcome,
+    IncomingCloudMessage,
+    ResolveOutcome,
 };
 use pa_types::daemon::cloud::{
-    canonical_json, CloudAgentMessageDeliveryStatus, CloudAgentMessageReceipt, CloudFamilyCommand,
-    CloudFamilyCommandPayload, CloudFamilyEventPayload, CloudFamilyRow,
+    CloudAgentMessageDeliveryStatus,
+    CloudAgentMessageReceipt,
+    CloudFamilyCommand,
+    CloudFamilyCommandPayload,
+    CloudFamilyEventPayload,
+    CloudFamilyRow,
+    canonical_json,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::oneshot;
 
 /// The request window of the tests whose send must expire unanswered (`Pending`): it elapses
 /// on its own, so load only makes the expiry later, never different.
@@ -321,10 +335,12 @@ async fn send_resolves_answered_only_after_receiver_admission() {
         receipt.delivery_status,
         Some(CloudAgentMessageDeliveryStatus::Delivered)
     );
-    assert!(receipt
-        .id
-        .as_deref()
-        .is_some_and(|id| id.starts_with("agentmsg_msgreq_")));
+    assert!(
+        receipt
+            .id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("agentmsg_msgreq_"))
+    );
 }
 
 #[tokio::test]
@@ -836,9 +852,11 @@ async fn request_envelope_is_the_ts_outbox_record() {
     assert_eq!(event_value["fromRemoteSessionId"], json!("remote_child"));
     assert_eq!(event_value["targetSelector"], json!("sibling-worker"));
     assert_eq!(event_value["message"], json!("status update"));
-    assert!(event_value["recordedAt"]
-        .as_str()
-        .is_some_and(|at| !at.is_empty()));
+    assert!(
+        event_value["recordedAt"]
+            .as_str()
+            .is_some_and(|at| !at.is_empty())
+    );
 
     // eventId is the TS digest: sha256 over the canonical {sessionId,
     // generation, event} JSON, `evt_` prefixed.

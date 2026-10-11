@@ -1,16 +1,17 @@
 //! Append-only recovery journals: the worker journal records the latest
 //! busy/operation state and queue snapshots.
 
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 pub(crate) const RECOVERY_JOURNAL_SUFFIX: &str = ".recovery.jsonl";
 
@@ -628,7 +629,7 @@ fn scan_worker_journal(path: &Path) -> Result<JournalScan> {
             return Err(anyhow::anyhow!(
                 "read worker journal {}: {error}",
                 path.display()
-            ))
+            ));
         }
     };
     // Byte-boundary scan: a crash-torn append can end mid multi-byte
@@ -1047,7 +1048,7 @@ impl WorkerRecoveryJournal {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(error).with_context(|| format!("open {} before replay", path.display()))
+                return Err(error).with_context(|| format!("open {} before replay", path.display()));
             }
         }
         // The file itself is private from its first write (the creation
@@ -1552,9 +1553,10 @@ fn parse_snapshot_lane(value: Option<&Value>) -> Vec<WorkerQueueItemRecord> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    use super::*;
 
     /// The macOS temp root resolves through /var (a symlink); the strict
     /// no-symlink placement contract requires the ORIGINAL path to be
@@ -2036,30 +2038,36 @@ mod tests {
         let receipt = serde_json::json!({ "id": "agentmsg_sync", "deliveryStatus": "delivered" });
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal.fail_next_cloud_sync();
-        assert!(journal
-            .record_queue_checkpoint(
-                "sess-a",
-                "sess-a-file",
-                None,
-                true,
-                "steer_queued",
-                &[],
-                &[],
-                Some(("msgreq_sync", &receipt)),
-            )
-            .is_err());
+        assert!(
+            journal
+                .record_queue_checkpoint(
+                    "sess-a",
+                    "sess-a-file",
+                    None,
+                    true,
+                    "steer_queued",
+                    &[],
+                    &[],
+                    Some(("msgreq_sync", &receipt)),
+                )
+                .is_err()
+        );
         assert!(journal.is_quarantined());
         assert!(fs::read_to_string(&path).unwrap().contains("msgreq_sync"));
-        assert!(journal
-            .record("sess-a", "sess-a-file", None, false, "turn_end")
-            .is_err());
+        assert!(
+            journal
+                .record("sess-a", "sess-a-file", None, false, "turn_end")
+                .is_err()
+        );
         let before = fs::read(&path).unwrap();
         // Even a readable complete line is not admissible if the restart
         // cannot successfully sync the journal before replaying it.
-        assert!(WorkerRecoveryJournal::open_with_sync(&path, |_| {
-            Err(std::io::Error::other("injected reopen fsync failure"))
-        })
-        .is_err());
+        assert!(
+            WorkerRecoveryJournal::open_with_sync(&path, |_| {
+                Err(std::io::Error::other("injected reopen fsync failure"))
+            })
+            .is_err()
+        );
         assert_eq!(fs::read(&path).unwrap(), before);
         drop(journal);
         let mut reopened = WorkerRecoveryJournal::open(&path).unwrap();

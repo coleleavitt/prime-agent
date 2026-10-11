@@ -9,15 +9,36 @@ use serde_json::{Map, Value};
 
 use crate::js::{canonical_json, sha256_hex};
 use crate::reducer::{
-    empty_ravo_state, ravo_extend_opponents, ravo_mark_provisional, ravo_step, ravo_w, GateStatus,
-    RavoChampion, RavoConfig, RavoCriterion, RavoCriterionObservation, RavoEvaluation,
-    RavoGateCertificate, RavoObservation, RavoOpponentPool, RavoProposal, RavoRejection, RavoState,
-    RavoWindowClock, WindowSpan,
+    GateStatus,
+    RavoChampion,
+    RavoConfig,
+    RavoCriterion,
+    RavoCriterionObservation,
+    RavoEvaluation,
+    RavoGateCertificate,
+    RavoObservation,
+    RavoOpponentPool,
+    RavoProposal,
+    RavoRejection,
+    RavoState,
+    RavoWindowClock,
+    WindowSpan,
+    empty_ravo_state,
+    ravo_extend_opponents,
+    ravo_mark_provisional,
+    ravo_step,
+    ravo_w,
 };
 use crate::referee::{
-    failure_opponent_passed, is_referee_opponent_id, referee_detail, referee_opponent_fingerprint,
-    referee_opponent_id, referee_opponent_passed, referee_verdict_is_evidence, RefereeVerdict,
+    RefereeVerdict,
     RefereeVerdictStatus,
+    failure_opponent_passed,
+    is_referee_opponent_id,
+    referee_detail,
+    referee_opponent_fingerprint,
+    referee_opponent_id,
+    referee_opponent_passed,
+    referee_verdict_is_evidence,
 };
 
 /// The criteria every `/refine` is judged on.

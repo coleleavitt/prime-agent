@@ -2,13 +2,33 @@
 //! `PromptSubmitNote`'s fold-back), the prompt stash's capture and restore, the side-question
 //! turns, and the pasted-image registry.
 
-use super::{
-    anyhow, collect_marked_images, evict_images_to_budget, format_image_marker, image_marker_ids,
-    mpsc, strip_image_markers, AgentView, DaemonClient, DaemonCommand, DockFold, Duration,
-    LoadedImage, Map, PendingConfirm, PromptStash, RebuildKind, Result, SessionUi,
-    SlashCommandRegistry, StatusKind, Value, UI_REQUEST_TIMEOUT_MS,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    AgentView,
+    DaemonClient,
+    DaemonCommand,
+    DockFold,
+    Duration,
+    LoadedImage,
+    Map,
+    PendingConfirm,
+    PromptStash,
+    RebuildKind,
+    Result,
+    SessionUi,
+    SlashCommandRegistry,
+    StatusKind,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    anyhow,
+    collect_marked_images,
+    evict_images_to_budget,
+    format_image_marker,
+    image_marker_ids,
+    mpsc,
+    strip_image_markers,
+};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SubmitBehavior {
     Steer,

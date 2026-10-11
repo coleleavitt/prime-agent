@@ -14,11 +14,11 @@ use std::sync::Arc;
 use pa_computer_use::telemetry::{NoTelemetry, TelemetryEvent, TelemetrySink};
 use pa_computer_use::{ComputerUse, HostConfig};
 use pa_telemetry::TelemetryClient;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::host_requests::handle_telemetry_emit_host_request;
-use super::telemetry::{RecordingSwitch, TelemetryWiring, EXECUTION_MODE_UNKNOWN};
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use super::telemetry::{EXECUTION_MODE_UNKNOWN, RecordingSwitch, TelemetryWiring};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 
 /// Forwards the crate's events through the kernel bridge's validation.
 struct BridgeTelemetry {
@@ -89,9 +89,10 @@ pub(crate) fn register_host_handlers(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_computer_use::REQUEST_TYPES;
     use pa_telemetry::MockSink;
+
+    use super::*;
 
     // Only the registration is exercised here: invoking a request detects
     // the live desktop's backend, and tests never touch the user's session.

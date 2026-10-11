@@ -11,12 +11,23 @@
 //! relaunches it. Every digest is RFC 8785 and byte-compatible with TS.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::capture::{
-    digest_value, seal, sealed_digest, CaptureClosure, CaptureStopReason, ExactResult, ExactUsage,
-    Finality, NoneReason, SafeError, SafeErrorCode, TerminalCapture, TurnBinding,
+    CaptureClosure,
+    CaptureStopReason,
+    ExactResult,
+    ExactUsage,
+    Finality,
+    NoneReason,
     PLACEHOLDER_DIGEST,
+    SafeError,
+    SafeErrorCode,
+    TerminalCapture,
+    TurnBinding,
+    digest_value,
+    seal,
+    sealed_digest,
 };
 use super::wire::WireError;
 
@@ -517,7 +528,7 @@ pub fn validate_settlement_commit(commit: &AtomicSettlementCommit) -> Result<(),
             }
         }
         TerminalCapture::Ambiguous(_) if !sealed_matches(&capture, "evidenceDigest") => {
-            return fail("capture_evidence_digest")
+            return fail("capture_evidence_digest");
         }
         TerminalCapture::Ambiguous(_) => {}
     }
@@ -525,10 +536,10 @@ pub fn validate_settlement_commit(commit: &AtomicSettlementCommit) -> Result<(),
         .map_err(|_| CommitInvalid("closure_shape"))?;
     match &commit.capture_closure {
         CaptureClosure::Observed(_) if !sealed_matches(&closure, "closureDigest") => {
-            return fail("closure_digest")
+            return fail("closure_digest");
         }
         CaptureClosure::Ambiguous(_) if !sealed_matches(&closure, "evidenceDigest") => {
-            return fail("closure_evidence_digest")
+            return fail("closure_evidence_digest");
         }
         _ => {}
     }

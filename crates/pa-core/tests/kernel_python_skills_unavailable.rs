@@ -19,10 +19,11 @@ use std::sync::{Arc, Mutex};
 use pa_core::kernel::bootstrap::{KernelPythonSkill, UnavailablePythonSkills};
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::HostRequestHandlers;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
 use pa_core::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
 use pa_core::session_engine::skills_unavailable_notice::{
-    notice_message, PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE,
+    PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE,
+    notice_message,
 };
 use pa_core::session_engine::{PromptOptions, PromptOutcome};
 use pa_types::session::FileEntry;

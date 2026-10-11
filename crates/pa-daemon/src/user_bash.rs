@@ -3,17 +3,17 @@
 //! `bash_start`/`bash_output`/`bash_end` events and the `bashExecution`
 //! durable row. A TS-stack port: sanitization, the 50KB window, the spill.
 
-use pa_types::sync::MutexExt;
 use std::io::Write;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use serde_json::{json, Map, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::Mutex;
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 /// Streaming window: chunks are retained (spilled to disk beyond this).
@@ -124,7 +124,7 @@ impl Worker {
                             command_type,
                             "lines must be between 1 and 200",
                             None,
-                        )
+                        );
                     }
                 },
             }
@@ -750,11 +750,7 @@ impl OutputSpill {
             }
         }
         self.file = None;
-        if self.failed {
-            None
-        } else {
-            self.path
-        }
+        if self.failed { None } else { self.path }
     }
 }
 
@@ -814,8 +810,7 @@ pub(crate) fn emit_session_event_frame(
     events: &Arc<crate::worker::EventPump>,
     event: Value,
 ) {
-    use crate::protocol::create_daemon_event_meta;
-    use crate::protocol::DaemonOutbound;
+    use crate::protocol::{DaemonOutbound, create_daemon_event_meta};
     use crate::worker::OutboundFrame;
     let mut core = core.lock_or_recover();
     let sequence = core.last_event_sequence + 1;
@@ -840,9 +835,11 @@ pub(crate) fn emit_session_event_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker(cwd: &std::path::Path) -> crate::test_support::InTestDir<Arc<Worker>> {
         created_sandboxed_worker(cwd, json!({ "responses": ["ack"] }), "{}", json!({})).await

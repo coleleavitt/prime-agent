@@ -7,22 +7,32 @@
 //! composition, and the exact tool schemas.
 
 #![cfg(test)]
-use pa_types::sync::MutexExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use pa_types::sync::MutexExt;
+
 use crate::tools::bash;
 use crate::tools::code_preview::preview_bash_command;
 use crate::tools::code_preview_python::preview_ipython_code;
-use crate::tools::edit::{create_edit_tool_definition, execute_edit, LocalEditOperations};
+use crate::tools::edit::{LocalEditOperations, create_edit_tool_definition, execute_edit};
 use crate::tools::ipython::{
-    self, ExecuteResult, ExecuteStatus, IpythonKernelProvisioner, IpythonToolOptions,
-    IpythonToolUi, KernelAttachment, KernelBusyAfterInterruptError, KernelErrorInfo,
-    KernelExecError, KernelExecuteOptions, KernelExecutor,
+    self,
+    ExecuteResult,
+    ExecuteStatus,
+    IpythonKernelProvisioner,
+    IpythonToolOptions,
+    IpythonToolUi,
+    KernelAttachment,
+    KernelBusyAfterInterruptError,
+    KernelErrorInfo,
+    KernelExecError,
+    KernelExecuteOptions,
+    KernelExecutor,
 };
 use crate::tools::tool_definition::ToolDefinition;
-use crate::tools::truncate::{truncate_head, truncate_tail, TruncationOptions};
+use crate::tools::truncate::{TruncationOptions, truncate_head, truncate_tail};
 
 const CORPUS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/corpus");
 

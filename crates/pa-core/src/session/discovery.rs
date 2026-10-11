@@ -321,8 +321,9 @@ fn edit_distance(left: &[char], right: &[char]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::FileEntry;
+
+    use super::*;
 
     fn write_session(dir: &Path, id: &str, cwd: &str) -> PathBuf {
         let path = dir.join(format!("{id}.jsonl"));

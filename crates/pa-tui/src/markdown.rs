@@ -17,12 +17,12 @@ mod tests;
 
 pub use inline::render_inline;
 pub use mermaid_blocks::MermaidMode;
-pub(crate) use mermaid_blocks::{drawn_spans, notice_style, MermaidPalette, MermaidRender};
+pub(crate) use mermaid_blocks::{MermaidPalette, MermaidRender, drawn_spans, notice_style};
+use ratatui::style::{Modifier, Style};
+use ratatui::text as rt;
 
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
-use ratatui::text as rt;
 
 /// Styling hooks resolved from a theme (plus the settings-driven `code_block_indent`; not
 /// `Copy` because of the indent `String`).

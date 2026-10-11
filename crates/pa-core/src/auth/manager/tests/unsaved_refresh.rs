@@ -4,9 +4,10 @@
 //! this request, every later lookup in this process, and other processes
 //! sharing the store, until a retried write lands it in `auth.json`.
 
-use super::*;
 use std::io::{BufRead as _, Write as _};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use super::*;
 
 const STORED_ACCESS: &str = "sk-stored-access-0";
 const STORED_REFRESH: &str = "sk-stored-refresh-0";
@@ -380,11 +381,13 @@ fn an_unsaved_credential_that_expires_refreshes_with_its_own_refresh_token() {
     // Writes recover: the save releases the claim this process held.
     backend.failing.store(false, Ordering::SeqCst);
     auth.get_api_key(PROVIDER);
-    assert!(crate::platform::lock_dir::LockDir::acquire(
-        &sidecar(dir.path(), "refresh", PROVIDER),
-        std::time::Duration::from_secs(10)
-    )
-    .is_ok());
+    assert!(
+        crate::platform::lock_dir::LockDir::acquire(
+            &sidecar(dir.path(), "refresh", PROVIDER),
+            std::time::Duration::from_secs(10)
+        )
+        .is_ok()
+    );
 }
 
 /// Collects every event and span field as text, with its level.
@@ -447,8 +450,7 @@ const LOG_CHILD_ENV: &str = "PA_AUTH_UNSAVED_LOG_CHILD";
 #[test]
 fn the_unsaved_login_is_reported_once_and_names_no_token() {
     const PROVIDER: &str = "x-unsaved-reported";
-    const NAME: &str =
-        "auth::manager::tests::unsaved_refresh::the_unsaved_login_is_reported_once_and_names_no_token";
+    const NAME: &str = "auth::manager::tests::unsaved_refresh::the_unsaved_login_is_reported_once_and_names_no_token";
     if std::env::var_os(LOG_CHILD_ENV).is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", NAME, "--nocapture", "--test-threads=1"])

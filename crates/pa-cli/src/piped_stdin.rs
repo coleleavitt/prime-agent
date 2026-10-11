@@ -4,8 +4,7 @@
 //! Workers and CI runners spawn this CLI with a stdin pipe they never write
 //! to or close; the read gives up after an idle window a live producer resets.
 
-use std::io::IsTerminal as _;
-use std::io::Read as _;
+use std::io::{IsTerminal as _, Read as _};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 

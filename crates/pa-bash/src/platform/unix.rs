@@ -7,14 +7,13 @@
 use std::io::{PipeReader, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt as _;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use std::os::unix::process::CommandExt as _;
-
 use process_wrap::std::{ChildWrapper, CommandWrap, ProcessSession};
-use rustix::event::{poll, PollFd, PollFlags};
-use rustix::process::{kill_process_group, test_kill_process_group, Pid};
+use rustix::event::{PollFd, PollFlags, poll};
+use rustix::process::{Pid, kill_process_group, test_kill_process_group};
 
 use super::{Containment, Signal};
 

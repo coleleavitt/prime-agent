@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::element::{cap, Element, Observation, Pair, Rect, MAX_ACTIONS, MAX_DEPTH, MAX_ELEMENTS};
-use crate::error::{head, unsupported, ComputerUseError, Result};
+use crate::element::{Element, MAX_ACTIONS, MAX_DEPTH, MAX_ELEMENTS, Observation, Pair, Rect, cap};
+use crate::error::{ComputerUseError, Result, head, unsupported};
 use crate::platform::Fingerprint;
 use crate::pyfmt::repr_float;
-use crate::secure::{is_secure_field, MAC_SECURE_ROLE, MAC_SECURE_SUBROLE};
+use crate::secure::{MAC_SECURE_ROLE, MAC_SECURE_SUBROLE, is_secure_field};
 
 /// The per-reference messaging timeout every AX read carries.
 pub(crate) const MESSAGING_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -107,7 +107,7 @@ pub(crate) trait Ax: Send + Sync {
     fn action_names(&self, node: &Self::Node) -> std::result::Result<Vec<String>, AxError>;
     fn perform(&self, node: &Self::Node, action: &str) -> std::result::Result<(), AxError>;
     fn is_settable(&self, node: &Self::Node, attribute: &str)
-        -> std::result::Result<bool, AxError>;
+    -> std::result::Result<bool, AxError>;
     fn set_string(
         &self,
         node: &Self::Node,

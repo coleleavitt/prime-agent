@@ -1,6 +1,6 @@
-use super::*;
-
 use std::os::unix::fs::PermissionsExt;
+
+use super::*;
 
 #[test]
 fn boot_cleanup_preserves_unverifiable_journals_and_waiting_callers_status() {

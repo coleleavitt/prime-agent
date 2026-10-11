@@ -4,20 +4,22 @@
 //! it burns on first use (before the token is even checked), so a leaked
 //! or replayed ticket is worthless.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pa_types::daemon::{
-    is_session_plane_daemon_command, DaemonPeerCommand, DaemonWorkerCommand, DaemonWorkerPeerGrant,
+    DaemonPeerCommand,
+    DaemonWorkerCommand,
+    DaemonWorkerPeerGrant,
+    is_session_plane_daemon_command,
 };
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::util::iso_to_unix_ms;
-use crate::worker::AuthOutcome;
-use crate::worker::Worker;
+use crate::worker::{AuthOutcome, Worker};
 
 /// TS `PEER_GRANT_TTL_LIMIT_MS`: a grant whose expiry is further out than
 /// this is invalid at registration, so a supervisor cannot mint long-lived
@@ -359,8 +361,9 @@ impl Worker {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::Map;
+
+    use super::*;
 
     fn grant_context() -> GrantContext {
         GrantContext {
@@ -637,9 +640,11 @@ mod tests {
         }
         assert!(!role.streams_events());
         assert!(!ConnectionRole::Unauthenticated.streams_events());
-        assert!(ConnectionRole::Supervisor {
-            generation: "sup:1".to_string()
-        }
-        .streams_events());
+        assert!(
+            ConnectionRole::Supervisor {
+                generation: "sup:1".to_string()
+            }
+            .streams_events()
+        );
     }
 }

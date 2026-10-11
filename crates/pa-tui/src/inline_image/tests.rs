@@ -1,21 +1,42 @@
-use super::painter::Painter;
-use super::payload::{
-    decode_gif_first_frame, decode_webp_first_frame, encode_png_rgb, gif_base64_to_rgba,
-    jpeg_base64_to_png, shrink_rgb, webp_base64_to_png, webp_base64_to_rgba, KittyFormat,
-    KittyPayload, KittyPayloadState, PayloadSource, Rgba,
-};
-use super::plan::{plan, Visible};
-use super::*;
-use crate::terminal_image::ImageTerminal;
-use crate::terminal_image::{
-    clear_image_protocol_override, delete_kitty_image, encode_iterm2, encode_kitty,
-    kitty_delete_placements, kitty_place, kitty_transmit, set_cell_dimensions_override,
-    Iterm2Options, Iterm2Size, KittyCrop, KittyOptions,
-};
-use base64::Engine;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Read as _;
+
+use base64::Engine;
+
+use super::painter::Painter;
+use super::payload::{
+    KittyFormat,
+    KittyPayload,
+    KittyPayloadState,
+    PayloadSource,
+    Rgba,
+    decode_gif_first_frame,
+    decode_webp_first_frame,
+    encode_png_rgb,
+    gif_base64_to_rgba,
+    jpeg_base64_to_png,
+    shrink_rgb,
+    webp_base64_to_png,
+    webp_base64_to_rgba,
+};
+use super::plan::{Visible, plan};
+use super::*;
+use crate::terminal_image::{
+    ImageTerminal,
+    Iterm2Options,
+    Iterm2Size,
+    KittyCrop,
+    KittyOptions,
+    clear_image_protocol_override,
+    delete_kitty_image,
+    encode_iterm2,
+    encode_kitty,
+    kitty_delete_placements,
+    kitty_place,
+    kitty_transmit,
+    set_cell_dimensions_override,
+};
 
 const KITTY: ImageTerminal = ImageTerminal {
     protocol: ImageProtocol::Kitty,
@@ -650,10 +671,12 @@ fn the_session_frame_reserves_the_preview_and_the_exit_flush_keeps_its_text() {
     // The cell paint never sees a marker.
     for line in &frame {
         let painted = crate::markdown::to_ratatui_line(line);
-        assert!(!painted
-            .spans
-            .iter()
-            .any(|span| span.content.contains("pa-image")));
+        assert!(
+            !painted
+                .spans
+                .iter()
+                .any(|span| span.content.contains("pa-image"))
+        );
     }
     let mut scrollback: Vec<u8> = Vec::new();
     view.stream_flush_to(&mut scrollback, 80, 40)
@@ -715,7 +738,7 @@ fn a_preview_scrolling_out_of_the_window_shrinks_to_its_visible_band() {
 /// re-creates the virtual placement; the release frees the data, wrapped.
 #[test]
 fn tmux_kitty_transmits_once_and_lets_the_cells_move_the_image() {
-    use crate::terminal_image::kitty_graphics::{tmux_passthrough, PLACEHOLDER};
+    use crate::terminal_image::kitty_graphics::{PLACEHOLDER, tmux_passthrough};
     let _terminal = Terminal::with_terminal(Some(KITTY_TMUX));
     let image = PanelImage::new("dG11eA==", "image/png", dims(200, 100));
     let stub = kitty_stub(&image);
@@ -732,9 +755,11 @@ fn tmux_kitty_transmits_once_and_lets_the_cells_move_the_image() {
         "\x1b_Ga=T,q=2,f=100,U=1,c=20,r=5,i={id};UE5HREFUQQ\x1b\\"
     ));
     let frame = frame_with(&image, BLOCK, 3, 12);
-    assert!(frame[3]
-        .iter()
-        .any(|span| span.content.starts_with(PLACEHOLDER)));
+    assert!(
+        frame[3]
+            .iter()
+            .any(|span| span.content.starts_with(PLACEHOLDER))
+    );
     assert_eq!(paint(&frame, (40, 12)), transmit);
     // Scrolled, cropped, gone, back, and a resize of the grid: tmux redraws
     // the placeholder text; nothing to write.
@@ -803,7 +828,7 @@ fn tmux_iterm2_places_through_the_passthrough_at_the_pane_origin() {
 /// exit flush still writes the textual fallback.
 #[test]
 fn the_tmux_session_frame_draws_placeholder_cells() {
-    use crate::terminal_image::kitty_graphics::{placeholder_cell, placeholder_rgb, PLACEHOLDER};
+    use crate::terminal_image::kitty_graphics::{PLACEHOLDER, placeholder_cell, placeholder_rgb};
     let _terminal = Terminal::with_terminal(Some(KITTY_TMUX));
     let mut view = session_view();
     let frame = view.render_frame(80, 40);
@@ -891,12 +916,14 @@ fn a_gif_preview_decodes_to_its_first_frame() {
     assert_eq!((frame.width, frame.height), (32, 16));
     assert_eq!(pixel(&frame, 2, 8), [255, 0, 0, 255]);
     assert_eq!(pixel(&frame, 29, 8), [0, 0, 255, 255]);
-    assert!(frame
-        .pixels
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .all(|p| *p != [0, 255, 0, 255]));
+    assert!(
+        frame
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p != [0, 255, 0, 255])
+    );
     // kitty's payload: the same pixels, zlib-compressed, `f=32,o=z`.
     let payload = gif_base64_to_rgba(&fixture(include_bytes!(
         "fixtures/split-32x16-animated.gif"

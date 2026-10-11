@@ -4,11 +4,19 @@
 
 use indexmap::IndexMap;
 use pa_ravo::{
-    normalize_entry_trust, normalize_trust_windows, open_trust_window,
-    record_trust_window_evidence, settle_harness_trust, trust_windows_value, TrustAdjustment,
-    TrustClaim, TrustWindowEvidence, TrustWindows, WindowSettlement,
+    TrustAdjustment,
+    TrustClaim,
+    TrustWindowEvidence,
+    TrustWindows,
+    WindowSettlement,
+    normalize_entry_trust,
+    normalize_trust_windows,
+    open_trust_window,
+    record_trust_window_evidence,
+    settle_harness_trust,
+    trust_windows_value,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const AT: &str = "2026-09-14T08:00:00.000Z";
 

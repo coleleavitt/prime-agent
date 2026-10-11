@@ -3,10 +3,16 @@
 //! session's live-model and thinking-level surfaces, the request API-key
 //! seam, and the persisted max-depth read.
 
-use super::{
-    AgentSessionEngine, EngineModelSelection, Model, RestoredSessionModel, SessionEngine, Value,
-};
 use pa_types::sync::RwLockExt;
+
+use super::{
+    AgentSessionEngine,
+    EngineModelSelection,
+    Model,
+    RestoredSessionModel,
+    SessionEngine,
+    Value,
+};
 
 impl AgentSessionEngine {
     /// This session's auth: the stored credentials, with the Prime

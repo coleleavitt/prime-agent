@@ -1,10 +1,11 @@
 //! The auto-retry unit battery: the retry-loop event surface, the
 //! park seam, and the stream-drop retry pins.
+use std::sync::{Arc, Mutex};
+
+use pa_agent::types::{AssistantContent, AssistantMessageDiagnostic, TextContent, Usage};
+
 use super::super::provider_retry::UNBOUNDED_BACKOFF_MS;
 use super::*;
-use pa_agent::types::{AssistantContent, AssistantMessageDiagnostic, TextContent, Usage};
-use std::sync::Arc;
-use std::sync::Mutex;
 
 fn error_message(
     kind: Option<&str>,
@@ -91,14 +92,12 @@ async fn quota_reset_beyond_cap_parks_through_the_seam() {
             // sentence; the park answers with the parked status.
             assert_eq!(message.stop_reason, StopReason::Error);
             assert!(abort.contains("Provider requested a 4363s wait"));
-            Some(
-                crate::session_engine::provider_park::ProviderParkOutcome {
-                    status_message: format!(
-                        "{abort}. Session parked until 2026-09-24T00:00:00.000Z and will resume automatically: {}",
-                        message.error_message.as_deref().unwrap_or("unknown error"),
-                    ),
-                },
-            )
+            Some(crate::session_engine::provider_park::ProviderParkOutcome {
+                status_message: format!(
+                    "{abort}. Session parked until 2026-09-24T00:00:00.000Z and will resume automatically: {}",
+                    message.error_message.as_deref().unwrap_or("unknown error"),
+                ),
+            })
         }) as crate::session_engine::provider_park::ParkFuture
     };
     let message = run_turn_with_auto_retry(
@@ -128,11 +127,13 @@ async fn quota_reset_beyond_cap_parks_through_the_seam() {
     // One parked end, no retry starts.
     assert_eq!(events.len(), 1, "one parked end: {events:?}");
     let final_error = match events.as_slice() {
-        [AutoRetryEvent::End {
-            success: false,
-            final_error: Some(final_error),
-            ..
-        }] => final_error.clone(),
+        [
+            AutoRetryEvent::End {
+                success: false,
+                final_error: Some(final_error),
+                ..
+            },
+        ] => final_error.clone(),
         other => panic!("expected one parked end, got {other:?}"),
     };
     assert!(final_error.contains("Session parked until 2026-09-24T00:00:00.000Z"));
@@ -167,11 +168,13 @@ async fn quota_reset_beyond_cap_keeps_the_give_up_when_the_seam_declines() {
     assert_eq!(message.stop_reason, StopReason::Error);
     let events = events.lock().unwrap().clone();
     let final_error = match events.as_slice() {
-        [AutoRetryEvent::End {
-            success: false,
-            final_error: Some(final_error),
-            ..
-        }] => final_error.clone(),
+        [
+            AutoRetryEvent::End {
+                success: false,
+                final_error: Some(final_error),
+                ..
+            },
+        ] => final_error.clone(),
         other => panic!("expected one give-up end, got {other:?}"),
     };
     assert!(final_error.contains("Provider requested a 4363s wait before retrying"));

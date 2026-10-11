@@ -10,17 +10,29 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use crate::claims::{
-    is_build_claim_command, merge_recall_claims, utf16_prefix, RecallClaim,
     RECALL_MAX_CLAIM_COMMAND_CHARS,
+    RecallClaim,
+    is_build_claim_command,
+    merge_recall_claims,
+    utf16_prefix,
 };
 use crate::mark::{
-    absent_skip_worktree_digest, capture_workspace, hex, workspace_digest, AbsentPresence,
-    AbsentSkipWorktree, CaptureFailure, WorkspaceSnapshot, WorkspaceState, RECALL_DIGEST_ALGORITHM,
-    RECALL_MAX_DIRTY_PATHS, RECALL_MAX_TAGGED_PATHS,
+    AbsentPresence,
+    AbsentSkipWorktree,
+    CaptureFailure,
+    RECALL_DIGEST_ALGORITHM,
+    RECALL_MAX_DIRTY_PATHS,
+    RECALL_MAX_TAGGED_PATHS,
+    WorkspaceSnapshot,
+    WorkspaceState,
+    absent_skip_worktree_digest,
+    capture_workspace,
+    hex,
+    workspace_digest,
 };
 use crate::time::{format_iso, parse_iso_millis};
 
@@ -473,9 +485,11 @@ mod tests {
             recall_repo_key("/work/my repo", agent),
             format!("my_repo.{hash}")
         );
-        assert!(recall_mark_path("/", agent)
-            .to_string_lossy()
-            .starts_with("/agent/recall/repo."));
+        assert!(
+            recall_mark_path("/", agent)
+                .to_string_lossy()
+                .starts_with("/agent/recall/repo.")
+        );
     }
 
     #[test]

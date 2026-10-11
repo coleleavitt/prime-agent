@@ -2,16 +2,37 @@
 //! worker-facing engine contract - model and goal config surfaces, the
 //! turn state machine, and the export/telemetry reads.
 
-use super::{
-    artifact_reference, image_delegation::ImageDelegationRun, json, map_thinking_level, now_millis,
-    persisted_rlm_max_depth, AgentSessionEngine, Arc, BranchSummaryOutcome, BranchSummaryRequest,
-    BranchSummaryRun, CompactionOutcome, CompactionRequest, CompactionRun, EngineEvent,
-    EngineModelSelection, ParentIdentity, PromptRequest, ProviderTarget, SessionEngine,
-    SideQuestionOutcome, SideQuestionRequest, StartupScope, TurnPrompt, Value,
-    DEFAULT_RLM_MAX_DEPTH,
-};
 use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_types::sync::{MutexExt, RwLockExt};
+
+use super::image_delegation::ImageDelegationRun;
+use super::{
+    AgentSessionEngine,
+    Arc,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    BranchSummaryRun,
+    CompactionOutcome,
+    CompactionRequest,
+    CompactionRun,
+    DEFAULT_RLM_MAX_DEPTH,
+    EngineEvent,
+    EngineModelSelection,
+    ParentIdentity,
+    PromptRequest,
+    ProviderTarget,
+    SessionEngine,
+    SideQuestionOutcome,
+    SideQuestionRequest,
+    StartupScope,
+    TurnPrompt,
+    Value,
+    artifact_reference,
+    json,
+    map_thinking_level,
+    now_millis,
+    persisted_rlm_max_depth,
+};
 
 impl SessionEngine for AgentSessionEngine {
     /// Swarm PR E's "watchers die with the session" at a session
@@ -569,7 +590,7 @@ impl SessionEngine for AgentSessionEngine {
             Err(error) => {
                 return CompactionOutcome::Failed {
                     error: error.to_string(),
-                }
+                };
             }
         };
         if let Err(error) = self.session_agent(&model) {
@@ -664,7 +685,7 @@ impl SessionEngine for AgentSessionEngine {
             Err(error) => {
                 return BranchSummaryOutcome::Failed {
                     error: error.to_string(),
-                }
+                };
             }
         };
         let api_key = self.resolve_request_api_key(&model);
@@ -944,7 +965,7 @@ impl SessionEngine for AgentSessionEngine {
                 return SideQuestionOutcome::Failed {
                     answer: String::new(),
                     error: error.to_string(),
-                }
+                };
             }
         };
         let agent = match self.session_agent(&model) {
@@ -953,7 +974,7 @@ impl SessionEngine for AgentSessionEngine {
                 return SideQuestionOutcome::Failed {
                     answer: String::new(),
                     error: error.to_string(),
-                }
+                };
             }
         };
         let question = request.question.clone();

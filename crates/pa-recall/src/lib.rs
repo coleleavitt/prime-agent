@@ -17,26 +17,55 @@ mod time;
 mod witness;
 
 pub use claims::{
-    is_build_claim_command, mentions_build_command, merge_recall_claims, ClaimStatus, ClaimVerdict,
-    RecallClaim, RECALL_MAX_CLAIMS, RECALL_MAX_CLAIM_COMMAND_CHARS,
+    ClaimStatus,
+    ClaimVerdict,
+    RECALL_MAX_CLAIM_COMMAND_CHARS,
+    RECALL_MAX_CLAIMS,
+    RecallClaim,
+    is_build_claim_command,
+    mentions_build_command,
+    merge_recall_claims,
 };
 pub use feature::{
-    is_workspace_recall_enabled, MarkOutcome, MarkWriter, RecallOptions, SkipReason,
-    WorkspaceRecall, WORKSPACE_RECALL_ENV,
+    MarkOutcome,
+    MarkWriter,
+    RecallOptions,
+    SkipReason,
+    WORKSPACE_RECALL_ENV,
+    WorkspaceRecall,
+    is_workspace_recall_enabled,
 };
-pub use git::{find_recall_repo, resolve_repo_root, GitFailure};
+pub use git::{GitFailure, find_recall_repo, resolve_repo_root};
 pub use mark::{
-    capture_workspace, is_fully_verifiable, workspace_digest, AbsentPresence, AbsentSkipWorktree,
-    CaptureFailure, WorkspaceSnapshot, WorkspaceState, RECALL_DIGEST_ALGORITHM,
+    AbsentPresence,
+    AbsentSkipWorktree,
+    CaptureFailure,
+    RECALL_DIGEST_ALGORITHM,
     RECALL_UNVERIFIABLE,
+    WorkspaceSnapshot,
+    WorkspaceState,
+    capture_workspace,
+    is_fully_verifiable,
+    workspace_digest,
 };
-pub use render::{render_recall_block, RECALL_BLOCK_MAX_BYTES};
+pub use render::{RECALL_BLOCK_MAX_BYTES, render_recall_block};
 pub use store::{
-    read_recall_mark, read_recall_skip, recall_mark_path, recall_repo_key, recall_skip_path,
-    write_recall_mark, MarkSkipReason, RecallClaimInput, RecallMarkFile, WrittenMark,
+    MarkSkipReason,
+    RecallClaimInput,
+    RecallMarkFile,
+    WrittenMark,
+    read_recall_mark,
+    read_recall_skip,
+    recall_mark_path,
+    recall_repo_key,
+    recall_skip_path,
+    write_recall_mark,
 };
 pub use time::format_iso;
 pub use witness::{
-    witness_workspace, RecallWitnessReport, RECALL_COMMITS_UNLISTED, RECALL_MARK_PREDATES_PRESENCE,
+    RECALL_COMMITS_UNLISTED,
+    RECALL_MARK_PREDATES_PRESENCE,
     RECALL_PRESENCE_CHANGED,
+    RecallWitnessReport,
+    witness_workspace,
 };

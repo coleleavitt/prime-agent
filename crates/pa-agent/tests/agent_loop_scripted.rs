@@ -9,13 +9,26 @@ use std::time::Duration;
 
 use pa_agent::abort::AbortSignal;
 use pa_agent::agent::{Agent, AgentOptions};
-use pa_agent::agent_loop::{run_agent_loop_continue, AgentEventSink, AgentLoopConfig};
+use pa_agent::agent_loop::{AgentEventSink, AgentLoopConfig, run_agent_loop_continue};
 use pa_agent::scripted::ScriptedProvider;
 use pa_agent::stream::AssistantMessageEvent;
 use pa_agent::types::{
-    AgentContext, AgentEvent, AgentMessage, AgentTool, AgentToolResult, AgentToolUpdateCallback,
-    AssistantContent, AssistantMessage, Message, Model, StopReason, TextContent, ToolExecutionMode,
-    ToolResultContent, ToolResultMessage, UserContent,
+    AgentContext,
+    AgentEvent,
+    AgentMessage,
+    AgentTool,
+    AgentToolResult,
+    AgentToolUpdateCallback,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    Model,
+    StopReason,
+    TextContent,
+    ToolExecutionMode,
+    ToolResultContent,
+    ToolResultMessage,
+    UserContent,
 };
 
 fn test_model() -> Model {
@@ -934,7 +947,9 @@ async fn the_repetition_guard_stops_a_looping_stream() {
         (
             StopReason::Error,
             Some("repetition_loop"),
-            Some("Generation stopped by the repetition guard: the output repeated one 4-character unit 507 times in a row"),
+            Some(
+                "Generation stopped by the repetition guard: the output repeated one 4-character unit 507 times in a row"
+            ),
         )
     );
     assert_eq!(

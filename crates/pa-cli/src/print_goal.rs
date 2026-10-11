@@ -2,8 +2,8 @@
 //! in-loop continuation hook, and the driver's queue arms (the in-run shape
 //! probed against the TS binary; budget/threshold stops).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, Message};
@@ -12,7 +12,7 @@ use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
 use pa_core::session_engine::goal_driver::UsageOutcome;
 use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_types::session::CustomMessage;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 /// Where the boundary's json events go: stdout in the product, a captured buffer in tests (the same
@@ -640,9 +640,10 @@ impl PrintGoalSurface {
 #[cfg(test)]
 // The faux provider registry is process-global: one std lock serializes every test that drives it.
 mod tests {
-    use super::*;
     use pa_core::session_engine::provider_adapter::json_round_trip;
     use serde_json::json;
+
+    use super::*;
 
     /// One test at a time over the global faux registry.
     static FAUX_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

@@ -105,9 +105,10 @@ fn session_is_archived(session_file: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Map;
+
     use super::*;
     use crate::util::{iso_from_unix_ms, now_ms};
-    use serde_json::Map;
 
     fn descriptor(session_file: Option<&Path>) -> DaemonWorkerDescriptor {
         DaemonWorkerDescriptor {
@@ -168,13 +169,15 @@ mod tests {
         let file = session_file(Some("active"));
         let recorded_at = iso_from_unix_ms(now_ms() - 1_000);
         let agent_dir = agent_dir();
-        assert!(revival_veto(
-            &agent_dir,
-            &descriptor(Some(&file)),
-            false,
-            Some(&recorded_at)
-        )
-        .is_none());
+        assert!(
+            revival_veto(
+                &agent_dir,
+                &descriptor(Some(&file)),
+                false,
+                Some(&recorded_at)
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -320,12 +323,14 @@ mod tests {
             crate::lease::acquire_runtime_session_lease(&file, &agent_dir)
                 .expect("the test process acquires the lease"),
         );
-        assert!(revival_veto(
-            &agent_dir,
-            &descriptor(Some(&file)),
-            false,
-            Some(&recorded_at)
-        )
-        .is_none());
+        assert!(
+            revival_veto(
+                &agent_dir,
+                &descriptor(Some(&file)),
+                false,
+                Some(&recorded_at)
+            )
+            .is_none()
+        );
     }
 }

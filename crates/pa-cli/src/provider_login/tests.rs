@@ -277,11 +277,12 @@ async fn login_stores_an_api_key_and_logout_removes_it() {
                     .to_string()
             )
         );
-    assert!(auth
-        .logout_options()
-        .await
-        .iter()
-        .all(|row| row.id != "openai"));
+    assert!(
+        auth.logout_options()
+            .await
+            .iter()
+            .all(|row| row.id != "openai")
+    );
 }
 
 #[tokio::test]
@@ -325,11 +326,12 @@ async fn a_stored_web_search_key_pairs_with_the_logout_row() {
                     .to_string()
             )
         );
-    assert!(auth
-        .logout_options()
-        .await
-        .iter()
-        .all(|row| row.id != "serper"));
+    assert!(
+        auth.logout_options()
+            .await
+            .iter()
+            .all(|row| row.id != "serper")
+    );
 }
 
 /// A credential source with one removable login.
@@ -405,11 +407,12 @@ async fn a_credential_source_login_logs_out_through_the_source() {
             "Logged out of {provider}\nRemoved from the stub store."
         ))
     );
-    assert!(auth
-        .logout_options()
-        .await
-        .iter()
-        .all(|row| row.id != provider));
+    assert!(
+        auth.logout_options()
+            .await
+            .iter()
+            .all(|row| row.id != provider)
+    );
     assert_eq!(
         auth.logout(&row).await,
         ProviderAuthOutcome::Status(format!("{provider} is not configured."))

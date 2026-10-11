@@ -7,8 +7,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use pa_types::daemon::update_flow::{
-    prepared_marker_expiry, update_marker_path, PreparedMarkerExpiry, UpdateId, UpdateStatusCounts,
-    UpdateStatusFailure, UpdateTimeoutBudget,
+    PreparedMarkerExpiry,
+    UpdateId,
+    UpdateStatusCounts,
+    UpdateStatusFailure,
+    UpdateTimeoutBudget,
+    prepared_marker_expiry,
+    update_marker_path,
 };
 use serde_json::Value;
 

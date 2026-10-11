@@ -1,7 +1,7 @@
 //! The telemetry event record.
 
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::properties::Properties;
 use crate::time::EpochMs;

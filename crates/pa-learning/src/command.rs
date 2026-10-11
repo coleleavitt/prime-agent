@@ -10,21 +10,35 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::chart::{render_ascii_chart, ChartOptions, ChartSeries};
-use crate::index::{read_learning_index, seal_learning_days, SealResult};
+use crate::chart::{ChartOptions, ChartSeries, render_ascii_chart};
+use crate::index::{SealResult, read_learning_index, seal_learning_days};
 use crate::js::{pad_end, pad_start, to_exponential, to_fixed, to_precision};
 use crate::json::stringify_pretty;
 use crate::report::{
-    build_learning_report, FingerprintTrend, LearningReport, Window, DEFAULT_MIN_COHORT_N,
+    DEFAULT_MIN_COHORT_N,
+    FingerprintTrend,
+    LearningReport,
+    Window,
+    build_learning_report,
 };
 use crate::store::{
-    agent_log_path, learning_index_dir, read_backfill_days, trajectory_backfill_dir,
-    trajectory_index_path, write_trajectory_index,
+    agent_log_path,
+    learning_index_dir,
+    read_backfill_days,
+    trajectory_backfill_dir,
+    trajectory_index_path,
+    write_trajectory_index,
 };
 use crate::trajectory::{
-    seal_trajectory_windows, SealTrajectoryOptions, TrajectoryLabel, TrajectoryLabelKind,
-    TrajectoryRateWindow, TrajectoryStoreFile, DEFAULT_MIN_TRAJECTORY_WINDOWS,
-    DEFAULT_TRAJECTORY_INTERNALIZED_GAP, PRIME_CORPUS,
+    DEFAULT_MIN_TRAJECTORY_WINDOWS,
+    DEFAULT_TRAJECTORY_INTERNALIZED_GAP,
+    PRIME_CORPUS,
+    SealTrajectoryOptions,
+    TrajectoryLabel,
+    TrajectoryLabelKind,
+    TrajectoryRateWindow,
+    TrajectoryStoreFile,
+    seal_trajectory_windows,
 };
 
 /// The command line.
@@ -322,11 +336,7 @@ fn format_rows(trends: &[FingerprintTrend], limit: usize) -> Vec<String> {
 }
 
 fn plural(count: usize) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
-    }
+    if count == 1 { "" } else { "s" }
 }
 
 /// The report as the command prints it (TS `formatLearningReport`).

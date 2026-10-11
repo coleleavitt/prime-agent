@@ -18,8 +18,8 @@
 
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use super::labels::{suffixed_spawn_form, SUBAGENT_NAME_MAX_LENGTH};
-use super::pyvalue::{py_repr, py_str_repr, py_strip, PyValue};
+use super::labels::{SUBAGENT_NAME_MAX_LENGTH, suffixed_spawn_form};
+use super::pyvalue::{PyValue, py_repr, py_str_repr, py_strip};
 
 pub const FAILURE_POLICIES: [&str; 3] = ["fail_fast", "continue", "escalate"];
 pub const PORT_TYPES: [&str; 2] = ["text", "json"];

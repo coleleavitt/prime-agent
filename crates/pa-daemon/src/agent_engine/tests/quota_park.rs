@@ -243,15 +243,19 @@ async fn non_quota_and_no_reset_failures_do_not_park() {
     let dir = tempfile::TempDir::new().unwrap();
     let engine = park_engine(dir.path());
     let non_quota = quota_failure_message(Some("server_error"), Some(3_600_000));
-    assert!(engine
-        .park_for_quota_reset(&non_quota, "abort")
-        .await
-        .is_none());
+    assert!(
+        engine
+            .park_for_quota_reset(&non_quota, "abort")
+            .await
+            .is_none()
+    );
     let no_reset = quota_failure_message(Some("rate_limit"), None);
-    assert!(engine
-        .park_for_quota_reset(&no_reset, "abort")
-        .await
-        .is_none());
+    assert!(
+        engine
+            .park_for_quota_reset(&no_reset, "abort")
+            .await
+            .is_none()
+    );
     assert!(!engine.is_quota_parked());
 }
 
@@ -304,9 +308,11 @@ async fn consumed_wake_without_reset_re_arms_bounded() {
         .park_for_quota_reset(&no_reset, "abort")
         .await
         .expect("the re-arm fires");
-    assert!(outcome
-        .status_message
-        .starts_with("Session is parked until "));
+    assert!(
+        outcome
+            .status_message
+            .starts_with("Session is parked until ")
+    );
     let park = engine
         .quota_park
         .lock()

@@ -434,11 +434,13 @@ pub fn read_prime_cli_config(path: &Path) -> Option<PrimeCliConfig> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::VecDeque;
     use std::sync::Mutex;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    use super::*;
 
     /// A scripted transport: exact URL -> response, in call order.
     struct ScriptedHttp(Mutex<VecDeque<(String, PrimeHttpResponse)>>);

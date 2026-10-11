@@ -1,17 +1,44 @@
 //! Worker supervision: the watch loop, the restart backoff, and
 //! the spawn/connect plumbing.
-use super::routing::{fail_unsent_request, WORKER_REQUEST_TIMEOUT_MS, WORKER_SOCKET_CLOSED};
+use pa_types::sync::MutexExt;
+
+use super::routing::{WORKER_REQUEST_TIMEOUT_MS, WORKER_SOCKET_CLOSED, fail_unsent_request};
 use super::{
-    anyhow, connect_transport, create_command_payload, json, mpsc, persist_worker,
-    persist_worker_at, probe_worker_socket, util, write_frame, Arc, Child, ClientRouting, Command,
-    Context, DaemonWorkerLifecycle, Duration, Ordering, PathBuf, PrivateFrameReader,
-    ResidentWorker, Result, RouteAdmission, Supervisor, TempSync, TypedCreateRejection, Value,
-    WorkerReply, WorkerRequest, DEFAULT_PRIVATE_FRAME_LIMITS, ROUTE_TIMEOUT_MS,
+    Arc,
+    Child,
+    ClientRouting,
+    Command,
+    Context,
+    DEFAULT_PRIVATE_FRAME_LIMITS,
+    DaemonWorkerLifecycle,
+    Duration,
+    Ordering,
+    PathBuf,
+    PrivateFrameReader,
+    ROUTE_TIMEOUT_MS,
+    ResidentWorker,
+    Result,
+    RouteAdmission,
+    Supervisor,
+    TempSync,
+    TypedCreateRejection,
+    Value,
     WORKER_AUTH_FLOOR_MS,
+    WorkerReply,
+    WorkerRequest,
+    anyhow,
+    connect_transport,
+    create_command_payload,
+    json,
+    mpsc,
+    persist_worker,
+    persist_worker_at,
+    probe_worker_socket,
+    util,
+    write_frame,
 };
 use crate::lease::is_process_alive;
 use crate::registry::WorkerRelay;
-use pa_types::sync::MutexExt;
 
 pub(super) const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// A crash-path child that lived at least this long proved health: its death resets

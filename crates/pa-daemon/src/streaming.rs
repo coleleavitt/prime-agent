@@ -3,14 +3,14 @@
 //! every other frame flushes the parked update first, so wire order stays identical.
 //! The deltas are ADDITIVE, so the parked run merges delta text; block-end events flush it.
 
-use pa_types::sync::MutexExt;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde_json::{json, Map};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, json};
 
 use crate::engine::AssistantSnapshot;
-use crate::protocol::{create_daemon_event_meta, DaemonOutbound};
+use crate::protocol::{DaemonOutbound, create_daemon_event_meta};
 use crate::worker::OutboundFrame;
 
 /// One parked update flushes per interval; anything parked longer is a
@@ -191,8 +191,9 @@ mod tests {
         serde_json::from_slice::<Value>(&frame.payload).expect("session event payload")
     }
 
-    use serde_json::Value;
     use std::sync::Arc;
+
+    use serde_json::Value;
     use tokio::sync::broadcast;
 
     #[test]

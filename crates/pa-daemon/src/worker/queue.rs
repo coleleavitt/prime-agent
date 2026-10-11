@@ -1,10 +1,23 @@
 //! Queued input: the item model, the lanes, admission, delivery batching,
 //! and queue recovery.
-use super::{
-    emit_worker_event_with, json, oneshot, Arc, Duration, EventPump, Mutex, Notify, Result,
-    SessionCore, Value, VecDeque, WorkerRecoveryJournal, AUTONOMOUS_QUEUE_KEY,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    AUTONOMOUS_QUEUE_KEY,
+    Arc,
+    Duration,
+    EventPump,
+    Mutex,
+    Notify,
+    Result,
+    SessionCore,
+    Value,
+    VecDeque,
+    WorkerRecoveryJournal,
+    emit_worker_event_with,
+    json,
+    oneshot,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {

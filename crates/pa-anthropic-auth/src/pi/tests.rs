@@ -7,7 +7,7 @@ use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use super::*;
-use crate::pi::convert::tests::{cases, golden, version, Case};
+use crate::pi::convert::tests::{Case, cases, golden, version};
 use crate::shape::claude_code_headers;
 use crate::test_support::*;
 
@@ -305,7 +305,9 @@ fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
 
     assert!(run_command(&feature, "claude-fast", "on").starts_with("## Claude Fast Mode Enabled"));
     complete(&model, &served());
-    assert!(run_command(&feature, "claude-fast", "off").starts_with("## Claude Fast Mode Disabled"));
+    assert!(
+        run_command(&feature, "claude-fast", "off").starts_with("## Claude Fast Mode Disabled")
+    );
     complete(&model, &served());
 
     let requests = requests.lock_or_recover().clone();

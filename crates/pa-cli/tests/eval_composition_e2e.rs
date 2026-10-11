@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn isolated_home() -> tempfile::TempDir {
     tempfile::TempDir::new().unwrap()

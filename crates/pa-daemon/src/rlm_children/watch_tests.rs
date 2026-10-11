@@ -1,13 +1,15 @@
-use super::*;
-use crate::protocol::{response_failure, response_success};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
 use pa_core::kernel::rlm_runtime::RlmSpawnTarget;
 use pa_types::platform::transport::bind_transport;
 use pa_types::session::AgentMessage;
-use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
+
+use super::*;
+use crate::protocol::{response_failure, response_success};
 
 /// How the fake supervisor answers a child `kill`.
 enum FakeKill {
@@ -529,9 +531,11 @@ async fn a_worker_leaving_inside_the_settle_grace_keeps_the_verdict() {
     let notice = follow_up_rx
         .try_recv()
         .expect("the no-reply notice is still owed");
-    assert!(notice["customMessage"]["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("the child final answer")));
+    assert!(
+        notice["customMessage"]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("the child final answer"))
+    );
 }
 
 #[tokio::test]

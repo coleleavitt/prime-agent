@@ -5,10 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
-
-use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput, ThinkingLevelMap};
 use pa_types::JsNumber;
+use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput, ThinkingLevelMap};
+use serde::Deserialize;
 
 use crate::compat::is_model_compat;
 
@@ -215,8 +214,9 @@ fn no_control_chars_nonempty(value: &str, max: usize) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn entry(overrides: &serde_json::Value) -> serde_json::Value {
         let mut base = json!({

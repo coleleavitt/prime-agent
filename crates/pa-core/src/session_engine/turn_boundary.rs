@@ -7,16 +7,14 @@ use std::sync::Arc;
 
 use pa_agent::agent::Agent;
 use pa_types::session::FileEntry;
-use serde_json::{json, Value};
+use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
-use crate::session::manager::SessionManager;
-
-use pa_types::usage::{calculate_context_tokens, estimate_tokens, valid_assistant_usage};
-
-use super::compact_session::{prepare_compaction, CompactSkip};
+use super::compact_session::{CompactSkip, prepare_compaction};
 use super::engine::SessionEngine;
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
+use crate::session::manager::SessionManager;
 
 /// A scheduled compaction (kernel `compact.run`).
 #[derive(Debug, Clone, PartialEq)]

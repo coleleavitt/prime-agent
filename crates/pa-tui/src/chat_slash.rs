@@ -3,10 +3,11 @@
 //! in `success` / `mdLink`. The outcome rows render in the status-row class instead
 //! (operator ruling 2026-09-25: command output is system output, never user text).
 
+use ratatui::style::Style;
+
 use crate::theme::{Theme, ThemeBg};
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 /// `Box(2,1)` content width: 2 columns of padding on each side, matching
 /// the user-message block.

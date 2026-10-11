@@ -147,13 +147,17 @@ fn probe_memo_key_distinguishes_every_input_and_drops_on_invalidate() {
     lock_probe_memo()
         .get_or_insert_with(HashMap::new)
         .insert(key.clone(), PathBuf::new());
-    assert!(lock_probe_memo()
-        .as_ref()
-        .is_some_and(|memo| memo.contains_key(&key)));
+    assert!(
+        lock_probe_memo()
+            .as_ref()
+            .is_some_and(|memo| memo.contains_key(&key))
+    );
     invalidate_runtime_probe_cache();
-    assert!(lock_probe_memo()
-        .as_ref()
-        .is_none_or(|memo| !memo.contains_key(&key)));
+    assert!(
+        lock_probe_memo()
+            .as_ref()
+            .is_none_or(|memo| !memo.contains_key(&key))
+    );
 }
 
 /// A failed start invalidates only its own interpreter's verdicts: another

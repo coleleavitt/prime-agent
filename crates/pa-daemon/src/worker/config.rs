@@ -1,16 +1,20 @@
 //! The worker's spawn configuration: `WorkerConfig`, read from the
 //! supervisor-provided environment.
-use super::{
-    WORKER_ACTIVE_SESSION_ID_ENV, WORKER_INSTANCE_ID_ENV, WORKER_RECOVERY_JOURNAL_ENV,
-    WORKER_SCRIPT_ENV, WORKER_SOCKET_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
-    WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
-};
-
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
 
+use super::{
+    WORKER_ACTIVE_SESSION_ID_ENV,
+    WORKER_INSTANCE_ID_ENV,
+    WORKER_RECOVERY_JOURNAL_ENV,
+    WORKER_SCRIPT_ENV,
+    WORKER_SOCKET_ENV,
+    WORKER_SUPERVISOR_SOCKET_ENV,
+    WORKER_TELEMETRY_DISABLED_ENV,
+    WORKER_TOKEN_ENV,
+};
 use crate::paths;
 
 #[derive(Debug, Clone)]

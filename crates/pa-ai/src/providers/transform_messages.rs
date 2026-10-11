@@ -5,8 +5,18 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Map;
 
 use crate::types::{
-    AssistantContent, AssistantMessage, Message, Model, ModelExt, StopReason, TextContent,
-    ToolCall, ToolResultMessage, UserMessage, UserMessageContent, UserOrToolContent,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    Model,
+    ModelExt,
+    StopReason,
+    TextContent,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+    UserMessageContent,
+    UserOrToolContent,
 };
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER: &str = "(image omitted: model does not support images)";

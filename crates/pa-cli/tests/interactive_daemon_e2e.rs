@@ -5851,8 +5851,14 @@ async fn tui_accepted_then_killed_turn_renders_closed_error() {
 #[tokio::test]
 async fn tui_close_reason_rows_survive_late_turn_status() {
     for (reason, explanation) in [
-        ("shutdown", "The Prime Agent daemon shut down while this window was attached. The session transcript remains saved; restart Prime Agent and reopen it from Agents View."),
-        ("replaced", "The daemon replaced this agent session with another session. Reopen the current session from Agents View."),
+        (
+            "shutdown",
+            "The Prime Agent daemon shut down while this window was attached. The session transcript remains saved; restart Prime Agent and reopen it from Agents View.",
+        ),
+        (
+            "replaced",
+            "The daemon replaced this agent session with another session. Reopen the current session from Agents View.",
+        ),
     ] {
         assert_close_reason_survives_late_turn_status(reason, explanation).await;
     }

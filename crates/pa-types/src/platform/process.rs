@@ -620,11 +620,13 @@ mod liveness_tests {
             return;
         }
         // A spawned `ps` resolves to the fake and would answer `Some("ps:...")`.
-        assert!(!std::process::Command::new("ps")
-            .output()
-            .unwrap()
-            .stdout
-            .is_empty());
+        assert!(
+            !std::process::Command::new("ps")
+                .output()
+                .unwrap()
+                .stdout
+                .is_empty()
+        );
         assert_eq!(process_start_id(100_000_000), None);
         assert!(process_start_id(std::process::id()).is_some());
     }
@@ -635,8 +637,9 @@ mod liveness_tests {
 /// unresolvable on `PATH` (the test re-execs itself without one).
 #[cfg(all(test, target_vendor = "apple"))]
 mod darwin_process_record_tests {
-    use super::*;
     use std::process::{Command, Stdio};
+
+    use super::*;
 
     /// The identity earlier builds and the TS product recorded: `ps -o
     /// lstart=` under the pinned env - the removed production path, kept

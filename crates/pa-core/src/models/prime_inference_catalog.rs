@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput};
 use pa_types::JsNumber;
+use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput};
 use serde::{Deserialize, Serialize};
 
-use super::prime_inference::{is_private_prime_inference_model_id, PRIME_INFERENCE_BASE_URL};
+use super::prime_inference::{PRIME_INFERENCE_BASE_URL, is_private_prime_inference_model_id};
 
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MIN_CATALOG_COVERAGE: f64 = 0.5;
@@ -356,15 +356,17 @@ mod tests {
     use super::*;
 
     fn bundled() -> Vec<Model> {
-        vec![serde_json::from_value(serde_json::json!({
-            "id": "z-ai/glm-5.3", "name": "GLM", "api": "openai-completions",
-            "provider": "prime-inference", "baseUrl": PRIME_INFERENCE_BASE_URL,
-            "reasoning": true, "input": ["text"],
-            "cost": { "input": 1, "output": 2, "cacheRead": 0.1, "cacheWrite": 1.25 },
-            "contextWindow": 128_000, "maxTokens": 8192, "featured": true,
-            "compat": { "maxTokensField": "max_tokens" }
-        }))
-        .unwrap()]
+        vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "z-ai/glm-5.3", "name": "GLM", "api": "openai-completions",
+                "provider": "prime-inference", "baseUrl": PRIME_INFERENCE_BASE_URL,
+                "reasoning": true, "input": ["text"],
+                "cost": { "input": 1, "output": 2, "cacheRead": 0.1, "cacheWrite": 1.25 },
+                "contextWindow": 128_000, "maxTokens": 8192, "featured": true,
+                "compat": { "maxTokensField": "max_tokens" }
+            }))
+            .unwrap(),
+        ]
     }
 
     #[test]
@@ -387,9 +389,11 @@ mod tests {
         assert_eq!(entries[0].context_window, Some(200_000));
         // Private ids parse but build() excludes them by default.
         let models = build_prime_inference_models(&bundled(), &entries, false).unwrap();
-        assert!(models
-            .iter()
-            .all(|m| !is_private_prime_inference_model_id(&m.id)));
+        assert!(
+            models
+                .iter()
+                .all(|m| !is_private_prime_inference_model_id(&m.id))
+        );
     }
 
     #[test]

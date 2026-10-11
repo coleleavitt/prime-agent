@@ -3,26 +3,29 @@
 //! merged with the passive jobs in the session-artifacts tree; passive jobs mutate their
 //! durable store, a selector-less cancel searches for the owning worker.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-
-use serde_json::{json, Map, Value};
+use std::sync::atomic::Ordering;
 
 use pa_core::cron::store::{AgentCronJobStore, HeartbeatManagementAction};
-use pa_core::cron::{is_heartbeat_cron_job, AgentCronJob, JobStatus};
+use pa_core::cron::{AgentCronJob, JobStatus, is_heartbeat_cron_job};
 use pa_types::daemon::DaemonCommand;
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::protocol::{
-    command_type_name, response_failure, response_line, response_success, DaemonResponse,
+    DaemonResponse,
+    command_type_name,
+    response_failure,
+    response_line,
+    response_success,
 };
-use crate::registry::{canonical_session_file_string, ResidentWorker};
+use crate::registry::{ResidentWorker, canonical_session_file_string};
 use crate::scheduled_jobs::session_artifact_dir;
 use crate::session_store::read_session_info;
-use crate::supervisor::{client_command_payload, Supervisor};
+use crate::supervisor::{Supervisor, client_command_payload};
 
 const CATALOG_FORWARD_TIMEOUT_MS: u64 = 5000;
 
@@ -866,9 +869,10 @@ mod tests {
     /// owns its job before the passive path can write to the shared store.
     #[tokio::test(start_paused = true)]
     async fn a_worker_registered_during_the_scan_gets_its_heartbeat_manage() {
+        use pa_types::daemon::DaemonWorkerDescriptor;
+
         use crate::registry::{ResidentWorker, WorkerReply};
         use crate::supervisor::subscribers::ClientSubscriptions;
-        use pa_types::daemon::DaemonWorkerDescriptor;
 
         let dir = tempfile::tempdir().expect("temp dir");
         let agent_dir = dir.path().join("agent");

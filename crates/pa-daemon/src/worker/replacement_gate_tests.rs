@@ -1,7 +1,8 @@
 //! Worker tests.
+use std::path::Path;
+
 use super::*;
 use crate::engine::SessionEngine;
-use std::path::Path;
 
 /// A recording engine whose session-model restore holds open for a fixed
 /// window: the event log proves whether two concurrent replacements interleave.
@@ -357,10 +358,12 @@ async fn a_symlinked_session_repairs_its_target_and_keeps_the_append_lease() {
         )
         .await;
     assert!(switched.success, "switch failed: {switched:?}");
-    assert!(std::fs::symlink_metadata(&alias)
-        .unwrap()
-        .file_type()
-        .is_symlink());
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     let appended = {
         let mut core = worker.core.lock().unwrap();
         let store = core.store.as_mut().expect("the switched store is live");
@@ -372,10 +375,12 @@ async fn a_symlinked_session_repairs_its_target_and_keeps_the_append_lease() {
             )
             .expect("append through the alias under its target lease")
     };
-    assert!(std::fs::symlink_metadata(&alias)
-        .unwrap()
-        .file_type()
-        .is_symlink());
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     let reopened = crate::session_store::SessionFile::open(&target).unwrap();
     assert!(
         reopened.entry(&appended).is_some(),
@@ -432,15 +437,17 @@ async fn an_unleased_switch_never_rewrites_another_workers_damaged_file() {
         )
         .await;
     assert!(created.success, "owner create failed: {created:?}");
-    assert!(owner
-        .core
-        .lock()
-        .unwrap()
-        .store
-        .as_ref()
-        .unwrap()
-        .lease
-        .is_some());
+    assert!(
+        owner
+            .core
+            .lock()
+            .unwrap()
+            .store
+            .as_ref()
+            .unwrap()
+            .lease
+            .is_some()
+    );
     {
         use std::io::Write as _;
         let mut torn = std::fs::OpenOptions::new()
@@ -467,15 +474,17 @@ async fn an_unleased_switch_never_rewrites_another_workers_damaged_file() {
         "the damaged target must fail open: {switched:?}"
     );
     assert_eq!(std::fs::read(&target).unwrap(), before);
-    assert!(owner
-        .core
-        .lock()
-        .unwrap()
-        .store
-        .as_ref()
-        .unwrap()
-        .lease
-        .is_some());
+    assert!(
+        owner
+            .core
+            .lock()
+            .unwrap()
+            .store
+            .as_ref()
+            .unwrap()
+            .lease
+            .is_some()
+    );
 
     let killed = visitor.dispatch("kill", &json!({})).await;
     assert!(killed.success, "visitor kill failed: {killed:?}");

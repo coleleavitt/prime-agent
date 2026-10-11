@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use pa_agent::types::ThinkingLevel;
 
-use super::super::engine::{create_session, SessionEngine, SessionEngineConfig};
+use super::super::engine::{SessionEngine, SessionEngineConfig, create_session};
 use super::super::rlm_host::{RlmHostFuture, RlmSpawnHandle, RlmSpawnRequest};
-use super::registry::{rlm_child_label, InProcessChildRecord};
+use super::registry::{InProcessChildRecord, rlm_child_label};
 use super::run::run_child_task;
 use super::{InProcessRlmHost, ParentFacts};
 use crate::kernel::rlm_runtime::create_default_rlm_subagent_session_name;

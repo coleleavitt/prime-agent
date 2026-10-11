@@ -4,7 +4,7 @@
 //! no grants and names the tools it needs; Wayland reports AT-SPI, grim and
 //! the virtual-input protocols with a fix-it line for anything missing.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// One grant or capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

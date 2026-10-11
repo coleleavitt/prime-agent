@@ -329,8 +329,9 @@ fn error_page(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     async fn live(state: &str) -> (CodexCallbackServer, u16) {
         let server = CodexCallbackServer::bind("127.0.0.1", 0, state)
@@ -484,9 +485,11 @@ mod tests {
     async fn an_unbindable_port_yields_the_error() {
         let held = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("a probe port");
         let port = held.local_addr().unwrap().port();
-        assert!(CodexCallbackServer::bind("127.0.0.1", port, "s")
-            .await
-            .is_err());
+        assert!(
+            CodexCallbackServer::bind("127.0.0.1", port, "s")
+                .await
+                .is_err()
+        );
     }
 
     #[test]

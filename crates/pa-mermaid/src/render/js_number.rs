@@ -82,11 +82,7 @@ fn is_decimal_literal(s: &str) -> bool {
 /// JS `Math.round`: halves round toward positive infinity.
 pub(super) fn round(x: f64) -> f64 {
     let floor = x.floor();
-    if x - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
+    if x - floor >= 0.5 { floor + 1.0 } else { floor }
 }
 
 /// JS `String(number)` (`Number.prototype.toString(10)`).

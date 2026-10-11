@@ -1,10 +1,9 @@
-use crate::agent_engine::tests::FAUX_TEST_LOCK;
-use crate::engine::SessionEngine as _;
+use pa_types::session::CustomMessage;
 
 use super::*;
 use crate::agent_engine::AgentEngineConfig;
-use crate::engine::EngineModelSelection;
-use pa_types::session::CustomMessage;
+use crate::agent_engine::tests::FAUX_TEST_LOCK;
+use crate::engine::{EngineModelSelection, SessionEngine as _};
 
 pub(crate) fn image_content(data: &str) -> pa_agent::types::ImageContent {
     pa_agent::types::ImageContent {
@@ -94,9 +93,11 @@ fn stripped_custom_row_keeps_text_and_drops_images() {
         panic!("blocks content");
     };
     assert_eq!(blocks.len(), 1);
-    assert!(!blocks
-        .iter()
-        .any(|block| matches!(block, pa_types::ai::UserContentBlock::Image(_))));
+    assert!(
+        !blocks
+            .iter()
+            .any(|block| matches!(block, pa_types::ai::UserContentBlock::Image(_)))
+    );
 
     let all_images = CustomMessage {
         content: pa_types::ai::UserContent::Blocks(vec![pa_types::ai::UserContentBlock::Image(
@@ -476,19 +477,23 @@ fn image_turn_delegation_lands_the_child_answer_on_a_text_only_parent() {
         row["content"],
         serde_json::json!("a red square on a white background")
     );
-    assert!(row["details"]["childId"]
-        .as_str()
-        .unwrap()
-        .starts_with("sub-"));
+    assert!(
+        row["details"]["childId"]
+            .as_str()
+            .unwrap()
+            .starts_with("sub-")
+    );
     assert_eq!(
         row["details"]["sessionName"],
         serde_json::json!("img-child")
     );
 
     // The turn settled cleanly.
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, crate::engine::EngineEvent::Done(Ok(())))));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::engine::EngineEvent::Done(Ok(()))))
+    );
 
     // The child's create carried the resolved image model and the
     // next recursion depth; the child's prompt carried the user text
@@ -505,14 +510,18 @@ fn image_turn_delegation_lands_the_child_answer_on_a_text_only_parent() {
         .iter()
         .find(|command| command["type"] == "prompt")
         .expect("prompt reached the supervisor");
-    assert!(prompt["message"]
-        .as_str()
-        .unwrap()
-        .contains("describe this"));
-    assert!(prompt["message"]
-        .as_str()
-        .unwrap()
-        .contains("Do not answer"));
+    assert!(
+        prompt["message"]
+            .as_str()
+            .unwrap()
+            .contains("describe this")
+    );
+    assert!(
+        prompt["message"]
+            .as_str()
+            .unwrap()
+            .contains("Do not answer")
+    );
     assert_eq!(
         prompt["images"],
         serde_json::json!([
@@ -546,9 +555,11 @@ fn the_image_model_child_is_funded_from_the_delegation_budget() {
         }),
     );
     let first = run_prompt_collecting(&engine, vec![image_content("QUJD")]);
-    assert!(first
-        .iter()
-        .any(|event| matches!(event, crate::engine::EngineEvent::Done(Ok(())))));
+    assert!(
+        first
+            .iter()
+            .any(|event| matches!(event, crate::engine::EngineEvent::Done(Ok(()))))
+    );
     let allowances: Vec<serde_json::Value> = supervisor
         .captured
         .lock()

@@ -1,7 +1,7 @@
 //! Private Prime Inference models and the private-model id predicate.
 
-use pa_types::ai::{CompatKind, Model, ModelCompat, ModelCost};
 use pa_types::JsNumber;
+use pa_types::ai::{CompatKind, Model, ModelCompat, ModelCost};
 
 pub const PRIME_INFERENCE_BASE_URL: &str = "https://api.pinference.ai/api/v1";
 

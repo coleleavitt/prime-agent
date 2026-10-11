@@ -19,24 +19,36 @@
 use std::io::{BufRead, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use serde_json::{json, Value};
-
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
 use pa_tui::auth_panel::{AuthPanelHandle, PrimeTeamOption, PrimeTeamPick};
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
 use pa_tui::provider_auth::{
-    AuthFlow, AuthStatusIndicator, AuthStatusStyle, AuthType, ProviderAuthCommands,
-    ProviderAuthCommandsHandle, ProviderAuthOutcome, ProviderRow, ProviderRowsFuture,
-    ProviderWarningFuture, PRIME_INFERENCE_PROVIDER_ID,
+    AuthFlow,
+    AuthStatusIndicator,
+    AuthStatusStyle,
+    AuthType,
+    PRIME_INFERENCE_PROVIDER_ID,
+    ProviderAuthCommands,
+    ProviderAuthCommandsHandle,
+    ProviderAuthOutcome,
+    ProviderRow,
+    ProviderRowsFuture,
+    ProviderWarningFuture,
 };
-use std::pin::Pin;
-use std::sync::Arc;
+use serde_json::{Value, json};
 
 /// Set only when this binary is re-executed as the product-under-test.
 const CHILD_SOCKET_ENV: &str = "PA_LOGIN_PANEL_CHILD_SOCKET";

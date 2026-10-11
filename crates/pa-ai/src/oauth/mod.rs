@@ -13,30 +13,45 @@ mod provider_http;
 mod types;
 mod xai;
 
+use std::future::Future;
+use std::time::Duration;
+
 pub use anthropic::{
-    login_anthropic, refresh_anthropic_token, AnthropicCredentials,
+    AnthropicCredentials,
     LOGIN_CANCELLED as ANTHROPIC_LOGIN_CANCELLED,
+    login_anthropic,
+    refresh_anthropic_token,
 };
 pub use callback::CodexCallbackServer;
 pub use github_copilot::{
-    get_github_copilot_base_url, login_github_copilot, refresh_github_copilot_token,
-    CopilotCredentials, LOGIN_CANCELLED as COPILOT_LOGIN_CANCELLED,
+    CopilotCredentials,
+    LOGIN_CANCELLED as COPILOT_LOGIN_CANCELLED,
+    get_github_copilot_base_url,
+    login_github_copilot,
+    refresh_github_copilot_token,
 };
 pub use openai_codex::{
-    login_openai_codex, refresh_openai_codex_token, CodexLoginUi, OAuthCredentials,
-    DEFAULT_ORIGINATOR, LOGIN_CANCELLED,
+    CodexLoginUi,
+    DEFAULT_ORIGINATOR,
+    LOGIN_CANCELLED,
+    OAuthCredentials,
+    login_openai_codex,
+    refresh_openai_codex_token,
 };
 pub use provider_http::{
-    ProviderHttp, ProviderHttpMethod, ProviderHttpRequest, ProviderHttpResponse,
+    ProviderHttp,
+    ProviderHttpMethod,
+    ProviderHttpRequest,
+    ProviderHttpResponse,
     ReqwestProviderHttp,
 };
 pub use types::{OAuthLoginUi, OAuthPrompt};
 pub use xai::{
-    login_xai, refresh_xai_token, XaiCredentials, LOGIN_CANCELLED as XAI_LOGIN_CANCELLED,
+    LOGIN_CANCELLED as XAI_LOGIN_CANCELLED,
+    XaiCredentials,
+    login_xai,
+    refresh_xai_token,
 };
-
-use std::future::Future;
-use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexHttpResponse {
@@ -161,9 +176,10 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, r#"{"ok":true}"#);
         assert!(response.ok());
-        assert!(http
-            .post_form("https://other.example/token", "", 1)
-            .await
-            .is_err());
+        assert!(
+            http.post_form("https://other.example/token", "", 1)
+                .await
+                .is_err()
+        );
     }
 }

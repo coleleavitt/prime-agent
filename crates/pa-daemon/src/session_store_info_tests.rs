@@ -1,6 +1,7 @@
 //! Compare the streaming listing fold against the previous whole-file fold.
-use super::*;
 use std::io::Write;
+
+use super::*;
 
 fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let content = fs::read_to_string(path).ok()?;
@@ -990,9 +991,9 @@ fn content_borrow_matches_full_parse_across_content_matrix() {
 
 #[test]
 #[allow(clippy::used_underscore_binding)] // the envelope scalars the fold
-                                          // keeps only for acceptance (`_timestamp`, `_parent_id`)
-                                          // are READ here to pin that acceptance, which is exactly
-                                          // the matrix's point
+// keeps only for acceptance (`_timestamp`, `_parent_id`)
+// are READ here to pin that acceptance, which is exactly
+// the matrix's point
 fn borrowed_metadata_reads_match_full_parse_across_shape_matrix() {
     // Rows are written from raw JSON so the escapes ride the bytes both extraction paths walk.
     let rows: Vec<&str> = vec![

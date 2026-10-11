@@ -20,12 +20,12 @@
 use std::path::PathBuf;
 
 use anyhow::anyhow;
+use pa_types::ai::Model as AiModel;
 use serde_json::Value;
 
 use crate::factory::lane::{ACTIVITY_ACTIONS, ACTIVITY_TIMEOUT_MS_CAP};
 use crate::models::registry::ModelRegistry;
 use crate::models::resolver::find_exact_model_reference_match;
-use pa_types::ai::Model as AiModel;
 
 /// The session facts the factory bridge resolves against, captured in
 /// `create_session` (the #3184 `SystemRouterHostConfig` capture shape).

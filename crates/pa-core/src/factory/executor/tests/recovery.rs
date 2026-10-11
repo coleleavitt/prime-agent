@@ -4,9 +4,9 @@
 //! live upstream, exit captures that need verification, and the paused
 //! run's error payload.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::fake::{done, exited, failed, node_status, running, Case, HOST_ANSWER_PREVIEW_CHARS};
+use super::fake::{Case, HOST_ANSWER_PREVIEW_CHARS, done, exited, failed, node_status, running};
 use crate::factory::executor::binding::{ANSWER_BINDING_CAP, ANSWER_CAPTURE_CAP};
 
 fn label_of(result: &Value, configured: &str) -> String {
@@ -266,10 +266,12 @@ async fn child_exit_captures_a_provisional_answer_and_marks_needs_verify() {
     let row = &work["entries"][0];
     assert_eq!(row["status"], "error");
     assert_eq!(row["needs_verify"], true);
-    assert!(row["provisional_answer"]
-        .as_str()
-        .unwrap()
-        .contains("report is at /tmp/report.md"));
+    assert!(
+        row["provisional_answer"]
+            .as_str()
+            .unwrap()
+            .contains("report is at /tmp/report.md")
+    );
     let marked: Vec<Value> = case
         .all_events_of(&result, "needs_verify")
         .into_iter()
@@ -333,10 +335,12 @@ async fn late_sibling_exit_after_terminal_entry_still_marks_needs_verify() {
     let row = &fan["entries"][0];
     assert_eq!(row["status"], "error");
     assert_eq!(row["needs_verify"], true);
-    assert!(row["provisional_answer"]
-        .as_str()
-        .unwrap()
-        .contains("results staged at /tmp/lane-b.md"));
+    assert!(
+        row["provisional_answer"]
+            .as_str()
+            .unwrap()
+            .contains("results staged at /tmp/lane-b.md")
+    );
     assert_eq!(case.all_events_of(&result, "needs_verify").len(), 1);
     assert_eq!(case.host.spawn_calls("fan").len(), 2);
     assert_eq!(case.all_events_of(&result, "retry"), Vec::<Value>::new());
@@ -373,8 +377,10 @@ async fn paused_run_status_carries_the_last_error_and_remedy() {
         last_error.contains("no JSON object containing output 'data'"),
         "{last_error}"
     );
-    assert!(status["remedy"]
-        .as_str()
-        .unwrap()
-        .contains(&format!("rlm.factory.resume('{}')", Case::run_id(&result))));
+    assert!(
+        status["remedy"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("rlm.factory.resume('{}')", Case::run_id(&result)))
+    );
 }

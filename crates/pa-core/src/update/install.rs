@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 /// The release platforms the update flow knows; the manifest ignores
 /// unknown entries, so future platforms pass through unvalidated.

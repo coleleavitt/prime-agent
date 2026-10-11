@@ -15,13 +15,20 @@
 //! With a renderer installed through [`crate::diagram`], each fence is laid out by it
 //! instead ([`apply_layouts`]); without one this module draws exactly as above.
 
-use super::{render_inline, Block, BlockKind, MarkdownStyle};
-use crate::diagram::{
-    DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, NoticeLevel, Outcome,
-};
-use crate::mermaid::{render_cached, ArtSpan, Cls};
-use crate::{Line, Span};
 use ratatui::style::Style;
+
+use super::{Block, BlockKind, MarkdownStyle, render_inline};
+use crate::diagram::{
+    DiagramLayout,
+    DiagramNotice,
+    DiagramRenderer,
+    DiagramRole,
+    DiagramSpan,
+    NoticeLevel,
+    Outcome,
+};
+use crate::mermaid::{ArtSpan, Cls, render_cached};
+use crate::{Line, Span};
 
 /// The `markdown.mermaid` setting: when assistant text renders Mermaid fences as diagrams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -329,11 +336,7 @@ fn drawn_line(spans: &[DiagramSpan], style: &MarkdownStyle) -> Line {
         return vec![Span::styled("\u{a0}", style.code)];
     }
     drawn_spans(spans, &style.mermaid_palette, |i| {
-        if i == 0 {
-            style.code
-        } else {
-            Style::default()
-        }
+        if i == 0 { style.code } else { Style::default() }
     })
 }
 

@@ -2,12 +2,17 @@
 //! Mirrors TS `utils.ts`: grapheme-aware widths, emoji as 2 columns,
 //! tabs expand to 3 spaces.
 
-use crate::{Line, Span};
 use pa_types::sync::MutexExt;
 use unicode_properties::{
-    EmojiStatus, GeneralCategory, GeneralCategoryGroup, UnicodeEmoji, UnicodeGeneralCategory,
+    EmojiStatus,
+    GeneralCategory,
+    GeneralCategoryGroup,
+    UnicodeEmoji,
+    UnicodeGeneralCategory,
 };
 use unicode_width::UnicodeWidthChar;
+
+use crate::{Line, Span};
 
 mod wrapping;
 #[cfg(test)]

@@ -271,9 +271,11 @@ mod tests {
         assert_eq!(lines[0]["active"], Value::Bool(true));
         assert_eq!(lines[0]["ownerPid"], Value::from(7));
         assert_eq!(lines[0]["kernelPid"], Value::from(9));
-        assert!(lines[0]["processStartId"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("proc:") || id.starts_with("ps:")));
+        assert!(
+            lines[0]["processStartId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("proc:") || id.starts_with("ps:"))
+        );
         assert_eq!(lines[1].get("processStartId"), None);
         assert!(text.starts_with("{\"version\": 1, \"pid\": "));
     }

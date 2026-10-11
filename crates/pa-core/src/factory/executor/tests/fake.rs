@@ -4,13 +4,21 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::factory::executor::ports::{
-    FactoryChildren, FactoryClock, FactoryNotices, FactorySpawn, PortFuture,
+    FactoryChildren,
+    FactoryClock,
+    FactoryNotices,
+    FactorySpawn,
+    PortFuture,
 };
 use crate::factory::executor::{
-    FactoryExecutor, FactoryExecutorConfig, FactoryRefusal, ResolvedSubagent, RunRequest,
+    FactoryExecutor,
+    FactoryExecutorConfig,
+    FactoryRefusal,
+    ResolvedSubagent,
+    RunRequest,
 };
 use crate::factory::pyvalue::PyValue;
 use crate::session_engine::rlm_host::RlmChildResult;

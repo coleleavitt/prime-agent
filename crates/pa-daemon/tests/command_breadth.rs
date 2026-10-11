@@ -3,10 +3,12 @@
 //! pinned verbatim below in declaration order. Every TS type (plus the Rust-
 //! native frames) must parse, keep its wire `type`, and route by selector.
 
-use pa_daemon::protocol::command_active_session_id;
-use pa_daemon::protocol::command_type_name;
-use pa_daemon::protocol::parse_daemon_command_line;
-use pa_daemon::protocol::KNOWN_COMMAND_TYPES;
+use pa_daemon::protocol::{
+    KNOWN_COMMAND_TYPES,
+    command_active_session_id,
+    command_type_name,
+    parse_daemon_command_line,
+};
 
 /// TS `DAEMON_COMMAND_TYPES`, verbatim and in declaration order
 /// (modes/daemon/daemon-supervisor.ts).

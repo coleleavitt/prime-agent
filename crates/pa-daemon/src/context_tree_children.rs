@@ -6,9 +6,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
-
 use pa_core::models::ModelRegistry;
+use serde_json::{Value, json};
 
 use crate::session_stats::store_context_usage;
 use crate::session_store::SessionFile;
@@ -254,8 +253,9 @@ fn context_window_of(registry: &ModelRegistry, provider: &str, model_id: &str) -
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn dir() -> crate::test_support::TestDir {
         crate::test_support::TestDir::new("pa-ctc-")

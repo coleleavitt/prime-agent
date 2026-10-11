@@ -53,7 +53,7 @@ pub fn parse(input: &[u8]) -> Result<Value, WireError> {
                 } else {
                     WireError::new("$", "contains invalid JSON")
                 }
-            }))
+            }));
         }
     };
     deserializer
@@ -207,8 +207,9 @@ impl<'de> Visitor<'de> for Strict<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn reason(input: &[u8]) -> String {
         parse(input).unwrap_err().to_string()

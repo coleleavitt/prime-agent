@@ -8,9 +8,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pa_core::autonomous::{
-    autonomous_limit_reason, autonomous_status, create_autonomous_runtime_state,
-    describe_autonomous_limit, latest_autonomous_gate_attempt, now_millis, AgentAutonomousConfig,
-    AutonomousDriver, AutonomousFollowUp, AutonomousRuntimeState, ShellAutonomousDriver,
+    AgentAutonomousConfig,
+    AutonomousDriver,
+    AutonomousFollowUp,
+    AutonomousRuntimeState,
+    ShellAutonomousDriver,
+    autonomous_limit_reason,
+    autonomous_status,
+    create_autonomous_runtime_state,
+    describe_autonomous_limit,
+    latest_autonomous_gate_attempt,
+    now_millis,
 };
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::provider_adapter::json_round_trip;

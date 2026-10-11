@@ -32,12 +32,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pa_core::swarm_eval::transcript::snapshot_from_transcript;
 use pa_core::swarm_eval::{
-    build_orchestrator_prompt, parse_answer_line, render_markdown_report, seeded_secrets,
-    trial_deadline, trial_result_from_snapshot, DefenseVerdict, EvalArgsError,
-    MessagingStatsSnapshot, SwarmEvalConfig, SwarmEvalTrialResult,
+    DefenseVerdict,
+    EvalArgsError,
+    MessagingStatsSnapshot,
+    SwarmEvalConfig,
+    SwarmEvalTrialResult,
+    build_orchestrator_prompt,
+    parse_answer_line,
+    render_markdown_report,
+    seeded_secrets,
+    trial_deadline,
+    trial_result_from_snapshot,
 };
-use pa_types::platform::transport::{connect_blocking, BlockingTransportStream};
-use serde_json::{json, Value};
+use pa_types::platform::transport::{BlockingTransportStream, connect_blocking};
+use serde_json::{Value, json};
 
 /// A blocking JSONL client for one daemon socket.
 struct Client {
@@ -762,17 +770,25 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
-    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::mpsc::{Receiver, Sender, channel};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use pa_core::swarm_eval::{seeded_secrets, ArrivalPattern, MessageSize, SwarmEvalConfig};
+    use pa_core::swarm_eval::{ArrivalPattern, MessageSize, SwarmEvalConfig, seeded_secrets};
     use pa_types::platform::transport::BlockingTransportStream;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{
-        run, run_tag, run_trial, runs_root_path, session_name, snapshot_from_transcript,
-        socket_from_args, trial_snapshot, Client, MessagingStatsSnapshot,
+        Client,
+        MessagingStatsSnapshot,
+        run,
+        run_tag,
+        run_trial,
+        runs_root_path,
+        session_name,
+        snapshot_from_transcript,
+        socket_from_args,
+        trial_snapshot,
     };
 
     /// A scripted daemon socket: greets the client, then answers each

@@ -132,9 +132,10 @@ fn the_list_renders_columned_rows_and_one_hint() {
         1,
         "the close hint appears once: {text:?}"
     );
-    assert!(text
-        .iter()
-        .any(|row| row.contains("↑/↓ move · Enter/→ open · ←/Esc close")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("↑/↓ move · Enter/→ open · ←/Esc close"))
+    );
     for line in &frame {
         assert!(
             crate::width::spans_width(line) <= 70,
@@ -376,21 +377,25 @@ fn the_detail_renders_the_full_prompt_created_by_and_actions() {
         text.iter().any(|row| row.starts_with("  Prompt")),
         "the prompt block carries its label"
     );
-    assert!(text
-        .iter()
-        .any(|row| row.starts_with("  created") && row.contains("Created by you")));
-    assert!(text
-        .iter()
-        .any(|row| row.starts_with("  session") && row.contains("the session")));
+    assert!(
+        text.iter()
+            .any(|row| row.starts_with("  created") && row.contains("Created by you"))
+    );
+    assert!(
+        text.iter()
+            .any(|row| row.starts_with("  session") && row.contains("the session"))
+    );
     assert!(text.iter().any(|row| row.contains("runs")));
     assert!(text.iter().any(|row| row.contains("Resume heartbeat")));
     assert!(text.iter().any(|row| row.contains("Stop heartbeat")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Continue scheduled deliveries")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("↑/↓ move · Enter run · ← back · Esc close")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Continue scheduled deliveries"))
+    );
+    assert!(
+        text.iter()
+            .any(|row| row.contains("↑/↓ move · Enter run · ← back · Esc close"))
+    );
 }
 
 #[test]
@@ -457,10 +462,12 @@ fn a_managed_job_replaces_or_removes_its_row() {
     updated.status = "paused".to_string();
     picker.apply_managed_job(updated, false);
     assert_eq!(picker.mode, Mode::List);
-    assert!(picker
-        .heartbeats
-        .iter()
-        .any(|entry| entry.job.id == "agent-1" && entry.job.status == "paused"));
+    assert!(
+        picker
+            .heartbeats
+            .iter()
+            .any(|entry| entry.job.id == "agent-1" && entry.job.status == "paused")
+    );
     let id = picker.heartbeats[0].job.id.clone();
     let stopped = picker.heartbeats[0].job.clone();
     picker.apply_managed_job(stopped, true);
@@ -479,9 +486,10 @@ fn a_fetch_error_keeps_the_rows() {
     assert_eq!(picker.fetch_error.as_deref(), Some("daemon busy"));
     let frame = picker.render(&theme(), 70, &kb());
     let text = frame_text(&frame);
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Heartbeat refresh failed: daemon busy")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Heartbeat refresh failed: daemon busy"))
+    );
     assert!(text.iter().any(|row| row.contains("tick user-1")));
 }
 
@@ -498,12 +506,14 @@ fn a_catalog_refresh_keeps_the_surviving_selection() {
     assert_eq!(picker.selected_heartbeat_id, None);
     let frame = picker.render(&theme(), 70, &kb());
     let text = frame_text(&frame);
-    assert!(text
-        .iter()
-        .any(|row| row.contains("No running or paused heartbeats")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Heartbeat refresh failed: daemon down")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("No running or paused heartbeats"))
+    );
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Heartbeat refresh failed: daemon down"))
+    );
 }
 
 #[test]
@@ -690,9 +700,10 @@ fn double_errors_reserve_both_footer_blocks() {
     assert!(frame.len() <= 14, "the pane fits: {}", frame.len());
     let text = frame_text(&frame);
     assert!(text.iter().any(|row| row.contains("daemon busy")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Error: management failed")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Error: management failed"))
+    );
 }
 
 #[test]

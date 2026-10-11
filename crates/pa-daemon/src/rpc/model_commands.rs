@@ -3,10 +3,9 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
-use pa_core::session_engine::provider_adapter::{json_round_trip, ProviderTarget};
+use pa_core::session_engine::provider_adapter::{ProviderTarget, json_round_trip};
 use pa_types::ai::{Model, ModelThinkingLevel};
+use serde_json::{Value, json};
 
 use super::commands::RpcState;
 use super::protocol::ResponseData;

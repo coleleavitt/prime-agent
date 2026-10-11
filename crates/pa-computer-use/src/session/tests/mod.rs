@@ -10,12 +10,13 @@ mod screenshots;
 mod security;
 mod state;
 
-use super::fake::{Env, FakePlatform, BUNDLE};
+use serde_json::Value;
+
+use super::fake::{BUNDLE, Env, FakePlatform};
 use super::{AppCall, BoundApp, IndexArg, PointArg, TargetArg, TextArg};
 use crate::error::{ComputerUseError, ErrorCode, Result};
 use crate::platform::{MouseButton, Platform};
 use crate::spec::AppSpec;
-use serde_json::Value;
 
 /// Bind the example app through the public `get_app`.
 fn bind<P: Platform>(env: &Env<P>, spec: &str) -> Result<BoundApp> {

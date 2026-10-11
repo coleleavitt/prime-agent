@@ -12,23 +12,39 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pa_dream::dream_loop::{
-    dream_run_id, judge_probation, merged_round_curve, priming_tree_id, run_dream_loop,
-    DreamLoopOptions, DreamLoopResult, DreamRoundRecord, PROBATION_EPS,
+    DreamLoopOptions,
+    DreamLoopResult,
+    DreamRoundRecord,
+    PROBATION_EPS,
+    dream_run_id,
+    judge_probation,
+    merged_round_curve,
+    priming_tree_id,
+    run_dream_loop,
 };
 use pa_dream::dreams::{
-    dreams_path, read_dreams_log, DreamProbationRecord, DreamsLogContext, DreamsLogLine,
+    DreamProbationRecord,
+    DreamsLogContext,
+    DreamsLogLine,
+    dreams_path,
+    read_dreams_log,
 };
 use pa_dream::improve::{CandidateReason, DreamResult, DreamerKind, PoolScore};
 use pa_dream::json;
 use pa_dream::objective::DEFAULT_OBJECTIVE;
 use pa_dream::policy::{
-    policy_id, sha256_hex, ExplorationPolicy, StopRule, DEFAULT_POLICY, PRIMING_DIVERSE,
+    DEFAULT_POLICY,
+    ExplorationPolicy,
+    PRIMING_DIVERSE,
+    StopRule,
+    policy_id,
+    sha256_hex,
 };
 use pa_dream::rng::{Seed, SeededRng};
 use pa_dream::store::{list_trees, read_tree};
 use pa_dream::task::{ArtifactShapeError, DynTask, Evaluation, ProposeParams, ScoredTask};
-use pa_dream::tasks::{resolve_task, DreamTaskId};
-use serde_json::{json, Map, Value};
+use pa_dream::tasks::{DreamTaskId, resolve_task};
+use serde_json::{Map, Value, json};
 use support::Fixed;
 
 const FIXED_CLOCK: u64 = 1_700_000_000_000;
@@ -226,10 +242,12 @@ fn the_fixed_control_never_dreams_and_shares_iteration_0_with_the_dreaming_loop(
         );
         assert!(dreaming.chosen_score >= dreaming.current_score);
         assert_eq!(dreaming.dreamer, DreamerKind::Local);
-        assert!(dreaming
-            .lever_scan
-            .as_ref()
-            .is_some_and(|scan| scan.gap >= 0.0));
+        assert!(
+            dreaming
+                .lever_scan
+                .as_ref()
+                .is_some_and(|scan| scan.gap >= 0.0)
+        );
         let winners = dreaming
             .candidate_verdicts
             .iter()
@@ -258,9 +276,11 @@ fn the_fixed_control_never_dreams_and_shares_iteration_0_with_the_dreaming_loop(
         (result.initial_policy_id.clone(), result.final_policy),
         (policy_id(&initial), initial)
     );
-    assert!(list_trees(explicit.path())
-        .iter()
-        .all(|summary| summary.policy_id == policy_id(&initial)));
+    assert!(
+        list_trees(explicit.path())
+            .iter()
+            .all(|summary| summary.policy_id == policy_id(&initial))
+    );
 }
 
 fn clock_free(record: &DreamRoundRecord) -> DreamRoundRecord {
@@ -591,11 +611,7 @@ impl ScoredTask for Scripted {
                 0.9
             };
         }
-        if round == 1 {
-            1.0
-        } else {
-            0.5
-        }
+        if round == 1 { 1.0 } else { 0.5 }
     }
 
     fn evaluate(&self, candidate: &f64) -> Evaluation {
@@ -883,9 +899,11 @@ fn every_round_records_its_exact_curve_and_the_stopped_early_count() {
         assert_eq!(record.probes_to_round_best, valid[0].seq);
         let last = record.improvements.last().expect("curve");
         assert_eq!((last.probe, last.score), (valid[0].seq, record.round_best));
-        assert!(record
-            .improvements
-            .windows(2)
-            .all(|pair| pair[0].score < pair[1].score));
+        assert!(
+            record
+                .improvements
+                .windows(2)
+                .all(|pair| pair[0].score < pair[1].score)
+        );
     }
 }

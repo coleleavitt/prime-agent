@@ -4,9 +4,10 @@
 //! on exit; `?1002` stays set under `?1003`, so terminals that ignore the any-event mode keep the
 //! native drag reports. Enabled blind: probing is not viable (tmux never answers DECRQM).
 
-use anyhow::Result;
 use std::io::{IsTerminal, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use anyhow::Result;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 

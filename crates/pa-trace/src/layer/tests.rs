@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use pa_types::trace_context::TraceContext;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
 use super::*;

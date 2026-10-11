@@ -18,13 +18,21 @@ use pa_core::kernel::shared::host_request_cancellation;
 use pa_core::models::ModelRegistry;
 use pa_core::session_engine::provider_adapter::stream_once;
 use pa_telemetry::Properties;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::preflight::{preflight, Cleared};
-use super::runner::{run_turn, Turn};
+use super::preflight::{Cleared, preflight};
+use super::runner::{Turn, run_turn};
 use super::wire::{
-    budget, decode_request, reply, FailureReason, Finality, RunAgentRequest, Settlement, Terminal,
-    Usage, ZeroCost,
+    FailureReason,
+    Finality,
+    RunAgentRequest,
+    Settlement,
+    Terminal,
+    Usage,
+    ZeroCost,
+    budget,
+    decode_request,
+    reply,
 };
 
 /// The host-request type the runtime sends (`rlm/workflow.py`).

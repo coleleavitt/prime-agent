@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::test_mock_http::{serve, MockResponse};
+use crate::test_mock_http::{MockResponse, serve};
 use crate::types::{Context, Model, StopReason, StreamOptions};
 use crate::utils_inner::http::stream_stall_failure;
 
@@ -15,7 +15,8 @@ const HANG_GUARD: Duration = Duration::from_secs(20);
 #[tokio::test]
 async fn a_silent_stream_fails_as_a_retryable_stall() {
     use crate::providers::openai_completions::{
-        stream_openai_completions, OpenAICompletionsOptions,
+        OpenAICompletionsOptions,
+        stream_openai_completions,
     };
     let content = "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n";
     let server = serve(vec![MockResponse {

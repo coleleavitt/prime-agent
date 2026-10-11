@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use super::{AgentsViewScope, Rollup, SelectionKey, TokenUsage};
-use crate::agents_view_state::{summary_for_record, UnifiedRecord};
+use crate::agents_view_state::{UnifiedRecord, summary_for_record};
 use crate::subagents::{depth_consistent_binding, is_subagent_summary, summary_parent_keys};
 
 /// The record hierarchy: every record by its aliases, and each record's children by parent

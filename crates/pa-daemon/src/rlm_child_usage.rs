@@ -101,8 +101,9 @@ pub(crate) fn child_usage_batches(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::*;
-    use serde_json::{json, Value};
 
     fn row(type_: &str, id: &str, fields: Value) -> SessionEntry {
         SessionEntry {

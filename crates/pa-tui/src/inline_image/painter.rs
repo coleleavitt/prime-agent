@@ -24,16 +24,30 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use super::payload::{KittyFormat, KittyPayload, KittyPayloadState, PayloadSource};
-use super::plan::{markers, plan, Visible};
+use super::plan::{Visible, markers, plan};
+use crate::Line;
 use crate::terminal_image::kitty_graphics::{
-    placeholder_image_id, tmux_passthrough, tmux_write_with_payload, Command,
+    Command,
+    placeholder_image_id,
+    tmux_passthrough,
+    tmux_write_with_payload,
 };
 use crate::terminal_image::{
-    allocate_image_id, delete_kitty_image, encode_iterm2, encode_kitty_with_format,
-    kitty_delete_placements, kitty_place, kitty_transmit_with_format, ImageProtocol, ImageTerminal,
-    ImageTransport, Iterm2Options, Iterm2Size, KittyCrop, KittyOptions,
+    ImageProtocol,
+    ImageTerminal,
+    ImageTransport,
+    Iterm2Options,
+    Iterm2Size,
+    KittyCrop,
+    KittyOptions,
+    allocate_image_id,
+    delete_kitty_image,
+    encode_iterm2,
+    encode_kitty_with_format,
+    kitty_delete_placements,
+    kitty_place,
+    kitty_transmit_with_format,
 };
-use crate::Line;
 
 #[derive(Debug, Clone, Copy)]
 struct KittyImage {

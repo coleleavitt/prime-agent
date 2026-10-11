@@ -2,10 +2,11 @@
 //! header row, an alignment/delimiter row, and data rows, sized so every column fits the available
 //! width.
 
-use crate::markdown::{render_inline, wrap_spans, wrapped_span_count, MarkdownStyle};
+use ratatui::style::Style;
+
+use crate::markdown::{MarkdownStyle, render_inline, wrap_spans, wrapped_span_count};
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 /// A parsed pipe table: header cells, data rows (normalized to the header width like marked's
 /// `splitCells`), and the raw source lines (the too-narrow fallback re-renders them).
@@ -400,8 +401,9 @@ fn longest_word_width(spans: &Line, max_width: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ratatui::style::Modifier;
+
+    use super::*;
 
     fn rows(out: &[Line]) -> Vec<String> {
         out.iter()

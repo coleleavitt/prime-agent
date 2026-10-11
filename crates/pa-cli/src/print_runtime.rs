@@ -1,22 +1,29 @@
 //! The headless print runtime: single-shot prompt -> answer over the pa-core
 //! session engine with a real pa-ai provider.
 
-use pa_types::sync::{MutexExt, RwLockExt};
 use std::sync::Arc;
 
+use pa_agent::stream::{LlmContext, StreamFn, StreamRequestOptions};
 use pa_agent::types::Model as AgentModel;
 use pa_core::session::discovery::{
-    find_most_recent_session_for_cwd, resolve_session_path, ResolvedSession, SessionSelectorError,
+    ResolvedSession,
+    SessionSelectorError,
+    find_most_recent_session_for_cwd,
+    resolve_session_path,
 };
-use pa_types::ai::Model;
-
-use crate::headless_autonomous::{autonomous_runtime_config, HeadlessAutonomous};
-use crate::mode::{AppMode, MissingSubsystem, RunOptions};
-use pa_agent::stream::{LlmContext, StreamFn, StreamRequestOptions};
 use pa_core::session_engine::provider_adapter::{
-    json_round_trip, map_thinking_level, stream_once, switchable_stream_fn, ProviderTarget,
+    ProviderTarget,
+    json_round_trip,
+    map_thinking_level,
+    stream_once,
+    switchable_stream_fn,
 };
 use pa_core::session_engine::session_events::agent_event_json;
+use pa_types::ai::Model;
+use pa_types::sync::{MutexExt, RwLockExt};
+
+use crate::headless_autonomous::{HeadlessAutonomous, autonomous_runtime_config};
+use crate::mode::{AppMode, MissingSubsystem, RunOptions};
 
 pub struct PrintRuntime;
 

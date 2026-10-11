@@ -102,9 +102,11 @@ fn an_empty_row_set_keeps_the_empty_state_and_closes() {
     assert_eq!(menu.handle_key("2", &kb()), SettingsMenuAction::None);
     let text = render_text(&menu);
     assert!(text.iter().any(|row| row.contains("No settings available")));
-    assert!(text
-        .iter()
-        .any(|row| { row.contains("Type to search · ←/→/Enter/Space change · Esc close") }));
+    assert!(
+        text.iter().any(|row| {
+            row.contains("Type to search · ←/→/Enter/Space change · Esc close")
+        })
+    );
     assert_eq!(menu.handle_key("esc", &kb()), SettingsMenuAction::Cancel);
 }
 
@@ -135,9 +137,10 @@ fn enter_opens_the_thinking_submenu_and_selection_applies() {
     assert_eq!(menu.handle_key("enter", &kb()), SettingsMenuAction::None);
     let text = render_text(&menu);
     assert!(text.iter().any(|row| row.contains("Thinking Level")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Select reasoning depth for thinking-capable models")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Select reasoning depth for thinking-capable models"))
+    );
     menu.handle_key("down", &kb());
     assert_eq!(
         menu.handle_key("enter", &kb()),
@@ -189,9 +192,10 @@ fn enter_opens_the_service_tier_submenu_preselected_and_selection_applies() {
     assert_eq!(menu.handle_key("enter", &kb()), SettingsMenuAction::None);
     let text = render_text(&menu);
     assert!(text.iter().any(|row| row.contains("Default Service Tier")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Cheaper, slower, may hit capacity limits")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Cheaper, slower, may hit capacity limits"))
+    );
     // The submenu preselects the current value (flex, the second option).
     assert_eq!(
         menu.handle_key("enter", &kb()),
@@ -216,9 +220,10 @@ fn enter_opens_the_service_tier_submenu_preselected_and_selection_applies() {
         SettingsMenuAction::SubmenuClosed
     );
     let text = render_text(&menu);
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Enter/Space change · Esc close")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Enter/Space change · Esc close"))
+    );
 }
 
 #[test]
@@ -238,16 +243,19 @@ fn typing_filters_the_active_tab_and_esc_cancels() {
 #[test]
 fn switching_tabs_shows_that_tabs_settings() {
     let mut menu = menu();
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Auto-compact")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Auto-compact"))
+    );
     // 4 jumps to the Editor tab.
     menu.handle_key("4", &kb());
     let text = render_text(&menu);
     assert!(text.iter().any(|row| row.contains("Editor padding")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Autocomplete max items")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Autocomplete max items"))
+    );
     assert!(text.iter().any(|row| row.contains("Show hardware cursor")));
     assert!(!text.iter().any(|row| row.contains("Auto-compact")));
     assert!(!text.iter().any(|row| row.contains("Theme")));
@@ -265,9 +273,11 @@ fn arrows_cycle_values_and_the_tab_keys_switch_tabs() {
             value: "false".to_string()
         }
     );
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Auto-compact")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Auto-compact"))
+    );
     assert_eq!(
         menu.handle_key("left", &kb()),
         SettingsMenuAction::Change {
@@ -280,28 +290,40 @@ fn arrows_cycle_values_and_the_tab_keys_switch_tabs() {
     for _ in 0..3 {
         menu.handle_key("right", &kb());
     }
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Steering mode")));
-    assert!(!render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Transport")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Steering mode"))
+    );
+    assert!(
+        !render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Transport"))
+    );
     menu.handle_key("tab", &kb());
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Transport")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Transport"))
+    );
     menu.handle_key("shift+tab", &kb());
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Auto-compact")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Auto-compact"))
+    );
     menu.handle_key("5", &kb());
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Skill commands")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Skill commands"))
+    );
     menu.handle_key("tab", &kb());
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Auto-compact")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Auto-compact"))
+    );
 }
 
 #[test]
@@ -339,9 +361,11 @@ fn arrows_cycle_a_multi_option_row_in_place() {
             value: "websocket".to_string()
         }
     );
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("websocket")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("websocket"))
+    );
     // Enter keeps its cycle: the next value after websocket.
     assert_eq!(
         menu.handle_key("enter", &kb()),
@@ -451,9 +475,11 @@ fn switching_tabs_keeps_each_tabs_search_and_selection() {
         menu.handle_key(key, &kb());
     }
     menu.handle_key("tab", &kb());
-    assert!(render_text(&menu)
-        .iter()
-        .any(|row| row.contains("Transport")));
+    assert!(
+        render_text(&menu)
+            .iter()
+            .any(|row| row.contains("Transport"))
+    );
     menu.handle_key("shift+tab", &kb());
     let text = render_text(&menu);
     assert!(text.iter().any(|row| row.contains("warn")));
@@ -517,9 +543,10 @@ fn the_header_and_the_settings_list_breathe_apart() {
 fn render_shows_value_and_selected_description() {
     let text = render_text(&menu());
     assert!(text.iter().any(|row| row.contains("Auto-compact")));
-    assert!(text
-        .iter()
-        .any(|row| row.contains("Automatically compact context when it gets too large")));
+    assert!(
+        text.iter()
+            .any(|row| row.contains("Automatically compact context when it gets too large"))
+    );
     assert!(text.iter().any(|row| {
         row.contains("Type to search · Tab/1-5 tabs · ←/→/Enter/Space change · Esc close")
     }));
@@ -556,9 +583,10 @@ fn opening_into_a_setting_keeps_the_top_bar_and_the_padding() {
     // The name and description keep the list rows' padding-x (regression pin b).
     assert_eq!(text[1], "  Thinking Level");
     assert!(text[3].starts_with("  Select reasoning depth"));
-    assert!(text
-        .iter()
-        .any(|row| row.starts_with("  Enter select · Esc back")));
+    assert!(
+        text.iter()
+            .any(|row| row.starts_with("  Enter select · Esc back"))
+    );
 }
 
 /// The search field takes the WHOLE key id (TS `Input.handleInput`, the

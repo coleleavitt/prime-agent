@@ -7,12 +7,18 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use rsa::pkcs8::EncodePublicKey;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::prime_inference::{
-    check_prime_scope_access, normalize_base_url, read_prime_cli_config, read_response_message,
-    PrimeAccessError, PrimeHttp, DEFAULT_PRIME_API_BASE_URL, DEFAULT_PRIME_FRONTEND_URL,
+    DEFAULT_PRIME_API_BASE_URL,
+    DEFAULT_PRIME_FRONTEND_URL,
     DEFAULT_REQUEST_TIMEOUT_MS,
+    PrimeAccessError,
+    PrimeHttp,
+    check_prime_scope_access,
+    normalize_base_url,
+    read_prime_cli_config,
+    read_response_message,
 };
 
 pub const PRIME_AGENT_TRACES_PROVIDER_ID: &str = "prime-agent-traces";
@@ -324,13 +330,15 @@ pub async fn login_prime_agent_traces(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rsa::pkcs8::DecodePublicKey;
     use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use rsa::pkcs8::DecodePublicKey;
+
+    use super::*;
 
     type PrimeHttpResponse = super::super::prime_inference::PrimeHttpResponse;
 
@@ -494,14 +502,16 @@ mod tests {
     #[tokio::test]
     async fn the_agent_traces_scope_check_names_the_ts_messages() {
         let http = ScriptedHttp::new(vec![whoami_ok(true)]);
-        assert!(check_prime_agent_traces_access(
-            &http,
-            DEFAULT_PRIME_API_BASE_URL,
-            "key",
-            DEFAULT_REQUEST_TIMEOUT_MS
-        )
-        .await
-        .is_ok());
+        assert!(
+            check_prime_agent_traces_access(
+                &http,
+                DEFAULT_PRIME_API_BASE_URL,
+                "key",
+                DEFAULT_REQUEST_TIMEOUT_MS
+            )
+            .await
+            .is_ok()
+        );
         let denied = ScriptedHttp::new(vec![whoami_ok(false)]);
         match check_prime_agent_traces_access(
             &denied,
@@ -684,8 +694,10 @@ mod tests {
             logged.lock().unwrap()[0],
             "Checking existing Prime CLI credentials..."
         );
-        assert!(logged.lock().unwrap()[1]
-            .starts_with("Existing Prime CLI key cannot upload Prime Agent traces ("));
+        assert!(
+            logged.lock().unwrap()[1]
+                .starts_with("Existing Prime CLI key cannot upload Prime Agent traces (")
+        );
     }
 
     #[tokio::test]

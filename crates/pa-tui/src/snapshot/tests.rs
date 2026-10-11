@@ -1,6 +1,7 @@
+use serde_json::json;
+
 use super::*;
 use crate::chat::StatusKind;
-use serde_json::json;
 
 fn test_view() -> crate::view::AgentView {
     crate::view::AgentView::new(crate::theme::Theme::builtin(

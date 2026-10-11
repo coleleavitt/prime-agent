@@ -8,8 +8,12 @@ use serde_json::Value;
 
 use super::decide::{RouterDecisionFn, RouterDecisionOutcome, RouterDecisionRequest};
 use super::types::{
-    RouterCloseOptions, RouterEnvironment, RouterExecution, RouterObservation,
-    RouterSegmentEnvironment, RouterUsage,
+    RouterCloseOptions,
+    RouterEnvironment,
+    RouterExecution,
+    RouterObservation,
+    RouterSegmentEnvironment,
+    RouterUsage,
 };
 
 /// One scripted environment program: what each phase returns.

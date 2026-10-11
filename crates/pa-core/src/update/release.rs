@@ -4,12 +4,12 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::install::{current_platform_alias, KNOWN_PLATFORMS};
-use super::version::{normalize_release_version, UpdateChannel};
+use super::install::{KNOWN_PLATFORMS, current_platform_alias};
+use super::version::{UpdateChannel, normalize_release_version};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReleaseArtifact {
@@ -209,10 +209,12 @@ mod tests {
         let release = parse_channel_manifest(manifest.to_string().as_bytes()).unwrap();
         assert_eq!(release.version, "1.2.3");
         assert_eq!(release.artifacts.len(), 3);
-        assert!(release
-            .artifacts
-            .iter()
-            .any(|artifact| artifact.platform == "linux-arm64"));
+        assert!(
+            release
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.platform == "linux-arm64")
+        );
     }
 
     #[test]

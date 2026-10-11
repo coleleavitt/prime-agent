@@ -4,31 +4,49 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::models::{clamp_thinking_level, supports_thinking};
 use crate::providers::openai_responses_shared::{
-    convert_responses_messages, convert_responses_tools, ConvertResponsesMessagesOptions,
-    ConvertResponsesToolsOptions, ResponsesStreamHooks, AZURE_TOOL_CALL_PROVIDERS,
+    AZURE_TOOL_CALL_PROVIDERS,
+    ConvertResponsesMessagesOptions,
+    ConvertResponsesToolsOptions,
+    ResponsesStreamHooks,
+    convert_responses_messages,
+    convert_responses_tools,
 };
 use crate::providers::simple_options::build_base_options;
 use crate::registry::Provider;
 use crate::types::{
-    done_reason, error_reason, AssistantMessage, CacheRetention, Context, Model, ModelExt,
-    ModelThinkingLevel, SimpleStreamOptions, StopReason, StreamOptions, Usage,
+    AssistantMessage,
+    CacheRetention,
+    Context,
+    Model,
+    ModelExt,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Usage,
+    done_reason,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{parse_json_with_repair, parse_streaming_json};
 use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
-    format_stream_failure_message, record_stream_failure, stream_failure_from_stop_reason,
     ProviderError,
+    format_stream_failure_message,
+    record_stream_failure,
+    stream_failure_from_stop_reason,
 };
 
 pub const API_AZURE_OPENAI_RESPONSES: &str = "azure-openai-responses";
@@ -587,7 +605,8 @@ mod tests {
     #[tokio::test]
     async fn a_stream_without_a_terminal_event_fails_closed() {
         use crate::providers::openai_responses::tests::{
-            truncated_text_failure_message, TRUNCATED_RESPONSES_SSE,
+            TRUNCATED_RESPONSES_SSE,
+            truncated_text_failure_message,
         };
         let server = crate::test_mock_http::serve(vec![crate::test_mock_http::MockResponse::sse(
             TRUNCATED_RESPONSES_SSE,

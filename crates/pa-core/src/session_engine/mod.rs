@@ -62,17 +62,16 @@ mod compaction_arms;
 mod terminal_inbox;
 mod wiring;
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, ThinkingLevel};
-use pa_types::session::AgentMessage as SessionAgentMessage;
-use pa_types::session::FileEntry;
-
-use crate::session::manager::{capture_git_context, SessionManager};
-use crate::skills::PromptTemplate;
+use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};
+use pa_types::sync::MutexExt;
 use slash_commands::{SessionSlashCommand, SlashCommandRegistry};
+
+use crate::session::manager::{SessionManager, capture_git_context};
+use crate::skills::PromptTemplate;
 
 /// How a prompt submitted while the agent streams is scheduled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

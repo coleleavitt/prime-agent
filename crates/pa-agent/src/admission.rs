@@ -20,7 +20,12 @@
 use std::sync::Arc;
 
 use crate::agent::{
-    Agent, AgentInner, AgentMessageBatch, AgentPromptInput, ClaimOrEnqueue, QueuedClaim,
+    Agent,
+    AgentInner,
+    AgentMessageBatch,
+    AgentPromptInput,
+    ClaimOrEnqueue,
+    QueuedClaim,
 };
 
 /// Outcome of [`Agent::admit_or_enqueue`] — the atomic
@@ -243,15 +248,25 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Mutex as StdMutex;
 
+    use super::*;
     use crate::agent::{AgentInitialState, AgentOptions, AgentStateSnapshot};
     use crate::scripted::ScriptedProvider;
     use crate::stream::{AssistantMessageEvent, LlmContext, StreamFn, StreamRequestOptions};
     use crate::types::{
-        AgentEvent, AgentMessage, AssistantContent, AssistantMessage, Message, Model, StopReason,
-        TextContent, ThinkingLevel, Usage, UserContent, UserPart,
+        AgentEvent,
+        AgentMessage,
+        AssistantContent,
+        AssistantMessage,
+        Message,
+        Model,
+        StopReason,
+        TextContent,
+        ThinkingLevel,
+        Usage,
+        UserContent,
+        UserPart,
     };
 
     fn model(id: &str) -> Model {

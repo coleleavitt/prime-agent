@@ -7,7 +7,7 @@
 //! are advisory: the art is still drawn and they are listed beside it. Notices are
 //! omitted while streaming, where nearly every intermediate state warns.
 
-use crate::render::{diagram_kind, render_cached, Art};
+use crate::render::{Art, diagram_kind, render_cached};
 
 /// The axis a rotated flowchart is drawn on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

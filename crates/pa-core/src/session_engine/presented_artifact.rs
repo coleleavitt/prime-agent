@@ -13,11 +13,11 @@ use std::sync::Arc;
 use base64::Engine as _;
 use pa_types::ai::{ImageContent, TextContent, UserContent, UserContentBlock};
 use pa_types::session::CustomMessage;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 use crate::session::manager::SessionManager;
 
 pub const PRESENTED_ARTIFACT_CUSTOM_TYPE: &str = "prime-agent.presented-artifact";

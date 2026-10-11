@@ -2,7 +2,7 @@
 //! and `/autonomous`; the strings are user-facing and byte-identical to TS.
 
 use crate::autonomous::{AgentAutonomousConfig, AgentAutonomousStatus, UNLIMITED_AUTONOMOUS_LIMIT};
-use crate::goals::{validate_goal_objective, MAX_THREAD_GOAL_OBJECTIVE_CHARS};
+use crate::goals::{MAX_THREAD_GOAL_OBJECTIVE_CHARS, validate_goal_objective};
 use crate::skills::parse_command_args;
 
 pub const AUTONOMOUS_BUDGET_USAGE: &str = "Usage: /autonomous [status|off] or /autonomous on [--max-continuations <n|unlimited>] [--max-turns <n|unlimited>] [--max-tokens <n|unlimited>] [--timeout-ms <n|unlimited>] [--gate <command>] [--gate-retries <n>] [--gate-timeout-ms <n>] [--subagent-keep-alive-ms <n>]";
@@ -439,9 +439,11 @@ mod tests {
             parse_autonomous_command("status extra").unwrap_err(),
             format!("Unexpected autonomous argument: extra. {AUTONOMOUS_BUDGET_USAGE}")
         );
-        assert!(parse_autonomous_command("on --nope 1")
-            .unwrap_err()
-            .starts_with("Unknown autonomous budget flag: --nope."));
+        assert!(
+            parse_autonomous_command("on --nope 1")
+                .unwrap_err()
+                .starts_with("Unknown autonomous budget flag: --nope.")
+        );
     }
 
     #[test]

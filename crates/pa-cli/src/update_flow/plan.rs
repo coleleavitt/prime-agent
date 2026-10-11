@@ -5,15 +5,22 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_core::update::install::{
-    current_platform_alias, read_installation, read_rollback_installation, running_release,
-    RunningRelease, CURRENT_LAUNCHER,
+    CURRENT_LAUNCHER,
+    RunningRelease,
+    current_platform_alias,
+    read_installation,
+    read_rollback_installation,
+    running_release,
 };
 use pa_core::update::release::{artifact_for_platform, latest_release};
 use pa_core::update::version::{
-    has_prerelease_tag, is_base_version_downgrade, is_release_update_candidate,
-    resolve_update_channel, UpdateChannel,
+    UpdateChannel,
+    has_prerelease_tag,
+    is_base_version_downgrade,
+    is_release_update_candidate,
+    resolve_update_channel,
 };
 
 /// The manifest fetch timeout.

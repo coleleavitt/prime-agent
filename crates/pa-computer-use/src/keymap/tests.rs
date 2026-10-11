@@ -161,9 +161,11 @@ fn invalid_chords_are_invalid_arguments_with_bounded_messages() {
     );
     let long = format!("{}+x", "m".repeat(40));
     let error = parse_chord(&long).unwrap_err();
-    assert!(error
-        .message
-        .starts_with(&format!("unknown modifier '{}';", "m".repeat(24))));
+    assert!(
+        error
+            .message
+            .starts_with(&format!("unknown modifier '{}';", "m".repeat(24)))
+    );
     assert_eq!(error.details, Some(json!({"key": head(&long, 32)})));
     assert_eq!(
         parse_chord("").unwrap_err(),

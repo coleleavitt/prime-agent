@@ -1,8 +1,9 @@
 //! Paste-marker behavior tests: the atomic-marker and paste-snapshot
 //! suites.
 
-use super::*;
 use wrap::{segment_with_markers, word_wrap_line};
+
+use super::*;
 
 fn ed() -> Editor {
     Editor::new()

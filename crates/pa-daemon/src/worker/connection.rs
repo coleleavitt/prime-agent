@@ -1,15 +1,44 @@
 //! Client connections: accept, authenticate, and the frame/event plumbing
 //! between the worker and its supervisor.
-use super::{
-    active_session_id_of, anyhow, app_version, bind_transport, broadcast,
-    create_daemon_replay_info, current_protocol_info, default_client_capabilities, json,
-    normalize_client_capabilities, peer_command_allowed, response_failure, response_success,
-    worker_peer_command_allowed, worker_server_capabilities, write_frame, write_frame_segments,
-    Arc, AtomicU64, ConnectionRole, Context, DaemonOutbound, DaemonResponse, DaemonResumeCursor,
-    Map, Ordering, Result, TransportStream, Value, Worker, WorkerRecoveryJournal, DAEMON_SCHEMA_ID,
-    DAEMON_SCHEMA_REVISION, DEFAULT_PRIVATE_FRAME_LIMITS, PEER_COMMAND_NOT_ALLOWED,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    Arc,
+    AtomicU64,
+    ConnectionRole,
+    Context,
+    DAEMON_SCHEMA_ID,
+    DAEMON_SCHEMA_REVISION,
+    DEFAULT_PRIVATE_FRAME_LIMITS,
+    DaemonOutbound,
+    DaemonResponse,
+    DaemonResumeCursor,
+    Map,
+    Ordering,
+    PEER_COMMAND_NOT_ALLOWED,
+    Result,
+    TransportStream,
+    Value,
+    Worker,
+    WorkerRecoveryJournal,
+    active_session_id_of,
+    anyhow,
+    app_version,
+    bind_transport,
+    broadcast,
+    create_daemon_replay_info,
+    current_protocol_info,
+    default_client_capabilities,
+    json,
+    normalize_client_capabilities,
+    peer_command_allowed,
+    response_failure,
+    response_success,
+    worker_peer_command_allowed,
+    worker_server_capabilities,
+    write_frame,
+    write_frame_segments,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthOutcome {

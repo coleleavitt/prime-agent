@@ -11,22 +11,31 @@ mod support;
 use std::path::Path;
 
 use pa_dream::improve::CandidateOrigin;
-use pa_dream::interpreter::{assert_legal_batch, interpret_policy, ObservationView, IMPROVE_EPS};
-use pa_dream::policy::{ExplorationPolicy, SelectionRule, StopRule, DEFAULT_POLICY};
+use pa_dream::interpreter::{IMPROVE_EPS, ObservationView, assert_legal_batch, interpret_policy};
+use pa_dream::policy::{DEFAULT_POLICY, ExplorationPolicy, SelectionRule, StopRule};
 use pa_dream::proposer::{LocalProposer, ProposeOutcome, Proposer};
 use pa_dream::records::{NodeOrigin, RevealRecord, RevealTag, TreeRecord};
-use pa_dream::replay::{simulate_policy, ReplayConfig, ReplaySimulator};
+use pa_dream::replay::{ReplayConfig, ReplaySimulator, simulate_policy};
 use pa_dream::rng::{Seed, SeededRng};
 use pa_dream::rollout::{
-    attempt_rng_label, improvements_of, run_online_exploration, ExploreOptions, ExploreResult,
+    ExploreOptions,
+    ExploreResult,
     ScoreImprovement,
+    attempt_rng_label,
+    improvements_of,
+    run_online_exploration,
 };
-use pa_dream::store::{read_tree, DreamStoreError, RecordedTree, TreeWriter};
+use pa_dream::store::{DreamStoreError, RecordedTree, TreeWriter, read_tree};
 use pa_dream::task::{
-    Artifact, ArtifactShapeError, DynTask, Evaluation, ProposeParams, ScoredTask,
+    Artifact,
+    ArtifactShapeError,
+    DynTask,
+    Evaluation,
+    ProposeParams,
+    ScoredTask,
 };
-use pa_dream::tasks::{resolve_task, DreamTaskId};
-use serde_json::{json, Value};
+use pa_dream::tasks::{DreamTaskId, resolve_task};
+use serde_json::{Value, json};
 use support::{policy, tree};
 
 fn t1() -> RecordedTree {
@@ -395,10 +404,12 @@ fn a_rollout_improves_over_the_root_at_zero_tokens_and_records_its_curve() {
             score: result.best_score
         })
     );
-    assert!(result
-        .improvements
-        .windows(2)
-        .all(|pair| pair[0].probe < pair[1].probe && pair[0].score < pair[1].score));
+    assert!(
+        result
+            .improvements
+            .windows(2)
+            .all(|pair| pair[0].probe < pair[1].probe && pair[0].score < pair[1].score)
+    );
     assert_eq!(improvements_of([(0, 1.0, false)]), Vec::new());
     assert_eq!(attempt_rng_label(3, 7, 1), "r3:p7:b1");
 
@@ -526,7 +537,9 @@ fn an_injected_outcomes_origin_and_tokens_land_on_the_node_without_moving_the_tr
         }))
         .collect();
     let legacy = RecordedTree::from_records(legacy).expect("legacy");
-    assert!(legacy.nodes[1..]
-        .iter()
-        .all(|node| node.origin() == NodeOrigin::Local));
+    assert!(
+        legacy.nodes[1..]
+            .iter()
+            .all(|node| node.origin() == NodeOrigin::Local)
+    );
 }

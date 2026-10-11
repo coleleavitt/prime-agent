@@ -5,11 +5,11 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 
-use anyhow::Result;
 // `Context` is used only by the linux `O_PATH` re-anchoring and the
 // Windows pipe-name error; a bare import is unused elsewhere.
 #[cfg(any(target_os = "linux", windows))]
 use anyhow::Context;
+use anyhow::Result;
 
 /// A full-duplex stream between a client and a daemon endpoint; `split`
 /// consumes it into owned halves, and callers hold only the erased halves.
@@ -400,8 +400,9 @@ pub fn connect_blocking(path: &Path) -> std::io::Result<Box<dyn BlockingTranspor
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use std::os::unix::fs::FileTypeExt;
+
+    use super::*;
 
     /// A directory whose full path length is exactly `target` bytes, inside
     /// a fresh temp dir (removed with the returned guard); falls back to
@@ -444,10 +445,12 @@ mod tests {
         bind_transport(&socket)
             .await
             .expect("bind through the limit");
-        assert!(std::fs::symlink_metadata(&socket)
-            .expect("socket file at the original deep path")
-            .file_type()
-            .is_socket());
+        assert!(
+            std::fs::symlink_metadata(&socket)
+                .expect("socket file at the original deep path")
+                .file_type()
+                .is_socket()
+        );
         // A second bind on the live socket must fail (address in use), not
         // silently re-anchor somewhere else.
         assert!(bind_transport(&socket).await.is_err());
@@ -502,8 +505,9 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod pipe_name_tests {
-    use super::{fnv1a64, pipe_name};
     use std::path::Path;
+
+    use super::{fnv1a64, pipe_name};
 
     #[test]
     fn pipe_namespace_names_pass_through_unchanged() {

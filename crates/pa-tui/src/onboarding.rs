@@ -3,13 +3,14 @@
 //! question panel. A startup model that is ready skips to the question (TS `immediate: true`); no
 //! usable model runs the full flow (TS `runOnboardingFlow`).
 
+use ratatui::style::{Color, Modifier, Style};
+
 use crate::keybindings::KeybindingsManager;
 use crate::keys::KeyId;
 use crate::onboarding_choice::{OnboardingChoice, OnboardingChoiceOption, OnboardingChoiceOptions};
-use crate::onboarding_flow::{welcome_action_row, welcome_rows, OnboardingPanel};
+use crate::onboarding_flow::{OnboardingPanel, welcome_action_row, welcome_rows};
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use ratatui::style::{Color, Modifier, Style};
 
 pub const TRACE_OPT_IN_PROMPT: &str = "Share agent traces with Prime Intellect?";
 const TRACE_OPT_IN_DESCRIPTION: &str = "Trace sharing helps us train better open-source models and improve the open agent ecosystem for everyone.";

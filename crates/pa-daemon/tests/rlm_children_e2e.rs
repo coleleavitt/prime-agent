@@ -30,12 +30,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pa_core::session_engine::rlm_host::{
-    RlmCreateSessionRequest, RlmSpawnRequest, RlmSpawnTarget, RlmSubagentHost,
+    RlmCreateSessionRequest,
+    RlmSpawnRequest,
+    RlmSpawnTarget,
+    RlmSubagentHost,
 };
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,
@@ -659,9 +662,11 @@ async fn rlm_create_session_spawns_a_prompted_depth_zero_session() {
         .await
         .expect("create session");
     assert_eq!(handle.name, "root-b");
-    assert!(Path::new(&handle.session_file)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")));
+    assert!(
+        Path::new(&handle.session_file)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+    );
     assert!(Path::new(&handle.session_file).exists());
     assert_eq!(handle.model, "scripted/faux-1");
 

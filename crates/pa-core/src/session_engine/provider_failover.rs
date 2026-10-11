@@ -9,14 +9,23 @@ use pa_agent::abort::AbortSignal;
 use pa_agent::types::{AssistantMessage, StopReason};
 use pa_types::ai::Model;
 
-use super::auto_retry::{run_turn_with_auto_retry, AutoRetryEvent, RetryStartReason};
-use super::provider_park::{is_quota_block_failure, ParkDecisionCallback};
+use super::auto_retry::{AutoRetryEvent, RetryStartReason, run_turn_with_auto_retry};
+use super::provider_park::{ParkDecisionCallback, is_quota_block_failure};
 use super::provider_retry::{
-    has_provider_stream_failure, is_agent_lifecycle_failure, is_context_overflow_failure,
-    is_faux_provider_queue_exhausted, is_permanent_provider_failure_kind,
-    is_unsupported_tool_failure, jittered_delay_ms, provider_retry_delay,
-    provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
-    provider_stream_failure_status, retry_jitter_rand01, ProviderRetryDelay, ProviderRetryPolicy,
+    ProviderRetryDelay,
+    ProviderRetryPolicy,
+    has_provider_stream_failure,
+    is_agent_lifecycle_failure,
+    is_context_overflow_failure,
+    is_faux_provider_queue_exhausted,
+    is_permanent_provider_failure_kind,
+    is_unsupported_tool_failure,
+    jittered_delay_ms,
+    provider_retry_delay,
+    provider_stream_failure_kind,
+    provider_stream_failure_retry_after_ms,
+    provider_stream_failure_status,
+    retry_jitter_rand01,
 };
 
 /// Per-provider retry budget and backoff schedule (settings
@@ -345,10 +354,10 @@ where
                         // The give-up sentence here is the park's abort message
                         // (TS `reset-too-far`).
                         let abort = format!(
-                        "Provider requested a {}s wait before retrying (above retry.provider.maxRetryDelayMs={}ms)",
-                        retry_after_ms.div_ceil(1000),
-                        quick_policy.max_retry_delay_ms,
-                    );
+                            "Provider requested a {}s wait before retrying (above retry.provider.maxRetryDelayMs={}ms)",
+                            retry_after_ms.div_ceil(1000),
+                            quick_policy.max_retry_delay_ms,
+                        );
                         // The park seam is a quota-failure seam: other
                         // server-requested waits keep the give-up.
                         let parked = if is_quota_block_failure(&message) {
@@ -468,10 +477,11 @@ fn with_stop_reason_aborted(mut message: AssistantMessage) -> AssistantMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::{Arc, Mutex};
+
     use pa_agent::types::{AssistantContent, AssistantMessageDiagnostic, TextContent, Usage};
-    use std::sync::Arc;
-    use std::sync::Mutex;
+
+    use super::*;
 
     fn model(provider: &str) -> Model {
         serde_json::from_value(serde_json::json!({

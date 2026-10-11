@@ -21,7 +21,11 @@ use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 
 /// Speaks protocol v3: ready, then per request the oversized unterminated
@@ -162,8 +166,10 @@ async fn a_multi_mib_blank_protocol_line_is_skipped_and_the_next_frame_lands() {
         (result.status, result.stdout.as_str()),
         (ExecuteStatus::Ok, "big")
     );
-    assert!(manager
-        .shutdown(KernelShutdownOptions::default())
-        .await
-        .is_ok());
+    assert!(
+        manager
+            .shutdown(KernelShutdownOptions::default())
+            .await
+            .is_ok()
+    );
 }

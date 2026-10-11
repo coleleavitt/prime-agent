@@ -3,11 +3,12 @@
 //! line below the hint (the operator's 2026-09-24 spacing directive).
 //! Geometry is the TS `ModelSelectorComponent` inline path.
 
-use pa_types::ai::{Model, ModelThinkingLevel};
 use std::fmt::Write;
 
+use pa_types::ai::{Model, ModelThinkingLevel};
+
 use super::{EffortLayout, ModelPicker};
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::menu_panel::{hint_row, menu_row, no_match_row, scroll_row, search_field_lines};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::str_width;
@@ -309,7 +310,9 @@ fn hint_line(theme: &Theme, width: usize, kb: &KeybindingsManager) -> Line {
             kb.first_key("tui.editor.cursorRight")
                 .map_or_else(|| "\u{2192}".to_string(), |key| format_key_text(&key))
         );
-        format!("{navigate} model \u{b7} {effort} effort \u{b7} {select_key} select \u{b7} {close_key} close")
+        format!(
+            "{navigate} model \u{b7} {effort} effort \u{b7} {select_key} select \u{b7} {close_key} close"
+        )
     } else {
         format!("{select_key} select \u{b7} {close_key} close")
     };

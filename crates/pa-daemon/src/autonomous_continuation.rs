@@ -3,10 +3,10 @@
 //! (`_getContinuationMessages`), churning INSIDE the one prompt wait - no
 //! run boundary between continuation turns, one `agent_end` per prompt wait.
 
-use pa_types::sync::{MutexExt, RwLockExt};
 use std::sync::Arc;
 
 use pa_core::session_engine::provider_adapter::json_round_trip;
+use pa_types::sync::{MutexExt, RwLockExt};
 
 use crate::agent_engine::AgentSessionEngine;
 
@@ -288,7 +288,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::agent_engine::tests::{admit, faux_engine_with_settings, FAUX_TEST_LOCK};
+    use crate::agent_engine::tests::{FAUX_TEST_LOCK, admit, faux_engine_with_settings};
     use crate::engine::EngineEvent;
 
     /// Inject the engine's background-bash liveness probe (a `true` probe

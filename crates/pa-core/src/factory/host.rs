@@ -20,13 +20,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::executor::model::LibraryOrigin;
 use super::executor::{FactoryExecutor, FactoryRefusal, ResolvedSubagent, RunRequest};
-use super::lane::{factory_enabled_in, FACTORY_DISABLED_MESSAGE};
-use super::pyvalue::{decode_node_table, PyValue};
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use super::lane::{FACTORY_DISABLED_MESSAGE, factory_enabled_in};
+use super::pyvalue::{PyValue, decode_node_table};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 
 /// Register `factory.spec` and `factory.library`, which every session
 /// serves (neither validation nor the machine library needs an executor).

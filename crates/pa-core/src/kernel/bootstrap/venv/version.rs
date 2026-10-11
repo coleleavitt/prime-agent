@@ -1,6 +1,6 @@
 //! The version-file concern: the schema consts, the `.bootstrap-version` read/write.
 
-use super::{default_rlm_extra_uv_args, BootstrapPythonSkill, BootstrapVersion, Path};
+use super::{BootstrapPythonSkill, BootstrapVersion, Path, default_rlm_extra_uv_args};
 
 /// Schema of `.bootstrap-version`; a mismatch rebuilds the venv.
 pub(super) const BOOTSTRAP_SCHEMA: u64 = 9;

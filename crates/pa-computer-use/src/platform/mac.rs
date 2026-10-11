@@ -27,17 +27,36 @@ use self::events::MacEvent;
 use crate::capture::CaptureDir;
 use crate::element::{Observation, Pair, Rect};
 use crate::error::{
-    head, injection_failed, invalid, not_running, transport, ComputerUseError, ErrorCode, Result,
+    ComputerUseError,
     ERROR_LIMIT,
+    ErrorCode,
+    Result,
+    head,
+    injection_failed,
+    invalid,
+    not_running,
+    transport,
 };
 use crate::keymap::ParsedChord;
 use crate::permissions::{PermissionReport, PermissionState};
 use crate::platform::{
-    CaptureRequest, Captured, Clipboard, Discovery, ElementActions, Fingerprint, FocusControl,
-    MouseButton, Platform, PlatformKind, RunningApp, ScrollDirection, Target, TextRecognizer,
+    CaptureRequest,
+    Captured,
+    Clipboard,
+    Discovery,
+    ElementActions,
+    Fingerprint,
+    FocusControl,
+    MouseButton,
+    Platform,
+    PlatformKind,
+    RunningApp,
+    ScrollDirection,
+    Target,
+    TextRecognizer,
     Workspace,
 };
-use crate::process::{run_tool, RunError, Tools, TOOL_TIMEOUT};
+use crate::process::{RunError, TOOL_TIMEOUT, Tools, run_tool};
 use crate::pyfmt::repr_str;
 use crate::secure::Security;
 use crate::session::expand_user;
@@ -494,8 +513,8 @@ where
 pub(crate) mod native {
     use std::path::Path;
 
-    use super::sys::{SysAx, SysDesktop};
     use super::MacPlatform;
+    use super::sys::{SysAx, SysDesktop};
     use crate::capture::CaptureDir;
     use crate::process::SystemTools;
 

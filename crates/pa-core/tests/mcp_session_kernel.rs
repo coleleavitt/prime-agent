@@ -18,13 +18,22 @@ use std::time::{Duration, Instant};
 use pa_core::kernel::cancellation::AbortSignal;
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 use pa_core::mcp::{
-    EnvRef, McpManager, McpManagerOptions, McpOAuth, McpServerConfig, McpSessionOptions,
+    EnvRef,
+    McpManager,
+    McpManagerOptions,
+    McpOAuth,
+    McpServerConfig,
+    McpSessionOptions,
     McpSessions,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn kernel_python() -> Option<PathBuf> {
     pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")

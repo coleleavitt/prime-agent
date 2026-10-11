@@ -1,16 +1,24 @@
 //! `AuthStorage`: credential resolution with runtime overrides, environment
 //! keys, stored credentials, fallback resolvers, and stale-marking.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use pa_types::sync::MutexExt;
+
 use super::resolve_config_value::{resolve_config_value, resolve_config_value_uncached};
-use super::storage::{parse_storage_data, AuthStorageBackend};
+use super::storage::{AuthStorageBackend, parse_storage_data};
 use super::types::{
-    AuthCredential, AuthSource, AuthSourceToken, AuthStatus, AuthStorageData, PrimeTeamAssignment,
-    PrimeTeamCredential, StoredPrimeTeam, PRIME_INFERENCE_PROVIDER_ID,
+    AuthCredential,
+    AuthSource,
+    AuthSourceToken,
+    AuthStatus,
+    AuthStorageData,
+    PRIME_INFERENCE_PROVIDER_ID,
+    PrimeTeamAssignment,
+    PrimeTeamCredential,
+    StoredPrimeTeam,
 };
 
 #[cfg(test)]

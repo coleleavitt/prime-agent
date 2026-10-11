@@ -2,16 +2,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use pa_types::session::FileEntry;
+
 use crate::keybindings::KeybindingsManager;
 use crate::tree_display::{self, ToolCallInfo};
 use crate::tree_nodes::{TreeNode, TreeNodeData};
-use pa_types::session::FileEntry;
 
 mod render;
 
+use render::{Direction, FlattenItem, toggle};
+
 #[cfg(test)]
 use crate::width::str_width;
-use render::{toggle, Direction, FlattenItem};
 
 /// Tree filter modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

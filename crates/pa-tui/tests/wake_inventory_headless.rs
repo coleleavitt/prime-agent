@@ -4,14 +4,20 @@
 //! without them, so each member needs its own frame-arm deadline.
 #![cfg(unix)]
 
-use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
-};
-use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
+
+use pa_tui::interactive::{
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
+};
+use serde_json::{Value, json};
 
 /// The plan height and the mock, in the same shape the other headless
 /// batteries use (the mock serves one session and answers the boot handshake).

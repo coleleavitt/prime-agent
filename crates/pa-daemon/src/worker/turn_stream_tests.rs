@@ -1,7 +1,11 @@
 //! The turn runner's stream tests.
 use super::*;
 use crate::engine::{
-    CompactionOutcome, CompactionRequest, PromptRequest, SessionEngine, SideQuestionOutcome,
+    CompactionOutcome,
+    CompactionRequest,
+    PromptRequest,
+    SessionEngine,
+    SideQuestionOutcome,
     SideQuestionRequest,
 };
 

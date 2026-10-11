@@ -10,8 +10,9 @@
 //!   (`authorization`, `api[-_]?key`, `token`, `secret`, `password`)
 //!   then string-redacted; plain-text bodies are string-redacted.
 
-use crate::types::Method;
 use thiserror::Error;
+
+use crate::types::Method;
 
 /// Cap for the `details` preview of an error response body (TS
 /// `MAX_RESPONSE_PREVIEW_CHARS`).

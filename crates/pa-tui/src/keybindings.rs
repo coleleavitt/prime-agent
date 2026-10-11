@@ -4,9 +4,10 @@
 //! `~/.prime/agent/keybindings.json`; user bindings load with the TS parse semantics: legacy names
 //! migrate, malformed values drop, an empty array disables a binding.
 
-use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeybindingDefinition {

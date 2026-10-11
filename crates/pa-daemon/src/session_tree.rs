@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
-
-use crate::session_store::{new_entry_id, session_file_name, SessionEntry, SessionFile};
+use anyhow::{Context, Result, anyhow};
 use pa_types::session::FileEntry;
+use serde_json::{Value, json};
+
+use crate::session_store::{SessionEntry, SessionFile, new_entry_id, session_file_name};
 
 /// The active label state: latest `label` entry per target (TS `labelsById`/`labelTimestampsById`).
 #[derive(Debug, Default)]
@@ -72,11 +72,13 @@ pub fn flat_tree(store: &SessionFile) -> Vec<Value> {
             if let Some(id) = entry.get("id").and_then(Value::as_str) {
                 if let Some(label) = labels.labels.get(id) {
                     node["label"] = json!(label);
-                    node["labelTimestamp"] = json!(labels
-                        .timestamps
-                        .get(id)
-                        .map(String::as_str)
-                        .unwrap_or_default());
+                    node["labelTimestamp"] = json!(
+                        labels
+                            .timestamps
+                            .get(id)
+                            .map(String::as_str)
+                            .unwrap_or_default()
+                    );
                 }
             }
             node

@@ -1,7 +1,8 @@
 //! The supervisor's operator-note surface: the daemon-event and session-channel
 //! notes, the rotating log line, and the spawn-ledger assembly.
-use super::{paths, util, Arc, Result, Supervisor, Value};
 use pa_types::sync::MutexExt;
+
+use super::{Arc, Result, Supervisor, Value, paths, util};
 
 /// How long the frequent supervision events accumulate before their one
 /// `daemon event` summary.

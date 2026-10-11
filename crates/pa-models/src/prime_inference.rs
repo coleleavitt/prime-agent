@@ -7,11 +7,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hmac::{Hmac, Mac};
-use pa_types::ai::{
-    CompatKind, Model, ModelCompat, ModelCost, ModelInput, ModelThinkingLevel,
-    OpenAiCompletionsCompat, ThinkingFormat, ThinkingLevelMap,
-};
 use pa_types::JsNumber;
+use pa_types::ai::{
+    CompatKind,
+    Model,
+    ModelCompat,
+    ModelCost,
+    ModelInput,
+    ModelThinkingLevel,
+    OpenAiCompletionsCompat,
+    ThinkingFormat,
+    ThinkingLevelMap,
+};
 use serde::Deserialize;
 use sha2::Sha256;
 
@@ -666,8 +673,9 @@ impl PrimeInferenceCatalog {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::*;
-    use serde_json::{json, Value};
 
     fn wire_entry(id: &str, input: f64, output: f64) -> serde_json::Value {
         json!({
@@ -799,13 +807,15 @@ mod tests {
             .unwrap();
         assert!((anthropic.cost.cache_read.as_f64() - 0.2).abs() < 1e-9);
         assert!((anthropic.cost.cache_write.as_f64() - 2.5).abs() < 1e-9);
-        assert!(anthropic
-            .compat
-            .as_ref()
-            .unwrap()
-            .raw
-            .get("cacheControlFormat")
-            .is_some_and(|v| v == "anthropic"));
+        assert!(
+            anthropic
+                .compat
+                .as_ref()
+                .unwrap()
+                .raw
+                .get("cacheControlFormat")
+                .is_some_and(|v| v == "anthropic")
+        );
     }
 
     #[test]

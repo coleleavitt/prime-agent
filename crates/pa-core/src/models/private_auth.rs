@@ -11,8 +11,10 @@ use sha2::Sha256;
 
 use super::prime_inference::is_private_prime_inference_model_id;
 use super::prime_inference_catalog::{
-    build_prime_inference_models_with_minimum, fetch_prime_inference_model_catalog,
-    parse_prime_inference_model_catalog, PrimeInferenceCatalogEntry,
+    PrimeInferenceCatalogEntry,
+    build_prime_inference_models_with_minimum,
+    fetch_prime_inference_model_catalog,
+    parse_prime_inference_model_catalog,
 };
 
 const PRIVATE_PRIME_AUTHORIZATION_CACHE_FILE: &str = "prime-inference-private-models.json";
@@ -416,10 +418,12 @@ mod tests {
         assert_eq!(first.fingerprint, "fingerprint-a");
         // A stable parse is pinned process-wide and a repeat read is served
         // from the snapshot (the same stat identity).
-        assert!(parse_cache()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(&cache_path));
+        assert!(
+            parse_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&cache_path)
+        );
         let second = read_private_prime_authorization_cache(&models_json).expect("cache readable");
         assert_eq!(second.fingerprint, "fingerprint-a");
         // The write path's atomic rename changes the identity, so the next
@@ -436,10 +440,12 @@ mod tests {
         let cache_path = private_prime_authorization_cache_path(&models_json);
         std::fs::write(&cache_path, "{ not json").unwrap();
         assert!(read_private_prime_authorization_cache(&models_json).is_none());
-        assert!(!parse_cache()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(&cache_path));
+        assert!(
+            !parse_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&cache_path)
+        );
         write_private_prime_authorization_cache(&models_json, &cache("fingerprint-a"));
         assert!(read_private_prime_authorization_cache(&models_json).is_some());
         // A deleted cache is never served from the snapshot.

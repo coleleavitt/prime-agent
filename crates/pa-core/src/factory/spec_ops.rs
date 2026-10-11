@@ -6,11 +6,14 @@
 //! one-shot (a runtime process with no serving kernel). Both hand the same
 //! JSON to [`run_spec_op`].
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::pyvalue::{decode_node_table, encode_node_table};
 use super::spec::{
-    canonicalize_factory_spec, compile_factory_dag, topological_order, validate_factory_machine,
+    canonicalize_factory_spec,
+    compile_factory_dag,
+    topological_order,
+    validate_factory_machine,
     validate_factory_spec,
 };
 

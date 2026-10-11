@@ -5,11 +5,11 @@
 //! only the daemon's own delivery or recovery journal reaches a queue lane with a
 //! reserved kind.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 /// The custom kinds ONLY the daemon's notice producer creates (pa-core
@@ -75,8 +75,9 @@ pub(crate) fn consume(nonce: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn a_mint_consumes_exactly_once() {

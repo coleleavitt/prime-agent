@@ -2,9 +2,27 @@
 //! row builders, the notice/list/row renderers, the cell/truncate helpers, and the terminal/
 //! headless renderer.
 use super::{
-    build_layout, mpsc, pad_line, section_title, str_width, truncate_text, AgentsStep,
-    AgentsViewMode, AgentsViewRow, AgentsViewUiMode, Composer, Duration, Line, Result, RowKind,
-    RowLayout, Section, Theme, ThemeColor, UiInput, Value,
+    AgentsStep,
+    AgentsViewMode,
+    AgentsViewRow,
+    AgentsViewUiMode,
+    Composer,
+    Duration,
+    Line,
+    Result,
+    RowKind,
+    RowLayout,
+    Section,
+    Theme,
+    ThemeColor,
+    UiInput,
+    Value,
+    build_layout,
+    mpsc,
+    pad_line,
+    section_title,
+    str_width,
+    truncate_text,
 };
 
 impl AgentsViewMode {

@@ -13,13 +13,16 @@
 //! single `action` question; a multi-question schema passes through
 //! unchanged.
 
-use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEventStream, AssistantMessageEventWriter,
-};
-use crate::types::{Context, Model, SimpleStreamOptions, StreamOptions};
-use crate::Provider;
 use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage};
 use serde_json::Value;
+
+use crate::Provider;
+use crate::event_stream::{
+    AssistantMessageEventStream,
+    AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
+};
+use crate::types::{Context, Model, SimpleStreamOptions, StreamOptions};
 
 /// One request round-trip's wall-clock bound when the caller sets none.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -160,10 +163,11 @@ fn error_message(model: &Model, error: &str) -> AssistantMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::ai::{Message, UserContent, UserMessage};
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
 
     /// One request the loopback server received.
     #[derive(Debug, Clone)]

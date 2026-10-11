@@ -1,10 +1,9 @@
 //! The live session's state block.
-use super::QueuedItem;
-
 use std::collections::VecDeque;
 
 use serde_json::Value;
 
+use super::QueuedItem;
 use crate::session_store::SessionFile;
 use crate::types::SessionActionSnapshot;
 

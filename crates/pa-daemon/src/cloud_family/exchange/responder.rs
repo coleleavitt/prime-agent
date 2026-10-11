@@ -1,16 +1,23 @@
 //! Local-side half of the exchange: request events in, journaled answers
 //! out through the delivery and submit seams.
 
-use pa_types::sync::MutexExt;
 use std::sync::Mutex;
 
 use pa_types::daemon::cloud::{
-    CloudFamilyCommand, CloudFamilyCommandPayload, CloudFamilyEvent, CloudFamilyEventPayload,
+    CloudFamilyCommand,
+    CloudFamilyCommandPayload,
+    CloudFamilyEvent,
+    CloudFamilyEventPayload,
 };
+use pa_types::sync::MutexExt;
 
 use super::{
-    AgentMessageLookup, CloudDeliveryError, CloudFamilyDelivery, FamilyResultSubmitter,
-    HandleOutcome, IncomingCloudMessage,
+    AgentMessageLookup,
+    CloudDeliveryError,
+    CloudFamilyDelivery,
+    FamilyResultSubmitter,
+    HandleOutcome,
+    IncomingCloudMessage,
 };
 use crate::cloud_family::log::{Admission, FamilyResultLog};
 

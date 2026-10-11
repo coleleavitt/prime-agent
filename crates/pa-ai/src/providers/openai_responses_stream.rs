@@ -6,22 +6,36 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::event_stream::{AssistantMessageEvent, AssistantMessageEventWriter};
 use crate::models::calculate_cost;
 pub use crate::providers::openai_responses_hooks::{
-    apply_service_tier_pricing, ResponsesStreamHooks,
+    ResponsesStreamHooks,
+    apply_service_tier_pricing,
 };
 use crate::providers::openai_responses_shared::encode_text_signature_v1;
 use crate::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, TextSignaturePhase,
-    ThinkingContent, ToolCall, Usage, UsageCost,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    TextSignaturePhase,
+    ThinkingContent,
+    ToolCall,
+    Usage,
+    UsageCost,
 };
-use crate::utils_inner::json_parse::{parse_streaming_json, StreamingJsonAccumulator};
+use crate::utils_inner::json_parse::{StreamingJsonAccumulator, parse_streaming_json};
 use crate::utils_inner::stream_failure::{
-    classify_stream_failure, open_stream_block, stream_drop_failure, ProviderError,
-    StreamFailureError, StreamFailureInfo, StreamFailureKind,
+    ProviderError,
+    StreamFailureError,
+    StreamFailureInfo,
+    StreamFailureKind,
+    classify_stream_failure,
+    open_stream_block,
+    stream_drop_failure,
 };
 
 /// Streaming slot state for one output item.

@@ -11,7 +11,7 @@ use std::pin::Pin;
 
 use pa_core::refinement::planner::RefinementEdit;
 use pa_core::refinement::{RefinementAction, RefinementKind};
-use pa_ledger::{replay_probe_of, FailureRecord, ReplayCase, ReplayProbe};
+use pa_ledger::{FailureRecord, ReplayCase, ReplayProbe, replay_probe_of};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -416,7 +416,7 @@ mod tests {
     use std::sync::Mutex;
 
     use pa_core::refinement::planner::normalize_refinement_proposal;
-    use pa_ledger::{fingerprint_failure, FailureKind};
+    use pa_ledger::{FailureKind, fingerprint_failure};
     use serde_json::json;
 
     use super::*;

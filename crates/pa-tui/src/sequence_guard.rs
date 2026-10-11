@@ -6,7 +6,14 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    Event,
+    KeyCode,
+    KeyEvent,
+    KeyEventKind,
+    KeyEventState,
+    KeyModifiers,
+    MouseButton,
+    MouseEvent,
     MouseEventKind,
 };
 

@@ -48,11 +48,19 @@ pub mod family;
 pub mod inbox;
 pub mod log;
 
-pub use delivery::{reconcile_uncertain, LocalFamilyDelivery, UncertainReconcile};
+pub use delivery::{LocalFamilyDelivery, UncertainReconcile, reconcile_uncertain};
 pub use exchange::{
-    AgentMessageLookup, CloudDeliveryError, CloudFamilyDelivery, CloudFamilyRequestError,
-    CloudFamilyRequestOutcome, CloudFamilyRequester, CloudFamilyResponder, FamilyResultSubmitter,
-    HandleOutcome, IncomingCloudMessage, ResolveOutcome,
+    AgentMessageLookup,
+    CloudDeliveryError,
+    CloudFamilyDelivery,
+    CloudFamilyRequestError,
+    CloudFamilyRequestOutcome,
+    CloudFamilyRequester,
+    CloudFamilyResponder,
+    FamilyResultSubmitter,
+    HandleOutcome,
+    IncomingCloudMessage,
+    ResolveOutcome,
 };
 pub use inbox::CloudInboxLog;
 pub use log::{Admission, FamilyRequestLog, FamilyResultLog};

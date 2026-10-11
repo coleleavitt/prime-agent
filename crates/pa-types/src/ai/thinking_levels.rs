@@ -125,8 +125,8 @@ pub fn thinking_level_map(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::{ModelCost, ModelInput, ThinkingLevelMap};
     use crate::JsNumber;
+    use crate::ai::{ModelCost, ModelInput, ThinkingLevelMap};
 
     fn model(reasoning: bool, map: Option<ThinkingLevelMap>) -> Model {
         Model {

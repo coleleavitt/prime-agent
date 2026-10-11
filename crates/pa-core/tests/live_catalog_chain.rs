@@ -22,11 +22,14 @@ use std::sync::Arc;
 
 use pa_core::auth::{AuthStorage, NoOAuth};
 use pa_core::models::{
-    find_session_model_with_readiness_wait, install_catalog, startup_refresh, ModelRegistry,
+    ModelRegistry,
     SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
+    find_session_model_with_readiness_wait,
+    install_catalog,
+    startup_refresh,
 };
 use pa_models::ModelCatalog;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A catalog-repo entry the compiled fallback provably lacks (asserted as
 /// a premise). Rides the compiled openai transport tuple — the pinning
@@ -211,10 +214,12 @@ async fn refresh_lands_live_pricing_private_models_and_layer_a_entries() {
         .expect("private entitlement served");
     assert!((private.cost.input.as_f64() - 0.42).abs() < 1e-9);
     // Auth is configured, so the private model is also available.
-    assert!(registry
-        .get_available()
-        .iter()
-        .any(|model| model.id == "internal/glm-5.4-fast"));
+    assert!(
+        registry
+            .get_available()
+            .iter()
+            .any(|model| model.id == "internal/glm-5.4-fast")
+    );
 
     // Exactly the three fetches (layer A, layer B, private lane).
     let requests = server.recorded_requests();
@@ -302,10 +307,12 @@ async fn without_credentials_the_compiled_fallback_serves_unchanged() {
     assert!(!all.iter().any(|model| model.id == LAYER_A_PROBE_ID));
     assert!(!all.iter().any(|model| model.id == "internal/glm-5.4-fast"));
     assert!(all.iter().any(|model| model.id == "internal/glm-5.2-fast"));
-    assert!(!registry
-        .get_available()
-        .iter()
-        .any(|model| model.id == "internal/glm-5.2-fast"));
+    assert!(
+        !registry
+            .get_available()
+            .iter()
+            .any(|model| model.id == "internal/glm-5.2-fast")
+    );
 }
 
 #[tokio::test]
@@ -336,9 +343,10 @@ async fn layer_a_fetch_adds_entries_the_compiled_fallback_lacks() {
         .expect("layer-A entry appears after the fetch");
     assert_eq!(gpt.context_window, 400_000);
     assert!((gpt.cost.input.as_f64() - 1.25).abs() < 1e-9);
-    assert!(all
-        .iter()
-        .any(|model| model.provider == "prime-inference" && model.id == "z-ai/glm-5.3"));
+    assert!(
+        all.iter()
+            .any(|model| model.provider == "prime-inference" && model.id == "z-ai/glm-5.3")
+    );
 }
 
 /// The picker regression — the fetched catalog-repo entry shows in the picker's available list once
@@ -395,20 +403,26 @@ async fn the_picker_available_list_shows_a_fetched_entry_once_its_provider_auth_
         .expect("the fetched entry lists in the picker once auth is configured");
     assert!((probe.cost.input.as_f64() - 1.25).abs() < 1e-9);
     // The rlm search surface (find_models) shares the availability gate.
-    assert!(registry
-        .get_rlm_searchable_models()
-        .iter()
-        .any(|model| model.id == LAYER_A_PROBE_ID));
+    assert!(
+        registry
+            .get_rlm_searchable_models()
+            .iter()
+            .any(|model| model.id == LAYER_A_PROBE_ID)
+    );
 
     let (_bare_dir, bare_registry) = refreshed_registry_with_openai_auth(false).await;
-    assert!(bare_registry
-        .get_all()
-        .iter()
-        .any(|model| model.id == LAYER_A_PROBE_ID));
-    assert!(!bare_registry
-        .get_available()
-        .iter()
-        .any(|model| model.id == LAYER_A_PROBE_ID));
+    assert!(
+        bare_registry
+            .get_all()
+            .iter()
+            .any(|model| model.id == LAYER_A_PROBE_ID)
+    );
+    assert!(
+        !bare_registry
+            .get_available()
+            .iter()
+            .any(|model| model.id == LAYER_A_PROBE_ID)
+    );
 }
 
 /// A saved private model missing from the cold registry (no disk caches yet) restores through the

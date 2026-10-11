@@ -1,14 +1,14 @@
 //! Settings storage: global (agentDir/settings.json) + project
 //! (cwd/<config-dir>/settings.json) files with lock-retry and atomic writes.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use pa_types::sync::MutexExt;
 
 pub const CONFIG_DIR_NAME: &str = ".prime/agent";
 

@@ -22,13 +22,17 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::cloud::{
-    canonical_json, cloud_event_problem, CloudCommandReceipt, CloudCursor, CloudEvent,
+    CloudCommandReceipt,
+    CloudCursor,
+    CloudEvent,
     CloudSessionStatus,
+    canonical_json,
+    cloud_event_problem,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::cloud_guest::DEFAULT_OUTBOX_RECORDS;

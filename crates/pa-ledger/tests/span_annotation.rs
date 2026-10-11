@@ -6,8 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use pa_core::features::{SessionFeature, SessionFeatureContext, ToolResultObservation};
-use pa_ledger::{fingerprint_failure, FailureKind, FailureLedgerFeature, LedgerOptions};
-use serde_json::{json, Value};
+use pa_ledger::{FailureKind, FailureLedgerFeature, LedgerOptions, fingerprint_failure};
+use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt as _;
 
 /// Events under the span-attributes target, as (field, value) pairs.

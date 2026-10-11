@@ -10,8 +10,8 @@
 
 use std::cell::Cell;
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The inline image protocol a terminal speaks (TS `ImageProtocol`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -756,8 +756,9 @@ pub fn image_fallback(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use base64::Engine;
+
+    use super::*;
 
     fn tiny_png(width: u32, height: u32) -> String {
         let mut bytes = vec![0x89, b'P', b'N', b'G'];
@@ -796,7 +797,7 @@ mod tests {
         bytes.extend(720u16.to_be_bytes()); // height
         bytes.extend(1080u16.to_be_bytes()); // width
         bytes.extend(vec![0u8; 8]); // SOF payload tail: the scan needs
-                                    // `offset + 9 < len`
+        // `offset + 9 < len`
         let data = base64::engine::general_purpose::STANDARD.encode(bytes);
         assert_eq!(
             get_image_dimensions_prefix(&data, "image/jpeg", IMAGE_DIMENSIONS_PREFIX_BYTES),
@@ -1007,7 +1008,7 @@ mod tests {
     /// ssh hop.
     #[test]
     fn kitty_transmission_is_always_direct() {
-        use kitty_graphics::{tmux_write_with_payload, Command};
+        use kitty_graphics::{Command, tmux_write_with_payload};
         let payload = "QUJD".repeat(3000);
         let written = [
             encode_kitty(&payload, &KittyOptions::default()),

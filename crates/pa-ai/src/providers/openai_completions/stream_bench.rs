@@ -1,5 +1,6 @@
-use super::*;
 use std::time::Instant;
+
+use super::*;
 
 #[test]
 #[ignore = "run with cargo test -p pa-ai --release stream_delta_benchmark -- --ignored --nocapture"]

@@ -9,8 +9,16 @@ use std::ops::Range;
 use super::files::{expand, join, read_script};
 use super::value::{self, Arg, Lookup, Unknown, Var};
 use super::walker::{
-    shown_fields, Call, Feed, Field, Share, State, Walker, MAX_CODE_DEPTH, MAX_FUNCTION_WALKS,
+    Call,
+    Feed,
+    Field,
+    MAX_CODE_DEPTH,
+    MAX_FUNCTION_WALKS,
     MAX_INVOCATIONS,
+    Share,
+    State,
+    Walker,
+    shown_fields,
 };
 use super::wrappers::{self, CodeArg, ShellCode};
 use super::{Cwd, Layer, Opaque, OpaqueKind, Via};

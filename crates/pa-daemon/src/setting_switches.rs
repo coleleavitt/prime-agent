@@ -4,13 +4,12 @@
 //! `set_follow_up_mode`, `set_auto_compaction`, `set_auto_retry`, and
 //! `abort_retry`; the wire contracts are TS-verbatim.
 
-use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
-
 use pa_types::ai::{ServiceTier, Transport};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::engine::EngineModelSelection;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 const QUEUE_MODES: &[&str] = &["all", "one-at-a-time"];
@@ -577,9 +576,11 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     fn worker_config(dir: &std::path::Path) -> crate::worker::WorkerConfig {
         crate::worker::WorkerConfig {

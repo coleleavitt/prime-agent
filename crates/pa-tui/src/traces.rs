@@ -4,8 +4,8 @@
 //! seam.
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The boxed-future shape of [`TracesCommands`] methods.
 pub type TracesFuture<T> = Pin<Box<dyn std::future::Future<Output = T> + Send>>;
@@ -611,8 +611,10 @@ mod tests {
         assert!(joined.contains("File: /s/a.jsonl"));
         assert!(joined.contains("Size: 1,234,567 bytes"));
         assert!(joined.contains("Uploadable: Yes"));
-        assert!(joined
-            .contains("Endpoint: https://api.primeintellect.ai/api/v1/agent-traces/sessions/s"));
+        assert!(
+            joined
+                .contains("Endpoint: https://api.primeintellect.ai/api/v1/agent-traces/sessions/s")
+        );
         assert!(joined.contains("Session ID: s"));
         assert!(joined.contains("Trace ID: root"));
         assert!(joined.contains("Parent session: root"));

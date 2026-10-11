@@ -7,7 +7,7 @@ use std::io::Write;
 use serde_json::Value;
 
 use super::format::{bold, red, yellow};
-use super::{parse_serve_status, probe_tailscale, run_tailscale, TailscaleProbe};
+use super::{TailscaleProbe, parse_serve_status, probe_tailscale, run_tailscale};
 
 /// Print the tailnet overview (human or `--json`; TS `runTailscaleStatus`).
 pub(crate) async fn run_status(program: &OsStr, json: bool) -> i32 {

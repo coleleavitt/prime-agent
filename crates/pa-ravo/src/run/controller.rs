@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
@@ -21,8 +21,15 @@ use super::archive::{ArchiveError, RavoArchive};
 use super::context::BoundedContextView;
 use crate::js::{canonical_json, sha256_hex};
 use crate::reducer::{
-    ravo_step, GateStatus, RavoConfig, RavoCriterionObservation, RavoEvaluation,
-    RavoGateCertificate, RavoObservation, RavoProposal, RavoState,
+    GateStatus,
+    RavoConfig,
+    RavoCriterionObservation,
+    RavoEvaluation,
+    RavoGateCertificate,
+    RavoObservation,
+    RavoProposal,
+    RavoState,
+    ravo_step,
 };
 
 /// A boxed child future.

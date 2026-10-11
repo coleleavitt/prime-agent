@@ -27,13 +27,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::base::{
-    CloudClientId, CloudCommandId, CloudCommandReceipt, CloudCommandRequest, CloudCursor,
-    CloudEvent, CloudSessionId, CloudSessionState, CloudSessionStatus,
+    CloudClientId,
+    CloudCommandId,
+    CloudCommandReceipt,
+    CloudCommandRequest,
+    CloudCursor,
+    CloudEvent,
+    CloudSessionId,
+    CloudSessionState,
+    CloudSessionStatus,
 };
-use super::canonical_json;
-use super::CLOUD_MAX_MESSAGE_BYTES;
-use crate::daemon::cloud::message_validation::cloud_message_problem;
+use super::{CLOUD_MAX_MESSAGE_BYTES, canonical_json};
 use crate::JsonMap;
+use crate::daemon::cloud::message_validation::cloud_message_problem;
 
 /// TS `CLOUD_MESSAGE_TYPES`, joined exactly as the TS validator reports
 /// it.

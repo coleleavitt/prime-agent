@@ -5,18 +5,23 @@
 //! bg row (`↓ N more` once content hides below); a placeholder replaces the first
 //! content row while the editor is empty.
 
+use pa_types::slash_commands::SlashCommandRegistry;
+use ratatui::style::Modifier;
+
 use super::chunk_selection;
 use super::flush::split_at_chars;
 use super::frame::{indicator_row, pad_row};
 use crate::editor::Editor;
 use crate::prompt_highlight::{
-    command_token, editor_chunk_highlights, editor_text_spans, find_arg_tokens, ArgTokenSpan,
+    ArgTokenSpan,
+    command_token,
+    editor_chunk_highlights,
+    editor_text_spans,
+    find_arg_tokens,
 };
 use crate::theme::{Theme, ThemeBg, ThemeColor};
 use crate::width::{str_width, truncate_to_width};
 use crate::{Line, Span};
-use pa_types::slash_commands::SlashCommandRegistry;
-use ratatui::style::Modifier;
 
 pub(crate) struct EditorBox {
     /// The box's rows, top bg row first.

@@ -5,13 +5,13 @@
 //! the persist-and-broadcast contract.
 
 use pa_agent::abort::AbortController;
+use pa_core::session_engine::compact_session::CompactOutcome;
+use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::engine::EngineEvent;
-use pa_core::session_engine::compact_session::CompactOutcome;
-use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 
 /// The outcome of one turn-boundary threshold check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

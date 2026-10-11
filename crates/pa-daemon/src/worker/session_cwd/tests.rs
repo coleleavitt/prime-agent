@@ -1,8 +1,9 @@
 //! Port of the TS `agent-session-cwd.test.ts` and `session-manager-cwd.test.ts`
 //! cases over the worker.
+use std::sync::Arc;
+
 use super::*;
 use crate::worker::{Worker, WorkerConfig};
-use std::sync::Arc;
 
 fn worker_in(dir: &Path) -> Arc<Worker> {
     Arc::new(Worker::new(

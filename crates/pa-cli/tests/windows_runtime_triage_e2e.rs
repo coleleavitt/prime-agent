@@ -44,9 +44,14 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_tui::interactive::{
-    HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// The daemon supervisor spawned as the freshly-built binary
 /// (`CARGO_BIN_EXE_prime-agent --mode daemon`).
@@ -273,7 +278,9 @@ async fn run_headless_bounded(
     {
         Ok(outcome) => outcome.expect("interactive run"),
         Err(tokio::time::error::Elapsed { .. }) => {
-            panic!("the headless run exceeded {HEADLESS_RUN_BOUND:?}: the wedge class - a turn never settled")
+            panic!(
+                "the headless run exceeded {HEADLESS_RUN_BOUND:?}: the wedge class - a turn never settled"
+            )
         }
     }
 }

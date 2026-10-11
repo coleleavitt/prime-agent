@@ -29,7 +29,7 @@ mod seatbelt;
 use std::ffi::OsStr;
 use std::process::Command;
 
-pub use launch::{launch_main, launcher, set_launcher, Launcher, LAUNCHER_FLAG};
+pub use launch::{LAUNCHER_FLAG, Launcher, launch_main, launcher, set_launcher};
 pub use policy::{Confinement, NetworkAccess, SandboxMode, SandboxPaths, SandboxPolicy};
 
 /// Why a sandbox cannot be applied.

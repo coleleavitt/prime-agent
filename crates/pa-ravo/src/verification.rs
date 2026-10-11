@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use pa_ledger::{FailureLedger, FailureObservation, LedgerHandle, ReplayCase, ReplayVerification};
 
-use crate::referee::{verdict_from_outcome, RefereeVerdictStatus, ReplayEnvironment, ReplayRunner};
+use crate::referee::{RefereeVerdictStatus, ReplayEnvironment, ReplayRunner, verdict_from_outcome};
 
 /// A case waiting for its self-check.
 #[derive(Clone)]

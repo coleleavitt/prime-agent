@@ -11,10 +11,21 @@ use std::path::Path;
 
 use crate::claims::{ClaimStatus, ClaimVerdict};
 use crate::mark::{
-    capture_workspace, committed_changes_between, digest_recall_path, is_fully_verifiable,
-    is_recall_excluded, paths_matching_commit, sort_utf16, workspace_digest, AbsentPresence,
-    CaptureFailure, WorkspaceSnapshot, WorkspaceState, RECALL_ABSENT_DIGEST,
-    RECALL_MAX_HASHED_BYTES, RECALL_UNVERIFIABLE,
+    AbsentPresence,
+    CaptureFailure,
+    RECALL_ABSENT_DIGEST,
+    RECALL_MAX_HASHED_BYTES,
+    RECALL_UNVERIFIABLE,
+    WorkspaceSnapshot,
+    WorkspaceState,
+    capture_workspace,
+    committed_changes_between,
+    digest_recall_path,
+    is_fully_verifiable,
+    is_recall_excluded,
+    paths_matching_commit,
+    sort_utf16,
+    workspace_digest,
 };
 use crate::store::RecallMarkFile;
 
@@ -132,11 +143,7 @@ fn format_claim_paths(paths: &[String]) -> String {
 }
 
 fn plural_s(count: usize) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
-    }
+    if count == 1 { "" } else { "s" }
 }
 
 fn cannot_verify(count: usize) -> String {

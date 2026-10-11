@@ -21,8 +21,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-
-pub use store::{TrustDecision, TrustRecord, TRUST_STORE_FILE};
+pub use store::{TRUST_STORE_FILE, TrustDecision, TrustRecord};
 
 /// Project settings keys that still apply in an untrusted workspace.
 ///

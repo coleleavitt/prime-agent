@@ -7,13 +7,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::super::canvas::{draw_text, Canvas, D, U};
+use super::super::canvas::{Canvas, D, U, draw_text};
 use super::super::graph::MAX_EDGES;
-use super::super::js_text;
-use super::super::labels::{clean_label, fit_label, MAX_LABEL};
+use super::super::labels::{MAX_LABEL, clean_label, fit_label};
 use super::super::layout::width_of;
 use super::super::statements::{header_kind, statements_of};
-use super::super::Role;
+use super::super::{Role, js_text};
 use super::Drawn;
 
 pub(in crate::render) const HEADERS: &[&str] = &["gitgraph", "gitgraph:"];

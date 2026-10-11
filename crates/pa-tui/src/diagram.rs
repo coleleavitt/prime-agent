@@ -18,8 +18,8 @@ use std::sync::OnceLock;
 #[path = "diagram_counts.rs"]
 mod counts;
 
-pub use counts::{set_render_counting, take_render_counts, RenderCounts};
-pub(crate) use counts::{settled, Outcome};
+pub(crate) use counts::{Outcome, settled};
+pub use counts::{RenderCounts, set_render_counting, take_render_counts};
 
 use crate::width::is_whitespace_char;
 

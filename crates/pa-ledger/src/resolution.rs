@@ -18,8 +18,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
 use crate::fingerprint::{
-    failure_opponent_id, fingerprint_failure, parse_python_traceback, tool_error_text,
-    FailureFingerprint, FailureKind,
+    FailureFingerprint,
+    FailureKind,
+    failure_opponent_id,
+    fingerprint_failure,
+    parse_python_traceback,
+    tool_error_text,
 };
 use crate::js::{js_len, js_prefix, js_trim};
 

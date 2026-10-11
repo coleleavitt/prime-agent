@@ -27,13 +27,14 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::client::{http_error, PrimeSandboxClient};
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::client::{PrimeSandboxClient, http_error};
 use crate::error::SandboxError;
 use crate::transport::{ResponseChunks, SandboxTransport, TransportRequest};
 use crate::types::Method;
-use crate::wire::{assert_sandbox_id, is_env_var_key, is_url_segment, LOCAL_HOSTNAMES};
-use serde::Deserialize;
-use uuid::Uuid;
+use crate::wire::{LOCAL_HOSTNAMES, assert_sandbox_id, is_env_var_key, is_url_segment};
 
 /// Transfer cap for upload and download payloads (TS `MAX_TRANSFER_BYTES`
 /// = 200 MiB).
@@ -831,10 +832,12 @@ mod tests {
         assert!(validate_exec_request(&request(|r| r.command = "  ".to_string())).is_err());
         assert!(validate_exec_request(&request(|r| r.command = "a\0b".to_string())).is_err());
         assert!(validate_exec_request(&request(|r| r.timeout_seconds = Some(0))).is_err());
-        assert!(validate_exec_request(&request(
-            |r| r.timeout_seconds = Some(MAX_EXEC_TIMEOUT_SECONDS + 1)
-        ))
-        .is_err());
+        assert!(
+            validate_exec_request(&request(
+                |r| r.timeout_seconds = Some(MAX_EXEC_TIMEOUT_SECONDS + 1)
+            ))
+            .is_err()
+        );
         assert!(validate_exec_request(&request(|r| r.working_dir = Some(String::new()))).is_err());
         assert!(validate_exec_request(&request(|r| r.user = Some(String::new()))).is_err());
         let mut bad_env = BTreeMap::new();
@@ -1006,11 +1009,13 @@ mod tests {
             }
         );
         assert!(parse_exec_result(serde_json::json!({ "stdout": "x" })).is_err());
-        assert!(parse_exec_result(serde_json::json!({
-            "stdout": "x",
-            "stderr": "",
-            "exit_code": "0"
-        }))
-        .is_err());
+        assert!(
+            parse_exec_result(serde_json::json!({
+                "stdout": "x",
+                "stderr": "",
+                "exit_code": "0"
+            }))
+            .is_err()
+        );
     }
 }

@@ -19,23 +19,40 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use pa_core::features::{
-    FeatureFuture, SessionFeature, SessionFeatureContext, ToolCallObservation,
+    FeatureFuture,
+    SessionFeature,
+    SessionFeatureContext,
+    ToolCallObservation,
     ToolResultObservation,
 };
 use tokio::sync::watch;
 use tracing::field::Empty;
 
 use crate::claims::{
-    is_build_claim_command, mentions_build_command, ClaimStatus, RECALL_MAX_CLAIMS,
+    ClaimStatus,
+    RECALL_MAX_CLAIMS,
+    is_build_claim_command,
+    mentions_build_command,
 };
 use crate::git::{find_recall_repo, resolve_repo_root};
 use crate::mark::{
-    capture_workspace, is_fully_verifiable, workspace_digest, CaptureFailure, RECALL_UNVERIFIABLE,
+    CaptureFailure,
+    RECALL_UNVERIFIABLE,
+    capture_workspace,
+    is_fully_verifiable,
+    workspace_digest,
 };
-use crate::render::{render_recall_block, RECALL_BLOCK_MAX_BYTES};
+use crate::render::{RECALL_BLOCK_MAX_BYTES, render_recall_block};
 use crate::store::{
-    read_recall_mark, read_recall_skip, recall_repo_key, write_recall_mark, write_recall_skip,
-    MarkSkipReason, RecallClaimInput, RecallMarkFile, WrittenMark,
+    MarkSkipReason,
+    RecallClaimInput,
+    RecallMarkFile,
+    WrittenMark,
+    read_recall_mark,
+    read_recall_skip,
+    recall_repo_key,
+    write_recall_mark,
+    write_recall_skip,
 };
 use crate::time::{format_iso, now_ms};
 use crate::witness::witness_workspace;

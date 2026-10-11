@@ -211,32 +211,34 @@ fn spawn_watchdog(state: &Arc<GuardState>) {
     let thread_state = Arc::clone(state);
     let spawned = std::thread::Builder::new()
         .name(WATCHDOG_THREAD_NAME.to_string())
-        .spawn(move || loop {
-            if thread_state.settled.load(Ordering::Acquire) {
-                return;
-            }
-            let deadline_ms = thread_state.force_deadline_ms.load(Ordering::SeqCst);
-            if deadline_ms == u64::MAX {
-                // Disarmed: keep watching — a later pair re-arms.
-                std::thread::sleep(Duration::from_millis(WATCHDOG_POLL_MS));
-                continue;
-            }
-            let deadline = thread_state.base + Duration::from_millis(deadline_ms);
-            let now = Instant::now();
-            if now >= deadline {
-                // Drain-aware: the deadline passed, but a writer that completed a step
-                // recently is draining a slow terminal, not stalled. Hold the fire while
-                // progress keeps landing.
-                let last_progress = LAST_EXIT_PROGRESS.lock().ok().and_then(|last| *last);
-                if force_quit_due(now, deadline, last_progress) {
-                    force_quit();
+        .spawn(move || {
+            loop {
+                if thread_state.settled.load(Ordering::Acquire) {
+                    return;
                 }
-                // Held: re-check on the next poll slice (progress may go
-                // stale while the drain stalls).
-                std::thread::sleep(Duration::from_millis(WATCHDOG_POLL_MS));
-                continue;
+                let deadline_ms = thread_state.force_deadline_ms.load(Ordering::SeqCst);
+                if deadline_ms == u64::MAX {
+                    // Disarmed: keep watching — a later pair re-arms.
+                    std::thread::sleep(Duration::from_millis(WATCHDOG_POLL_MS));
+                    continue;
+                }
+                let deadline = thread_state.base + Duration::from_millis(deadline_ms);
+                let now = Instant::now();
+                if now >= deadline {
+                    // Drain-aware: the deadline passed, but a writer that completed a step
+                    // recently is draining a slow terminal, not stalled. Hold the fire while
+                    // progress keeps landing.
+                    let last_progress = LAST_EXIT_PROGRESS.lock().ok().and_then(|last| *last);
+                    if force_quit_due(now, deadline, last_progress) {
+                        force_quit();
+                    }
+                    // Held: re-check on the next poll slice (progress may go
+                    // stale while the drain stalls).
+                    std::thread::sleep(Duration::from_millis(WATCHDOG_POLL_MS));
+                    continue;
+                }
+                std::thread::sleep((deadline - now).min(Duration::from_millis(WATCHDOG_POLL_MS)));
             }
-            std::thread::sleep((deadline - now).min(Duration::from_millis(WATCHDOG_POLL_MS)));
         });
     if spawned.is_err() {
         // A spawn failure (out of thread resources) leaves the loop's own

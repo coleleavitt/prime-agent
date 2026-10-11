@@ -2,24 +2,46 @@
 //! per-session prompt-cache simulation, token-paced streaming with aborts, and queued response
 //! factories.
 
-use pa_types::sync::MutexExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
+use pa_types::sync::MutexExt;
+use rand::Rng;
 use serde_json::Map;
 
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEventStream, AssistantMessageEventWriter,
+    AssistantMessageEventStream,
+    AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
-use crate::registry::{register_api_provider, unregister_api_providers, Provider};
+use crate::registry::{Provider, register_api_provider, unregister_api_providers};
 use crate::types::{
-    done_reason, error_reason, zero_model_cost, AssistantContent, AssistantMessage,
-    AssistantMessageEvent, Context, ErrorStopReason, ImageContent, Message, MessageExt, Model,
-    ModelCost, ModelInput, SimpleStreamOptions, StopReason, StreamOptions, TextContent,
-    ThinkingContent, ToolCall, ToolResultMessage, Usage, UsageCost, UserMessageContent,
+    AssistantContent,
+    AssistantMessage,
+    AssistantMessageEvent,
+    Context,
+    ErrorStopReason,
+    ImageContent,
+    Message,
+    MessageExt,
+    Model,
+    ModelCost,
+    ModelInput,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    ToolResultMessage,
+    Usage,
+    UsageCost,
+    UserMessageContent,
+    done_reason,
+    error_reason,
+    zero_model_cost,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use rand::Rng;
 
 const DEFAULT_API: &str = "faux";
 const DEFAULT_PROVIDER: &str = "faux";

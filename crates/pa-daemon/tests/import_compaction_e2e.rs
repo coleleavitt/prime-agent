@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Supervisor {
     child: Child,
@@ -208,15 +208,17 @@ fn setup(name: &str) -> Harness {
 /// `toolName` — shapes the TS loader keeps, so the Rust parse must keep them too.
 fn grown_fixture(dir: &Path, turns: usize) -> PathBuf {
     let fixture = dir.join("grown-import.jsonl");
-    let mut lines = vec![json!({
-        "type": "session",
-        "id": "grown-import",
-        "version": 3,
-        "timestamp": "2026-01-01T00:00:00.000Z",
-        "cwd": dir.to_string_lossy(),
-        "rlmDepth": 0,
-    })
-    .to_string()];
+    let mut lines = vec![
+        json!({
+            "type": "session",
+            "id": "grown-import",
+            "version": 3,
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "cwd": dir.to_string_lossy(),
+            "rlmDepth": 0,
+        })
+        .to_string(),
+    ];
     let mut parent: Option<String> = None;
     for turn in 0..turns {
         for (kind, id) in [

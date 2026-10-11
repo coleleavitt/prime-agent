@@ -1,14 +1,25 @@
 //! The dispatch surface: command routing, the command handlers,
 //! and the abort family.
-use super::{
-    json, persist_custom_row, response_failure, response_success, KillCloseReason, Lane,
-    QueueCheckpoint, QueuedItem, Result, SessionFile, TurnSettle, VecDeque, Worker,
-    PROMPT_ABORTED_BEFORE_DELIVERY, SIDE_QUESTION_SETTLE_TIMEOUT,
-};
 use pa_types::sync::MutexExt;
-
 use serde_json::Value;
 
+use super::{
+    KillCloseReason,
+    Lane,
+    PROMPT_ABORTED_BEFORE_DELIVERY,
+    QueueCheckpoint,
+    QueuedItem,
+    Result,
+    SIDE_QUESTION_SETTLE_TIMEOUT,
+    SessionFile,
+    TurnSettle,
+    VecDeque,
+    Worker,
+    json,
+    persist_custom_row,
+    response_failure,
+    response_success,
+};
 use crate::protocol::DaemonResponse;
 
 impl Worker {

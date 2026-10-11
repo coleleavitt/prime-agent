@@ -1,7 +1,7 @@
 //! The compact-trigger auto-refine machine: the review gates, the durable-row
 //! surface, the requested-refinement streaming, and the disposal drain.
 
-use super::{json, Model, PathBuf, SessionAgentMessage, SessionEngine, TurnBoundary};
+use super::{Model, PathBuf, SessionAgentMessage, SessionEngine, TurnBoundary, json};
 
 /// Wall-clock milliseconds (the review-cooldown stamps).
 fn now_millis() -> u64 {

@@ -11,23 +11,53 @@ mod support;
 use std::collections::HashSet;
 
 use pa_dream::improve::{
-    dreamer_kind_of, lever_scan_grid, measure_pool, mutate_policy, propose_policies, run_dreaming,
-    run_lever_scan, score_policy_on_pool, select_best_policy, CandidateInput, CandidateOrigin,
-    CandidateReason, DreamerKind, DreamingOptions, DreamingScoreConfig, PoolScore, SpendCharge,
+    CandidateInput,
+    CandidateOrigin,
+    CandidateReason,
+    DreamerKind,
+    DreamingOptions,
+    DreamingScoreConfig,
     LEVER_SCAN_BETAS,
+    PoolScore,
+    SpendCharge,
+    dreamer_kind_of,
+    lever_scan_grid,
+    measure_pool,
+    mutate_policy,
+    propose_policies,
+    run_dreaming,
+    run_lever_scan,
+    score_policy_on_pool,
+    select_best_policy,
 };
 use pa_dream::objective::{
-    compute_objective, compute_objective_terms, normalized_quality, pool_score_scale,
-    ObjectiveBudget, ObjectiveEvidence, ObjectiveScale, ReplayObjectiveConfig, DEFAULT_OBJECTIVE,
+    DEFAULT_OBJECTIVE,
+    ObjectiveBudget,
+    ObjectiveEvidence,
+    ObjectiveScale,
+    ReplayObjectiveConfig,
+    compute_objective,
+    compute_objective_terms,
+    normalized_quality,
+    pool_score_scale,
 };
 use pa_dream::policy::{
-    parse_exploration_policy, policy_fields_differing, policy_id, ExplorationPolicy, PolicyField,
-    RecoveryPolicy, SelectionRule, StopRule, DEFAULT_POLICY, REPLAY_DEAD_FIELDS, SELECTION_RULES,
+    DEFAULT_POLICY,
+    ExplorationPolicy,
+    PolicyField,
+    REPLAY_DEAD_FIELDS,
+    RecoveryPolicy,
+    SELECTION_RULES,
     STOP_RULES,
+    SelectionRule,
+    StopRule,
+    parse_exploration_policy,
+    policy_fields_differing,
+    policy_id,
 };
-use pa_dream::replay::{simulate_policy, ReplayConfig, ReplayResult};
+use pa_dream::replay::{ReplayConfig, ReplayResult, simulate_policy};
 use pa_dream::store::RecordedTree;
-use support::{fixture, local, policy, rng, tree, Fixed};
+use support::{Fixed, fixture, local, policy, rng, tree};
 
 const OBJECTIVE: ReplayObjectiveConfig = DEFAULT_OBJECTIVE;
 
@@ -1410,10 +1440,12 @@ fn identical_duplicate_and_replay_dead_candidates_are_labelled_and_never_win() {
         verdict.changed,
         ["recoveryPolicy", "branchWidth", "refineDepth"]
     );
-    assert!(verdict
-        .changed
-        .iter()
-        .all(|field| REPLAY_DEAD_FIELDS.iter().any(|dead| dead.as_str() == field)));
+    assert!(
+        verdict
+            .changed
+            .iter()
+            .all(|field| REPLAY_DEAD_FIELDS.iter().any(|dead| dead.as_str() == field))
+    );
     assert_eq!(
         (verdict.value, verdict.quality),
         (selection.current_score, selection.current_quality)
@@ -1625,9 +1657,11 @@ fn the_lever_grid_is_fixed_deduplicated_and_changes_only_the_scanned_fields() {
         PolicyField::Beta,
     ];
     for entry in &grid[1..] {
-        assert!(policy_fields_differing(entry, &DEFAULT_POLICY)
-            .iter()
-            .all(|field| scanned.contains(field)));
+        assert!(
+            policy_fields_differing(entry, &DEFAULT_POLICY)
+                .iter()
+                .all(|field| scanned.contains(field))
+        );
     }
     let exact_cfg = cfg(3, 6);
     let first = run_lever_scan(&exact_incumbent(), &exact_pool(), &exact_cfg);

@@ -398,7 +398,7 @@ mod tests {
         // The provider's drop disclosure (pa-ai `stream_drop_failure`):
         // every block detail names the same class.
         let classification = classify(
-            "Provider dropped the response stream (stream_drop): the stream ended inside a thinking block before the stop signal"
+            "Provider dropped the response stream (stream_drop): the stream ended inside a thinking block before the stop signal",
         );
         assert_eq!(classification.subtype, "stream_drop");
         assert_eq!(classification.category, "network");
@@ -414,7 +414,7 @@ mod tests {
         assert!(pa_telemetry::ERROR_SUBTYPES.contains(&classification.subtype));
         // The empty-stream variant classifies identically.
         let empty = classify(
-            "Provider dropped the response stream (stream_drop): the stream ended before any response content or stop signal"
+            "Provider dropped the response stream (stream_drop): the stream ended before any response content or stop signal",
         );
         assert_eq!(empty.subtype, "stream_drop");
         assert!(empty.retryable);

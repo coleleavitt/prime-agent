@@ -19,16 +19,34 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use common::{
-    connect_stream_head, http_chunk, http_chunk_end, json_response, proto_response, raw_response,
-    MockServer, ScriptedResponse,
+    MockServer,
+    ScriptedResponse,
+    connect_stream_head,
+    http_chunk,
+    http_chunk_end,
+    json_response,
+    proto_response,
+    raw_response,
 };
 use pa_sandbox::gateway::GatewayAuth;
 use pa_sandbox::proto::encode_connect_frame;
 use pa_sandbox::transport::ReqwestSandboxTransport;
 use pa_sandbox::{
-    CommandSessionClient, CommandSessionError, CommandSessionErrorCode, CommandSessionEvent,
-    CommandSessionOptions, ControlOptions, EndEvent, GatewayAuthSource, InputChannel,
-    SendInputOptions, SendSignalOptions, StartOptions, StartRequest, StreamOptions, VmSignal,
+    CommandSessionClient,
+    CommandSessionError,
+    CommandSessionErrorCode,
+    CommandSessionEvent,
+    CommandSessionOptions,
+    ControlOptions,
+    EndEvent,
+    GatewayAuthSource,
+    InputChannel,
+    SendInputOptions,
+    SendSignalOptions,
+    StartOptions,
+    StartRequest,
+    StreamOptions,
+    VmSignal,
 };
 
 const UUID: &str = "0198c0de-9a1b-4d3e-8f2a-5c6b7d8e9f01";
@@ -647,8 +665,10 @@ async fn send_signal_speaks_the_unary_wire() {
     expected.extend_from_slice(&[0x10, 15, 0x1a, 36]);
     expected.extend_from_slice(UUID.as_bytes());
     assert_eq!(request_body(&requests[0]), expected.as_slice());
-    assert!(String::from_utf8_lossy(&requests[0])
-        .contains("/command_session.CommandSession/SendSignal"));
+    assert!(
+        String::from_utf8_lossy(&requests[0])
+            .contains("/command_session.CommandSession/SendSignal")
+    );
 }
 
 #[tokio::test]

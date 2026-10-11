@@ -27,13 +27,13 @@ mod syntax;
 mod test_support;
 mod verdict;
 
-pub use context::{is_truthy_env_value, GuardContext};
-pub use pipeline::{check, Allowances};
+pub use context::{GuardContext, is_truthy_env_value};
+pub use pipeline::{Allowances, check};
 pub use run::RunCancel;
 pub use runner::{ActivityError, JobTable, SpawnError, SpawnRequest};
 pub use sandbox::JobSandbox;
 pub use script::Script;
-pub use service::{handle, handle_cancellable, REQUEST_TYPES};
-pub use shell::{child_env, resolve_shell, ShellError};
+pub use service::{REQUEST_TYPES, handle, handle_cancellable};
+pub use shell::{ShellError, child_env, resolve_shell};
 pub use sidecar::serve_stdio;
 pub use verdict::{GuardKind, Refusal};

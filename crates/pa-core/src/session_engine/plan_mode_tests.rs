@@ -9,13 +9,15 @@ use pa_types::session::FileEntry;
 
 use super::*;
 use crate::session::manager::SessionManager;
-use crate::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
-use crate::session_engine::session_commands::{
-    execute_session_command, SessionCommandExecution, SessionCommandParams,
-};
-use crate::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
-use crate::session_engine::tool_bridge::bridge_tool;
 use crate::session_engine::PromptOptions;
+use crate::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
+use crate::session_engine::session_commands::{
+    SessionCommandExecution,
+    SessionCommandParams,
+    execute_session_command,
+};
+use crate::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
+use crate::session_engine::tool_bridge::bridge_tool;
 
 fn model() -> pa_agent::types::Model {
     pa_agent::types::Model {

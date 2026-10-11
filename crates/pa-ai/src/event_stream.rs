@@ -2,13 +2,13 @@
 //! one of `done` (success) or `error` (failure/abort). The event type is owned by `pa-types`, so
 //! the helpers below are an extension trait.
 
-use pa_types::sync::MutexExt;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll, Waker};
 
 use futures::Stream;
+use pa_types::sync::MutexExt;
 use serde_json::Map;
 
 pub use crate::types::{AssistantContent, AssistantMessage, AssistantMessageEvent, StopReason};
@@ -279,8 +279,8 @@ impl Stream for AssistantMessageEventStream {
     }
 }
 
-pub fn create_assistant_message_event_stream(
-) -> (AssistantMessageEventWriter, AssistantMessageEventStream) {
+pub fn create_assistant_message_event_stream()
+-> (AssistantMessageEventWriter, AssistantMessageEventStream) {
     AssistantMessageEventStream::new()
 }
 

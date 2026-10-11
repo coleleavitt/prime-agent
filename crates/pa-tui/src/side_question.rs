@@ -440,16 +440,20 @@ mod tests {
             .expect("the /btw header row");
         assert!(first.contains("question a"));
         assert!(joined.iter().any(|row| row.contains("the answer")));
-        assert!(joined
-            .iter()
-            .any(|row| row.contains("reply to follow up · esc to return to session")));
+        assert!(
+            joined
+                .iter()
+                .any(|row| row.contains("reply to follow up · esc to return to session"))
+        );
         // A running turn swaps the hint.
         pane.upsert(turn("b", "running", ""));
         let rows = pane.render(&theme, 0, false, "Esc/Ctrl+C", 80, MermaidMode::default());
         let joined: Vec<String> = rows.iter().map(&text).collect();
-        assert!(joined
-            .iter()
-            .any(|row| row.contains("esc to cancel and return to session")));
+        assert!(
+            joined
+                .iter()
+                .any(|row| row.contains("esc to cancel and return to session"))
+        );
         // The cancelled placeholder shows when no answer streamed.
         pane.upsert(SideQuestionTurn {
             status: "cancelled".to_string(),

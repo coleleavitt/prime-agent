@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
-use pa_core::platform::process::{kill_pid, Signal};
+use pa_core::platform::process::{Signal, kill_pid};
 use pa_types::platform::process::{is_process_alive, process_start_id};
 
-use super::{evaluate_shutdown_quiet_period, DaemonStateRoot, DiscoveredDaemonProcess};
+use super::{DaemonStateRoot, DiscoveredDaemonProcess, evaluate_shutdown_quiet_period};
 
 /// How long the residual sweep may run before it declares the listener
 /// set stuck.
@@ -246,10 +246,11 @@ pub(super) fn listener_signature(listeners: &[DiscoveredDaemonProcess]) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::daemon_discovery::Containment;
     use std::collections::HashSet;
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::daemon_discovery::Containment;
 
     /// A state root inside a test-created fixture dir; the ambient
     /// environment's real paths are never part of any sweep.

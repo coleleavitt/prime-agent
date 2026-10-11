@@ -1,9 +1,11 @@
 //! ANSI encoding of styled lines (used by debug output and tests) and the general-purpose ANSI
 //! stripper (TS `stripAnsi` in utils.ts).
 
-use crate::{Line, Span};
-use ratatui::style::{Color, Modifier};
 use std::fmt::Write;
+
+use ratatui::style::{Color, Modifier};
+
+use crate::{Line, Span};
 
 /// Remove all escape sequences (CSI, OSC, DCS, APC/PM/SOS, two-char escapes), leaving plain
 /// text — the exact port of TS `stripAnsi`: the common CSI form goes first (its regex fast

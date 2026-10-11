@@ -22,11 +22,14 @@ use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::cloud::{
-    canonical_json, CloudFamilyCommand, CloudFamilyEvent, CloudFamilyEventPayload,
+    CloudFamilyCommand,
+    CloudFamilyEvent,
+    CloudFamilyEventPayload,
+    canonical_json,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 #[cfg(unix)]
@@ -616,8 +619,9 @@ impl FamilyResultLog {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
 
     /// The macOS temp root resolves through /var (a symlink); the strict
     /// no-symlink placement policy requires the ORIGINAL path to be

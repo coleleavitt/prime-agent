@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_types::daemon::{DaemonCommand, DaemonWorkerCommand};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::backpressure::RouteAdmission;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::registry::ResidentWorker;
 use crate::supervisor::Supervisor;
 
@@ -115,7 +115,7 @@ impl Supervisor {
                             Ok(None) => {
                                 return fail(format!(
                                     "Unknown active session: {target_active_session_id}"
-                                ))
+                                ));
                             }
                             Err(error) => return fail(error),
                         }
@@ -367,7 +367,7 @@ impl Supervisor {
                 return match self.wake_ledger_child(selector).await {
                     Some(outcome) => outcome,
                     None => WakeOutcome::Unknown,
-                }
+                };
             }
             Err(error) => return WakeOutcome::Failed(error.to_string()),
         };
@@ -618,12 +618,15 @@ pub(crate) enum WakeOutcome {
 
 #[cfg(test)]
 mod tests {
+    use pa_types::daemon::{
+        DaemonWorkerDescriptor,
+        DaemonWorkerLifecycle,
+        DurableDaemonCreateCommand,
+    };
+
     use super::*;
     use crate::registry::ResidentWorker;
     use crate::supervisor::SupervisorOptions;
-    use pa_types::daemon::{
-        DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand,
-    };
 
     #[test]
     fn sender_endpoint_carries_the_durable_parent_edge() {

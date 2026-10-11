@@ -2,13 +2,15 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::models::supports_thinking;
 use crate::providers::openai_completions::convert::{convert_messages, convert_tools};
-use crate::providers::openai_completions::has_tool_history;
 use crate::providers::openai_completions::{
-    OpenAICompatCacheControl, OpenAICompletionsOptions, ResolvedCompat,
+    OpenAICompatCacheControl,
+    OpenAICompletionsOptions,
+    ResolvedCompat,
+    has_tool_history,
 };
 use crate::types::{CacheRetention, Context, Model, ModelExt, ModelThinkingLevel};
 

@@ -2,14 +2,15 @@
 //! its label-edit input, and the post-selection "Summarize branch?"
 //! choice (TS `TreeSelectorComponent`).
 
+use serde_json::Value;
+
+use crate::Line;
 use crate::keybindings::KeybindingsManager;
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
 use crate::tree_list::{FilterMode, TreeList, TreeListAction};
-use crate::tree_nodes::{build_tree, TreeNode};
+use crate::tree_nodes::{TreeNode, build_tree};
 use crate::width::{line_width, truncate_line};
-use crate::Line;
-use serde_json::Value;
 
 /// What the caller must run after a key press.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,8 +337,12 @@ impl TreeSelector {
                         ));
                         lines.push(input_row(theme, width, input));
                         lines.push(truncate_line(
-                            &vec![theme
-                                .fg_span(ThemeColor::Muted, input_pane_hint(kb, "save", "cancel"))],
+                            &vec![
+                                theme.fg_span(
+                                    ThemeColor::Muted,
+                                    input_pane_hint(kb, "save", "cancel"),
+                                ),
+                            ],
                             width,
                             "",
                         ));
@@ -348,7 +353,7 @@ impl TreeSelector {
             Mode::LabelInput { input, .. } => {
                 lines.push(truncate_line(
                     &vec![
-                        theme.fg_span(ThemeColor::Muted, "  Label (empty to remove):".to_string())
+                        theme.fg_span(ThemeColor::Muted, "  Label (empty to remove):".to_string()),
                     ],
                     width,
                     "",
@@ -429,9 +434,10 @@ fn render_choice(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::*;
     use crate::theme::{ColorMode, Theme};
-    use serde_json::{json, Value};
 
     /// A selector over one visible user-message node (the default filter
     /// hides settings-class entries, so the fixtures use `wire_chain`).

@@ -11,7 +11,12 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::tools::tool_definition::{
-    AbortSignal, ExecutionMode, OnUpdate, ToolContentBlock, ToolDefinition, ToolExecutionResult,
+    AbortSignal,
+    ExecutionMode,
+    OnUpdate,
+    ToolContentBlock,
+    ToolDefinition,
+    ToolExecutionResult,
     ToolUpdate,
 };
 
@@ -604,11 +609,12 @@ pub async fn execute_ipython(
         details["errorEname"] = json!(error.ename);
     }
     if !r.sent_agent_messages.is_empty() {
-        details["sentAgentMessages"] = json!(r
-            .sent_agent_messages
-            .iter()
-            .map(sent_agent_message_json)
-            .collect::<Vec<_>>());
+        details["sentAgentMessages"] = json!(
+            r.sent_agent_messages
+                .iter()
+                .map(sent_agent_message_json)
+                .collect::<Vec<_>>()
+        );
     }
 
     // Host facts for in-process observers (never persisted): the cell's

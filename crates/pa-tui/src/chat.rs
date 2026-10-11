@@ -4,12 +4,12 @@
 
 mod geometry;
 pub(crate) use geometry::{assistant_row_count, user_block_row_count};
+use ratatui::style::{Modifier, Style};
 
 use crate::snapshot::RetryStartReason;
 use crate::theme::{Theme, ThemeBg, ThemeColor};
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
 
 /// How much detail the conversation shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,12 +122,15 @@ pub enum ChatEntry {
 
 // The card types live in `tool_card`; re-exported here because the
 // transcript vocabulary (`ChatEntry`) is this module's.
-pub use crate::tool_card::{render_tool_card, ToolCallCard, ToolResultView};
 // The compaction rows (loader + summary) live in `compaction_row`; same
 // re-export rule as the tool cards.
 pub use crate::compaction_row::{
-    render_compaction_loader, render_compaction_summary, CompactionReason, CompactionState,
+    CompactionReason,
+    CompactionState,
+    render_compaction_loader,
+    render_compaction_summary,
 };
+pub use crate::tool_card::{ToolCallCard, ToolResultView, render_tool_card};
 
 /// An assistant message's visible content (tool calls move to cards).
 #[derive(Debug, Clone, PartialEq)]

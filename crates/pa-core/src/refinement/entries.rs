@@ -7,8 +7,12 @@
 use std::path::Path;
 
 use super::{
-    load_harness_state, save_harness_state, HarnessEntry, HarnessScope, RefinementKind,
+    HarnessEntry,
+    HarnessScope,
     REFINEMENT_KINDS,
+    RefinementKind,
+    load_harness_state,
+    save_harness_state,
 };
 
 /// The entry key the flag lives under.
@@ -336,13 +340,15 @@ mod tests {
                 ["stale"]
                 .is_enabled()
         );
-        assert!(set_harness_entry_enabled(
-            &global,
-            HarnessScope::Global,
-            RefinementKind::Memory,
-            "gone",
-            true
-        )
-        .is_err());
+        assert!(
+            set_harness_entry_enabled(
+                &global,
+                HarnessScope::Global,
+                RefinementKind::Memory,
+                "gone",
+                true
+            )
+            .is_err()
+        );
     }
 }

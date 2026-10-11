@@ -260,8 +260,9 @@ pub fn completion_text(run_id: &str, status: Option<&Value>) -> Result<String, S
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn parsed(args: &str) -> Result<RavoCommand, String> {
         parse_ravo_command(args)

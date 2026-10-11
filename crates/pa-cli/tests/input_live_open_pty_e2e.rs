@@ -37,13 +37,17 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use serde_json::{json, Value};
-
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
+use serde_json::{Value, json};
 
 /// The child-mode socket: set (with the socket path) only when this very
 /// binary is re-executed as the product-under-test.
@@ -437,7 +441,9 @@ impl PtyReader {
             if Instant::now() > deadline {
                 let screen = self.rendered();
                 let stream = String::from_utf8_lossy(&self.output);
-                panic!("timeout waiting for {what} (needle {needle:?}); rendered screen:\n{screen}\npty stream:\n{stream}");
+                panic!(
+                    "timeout waiting for {what} (needle {needle:?}); rendered screen:\n{screen}\npty stream:\n{stream}"
+                );
             }
             std::thread::sleep(Duration::from_millis(20));
         }

@@ -7,12 +7,12 @@
 use std::path::PathBuf;
 
 use anthropic::cch::js_json_stringify;
-use anthropic::claude_code::{order_claude_code_body, FAST_MODE_BETA, SERVER_SIDE_FALLBACK_BETAS};
+use anthropic::claude_code::{FAST_MODE_BETA, SERVER_SIDE_FALLBACK_BETAS, order_claude_code_body};
 use pa_ai::request_hooks::{CallerOptions, OutgoingRequest, RequestSource};
 use serde_json::Value;
 
-use crate::shape::{shape_headers, ShapeEnv, ShapeIdentity};
 use crate::SharedStoreSource;
+use crate::shape::{ShapeEnv, ShapeIdentity, shape_headers};
 
 pub(crate) mod account_commands;
 pub(crate) mod commands;

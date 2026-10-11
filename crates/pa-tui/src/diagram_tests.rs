@@ -3,9 +3,10 @@
 //! TS produced and the layout each fence got (`scripts/lovely-mermaid-goldens.mjs`); a
 //! renderer replaying those layouts must split the text into the same segments.
 
-use super::{text_segments, DiagramLayout, DiagramRenderer, TextSegment};
-use crate::markdown::MermaidMode;
 use serde_json::Value;
+
+use super::{DiagramLayout, DiagramRenderer, TextSegment, text_segments};
+use crate::markdown::MermaidMode;
 
 const TEXT_GOLDENS: &str = include_str!("custom_message/diagram_text_goldens.json");
 

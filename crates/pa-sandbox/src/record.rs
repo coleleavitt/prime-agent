@@ -8,9 +8,10 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+use serde::Deserialize;
+
 use crate::error::SandboxError;
 use crate::types::{Sandbox, SandboxStatus};
-use serde::Deserialize;
 
 /// The raw wire form of a sandbox record: `camelCase` aliases with the
 /// `snake_case` egress lists kept verbatim (the platform's

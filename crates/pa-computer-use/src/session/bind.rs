@@ -3,15 +3,15 @@
 //! macOS resolves running apps (and launches a not-yet-running one, gated
 //! before anything starts); X11 and Wayland attach to a running window.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{AppState, BoundApp, InstructionsDir, Session};
-use crate::error::{head, invalid, ComputerUseError, ErrorCode, Result};
+use crate::error::{ComputerUseError, ErrorCode, Result, head, invalid};
 use crate::permissions::PermissionState;
 use crate::platform::{Discovery, Platform, PlatformKind, RunningApp, WindowDirectory, Workspace};
 use crate::policy::GateVerdict;
 use crate::pyfmt::{casefold, casefold_eq, repr_str};
-use crate::spec::{is_blank, AppSpec, SpecKey, SpecShape};
+use crate::spec::{AppSpec, SpecKey, SpecShape, is_blank};
 
 /// The Accessibility refusal of a bind (before any launch).
 fn accessibility_missing(reported: PermissionState) -> ComputerUseError {

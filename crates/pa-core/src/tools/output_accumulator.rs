@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::tools::truncate::{truncate_tail, TruncationOptions, TruncationResult};
+use crate::tools::truncate::{TruncationOptions, TruncationResult, truncate_tail};
 
 pub struct OutputAccumulatorOptions {
     pub max_lines: usize,

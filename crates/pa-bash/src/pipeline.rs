@@ -3,7 +3,7 @@
 //! first refusal wins.
 
 use std::collections::BTreeSet;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::context::GuardContext;
 use crate::guards::{self, Check, Verdict};

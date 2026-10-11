@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pa_daemon::session_store::{list_sessions, SessionFile, SessionInfo};
+use pa_daemon::session_store::{SessionFile, SessionInfo, list_sessions};
 
 use crate::daemon_session_list::{format_session_age, format_session_display_id, format_table};
 
@@ -183,8 +183,9 @@ pub(crate) fn run_delete_session(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn saved(dir: &Path, cwd: &Path, name: Option<&str>) -> PathBuf {
         let mut file = SessionFile::create(&cwd.to_string_lossy(), None, 0);

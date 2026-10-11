@@ -173,14 +173,30 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
 use std::sync::{Arc, Mutex};
 
 use pa_tui::provider_auth::{
-    AuthFlow, AuthStatusIndicator, AuthStatusStyle, AuthType, ProviderAuthCommands,
-    ProviderAuthFuture, ProviderAuthOutcome, ProviderRow, ProviderRowsFuture,
-    ProviderWarningFuture, PRIME_INFERENCE_PROVIDER_ID,
+    AuthFlow,
+    AuthStatusIndicator,
+    AuthStatusStyle,
+    AuthType,
+    PRIME_INFERENCE_PROVIDER_ID,
+    ProviderAuthCommands,
+    ProviderAuthFuture,
+    ProviderAuthOutcome,
+    ProviderRow,
+    ProviderRowsFuture,
+    ProviderWarningFuture,
 };
 use pa_tui::traces::{
-    TraceLoginOutcome, TracePreviewInfo, TracePreviewOutcome, TraceUploadAllNote,
-    TraceUploadAllNoteSender, TraceUploadAllReport, TraceUploadCancel, TraceUploadStatus,
-    TracesCommands, TracesCommandsHandle, TracesFuture,
+    TraceLoginOutcome,
+    TracePreviewInfo,
+    TracePreviewOutcome,
+    TraceUploadAllNote,
+    TraceUploadAllNoteSender,
+    TraceUploadAllReport,
+    TraceUploadCancel,
+    TraceUploadStatus,
+    TracesCommands,
+    TracesCommandsHandle,
+    TracesFuture,
 };
 use pa_tui::update_command::{UpdateCommands, UpdateCommandsHandle};
 

@@ -1,15 +1,14 @@
 //! The manager-catalog unit battery: the resolution order, the endpoint
 //! pinning, the paste install, and the demand-driven verification.
-use super::*;
-use crate::mcp::catalog_schema::{parse_plugins_catalog, McpServiceEntry};
-use crate::mcp::catalog_views::{fresh_mcp_login_allowed, is_pasteable_token_service};
-use crate::mcp::connection_store::McpConnectionStatus as RecordStatus;
-use crate::mcp::probe::McpEndpointProbeImpl;
-use crate::mcp::probe::ProbeOutcome;
-use crate::mcp::McpManagerOptions;
-use crate::mcp::McpServerConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use super::*;
+use crate::mcp::catalog_schema::{McpServiceEntry, parse_plugins_catalog};
+use crate::mcp::catalog_views::{fresh_mcp_login_allowed, is_pasteable_token_service};
+use crate::mcp::connection_store::McpConnectionStatus as RecordStatus;
+use crate::mcp::probe::{McpEndpointProbeImpl, ProbeOutcome};
+use crate::mcp::{McpManagerOptions, McpServerConfig};
 
 /// The REAL shipped catalog payload projected to the v2 client contract.
 const REAL_PAYLOAD: &str = include_str!("../../../tests/fixtures/mcp/plugins-catalog.v2.json");
@@ -144,9 +143,11 @@ fn resolution_order_builtins_local_remote() {
         "the id collision is visible: {:?}",
         manager.service_catalog_diagnostics()
     );
-    assert!(descriptors
-        .iter()
-        .any(|service| service.service_id == "remote-only"));
+    assert!(
+        descriptors
+            .iter()
+            .any(|service| service.service_id == "remote-only")
+    );
     // The remote-only entry is never connectable through a user server
     // shadow until the user owns the id.
     let remote_only = descriptors
@@ -494,10 +495,12 @@ async fn paste_flow_installs_a_bearer_token_service_end_to_end() {
         crate::mcp::catalog_status_views::McpConnectionStatus::SetupRequired.as_str()
     );
     assert_eq!(before.paste_token, Some(true));
-    assert!(before
-        .setup_hint
-        .as_deref()
-        .is_some_and(|hint| hint.contains("paste")));
+    assert!(
+        before
+            .setup_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("paste"))
+    );
     let inputs = manager
         .lock()
         .unwrap()

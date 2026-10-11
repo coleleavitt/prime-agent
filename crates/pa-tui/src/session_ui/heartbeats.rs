@@ -1,9 +1,24 @@
 //! The background catalog fetch and its update fold, the `/heartbeats`
 //! manager view's keys and management requests.
 use super::{
-    key_event_to_id, parse_heartbeats, picker_viewport_rows, scope_heartbeats, sort_heartbeats,
-    AgentView, DaemonCommand, Duration, HeartbeatAction, HeartbeatEntry, HeartbeatsPicker,
-    HeartbeatsPickerAction, KeyEvent, Map, Result, SessionUi, Value, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    DaemonCommand,
+    Duration,
+    HeartbeatAction,
+    HeartbeatEntry,
+    HeartbeatsPicker,
+    HeartbeatsPickerAction,
+    KeyEvent,
+    Map,
+    Result,
+    SessionUi,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    key_event_to_id,
+    parse_heartbeats,
+    picker_viewport_rows,
+    scope_heartbeats,
+    sort_heartbeats,
 };
 
 /// A landed heartbeat-catalog refresh: the scoped, sorted rows, or the

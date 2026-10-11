@@ -24,8 +24,7 @@ const EXPIRY_SKEW_MS: i64 = 5 * 60 * 1000;
 /// The refresh runs under the auth store's file lock, which a peer declares stale after 10 seconds;
 /// the request must fit inside that window.
 pub const REFRESH_TIMEOUT_MS: u64 = 8_000;
-const AUTH_INSTRUCTIONS: &str =
-    "Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.";
+const AUTH_INSTRUCTIONS: &str = "Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.";
 const PROMPT_MESSAGE: &str = "Paste the authorization code or full redirect URL:";
 /// The cancel error the driving surface maps to the silent cancelled outcome.
 pub const LOGIN_CANCELLED: &str = "Login cancelled";
@@ -369,13 +368,15 @@ async fn post_json(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
     use tokio::io::AsyncWriteExt as _;
+
+    use super::*;
 
     /// A scripted transport: url -> response, recording every posted
     /// body. Unknown urls fail the request (the TS suite throws on
@@ -608,12 +609,13 @@ mod tests {
         // The state and the verifier are the same TS secret.
         assert_eq!(json["state"], json["code_verifier"]);
         // The exchange is narrated (TS `onProgress`).
-        assert!(ui
-            .progress
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|message| message == "Exchanging authorization code for tokens..."));
+        assert!(
+            ui.progress
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|message| message == "Exchanging authorization code for tokens...")
+        );
     }
 
     #[tokio::test]
@@ -755,8 +757,10 @@ mod tests {
             .expect("the flow's callback server accepts the redirect");
         stream
             .write_all(
-                format!("GET /callback?code=live-code&state={state} HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                    .as_bytes(),
+                format!(
+                    "GET /callback?code=live-code&state={state} HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                )
+                .as_bytes(),
             )
             .await
             .expect("the redirect writes");

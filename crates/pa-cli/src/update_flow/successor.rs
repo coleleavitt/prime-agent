@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use pa_types::daemon::update_flow::{UpdateProcessIdentity, UPDATE_ROSTER_ENV};
+use pa_types::daemon::update_flow::{UPDATE_ROSTER_ENV, UpdateProcessIdentity};
 use serde_json::Value;
 
 /// How often the boot wait retries the hello handshake.
@@ -135,8 +135,9 @@ fn process_exit_observed(
 mod tests {
     use std::path::PathBuf;
 
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn unknown_process_probes_do_not_prove_predecessor_exit() {

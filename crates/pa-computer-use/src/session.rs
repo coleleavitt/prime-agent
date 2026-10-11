@@ -17,17 +17,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+pub(crate) use actions::{ActionArg, AppCall, TargetArg, TextArg};
+pub(crate) use app::{AppState, IndexArg, PointArg};
+#[cfg(any(target_os = "macos", all(test, unix)))]
+pub(crate) use bind::expand_user;
+use serde_json::{Value, json};
 
 use crate::error::{ComputerUseError, ErrorCode, Result};
 use crate::platform::{AppEntry, Discovery, Platform};
 use crate::policy::Policy;
 use crate::telemetry::{Outcome, TelemetryEvent, TelemetrySink};
-
-pub(crate) use actions::{ActionArg, AppCall, TargetArg, TextArg};
-pub(crate) use app::{AppState, IndexArg, PointArg};
-#[cfg(any(target_os = "macos", all(test, unix)))]
-pub(crate) use bind::expand_user;
 
 /// The post-action settle and paste timings (shortened by tests).
 #[derive(Debug, Clone, Copy)]

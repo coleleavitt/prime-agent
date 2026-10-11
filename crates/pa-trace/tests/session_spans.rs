@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use pa_core::session::manager::SessionManager;
 use pa_trace::RecorderConfig;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
 fn span_ends(log_path: &Path) -> Vec<serde_json::Map<String, Value>> {

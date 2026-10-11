@@ -6,12 +6,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use pa_types::session::{
-    AgentMessage, ChildUsageOrigin, EntryBase, FileEntry, GitContext, SessionHeader, SessionState,
+    AgentMessage,
+    ChildUsageOrigin,
+    EntryBase,
+    FileEntry,
+    GitContext,
+    SessionHeader,
+    SessionState,
     SessionStateStatus,
 };
 
 use super::tree::SessionTree;
-use super::{migrate_to_current_version, parse_session_entries, CURRENT_SESSION_VERSION};
+use super::{CURRENT_SESSION_VERSION, migrate_to_current_version, parse_session_entries};
 
 #[cfg(test)]
 mod tests;
@@ -29,7 +35,7 @@ mod append;
 mod persist;
 
 mod queries;
-use super::{build_session_context, SessionContext};
+use super::{SessionContext, build_session_context};
 
 mod lifecycle;
 use super::window;
@@ -58,16 +64,20 @@ pub use repair::{load_entries_from_file, repair_jsonl_damage};
 // wire vocabulary stable for the engine's row factories (the canonical
 // factories live in session_engine::rlm_notices).
 mod notices;
-pub use notices::{
-    AGENT_MESSAGE_CUSTOM_TYPE, AGENT_MESSAGE_KEY_FIELD, NOTICE_CONSUMED_CUSTOM_TYPE,
-    NOTICE_CONSUMED_KEYS_FIELD, NOTICE_KEY_FIELD, TERMINAL_NOTICE_CUSTOM_TYPES,
-};
 // The test-build fault hooks for the strict notice append are pub(crate)
 // inside the child module; lift them so the engine's in-process host
 // tests can reach `crate::session::manager::fault_hooks::{arm, disarm,
 // Fault, take}` without the private module path.
 #[cfg(test)]
 pub(crate) use notices::fault_hooks;
+pub use notices::{
+    AGENT_MESSAGE_CUSTOM_TYPE,
+    AGENT_MESSAGE_KEY_FIELD,
+    NOTICE_CONSUMED_CUSTOM_TYPE,
+    NOTICE_CONSUMED_KEYS_FIELD,
+    NOTICE_KEY_FIELD,
+    TERMINAL_NOTICE_CUSTOM_TYPES,
+};
 
 /// A persist observer; must not break session writes (panics are contained).
 pub type SessionPersistListener = Box<dyn Fn(&Path) + Send + Sync>;

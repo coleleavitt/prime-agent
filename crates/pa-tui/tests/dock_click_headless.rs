@@ -36,10 +36,15 @@ fn run_lock() -> MutexGuard<'static, ()> {
 }
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The SGR reports a real terminal sends: a left press, a release, and the `?1003` buttonless
 /// motion report (base code 3 + the motion bit — 35) the hover affordance rides.

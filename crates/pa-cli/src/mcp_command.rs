@@ -4,12 +4,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
+use pa_core::auth::AuthStorageBackend;
+use pa_core::settings::SettingsStorage;
 use serde::{Deserialize, Serialize};
 
 use crate::config::get_agent_dir;
-use pa_core::auth::AuthStorageBackend;
-use pa_core::settings::SettingsStorage;
 
 /// Built-in MCP integrations that reserve their server name.
 pub const BUILTIN_MCP_CATALOG: &[&str] = &["linear", "notion"];
@@ -258,7 +258,9 @@ fn validate_name(name: &str) -> Result<&str> {
     if NAME_PATTERN(name) {
         Ok(name)
     } else {
-        bail!("MCP server names must be 1-64 letters, numbers, underscores, or hyphens and start with a letter or number.")
+        bail!(
+            "MCP server names must be 1-64 letters, numbers, underscores, or hyphens and start with a letter or number."
+        )
     }
 }
 
@@ -313,7 +315,9 @@ fn parse_mcp_add_args(args: &[String]) -> Result<(&str, McpServerConfig, bool)> 
             _ => {
                 let equals = value.find('=').filter(|&e| e > 0 && e < value.len() - 1);
                 let Some(equals) = equals else {
-                    bail!("--env must use CHILD=SOURCE, where both sides are environment variable names.");
+                    bail!(
+                        "--env must use CHILD=SOURCE, where both sides are environment variable names."
+                    );
                 };
                 let child = validate_env_name(&value[..equals], "--env child")?;
                 let source = validate_env_name(&value[equals + 1..], "--env source")?;

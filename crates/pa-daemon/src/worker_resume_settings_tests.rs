@@ -1,10 +1,14 @@
 #[cfg(test)]
 mod resume_settings_tests {
+    use pa_agent::abort::AbortSignal;
+
     use crate::engine::{
-        BranchSummaryOutcome, BranchSummaryRequest, CompactionOutcome, CompactionRequest,
+        BranchSummaryOutcome,
+        BranchSummaryRequest,
+        CompactionOutcome,
+        CompactionRequest,
     };
     use crate::worker::*;
-    use pa_agent::abort::AbortSignal;
 
     #[derive(Default)]
     struct CaptureEngine {
@@ -166,15 +170,17 @@ mod resume_settings_tests {
                     }
                 );
                 assert_eq!(*capture.tier.lock().unwrap(), None);
-                assert!(worker
-                    .core
-                    .lock()
-                    .unwrap()
-                    .store
-                    .as_ref()
-                    .unwrap()
-                    .window
-                    .is_some());
+                assert!(
+                    worker
+                        .core
+                        .lock()
+                        .unwrap()
+                        .store
+                        .as_ref()
+                        .unwrap()
+                        .window
+                        .is_some()
+                );
             }
             // The worker's core is Arc-shared with its handler seams, so an
             // in-process drop never releases the store; `kill` is the real teardown.

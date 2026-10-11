@@ -5,7 +5,12 @@
 //! `a358fd19e`).
 
 use pa_tui::diagram::{
-    DiagramLayout, DiagramNotice, DiagramRenderer, DiagramRole, DiagramSpan, DiagramSurface,
+    DiagramLayout,
+    DiagramNotice,
+    DiagramRenderer,
+    DiagramRole,
+    DiagramSpan,
+    DiagramSurface,
     NoticeLevel,
 };
 

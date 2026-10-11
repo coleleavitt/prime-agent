@@ -3,7 +3,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -189,14 +189,16 @@ fn flags_an_active_operation_span_start_with_no_matching_end() {
     let log = write_log(&lines);
     let (_, summary) = run_json(&log.path, &[]);
     assert_eq!(count(&summary, "stuck_turn"), 2);
-    assert!(summary["incidents"]
-        .as_array()
-        .expect("incidents")
-        .iter()
-        .any(|item| item["summary"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("agent.prompt span silent-open")));
+    assert!(
+        summary["incidents"]
+            .as_array()
+            .expect("incidents")
+            .iter()
+            .any(|item| item["summary"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("agent.prompt span silent-open"))
+    );
 }
 
 #[test]
@@ -264,10 +266,12 @@ fn counts_an_unfinished_child_run_and_a_delivered_completion_notice_as_child_inc
     let (_, summary) = run_json(&log.path, &[]);
     assert_eq!(count(&summary, "child"), 2);
     let incidents = summary["incidents"].as_array().expect("incidents");
-    assert!(incidents.iter().any(|item| item["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("rlm.child.run span run1")));
+    assert!(incidents.iter().any(|item| {
+        item["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rlm.child.run span run1")
+    }));
     assert!(incidents.contains(&json!({
         "category": "child",
         "ts": "2026-09-08T11:30:00.000Z",
@@ -275,10 +279,12 @@ fn counts_an_unfinished_child_run_and_a_delivered_completion_notice_as_child_inc
         "traceId": "4ef7651916cd43dd8448eb211c803190",
         "sessionId": "child-session-1",
     })));
-    assert!(!incidents.iter().any(|item| item["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("child-cancelled")));
+    assert!(!incidents.iter().any(|item| {
+        item["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("child-cancelled")
+    }));
 }
 
 #[test]

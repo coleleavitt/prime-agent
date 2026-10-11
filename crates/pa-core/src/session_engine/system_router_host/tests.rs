@@ -5,9 +5,8 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::kernel::shared::HostRequestPayload;
-
 use super::*;
+use crate::kernel::shared::HostRequestPayload;
 
 const MODELS_JSON: &str = r#"{
   "providers": {

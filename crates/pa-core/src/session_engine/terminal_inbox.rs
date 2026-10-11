@@ -1,12 +1,12 @@
 //! Parent-owned terminal-notice inbox: one durable row, one live delivery,
 //! and one coalesced wake pump per session (never one task per notice).
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_agent::admission::{AdmitStatus, QueuedAdmission};
 use pa_agent::agent::Agent;
 use pa_types::session::CustomMessage;
+use pa_types::sync::MutexExt;
 
 use super::AgentSession;
 

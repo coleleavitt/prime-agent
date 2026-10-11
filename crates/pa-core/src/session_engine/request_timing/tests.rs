@@ -3,12 +3,20 @@
 //! instrumentation, the stream seam's first-token capture, and the
 //! summary's usage fields (the TS test port).
 
-use super::*;
-use pa_agent::stream::{event_stream, LlmContext};
-use pa_agent::types::{
-    AgentMessage, AssistantContent, Message, TextContent, UsageCost, UserContent, UserMessage,
-};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+use pa_agent::stream::{LlmContext, event_stream};
+use pa_agent::types::{
+    AgentMessage,
+    AssistantContent,
+    Message,
+    TextContent,
+    UsageCost,
+    UserContent,
+    UserMessage,
+};
+
+use super::*;
 
 /// Tests that touch the `PI_REQUEST_TIMING` env serialize on this lock:
 /// the process env is global across parallel test threads.
@@ -703,7 +711,7 @@ fn the_settings_flag_round_trips_and_defaults_off() {
 /// seams from the `requestTiming` settings key.
 #[tokio::test]
 async fn engine_sessions_emit_the_timeline_only_when_the_flag_is_on() {
-    use crate::session_engine::engine::{create_session, SessionEngineConfig};
+    use crate::session_engine::engine::{SessionEngineConfig, create_session};
     use crate::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
 
     // The engine reads the env half of the flag at session build, so the
@@ -943,7 +951,7 @@ async fn the_payload_capture_writes_nothing_when_the_flag_is_off() {
 #[cfg(unix)]
 #[tokio::test]
 async fn engine_sessions_capture_the_outbound_payload_when_the_flag_is_on() {
-    use crate::session_engine::engine::{create_session, SessionEngineConfig};
+    use crate::session_engine::engine::{SessionEngineConfig, create_session};
 
     // Both shared-process locks: the env pin and the writer queue.
     let _writer_lock = super::payload::WRITER_TEST_LOCK.lock().await;

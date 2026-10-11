@@ -5,18 +5,21 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
+use pa_types::daemon::DaemonCommand;
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use super::config_options::{
-    config_options_value, model_value, publish_config_options, session_config_options, PickerModel,
+    PickerModel,
     SessionConfigOption,
+    config_options_value,
+    model_value,
+    publish_config_options,
+    session_config_options,
 };
 use super::daemon::{DaemonAcpState, DaemonLink};
-use super::jsonrpc;
 use super::producer::{self, UpdateProducer};
-use super::types;
-use pa_types::daemon::DaemonCommand;
+use super::{jsonrpc, types};
 
 /// The hosted session's picker state: the published options, the
 /// discovered models, and the serialized config queue.
@@ -250,7 +253,7 @@ async fn apply_wire_config(
                 None => {
                     return Err(WireConfigError::internal(
                         "the worker's state did not answer the supported levels; try again",
-                    ))
+                    ));
                 }
             };
             // #2858's map-driven capability: the coarse `reasoning`
@@ -320,9 +323,11 @@ pub(super) async fn fetch_available_models(
         })
         .await?;
     if !response.success {
-        anyhow::bail!(response
-            .error
-            .unwrap_or_else(|| "model discovery failed".to_string()));
+        anyhow::bail!(
+            response
+                .error
+                .unwrap_or_else(|| "model discovery failed".to_string())
+        );
     }
     let models = response
         .data

@@ -1,14 +1,14 @@
 //! The refinement-outcome row: decode and rendering of the applied-edit
 //! list with its -/+ change rows. The shared row types live in `super`.
 
+use serde_json::Value;
+
 use super::render::{pad_with, spacer, text_rows};
 use super::{EditField, LabelPart, RefinementEditRow, RefinementOutcomeRow};
 use crate::chat::{ChatEntry, Detail, StatusKind};
 use crate::theme::{ColorMode, Theme, ThemeBg, ThemeColor};
-use crate::width::wrap_line;
-use crate::width::{str_width, truncate_line, wrap_text};
+use crate::width::{str_width, truncate_line, wrap_line, wrap_text};
 use crate::{Line, Span};
-use serde_json::Value;
 
 /// Summary + scope + applied-edit list; malformed payloads render the
 /// notice.
@@ -413,9 +413,10 @@ mod render_oracle;
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::custom_message::REFINEMENT_OUTCOME_CUSTOM_TYPE;
-    use serde_json::json;
 
     #[test]
     // Deliberate decomposed/non-NFC fixtures: the width engine measures the raw sequences.
@@ -695,9 +696,10 @@ mod tests {
         assert_eq!(flat(&rows[3]), " one two three");
         assert_eq!(flat(&rows[4]), " four five si\u{2026}");
         let rows = render_refinement_outcome(&row, Detail::Details, &theme(), 60);
-        assert!(rows
-            .iter()
-            .any(|r| flat(r) == " one two three four five six seven"));
+        assert!(
+            rows.iter()
+                .any(|r| flat(r) == " one two three four five six seven")
+        );
         // Expanded (`Detail::All`): the raw summary hangs on the branch grammar — the first
         // row carries the dim `╰─ ` gutter, the newline-joined source rows the continuation indent.
         let rows = render_refinement_outcome(&row, Detail::All, &theme(), 60);

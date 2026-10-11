@@ -1,7 +1,7 @@
 //! The TS `workflow-v2-wire.test.ts` battery and the runtime's
 //! `test_workflow_v2.py` contract cases, against the Rust codec.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 

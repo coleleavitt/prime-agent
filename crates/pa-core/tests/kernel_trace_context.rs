@@ -8,7 +8,7 @@
 
 mod trace_kernel;
 
-use pa_types::trace_context::{set_current_context_source, TraceContext};
+use pa_types::trace_context::{TraceContext, set_current_context_source};
 
 const STUB: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 

@@ -2,10 +2,11 @@
 //! themes' variable/color layout; colors resolve to truecolor or 256-color
 //! ANSI depending on `COLORTERM`/`TERM`.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeColor {

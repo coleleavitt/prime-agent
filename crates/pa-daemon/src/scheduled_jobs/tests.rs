@@ -1,8 +1,9 @@
 //! The scheduled-jobs unit battery: the queue hooks, the fire/defer decision,
 //! and the nine protocol arms' wire shapes.
+use std::sync::Arc;
+
 use super::*;
 use crate::worker::Worker;
-use std::sync::Arc;
 
 fn persisted_worker_config(dir: &std::path::Path) -> crate::worker::WorkerConfig {
     crate::worker::WorkerConfig {

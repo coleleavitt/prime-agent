@@ -650,7 +650,9 @@ async fn revived_session_fallback_is_on_the_record() {
     engine.restore_session_model(&path, None).await;
     assert_eq!(
         engine.model_fallback_message().as_deref(),
-        Some("Could not restore model prime-inference/internal/glm-5.4-fast. Using prime-inference/z-ai/glm-5.3"),
+        Some(
+            "Could not restore model prime-inference/internal/glm-5.4-fast. Using prime-inference/z-ai/glm-5.3"
+        ),
         "the fallback is published, never silent"
     );
     let resolved = engine.resolve_registry_model().expect("startup chain");

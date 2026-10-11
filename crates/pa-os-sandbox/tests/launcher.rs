@@ -9,7 +9,7 @@
 
 use std::ffi::OsStr;
 
-use pa_os_sandbox::{launch_main, LAUNCHER_FLAG};
+use pa_os_sandbox::{LAUNCHER_FLAG, launch_main};
 
 fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(OsStr::new(LAUNCHER_FLAG)) {
@@ -32,7 +32,12 @@ mod linux {
 
     use pa_os_sandbox::launch::{LAUNCH_ACK, LAUNCH_NAK};
     use pa_os_sandbox::{
-        Confinement, Launcher, NetworkAccess, PreparedSandbox, SandboxError, SandboxPaths,
+        Confinement,
+        Launcher,
+        NetworkAccess,
+        PreparedSandbox,
+        SandboxError,
+        SandboxPaths,
         SandboxPolicy,
     };
 

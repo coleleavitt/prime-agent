@@ -1,15 +1,25 @@
 //! Session creation and reuse on the worker: the create command's
 //! construction of the live session.
-use super::{
-    json, paths, response_failure, response_success, restore_queue_snapshot, session_file_name,
-    Arc, EngineModelSelection, Result, RlmSessionIdentity, SessionEngine, SessionFile, VecDeque,
-    Worker,
-};
 use pa_types::sync::{MutexExt, RwLockExt};
-
 use serde::Deserialize as _;
 use serde_json::Value;
 
+use super::{
+    Arc,
+    EngineModelSelection,
+    Result,
+    RlmSessionIdentity,
+    SessionEngine,
+    SessionFile,
+    VecDeque,
+    Worker,
+    json,
+    paths,
+    response_failure,
+    response_success,
+    restore_queue_snapshot,
+    session_file_name,
+};
 use crate::agent_engine::CreateSessionResources;
 use crate::protocol::DaemonResponse;
 

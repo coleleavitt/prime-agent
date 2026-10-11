@@ -2,11 +2,11 @@
 //! versions and git upstreams, and reinstall moved packages; plus the
 //! startup-notice update check.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::manager::{PackageManager, PackageUpdate, ProgressAction};
 use super::npm;
-use super::source::{parse_source, GitSource, NpmSource, ParsedSource, SourceScope, UserOrProject};
+use super::source::{GitSource, NpmSource, ParsedSource, SourceScope, UserOrProject, parse_source};
 
 impl PackageManager {
     /// Update configured packages. With a source, only packages with the same

@@ -7,10 +7,10 @@
 
 use serde_json::Value;
 
+use crate::Line;
 use crate::config_selector::{ConfigSelector, SelectorAction, SelectorKind, SelectorRow};
 use crate::keybindings::KeybindingsManager;
 use crate::theme::Theme;
-use crate::Line;
 
 /// One key press while the selector is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,9 +195,10 @@ pub fn toggle_command(key: &str, enabled: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::theme::ColorMode;
-    use serde_json::json;
 
     fn result_row(content: &str, entries: &Value) -> Value {
         json!({

@@ -3,18 +3,29 @@
 //! OAuth/Claude-Code header modes, beta headers, and adaptive vs budget-based thinking selection
 //! live here.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
+    create_assistant_message_event_stream,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::simple_options::{adjust_max_tokens_for_thinking, build_base_options};
 use crate::registry::Provider;
 use crate::types::{
-    AssistantMessage, CacheRetention, Context, Model, ModelExt, ModelThinkingLevel,
-    SimpleStreamOptions, StopReason, StreamOptions, Tool, Usage,
+    AssistantMessage,
+    CacheRetention,
+    Context,
+    Model,
+    ModelExt,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Tool,
+    Usage,
 };
 use crate::utils_inner::diagnostics::now_ms;
 
@@ -201,11 +212,7 @@ impl CacheControl {
     }
 
     fn duration(&self) -> &'static str {
-        if self.ttl == Some("1h") {
-            "1h"
-        } else {
-            "5m"
-        }
+        if self.ttl == Some("1h") { "1h" } else { "5m" }
     }
 }
 
@@ -396,12 +403,14 @@ pub(crate) fn build_request_headers(
             if is_oauth {
                 headers.insert(
                     "anthropic-beta".into(),
-                    json!(["claude-code-20250219", "oauth-2025-04-20"]
-                        .iter()
-                        .chain(beta_features.iter())
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join(",")),
+                    json!(
+                        ["claude-code-20250219", "oauth-2025-04-20"]
+                            .iter()
+                            .chain(beta_features.iter())
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
                 );
                 headers.insert(
                     "user-agent".into(),
@@ -603,7 +612,7 @@ mod always_on_adaptive_thinking_tests {
 #[cfg(test)]
 mod subscription_identity_tests {
     use super::build_request_headers;
-    use crate::types::{zero_model_cost, Model, ModelInput};
+    use crate::types::{Model, ModelInput, zero_model_cost};
 
     // TS #2645's wire-contract assertions (anthropic-thinking-disable.test.ts): subscription
     // requests claim the Claude Code client identity, and the claimed version must stay at or above

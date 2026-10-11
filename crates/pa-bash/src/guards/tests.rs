@@ -312,9 +312,11 @@ fn implicit_force_pushes_follow_the_upstream() {
         .expect("unknown directory refused");
     assert!(relocated.contains("changes directory"), "{relocated}");
     // Outside a repository git fails on its own.
-    assert!(fixture
-        .refusal(GuardKind::ForcePush, "git push -f")
-        .is_none());
+    assert!(
+        fixture
+            .refusal(GuardKind::ForcePush, "git push -f")
+            .is_none()
+    );
 }
 
 #[test]
@@ -904,9 +906,11 @@ fn arbitrary_text_never_panics() {
 fn nesting_past_the_bounds_stays_evidence_gated() {
     let fixture = Fixture::new();
     let deep = |leaf: &str| format!("{}{leaf}{}", "$(".repeat(300), ")".repeat(300));
-    assert!(fixture
-        .refusal(GuardKind::DestructiveChmod, &deep("chmod -R 755 ~"))
-        .is_some());
+    assert!(
+        fixture
+            .refusal(GuardKind::DestructiveChmod, &deep("chmod -R 755 ~"))
+            .is_some()
+    );
     assert!(fixture.any_refusal(&deep("echo hi")).is_none());
     let mut chain = "git push -f origin main".to_string();
     for _ in 0..20 {
@@ -1240,11 +1244,23 @@ fn git_probes_execute_nothing_the_command_or_config_names() {
         &["config", "core.fsmonitor", &touch("repo-fsmonitor")],
     );
     let commands = [
-        format!("git -c core.fsmonitor='{}' reset --hard", touch("fsmonitor")),
-        format!("git -c core.hooksPath={} reset --hard", fixture.root.display()),
-        format!("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0='{}' git reset --hard", touch("env")),
+        format!(
+            "git -c core.fsmonitor='{}' reset --hard",
+            touch("fsmonitor")
+        ),
+        format!(
+            "git -c core.hooksPath={} reset --hard",
+            fixture.root.display()
+        ),
+        format!(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0='{}' git reset --hard",
+            touch("env")
+        ),
         format!("GIT_SSH_COMMAND='{}' git push -f origin HEAD", touch("ssh")),
-        format!("LD_PRELOAD={}/nothing.so git push -f origin main", fixture.root.display()),
+        format!(
+            "LD_PRELOAD={}/nothing.so git push -f origin main",
+            fixture.root.display()
+        ),
         format!("git --exec-path={} p", fixture.root.display()),
         "git reset --hard".to_string(),
         "git push -f origin HEAD".to_string(),

@@ -3,9 +3,8 @@
 //! from a session, and how their statuses classify. Pure functions over
 //! `roster_subscribe` wire entries.
 
+use pa_types::daemon::agent_roster::{AgentRosterStatus, classify_summary_value};
 use serde_json::Value;
-
-use pa_types::daemon::agent_roster::{classify_summary_value, AgentRosterStatus};
 
 /// One session's family-addressing identity: the keys its child rows
 /// reference it by.
@@ -350,8 +349,9 @@ pub(crate) fn family_cost(roster: &[Value], session: &SessionIdentity) -> Option
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn entry(agent_id: &str, summary: &Value, status: &str) -> Value {
         json!({ "agentId": agent_id, "summary": summary, "status": status })

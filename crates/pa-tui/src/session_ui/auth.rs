@@ -1,9 +1,20 @@
 //! The provider login/logout selectors and the inline auth panel, the
 //! parked model sign-in, and the `/mcp` auth flow.
 use super::{
-    key_event_to_id, picker_viewport_rows, AgentView, AuthSelectorAction, AuthSelectorKind,
-    DaemonCommand, Duration, KeyEvent, Map, ModelSelectionApplied, ModelSwitchScope, Result,
-    SessionUi, UI_REQUEST_TIMEOUT_MS,
+    AgentView,
+    AuthSelectorAction,
+    AuthSelectorKind,
+    DaemonCommand,
+    Duration,
+    KeyEvent,
+    Map,
+    ModelSelectionApplied,
+    ModelSwitchScope,
+    Result,
+    SessionUi,
+    UI_REQUEST_TIMEOUT_MS,
+    key_event_to_id,
+    picker_viewport_rows,
 };
 
 /// The outcome of one daemon `set_model` attempt: the switch landed, the provider is not signed in

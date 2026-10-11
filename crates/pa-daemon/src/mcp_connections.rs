@@ -8,9 +8,9 @@
 //! tool count).
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 impl Worker {

@@ -1,36 +1,53 @@
 //! Mistral Conversations streaming core: the provider stream function, SSE
 //! iteration, chunk handling, and stream-state accumulation.
 
-use std::fmt::Write as _;
-
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use serde_json::{Map, Value};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::models::calculate_cost;
 use crate::providers::mistral::convert::{
-    build_chat_payload, derive_mistral_tool_call_id, MistralToolCallIdNormalizer,
+    MistralToolCallIdNormalizer,
+    build_chat_payload,
+    derive_mistral_tool_call_id,
 };
-use crate::providers::mistral::{build_request_headers, MistralOptions, API_MISTRAL_CONVERSATIONS};
+use crate::providers::mistral::{API_MISTRAL_CONVERSATIONS, MistralOptions, build_request_headers};
 use crate::providers::transform_messages::transform_messages_with_normalizer;
 use crate::types::{
-    done_reason, error_reason, AssistantContent, AssistantMessage, Context, Model, StopReason,
-    TextContent, ThinkingContent, ToolCall, Usage,
+    AssistantContent,
+    AssistantMessage,
+    Context,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    Usage,
+    done_reason,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{
-    parse_json_with_repair, parse_streaming_json, StreamingJsonAccumulator,
+    StreamingJsonAccumulator,
+    parse_json_with_repair,
+    parse_streaming_json,
 };
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
-    record_stream_failure, stream_failure_from_stop_reason, ProviderError, ProviderHttpError,
+    ProviderError,
+    ProviderHttpError,
+    record_stream_failure,
+    stream_failure_from_stop_reason,
 };
 
 const MAX_MISTRAL_ERROR_BODY_CHARS: usize = 4000;

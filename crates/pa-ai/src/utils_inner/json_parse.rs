@@ -540,8 +540,9 @@ impl Default for StreamingJsonAccumulator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn parses_complete_json() {

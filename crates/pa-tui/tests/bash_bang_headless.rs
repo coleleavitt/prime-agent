@@ -25,10 +25,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Tall enough that the whole 20-row bash preview plus its status rows fit the window.
 const TALL_PLAN_HEIGHT: u16 = 64;

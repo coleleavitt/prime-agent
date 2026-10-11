@@ -51,9 +51,9 @@ pub fn process_file_arguments(
             Ok(Some(image)) => {
                 if auto_resize_images && image.data.len() > DEFAULT_MAX_BYTES {
                     let _ = writeln!(
-                    processed.text,
-                    "<file name=\"{resolved}\">[Image omitted: could not be resized below the inline image size limit.]</file>"
-                );
+                        processed.text,
+                        "<file name=\"{resolved}\">[Image omitted: could not be resized below the inline image size limit.]</file>"
+                    );
                     continue;
                 }
                 processed.images.push(ImageContent {
@@ -172,9 +172,11 @@ mod tests {
         let processed = process_file_arguments(&[file.to_string_lossy().to_string()], &dir, true)
             .expect("process");
         assert_eq!(processed.images, Vec::new());
-        assert!(processed
-            .text
-            .contains("[Image omitted: could not be resized below the inline image size limit.]"));
+        assert!(
+            processed.text.contains(
+                "[Image omitted: could not be resized below the inline image size limit.]"
+            )
+        );
     }
 
     #[test]

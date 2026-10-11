@@ -2,8 +2,18 @@
 //! row/line shapers the pane's render methods assemble over.
 
 use super::{
-    fill_row, hug_row, plain_cell, scrub_controls, status_dot, str_width, truncate_line,
-    BashActivity, Line, Span, Theme, ThemeColor,
+    BashActivity,
+    Line,
+    Span,
+    Theme,
+    ThemeColor,
+    fill_row,
+    hug_row,
+    plain_cell,
+    scrub_controls,
+    status_dot,
+    str_width,
+    truncate_line,
 };
 
 /// The table's column geometry: the command, duration, pid, and status

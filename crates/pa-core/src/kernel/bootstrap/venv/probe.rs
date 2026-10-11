@@ -2,8 +2,15 @@
 //! verdict) that skips re-probing a venv nobody damaged.
 
 use super::{
-    collect_python_files, Digest, HashMap, KernelPythonSkill, Mutex, Path, PathBuf, Stdio,
     DEFAULT_RLM_EXTRA_PACKAGES,
+    Digest,
+    HashMap,
+    KernelPythonSkill,
+    Mutex,
+    Path,
+    PathBuf,
+    Stdio,
+    collect_python_files,
 };
 
 /// Every probe runs with `-P`: `python -c` puts the host cwd (`''`) first on `sys.path`, so a

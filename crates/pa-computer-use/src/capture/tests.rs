@@ -2,7 +2,7 @@
 //! sweep, symlink, FIFO, mode and PNG-hygiene halves; the screencapture argv
 //! and error halves are in the macOS backend's tests).
 
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 

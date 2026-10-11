@@ -3,20 +3,22 @@
 //! models, offline or not. Resolution returns fresh snapshots: a
 //! mid-session refresh never retargets the active model.
 
-use pa_types::sync::MutexExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::bundled::{load_bundled_models, BundledAssets};
-use crate::cache::{CatalogCache, RefreshOptions, PUBLIC_SCOPE};
+use pa_types::sync::MutexExt;
+
+use crate::bundled::{BundledAssets, load_bundled_models};
+use crate::cache::{CatalogCache, PUBLIC_SCOPE, RefreshOptions};
 use crate::fetch::{CatalogFetcher, MODEL_CATALOG_URL};
-use crate::pinning::{parse_provider_model_catalog, PinnedTemplates};
+use crate::pinning::{PinnedTemplates, parse_provider_model_catalog};
 use crate::prime_inference::{
-    merge_prime_inference_models, PrimeInferenceCatalog, PrimeInferenceCredentials,
     PRIME_INFERENCE_BASE_URL,
+    PrimeInferenceCatalog,
+    PrimeInferenceCredentials,
+    merge_prime_inference_models,
 };
-use crate::transports;
-use crate::Model;
+use crate::{Model, transports};
 
 /// The provider-model-catalog cache file, beside models.json.
 pub const PROVIDER_CATALOG_CACHE_FILE: &str = "provider-model-catalog.v1.json";
@@ -297,8 +299,9 @@ impl ModelCatalog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn models_json(ids: &[&str]) -> String {
         let compiled = transports::compiled_models();

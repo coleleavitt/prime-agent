@@ -2,9 +2,11 @@
 //! must behave exactly like the whole-body `read_to_string` reader it replaced (the
 //! reference below is that old code, verbatim) — invariant-by-test, not by reasoning.
 
-use super::{fold_child_usage_attributions, SessionEntry, SessionFile};
-use serde_json::Value;
 use std::io::Write;
+
+use serde_json::Value;
+
+use super::{SessionEntry, SessionFile, fold_child_usage_attributions};
 
 /// The pre-streaming reference reader: the `read_to_string` + `lines`
 /// path the streamed open replaced.

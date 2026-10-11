@@ -8,12 +8,14 @@ use std::sync::Arc;
 use pa_core::autonomous::AutonomousRuntimeState;
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::session_commands::{
-    execute_session_command, session_command_echo_row, SessionCommandExecution,
+    SessionCommandExecution,
     SessionCommandParams,
+    execute_session_command,
+    session_command_echo_row,
 };
 use pa_core::session_engine::slash_commands::SessionSlashCommand;
 use pa_types::ai::Model;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::print_goal::PrintGoalSurface;
 
@@ -185,11 +187,12 @@ pub(crate) async fn execute_prompt_session_command(
 
 #[cfg(test)]
 mod tests {
+    use pa_core::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
+    use serde_json::json;
+
     use super::*;
     use crate::print_boundary::TurnBoundary;
     use crate::print_goal::PrintGoalSurface;
-    use pa_core::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
-    use serde_json::json;
 
     /// One test at a time over the global faux registry (the same contract `print_goal` and
     /// `print_boundary` tests hold).

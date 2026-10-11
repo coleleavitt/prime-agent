@@ -23,11 +23,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
-use nix::pty::{openpty, Winsize};
-use serde_json::{json, Map, Value};
-
+use nix::fcntl::FcntlArg::F_SETFL;
+use nix::fcntl::{OFlag, fcntl};
+use nix::pty::{Winsize, openpty};
 use pa_types::daemon::DaemonCommand;
+use serde_json::{Map, Value, json};
 
 /// The parent hands the child its launch through this env var; unset, the
 /// test passes trivially (a plain `cargo test` runs only the parent).

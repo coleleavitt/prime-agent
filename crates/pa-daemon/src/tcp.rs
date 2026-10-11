@@ -17,7 +17,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_core::platform::{is_executable, is_executable_by_process};
 use serde_json::Value;
 
@@ -502,7 +502,7 @@ pub fn load_or_create_daemon_tcp_token(agent_dir: &Path) -> Result<DaemonTcpToke
                             token: existing,
                             token_path,
                             created: false,
-                        })
+                        });
                     }
                     // The winner's open landed but its write is still in
                     // flight: the file reads empty (or not yet exists);
@@ -524,7 +524,7 @@ pub fn load_or_create_daemon_tcp_token(agent_dir: &Path) -> Result<DaemonTcpToke
             return Err(anyhow!(
                 "daemon TCP token file {}: {error}",
                 token_path.display()
-            ))
+            ));
         }
     }
     if let Err(error) = pa_core::platform::perms::restrict_file(&token_path) {
@@ -623,8 +623,9 @@ pub fn check_daemon_tcp_line_auth(line: &str, expected_token: &str) -> DaemonTcp
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
+
+    use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

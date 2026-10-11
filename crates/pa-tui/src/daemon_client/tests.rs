@@ -1,6 +1,7 @@
-use super::*;
 use serde_json::json;
 use tokio::net::UnixListener;
+
+use super::*;
 
 /// Minimal scripted supervisor used by client tests: hello on connect,
 /// canned responses keyed by command type.
@@ -155,9 +156,11 @@ async fn request_timeout_reports_socket() {
         error.to_string().contains("Timed out after"),
         "unexpected error: {error}"
     );
-    assert!(error
-        .to_string()
-        .contains(socket.display().to_string().as_str()));
+    assert!(
+        error
+            .to_string()
+            .contains(socket.display().to_string().as_str())
+    );
     assert!(!is_daemon_rejection(&error));
 }
 
@@ -223,9 +226,11 @@ async fn a_request_after_the_reader_died_refuses_instead_of_riding_the_budget() 
             .contains("the daemon connection is closed"),
         "unexpected error: {error}"
     );
-    assert!(error
-        .to_string()
-        .contains(socket.display().to_string().as_str()));
+    assert!(
+        error
+            .to_string()
+            .contains(socket.display().to_string().as_str())
+    );
     // The refusal is a transport failure: transient for the submit path
     // (the pane stays mounted for the reconnect driver), never a daemon
     // rejection.

@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use crate::schema::{parse_model_catalog, InvalidEntries};
 use crate::Model;
+use crate::schema::{InvalidEntries, parse_model_catalog};
 
 /// The compiled `(provider, api, baseUrl)` template tables for pinning.
 #[derive(Clone, Default)]
@@ -103,9 +103,11 @@ pub fn pin_catalog_models(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::*;
 
     fn compiled_fixture() -> PinnedTemplates {
         let mut headers = BTreeMap::new();
@@ -236,9 +238,11 @@ mod tests {
         let models = parse_provider_model_catalog(&payload, &templates).expect("pinned");
         assert_eq!(models.len(), 1, "the headers-carrying entry is dropped");
         assert_eq!(models[0].id, "exact");
-        assert!(!models[0]
-            .headers
-            .as_ref()
-            .is_some_and(|headers| headers.contains_key("X-Evil")));
+        assert!(
+            !models[0]
+                .headers
+                .as_ref()
+                .is_some_and(|headers| headers.contains_key("X-Evil"))
+        );
     }
 }

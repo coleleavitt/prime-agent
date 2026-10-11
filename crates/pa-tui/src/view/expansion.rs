@@ -52,11 +52,12 @@ impl AgentView {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::chat::{ChatEntry, ToolResultView};
     use crate::theme::{ColorMode, Theme};
     use crate::tool_card::ToolCallCard;
-    use serde_json::json;
 
     /// A settled `bash` card whose output out-talls the collapsed preview, so expansion is the
     /// only way its first output lines render.

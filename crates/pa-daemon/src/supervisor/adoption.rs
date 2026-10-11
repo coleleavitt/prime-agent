@@ -1,14 +1,31 @@
 //! Worker adoption: the boot discovery pass and the per-worker
 //! adoption outcomes.
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
+use pa_types::sync::MutexExt;
+
 use super::{
-    anyhow, json, load_descriptors, response_failure, response_success, socket,
-    worker_connect_deadline, Context, DaemonCommand, DaemonResponse, DaemonWorkerLifecycle,
-    Duration, Ordering, Path, PathBuf, ResidentWorker, Result, Supervisor, Value,
+    Context,
+    DaemonCommand,
+    DaemonResponse,
+    DaemonWorkerLifecycle,
+    Duration,
+    Ordering,
+    Path,
+    PathBuf,
+    ResidentWorker,
+    Result,
+    Supervisor,
+    Value,
     WorkerRegistration,
+    anyhow,
+    json,
+    load_descriptors,
+    response_failure,
+    response_success,
+    socket,
+    worker_connect_deadline,
 };
 
 /// An unobservable start identity does not prove that a live pid was recycled.

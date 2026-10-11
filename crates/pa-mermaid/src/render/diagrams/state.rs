@@ -7,13 +7,26 @@
 //! splits a composite into unlabelled sibling region groups. `[*]` is scoped per group.
 
 use super::super::graph::{
-    parse_dir, Edge, Graph, Group, Head, LineKind, Shape, MAX_GROUPS, MAX_GROUP_DEPTH,
+    Edge,
+    Graph,
+    Group,
+    Head,
+    LineKind,
+    MAX_GROUP_DEPTH,
+    MAX_GROUPS,
+    Shape,
+    parse_dir,
 };
 use super::super::js_text;
 use super::super::labels::{ascii_lower, decode_html_entities};
 use super::super::layout::{layout_flowchart, layout_grouped};
 use super::super::statements::{
-    first_word, header_kind, non_empty, split_colon, statements_of, take_tags,
+    first_word,
+    header_kind,
+    non_empty,
+    split_colon,
+    statements_of,
+    take_tags,
 };
 use super::Drawn;
 

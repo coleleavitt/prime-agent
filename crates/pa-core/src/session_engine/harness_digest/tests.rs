@@ -1,11 +1,11 @@
 //! The harness-digest unit battery: the digest delivery placements, the
 //! deferred first-turn row, and the compaction-boundary captures.
-use super::*;
-use crate::session::manager::SessionManager;
 use pa_agent::types::UserMessage;
 use serde_json::Value;
 
 use super::super::messages::COMPACTION_SUMMARY_SUFFIX;
+use super::*;
+use crate::session::manager::SessionManager;
 
 #[test]
 fn empty_state_digest_renders_placeholder() {
@@ -35,7 +35,10 @@ fn empty_state_digest_renders_placeholder() {
 #[test]
 fn a_prompt_hook_adjusts_the_digest_and_its_fingerprint() {
     use crate::refinement::prompt_hook::{
-        HarnessPromptAdjustment, HarnessPromptHook, HarnessPromptHooks, HarnessPromptSection,
+        HarnessPromptAdjustment,
+        HarnessPromptHook,
+        HarnessPromptHooks,
+        HarnessPromptSection,
     };
     struct Section(Vec<String>);
     impl HarnessPromptHook for Section {
@@ -743,9 +746,11 @@ fn package_harness_overlays_reach_the_digest_read_only() {
         "- [package:repo_access_policy] Repo access policy (general, v1) [read-only package; scope=user; source=local:prime-skills rev=v1.0.0; file=harness/memory/repo_access_policy.json]: Clone over ssh only."
     );
     assert!(!render.digest.contains(&pkg.display().to_string()));
-    assert!(render
-        .digest
-        .contains("Never update or delete a package entry with `/refine`"));
+    assert!(
+        render
+            .digest
+            .contains("Never update or delete a package entry with `/refine`")
+    );
     std::fs::write(
         pkg.join("package.json"),
         r#"{"name":"prime-skills","version":"1.1.0","pi":{"harness":["./harness"]}}"#,
@@ -756,9 +761,9 @@ fn package_harness_overlays_reach_the_digest_read_only() {
     assert_ne!(updated.state_fingerprint, render.state_fingerprint);
     // An editable global entry with the same id shadows the overlay.
     let mut global = crate::refinement::empty_harness_state();
-    let mut editable = load().state.entries[&crate::refinement::RefinementKind::Memory]
-        ["repo_access_policy"]
-        .clone();
+    let mut editable =
+        load().state.entries[&crate::refinement::RefinementKind::Memory]["repo_access_policy"]
+            .clone();
     editable.extensions.clear();
     editable.content = "Editable override.".to_string();
     global
@@ -769,8 +774,10 @@ fn package_harness_overlays_reach_the_digest_read_only() {
     crate::refinement::save_harness_state(&agent.join("harness"), &global).unwrap();
     let shadowed =
         render_digest_with_fingerprint(&context(load().state), HarnessQueryTerms::default());
-    assert!(shadowed
-        .digest
-        .contains("- [global:repo_access_policy] Repo access policy"));
+    assert!(
+        shadowed
+            .digest
+            .contains("- [global:repo_access_policy] Repo access policy")
+    );
     assert!(!shadowed.digest.contains("[package:repo_access_policy]"));
 }

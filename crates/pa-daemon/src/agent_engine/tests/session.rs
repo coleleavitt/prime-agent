@@ -129,10 +129,12 @@ async fn get_commands_enumerates_skills_before_the_first_prompt() {
     );
     // Every skill command carries the `skill:` name form and source info.
     for command in &skill_commands {
-        assert!(command
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| name.starts_with("skill:")));
+        assert!(
+            command
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.starts_with("skill:"))
+        );
         assert!(command.get("sourceInfo").is_some());
     }
 }
@@ -155,11 +157,13 @@ async fn replacement_teardown_retires_the_session_and_the_funnel_adopts_the_bran
     // Retire: the built session drops with its mirrored goal handles.
     engine.retire_session_runtime().await;
     assert!(engine.session.lock().await.is_none());
-    assert!(engine
-        .goal_runtime
-        .lock()
-        .expect("goal runtime lock")
-        .is_none());
+    assert!(
+        engine
+            .goal_runtime
+            .lock()
+            .expect("goal runtime lock")
+            .is_none()
+    );
 
     // Park the moved branch on the unbuilt engine (the worker parks it on a blocking thread).
     let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
@@ -182,11 +186,13 @@ async fn replacement_teardown_retires_the_session_and_the_funnel_adopts_the_bran
         .expect("park join")
         .expect("park branch");
     }
-    assert!(engine
-        .pending_branch
-        .lock()
-        .expect("pending branch lock")
-        .is_some());
+    assert!(
+        engine
+            .pending_branch
+            .lock()
+            .expect("pending branch lock")
+            .is_some()
+    );
 
     // The async funnel's build adopts the parked branch.
     let model = engine.resolve_model().expect("model");
@@ -194,11 +200,13 @@ async fn replacement_teardown_retires_the_session_and_the_funnel_adopts_the_bran
         .ensure_core_session_async(&model)
         .await
         .expect("rebuild");
-    assert!(engine
-        .pending_branch
-        .lock()
-        .expect("pending branch lock")
-        .is_none());
+    assert!(
+        engine
+            .pending_branch
+            .lock()
+            .expect("pending branch lock")
+            .is_none()
+    );
     let session = engine.session.lock().await;
     let built = session.as_deref().expect("rebuilt session");
     let state = built.session.agent().state().await;

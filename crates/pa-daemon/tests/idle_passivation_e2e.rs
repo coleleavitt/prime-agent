@@ -23,14 +23,13 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
-
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_core::session_engine::agent_messaging::register_agent_message_host_handlers;
 use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSubagentHost};
 use pa_daemon::agent_messaging::LinkAgentMessageController;
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
+use serde_json::{Value, json};
 
 struct Daemon {
     child: Child,
@@ -352,8 +351,9 @@ async fn a_settled_child_passivates_stays_listable_and_revives_by_agent_message(
                 let mut found = std::path::PathBuf::new();
                 if let Ok(entries) = std::fs::read_dir(agent_dir.join("daemon-workers")) {
                     for instance in entries.flatten() {
-                        let p =
-                            instance.path().join(format!("{child_active_session_id}.json"));
+                        let p = instance
+                            .path()
+                            .join(format!("{child_active_session_id}.json"));
                         if p.exists() {
                             found = p;
                         }
@@ -366,11 +366,7 @@ async fn a_settled_child_passivates_stays_listable_and_revives_by_agent_message(
                 if let Ok(entries) = std::fs::read_dir(agent_dir.join("logs")) {
                     for entry in entries.flatten() {
                         if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            tails.push(format!(
-                                "{}: {}",
-                                entry.path().to_string_lossy(),
-                                content
-                            ));
+                            tails.push(format!("{}: {}", entry.path().to_string_lossy(), content));
                         }
                     }
                 }

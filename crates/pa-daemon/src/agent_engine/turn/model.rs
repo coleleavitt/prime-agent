@@ -1,11 +1,22 @@
 //! The model-turn runner: the streaming run over the built session agent,
 //! the retry/failover policy application, and the quota-park mid-run arm.
-use super::{
-    aborted_message, drop_trailing_assistant, json_round_trip, map_thinking_level,
-    retry_event_to_engine_event, AgentSessionEngine, EngineEvent, ProviderTarget, StopReason,
-    TurnAdmission, TurnOnce, TurnPrompt, TurnResult,
-};
 use pa_types::sync::RwLockExt;
+
+use super::{
+    AgentSessionEngine,
+    EngineEvent,
+    ProviderTarget,
+    StopReason,
+    TurnAdmission,
+    TurnOnce,
+    TurnPrompt,
+    TurnResult,
+    aborted_message,
+    drop_trailing_assistant,
+    json_round_trip,
+    map_thinking_level,
+    retry_event_to_engine_event,
+};
 
 impl AgentSessionEngine {
     /// Drive one admitted prompt through the retry-driver model loop and
@@ -32,7 +43,7 @@ impl AgentSessionEngine {
                 return TurnResult::Error {
                     error: error.to_string(),
                     assistant: None,
-                }
+                };
             }
         };
         // The preflight validates the model SERVING the run: a model whose
@@ -125,7 +136,7 @@ impl AgentSessionEngine {
                 return TurnResult::Error {
                     error: format!("{error:#}"),
                     assistant: None,
-                }
+                };
             }
         };
         // The serving target's Prime Inference key and team header were

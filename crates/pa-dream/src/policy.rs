@@ -488,8 +488,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn the_default_policy_id_matches_the_ts_product() {

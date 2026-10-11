@@ -16,20 +16,33 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use pa_core::features::{
-    FeatureCommandOutcome, FeatureFuture, FeatureTelemetry, SessionFeature, SessionFeatureContext,
+    FeatureCommandOutcome,
+    FeatureFuture,
+    FeatureTelemetry,
+    SessionFeature,
+    SessionFeatureContext,
 };
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use pa_telemetry::Properties;
 use pa_types::slash_commands::{BuiltinSlashCommand, SlashCommandExecution};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::agent_runner::AgentRunAgent;
 use crate::requests::{
-    parse_dream_command, parse_experiment_payload, parse_run_payload, DreamCommand,
+    DreamCommand,
+    parse_dream_command,
+    parse_experiment_payload,
+    parse_run_payload,
 };
 use crate::run_service::{
-    DreamExperimentRequest, DreamRunKind, DreamRunRequest, DreamRunService, DreamRunServiceDeps,
-    DreamRunStatus, DreamStopReason, StartedRun,
+    DreamExperimentRequest,
+    DreamRunKind,
+    DreamRunRequest,
+    DreamRunService,
+    DreamRunServiceDeps,
+    DreamRunStatus,
+    DreamStopReason,
+    StartedRun,
 };
 use crate::store::ENV_DREAM_DIR;
 use crate::tasks::DreamTaskId;
@@ -359,8 +372,8 @@ fn handle(session: &SessionDream, request_type: &str, payload: &Value) -> Result
                             reply["seeds"] = json!(count);
                         }
                         reply["note"] = json!(format!(
-                        "The Dream-RSI experiment{seed_note} continues in the background; check `dream.status` (resultPath/resultPaths on completion) or the Agents View for progress. Continue working normally."
-                    ));
+                            "The Dream-RSI experiment{seed_note} continues in the background; check `dream.status` (resultPath/resultPaths on completion) or the Agents View for progress. Continue working normally."
+                        ));
                         reply
                     }
                     Err(reason) => json!({ "started": false, "reason": reason }),

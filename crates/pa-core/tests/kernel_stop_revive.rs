@@ -23,7 +23,11 @@ use std::time::Duration;
 
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{
-    host_handler, ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelShutdownOptions,
+    host_handler,
 };
 
 /// The kernel Python with prime-agent-runtime installed (see

@@ -1,8 +1,18 @@
-use super::{
-    auxiliary_model, compaction, compaction_exec, image_model_routing, ipython_state,
-    provider_adapter, refine, semantic_edges, telemetry, AgentSession, PromptBatchRow,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    AgentSession,
+    PromptBatchRow,
+    auxiliary_model,
+    compaction,
+    compaction_exec,
+    image_model_routing,
+    ipython_state,
+    provider_adapter,
+    refine,
+    semantic_edges,
+    telemetry,
+};
 
 impl AgentSession {
     /// Install the image-model routing host seam; `None` keeps image turns on the session model.

@@ -3,13 +3,13 @@
 //! durable `compaction_outcome` custom row, broadcasts it, and emits the
 //! settled `compaction_end`; manual `/compact` reports on the event only.
 
+use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 use serde_json::Value;
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::compaction::compaction_end_unsuccessful;
 use crate::engine::EngineEvent;
 use crate::session_commands::custom_message_value;
-use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 
 impl AgentSessionEngine {
     /// Record and broadcast one unsuccessful-compaction outcome, then emit the

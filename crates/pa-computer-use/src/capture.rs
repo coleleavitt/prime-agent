@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use rustix::io::Errno;
 
-use crate::error::{head, transport, ComputerUseError, Result, ERROR_LIMIT};
+use crate::error::{ComputerUseError, ERROR_LIMIT, Result, head, transport};
 
 const SWEEP_MAX_FILES: usize = 20;
 const SWEEP_MAX_AGE_SECONDS: f64 = 24.0 * 60.0 * 60.0;

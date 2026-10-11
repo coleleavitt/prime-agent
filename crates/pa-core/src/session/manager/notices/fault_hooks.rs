@@ -6,12 +6,13 @@
 //! leaves, so the reconcile/idempotence machinery under test behaves
 //! identically.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+use pa_types::sync::MutexExt;
 
 /// One injectable stage of the strict durable append.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

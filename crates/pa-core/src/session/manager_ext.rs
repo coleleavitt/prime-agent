@@ -1,12 +1,17 @@
 //! `SessionManager` part 2: queries, branches, labels, status entries.
 
 use pa_types::session::{
-    AgentMessage, CustomMessageEntry, FileEntry, GitContext, GitStateEntry, LabelEntry,
+    AgentMessage,
+    CustomMessageEntry,
+    FileEntry,
+    GitContext,
+    GitStateEntry,
+    LabelEntry,
     SessionStateStatus,
 };
 
-use super::manager::SessionManager;
 use super::CONTENT_ENTRY_TYPES;
+use super::manager::SessionManager;
 
 impl SessionManager {
     /// The active session state (latest normalized `session_state` entry).
@@ -287,8 +292,9 @@ fn entry_type(entry: &FileEntry) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::session::manager::SessionManager;
     use pa_types::session::AgentMessage;
+
+    use crate::session::manager::SessionManager;
 
     fn assistant() -> AgentMessage {
         AgentMessage::Assistant(pa_types::ai::AssistantMessage {

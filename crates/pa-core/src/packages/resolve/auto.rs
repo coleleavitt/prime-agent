@@ -6,13 +6,22 @@ use std::path::{Path, PathBuf};
 
 use super::super::PackageManager;
 use super::discovery::{
-    collect_ancestor_agents_skill_dirs, collect_auto_prompt_entries, collect_auto_theme_entries,
-    collect_skill_entries, SkillDiscoveryMode,
+    SkillDiscoveryMode,
+    collect_ancestor_agents_skill_dirs,
+    collect_auto_prompt_entries,
+    collect_auto_theme_entries,
+    collect_skill_entries,
 };
 use super::patterns::is_enabled_by_overrides;
 use super::{
-    resource_type_dir_name, settings_array, MetadataSource, PathMetadata, ResourceAccumulator,
-    ResourceOrigin, ResourceType, RESOURCE_TYPES,
+    MetadataSource,
+    PathMetadata,
+    RESOURCE_TYPES,
+    ResourceAccumulator,
+    ResourceOrigin,
+    ResourceType,
+    resource_type_dir_name,
+    settings_array,
 };
 use crate::settings::Settings;
 use crate::skills::diagnostics::ResourceDiagnostic;

@@ -89,13 +89,14 @@
 //! process exit can never push the kitty flags back on after the exit
 //! restore popped them.
 
-use anyhow::Result;
 use std::io::{IsTerminal, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 // The probe's answer channel is unix-only (see `spawn_kitty_probe`).
 #[cfg(unix)]
 use std::sync::mpsc;
 use std::time::Duration;
+
+use anyhow::Result;
 
 /// Bracketed paste on (`?2004h`): pastes arrive wrapped in `ESC[200~ ... ESC[201~`, one chunk.
 const ENABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004h";

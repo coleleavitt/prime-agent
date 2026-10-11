@@ -7,13 +7,18 @@
 pub(crate) mod report;
 pub(crate) mod time;
 
-use self::report::{build_incident_report, IncidentReportOptions};
-use crate::config::get_agent_dir;
-use pa_types::incident::{
-    collect_incident_events, collect_worker_pid_map, parse_incident_daemon_log_line,
-    parse_incident_log_line, IncidentLogEntry,
-};
 use std::path::{Path, PathBuf};
+
+use pa_types::incident::{
+    IncidentLogEntry,
+    collect_incident_events,
+    collect_worker_pid_map,
+    parse_incident_daemon_log_line,
+    parse_incident_log_line,
+};
+
+use self::report::{IncidentReportOptions, build_incident_report};
+use crate::config::get_agent_dir;
 
 /// The default `--since` is 24 hours ago.
 const DEFAULT_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;

@@ -73,17 +73,14 @@ impl UpdateReport {
 }
 
 fn plural(count: u64) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
-    }
+    if count == 1 { "" } else { "s" }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::daemon::update_flow::{UpdateId, UpdateStatusCounts, UpdateStatusFailure};
+
+    use super::*;
 
     fn status(state: UpdateState, counts: UpdateStatusCounts) -> UpdateStatus {
         UpdateStatus {

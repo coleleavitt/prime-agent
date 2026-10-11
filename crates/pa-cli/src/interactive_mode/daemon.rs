@@ -3,7 +3,7 @@
 
 use anyhow::Context as _;
 
-use super::{anyhow, Command, Duration, Instant, Path, Result, Stdio};
+use super::{Command, Duration, Instant, Path, Result, Stdio, anyhow};
 
 const DAEMON_STARTUP_TIMEOUT_MS: u64 = 30_000;
 const DAEMON_SHUTDOWN_WAIT_MS: u64 = 5_000;

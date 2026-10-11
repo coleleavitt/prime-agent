@@ -3,10 +3,11 @@
 //! exact session/generation/sequence/entry-count match; a pack expands byte-exactly — a miss
 //! re-renders as before.
 
-use super::layout::EntryLayout;
-use super::AgentView;
-use crate::theme::Theme;
 use std::sync::{Mutex, OnceLock};
+
+use super::AgentView;
+use super::layout::EntryLayout;
+use crate::theme::Theme;
 
 /// The render-shape inputs a packed layout's rows depend on: the width
 /// plus the view's `layout_options` tuple.

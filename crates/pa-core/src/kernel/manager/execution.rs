@@ -1,14 +1,33 @@
 //! Execution bookkeeping: request writes, interrupts, abort forcing, and
 //! active-execution resolution plus late-sent agent message handlers.
 
-use super::{
-    anyhow, json, lock, parse_sent_agent_message, AbortSignal, ActiveExecution, Arc, AsyncWriteExt,
-    Duration, ExecuteResult, ExecuteStatus, Inner, Instant, InternalExecuteResult,
-    KernelBusyAfterInterruptError, KernelState, LateSentAgentMessageCallback, Value,
-    AGENT_MESSAGE_DISPLAY_MIME, KERNEL_BUSY_INTERRUPT_INTERVAL_MS, KERNEL_BUSY_REUSE_WAIT_MS,
-    MAX_BACKGROUND_OUTPUT_CHARS, MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
-};
 use std::fmt::Write as _;
+
+use super::{
+    AGENT_MESSAGE_DISPLAY_MIME,
+    AbortSignal,
+    ActiveExecution,
+    Arc,
+    AsyncWriteExt,
+    Duration,
+    ExecuteResult,
+    ExecuteStatus,
+    Inner,
+    Instant,
+    InternalExecuteResult,
+    KERNEL_BUSY_INTERRUPT_INTERVAL_MS,
+    KERNEL_BUSY_REUSE_WAIT_MS,
+    KernelBusyAfterInterruptError,
+    KernelState,
+    LateSentAgentMessageCallback,
+    MAX_BACKGROUND_OUTPUT_CHARS,
+    MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
+    Value,
+    anyhow,
+    json,
+    lock,
+    parse_sent_agent_message,
+};
 
 impl Inner {
     /// Write one JSON-lines request frame; completes when the OS accepted the bytes.
@@ -217,7 +236,8 @@ impl Inner {
             let mut background_output = std::mem::take(&mut buffers.background_output);
             buffers.background_output_chars = 0;
             if buffers.background_output_truncated {
-                let _ = write!(background_output,
+                let _ = write!(
+                    background_output,
                     "\n[... background output truncated at {MAX_BACKGROUND_OUTPUT_CHARS} chars ...]",
                 );
             }

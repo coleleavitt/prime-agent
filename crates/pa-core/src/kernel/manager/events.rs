@@ -1,14 +1,32 @@
 //! Event dispatch: kernel protocol events routed to streams, display updates,
 //! and background output buffers.
 
-use super::{
-    append_truncated, lock, parse_attachment_display, parse_diff_display, parse_sent_agent_message,
-    Arc, Event, ExecBuffers, ExecuteStatus, Guarded, Inner, KernelBashCommands, KernelError,
-    StreamName, Value, AGENT_MESSAGE_DISPLAY_MIME, ATTACHMENT_DISPLAY_MIME,
-    BASH_ACTIVITY_DISPLAY_MIME, BASH_COMMAND_DISPLAY_MIME, DIFF_DISPLAY_MIME,
-    MAX_ATTACHMENT_DATA_CHARS, MAX_BACKGROUND_OUTPUT_CHARS,
-};
 use std::fmt::Write as _;
+
+use super::{
+    AGENT_MESSAGE_DISPLAY_MIME,
+    ATTACHMENT_DISPLAY_MIME,
+    Arc,
+    BASH_ACTIVITY_DISPLAY_MIME,
+    BASH_COMMAND_DISPLAY_MIME,
+    DIFF_DISPLAY_MIME,
+    Event,
+    ExecBuffers,
+    ExecuteStatus,
+    Guarded,
+    Inner,
+    KernelBashCommands,
+    KernelError,
+    MAX_ATTACHMENT_DATA_CHARS,
+    MAX_BACKGROUND_OUTPUT_CHARS,
+    StreamName,
+    Value,
+    append_truncated,
+    lock,
+    parse_attachment_display,
+    parse_diff_display,
+    parse_sent_agent_message,
+};
 
 impl Inner {
     pub(crate) fn handle_event(self: &Arc<Self>, event: Event) {
@@ -323,14 +341,15 @@ impl Inner {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use serde_json::json;
 
     use super::*;
     use crate::kernel::manager::ReplKernelManager;
     use crate::kernel::shared::{BackgroundWorkSettledCallback, KernelManagerOptions};
     use crate::platform::process::Signal;
-    use serde_json::json;
 
     #[test]
     fn teardown_resets_pending_background_count() {
@@ -462,8 +481,10 @@ mod tests {
             json!({ "id": "b".repeat(32), "pid": 43, "active": true }),
         );
         manager.inner.cleanup_resources(Signal::Term);
-        assert!(manager
-            .kernel_stderr()
-            .contains("background work settled callback failed"));
+        assert!(
+            manager
+                .kernel_stderr()
+                .contains("background work settled callback failed")
+        );
     }
 }

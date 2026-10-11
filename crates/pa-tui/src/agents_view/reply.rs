@@ -1,6 +1,14 @@
 //! The reply flow: the space-key composer over the prompt, its arm/disarm and key
 //! routing, the headline fetch, the send/resume/kill dispatches, and their statuses.
+use pa_types::daemon::{DaemonCommand, PromptInput, StreamingBehavior};
+use pa_types::slash_commands::{
+    SESSION_SLASH_COMMAND_NAMES,
+    SlashCommandRegistry,
+    is_session_slash_command_name,
+    parse_slash_command,
+};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use super::delete::PendingDelete;
 use super::rename::RenameTarget;
@@ -10,12 +18,6 @@ use crate::agents_view_forest::RowKind;
 use crate::editor::{Editor, EditorEvent};
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
-use pa_types::daemon::{DaemonCommand, PromptInput, StreamingBehavior};
-use pa_types::slash_commands::{
-    is_session_slash_command_name, parse_slash_command, SlashCommandRegistry,
-    SESSION_SLASH_COMMAND_NAMES,
-};
-use tokio::sync::mpsc;
 
 /// The row-targeted view commands: the one name list the parser, the rejection
 /// rule, and the autocomplete entries all read.
@@ -881,7 +883,7 @@ async fn send_reply(
             Ok(response) => {
                 return Err(response
                     .error
-                    .unwrap_or_else(|| "the command failed".into()))
+                    .unwrap_or_else(|| "the command failed".into()));
             }
             Err(error) => return Err(format!("{error:#}")),
         };

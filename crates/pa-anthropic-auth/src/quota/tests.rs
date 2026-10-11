@@ -3,8 +3,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use anthropic::account::QuotaObservation;
 use anthropic::AccountStore;
+use anthropic::account::QuotaObservation;
 use chrono::{Duration, Utc};
 use pa_core::auth::ProviderCredentialSource;
 use pa_core::features::{FeatureStatus, SessionFeature, SessionFeatureContext};
@@ -102,10 +102,12 @@ fn a_429_with_no_other_login_is_reported_and_the_login_keeps_serving() {
 
     assert_eq!(message.stop_reason, pa_ai::types::StopReason::Error);
     assert_eq!(bearers(&requests).len(), 1);
-    assert!(stored(&source)
-        .get("alone")
-        .and_then(|account| account.rate_limited_until)
-        .is_some());
+    assert!(
+        stored(&source)
+            .get("alone")
+            .and_then(|account| account.rate_limited_until)
+            .is_some()
+    );
     // Still a login (not "no API key"), and its live token still serves:
     // the provider's answer decides, as it does for the plugins.
     assert!(source.status().is_some());

@@ -1,14 +1,19 @@
 //! The compaction executor: assemble and run the summarization request
 //! (via pa-ai's completion facade).
 
-use super::compaction::{build_summarization_prompt, CutPointResult};
-use super::compaction_utils::{
-    compute_file_lists, extract_file_ops_from_message, format_file_operations, FileOperations,
-};
-use super::messages::convert_to_llm;
+use std::fmt::Write as _;
+
 use pa_types::ai::{AssistantMessage, TextContent, UserContent, UserContentBlock, UserMessage};
 use pa_types::session::{AgentMessage, CompactionEntry, FileEntry};
-use std::fmt::Write as _;
+
+use super::compaction::{CutPointResult, build_summarization_prompt};
+use super::compaction_utils::{
+    FileOperations,
+    compute_file_lists,
+    extract_file_ops_from_message,
+    format_file_operations,
+};
+use super::messages::convert_to_llm;
 
 /// Details stored on the compaction entry for file tracking.
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -384,8 +389,9 @@ pub fn file_ops_block(read_files: &[String], modified_files: &[String]) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::EntryBase;
+
+    use super::*;
 
     fn user(text: &str) -> AgentMessage {
         AgentMessage::User(UserMessage {
@@ -606,7 +612,9 @@ mod tests {
             "<conversation>\n[User]: big turn\n\n[User]: more of the turn\n</conversation>\n\n"
         ));
         assert!(text.contains("This is the PREFIX of a turn that was too large to keep."));
-        assert!(text.ends_with("Be concise. Focus on what's needed to understand the kept suffix."));
+        assert!(
+            text.ends_with("Be concise. Focus on what's needed to understand the kept suffix.")
+        );
         assert!(!text.contains("Create a structured context checkpoint summary"));
         assert!(!text.contains("<previous-summary>"));
         assert!(!text.contains("the Python kernel keeps running"));

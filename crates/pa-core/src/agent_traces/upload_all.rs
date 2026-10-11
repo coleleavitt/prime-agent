@@ -2,16 +2,33 @@
 //! limit), the session-file find walk, and the concurrent sweep with its
 //! progress notes and cancel checks.
 
-use super::{
-    delay, log_agent_trace_outcome, now_ms, perform_agent_trace_upload, read_trace_session_header,
-    resolve_path, Ordering, Path, PathBuf, TraceHttp, TraceHttpError, TraceUploadAllProgress,
-    TraceUploadAllResult, TraceUploadCancel, TraceUploadDelay, TraceUploadDelaySink,
-    TraceUploadOptions, TraceUploadResult, TRACE_UPLOAD_ALL_CONCURRENCY,
-    TRACE_UPLOAD_ALL_MIN_REQUEST_INTERVAL_MS,
-};
-use pa_types::sync::MutexExt;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
+
+use pa_types::sync::MutexExt;
+
+use super::{
+    Ordering,
+    Path,
+    PathBuf,
+    TRACE_UPLOAD_ALL_CONCURRENCY,
+    TRACE_UPLOAD_ALL_MIN_REQUEST_INTERVAL_MS,
+    TraceHttp,
+    TraceHttpError,
+    TraceUploadAllProgress,
+    TraceUploadAllResult,
+    TraceUploadCancel,
+    TraceUploadDelay,
+    TraceUploadDelaySink,
+    TraceUploadOptions,
+    TraceUploadResult,
+    delay,
+    log_agent_trace_outcome,
+    now_ms,
+    perform_agent_trace_upload,
+    read_trace_session_header,
+    resolve_path,
+};
 
 /// One serialized slot per request, holding the platform's rate limit
 /// (5 requests a minute, spaced by the computed minimum interval).

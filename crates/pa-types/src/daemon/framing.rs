@@ -2,7 +2,7 @@
 //! direct-attach clients (pa-tui/pa-cli) (TS `private-framing.ts`): 8-byte big-endian prefix (u32
 //! header length, u32 payload length), JSON header, binary payload.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const FRAME_PREFIX_BYTES: usize = 8;
@@ -409,8 +409,9 @@ mod tests {
         };
         let header_value = serde_json::json!({"kind": "aaaaaaaaaaaaaaaaaaaa"});
         let err = encode_private_frame(&header_value, &[], limits).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Invalid private frame header length"));
+        assert!(
+            err.to_string()
+                .contains("Invalid private frame header length")
+        );
     }
 }

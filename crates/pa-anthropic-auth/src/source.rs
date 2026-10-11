@@ -15,23 +15,36 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use anthropic::access::{
-    access_candidates, get_access_token, AccessError, AccessErrorKind, AccessGrant, AccessRequest,
+    AccessError,
+    AccessErrorKind,
+    AccessGrant,
+    AccessRequest,
     AccessSource,
+    access_candidates,
+    get_access_token,
 };
 use anthropic::credentials::NativePublish;
 use anthropic::{AccountStore, Endpoints, OAuthClient, SharedRefreshOptions};
 use pa_core::auth::{
-    CredentialSourceError, CredentialSourceStatus, ProviderCredentialSource, RemovedLogin,
-    SourcedCredential, StoredLoginCustody, StoredOAuthLogin,
+    CredentialSourceError,
+    CredentialSourceStatus,
+    ProviderCredentialSource,
+    RemovedLogin,
+    SourcedCredential,
+    StoredLoginCustody,
+    StoredOAuthLogin,
 };
 use pa_types::sync::MutexExt;
 use sha2::{Digest, Sha256};
 
 use crate::config::{
-    config_path_from_lookup, routing_state_path_from_lookup, ConfigFile, RoutingConfig,
+    ConfigFile,
+    RoutingConfig,
+    config_path_from_lookup,
+    routing_state_path_from_lookup,
 };
 use crate::keepalive::{Job, KeepAlive};
-use crate::quota::{poll_usage, quota_line, PollRun, QuotaLine, QuotaTracker, StoreWrite};
+use crate::quota::{PollRun, QuotaLine, QuotaTracker, StoreWrite, poll_usage, quota_line};
 use crate::routing::{Route, RouteRequest, RoutingCounts};
 
 /// The status rows' label for a login the shared store holds.

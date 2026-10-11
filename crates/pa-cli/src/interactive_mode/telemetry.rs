@@ -479,9 +479,11 @@ mod tests {
         ));
         assert_eq!(exits[0]["properties"]["tui_inline_image_count"], 0);
         assert!(exits[1]["properties"].get("tui_scroll_count").is_none());
-        assert!(exits[1]["properties"]
-            .get("tui_hyperlinks_enabled")
-            .is_none());
+        assert!(
+            exits[1]["properties"]
+                .get("tui_hyperlinks_enabled")
+                .is_none()
+        );
     }
 
     /// The client adoption occurrences count into the run's `tui exit`.

@@ -7,9 +7,9 @@
 //! to the cursor; rendering highlights it (view.rs), edits delete it
 //! before inserting, and undo/redo carry it.
 
-use super::text_utils::{char_at, char_prefix, char_suffix};
 #[cfg(test)]
 use super::PasteDisposition;
+use super::text_utils::{char_at, char_prefix, char_suffix};
 use super::{Editor, EditorEvent, LastAction};
 
 impl Editor {

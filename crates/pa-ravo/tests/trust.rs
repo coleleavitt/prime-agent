@@ -13,20 +13,27 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_core::refinement::RefinementResult;
 use pa_core::refinement::executor::RefinerFn;
 use pa_core::refinement::gate::RefinementGating;
-use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
-use pa_core::refinement::RefinementResult;
+use pa_core::refinement::ranking::{HarnessStatePromptOptions, format_harness_state_for_prompt};
 use pa_core::session::manager::SessionManager;
 use pa_core::session_engine::refine::{
-    execute_refinement_gated, RefineOptions, RefinementSource, RefinementTranscript,
+    RefineOptions,
+    RefinementSource,
+    RefinementTranscript,
+    execute_refinement_gated,
 };
 use pa_ledger::{
-    fingerprint_tool_result_text, FailureLedgerFeature, HarnessDocument, LedgerOptions, ReplayCase,
+    FailureLedgerFeature,
+    HarnessDocument,
+    LedgerOptions,
+    ReplayCase,
+    fingerprint_tool_result_text,
 };
 use pa_ravo::{RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner};
 use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Self-checks always reproduce; the referee's skill-import replays run
 /// clean while the skill is `fixed`, and raise once it is not.
@@ -222,10 +229,12 @@ impl Session {
 
     async fn refine(&mut self, plan: &str, judge: RefinerFn) -> RefinementResult {
         let gate = self.ravo.refinement_gate(&self.context).unwrap();
-        let messages = vec![serde_json::from_value(
-            json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
-        )
-        .unwrap()];
+        let messages = vec![
+            serde_json::from_value(
+                json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
+            )
+            .unwrap(),
+        ];
         execute_refinement_gated(
             &mut self.manager,
             RefinementTranscript {

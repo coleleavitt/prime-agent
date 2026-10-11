@@ -1,15 +1,19 @@
 //! Guest-side half of the exchange: durable requests out, journaled answers
 //! in.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use pa_types::daemon::cloud::{
-    CloudAgentMessageReceipt, CloudFamilyCommand, CloudFamilyCommandPayload, CloudFamilyEvent,
-    CloudFamilyEventPayload, CloudFamilyRow,
+    CloudAgentMessageReceipt,
+    CloudFamilyCommand,
+    CloudFamilyCommandPayload,
+    CloudFamilyEvent,
+    CloudFamilyEventPayload,
+    CloudFamilyRow,
 };
+use pa_types::sync::MutexExt;
 use tokio::sync::oneshot;
 
 use super::{CloudFamilyRequestError, CloudFamilyRequestOutcome, ResolveOutcome};

@@ -9,9 +9,9 @@ use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext}
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_core::session_engine::telemetry::TelemetryWiring;
 use pa_telemetry::{MockSink, TelemetryClient, TelemetryClientConfig, TelemetrySink};
-use pa_workflow::v2::wire::{decode_as, decode_public_result, Def};
 use pa_workflow::WorkflowFeature;
-use serde_json::{json, Value};
+use pa_workflow::v2::wire::{Def, decode_as, decode_public_result};
+use serde_json::{Value, json};
 
 /// The runtime unittest's definition; its digest is sha256 over Python's
 /// `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.

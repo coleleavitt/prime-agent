@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use pa_types::platform::transport::TransportListener;
 
-use super::{anyhow, Arc, Ordering, Result, Supervisor};
+use super::{Arc, Ordering, Result, Supervisor, anyhow};
 
 /// The backoff before retrying a non-recoverable accept error (Codex
 /// parity: the control-socket acceptor sleeps 1s between retries).
@@ -119,13 +119,15 @@ mod tests {
     use std::time::Duration;
 
     use pa_types::platform::transport::{
-        AcceptFuture, AsyncReadHalf, AsyncWriteHalf, TransportStream,
+        AcceptFuture,
+        AsyncReadHalf,
+        AsyncWriteHalf,
+        TransportStream,
     };
     use tempfile::TempDir;
 
-    use crate::supervisor::{Supervisor, SupervisorOptions};
-
     use super::*;
+    use crate::supervisor::{Supervisor, SupervisorOptions};
 
     /// The scripted accept results, shared so the test can read what the
     /// loop consumed after the stand-in is moved into `serve` (the

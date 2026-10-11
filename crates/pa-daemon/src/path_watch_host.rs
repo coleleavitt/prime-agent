@@ -8,12 +8,11 @@
 //! ([`AgentSessionEngine::set_path_watch_sink`]) at construction, and the
 //! engine registers the handlers only when the sink exists.
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::path_watch::PathWatchSink;

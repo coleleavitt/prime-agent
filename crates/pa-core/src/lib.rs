@@ -22,38 +22,59 @@
 pub(crate) mod tools;
 
 // Tool-definition contract.
-pub use tools::tool_definition::{
-    AbortSignal, ExecuteFn, ExecuteFuture, ExecutionMode, OnUpdate, PrepareArgumentsFn,
-    ToolContentBlock, ToolDefinition, ToolExecutionResult, ToolUpdate, WrappedTool,
+// bash tool: definition + local/remote execution seam.
+pub use tools::bash::{
+    BashOperations,
+    BashSpawnContext,
+    BashSpawnHook,
+    BashToolOptions,
+    LocalBashOperations,
+    create_bash_tool_definition,
+    create_bash_tool_definition_with_options,
 };
-
+// edit tool: definition + filesystem operations seam.
+pub use tools::edit::{
+    EditOperations,
+    LocalEditOperations,
+    create_edit_tool_definition,
+    prepare_edit_arguments,
+};
+// ipython tool: definition + kernel lifecycle seam (RLM bootstrap included).
+pub use tools::ipython::{
+    ExecuteResult,
+    ExecuteStatus,
+    IpythonKernelProvisioner,
+    IpythonToolOptions,
+    IpythonToolUi,
+    KernelAttachment,
+    KernelBusyAfterInterruptError,
+    KernelErrorInfo,
+    KernelExecError,
+    KernelExecutor,
+    LateSentAgentMessageHandler,
+    create_ipython_tool_definition,
+    sent_agent_message_json,
+};
 // Path-resolution helper the CLI's `@file` expansion shares with the
 // tools (cwd-relative resolve with the macOS filename variants).
 pub use tools::path_utils::resolve_read_path;
-
 // Result-rendering helpers: the image metadata pair the daemon's snapshot
 // elision consumes alongside the tool renderers (narrow re-export).
-pub use tools::render_utils::{get_image_dimensions_prefix, IMAGE_DIMENSIONS_PREFIX_BYTES};
-
-// bash tool: definition + local/remote execution seam.
-pub use tools::bash::{
-    create_bash_tool_definition, create_bash_tool_definition_with_options, BashOperations,
-    BashSpawnContext, BashSpawnHook, BashToolOptions, LocalBashOperations,
+pub use tools::render_utils::{IMAGE_DIMENSIONS_PREFIX_BYTES, get_image_dimensions_prefix};
+pub use tools::rlm_bootstrap::{PythonSkillRuntimeInfo, build_rlm_bootstrap_code};
+pub use tools::tool_definition::{
+    AbortSignal,
+    ExecuteFn,
+    ExecuteFuture,
+    ExecutionMode,
+    OnUpdate,
+    PrepareArgumentsFn,
+    ToolContentBlock,
+    ToolDefinition,
+    ToolExecutionResult,
+    ToolUpdate,
+    WrappedTool,
 };
-
-// edit tool: definition + filesystem operations seam.
-pub use tools::edit::{
-    create_edit_tool_definition, prepare_edit_arguments, EditOperations, LocalEditOperations,
-};
-
-// ipython tool: definition + kernel lifecycle seam (RLM bootstrap included).
-pub use tools::ipython::{
-    create_ipython_tool_definition, sent_agent_message_json, ExecuteResult, ExecuteStatus,
-    IpythonKernelProvisioner, IpythonToolOptions, IpythonToolUi, KernelAttachment,
-    KernelBusyAfterInterruptError, KernelErrorInfo, KernelExecError, KernelExecutor,
-    LateSentAgentMessageHandler,
-};
-pub use tools::rlm_bootstrap::{build_rlm_bootstrap_code, PythonSkillRuntimeInfo};
 // RLM kernel subsystem: persistent IPython kernel lifecycle.
 pub mod agent_traces;
 pub mod auth;

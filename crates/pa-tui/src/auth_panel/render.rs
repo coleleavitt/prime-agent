@@ -3,11 +3,36 @@
 //! selector's API-key prompt reuses.
 
 use super::{
-    hint_row, key_hint, login_field_row, menu_row, no_match_row, osc8_open, scroll_row,
-    scrub_controls, search_field_lines, search_field_plain_row, AuthPanel, CopyStatus,
-    KeybindingsManager, Line, MenuSegment, Modifier, PanelInput, PanelSurface, PastePromptTone,
-    PasteStyle, PickerSegment, Span, Theme, ThemeColor, BROWSER_DEFAULT_INSTRUCTIONS, OSC8_CLOSE,
-    PASTE_PLACEHOLDER, PREFERRED_VISIBLE_TEAMS, TEAM_SEARCH_PLACEHOLDER, TOKEN_PLACEHOLDER,
+    AuthPanel,
+    BROWSER_DEFAULT_INSTRUCTIONS,
+    CopyStatus,
+    KeybindingsManager,
+    Line,
+    MenuSegment,
+    Modifier,
+    OSC8_CLOSE,
+    PASTE_PLACEHOLDER,
+    PREFERRED_VISIBLE_TEAMS,
+    PanelInput,
+    PanelSurface,
+    PastePromptTone,
+    PasteStyle,
+    PickerSegment,
+    Span,
+    TEAM_SEARCH_PLACEHOLDER,
+    TOKEN_PLACEHOLDER,
+    Theme,
+    ThemeColor,
+    hint_row,
+    key_hint,
+    login_field_row,
+    menu_row,
+    no_match_row,
+    osc8_open,
+    scroll_row,
+    scrub_controls,
+    search_field_lines,
+    search_field_plain_row,
 };
 
 impl AuthPanel {
@@ -19,7 +44,7 @@ impl AuthPanel {
         let mut lines: Vec<Line> = Vec::new();
         if self.surface == PanelSurface::Session {
             lines.push(vec![
-                theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width))
+                theme.fg_span(ThemeColor::BorderMuted, "\u{2500}".repeat(width)),
             ]);
             lines.push(content_row(theme, width, ThemeColor::Muted, &self.title));
             if let Some(subtitle) = &self.subtitle {

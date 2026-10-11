@@ -7,7 +7,7 @@
 
 use pa_types::daemon::DaemonErrorInfo;
 
-use crate::protocol::{response_failure, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure};
 
 /// In-flight requests one worker accepts before its route saturates; also the
 /// bound of the supervisor-to-worker command channel (admission precedes
@@ -58,12 +58,13 @@ pub(crate) fn overloaded_response(command_type: &str, worker_id: &str) -> Daemon
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
 
+    use pa_types::daemon::{DaemonErrorInfo, DaemonWorkerDescriptor};
+
+    use super::*;
     use crate::registry::{ResidentWorker, WorkerRequest};
     use crate::supervisor::{Supervisor, SupervisorOptions};
-    use pa_types::daemon::{DaemonErrorInfo, DaemonWorkerDescriptor};
 
     fn resident(worker_id: &str) -> Arc<ResidentWorker> {
         let descriptor: DaemonWorkerDescriptor = serde_json::from_value(serde_json::json!({

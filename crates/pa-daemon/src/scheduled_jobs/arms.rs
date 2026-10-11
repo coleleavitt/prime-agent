@@ -3,9 +3,18 @@
 //! `heartbeat_set`, `heartbeat_update`): payload validation and the store
 //! calls behind each `scheduled`-surface command.
 use super::{
-    is_heartbeat_cron_job, json, normalize_heartbeat_delivery_mode, normalize_heartbeat_schedule,
-    response_failure, response_success, CreateAgentCronJobInput, DaemonResponse,
-    HeartbeatManagementAction, JobStatus, Value, Worker,
+    CreateAgentCronJobInput,
+    DaemonResponse,
+    HeartbeatManagementAction,
+    JobStatus,
+    Value,
+    Worker,
+    is_heartbeat_cron_job,
+    json,
+    normalize_heartbeat_delivery_mode,
+    normalize_heartbeat_schedule,
+    response_failure,
+    response_success,
 };
 
 impl Worker {
@@ -160,7 +169,7 @@ impl Worker {
                         "cron_add",
                         "Cron jobs require a persisted session file",
                         None,
-                    )
+                    );
                 }
             };
             CreateAgentCronJobInput {
@@ -293,7 +302,7 @@ impl Worker {
                         "heartbeat_set",
                         "Heartbeats require a persisted session file",
                         None,
-                    )
+                    );
                 }
             };
             let previous = self
@@ -383,7 +392,7 @@ impl Worker {
         let outcome = match outcome {
             Ok(job) => job,
             Err(error) => {
-                return response_failure(None, "heartbeat_update", &error.to_string(), None)
+                return response_failure(None, "heartbeat_update", &error.to_string(), None);
             }
         };
         if let Some(job) = &outcome {

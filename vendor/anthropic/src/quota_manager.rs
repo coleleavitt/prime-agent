@@ -30,11 +30,17 @@
 use std::collections::HashMap;
 
 use crate::backoff::{
-    FailureFacts, OperationError, build_quota_operation_error, is_quota_auth_failure,
+    FailureFacts,
+    OperationError,
+    build_quota_operation_error,
+    is_quota_auth_failure,
     quota_backoff_active,
 };
 use crate::quota::{
-    QuotaFieldSource, QuotaPolicy, QuotaSnapshot, merge_header_quota_snapshot,
+    QuotaFieldSource,
+    QuotaPolicy,
+    QuotaSnapshot,
+    merge_header_quota_snapshot,
     merge_poll_completion_with_newer_headers,
 };
 

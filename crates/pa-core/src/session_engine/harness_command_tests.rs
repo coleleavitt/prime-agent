@@ -7,15 +7,21 @@ use std::sync::Arc;
 use pa_agent::scripted::ScriptedProvider;
 
 use crate::refinement::{
-    empty_harness_state, load_harness_state, save_harness_state, HarnessEntry, HarnessScope,
+    HarnessEntry,
+    HarnessScope,
     RefinementKind,
+    empty_harness_state,
+    load_harness_state,
+    save_harness_state,
 };
 use crate::session::manager::SessionManager;
-use crate::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
+use crate::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
 use crate::session_engine::session_commands::{
-    execute_session_command, SessionCommandExecution, SessionCommandParams,
+    SessionCommandExecution,
+    SessionCommandParams,
+    execute_session_command,
 };
-use crate::session_engine::slash_commands::{parse_session_command, SlashCommandRegistry};
+use crate::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 
 fn model() -> pa_agent::types::Model {
     pa_agent::types::Model {
@@ -117,10 +123,12 @@ async fn harness_lists_and_disables_entries_off_the_transcript() {
         result.content.text(),
         "Continual harness entries:\n[on]  global:subagent:planner - Planner\n[on]  global:subagent:reviewer - API reviewer"
     );
-    assert!(crate::session_engine::messages::convert_to_llm(&[
-        pa_types::session::AgentMessage::Custom(result.clone())
-    ])
-    .is_empty());
+    assert!(
+        crate::session_engine::messages::convert_to_llm(&[
+            pa_types::session::AgentMessage::Custom(result.clone())
+        ])
+        .is_empty()
+    );
 
     let disabled = run(&engine, &global, "/harness disable reviewer").await;
     assert_eq!(disabled.error, None);

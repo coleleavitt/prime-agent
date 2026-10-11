@@ -1,22 +1,21 @@
 //! Supervisor-side roster serving: subscribe/unsubscribe handling, worker
 //! roster deltas, the stop-path passivation, and the `roster_update` pushes subscribers receive.
 
-use pa_types::sync::MutexExt;
-use serde_json::Map;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pa_types::daemon::agent_roster::AgentRosterEntry;
 use pa_types::daemon::DaemonOutbound;
-use serde_json::{json, Value};
+use pa_types::daemon::agent_roster::AgentRosterEntry;
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 
 use crate::backpressure::RouteAdmission;
 use crate::lease::canonical_session_path;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::registry::ResidentWorker;
-use crate::supervisor::{ClientRouting, Supervisor, ROUTE_TIMEOUT_MS};
+use crate::supervisor::{ClientRouting, ROUTE_TIMEOUT_MS, Supervisor};
 use crate::supervisor_roster_seed::family_descends_from;
 
 /// `worker_roster_delta`'s parsed frame. `sequence` feeds the stale-delta

@@ -6,7 +6,15 @@
 //! dropped, recorded in `graph.warnings`.
 
 use super::super::graph::{
-    parse_dir, Edge, Graph, Group, Head, LineKind, Shape, MAX_GROUPS, MAX_GROUP_DEPTH,
+    Edge,
+    Graph,
+    Group,
+    Head,
+    LineKind,
+    MAX_GROUP_DEPTH,
+    MAX_GROUPS,
+    Shape,
+    parse_dir,
 };
 use super::super::js_text;
 use super::super::labels::{ascii_lower, clean_label, decode_html_entities, is_id_char};

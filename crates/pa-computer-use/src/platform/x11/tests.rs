@@ -5,12 +5,12 @@
 
 use serde_json::json;
 
-use super::tree::{parse_tree, Window};
+use super::tree::{Window, parse_tree};
 use super::*;
 use crate::error::ErrorCode;
 use crate::keymap::parse_chord;
-use crate::process::script::Script;
 use crate::process::RunError;
+use crate::process::script::Script;
 use crate::render::serialize;
 use crate::session::fake::Env;
 use crate::session::{AppCall, IndexArg, PointArg, TargetArg, TextArg};
@@ -1097,9 +1097,11 @@ fn unsupported_actions_name_the_x11_gap_and_emit_their_events() {
         .session
         .call(app.handle, AppCall::IsFrontmost)
         .unwrap_err();
-    assert!(frontmost
-        .message
-        .contains("focus control is not available on the linux X11 backend yet"));
+    assert!(
+        frontmost
+            .message
+            .contains("focus control is not available on the linux X11 backend yet")
+    );
     assert_eq!(frontmost.code, ErrorCode::ActionUnsupported);
     let ocr = env
         .session

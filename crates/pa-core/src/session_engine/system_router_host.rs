@@ -29,12 +29,14 @@ use pa_types::ai::Model as AiModel;
 use serde_json::Value;
 
 use crate::auth::AuthStorage;
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 use crate::models::registry::ModelRegistry;
 use crate::models::resolver::find_exact_model_reference_match;
 use crate::session_engine::provider_retry::ProviderRetryPolicy;
 use crate::system_router::{
-    parse_system_router_run_spec, run_router_segment, RouterSegmentOptions,
+    RouterSegmentOptions,
+    parse_system_router_run_spec,
+    run_router_segment,
 };
 
 /// The session facts the `system_router.run` handler resolves against.

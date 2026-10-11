@@ -1,10 +1,21 @@
+use pa_types::sync::MutexExt;
+
 use super::compact_session::CompactOutcome;
 use super::{
-    compaction, compaction_trace, ipython_state, provider_adapter, rebuilt_loop_messages, refine,
-    session_message_to_loop, standard_message, AgentMessage, AgentSession, FileEntry,
-    SessionAgentMessage, TrailingAssistantFilter,
+    AgentMessage,
+    AgentSession,
+    FileEntry,
+    SessionAgentMessage,
+    TrailingAssistantFilter,
+    compaction,
+    compaction_trace,
+    ipython_state,
+    provider_adapter,
+    rebuilt_loop_messages,
+    refine,
+    session_message_to_loop,
+    standard_message,
 };
-use pa_types::sync::MutexExt;
 
 impl AgentSession {
     pub async fn latest_compaction_timestamp(&self) -> Option<u64> {

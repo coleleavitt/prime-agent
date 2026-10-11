@@ -4,9 +4,9 @@
 //! engine-minted continuations classify by wire-typed provenance only (user-typed look-alikes stay
 //! human rows); browse walks every item; edits are human-origin only.
 
+use crate::Line;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{pad_line, truncate_line};
-use crate::Line;
 
 #[cfg(test)]
 mod tests;

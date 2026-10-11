@@ -18,7 +18,7 @@ pub mod update_command;
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// This process's install root (the coordinator runs the NEW binary, the
 /// invoking CLI the old one - both derive it from `current_exe`).

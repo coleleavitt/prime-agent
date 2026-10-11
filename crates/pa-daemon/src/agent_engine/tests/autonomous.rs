@@ -9,13 +9,13 @@ fn autonomous_on_enables_the_driver_loop() {
     );
     // The enable prompt runs the session command; no model turn admits.
     let status = custom_rows(&events);
-    assert!(status
-        .iter()
-        .any(|row| row["customType"] == "autonomous_status"
+    assert!(status.iter().any(|row| {
+        row["customType"] == "autonomous_status"
             && row["content"]
                 .as_str()
                 .unwrap_or_default()
-                .starts_with("[autonomous-status: on]")));
+                .starts_with("[autonomous-status: on]")
+    }));
     assert_eq!(assistant_texts(&events), Vec::<String>::new());
     let state = engine.autonomous.blocking_lock();
     assert!(state.enabled);
@@ -58,10 +58,12 @@ fn autonomous_limit_stops_the_run_without_a_row() {
         .filter(|row| row["customType"] == "autonomous_status")
         .collect();
     assert_eq!(status_rows.len(), 1, "the enable announcement only");
-    assert!(status_rows[0]["content"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("[autonomous-status: on]"));
+    assert!(
+        status_rows[0]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("[autonomous-status: on]")
+    );
     assert_eq!(events.last(), Some(&EngineEvent::Done(Ok(()))));
     // Per-turn usage accounting: two settled turns.
     let state = engine.autonomous.blocking_lock();
@@ -134,10 +136,12 @@ fn autonomous_gate_pass_and_failure_drive_the_loop() {
         .filter(|row| row["customType"] == "autonomous_status")
         .collect();
     assert_eq!(status_rows.len(), 1, "the enable announcement only");
-    assert!(status_rows[0]["content"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("[autonomous-status: on]"));
+    assert!(
+        status_rows[0]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("[autonomous-status: on]")
+    );
     let state = engine.autonomous.blocking_lock();
     assert_eq!(state.gates.commands, vec![gate]);
     assert_eq!(state.last_gate_failure, None);
@@ -255,9 +259,11 @@ fn the_turn_loop_is_driven_by_the_driver_trait() {
         vec!["one".to_string(), "two".to_string()]
     );
     // The stop surfaces no row (the TS shape).
-    assert!(custom_rows(&events)
-        .into_iter()
-        .all(|row| row["customType"] != "autonomous_status"));
+    assert!(
+        custom_rows(&events)
+            .into_iter()
+            .all(|row| row["customType"] != "autonomous_status")
+    );
     assert_eq!(events.last(), Some(&EngineEvent::Done(Ok(()))));
     // Per-message accounting ran through the trait for both settled turns.
     assert_eq!(

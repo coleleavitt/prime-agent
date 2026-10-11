@@ -2,7 +2,7 @@
 //! data so `rlm.mcp` raises the same exception class (and message) the
 //! in-kernel client raised.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The Python exception class the kernel raises for a failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

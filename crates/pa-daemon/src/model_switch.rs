@@ -7,7 +7,7 @@ use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::engine::EngineModelSelection;
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 /// The wire levels a thinking switch accepts (TS `ThinkingLevel`).
@@ -254,8 +254,9 @@ fn resolve_available_model(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn worker_config(dir: &std::path::Path) -> crate::worker::WorkerConfig {
         crate::worker::WorkerConfig {
@@ -331,7 +332,9 @@ mod tests {
         assert_eq!(response.command, "set_model");
         assert_eq!(
             response.error.as_deref(),
-            Some("Model \"prime-inference/mock-1\" is blocked by the daemon model allowlist (settings \"allowedModels\"); the daemon never falls back to a different model. Allow it in the settings or pick an allowed model.")
+            Some(
+                "Model \"prime-inference/mock-1\" is blocked by the daemon model allowlist (settings \"allowedModels\"); the daemon never falls back to a different model. Allow it in the settings or pick an allowed model."
+            )
         );
 
         // An allowing allowlist opens the gate: the scripted engine then

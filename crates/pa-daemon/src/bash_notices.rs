@@ -4,10 +4,9 @@
 //! `resumeIfIdle`; a later kernel read that reaches the model first sends
 //! `bash.consumed`, and the undelivered notice withdraws.
 
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use pa_types::sync::MutexExt;
 use serde_json::Value;
-
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
 
 use crate::agent_engine::AgentSessionEngine;
 use crate::engine::{BashCompletionNotice, BashConsumedNotice};
@@ -110,29 +109,37 @@ mod tests {
 
     #[test]
     fn completion_validation_matches_the_ts_contract() {
-        assert!(validate_completion(&serde_json::json!({
-            "pid": 4321,
-            "command": "sleep 1",
-            "exitCode": 0,
-        }))
-        .is_ok());
-        assert!(validate_completion(&serde_json::json!({
-            "pid": 0,
-            "command": "sleep 1",
-            "exitCode": 0,
-        }))
-        .is_err());
-        assert!(validate_completion(&serde_json::json!({
-            "pid": 4321,
-            "command": "",
-            "exitCode": 0,
-        }))
-        .is_err());
-        assert!(validate_completion(&serde_json::json!({
-            "pid": 4321,
-            "command": "sleep 1",
-            "exitCode": "0",
-        }))
-        .is_err());
+        assert!(
+            validate_completion(&serde_json::json!({
+                "pid": 4321,
+                "command": "sleep 1",
+                "exitCode": 0,
+            }))
+            .is_ok()
+        );
+        assert!(
+            validate_completion(&serde_json::json!({
+                "pid": 0,
+                "command": "sleep 1",
+                "exitCode": 0,
+            }))
+            .is_err()
+        );
+        assert!(
+            validate_completion(&serde_json::json!({
+                "pid": 4321,
+                "command": "",
+                "exitCode": 0,
+            }))
+            .is_err()
+        );
+        assert!(
+            validate_completion(&serde_json::json!({
+                "pid": 4321,
+                "command": "sleep 1",
+                "exitCode": "0",
+            }))
+            .is_err()
+        );
     }
 }

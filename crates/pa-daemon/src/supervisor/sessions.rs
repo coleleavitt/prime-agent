@@ -2,11 +2,34 @@
 //! handlers, the stale-id binding and rebind seam, and the saved-row
 //! builders.
 use super::{
-    anyhow, bail, join_all, json, list_sessions, mpsc, name_unavailable_error, paths,
-    reservation_key, response_failure, response_line, response_success, subscribers, Arc,
-    DaemonCommand, DaemonResponse, DaemonSessionLifecycle, NameScope, Outbound, Path, PathBuf,
-    ResidentWorker, Result, RouteAdmission, Supervisor, Value, ROUTE_TIMEOUT_MS,
+    Arc,
+    DaemonCommand,
+    DaemonResponse,
+    DaemonSessionLifecycle,
+    NameScope,
+    Outbound,
+    Path,
+    PathBuf,
+    ROUTE_TIMEOUT_MS,
+    ResidentWorker,
+    Result,
+    RouteAdmission,
     SUMMARY_TIMEOUT_MS,
+    Supervisor,
+    Value,
+    anyhow,
+    bail,
+    join_all,
+    json,
+    list_sessions,
+    mpsc,
+    name_unavailable_error,
+    paths,
+    reservation_key,
+    response_failure,
+    response_line,
+    response_success,
+    subscribers,
 };
 
 /// One spawn-name reservation held across a fresh-launch create (TS #2396): the only
@@ -854,11 +877,12 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
 
 #[cfg(test)]
 mod tests {
+    use pa_types::daemon::DaemonWorkerDescriptor;
+
     use super::*;
     use crate::backpressure::WORKER_INFLIGHT_CAPACITY;
     use crate::registry::{WorkerReply, WorkerRequest};
     use crate::supervisor::SupervisorOptions;
-    use pa_types::daemon::DaemonWorkerDescriptor;
 
     fn resident(worker_id: &str, session_file: Option<&Path>) -> Arc<ResidentWorker> {
         let mut descriptor = json!({
@@ -984,8 +1008,8 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_named_create_name_check_does_not_wait_out_the_client_deadline_behind_a_wedged_resident(
-    ) {
+    async fn a_named_create_name_check_does_not_wait_out_the_client_deadline_behind_a_wedged_resident()
+     {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let supervisor = Arc::new(supervisor(dir.path()));
         let wedged = resident("w-wedged", None);

@@ -80,17 +80,19 @@ fn the_first_progress_line_lands_under_the_section_title() {
     let mut panel = AuthPanel::new("Login to Prime Inference");
     panel.push_progress("Checking existing Prime CLI credentials...");
     let rows = frame_text(&mut panel);
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("Login to Prime Inference")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Login to Prime Inference"))
+    );
     assert!(
         rows.iter()
             .any(|row| row.contains("Preparing authentication")),
         "the TS section title rides the first progress: {rows:?}"
     );
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("Checking existing Prime CLI credentials...")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Checking existing Prime CLI credentials..."))
+    );
 }
 
 #[test]
@@ -108,9 +110,10 @@ fn the_auth_url_block_replaces_the_content() {
         Some("Enter the code from the browser.".to_string()),
     );
     let rows = frame_text(&mut panel);
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("https://fixture.example/authorize")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("https://fixture.example/authorize"))
+    );
     assert!(
         rows.iter()
             .any(|row| row.contains("Enter the code from the browser.")),
@@ -133,9 +136,10 @@ fn the_auth_url_block_replaces_the_content() {
 fn the_paste_prompt_submits_the_typed_value() {
     let (mut panel, mut answer) = mount_paste();
     let rows = frame_text(&mut panel);
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("Paste a Prime API key below:")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Paste a Prime API key below:"))
+    );
     let field = rows
         .iter()
         .position(|row| row.contains("Paste value"))
@@ -158,9 +162,10 @@ fn the_paste_prompt_submits_the_typed_value() {
     );
     // The paste-only panel keeps its own hint row; the auth-actions row rides only under a
     // shown URL block (pinned by the URL block's tests below).
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("Enter submit  Esc cancel")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Enter submit  Esc cancel"))
+    );
     for character in "  sk-live  ".chars() {
         panel.handle_key(character.to_string().as_str(), &kb(), &mut sink());
     }
@@ -188,9 +193,10 @@ fn an_empty_paste_submit_shows_the_notice_only_on_the_token_panel() {
     );
     panel.handle_key("enter", &kb(), &mut sink());
     let rows = frame_text(&mut panel);
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("The value cannot be empty.")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("The value cannot be empty."))
+    );
     assert!(answer.try_recv().is_err(), "nothing answered");
     panel.handle_key("k", &kb(), &mut sink());
     panel.handle_key("enter", &kb(), &mut sink());
@@ -288,16 +294,18 @@ fn the_team_picker_renders_the_ts_rows() {
     let (mut panel, _answer) = mount_teams(vec![acme(), beta()], Some("team-beta"));
     let rows = frame_text(&mut panel);
     assert!(rows.iter().any(|row| row.contains("Select a Prime Team:")));
-    assert!(rows
-        .iter()
-        .any(|row| { row.contains("Choose which account pays for Prime Inference usage.") }));
+    assert!(
+        rows.iter()
+            .any(|row| { row.contains("Choose which account pays for Prime Inference usage.") })
+    );
     assert!(rows.iter().any(|row| row.contains("Search teams")));
     assert!(rows.iter().any(|row| row.contains("Personal")));
     assert!(rows.iter().any(|row| row.contains("personal account")));
     assert!(rows.iter().any(|row| row.contains("Acme Corp")));
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("slug: acme, role: owner")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("slug: acme, role: owner"))
+    );
     assert!(rows.iter().any(|row| row.contains("role: member")));
     let beta_row = rows
         .iter()
@@ -316,9 +324,10 @@ fn the_team_picker_renders_the_ts_rows() {
 fn the_personal_row_is_current_without_a_stored_selection() {
     let (mut panel, _answer) = mount_teams(vec![acme()], None);
     let rows = frame_text(&mut panel);
-    assert!(rows
-        .iter()
-        .any(|row| row.contains("personal account · current")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("personal account · current"))
+    );
 }
 
 #[test]

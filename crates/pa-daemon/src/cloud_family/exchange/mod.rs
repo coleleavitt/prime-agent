@@ -29,12 +29,11 @@
 mod requester;
 mod responder;
 
-pub use requester::CloudFamilyRequester;
-pub use responder::CloudFamilyResponder;
-
 use std::future::Future;
 
 use pa_types::daemon::cloud::{CloudAgentMessageReceipt, CloudFamilyCommand, CloudFamilyRow};
+pub use requester::CloudFamilyRequester;
+pub use responder::CloudFamilyResponder;
 
 /// The sender's view of one cross-boundary send. `Answered` is the only
 /// branch that ever carries the receiver's delivery truth: it exists only

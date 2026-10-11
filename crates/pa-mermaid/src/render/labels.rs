@@ -60,11 +60,7 @@ pub(super) fn display_generics(s: &str) -> String {
         .map(|c| {
             if c == '~' {
                 open = !open;
-                if open {
-                    '<'
-                } else {
-                    '>'
-                }
+                if open { '<' } else { '>' }
             } else {
                 c
             }

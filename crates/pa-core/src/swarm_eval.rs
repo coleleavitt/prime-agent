@@ -114,7 +114,11 @@ impl DefenseVerdict {
 // `rlm.messaging_stats()` shape its producer (the session's messaging
 // counters, upstream #2352) emits.
 pub use crate::session_engine::messaging_stats::{
-    ArrivalCounts, ContextShape, MessagingStatsSnapshot, SendCounts, StepCounts,
+    ArrivalCounts,
+    ContextShape,
+    MessagingStatsSnapshot,
+    SendCounts,
+    StepCounts,
 };
 
 /// Score a messaging snapshot against the pre-registered defense lines.

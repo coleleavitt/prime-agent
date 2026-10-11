@@ -10,16 +10,29 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pa_types::daemon::cloud::{
-    CloudCommandId, CloudCommandRequest, CloudCommandState, CloudCursor, CloudGetCommand,
-    CloudMessage, CloudSubmit, CloudSubscribe,
+    CloudCommandId,
+    CloudCommandRequest,
+    CloudCommandState,
+    CloudCursor,
+    CloudGetCommand,
+    CloudMessage,
+    CloudSubmit,
+    CloudSubscribe,
 };
 
 use crate::cloud_guest::dispatch::{GuestDispatchOutcome, GuestExecutor, GuestSessionSnapshot};
 use crate::cloud_guest::outbox::{GuestEventInput, GuestEventOutbox};
 use crate::cloud_guest::server::GuestProtocolServer;
 use crate::cloud_guest::tests_support::{
-    boot_guest, event_sequence, open_request, prompt_request, rt, BootedGuest, LoopbackClient,
-    LoopbackHub, TEST_TOKEN,
+    BootedGuest,
+    LoopbackClient,
+    LoopbackHub,
+    TEST_TOKEN,
+    boot_guest,
+    event_sequence,
+    open_request,
+    prompt_request,
+    rt,
 };
 
 // ---------------------------------------------------------------------------

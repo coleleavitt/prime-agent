@@ -1,10 +1,10 @@
+use ratatui::style::{Modifier, Style};
+
 use super::{FilterMode, GutterInfo, TreeList};
 use crate::theme::{Theme, ThemeBg, ThemeColor};
-use crate::tree_display;
 use crate::tree_nodes::TreeNode;
 use crate::width::{str_width, truncate_line};
-use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
+use crate::{Line, Span, tree_display};
 
 impl TreeList {
     /// Render the visible rows plus the counter (TS `TreeList.render`).
@@ -53,11 +53,7 @@ impl TreeList {
                 node.indent
             };
             let connector = if node.show_connector && !node.is_virtual_root_child {
-                if node.is_last {
-                    "└─ "
-                } else {
-                    "├─ "
-                }
+                if node.is_last { "└─ " } else { "├─ " }
             } else {
                 ""
             };

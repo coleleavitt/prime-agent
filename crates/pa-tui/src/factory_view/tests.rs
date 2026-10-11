@@ -6,10 +6,11 @@
 //! fifteen-run world: selection stability, the dock's liveness count,
 //! the render window, the refresh markers, and the churn discipline).
 
+use serde_json::json;
+
 use super::*;
 use crate::keybindings::KeybindingsManager;
 use crate::theme::{ColorMode, Theme};
-use serde_json::json;
 
 fn theme() -> Theme {
     Theme::builtin("prime", ColorMode::TrueColor)

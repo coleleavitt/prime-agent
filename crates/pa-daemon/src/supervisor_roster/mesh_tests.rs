@@ -6,15 +6,18 @@
 use std::sync::{Arc, Mutex};
 
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Map, Value};
-
-use crate::remote_mesh::{
-    RemoteAgentHost, RemoteAgentMeshOptions, RemoteAgentMeshSource, RemoteAgentMessageDelivery,
-    RemoteAgentMessageTransport, RemoteAgentSessionSummary,
-};
-use crate::supervisor::{Supervisor, SupervisorOptions};
+use serde_json::{Map, Value, json};
 
 use super::*;
+use crate::remote_mesh::{
+    RemoteAgentHost,
+    RemoteAgentMeshOptions,
+    RemoteAgentMeshSource,
+    RemoteAgentMessageDelivery,
+    RemoteAgentMessageTransport,
+    RemoteAgentSessionSummary,
+};
+use crate::supervisor::{Supervisor, SupervisorOptions};
 
 fn remote_session(id: &str, name: Option<&str>) -> RemoteAgentSessionSummary {
     RemoteAgentSessionSummary {
@@ -125,7 +128,9 @@ fn set_hosts(source: &Arc<Source>, hosts: Vec<RemoteAgentHost>) {
 /// A registered-resident stub with the given worker token.
 fn resident(worker_id: &str, token: &str) -> Arc<crate::registry::ResidentWorker> {
     use pa_types::daemon::{
-        DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand,
+        DaemonWorkerDescriptor,
+        DaemonWorkerLifecycle,
+        DurableDaemonCreateCommand,
     };
     crate::registry::ResidentWorker::new(
         worker_id.to_string(),

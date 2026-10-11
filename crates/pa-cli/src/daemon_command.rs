@@ -5,13 +5,15 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::daemon_client::DaemonClient;
 use crate::daemon_session_list::{
-    format_session_list_table, get_session_summaries, live_session_summary,
+    format_session_list_table,
+    get_session_summaries,
+    live_session_summary,
     matches_session_id_suffix,
 };
 

@@ -17,11 +17,15 @@ pub const MAX_DESCRIPTION_LENGTH: usize = 1024;
 
 pub use diagnostics::{ResourceCollision, ResourceDiagnostic};
 pub use discovery::load_skills_from_dir;
-pub use loader::{load_skills, LoadSkillsOptions, LoadSkillsResult};
+pub use loader::{LoadSkillsOptions, LoadSkillsResult, load_skills};
 pub use pa_types::slash_commands::parse_slash_command;
 pub use prompt_templates::{
-    expand_prompt_template, load_prompt_templates, parse_command_args, substitute_args,
-    LoadPromptTemplatesOptions, PromptTemplate,
+    LoadPromptTemplatesOptions,
+    PromptTemplate,
+    expand_prompt_template,
+    load_prompt_templates,
+    parse_command_args,
+    substitute_args,
 };
 
 /// Source provenance for a resource (the TS source-info shape).

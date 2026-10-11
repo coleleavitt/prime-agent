@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::context::GuardContext;
 use crate::model::{Arg, Invocation};
-use crate::probe::{run_probe, ProbeLimits, ProbeOutcome};
+use crate::probe::{ProbeLimits, ProbeOutcome, run_probe};
 use crate::script::Script;
 
 /// A `git` invocation, split at its subcommand.

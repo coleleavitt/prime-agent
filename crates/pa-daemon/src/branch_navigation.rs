@@ -3,18 +3,18 @@
 //! `set_session_entry_label`, `navigate_tree`, `fork`, and
 //! `abort_branch_summary`; the store operations live in [`crate::session_tree`].
 
-use pa_types::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use pa_agent::abort::AbortController;
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 use crate::engine::{BranchSummaryRequest, SessionEngine};
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::session_store::{SessionEntry, SessionFile};
 use crate::session_tree;
 use crate::worker::{SessionCore, Worker};
-use pa_agent::abort::AbortController;
 
 /// One completed abandoned-branch summary to persist: the text, its usage block, its
 /// file-op details, and the model the summary served on (`None` keeps the attribution).
@@ -243,10 +243,10 @@ impl TreeNavigation {
                             None,
                             "navigate_tree",
                             Some(json!({ "cancelled": true, "aborted": true })),
-                        )
+                        );
                     }
                     crate::engine::BranchSummaryOutcome::Failed { error } => {
-                        return response_failure(None, "navigate_tree", &error, None)
+                        return response_failure(None, "navigate_tree", &error, None);
                     }
                 }
             }
@@ -291,7 +291,7 @@ impl TreeNavigation {
                         summary_entry = store.entry(&summary_id).map(session_tree::entry_json);
                     }
                     Err(error) => {
-                        return response_failure(None, "navigate_tree", &error.to_string(), None)
+                        return response_failure(None, "navigate_tree", &error.to_string(), None);
                     }
                 }
             } else {
@@ -437,7 +437,7 @@ impl TreeNavigation {
                     match store.create_branched_file(leaf_id, session_dir) {
                         Ok(forked) => forked,
                         Err(error) => {
-                            return Err(response_failure(None, command, &error.to_string(), None))
+                            return Err(response_failure(None, command, &error.to_string(), None));
                         }
                     }
                 }

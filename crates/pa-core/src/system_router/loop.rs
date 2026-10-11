@@ -28,14 +28,29 @@ use pa_agent::abort::AbortSignal;
 use tokio::time::Instant;
 
 use super::action_space::{
-    compile_action_space, compile_decision_prompt, format_history_entry, gate_label,
-    gate_threshold, observation_digest, CompiledActionSpace,
+    CompiledActionSpace,
+    compile_action_space,
+    compile_decision_prompt,
+    format_history_entry,
+    gate_label,
+    gate_threshold,
+    observation_digest,
 };
 use super::decide::RouterDecisionFn;
 use super::types::{
-    RouterCloseOptions, RouterEnvironment, RouterGateSpec, RouterGateTrace, RouterGateVerdict,
-    RouterModelInfo, RouterObservation, RouterRunStatus, RouterStepTrace, RouterUsage,
-    SystemRouterRunResult, ESCALATE_ACTION, FINISH_ACTION,
+    ESCALATE_ACTION,
+    FINISH_ACTION,
+    RouterCloseOptions,
+    RouterEnvironment,
+    RouterGateSpec,
+    RouterGateTrace,
+    RouterGateVerdict,
+    RouterModelInfo,
+    RouterObservation,
+    RouterRunStatus,
+    RouterStepTrace,
+    RouterUsage,
+    SystemRouterRunResult,
 };
 
 /// Consecutive gate refusals before the loop stops as stuck.
@@ -214,24 +229,22 @@ async fn run_loop(
                 RouterRunStatus::Failed,
                 "aborted",
                 "Router aborted before reset.".to_string(),
-            ))
+            ));
         }
-        Race::Deadline => {
-            return Ok(state.finish(
-                RouterRunStatus::Incomplete,
-                "timeout",
-                format!(
+        Race::Deadline => return Ok(state.finish(
+            RouterRunStatus::Incomplete,
+            "timeout",
+            format!(
                 "Stopped before the first step: the segment timeout of {}ms elapsed during reset.",
                 options.timeout_ms
             ),
-            ))
-        }
+        )),
         Race::Done(Err(error)) => {
             return Ok(state.finish(
                 RouterRunStatus::Failed,
                 "environment_error",
                 format!("Environment failed resetting at segment start: {error}"),
-            ))
+            ));
         }
         Race::Done(Ok(())) => {}
     }
@@ -250,7 +263,7 @@ async fn run_loop(
                     RouterRunStatus::Failed,
                     "aborted",
                     "Router aborted while observing the current step.".to_string(),
-                ))
+                ));
             }
             Race::Deadline => {
                 return Ok(state.finish(
@@ -260,14 +273,14 @@ async fn run_loop(
                         "Stopped at step {step}: the segment timeout of {}ms elapsed.",
                         options.timeout_ms
                     ),
-                ))
+                ));
             }
             Race::Done(Err(error)) => {
                 return Ok(state.finish(
                     RouterRunStatus::Failed,
                     "environment_error",
                     format!("Environment failed observing at step {step}: {error}"),
-                ))
+                ));
             }
             Race::Done(Ok(observation)) => observation,
         };
@@ -311,43 +324,42 @@ async fn run_loop(
         );
         let decision_started_ms = now_ms();
         let decision_started = Instant::now();
-        let decision = match race(
-            signal,
-            deadline,
-            (options.decide)(super::decide::RouterDecisionRequest {
-                prompt,
-                image: observation.image.clone(),
-                signal: options.signal.clone(),
-            }),
-        )
-        .await
-        {
-            Race::Aborted => {
-                return Ok(state.finish(
-                    RouterRunStatus::Failed,
-                    "aborted",
-                    "Router aborted during the current step.".to_string(),
-                ))
-            }
-            Race::Deadline => {
-                return Ok(state.finish(
+        let decision =
+            match race(
+                signal,
+                deadline,
+                (options.decide)(super::decide::RouterDecisionRequest {
+                    prompt,
+                    image: observation.image.clone(),
+                    signal: options.signal.clone(),
+                }),
+            )
+            .await
+            {
+                Race::Aborted => {
+                    return Ok(state.finish(
+                        RouterRunStatus::Failed,
+                        "aborted",
+                        "Router aborted during the current step.".to_string(),
+                    ));
+                }
+                Race::Deadline => return Ok(state.finish(
                     RouterRunStatus::Incomplete,
                     "timeout",
                     format!(
                         "Stopped at step {step}: the segment timeout of {}ms elapsed mid-decision.",
                         options.timeout_ms
                     ),
-                ))
-            }
-            Race::Done(Err(error)) => {
-                return Ok(state.finish(
-                    RouterRunStatus::Failed,
-                    "decision_model_error",
-                    format!("Decision function threw at step {step}: {error}"),
-                ))
-            }
-            Race::Done(Ok(decision)) => decision,
-        };
+                )),
+                Race::Done(Err(error)) => {
+                    return Ok(state.finish(
+                        RouterRunStatus::Failed,
+                        "decision_model_error",
+                        format!("Decision function threw at step {step}: {error}"),
+                    ));
+                }
+                Race::Done(Ok(decision)) => decision,
+            };
         let latency_ms = decision_started.elapsed().as_millis() as u64;
         if let Some(usage) = decision.usage {
             state.usage.add(usage);
@@ -602,7 +614,7 @@ async fn run_loop(
                     RouterRunStatus::Failed,
                     "aborted",
                     "Router aborted during the current step.".to_string(),
-                ))
+                ));
             }
             Race::Deadline => {
                 // The dispatch already reached the adapter: record the unknown

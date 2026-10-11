@@ -8,12 +8,23 @@ use std::path::Path;
 use std::pin::Pin;
 
 use pa_ai::oauth::{
-    login_anthropic, login_github_copilot, login_xai, AnthropicCredentials, OAuthLoginUi,
-    OAuthPrompt, ProviderHttp, ANTHROPIC_LOGIN_CANCELLED, COPILOT_LOGIN_CANCELLED,
+    ANTHROPIC_LOGIN_CANCELLED,
+    AnthropicCredentials,
+    COPILOT_LOGIN_CANCELLED,
+    OAuthLoginUi,
+    OAuthPrompt,
+    ProviderHttp,
     XAI_LOGIN_CANCELLED,
+    login_anthropic,
+    login_github_copilot,
+    login_xai,
 };
 use pa_core::auth::{
-    AuthCredential, AuthStorage, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID, XAI_PROVIDER_ID,
+    ANTHROPIC_PROVIDER_ID,
+    AuthCredential,
+    AuthStorage,
+    GITHUB_COPILOT_PROVIDER_ID,
+    XAI_PROVIDER_ID,
 };
 use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
 use pa_tui::provider_auth::ProviderAuthOutcome;
@@ -329,12 +340,13 @@ fn login_status(agent_dir: &Path, provider_name: &str) -> ProviderAuthOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::{HashMap, VecDeque};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use pa_ai::oauth::ProviderHttpResponse;
+
+    use super::*;
 
     /// A scripted transport: queued responses per url (popped in order; unknown urls fail the
     /// request).

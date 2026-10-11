@@ -8,11 +8,20 @@ use serde_json::{Map, Value};
 use crate::event_stream::{AssistantMessageEvent, AssistantMessageEventWriter};
 use crate::models::calculate_cost;
 use crate::providers::google_shared::{
-    is_thinking_part, map_google_stop_reason, retain_thought_signature,
+    is_thinking_part,
+    map_google_stop_reason,
+    retain_thought_signature,
 };
 use crate::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall,
-    Usage, UsageCost,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    Usage,
+    UsageCost,
 };
 
 /// Streaming state shared by the Gemini and Vertex providers.

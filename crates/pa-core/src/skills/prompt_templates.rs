@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
+pub use pa_types::slash_commands::parse_slash_command;
 use serde::Serialize;
 
 use super::frontmatter::parse_frontmatter;
-use super::{create_synthetic_source_info, skill_markdown_name, SourceInfo, SourceScope};
-pub use pa_types::slash_commands::parse_slash_command;
+use super::{SourceInfo, SourceScope, create_synthetic_source_info, skill_markdown_name};
 
 /// A prompt template loaded from a markdown file.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -135,11 +135,7 @@ trait SaturatingSub1OrZero {
 }
 impl SaturatingSub1OrZero for usize {
     fn saturating_sub1_or_zero(self) -> usize {
-        if self == 0 {
-            0
-        } else {
-            self - 1
-        }
+        if self == 0 { 0 } else { self - 1 }
     }
 }
 

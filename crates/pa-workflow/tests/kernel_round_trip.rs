@@ -15,14 +15,18 @@ use std::sync::Arc;
 
 use pa_agent::scripted::ScriptedProvider;
 use pa_ai::faux::{
-    faux_assistant_message, faux_text, register_faux_provider, FauxAssistantMessageOptions,
-    FauxResponseStep, RegisterFauxProviderOptions,
+    FauxAssistantMessageOptions,
+    FauxResponseStep,
+    RegisterFauxProviderOptions,
+    faux_assistant_message,
+    faux_text,
+    register_faux_provider,
 };
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
 use pa_core::session_engine::{PromptOptions, PromptOutcome};
 use pa_workflow::WorkflowFeature;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The kernel Python with prime-agent-runtime installed. Skipped (with a
 /// note) on machines without a bootstrapped kernel venv.

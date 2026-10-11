@@ -2,9 +2,21 @@
 //! summaries from the supervisor, the nuclear-family roster derivation, and
 //! the preview text helpers.
 use super::{
-    json, row_is_child, row_is_parent, row_is_sibling, AgentFamilyRelationship, AgentFamilyStatus,
-    AgentObserveActivity, AgentObserveController, AgentObserveMessagePreview,
-    AgentObservePendingToolCalls, AgentObserveSummary, Arc, FamilyIdentity, SupervisorLink, Value,
+    AgentFamilyRelationship,
+    AgentFamilyStatus,
+    AgentObserveActivity,
+    AgentObserveController,
+    AgentObserveMessagePreview,
+    AgentObservePendingToolCalls,
+    AgentObserveSummary,
+    Arc,
+    FamilyIdentity,
+    SupervisorLink,
+    Value,
+    json,
+    row_is_child,
+    row_is_parent,
+    row_is_sibling,
 };
 
 /// `agent_observe.*` controller for daemon workers: message previews and

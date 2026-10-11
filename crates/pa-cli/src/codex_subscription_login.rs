@@ -9,7 +9,11 @@ use std::path::Path;
 use std::pin::Pin;
 
 use pa_ai::oauth::{
-    login_openai_codex, CodexHttp, CodexLoginUi, DEFAULT_ORIGINATOR, LOGIN_CANCELLED,
+    CodexHttp,
+    CodexLoginUi,
+    DEFAULT_ORIGINATOR,
+    LOGIN_CANCELLED,
+    login_openai_codex,
 };
 use pa_core::auth::{AuthCredential, AuthStorage, OPENAI_CODEX_PROVIDER_ID};
 use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
@@ -112,11 +116,12 @@ pub(crate) async fn run_codex_subscription_login(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use pa_ai::oauth::CodexHttpResponse;
+
+    use super::*;
 
     struct ScriptedHttp(std::collections::HashMap<String, CodexHttpResponse>);
 

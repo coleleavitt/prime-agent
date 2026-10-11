@@ -3,13 +3,13 @@
 //! Aborts acknowledge immediately (TS `abortCompaction` is instant); a run with no end inside
 //! the grace gets a durable terminal declaration plus a synthetic `compaction_end`.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
+use pa_types::sync::MutexExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 
@@ -315,7 +315,7 @@ impl crate::supervisor::Supervisor {
                         ),
                     )],
                     false,
-                )
+                );
             }
         };
         // No restore wait: a superseded id still rebinds, so the abort reaches the CURRENT worker.

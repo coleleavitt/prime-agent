@@ -7,14 +7,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::phases::{check_marker_fresh, commit_update, prepare_to_prepared, restore_report};
 use anyhow::{Context, Result};
 use pa_types::daemon::update_flow::{
-    update_prepared_dir, update_roster_path, UpdateId, UpdateProcessIdentity, UpdateState,
-    UpdateStatus, UpdateTimeoutBudget,
+    UpdateId,
+    UpdateProcessIdentity,
+    UpdateState,
+    UpdateStatus,
+    UpdateTimeoutBudget,
+    update_prepared_dir,
+    update_roster_path,
 };
 use tokio::sync::Mutex;
 
+use super::phases::{check_marker_fresh, commit_update, prepare_to_prepared, restore_report};
 use super::status::{StatusHeartbeat, StatusWriter};
 use super::successor::{identity_from_hello, spawn_supervisor, wait_for_exit, wait_for_hello};
 use super::swap;

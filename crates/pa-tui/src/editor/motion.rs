@@ -2,7 +2,7 @@
 //! movement over the visual line map.
 
 use super::text_utils::{char_find_after, char_find_before, char_prefix, char_suffix};
-use super::{is_atomic_marker, is_whitespace_char, word_wrap_line, Editor, VisualLine};
+use super::{Editor, VisualLine, is_atomic_marker, is_whitespace_char, word_wrap_line};
 use crate::width::{is_punctuation_char, str_width};
 
 impl Editor {

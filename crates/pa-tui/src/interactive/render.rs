@@ -2,8 +2,19 @@
 //! keyboard check, the suspend-cycle terminal handoff, and the exit flush rows.
 
 use super::{
-    mpsc, terminal, AgentView, Duration, ExitGuard, HeadlessStep, InteractiveOptions, KeyEvent,
-    Result, SessionUi, Terminal, UiInput, UiMode,
+    AgentView,
+    Duration,
+    ExitGuard,
+    HeadlessStep,
+    InteractiveOptions,
+    KeyEvent,
+    Result,
+    SessionUi,
+    Terminal,
+    UiInput,
+    UiMode,
+    mpsc,
+    terminal,
 };
 
 /// One typed string as key events: characters become `Char` presses, `\n`

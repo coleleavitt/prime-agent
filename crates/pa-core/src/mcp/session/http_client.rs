@@ -9,13 +9,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::stream::BoxStream;
 use futures::StreamExt as _;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE, WWW_AUTHENTICATE};
+use futures::stream::BoxStream;
 use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, WWW_AUTHENTICATE};
 use rmcp::model::{ClientJsonRpcMessage, JsonRpcMessage, ServerJsonRpcMessage};
 use rmcp::transport::streamable_http_client::{
-    AuthRequiredError, SseError, StreamableHttpClient, StreamableHttpError,
+    AuthRequiredError,
+    SseError,
+    StreamableHttpClient,
+    StreamableHttpError,
     StreamableHttpPostResponse,
 };
 use sse_stream::{Sse, SseStream};

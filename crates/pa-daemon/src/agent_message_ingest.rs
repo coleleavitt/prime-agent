@@ -3,17 +3,18 @@
 //! delivery gate. Deliberate deviation from TS: no per-sender rate bucket
 //! (the daemon's queue capacity bound is the enforced limit).
 
-use pa_types::sync::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde_json::{json, Value};
-
 use pa_core::session_engine::agent_messaging::{
-    DEFAULT_AGENT_MESSAGE_MAX_CHARS, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
-    DEFAULT_AGENT_MESSAGE_RATE_LIMIT_CAPACITY, DEFAULT_AGENT_MESSAGE_RATE_LIMIT_REFILL_MS,
+    DEFAULT_AGENT_MESSAGE_MAX_CHARS,
+    DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    DEFAULT_AGENT_MESSAGE_RATE_LIMIT_CAPACITY,
+    DEFAULT_AGENT_MESSAGE_RATE_LIMIT_REFILL_MS,
 };
+use pa_types::sync::MutexExt;
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::{QueuedItem, Worker};
 
 /// The body prefix of a drop notice (upstream #2329): a dropped notice is
@@ -319,9 +320,11 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         let dir = crate::test_support::TestDir::new("pa-worker-ami-");
@@ -598,7 +601,10 @@ mod tests {
             .expect("the pause notifies the sender")
             .unwrap();
         assert_eq!(
-            (notice["targetActiveSessionId"].clone(), notice["message"].clone()),
+            (
+                notice["targetActiveSessionId"].clone(),
+                notice["message"].clone()
+            ),
             (
                 json!("peer-2"),
                 json!(format!(
@@ -631,7 +637,10 @@ mod tests {
         .await
         .expect("the close notifies the sender");
         assert_eq!(
-            (notice["targetActiveSessionId"].clone(), notice["message"].clone()),
+            (
+                notice["targetActiveSessionId"].clone(),
+                notice["message"].clone()
+            ),
             (
                 json!("peer-3"),
                 json!(format!(

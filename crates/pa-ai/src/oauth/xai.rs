@@ -360,10 +360,11 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::{HashMap, VecDeque};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use super::*;
 
     type ScriptedResponse = super::super::provider_http::ProviderHttpResponse;
 

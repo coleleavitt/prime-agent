@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use fancy_regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::time::parse_iso_millis;
 

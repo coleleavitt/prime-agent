@@ -2,23 +2,23 @@
 //! prompting, state, model, thinking, queue-mode, and compaction
 //! handlers. Session-level and scheduling commands live in [`super::session_commands`].
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
-use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pa_core::autonomous::AutonomousRuntimeState;
 use pa_core::session_engine::provider_adapter::json_round_trip;
-
 use pa_types::goal::GoalState;
+use serde_json::{Value, json};
 
-use super::model_commands;
-use super::prompt_commands;
 use super::protocol::{self, ResponseData};
 use super::session::{RpcEngineRequest, RpcSession};
-use super::session_commands;
-use super::LineWriter;
-use super::COMPACT_FRAME_FLUSH_BUDGET;
+use super::{
+    COMPACT_FRAME_FLUSH_BUDGET,
+    LineWriter,
+    model_commands,
+    prompt_commands,
+    session_commands,
+};
 
 /// The shared handler state: the live session plus the fixed identity and
 /// the session-scoped runtime pieces the handlers own.

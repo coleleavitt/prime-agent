@@ -8,6 +8,7 @@
 //! forces two columns.
 
 use std::sync::OnceLock;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
@@ -33,11 +34,7 @@ pub(crate) fn package_cluster_width(cluster: &str) -> usize {
         // The package's table rates the controls it keeps (`\t\n\r`) one column.
         w = w.max(c.width().unwrap_or(1));
     }
-    if vs16 || regional >= 2 {
-        2
-    } else {
-        w
-    }
+    if vs16 || regional >= 2 { 2 } else { w }
 }
 
 fn cluster_width(cluster: &str) -> usize {

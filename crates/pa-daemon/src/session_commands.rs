@@ -5,10 +5,14 @@
 //! `compaction_start` before the summarizer, the settled `compaction_end` after.
 
 use pa_core::session_engine::session_commands::{
-    session_command_echo_row, session_command_failure_row, SessionCommandExecution,
+    SessionCommandExecution,
+    session_command_echo_row,
+    session_command_failure_row,
 };
 use pa_core::session_engine::slash_commands::{
-    parse_session_command, SessionSlashCommand, SlashCommandRegistry,
+    SessionSlashCommand,
+    SlashCommandRegistry,
+    parse_session_command,
 };
 use pa_types::session::AgentMessage;
 

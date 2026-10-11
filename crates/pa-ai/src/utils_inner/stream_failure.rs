@@ -9,8 +9,10 @@ use serde_json::Map;
 
 use crate::types::AssistantMessage;
 use crate::utils::diagnostics::{
-    append_assistant_message_diagnostic, create_assistant_message_diagnostic, now_ms,
     DiagnosticErrorInfo,
+    append_assistant_message_diagnostic,
+    create_assistant_message_diagnostic,
+    now_ms,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -165,8 +167,7 @@ pub enum ConnectionErrorProfile {
 
 /// The AWS SDK's deserialization hint the TS binary appends to failures inside a received response
 /// body.
-pub const AWS_DESERIALIZATION_HINT: &str =
-    "\n  Deserialization error: to see the raw response, inspect the hidden field {error}.$response on this object.";
+pub const AWS_DESERIALIZATION_HINT: &str = "\n  Deserialization error: to see the raw response, inspect the hidden field {error}.$response on this object.";
 
 /// The base failure text of an http2 transport failure (without the deserialization hint).
 #[must_use]

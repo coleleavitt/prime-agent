@@ -11,11 +11,10 @@
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::rng::SeededRng;
 use crate::task::{ArtifactShapeError, Evaluation, FailClass, ProposeParams, ScoredTask};

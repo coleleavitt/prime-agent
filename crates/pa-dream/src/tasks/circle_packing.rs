@@ -6,7 +6,7 @@
 //! assigns radii by the closed-form FEASIBLE repair
 //! `r_i = ½ min(boundaryDist_i, min_{j≠i} dist(i, j))`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::json::number;
 use crate::rng::SeededRng;
@@ -370,8 +370,9 @@ mod tests {
             crate::json::canonical_json(&task.serialize(&restored)),
             crate::json::canonical_json(&serialized)
         );
-        assert!(task
-            .deserialize(&json!({"n": 2, "xs": [0.1], "ys": [0.1, 0.2], "rs": [0.0, 0.0]}))
-            .is_err());
+        assert!(
+            task.deserialize(&json!({"n": 2, "xs": [0.1], "ys": [0.1, 0.2], "rs": [0.0, 0.0]}))
+                .is_err()
+        );
     }
 }

@@ -6,11 +6,20 @@
 //! passthrough `get_api_key` (TS getApiKey).
 
 use super::{
-    now_epoch_ms, parse_storage_data, refresh_flight, refresh_token_revoked,
-    remember_revoked_refresh_token, resolve_config_value, resolve_config_value_uncached,
-    AuthApiKeyResult, AuthCredential, AuthStorage, OAuthRefreshError, PRIME_INFERENCE_PROVIDER_ID,
+    AuthApiKeyResult,
+    AuthCredential,
+    AuthStorage,
+    OAuthRefreshError,
+    PRIME_INFERENCE_PROVIDER_ID,
+    now_epoch_ms,
+    parse_storage_data,
+    refresh_flight,
+    refresh_token_revoked,
+    remember_revoked_refresh_token,
+    resolve_config_value,
+    resolve_config_value_uncached,
 };
-use crate::auth::{credential_source, CredentialSourceError};
+use crate::auth::{CredentialSourceError, credential_source};
 
 impl AuthStorage {
     /// Resolve a file-backed credential without blocking the async caller on

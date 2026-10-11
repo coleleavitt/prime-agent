@@ -586,9 +586,11 @@ async fn cancel_owned_admission_aborts_the_running_prompt() {
     );
     // Without cancelOwned, the queued prompt remains queued.
     let queue = worker.dispatch("get_queue", &json!({})).await;
-    assert!(serde_json::to_string(&queue.data)
-        .unwrap()
-        .contains("queued behind the held turn"));
+    assert!(
+        serde_json::to_string(&queue.data)
+            .unwrap()
+            .contains("queued behind the held turn")
+    );
     let queued_removed = worker
         .dispatch(
             "cancel_prompt_admission",

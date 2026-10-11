@@ -39,8 +39,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
 
     #[tokio::test]
     async fn bounded_fanout_caps_concurrency_and_runs_every_job() {

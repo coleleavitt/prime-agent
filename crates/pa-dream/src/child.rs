@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::json;
 use crate::proposer::ProposalRejectReason;
-use crate::rejections::{excerpt_of, REJECTION_EXCERPT_CHARS};
+use crate::rejections::{REJECTION_EXCERPT_CHARS, excerpt_of};
 
 /// Per-attempt child token budget when a caller does not set one.
 pub const DEFAULT_CHILD_TOKEN_BUDGET: u64 = 200_000;

@@ -1,7 +1,8 @@
 //! Context overflow detection: the provider pattern table and the silent-overflow heuristics.
 
-use regex::Regex;
 use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crate::types::{AssistantContent, AssistantMessage, StopReason};
 
@@ -125,9 +126,10 @@ fn content_text(message: &AssistantMessage) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Map;
+
     use super::*;
     use crate::types::{Usage, UsageCost};
-    use serde_json::Map;
 
     fn message(
         stop_reason: StopReason,

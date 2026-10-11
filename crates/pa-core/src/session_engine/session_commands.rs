@@ -7,25 +7,30 @@ use std::sync::Arc;
 
 use pa_types::session::CustomMessage;
 
-use crate::autonomous::{
-    autonomous_status, set_autonomous_enabled, set_autonomous_limits, AutonomousRuntimeState,
-};
-use crate::goals::{create_goal_context_message, GoalContextKind, GoalStatus};
-use crate::slash_command_args::{
-    format_autonomous_status, parse_autonomous_command, parse_goal_command, AutonomousCommand,
-    GoalCommand,
-};
-
 use super::compact_session::CompactOutcome;
 use super::engine::SessionEngine;
 use super::goal_driver::GoalDriver;
 use super::messages::{
-    SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
+    SESSION_SLASH_COMMAND_CUSTOM_TYPE,
+    SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
 use super::refine::{RefineOptions, RefinementSource};
-use super::slash_commands::{parse_refine_command_options, SessionSlashCommand};
-
+use super::slash_commands::{SessionSlashCommand, parse_refine_command_options};
 pub use crate::autonomous::AUTONOMOUS_STATUS_CUSTOM_TYPE;
+use crate::autonomous::{
+    AutonomousRuntimeState,
+    autonomous_status,
+    set_autonomous_enabled,
+    set_autonomous_limits,
+};
+use crate::goals::{GoalContextKind, GoalStatus, create_goal_context_message};
+use crate::slash_command_args::{
+    AutonomousCommand,
+    GoalCommand,
+    format_autonomous_status,
+    parse_autonomous_command,
+    parse_goal_command,
+};
 
 /// Inputs the host runtime supplies to one execution.
 pub struct SessionCommandParams<'a> {
@@ -593,7 +598,9 @@ async fn execute_harness(
     execution: &mut SessionCommandExecution,
 ) -> Result<(), String> {
     use crate::refinement::entries::{
-        list_harness_entries, resolve_harness_entry, set_harness_entry_enabled,
+        list_harness_entries,
+        resolve_harness_entry,
+        set_harness_entry_enabled,
     };
     const USAGE: &str = "Usage: /harness [list | enable <entry> | disable <entry>]";
     let local_dir = {
@@ -775,9 +782,10 @@ async fn persist_rows<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::goals::{empty_goal_state, GoalState, GoalStatus};
     use pa_types::ai::UserContent;
+
+    use super::*;
+    use crate::goals::{GoalState, GoalStatus, empty_goal_state};
 
     fn command(name: &'static str, args: &str) -> SessionSlashCommand {
         let text = if args.is_empty() {

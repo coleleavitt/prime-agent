@@ -4,10 +4,10 @@
 
 use std::collections::HashSet;
 
+use super::McpServerConfig;
 use super::catalog_schema::{AuthStrategy, McpSetupField, SetupFieldKind, SetupStatus};
 use super::connection_store::{McpConnectionRecord, McpConnectionStatus as RecordStatus};
 use super::service_catalog::{DescriptorTransport, McpServiceDescriptor};
-use super::McpServerConfig;
 use crate::auth::types::AuthCredential;
 
 /// The `mcp:<connectionId>` credential key.
@@ -533,5 +533,7 @@ pub fn mcp_login_eligibility(
             "This service requires a concrete OAuth endpoint and supported setup before it can be connected."
         });
     }
-    deny("This service requires a concrete OAuth endpoint and supported setup before it can be connected.")
+    deny(
+        "This service requires a concrete OAuth endpoint and supported setup before it can be connected.",
+    )
 }

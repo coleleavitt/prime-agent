@@ -31,16 +31,20 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use anthropic::access::{get_access_token, AccessRequest};
+use anthropic::access::{AccessRequest, get_access_token};
 use anthropic::account::QuotaObservation;
 use anthropic::backoff::FailureFacts;
 use anthropic::quota::{
-    is_quota_bearing_header_frame, normalize_quota_headers, QuotaFieldSource, QuotaPolicy,
-    QuotaSnapshot, QuotaWindow,
+    QuotaFieldSource,
+    QuotaPolicy,
+    QuotaSnapshot,
+    QuotaWindow,
+    is_quota_bearing_header_frame,
+    normalize_quota_headers,
 };
 use anthropic::quota_manager::{PollDecision, PollOutcome, QuotaManager};
 use anthropic::retry::retry_after_ms;

@@ -5,12 +5,20 @@
 
 use super::layout::{store_bases, xdg_kernel_venv_dir};
 use super::skills::file_content_hash;
-use super::store::{venv_key, VenvStore};
+use super::store::{VenvStore, venv_key};
 use super::version::{bootstrap_base_version_current, bootstrap_skill_key};
 use super::{
-    ensure_uv, expand_home, kernel_venv_dir, kernel_venv_python, read_bootstrap_version,
-    resolve_runtime_identity, run_async, write_bootstrap_version, BootstrapPythonSkill, Path,
+    BootstrapPythonSkill,
+    Path,
     PathBuf,
+    ensure_uv,
+    expand_home,
+    kernel_venv_dir,
+    kernel_venv_python,
+    read_bootstrap_version,
+    resolve_runtime_identity,
+    run_async,
+    write_bootstrap_version,
 };
 use crate::kernel::bootstrap::dir_lock::acquire_bootstrap_lock;
 

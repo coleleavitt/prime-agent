@@ -239,8 +239,9 @@ pub async fn sync_after_compaction(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::session::AgentMessage as SessionAgentMessage;
+
+    use super::*;
 
     /// A scripted kernel probe.
     struct ScriptedProbe {
@@ -316,8 +317,10 @@ mod tests {
             notice_content(None, Some(&["alpha".to_string(), "beta".to_string()])),
             "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. These names are still defined: alpha, beta."
         );
-        assert!(notice_content(Some(&[]), Some(&["v".to_string()]))
-            .contains("still available. These names"));
+        assert!(
+            notice_content(Some(&[]), Some(&["v".to_string()]))
+                .contains("still available. These names")
+        );
     }
 
     #[test]
@@ -361,11 +364,12 @@ mod tests {
     // AgentSession-level flow: the append point, the live context, and the back-to-back
     // second `/compact` (the #227-documented TS behavior).
 
-    use crate::session_engine::compact_session::{CompactOutcome, CompactSkip};
-    use crate::session_engine::AgentSession;
     use pa_agent::agent::AgentOptions;
     use pa_types::ai::UserContent;
     use pa_types::session::FileEntry;
+
+    use crate::session_engine::AgentSession;
+    use crate::session_engine::compact_session::{CompactOutcome, CompactSkip};
 
     /// The faux provider with scripted summarizer responses. The faux seam
     /// is process-global, so every registration unregisters on drop.
@@ -525,8 +529,10 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert!(requests[0].contains("Create a structured context checkpoint summary"));
         assert!(requests[1].contains("NEW conversation messages to incorporate"));
-        assert!(requests[1]
-            .contains("<previous-summary>\nthe first compaction summary\n</previous-summary>"));
+        assert!(
+            requests[1]
+                .contains("<previous-summary>\nthe first compaction summary\n</previous-summary>")
+        );
         // Notice row after every compaction, in order.
         let entries = engine.entries().await;
         let mut tail = entries.iter().rev();

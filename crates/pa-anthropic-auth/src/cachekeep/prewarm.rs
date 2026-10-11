@@ -3,21 +3,21 @@
 //! prewarm-safe, the store's current token for the login the session was
 //! served with, pi's headers over it, sent to where the request went.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Weak;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Instant;
 
-use anthropic::access::{get_access_token, AccessRequest};
-use anthropic::claude_code::{merge_anthropic_betas, FAST_MODE_BETA};
+use anthropic::access::{AccessRequest, get_access_token};
+use anthropic::claude_code::{FAST_MODE_BETA, merge_anthropic_betas};
 use anthropic::{AccountStore, SharedRefreshOptions};
 use chrono::{DateTime, FixedOffset};
 use pa_types::sync::MutexExt;
 use serde_json::Value;
 
-use super::{prewarm_body, Outcome, Settings, Target, Tick, Track, EXTENDED_TTL_BETA};
-use crate::shape::{claude_code_headers, ShapeEnv, ShapeIdentity};
-use crate::source::block_on_own_runtime;
+use super::{EXTENDED_TTL_BETA, Outcome, Settings, Target, Tick, Track, prewarm_body};
 use crate::SharedStoreSource;
+use crate::shape::{ShapeEnv, ShapeIdentity, claude_code_headers};
+use crate::source::block_on_own_runtime;
 
 /// Tracked headers a prewarm never copies (its own credential and framing
 /// replace them).

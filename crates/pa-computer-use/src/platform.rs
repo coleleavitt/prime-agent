@@ -245,7 +245,7 @@ pub(crate) trait Platform: Send + Sync + 'static {
     fn observe(&self, target: Target) -> Result<Observation<Self::Element>>;
     /// One live element's current (role, title), for freshness checks.
     fn live_fingerprint(&self, element: &Self::Element)
-        -> Result<(Option<String>, Option<String>)>;
+    -> Result<(Option<String>, Option<String>)>;
     /// The settle poll's read; `None` when the window cannot be read.
     fn window_fingerprint(&self, target: Target, budget: Duration) -> Option<Fingerprint>;
     /// The live focused element's secure state (not consulted on X11,

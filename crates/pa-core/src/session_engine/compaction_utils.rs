@@ -176,7 +176,9 @@ fn truncate_for_summary(text: &str, max_chars: usize) -> String {
     let tail: String = chars[char_count - TOOL_RESULT_TAIL_CHARS..]
         .iter()
         .collect();
-    format!("{head}\n\n[... {elided} characters truncated; first {head_chars} and last {TOOL_RESULT_TAIL_CHARS} kept ...]\n\n{tail}")
+    format!(
+        "{head}\n\n[... {elided} characters truncated; first {head_chars} and last {TOOL_RESULT_TAIL_CHARS} kept ...]\n\n{tail}"
+    )
 }
 
 fn user_text(content: &pa_types::ai::UserContent) -> String {

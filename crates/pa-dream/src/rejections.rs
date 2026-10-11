@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::child::RunAgentStatus;
 use crate::json;
 use crate::proposer::ProposalRejectReason;
-use crate::store::{append_private, create_dir_private, DreamStoreError};
+use crate::store::{DreamStoreError, append_private, create_dir_private};
 
 /// Total characters (UTF-16 code units, as JS counts them) an excerpt keeps.
 pub const REJECTION_EXCERPT_CHARS: usize = 240;

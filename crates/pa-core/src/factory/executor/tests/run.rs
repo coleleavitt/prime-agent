@@ -1,13 +1,20 @@
 //! Dry run, subagent resolution, input binding, fan-in, answer capture,
 //! and foreach (ports of `FactoryExecutorTest`).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::fake::{
-    done, entry_statuses, failed, instance_statuses, node_status, running, strings, Case,
+    Case,
+    done,
+    entry_statuses,
+    failed,
+    instance_statuses,
+    node_status,
+    running,
+    strings,
 };
-use crate::factory::executor::binding::ANSWER_CAPTURE_CAP;
 use crate::factory::executor::FactoryRefusal;
+use crate::factory::executor::binding::ANSWER_CAPTURE_CAP;
 
 #[tokio::test]
 async fn run_rejects_invalid_dag_and_starts_nothing() {
@@ -192,11 +199,13 @@ async fn run_starts_ready_nodes_and_reports_counts() {
     assert_eq!(case.host.calls_of("rlm.run").len(), 2);
     let status = case.settle(&result).await;
     assert_eq!(status["state"], "done");
-    assert!(status["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|node| node["status"] == "done"));
+    assert!(
+        status["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node["status"] == "done")
+    );
     assert_eq!(case.host.notice_kinds(), strings(&["finished"]));
     assert_eq!(status["usage"]["spawns"], 4);
     assert_eq!(status["usage"]["settled"], 4);
@@ -278,10 +287,12 @@ async fn bad_json_input_fails_node_without_spawning() {
     assert_eq!(case.host.spawn_calls("b"), Vec::<Value>::new());
     let b = node_status(&status, "b");
     assert_eq!(b["status"], "error");
-    assert!(b["error"]
-        .as_str()
-        .unwrap()
-        .contains("no JSON object containing output"));
+    assert!(
+        b["error"]
+            .as_str()
+            .unwrap()
+            .contains("no JSON object containing output")
+    );
     assert_eq!(node_status(&status, "c")["status"], "done");
     assert_eq!(status["state"], "failed");
 }
@@ -588,9 +599,11 @@ async fn foreach_failure_never_admits_queued_siblings_and_waits_for_running_ones
         .filter(|event| event["node"] == "fan")
         .collect();
     assert_eq!(cancelled.len(), 3);
-    assert!(cancelled
-        .iter()
-        .all(|event| event["detail"] == "entry failed before admission"));
+    assert!(
+        cancelled
+            .iter()
+            .all(|event| event["detail"] == "entry failed before admission")
+    );
 }
 
 #[tokio::test]

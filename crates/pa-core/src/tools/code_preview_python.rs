@@ -2,8 +2,16 @@
 //! and their statement scanner.
 
 use crate::tools::code_preview::{
-    descriptor, is_comment_line, js_trim, js_trim_end, path_tail, preview_bash_command, re,
-    simplify_bash_command_line, CodePreview, S,
+    CodePreview,
+    S,
+    descriptor,
+    is_comment_line,
+    js_trim,
+    js_trim_end,
+    path_tail,
+    preview_bash_command,
+    re,
+    simplify_bash_command_line,
 };
 use crate::tools::ipython_cell_code::parse_ipython_bash_cell;
 

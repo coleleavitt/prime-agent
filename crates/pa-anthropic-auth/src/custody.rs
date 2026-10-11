@@ -9,16 +9,22 @@ use std::sync::atomic::Ordering;
 
 use anthropic::credentials::read_claude_code_login;
 use anthropic::token::{
-    is_valid_access_token, is_valid_refresh_token, AccessToken, Credential, OAuthTokens,
-    RefreshToken, TokenAccount, TokenOrganization,
+    AccessToken,
+    Credential,
+    OAuthTokens,
+    RefreshToken,
+    TokenAccount,
+    TokenOrganization,
+    is_valid_access_token,
+    is_valid_refresh_token,
 };
-use anthropic::{account_identities, Account, AccountStore};
+use anthropic::{Account, AccountStore, account_identities};
 use chrono::{TimeZone, Utc};
 use pa_core::auth::{CredentialSourceError, RemovedLogin, StoredLoginCustody, StoredOAuthLogin};
 use pa_types::sync::MutexExt;
 
-use crate::source::{block_on_own_runtime, logins, served_login, UsageEvent};
 use crate::SharedStoreSource;
+use crate::source::{UsageEvent, block_on_own_runtime, logins, served_login};
 
 /// The refresh token the plugins write into a host's own auth file in place
 /// of the real one once the store holds the login (anthropic-auth's

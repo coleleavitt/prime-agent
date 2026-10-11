@@ -2,10 +2,10 @@
 
 use ratatui::style::Style;
 
-use super::{eligible_images, image_rows, panel_header, panel_line, ToolCallCard, ToolResultView};
+use super::{ToolCallCard, ToolResultView, eligible_images, image_rows, panel_header, panel_line};
+use crate::Line;
 use crate::theme::{Theme, ThemeBg};
 use crate::width::{wrap_line, wrap_text, wrapped_line_count, wrapped_text_count};
-use crate::Line;
 
 pub(super) fn panel_content_width(width: usize) -> usize {
     width.saturating_sub(4).max(1)

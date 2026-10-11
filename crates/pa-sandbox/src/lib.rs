@@ -44,32 +44,70 @@ mod record;
 mod vm_wire;
 mod wire;
 
-pub use client::{ClientOptions, PrimeSandboxClient, DEFAULT_BASE_URL};
+pub use client::{ClientOptions, DEFAULT_BASE_URL, PrimeSandboxClient};
 pub use command_session::{
-    CommandSessionEvent, CommandSpec, EndEvent, InputChannel, OutputChannel, PtySize, StartRequest,
+    CommandSessionEvent,
+    CommandSpec,
+    EndEvent,
+    InputChannel,
+    OutputChannel,
+    PtySize,
+    StartRequest,
     VmSignal,
 };
-pub use error::{SandboxError, SandboxErrorCode, MAX_RESPONSE_PREVIEW_CHARS};
+pub use error::{MAX_RESPONSE_PREVIEW_CHARS, SandboxError, SandboxErrorCode};
 pub use gateway::{
-    ExecRequest, ExecResult, GatewayAuth, GatewayOptions, UploadRequest, UploadResult,
-    DEFAULT_EXEC_TIMEOUT_SECONDS, MAX_ERROR_BODY_BYTES, MAX_EXEC_TIMEOUT_SECONDS,
+    DEFAULT_EXEC_TIMEOUT_SECONDS,
+    ExecRequest,
+    ExecResult,
+    GatewayAuth,
+    GatewayOptions,
+    MAX_ERROR_BODY_BYTES,
+    MAX_EXEC_TIMEOUT_SECONDS,
     MAX_TRANSFER_BYTES,
+    UploadRequest,
+    UploadResult,
 };
 pub use transport::{
-    ReqwestSandboxTransport, SandboxTransport, TransportRequest, TransportResponse,
     MAX_JSON_BODY_BYTES,
+    ReqwestSandboxTransport,
+    SandboxTransport,
+    TransportRequest,
+    TransportResponse,
 };
 pub use types::{
-    Sandbox, SandboxStatus, StartCommand, VmCreateRequest, WaitOptions, DEFAULT_REQUEST_TIMEOUT,
-    DEFAULT_WAIT_POLL_INTERVAL, DEFAULT_WAIT_TIMEOUT, PRIME_SANDBOX_CREATE_MAX_ATTEMPTS,
+    DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_WAIT_POLL_INTERVAL,
+    DEFAULT_WAIT_TIMEOUT,
+    PRIME_SANDBOX_CREATE_MAX_ATTEMPTS,
+    Sandbox,
+    SandboxStatus,
+    StartCommand,
+    VmCreateRequest,
+    WaitOptions,
 };
 pub use vm_error::{CommandSessionError, CommandSessionErrorCode};
 pub use vm_process::{
-    CommandSessionClient, CommandSessionOptions, ControlOptions, GatewayAuthSource,
-    PlatformGatewayAuthSource, SendInputOptions, SendSignalOptions, StartOptions, StreamOptions,
-    DEFAULT_EVENT_FRAME_MAX_BYTES, DEFAULT_KEEPALIVE_INTERVAL_SECONDS, DEFAULT_MAX_PENDING_EVENTS,
-    DEFAULT_MAX_RECONNECTS, DEFAULT_RECONNECT_BASE_DELAY, DEFAULT_SEND_INPUT_TIMEOUT,
-    DEFAULT_SEND_SIGNAL_TIMEOUT, DEFAULT_UNARY_ATTEMPTS, DEFAULT_UNARY_RETRY_BASE_DELAY,
-    DEFAULT_UPDATE_TIMEOUT, MAX_PROCESS_INPUT_BYTES, MAX_UNARY_BODY_BYTES,
+    CommandSessionClient,
+    CommandSessionOptions,
+    ControlOptions,
+    DEFAULT_EVENT_FRAME_MAX_BYTES,
+    DEFAULT_KEEPALIVE_INTERVAL_SECONDS,
+    DEFAULT_MAX_PENDING_EVENTS,
+    DEFAULT_MAX_RECONNECTS,
+    DEFAULT_RECONNECT_BASE_DELAY,
+    DEFAULT_SEND_INPUT_TIMEOUT,
+    DEFAULT_SEND_SIGNAL_TIMEOUT,
+    DEFAULT_UNARY_ATTEMPTS,
+    DEFAULT_UNARY_RETRY_BASE_DELAY,
+    DEFAULT_UPDATE_TIMEOUT,
+    GatewayAuthSource,
+    MAX_PROCESS_INPUT_BYTES,
+    MAX_UNARY_BODY_BYTES,
+    PlatformGatewayAuthSource,
+    SendInputOptions,
+    SendSignalOptions,
+    StartOptions,
+    StreamOptions,
 };
 pub use vm_stream::CommandSessionStream;

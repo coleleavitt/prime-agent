@@ -8,8 +8,15 @@ use std::sync::OnceLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::stream_failure::{
-    stream_failure_message, ConnectionErrorKind, ConnectionErrorProfile, ProviderConnectionError,
-    ProviderError, ProviderHttpError, StreamFailureError, StreamFailureInfo, StreamFailureKind,
+    ConnectionErrorKind,
+    ConnectionErrorProfile,
+    ProviderConnectionError,
+    ProviderError,
+    ProviderHttpError,
+    StreamFailureError,
+    StreamFailureInfo,
+    StreamFailureKind,
+    stream_failure_message,
 };
 
 static CLIENT: std::sync::Mutex<Option<reqwest::Client>> = std::sync::Mutex::new(None);
@@ -366,7 +373,7 @@ impl SendFailure {
                     kind: ConnectionErrorKind::Timeout,
                     profile: request.connection.clone(),
                     cause: format!("request exceeded the {timeout_ms}ms timeout"),
-                })
+                });
             }
             Self::Transport(error) => error,
         };
@@ -474,7 +481,7 @@ mod stale_connection_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_mock_http::{serve, MockResponse};
+    use crate::test_mock_http::{MockResponse, serve};
 
     /// Read the whole body chunk by chunk through `next_text`.
     async fn read_text_chunks(frames: Vec<Vec<u8>>) -> String {

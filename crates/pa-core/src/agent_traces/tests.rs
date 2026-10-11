@@ -2,12 +2,13 @@
 //! request + cursor + trace-log contract, the retry/rate gates, the parent-chain +
 //! git-context resolution, the preview, the find walk, and the outbox entry hash.
 
-use super::*;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::io::Write as _;
 use std::pin::Pin;
 use std::sync::Mutex;
+
+use super::*;
 
 /// One captured request (url, headers, body).
 type CapturedRequest = (String, Vec<(String, String)>, String);

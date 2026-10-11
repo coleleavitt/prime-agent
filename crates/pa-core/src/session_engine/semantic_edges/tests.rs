@@ -4,14 +4,23 @@
 use std::sync::{Arc, Mutex};
 
 use pa_agent::stream::{
-    AssistantMessageEvent, LlmContext, ModelStream, StreamFn, StreamRequestOptions,
+    AssistantMessageEvent,
+    LlmContext,
+    ModelStream,
+    StreamFn,
+    StreamRequestOptions,
 };
 use pa_agent::types::{AssistantMessage, Model, StopReason, Usage};
 use tempfile::TempDir;
 
 use super::{
-    model_request_headers, wrap_stream_fn, SemanticEdgeIdentity, SemanticEdgeLedgerEvent,
-    SemanticEdgeRecorder, IDEMPOTENCY_KEY_HEADER, MODEL_REQUEST_ID_HEADER,
+    IDEMPOTENCY_KEY_HEADER,
+    MODEL_REQUEST_ID_HEADER,
+    SemanticEdgeIdentity,
+    SemanticEdgeLedgerEvent,
+    SemanticEdgeRecorder,
+    model_request_headers,
+    wrap_stream_fn,
 };
 
 const FINGERPRINT_A: [u8; 32] = [1; 32];

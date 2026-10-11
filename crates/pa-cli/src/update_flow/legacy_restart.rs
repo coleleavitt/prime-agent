@@ -7,11 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use pa_types::daemon::update_flow::{
-    UpdateId, UpdateProcessIdentity, UpdateRoster, UpdateTimeoutBudget,
-};
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Value};
+use pa_types::daemon::update_flow::{
+    UpdateId,
+    UpdateProcessIdentity,
+    UpdateRoster,
+    UpdateTimeoutBudget,
+};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::successor::{identity_from_hello, spawn_supervisor, wait_for_exit, wait_for_hello};
@@ -562,14 +565,16 @@ mod tests {
         );
         let mut other = owner;
         other["supervisorProcessStartId"] = json!("replacement-start");
-        assert!(recover_prepared(
-            &checkpoint,
-            &checkpoint.with_extension("attempt.json"),
-            &source,
-            &socket,
-            Some(&other)
-        )
-        .is_err());
+        assert!(
+            recover_prepared(
+                &checkpoint,
+                &checkpoint.with_extension("attempt.json"),
+                &source,
+                &socket,
+                Some(&other)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -712,10 +717,12 @@ mod tests {
                 .exists(),
             "definitive refusal must not block a fresh attempt"
         );
-        assert!(status["message"]
-            .as_str()
-            .unwrap()
-            .contains("session checkpoint failed"));
+        assert!(
+            status["message"]
+                .as_str()
+                .unwrap()
+                .contains("session checkpoint failed")
+        );
     }
 
     #[tokio::test]

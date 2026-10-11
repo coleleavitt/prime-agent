@@ -8,14 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-
 use pa_core::cron::store::{AgentCronJobStore, CancelJobsFilter};
 
 use crate::lease::canonical_session_path;
 use crate::registry::ResidentWorker;
 use crate::rlm_ledger::RlmSpawnLedger;
 use crate::scheduled_jobs::session_artifact_dir;
-use crate::session_store::{read_session_info, SessionFile};
+use crate::session_store::{SessionFile, read_session_info};
 use crate::supervisor::Supervisor;
 
 /// One tree member of a stopped root: its durable session id and file.
@@ -495,10 +494,12 @@ impl Supervisor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::session_store::{session_file_name, SessionFile};
-    use pa_core::cron::AgentCronJob;
     use std::io::Write;
+
+    use pa_core::cron::AgentCronJob;
+
+    use super::*;
+    use crate::session_store::{SessionFile, session_file_name};
 
     fn temp_dir() -> crate::test_support::TestDir {
         crate::test_support::TestDir::new("pa-stop-cleanup-")

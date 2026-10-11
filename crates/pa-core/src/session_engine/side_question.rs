@@ -3,22 +3,33 @@
 //! (KV-cacheable prefix preserved); earlier side turns replay after the clone, tools are
 //! blocked (`before_tool_call`), a turn cap is the backstop; results never enter history.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use pa_agent::abort::{race_with_abort, AbortSignal};
+use pa_agent::abort::{AbortSignal, race_with_abort};
 use pa_agent::agent::{Agent, AgentInitialState, AgentOptions};
 use pa_agent::agent_loop::{BeforeToolCallFn, ShouldStopAfterTurnFn};
 use pa_agent::types::{
-    AssistantContent, AssistantMessage, Message, StopReason, TextContent, UserContent, UserMessage,
+    AssistantContent,
+    AssistantMessage,
+    Message,
+    StopReason,
+    TextContent,
+    UserContent,
+    UserMessage,
     UserPart,
 };
 
 use super::provider_retry::{
-    is_agent_lifecycle_failure, is_faux_provider_queue_exhausted,
-    is_permanent_provider_failure_kind, provider_retry_delay, provider_stream_failure_kind,
-    provider_stream_failure_retry_after_ms, provider_stream_failure_status, ProviderRetryDelay,
+    ProviderRetryDelay,
     ProviderRetryPolicy,
+    is_agent_lifecycle_failure,
+    is_faux_provider_queue_exhausted,
+    is_permanent_provider_failure_kind,
+    provider_retry_delay,
+    provider_stream_failure_kind,
+    provider_stream_failure_retry_after_ms,
+    provider_stream_failure_status,
 };
 
 /// Sink receiving partial side-question answers while the run streams.
@@ -456,14 +467,16 @@ async fn assistant_turns_after(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use pa_agent::abort::AbortController;
+    use pa_agent::scripted::ScriptedProvider;
+    use pa_agent::types::AgentTool;
+
     use super::super::provider_retry::UNBOUNDED_BACKOFF_MS;
     use super::*;
     use crate::session_engine::tool_bridge::bridge_tool;
     use crate::tools::tool_definition::{ToolDefinition, ToolExecutionResult};
-    use pa_agent::abort::AbortController;
-    use pa_agent::scripted::ScriptedProvider;
-    use pa_agent::types::AgentTool;
-    use std::sync::atomic::AtomicBool;
 
     fn test_model() -> pa_agent::types::Model {
         serde_json::from_value(serde_json::json!({
@@ -668,10 +681,12 @@ mod tests {
         // failure (never retried) and the run fails with.
         assert_eq!(result.status, SideQuestionStatus::Error);
         assert_eq!(provider.calls().len(), 3);
-        assert!(result
-            .error_message
-            .as_deref()
-            .is_some_and(|message| message.contains("ScriptedProvider exhausted")));
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("ScriptedProvider exhausted"))
+        );
     }
 
     #[tokio::test]

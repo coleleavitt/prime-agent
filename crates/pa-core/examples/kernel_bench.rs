@@ -19,12 +19,18 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use pa_core::kernel::bootstrap::{
-    ensure_kernel_python, EnsureKernelPythonOptions, KernelPythonSkill,
+    EnsureKernelPythonOptions,
+    KernelPythonSkill,
+    ensure_kernel_python,
 };
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions,
-    KernelShutdownOptions, KernelSnapshotConfig,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelManagerOptions,
+    KernelShutdownOptions,
+    KernelSnapshotConfig,
 };
 use pa_core::kernel::state_snapshot::{manifest_path_in, snapshot_path_in};
 

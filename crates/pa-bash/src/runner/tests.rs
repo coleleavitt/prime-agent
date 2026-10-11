@@ -178,9 +178,11 @@ fn the_journal_brackets_the_job() {
         .map(|record| record["active"].as_bool().expect("active"))
         .collect();
     assert_eq!(active, vec![true, false]);
-    assert!(records
-        .iter()
-        .all(|record| record["pid"] == job.pid && record["ownerPid"] == 4242));
+    assert!(
+        records
+            .iter()
+            .all(|record| record["pid"] == job.pid && record["ownerPid"] == 4242)
+    );
 }
 
 /// The kernel's sandbox prepared for `workspace` (writable) with nothing

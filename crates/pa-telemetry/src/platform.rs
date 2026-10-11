@@ -7,10 +7,9 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-use crate::properties::Properties;
-
 /// Current schema version stamped on every event (the catalog's version).
 pub use crate::catalog::SCHEMA_VERSION;
+use crate::properties::Properties;
 
 const UNKNOWN: &str = "unknown";
 const MAX_VERSION_LENGTH: usize = 64;

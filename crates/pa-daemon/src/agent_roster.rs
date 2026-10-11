@@ -6,11 +6,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::session_usage::SessionUsageSummary;
 use pa_types::daemon::agent_roster::{
-    classify_summary_value, roster_agent_id_for_summary, slim_roster_summary, AgentRosterEntry,
+    AgentRosterEntry,
+    classify_summary_value,
+    roster_agent_id_for_summary,
+    slim_roster_summary,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
+
+use crate::session_usage::SessionUsageSummary;
 
 /// The supervisor-owned roster. `Write()` classifies once and its file index
 /// converges seed and worker keys.
@@ -456,10 +460,12 @@ fn attach_deleted_descendant_usage(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Mutex;
+
     use pa_types::daemon::agent_roster::AgentRosterStatus;
     use serde_json::json;
-    use std::sync::Mutex;
+
+    use super::*;
 
     /// The store is not Sync-friendly in tests through `&mut`; the
     /// supervisor holds it behind a lock, so tests do too.

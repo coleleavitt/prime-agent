@@ -13,11 +13,15 @@
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use anyhow::{anyhow, Context, Result};
-
+use anyhow::{Context, Result, anyhow};
 use pa_core::auth::{AuthCredential, AuthStorage};
 use pa_core::mcp::{
-    McpLoginUi, McpManager, McpManagerOptions, McpServerConfig, OAuthHttp, ReqwestOAuthHttp,
+    McpLoginUi,
+    McpManager,
+    McpManagerOptions,
+    McpServerConfig,
+    OAuthHttp,
+    ReqwestOAuthHttp,
 };
 use pa_tui::auth_panel::{PastePromptTone, PasteStyle};
 use pa_tui::client_auth::{AuthFuture, ClientAuthCommands};
@@ -293,9 +297,10 @@ impl McpLoginUi for PanelMcpLoginUi {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    use super::*;
 
     /// A scripted transport (exact URL -> response): a plain origin-level
     /// authorization server.

@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use crate::error::SandboxError;
-use crate::gateway::{validate_gateway_credentials, GatewayAuth, MAX_ERROR_BODY_BYTES};
+use crate::gateway::{GatewayAuth, MAX_ERROR_BODY_BYTES, validate_gateway_credentials};
 use crate::proto::{ProtoError, ProtoErrorKind, Reader};
 use crate::transport::{ResponseChunks, SandboxTransport};
 use crate::vm_error::{CommandSessionError, CommandSessionErrorCode};

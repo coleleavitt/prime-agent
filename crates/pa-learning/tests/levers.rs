@@ -10,12 +10,20 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::refinement::prompt_hook::{HarnessPromptHook, HarnessPromptHooks};
-use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
+use pa_core::refinement::ranking::{HarnessStatePromptOptions, format_harness_state_for_prompt};
 use pa_core::refinement::{HarnessEntry, HarnessScope, HarnessState, RefinementKind};
 use pa_learning::{
-    read_trajectory_index, trajectory_index_path, trajectory_prompt_adjustment,
-    write_trajectory_index, LearningFeature, TrajectoryLabel, TrajectoryLabelKind,
-    TrajectoryStoreFile, TrajectoryWindow, DEFAULT_MAX_TRAJECTORY_WINDOWS, TRAJECTORY_INDEX_ENV,
+    DEFAULT_MAX_TRAJECTORY_WINDOWS,
+    LearningFeature,
+    TRAJECTORY_INDEX_ENV,
+    TrajectoryLabel,
+    TrajectoryLabelKind,
+    TrajectoryStoreFile,
+    TrajectoryWindow,
+    read_trajectory_index,
+    trajectory_index_path,
+    trajectory_prompt_adjustment,
+    write_trajectory_index,
 };
 use serde_json::json;
 

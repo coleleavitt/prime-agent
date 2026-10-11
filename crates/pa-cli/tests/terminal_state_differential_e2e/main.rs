@@ -29,21 +29,30 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use harness::{
-    child_options, find_subsequence, harness_lock, quiet_child_epilogue, spawn_child, view_options,
-    ChildSpec, DifferentialHarness, PtyReader, Termios,
+    ChildSpec,
+    DifferentialHarness,
+    PtyReader,
+    Termios,
+    child_options,
+    find_subsequence,
+    harness_lock,
+    quiet_child_epilogue,
+    spawn_child,
+    view_options,
 };
 use ledger::ModeLedger;
-
-use nix::pty::{openpty, Winsize};
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::pty::{Winsize, openpty};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
-
 use pa_tui::agents_view::AgentsViewUiMode;
 use pa_tui::config_selector::{
-    run_config_selector, ConfigSelector, ConfigSelectorOptions, SelectorRow,
+    ConfigSelector,
+    ConfigSelectorOptions,
+    SelectorRow,
+    run_config_selector,
 };
-use pa_tui::interactive::{run_interactive, UiMode};
+use pa_tui::interactive::{UiMode, run_interactive};
 
 /// The kitty flags push (`1|2|4`, the TS `ProcessTerminal` set): the arm
 /// proof every mounted surface must show.

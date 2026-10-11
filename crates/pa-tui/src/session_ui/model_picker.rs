@@ -1,12 +1,29 @@
 //! The `/model` catalog's TTL-gated refresh and landed-catalog fold,
 //! the picker's open/key handling, and the model/thinking-level application
 //! paths.
-use super::{
-    key_event_to_id, streaming_tray_hint, AgentView, ChatEntry, CurrentModel, CycleDirection,
-    DaemonCommand, Duration, KeyEvent, Map, ModelPicker, ModelPickerAction, ModelPickerOptions,
-    ModelSwitchScope, Result, SessionUi, SetModelOutcome, StatusKind, UI_REQUEST_TIMEOUT_MS,
-};
 use serde_json::Value;
+
+use super::{
+    AgentView,
+    ChatEntry,
+    CurrentModel,
+    CycleDirection,
+    DaemonCommand,
+    Duration,
+    KeyEvent,
+    Map,
+    ModelPicker,
+    ModelPickerAction,
+    ModelPickerOptions,
+    ModelSwitchScope,
+    Result,
+    SessionUi,
+    SetModelOutcome,
+    StatusKind,
+    UI_REQUEST_TIMEOUT_MS,
+    key_event_to_id,
+    streaming_tray_hint,
+};
 
 /// How long a fetched model catalog stays fresh; a `/model` open past it
 /// refreshes again in the background.

@@ -5,7 +5,9 @@
 //! downgrades the images.
 
 use pa_core::session_engine::provider_adapter::{
-    json_round_trip, map_thinking_level, ProviderTarget,
+    ProviderTarget,
+    json_round_trip,
+    map_thinking_level,
 };
 use pa_types::sync::{MutexExt, RwLockExt};
 
@@ -226,9 +228,9 @@ impl AgentSessionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_engine::{tests::FAUX_TEST_LOCK, AgentEngineConfig};
-    use crate::engine::SessionEngine as _;
-    use crate::engine::{EngineEvent, EngineModelSelection, PromptRequest};
+    use crate::agent_engine::AgentEngineConfig;
+    use crate::agent_engine::tests::FAUX_TEST_LOCK;
+    use crate::engine::{EngineEvent, EngineModelSelection, PromptRequest, SessionEngine as _};
 
     fn write_image_pair_models_json(agent_dir: &std::path::Path) {
         std::fs::create_dir_all(agent_dir).unwrap();

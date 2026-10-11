@@ -3,14 +3,20 @@
 
 use std::sync::Arc;
 
+use serde_json::json;
+
 use crate::tools::edit_diff::{
-    apply_edits_to_normalized_content, detect_line_ending, generate_diff_string_default,
-    normalize_to_lf, restore_line_endings, strip_bom, Edit,
+    Edit,
+    apply_edits_to_normalized_content,
+    detect_line_ending,
+    generate_diff_string_default,
+    normalize_to_lf,
+    restore_line_endings,
+    strip_bom,
 };
 use crate::tools::file_mutation_queue::with_file_mutation_queue;
 use crate::tools::path_utils::resolve_to_cwd;
 use crate::tools::tool_definition::{ToolContentBlock, ToolDefinition, ToolExecutionResult};
-use serde_json::json;
 
 pub fn edit_tool_schema() -> serde_json::Value {
     json!({

@@ -2,9 +2,9 @@
 //! machine, the digest-deduped stable id, the uncertain restore, and
 //! the compaction rewrite.
 
-use pa_types::daemon::cloud::{cloud_request_digest, CloudCommandState};
+use pa_types::daemon::cloud::{CloudCommandState, cloud_request_digest};
 
-use crate::cloud_guest::journal::{parse_claimed_request, GuestAdmission, GuestCommandJournal};
+use crate::cloud_guest::journal::{GuestAdmission, GuestCommandJournal, parse_claimed_request};
 
 fn prompt_request_value(text: &str) -> serde_json::Value {
     serde_json::json!({"kind": "prompt", "text": text})
@@ -193,14 +193,18 @@ fn settle_bounds_match_the_wire_limits() {
         .admit("cmd_one", &prompt_request_value("turn"))
         .unwrap();
     assert!(journal.complete("cmd_one", Some("")).is_err());
-    assert!(journal
-        .complete("cmd_one", Some(&"x".repeat(2049)))
-        .is_err());
+    assert!(
+        journal
+            .complete("cmd_one", Some(&"x".repeat(2049)))
+            .is_err()
+    );
     assert!(journal.fail("cmd_one", Some("")).is_err());
     assert!(journal.fail("cmd_one", Some(&"x".repeat(2049))).is_err());
-    assert!(journal
-        .receipt("cmd_one")
-        .is_some_and(|receipt| receipt.state == CloudCommandState::Accepted));
+    assert!(
+        journal
+            .receipt("cmd_one")
+            .is_some_and(|receipt| receipt.state == CloudCommandState::Accepted)
+    );
 }
 
 #[test]

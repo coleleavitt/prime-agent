@@ -13,25 +13,41 @@ use std::time::Duration;
 use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext};
 use pa_core::refinement::executor::RefinerFn;
 use pa_core::refinement::gate::RefinementGating;
-use pa_core::refinement::{load_harness_state, HarnessScope, RefinementKind, RefinementResult};
+use pa_core::refinement::{HarnessScope, RefinementKind, RefinementResult, load_harness_state};
 use pa_core::session::manager::SessionManager;
 use pa_core::session_engine::refine::{
-    execute_refinement_gated, RefineOptions, RefinementSource, RefinementTranscript,
+    RefineOptions,
+    RefinementSource,
+    RefinementTranscript,
+    execute_refinement_gated,
 };
 use pa_core::session_engine::turn_boundary::{
-    PendingRefine, RefineRequester, RefineTrigger, TurnBoundaryRequests,
+    PendingRefine,
+    RefineRequester,
+    RefineTrigger,
+    TurnBoundaryRequests,
 };
 use pa_ledger::{
-    fingerprint_tool_result_text, format_recurrence_refine_instructions, recurring_failures,
-    FailureLedgerFeature, HarnessDocument, LedgerOptions, ReplayCase,
+    FailureLedgerFeature,
+    HarnessDocument,
+    LedgerOptions,
+    ReplayCase,
+    fingerprint_tool_result_text,
+    format_recurrence_refine_instructions,
+    recurring_failures,
 };
 use pa_ravo::{
-    RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner,
-    RAVO_BASELINE_CHANGED_RATIONALE, RAVO_GATE_DECISION_EVENT,
+    RAVO_BASELINE_CHANGED_RATIONALE,
+    RAVO_GATE_DECISION_EVENT,
+    RavoFeature,
+    RavoOptions,
+    ReplayEnvironment,
+    ReplayOutcome,
+    ReplayRunner,
 };
 use pa_telemetry::Properties;
 use pa_types::ai::{AssistantContentBlock, AssistantMessage, Model, StopReason, TextContent};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// No replay ever runs in these sessions' proposals (memory edits only).
 struct NeverRuns;
@@ -204,10 +220,12 @@ impl Session {
             .ravo
             .refinement_gate(&self.context)
             .expect("the feature offers a gate");
-        let messages = vec![serde_json::from_value(
-            json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
-        )
-        .unwrap()];
+        let messages = vec![
+            serde_json::from_value(
+                json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
+            )
+            .unwrap(),
+        ];
         execute_refinement_gated(
             &mut self.manager,
             RefinementTranscript {
@@ -562,10 +580,10 @@ async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
 async fn a_global_refine_takes_the_harness_state_lock() {
     let mut session = session();
     let gate = session.ravo.refinement_gate(&session.context).unwrap();
-    let messages = vec![serde_json::from_value(
-        json!({ "role": "user", "content": "do it twice", "timestamp": 1 }),
-    )
-    .unwrap()];
+    let messages = vec![
+        serde_json::from_value(json!({ "role": "user", "content": "do it twice", "timestamp": 1 }))
+            .unwrap(),
+    ];
     let gating = || RefinementGating {
         gate: Arc::clone(&gate),
         model_call: scripted(
@@ -698,11 +716,13 @@ async fn failures_queue_their_own_refines_and_repairs() {
             "triggerFingerprintIds": [fingerprint]
         })
     );
-    assert!(repair
-        .instructions
-        .as_deref()
-        .unwrap()
-        .starts_with("Automatic refine triggered by regression"));
+    assert!(
+        repair
+            .instructions
+            .as_deref()
+            .unwrap()
+            .starts_with("Automatic refine triggered by regression")
+    );
     let options = RefineOptions {
         trigger: repair.trigger.clone(),
         instructions: repair.instructions.clone(),

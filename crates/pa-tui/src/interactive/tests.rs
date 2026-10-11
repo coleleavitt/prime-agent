@@ -1,8 +1,9 @@
 //! The interactive loop's unit battery: the shutdown-recovery constants, the headless settle gate,
 //! and the exit restore contract.
 
-use super::*;
 use std::collections::HashSet;
+
+use super::*;
 
 #[tokio::test]
 async fn headless_error_returns_never_touch_the_terminal() {

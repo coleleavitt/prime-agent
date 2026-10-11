@@ -14,12 +14,14 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::json;
 use super::projection::{
-    assert_run_terminalized_outcome_equality, validate_projection_semantics, Projection,
+    Projection,
     ProjectionKind,
+    assert_run_terminalized_outcome_equality,
+    validate_projection_semantics,
 };
 use super::wire::{self, Def, WireError};
 
@@ -981,7 +983,7 @@ fn reduce_controller_fact(
             return reject(
                 ReducerCode::ControllerFactUnknown,
                 format!("unknown controller fact type {other}"),
-            )
+            );
         }
     }
     Ok(next)
@@ -1247,7 +1249,7 @@ fn reduce_host_fact(
             return reject(
                 ReducerCode::HostFactUnknown,
                 format!("unknown host fact type {other}"),
-            )
+            );
         }
     }
     Ok(next)

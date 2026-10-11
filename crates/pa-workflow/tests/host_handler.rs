@@ -9,17 +9,24 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use pa_ai::faux::{
-    faux_assistant_message, faux_text, register_faux_provider, FauxAssistantMessageOptions,
-    FauxProviderRegistration, FauxResponseStep, RegisterFauxProviderOptions,
+    FauxAssistantMessageOptions,
+    FauxProviderRegistration,
+    FauxResponseStep,
+    RegisterFauxProviderOptions,
+    faux_assistant_message,
+    faux_text,
+    register_faux_provider,
 };
 use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{
-    with_host_request_cancellation, HostRequestHandlers, HostRequestPayload,
+    HostRequestHandlers,
+    HostRequestPayload,
+    with_host_request_cancellation,
 };
 use pa_core::session_engine::telemetry::TelemetryWiring;
 use pa_telemetry::{MockSink, TelemetryClient, TelemetryClientConfig, TelemetrySink};
 use pa_workflow::WorkflowFeature;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const MODEL_ID: &str = "faux-1";
 
@@ -453,8 +460,10 @@ async fn a_cancelled_request_settles_without_provider_io_and_is_recorded() {
             })
         )
     );
-    assert!(event
-        .properties
-        .get("duration_ms")
-        .is_some_and(Value::is_u64));
+    assert!(
+        event
+            .properties
+            .get("duration_ms")
+            .is_some_and(Value::is_u64)
+    );
 }

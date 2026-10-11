@@ -29,20 +29,24 @@
 //! uses, and a receipt exists only after the target admitted the
 //! message.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use pa_types::daemon::cloud::{CloudAgentMessageReceipt, CloudFamilyRow, CloudFamilyRowStatus};
-use serde_json::{json, Map, Value};
+use pa_types::daemon::cloud::{
+    CloudAgentMessageReceipt,
+    CloudFamilyEvent,
+    CloudFamilyEventPayload,
+    CloudFamilyRow,
+    CloudFamilyRowStatus,
+};
+use serde_json::{Map, Value, json};
 
-use pa_types::daemon::cloud::{CloudFamilyEvent, CloudFamilyEventPayload};
-
-use super::family::{agent_family_relationship, family_row_from_summary, AGENT_FAMILY_REACH_ERROR};
+use super::family::{AGENT_FAMILY_REACH_ERROR, agent_family_relationship, family_row_from_summary};
 use super::inbox::CloudInboxLog;
 use super::{AgentMessageLookup, CloudDeliveryError, CloudFamilyDelivery, IncomingCloudMessage};
 use crate::lease::canonical_session_path;
 use crate::registry::ResidentWorker;
 use crate::supervisor::Supervisor;
-use std::path::Path;
 
 /// The worker round-trip budget for the delivery route (TS
 /// `WORKER_REQUEST_TIMEOUT_MS`).

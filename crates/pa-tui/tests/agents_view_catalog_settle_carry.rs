@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
 use pa_tui::interactive::SessionSelection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The catalog request is held long enough that a keyed step lands while the load is still in
 /// flight (the pre-load Enter that arms the hint).

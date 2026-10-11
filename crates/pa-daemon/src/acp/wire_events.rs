@@ -8,11 +8,16 @@
 //! the TS switch's default arm.
 
 use serde::Deserialize as _;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::meta::{prime_agent_meta, PrimeAgentCompactionMeta, PrimeAgentSessionMeta};
+use super::meta::{PrimeAgentCompactionMeta, PrimeAgentSessionMeta, prime_agent_meta};
 use super::types::{
-    AcpSessionUpdate, AcpToolKind, AcpToolStatus, TextBlock, ToolCallContent, UserContentBlock,
+    AcpSessionUpdate,
+    AcpToolKind,
+    AcpToolStatus,
+    TextBlock,
+    ToolCallContent,
+    UserContentBlock,
 };
 
 /// The model-facing Python REPL tool.
@@ -1070,11 +1075,13 @@ mod tests {
         }))
         .expect("assistant message_end");
         assert_eq!(stop.stop_reason, Some(pa_types::ai::StopReason::Length));
-        assert!(assistant_stop(&json!({
-            "type": "message_end",
-            "message": { "role": "user" },
-        }))
-        .is_none());
+        assert!(
+            assistant_stop(&json!({
+                "type": "message_end",
+                "message": { "role": "user" },
+            }))
+            .is_none()
+        );
     }
 
     #[test]
@@ -1371,11 +1378,13 @@ mod tests {
             1_000
         )
         .is_none());
-        assert!(usage_update(
-            &end(json!({ "role": "user", "usage": { "totalTokens": 5 } })),
-            1_000
-        )
-        .is_none());
+        assert!(
+            usage_update(
+                &end(json!({ "role": "user", "usage": { "totalTokens": 5 } })),
+                1_000
+            )
+            .is_none()
+        );
         assert!(usage_update(&json!({ "type": "agent_end" }), 1_000).is_none());
     }
 }

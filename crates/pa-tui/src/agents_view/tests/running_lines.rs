@@ -218,10 +218,11 @@ fn live_transitions_update_the_one_line_and_keep_the_selection() {
         .find(|row| row.kind == RowKind::SubagentSummary)
         .expect("the ONE line");
     assert_eq!(line.title, "4 subagents (2 running)");
-    assert!(mode
-        .rows
-        .iter()
-        .any(|row| row.identity == selected_identity && row.section == Section::Running));
+    assert!(
+        mode.rows
+            .iter()
+            .any(|row| row.identity == selected_identity && row.section == Section::Running)
+    );
     assert_eq!(mode.rows[mode.selected].identity, selected_identity);
 }
 

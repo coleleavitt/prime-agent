@@ -17,25 +17,33 @@ use std::time::Duration;
 
 use serde_json::json;
 use wayland_client::backend::{ObjectId, WaylandError};
-use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
+use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_output, wl_pointer, wl_registry, wl_seat};
 use wayland_client::{
-    delegate_noop, Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle,
+    Connection,
+    Dispatch,
+    DispatchError,
+    EventQueue,
+    Proxy,
+    QueueHandle,
+    delegate_noop,
 };
-use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
-    zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
-    zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
-};
-use wayland_protocols_wlr::virtual_pointer::v1::client::{
-    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
-    zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
-};
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
+use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
+use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
 use super::input::{
-    groups, keymap_text, Availability, KeyStroke, PointerTarget, VirtualInput, FIRST_KEYCODE,
+    Availability,
+    FIRST_KEYCODE,
+    KeyStroke,
+    PointerTarget,
+    VirtualInput,
+    groups,
+    keymap_text,
 };
 use crate::element::Pair;
-use crate::error::{head, injection_failed, unsupported, ComputerUseError, Result, ERROR_LIMIT};
+use crate::error::{ComputerUseError, ERROR_LIMIT, Result, head, injection_failed, unsupported};
 use crate::platform::{MouseButton, ScrollDirection};
 use crate::pyfmt::repr_str;
 

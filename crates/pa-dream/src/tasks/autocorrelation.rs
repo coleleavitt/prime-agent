@@ -6,7 +6,7 @@
 //! autoconvolution of a step function is piecewise linear, so it peaks at a
 //! knot). The uniform root scores 0.5.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::circle_packing::{move_count, refine_depth};
 use crate::json::number;

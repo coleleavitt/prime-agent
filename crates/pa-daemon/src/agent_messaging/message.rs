@@ -2,9 +2,21 @@
 //! delivery through the supervisor, the direct peer transport with the
 //! supervisor-routed fallback, and the wire receipt mapping.
 use super::{
-    json, row_is_child, row_is_parent, row_is_sibling, row_str, AgentFamilyMember,
-    AgentFamilyRelationship, AgentMessageController, AgentMessageDeliveryStatus,
-    AgentMessageReceipt, AgentMessageSendInput, Arc, FamilyIdentity, SupervisorLink, Value,
+    AgentFamilyMember,
+    AgentFamilyRelationship,
+    AgentMessageController,
+    AgentMessageDeliveryStatus,
+    AgentMessageReceipt,
+    AgentMessageSendInput,
+    Arc,
+    FamilyIdentity,
+    SupervisorLink,
+    Value,
+    json,
+    row_is_child,
+    row_is_parent,
+    row_is_sibling,
+    row_str,
 };
 
 /// `agent_message.send` controller for daemon workers: the family roster and message

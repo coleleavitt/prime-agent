@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use pa_types::daemon::update_flow::{
-    socket_update_dir, update_intent_path, update_status_path, UpdateId, UpdateIntent,
+    UpdateId,
+    UpdateIntent,
+    socket_update_dir,
+    update_intent_path,
+    update_status_path,
 };
 
 /// What `Acquire` found.

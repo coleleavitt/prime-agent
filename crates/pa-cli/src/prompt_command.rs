@@ -1,7 +1,7 @@
 //! `prime-agent prompt`: dump the fully-assembled effective system prompt with
 //! its per-layer breakdown, without starting a session or a provider.
 
-use pa_core::resources::{load_resources, ResourceLoaderOptions};
+use pa_core::resources::{ResourceLoaderOptions, load_resources};
 use pa_core::settings::SettingsManager;
 
 use crate::config::get_agent_dir;
@@ -238,12 +238,16 @@ mod tests {
         let (breakdown, errors) = assemble_breakdown(dir.path(), Some("mock/mock-1")).unwrap();
         assert!(errors.is_empty());
         assert!(breakdown.assembled.starts_with("# prime-agent harness"));
-        assert!(breakdown
-            .assembled
-            .contains("Recursive agent depth: 0 (root)"));
-        assert!(breakdown
-            .assembled
-            .contains("Conversation log: not persisted"));
+        assert!(
+            breakdown
+                .assembled
+                .contains("Recursive agent depth: 0 (root)")
+        );
+        assert!(
+            breakdown
+                .assembled
+                .contains("Conversation log: not persisted")
+        );
         // Every static segment sits inside the cached prefix.
         for segment in &breakdown.segments {
             let inside = breakdown

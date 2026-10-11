@@ -11,14 +11,34 @@ use std::rc::Rc;
 
 use super::value::{self, Arg, Lookup, Piece, Resolve, Unknown, Var, Vars};
 use super::{
-    Capture, Cwd, Input, Invocation, Layer, Model, Opaque, OpaqueKind, Output, Stage, Via,
+    Capture,
+    Cwd,
+    Input,
+    Invocation,
+    Layer,
+    Model,
+    Opaque,
+    OpaqueKind,
+    Output,
+    Stage,
+    Via,
 };
 use crate::context::GuardContext;
 use crate::syntax::ast::{
-    AndOr, AssignValue, Assignment, Command, Connector, List, Part, Pipeline, Redirect, RedirectOp,
-    SimpleCommand, Word,
+    AndOr,
+    AssignValue,
+    Assignment,
+    Command,
+    Connector,
+    List,
+    Part,
+    Pipeline,
+    Redirect,
+    RedirectOp,
+    SimpleCommand,
+    Word,
 };
-use crate::syntax::parse::{parse, NEW_DESCRIPTOR};
+use crate::syntax::parse::{NEW_DESCRIPTOR, parse};
 
 /// Nested code (payloads, scripts, here-documents fed to shells, function
 /// calls) deeper than this stays opaque.

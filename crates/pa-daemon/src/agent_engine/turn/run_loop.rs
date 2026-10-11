@@ -1,10 +1,19 @@
 //! The turn loop: the queue-mode mapping, the turn runner over the
 //! admission/boundary/once machinery, and the session-agent constructor.
-use super::{
-    AgentSessionEngine, AutoCompactionRun, BoundaryRun, EngineEvent, GoalBoundary, Model,
-    OverflowArmRun, TurnAdmission, TurnPrompt, TurnResult,
-};
 use pa_types::sync::MutexExt;
+
+use super::{
+    AgentSessionEngine,
+    AutoCompactionRun,
+    BoundaryRun,
+    EngineEvent,
+    GoalBoundary,
+    Model,
+    OverflowArmRun,
+    TurnAdmission,
+    TurnPrompt,
+    TurnResult,
+};
 
 impl AgentSessionEngine {
     /// Map a wire/settings queue mode ("all"/"one-at-a-time") onto the

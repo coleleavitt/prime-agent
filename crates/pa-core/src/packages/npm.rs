@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::process::run_command_capture;
 use super::source::{NpmSource, SourceScope};

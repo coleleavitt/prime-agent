@@ -3,16 +3,15 @@
 //! its UNCHANGED active session id; the descriptor, persisted record, and
 //! binding table follow the roster under the descriptor lock (older never wins).
 
-use pa_types::sync::MutexExt;
 use std::sync::Arc;
 
 use pa_types::daemon::DaemonWorkerDescriptor;
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 use tokio::sync::MutexGuard;
 
-use crate::registry::ResidentWorker;
-
 use super::Supervisor;
+use crate::registry::ResidentWorker;
 
 /// The retry cadence: doubling to the 5s cap (a slow-but-alive worker's boot pull
 /// times out; the retry converges on its answer).

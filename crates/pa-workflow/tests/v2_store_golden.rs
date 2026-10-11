@@ -16,11 +16,19 @@ mod v2_support;
 
 use std::path::Path;
 
-use pa_workflow::v2::store::{Store, STORE_FILE_NAME};
-use serde_json::{json, Value};
+use pa_workflow::v2::store::{STORE_FILE_NAME, Store};
+use serde_json::{Value, json};
 use v2_support::{
-    acknowledgement_from_json, aggregate_json, claimed_json, effect_from_json, error_json,
-    events_json, fixture, read_json, TestClock, SCOPE,
+    SCOPE,
+    TestClock,
+    acknowledgement_from_json,
+    aggregate_json,
+    claimed_json,
+    effect_from_json,
+    error_json,
+    events_json,
+    fixture,
+    read_json,
 };
 
 /// Run one scenario step against the Rust store, answering the TS-shaped

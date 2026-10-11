@@ -4,9 +4,9 @@
 //! chunk's `messages` array stays under a byte budget. A failure after the
 //! streamed response surfaces as `session_snapshot_failed`.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pa_types::daemon::SnapshotPurpose;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Byte budget for one chunk's serialized `messages` array. Mirrors the
 /// product default (`SNAPSHOT_TARGET_CHUNK_BYTES`).
@@ -170,7 +170,7 @@ pub(crate) fn stream_attach(
             return Err(anyhow!(
                 "Session attach result has a malformed messages payload: {}",
                 json_type_name(other)
-            ))
+            ));
         }
     }
     object.insert(
@@ -234,7 +234,7 @@ fn snapshot_event_lines(
                 active_session_id,
                 &stream.id,
                 "Session worker did not provide a snapshot transcript",
-            ))
+            ));
         }
         other => {
             return SnapshotStreamEvents::Failed(failed_line(
@@ -244,7 +244,7 @@ fn snapshot_event_lines(
                     "Session snapshot has a malformed messages payload: {}",
                     json_type_name(other)
                 ),
-            ))
+            ));
         }
     };
     let snapshot_header = data.get("snapshot").cloned().unwrap_or_else(|| json!({}));
@@ -490,20 +490,24 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("messageCount");
-        assert!(stream_attach(data, "s1", SnapshotPurpose::Attach)
-            .unwrap_err()
-            .to_string()
-            .contains("message count"));
+        assert!(
+            stream_attach(data, "s1", SnapshotPurpose::Attach)
+                .unwrap_err()
+                .to_string()
+                .contains("message count")
+        );
         let mut data = attach_result(&[]);
         data.as_object_mut().unwrap().remove("lastEventCursor");
         data["snapshot"]
             .as_object_mut()
             .unwrap()
             .remove("lastEventCursor");
-        assert!(stream_attach(data, "s1", SnapshotPurpose::Attach)
-            .unwrap_err()
-            .to_string()
-            .contains("event cursor"));
+        assert!(
+            stream_attach(data, "s1", SnapshotPurpose::Attach)
+                .unwrap_err()
+                .to_string()
+                .contains("event cursor")
+        );
     }
 
     #[test]

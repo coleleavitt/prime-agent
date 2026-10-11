@@ -4,9 +4,10 @@
 //! The holder is usually the other product (named best-effort from its
 //! pid); the refusal stays actionable and every refused create is logged.
 
-use crate::lease::SessionAlreadyActiveError;
-use crate::protocol::{response_failure, DaemonResponse};
 use std::path::Path;
+
+use crate::lease::SessionAlreadyActiveError;
+use crate::protocol::{DaemonResponse, response_failure};
 
 /// The live holder of a refused session file, as the lease record names it:
 /// the pid and, when recorded, the active session id.
@@ -388,8 +389,9 @@ pub(crate) fn create_failure_response(error: &anyhow::Error) -> DaemonResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_types::daemon::DaemonErrorInfo;
+
+    use super::*;
 
     /// No third "open a different session" option: the user is already
     /// in the picker (operator-directed, 2026-09-24).

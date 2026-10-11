@@ -7,7 +7,7 @@ use pa_types::session::CustomMessage;
 
 use super::engine::SessionEngine;
 use super::goal_driver::UsageOutcome;
-use crate::goals::{create_goal_context_message, GoalContextKind, GoalStatus};
+use crate::goals::{GoalContextKind, GoalStatus, create_goal_context_message};
 
 /// Convert one custom row to its loop form via the shared wire shape, for
 /// embeddings that admit minted goal rows through the continuation hook.

@@ -1,8 +1,9 @@
 //! The goal/max-depth runtime core: the durable `rlm_max_depth_state`
 //! writes, the goal-runtime mirror adopted onto each built session, and
 //! the `goal_update` emission family.
-use super::{json, AgentSessionEngine, CoreSessionEngine, EngineEvent, GoalRuntimeHandles, Value};
 use pa_types::sync::MutexExt;
+
+use super::{AgentSessionEngine, CoreSessionEngine, EngineEvent, GoalRuntimeHandles, Value, json};
 
 impl AgentSessionEngine {
     /// Write the durable `rlm_max_depth_state` entry: straight into the

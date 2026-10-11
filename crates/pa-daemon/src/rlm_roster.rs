@@ -6,14 +6,17 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::lease::canonical_session_path;
 use crate::rlm_ledger::{
-    read_legacy_registry, read_rlm_subagent_display, LegacyRlmSubagentEntry, RlmLedgerEdge,
+    LegacyRlmSubagentEntry,
+    RlmLedgerEdge,
     RlmSpawnLedger,
+    read_legacy_registry,
+    read_rlm_subagent_display,
 };
-use crate::session_store::{read_session_info, SessionInfo};
+use crate::session_store::{SessionInfo, read_session_info};
 
 /// Hydration metadata fields beyond the edge (prompt, model, node ids):
 /// display-grade, never topology.
@@ -230,10 +233,12 @@ pub fn passive_child_info(child: &PassiveRlmChild) -> SessionInfo {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use serde_json::json;
+
     use super::*;
     use crate::rlm_ledger::{RlmLedgerDeleteReason, RlmSpawnInput};
-    use serde_json::json;
-    use std::fs;
 
     fn temp_dir(name: &str) -> crate::test_support::TestDir {
         crate::test_support::TestDir::new(&format!("pa-roster-{name}-"))
@@ -288,9 +293,11 @@ mod tests {
             metadata: RlmChildMetadata::default(),
             parent_active_session_id: None,
         };
-        assert!(passive_child_summary(&plain_row)
-            .get("thinkingLevel")
-            .is_none());
+        assert!(
+            passive_child_summary(&plain_row)
+                .get("thinkingLevel")
+                .is_none()
+        );
     }
 
     #[test]

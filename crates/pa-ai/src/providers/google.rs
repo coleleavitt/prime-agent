@@ -2,33 +2,50 @@
 //! `streamGenerateContent` SSE streaming, thinking config (levels for Gemini 3, budgets for Gemini
 //! 2.5), tool config, and usage accounting.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::google_shared::{
-    budget_effort, convert_messages, convert_tools, get_disabled_thinking_config,
-    get_google_thinking_budget, get_thinking_level, API_GOOGLE_GENERATIVE_AI,
+    API_GOOGLE_GENERATIVE_AI,
+    budget_effort,
+    convert_messages,
+    convert_tools,
+    get_disabled_thinking_config,
+    get_google_thinking_budget,
+    get_thinking_level,
 };
 use crate::providers::google_stream::GoogleStreamState;
 use crate::providers::simple_options::build_base_options;
 use crate::registry::Provider;
 use crate::types::{
-    done_reason, error_reason, AssistantMessage, Context, Model, ModelThinkingLevel,
-    SimpleStreamOptions, StopReason, StreamOptions, Usage,
+    AssistantMessage,
+    Context,
+    Model,
+    ModelThinkingLevel,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Usage,
+    done_reason,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::parse_json_with_repair;
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
-    format_stream_failure_message, record_stream_failure, stream_failure_from_stop_reason,
     ProviderError,
+    format_stream_failure_message,
+    record_stream_failure,
+    stream_failure_from_stop_reason,
 };
 
 /// Thinking configuration for the provider options.

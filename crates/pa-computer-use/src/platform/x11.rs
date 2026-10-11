@@ -20,24 +20,40 @@ mod tree;
 use std::time::Duration;
 
 use serde_json::json;
+use tree::{Window, parse_tree};
 
 use crate::capture::CaptureDir;
-use crate::element::{Element, Observation, Pair, Rect, MAX_DEPTH, MAX_ELEMENTS};
+use crate::element::{Element, MAX_DEPTH, MAX_ELEMENTS, Observation, Pair, Rect};
 use crate::error::{
-    head, injection_failed, invalid, not_running, transport, ComputerUseError, Result, ERROR_LIMIT,
+    ComputerUseError,
+    ERROR_LIMIT,
+    Result,
+    head,
+    injection_failed,
+    invalid,
+    not_running,
+    transport,
 };
 use crate::keymap::{Modifier, ParsedChord};
 use crate::permissions::PermissionReport;
-use crate::platform::logind;
 use crate::platform::{
-    AppEntry, CaptureRequest, Captured, Discovery, Fingerprint, MouseButton, Platform,
-    PlatformKind, ScrollDirection, Target, WindowCandidate, WindowDirectory,
+    AppEntry,
+    CaptureRequest,
+    Captured,
+    Discovery,
+    Fingerprint,
+    MouseButton,
+    Platform,
+    PlatformKind,
+    ScrollDirection,
+    Target,
+    WindowCandidate,
+    WindowDirectory,
+    logind,
 };
-use crate::process::{optional_tool, run_tool, CommandOutput, Tools, TOOL_TIMEOUT};
+use crate::process::{CommandOutput, TOOL_TIMEOUT, Tools, optional_tool, run_tool};
 use crate::secure::Security;
-use crate::spec::{is_blank, AppSpec, SpecKey, SpecShape};
-
-use tree::{parse_tree, Window};
+use crate::spec::{AppSpec, SpecKey, SpecShape, is_blank};
 
 const TYPE_DELAY_MS: u32 = 12;
 const WHEEL_CLICKS_PER_PAGE: u32 = 10;

@@ -6,12 +6,12 @@
 
 use std::pin::Pin;
 
+use crate::Line;
 use crate::fuzzy::fuzzy_filter;
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::{key_hint, menu_row, search_field_lines};
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
-use crate::Line;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthType {
@@ -399,14 +399,14 @@ impl ProviderAuthSelector {
             // `MenuPanel` inline chrome: the borderMuted rule and the muted
             // one-space title (the content's own `startContent` blank opens the body).
             lines.push(vec![
-                theme.fg_span(ThemeColor::BorderMuted, "─".repeat(width.max(1)))
+                theme.fg_span(ThemeColor::BorderMuted, "─".repeat(width.max(1))),
             ]);
             lines.push(vec![
-                theme.fg_span(ThemeColor::Muted, format!(" {}", self.title()))
+                theme.fg_span(ThemeColor::Muted, format!(" {}", self.title())),
             ]);
             if !self.subtitle().is_empty() {
                 lines.push(vec![
-                    theme.fg_span(ThemeColor::Muted, format!(" {}", self.subtitle()))
+                    theme.fg_span(ThemeColor::Muted, format!(" {}", self.subtitle())),
                 ]);
             }
         }
@@ -504,7 +504,7 @@ impl ProviderAuthSelector {
                 if let Some(status) = provider.status {
                     lines.push(Vec::new());
                     lines.push(vec![
-                        theme.fg_span(ThemeColor::Muted, format!(" {}", status.label))
+                        theme.fg_span(ThemeColor::Muted, format!(" {}", status.label)),
                     ]);
                 }
             }
@@ -521,7 +521,7 @@ impl ProviderAuthSelector {
         lines.push(vec![theme.fg_span(ThemeColor::Muted, format!("  {hints}"))]);
         if framed {
             lines.push(vec![
-                theme.fg_span(ThemeColor::Border, "─".repeat(width.max(1)))
+                theme.fg_span(ThemeColor::Border, "─".repeat(width.max(1))),
             ]);
         } else {
             // One blank line below the hint (the pickers' grammar).
@@ -817,9 +817,11 @@ mod tests {
             !text.iter().any(|row| row.trim() == "Providers"),
             "no title row rides the login menu: {text:?}"
         );
-        assert!(!text
-            .iter()
-            .any(|row| row.contains("Connect with a subscription or API key.")));
+        assert!(
+            !text
+                .iter()
+                .any(|row| row.contains("Connect with a subscription or API key."))
+        );
         assert!(!text.iter().any(|row| row.contains("MCP Connections")));
         assert!(text.iter().any(|row| row.contains("OpenAI · api key")));
         assert!(
@@ -851,9 +853,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.iter().any(|row| row.contains("Saved Credentials")));
-        assert!(text
-            .iter()
-            .any(|row| row.contains("Choose a credential to remove.")));
+        assert!(
+            text.iter()
+                .any(|row| row.contains("Choose a credential to remove."))
+        );
         assert_eq!(
             selector.handle_key("enter", &kb()),
             AuthSelectorAction::Logout { provider: openai() }
@@ -915,8 +918,9 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(text
-            .iter()
-            .any(|row| row.contains("No providers available")));
+        assert!(
+            text.iter()
+                .any(|row| row.contains("No providers available"))
+        );
     }
 }

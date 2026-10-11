@@ -1,6 +1,7 @@
-use super::*;
 use pa_agent::agent::{AgentInitialState, AgentOptions};
 use pa_agent::scripted::ScriptedProvider;
+
+use super::*;
 
 fn test_model() -> pa_agent::types::Model {
     serde_json::from_value(serde_json::json!({

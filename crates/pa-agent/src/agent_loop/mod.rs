@@ -7,9 +7,18 @@ use std::sync::Arc;
 
 use crate::abort::AbortSignal;
 use crate::types::{
-    AfterToolCallContext, AfterToolCallResult, AgentEvent, AgentMessage, BeforeToolCallContext,
-    BeforeToolCallResult, GetContinuationMessagesContext, Message, Model,
-    ShouldStopAfterTurnContext, ThinkingLevel, ToolExecutionMode,
+    AfterToolCallContext,
+    AfterToolCallResult,
+    AgentEvent,
+    AgentMessage,
+    BeforeToolCallContext,
+    BeforeToolCallResult,
+    GetContinuationMessagesContext,
+    Message,
+    Model,
+    ShouldStopAfterTurnContext,
+    ThinkingLevel,
+    ToolExecutionMode,
 };
 
 /// Sink receiving the loop's events. The loop awaits every emission, so

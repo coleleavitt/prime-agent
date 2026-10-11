@@ -1,13 +1,20 @@
 //! LLM-facing message conversion (TS `convertToLlm` plus the message
 //! presentation constants).
 
-use super::agent_messaging::sanitize_message_header_value;
-use crate::cron::AgentCronJob;
+use std::fmt::Write as _;
+
 use pa_types::ai::{
-    AssistantMessage, TextContent, ToolResultMessage, UserContent, UserContentBlock, UserMessage,
+    AssistantMessage,
+    TextContent,
+    ToolResultMessage,
+    UserContent,
+    UserContentBlock,
+    UserMessage,
 };
 use pa_types::session::AgentMessage;
-use std::fmt::Write as _;
+
+use super::agent_messaging::sanitize_message_header_value;
+use crate::cron::AgentCronJob;
 
 pub const COMPACTION_SUMMARY_PREFIX: &str = "[compaction-summary]\n\nThe conversation history before this point was compacted into the following summary.\nThe retained messages below are authoritative; this summary may lag behind them.\n\n<summary>\n";
 pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
@@ -17,7 +24,8 @@ pub const HARNESS_DIGEST_PREFIX: &str = "[harness-digest]\n\nThe persistent memo
 pub const HARNESS_DIGEST_SUFFIX: &str = "\n</harness_state>";
 
 pub use pa_types::slash_commands::{
-    SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
+    SESSION_SLASH_COMMAND_CUSTOM_TYPE,
+    SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";

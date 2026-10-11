@@ -14,23 +14,48 @@ use std::path::Path;
 use std::ptr::NonNull;
 use std::time::Duration;
 
-use objc2::rc::Retained;
 use objc2::AnyThread;
+use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSApplicationActivationOptions, NSApplicationActivationPolicy, NSPasteboard, NSWorkspace,
+    NSApplicationActivationOptions,
+    NSApplicationActivationPolicy,
+    NSPasteboard,
+    NSWorkspace,
 };
 use objc2_application_services::{
-    kAXTrustedCheckOptionPrompt, AXError, AXIsProcessTrustedWithOptions, AXUIElement,
-    AXValue as CfAxValue, AXValueType,
+    AXError,
+    AXIsProcessTrustedWithOptions,
+    AXUIElement,
+    AXValue as CfAxValue,
+    AXValueType,
+    kAXTrustedCheckOptionPrompt,
 };
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFCopyDescription, CFDictionary, CFIndex, CFNumber, CFRange, CFRetained,
-    CFString, CFType, CGPoint, CGSize,
+    CFArray,
+    CFBoolean,
+    CFCopyDescription,
+    CFDictionary,
+    CFIndex,
+    CFNumber,
+    CFRange,
+    CFRetained,
+    CFString,
+    CFType,
+    CGPoint,
+    CGSize,
 };
 use objc2_core_graphics::{
-    kCGWindowBounds, kCGWindowNumber, CGEvent, CGEventFlags, CGEventType, CGMouseButton,
-    CGPreflightScreenCaptureAccess, CGScrollEventUnit, CGSessionCopyCurrentDictionary,
-    CGWindowListCopyWindowInfo, CGWindowListOption,
+    CGEvent,
+    CGEventFlags,
+    CGEventType,
+    CGMouseButton,
+    CGPreflightScreenCaptureAccess,
+    CGScrollEventUnit,
+    CGSessionCopyCurrentDictionary,
+    CGWindowListCopyWindowInfo,
+    CGWindowListOption,
+    kCGWindowBounds,
+    kCGWindowNumber,
 };
 use objc2_foundation::{NSArray, NSBundle, NSData, NSDictionary, NSString, NSURL};
 use objc2_vision::{VNImageRequestHandler, VNRecognizeTextRequest, VNRequest};
@@ -42,7 +67,12 @@ use super::{Desktop, PostError, WorkspaceApp};
 use crate::element::Rect;
 use crate::keymap::Modifier;
 use crate::platform::{
-    Clipboard, ClipboardSnapshot, MouseButton, PasteFormat, RecognizedText, TextRecognizer,
+    Clipboard,
+    ClipboardSnapshot,
+    MouseButton,
+    PasteFormat,
+    RecognizedText,
+    TextRecognizer,
 };
 
 /// `kAXErrorFailure`: a value that could not even be built.

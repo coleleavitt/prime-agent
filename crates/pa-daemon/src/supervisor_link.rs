@@ -5,12 +5,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use pa_types::platform::transport::{connect_transport, AsyncReadHalf, AsyncWriteHalf};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow};
+use pa_types::platform::transport::{AsyncReadHalf, AsyncWriteHalf, connect_transport};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::protocol::{current_protocol_info, DaemonResponse};
+use crate::protocol::{DaemonResponse, current_protocol_info};
 
 /// Sentinel for command-level timeouts.
 #[derive(Debug, thiserror::Error)]

@@ -115,7 +115,7 @@ pub(crate) fn http_connection_status(
                         login_pending: false,
                         setup_hint: None,
                         record,
-                    }
+                    };
                 }
                 Some(RecordStatus::Pending) => {
                     return HttpStatusResult {
@@ -123,7 +123,7 @@ pub(crate) fn http_connection_status(
                         login_pending: false,
                         setup_hint: record.as_ref().and_then(|r| r.last_error.clone()),
                         record,
-                    }
+                    };
                 }
                 Some(RecordStatus::Error) => {
                     return HttpStatusResult {
@@ -131,7 +131,7 @@ pub(crate) fn http_connection_status(
                         login_pending: false,
                         setup_hint: record.as_ref().and_then(|r| r.last_error.clone()),
                         record,
-                    }
+                    };
                 }
                 None => {
                     return HttpStatusResult {
@@ -141,7 +141,7 @@ pub(crate) fn http_connection_status(
                             "Credentials stored; connection verification pending.".to_string(),
                         ),
                         record,
-                    }
+                    };
                 }
             },
             Err(

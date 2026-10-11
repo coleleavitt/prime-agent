@@ -90,10 +90,12 @@ async fn deliver_message_answers_the_ts_receipt_shape() {
     );
     assert_eq!(data["target"]["activeSessionId"], "target-session");
     assert_eq!(data["target"]["sessionName"], "target");
-    assert!(!data["target"]["sessionId"]
-        .as_str()
-        .unwrap_or_default()
-        .is_empty());
+    assert!(
+        !data["target"]["sessionId"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
     assert_eq!(data["from"]["sessionName"], "source-agent");
     // Upstream #1189: the prompt carries the acceptance time the receipt
     // reports, so the receiver can spot mail that waited.

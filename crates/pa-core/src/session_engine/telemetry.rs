@@ -20,28 +20,38 @@
 //! model calls classify through [`super::error_classify`]: only fixed
 //! diagnostics and reviewed fixed strings ride events.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pa_agent::agent::Subscription;
 use pa_agent::types::{AgentEvent, AssistantMessage, StopReason, Usage};
 use pa_telemetry::{
-    base_properties, Properties, RunTrigger, TelemetryClient, TelemetryClientConfig, ToolCategory,
+    Properties,
+    RunTrigger,
+    TelemetryClient,
+    TelemetryClientConfig,
+    ToolCategory,
+    base_properties,
 };
+use pa_types::sync::MutexExt;
 use serde_json::Value;
-
-use crate::kernel::shared::{host_handler, HostRequestHandlers};
 
 use super::auto_retry::AutoRetryEvent;
 use super::error_classify::classify_error_message;
 use super::host_requests::handle_telemetry_emit_host_request;
+use crate::kernel::shared::{HostRequestHandlers, host_handler};
 
 mod track;
 pub use track::{
-    track_catalog_refresh, track_compaction_abort_declared, track_daemon_event_summary,
-    track_deleted_child_usage_captured, track_image_delegation, track_model_refused,
-    track_sessions_archived, track_vision_read, track_worker_adoption,
+    track_catalog_refresh,
+    track_compaction_abort_declared,
+    track_daemon_event_summary,
+    track_deleted_child_usage_captured,
+    track_image_delegation,
+    track_model_refused,
+    track_sessions_archived,
+    track_vision_read,
+    track_worker_adoption,
     track_worker_children_closed,
 };
 
@@ -51,8 +61,11 @@ pub use classify::provider_category;
 mod status;
 use classify::{error_category, model_category, opt_value, run_outcome};
 pub use status::{
-    set_telemetry_enabled_text, telemetry_endpoint, telemetry_status_text, telemetry_switch,
     TelemetrySwitch,
+    set_telemetry_enabled_text,
+    telemetry_endpoint,
+    telemetry_status_text,
+    telemetry_switch,
 };
 
 #[cfg(test)]

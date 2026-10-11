@@ -29,7 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The compaction summarizer request marker (the fixed summarization prompt rides the first
 /// message).
@@ -488,7 +488,9 @@ fn threshold_compaction_streams_summary_deltas_to_attached_clients() {
         client.events
     );
     assert!(
-        delta_indexes.iter().all(|index| *index > start_index && *index < end_index),
+        delta_indexes
+            .iter()
+            .all(|index| *index > start_index && *index < end_index),
         "every delta lives between the start and the settling end: {delta_indexes:?} in {start_index}..{end_index}"
     );
     // The deltas arrive in generation order and concatenate to the full summary.

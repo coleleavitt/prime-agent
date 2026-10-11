@@ -12,19 +12,23 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pa_dream::command::{run_dream_command, DreamCommandIo};
-use pa_dream::dream_loop::{run_dream_loop, DreamLoopOptions};
+use pa_dream::command::{DreamCommandIo, run_dream_command};
+use pa_dream::dream_loop::{DreamLoopOptions, run_dream_loop};
 use pa_dream::dreams::DreamsLogContext;
 use pa_dream::experiment::{
-    run_experiment, ExperimentArm, ExperimentBudget, ExperimentRunOptions, ExperimentSpec,
+    ExperimentArm,
+    ExperimentBudget,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    run_experiment,
 };
 use pa_dream::json;
 use pa_dream::objective::DEFAULT_OBJECTIVE;
-use pa_dream::policy::{sha256_hex, ExplorationPolicy, DEFAULT_POLICY, PRIMING_DIVERSE};
+use pa_dream::policy::{DEFAULT_POLICY, ExplorationPolicy, PRIMING_DIVERSE, sha256_hex};
 use pa_dream::rng::{Seed, SeededRng};
-use pa_dream::rollout::{run_online_exploration, ExploreOptions};
-use pa_dream::tasks::{resolve_task, DreamTaskId};
-use serde_json::{json, Value};
+use pa_dream::rollout::{ExploreOptions, run_online_exploration};
+use pa_dream::tasks::{DreamTaskId, resolve_task};
+use serde_json::{Value, json};
 
 const CLOCK: u64 = 1_700_000_000_000;
 

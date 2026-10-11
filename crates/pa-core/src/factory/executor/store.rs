@@ -12,14 +12,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::model::{kind, EventAt, FactoryRun, RunState, Status};
 use super::RunCell;
+use super::model::{EventAt, FactoryRun, RunState, Status, kind};
 
 /// The run-record directory under a session's artifact directory.
 pub const FACTORY_RUNS_DIR: &str = "factory-runs";

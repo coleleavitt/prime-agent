@@ -3,13 +3,13 @@
 //! columns. Ported from grok-mermaid 0.2.3 `layout-seq.ts` (Apache-2.0; see
 //! `LICENSE-grok-mermaid`).
 
-use super::canvas::{draw_text_over_edges, Canvas, D, L, R, U};
+use super::Cls;
+use super::canvas::{Canvas, D, L, R, U, draw_text_over_edges};
 use super::graph::Shape;
-use super::labels::{fit_label, WRAP_WIDTH};
-use super::layout::{draw_box, half, sat, Placed, MAX_CANVAS_CELLS, PAD};
+use super::labels::{WRAP_WIDTH, fit_label};
+use super::layout::{MAX_CANVAS_CELLS, PAD, Placed, draw_box, half, sat};
 use super::parse::{NoteAnchor, SeqHead, SeqItem, Sequence};
 use super::width::string_width;
-use super::Cls;
 
 /// Minimum columns between adjacent lifelines.
 const SEQ_GAP: i64 = 5;

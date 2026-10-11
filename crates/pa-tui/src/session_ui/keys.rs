@@ -1,9 +1,24 @@
 //! The terminal input grammar: key dispatch, mouse reports, paste,
 //! selection/auto-scroll, and the input-state seams.
 use super::{
-    key_event_to_id, AgentView, ChatEntry, ChoicePickerAction, ChoicePurpose, DaemonCommand,
-    DockFocusSource, Duration, Instant, KeyEvent, Map, ModelSwitchScope, QueueBrowseDirection,
-    QueueLane, Result, SessionUi, StatusKind, SubmitBehavior,
+    AgentView,
+    ChatEntry,
+    ChoicePickerAction,
+    ChoicePurpose,
+    DaemonCommand,
+    DockFocusSource,
+    Duration,
+    Instant,
+    KeyEvent,
+    Map,
+    ModelSwitchScope,
+    QueueBrowseDirection,
+    QueueLane,
+    Result,
+    SessionUi,
+    StatusKind,
+    SubmitBehavior,
+    key_event_to_id,
 };
 
 /// How long the Ctrl+C exit hint arms the second-press exit.
@@ -1044,10 +1059,11 @@ pub(crate) fn opening_echo_key_claimed(
 
 #[cfg(test)]
 mod opening_echo_claim_tests {
+    use std::collections::BTreeMap;
+
     use super::opening_echo_key_claimed;
     use crate::editor::Editor;
     use crate::keybindings::{KeybindingsConfig, KeybindingsManager};
-    use std::collections::BTreeMap;
 
     fn manager(bindings: &[(&str, &str)]) -> KeybindingsManager {
         let config: KeybindingsConfig = bindings

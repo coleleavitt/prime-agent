@@ -35,10 +35,15 @@ fn run_lock() -> MutexGuard<'static, ()> {
 }
 
 use pa_tui::interactive::{
-    run_interactive, HeadlessPlan, HeadlessStep, InteractiveOptions, ModelSelection,
-    SessionSelection, UiMode,
+    HeadlessPlan,
+    HeadlessStep,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The SGR reports a real terminal sends with ?1002+?1006 tracking active.
 fn press(col: usize, row: usize) -> String {

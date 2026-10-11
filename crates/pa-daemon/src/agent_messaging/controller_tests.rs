@@ -1,16 +1,18 @@
 //! The controller test battery: family roster, direct peer delivery,
 //! fallback, and observe families.
 
+use std::sync::Arc;
+
+use pa_core::session_engine::agent_messaging::AgentMessageController;
+use pa_types::platform::transport::bind_transport;
+use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
 use super::observe::summaries_from_roster;
 use super::*;
 use crate::protocol::{response_failure, response_success};
 use crate::rlm_children::RlmChildIdentity;
 use crate::supervisor_link::SupervisorLink;
-use pa_core::session_engine::agent_messaging::AgentMessageController;
-use pa_types::platform::transport::bind_transport;
-use serde_json::{json, Value};
-use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 /// A scripted JSONL supervisor: answers `list` with a roster,
 /// `get_worker_peer_transport` per script, and `send_message` with a
@@ -248,10 +250,10 @@ async fn family_labels_children_and_parent_from_the_registry() {
     assert_eq!(family[2].id, "ddd444");
     assert_eq!(family[2].name.as_deref(), Some("worker-a"));
     assert_eq!(family[2].aliases, vec!["sub-kid1", "sess-d"]);
-    assert!(!family
-        .iter()
-        .any(|member| member.id == "ddd444"
-            && member.relationship == AgentFamilyRelationship::Sibling));
+    assert!(
+        !family.iter().any(|member| member.id == "ddd444"
+            && member.relationship == AgentFamilyRelationship::Sibling)
+    );
     assert!(!family.iter().any(|member| member.id == "xxx999"));
 }
 
@@ -569,12 +571,16 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
         .find(|s| s.active_session_id.as_deref() == Some("own333"))
         .unwrap();
     assert_eq!(child.relationship, Some(AgentFamilyRelationship::Child));
-    assert!(!summaries
-        .iter()
-        .any(|s| s.active_session_id.as_deref() == Some("foreign444")));
-    assert!(!summaries
-        .iter()
-        .any(|s| s.active_session_id.as_deref() == Some("root555")));
+    assert!(
+        !summaries
+            .iter()
+            .any(|s| s.active_session_id.as_deref() == Some("foreign444"))
+    );
+    assert!(
+        !summaries
+            .iter()
+            .any(|s| s.active_session_id.as_deref() == Some("root555"))
+    );
 }
 
 #[test]
@@ -844,9 +850,11 @@ fn summaries_label_root_siblings_and_never_foreign_children() {
         .find(|s| s.active_session_id.as_deref() == Some("root222"))
         .unwrap();
     assert_eq!(sibling.relationship, Some(AgentFamilyRelationship::Sibling));
-    assert!(!summaries
-        .iter()
-        .any(|s| s.active_session_id.as_deref() == Some("child999")));
+    assert!(
+        !summaries
+            .iter()
+            .any(|s| s.active_session_id.as_deref() == Some("child999"))
+    );
 }
 
 #[tokio::test]

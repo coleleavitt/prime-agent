@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use pa_types::ai::{Model, ModelThinkingLevel};
 
-use super::super::action_space::{compile_action_space, CompiledAction};
+use super::super::action_space::{CompiledAction, compile_action_space};
 use super::super::test_support as support;
 use super::super::types::{RouterActionParamSpec, RouterActionRisk, RouterActionSpec};
 use super::*;
@@ -33,11 +33,13 @@ fn a_clean_single_choice_parses() {
 fn only_listed_actions_and_parameter_values_pass() {
     let unknown_action = parse(r#"{"action": "jump", "confidence": 0.9}"#);
     assert!(unknown_action.action.is_none());
-    assert!(unknown_action
-        .parse_error
-        .as_deref()
-        .unwrap()
-        .contains("unknown action"));
+    assert!(
+        unknown_action
+            .parse_error
+            .as_deref()
+            .unwrap()
+            .contains("unknown action")
+    );
 
     let unknown_param =
         parse(r#"{"action": "press", "params": {"trigger": "a"}, "confidence": 0.9}"#);
@@ -115,7 +117,9 @@ fn prose_and_fences_before_the_decision_do_not_refuse_it() {
     );
     assert_eq!(fenced.action.as_deref(), Some("look"));
 
-    let prose = parse("I considered {\"action\": \"jump\"} but settled on {\"action\": \"look\", \"confidence\": 0.6}");
+    let prose = parse(
+        "I considered {\"action\": \"jump\"} but settled on {\"action\": \"look\", \"confidence\": 0.6}",
+    );
     assert_eq!(prose.action.as_deref(), Some("look"));
 }
 

@@ -5,12 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use super::window_cache::{self, Generation, Snapshot};
-pub use super::window_cache::{append_cached, flush as flush_cache, AppendOwnership};
 use pa_types::session::{FileEntry, SessionHeader};
 use serde::{Deserialize, Serialize};
 
-use super::{build_session_context, SessionContext};
+use super::window_cache::{self, Generation, Snapshot};
+pub use super::window_cache::{AppendOwnership, append_cached, flush as flush_cache};
+use super::{SessionContext, build_session_context};
 
 const CHUNK_BYTES: usize = 64 * 1024;
 /// Actual source read ranges and sidecar bytes for this open.

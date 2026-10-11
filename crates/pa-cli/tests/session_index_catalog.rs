@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use pa_daemon::session_store::{list_sessions, read_session_info, session_file_name, SessionFile};
+use pa_daemon::session_store::{SessionFile, list_sessions, read_session_info, session_file_name};
 use serde_json::json;
 
 fn write_session(dir: &Path, cwd: &str, name: Option<&str>, turns: u64) -> PathBuf {
@@ -58,10 +58,11 @@ fn the_index_lists_exactly_the_native_rows() {
         "cold: folded and recorded"
     );
     assert!(index.flush(Instant::now() + Duration::from_secs(30)));
-    assert!(dir
-        .path()
-        .join(pa_session_index::SESSION_INDEX_FILE)
-        .is_file());
+    assert!(
+        dir.path()
+            .join(pa_session_index::SESSION_INDEX_FILE)
+            .is_file()
+    );
     assert_eq!(list_sessions(dir.path()), native, "warm: served");
 
     // A grown session misses and folds again; the others stay served.

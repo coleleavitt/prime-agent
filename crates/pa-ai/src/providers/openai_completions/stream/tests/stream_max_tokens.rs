@@ -5,8 +5,9 @@
 //! captured bodies; the TS fix PR's `max-tokens.test.ts` behavior, pinned
 //! at the provider wire instead of the option assembly).
 
-use super::*;
 use std::sync::{Arc, Mutex};
+
+use super::*;
 
 /// The reporter's model (issue #755: a vLLM-served GLM configured in
 /// models.json with `"maxTokens": 131072` and the OpenAI-completions

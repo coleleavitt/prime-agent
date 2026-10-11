@@ -3,31 +3,44 @@
 //! keep the parent-side roster the kernel reads. Unlike TS, each child runs
 //! in its own supervised worker process; the kernel surface stays TS parity.
 
-use pa_types::sync::MutexExt;
-use serde_json::Map;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use pa_core::kernel::rlm_runtime::create_default_rlm_subagent_session_name;
 use pa_core::session_engine::rlm_host::{
-    RlmChildResult, RlmCreateSessionHandle, RlmCreateSessionRequest, RlmDeleteSubagentResult,
-    RlmHostFuture, RlmInterruptSubagentResult, RlmSpawnHandle, RlmSpawnRequest,
-    RlmSubagentActivity, RlmSubagentEntry, RlmSubagentHost,
+    RlmChildResult,
+    RlmCreateSessionHandle,
+    RlmCreateSessionRequest,
+    RlmDeleteSubagentResult,
+    RlmHostFuture,
+    RlmInterruptSubagentResult,
+    RlmSpawnHandle,
+    RlmSpawnRequest,
+    RlmSubagentActivity,
+    RlmSubagentEntry,
+    RlmSubagentHost,
 };
 use pa_core::session_engine::rlm_notices::{
-    create_rlm_child_failure_message, create_rlm_child_terminal_notice, RlmChildTerminalNotice,
+    RlmChildTerminalNotice,
+    create_rlm_child_failure_message,
+    create_rlm_child_terminal_notice,
 };
 use pa_core::session_engine::rlm_usage::{RlmChildUsageReport, RlmChildUsageSink};
 use pa_types::daemon::{DaemonCommand, DaemonSessionLifecycle, PromptInput};
 use pa_types::session::CustomMessage;
-use serde_json::{json, Value};
+use pa_types::sync::MutexExt;
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use crate::rlm_child_model::{
-    assert_thinking_supported, cap_text, compact_rlm_text, resolve_child_model, rlm_child_label,
     ANSWER_TEXT_MAX_CHARS,
+    assert_thinking_supported,
+    cap_text,
+    compact_rlm_text,
+    resolve_child_model,
+    rlm_child_label,
 };
 use crate::supervisor_link::SupervisorLink;
 use crate::util::now_ms;

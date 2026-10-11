@@ -3,15 +3,14 @@
 //! same JSONL protocol as the unix socket through the ordinary client
 //! connection handler - the only difference is the trust mode.
 
-use pa_types::sync::MutexExt;
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-
 use pa_types::daemon::DaemonErrorInfo;
+use pa_types::sync::MutexExt;
 use serde_json::Value;
 
 use crate::protocol::response_failure;
@@ -219,8 +218,8 @@ mod tests {
 // bound listener over loopback.
 #[cfg(test)]
 mod integration_tests {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use serde_json::Value;
@@ -393,7 +392,11 @@ mod integration_tests {
         // An authenticated prefix, then a line over the bound with no
         // newline: the overflow destroys the connection before any
         // dispatch could run.
-        let oversized = format!("{}{}", "{\"type\":\"command\",\"id\":\"big\",\"command\":{\"type\":\"list\"},\"auth\":{\"token\":\"", token);
+        let oversized = format!(
+            "{}{}",
+            "{\"type\":\"command\",\"id\":\"big\",\"command\":{\"type\":\"list\"},\"auth\":{\"token\":\"",
+            token
+        );
         let mut payload = String::new();
         payload.push_str(&oversized);
         payload.push_str(&"a".repeat(crate::tcp::DAEMON_TCP_MAX_LINE_CHARS));

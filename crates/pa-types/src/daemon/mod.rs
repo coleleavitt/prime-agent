@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::session::AgentMessage;
 use crate::JsonMap;
+use crate::session::AgentMessage;
 
 pub const DAEMON_PROTOCOL_NAME: &str = "prime-agent.daemon";
 /// Worker-side request budget for `list_agent_peers` (TS #2516
@@ -129,37 +129,92 @@ pub mod update_flow;
 mod worker;
 
 pub use command::{
-    CycleDirection, DaemonCommand, DaemonCommandEnvelope, DaemonCommandFrameType,
-    DaemonCommandWire, DaemonSessionLifecycle, ForkPosition, PromptInput, StreamingBehavior,
+    CycleDirection,
+    DaemonCommand,
+    DaemonCommandEnvelope,
+    DaemonCommandFrameType,
+    DaemonCommandWire,
+    DaemonSessionLifecycle,
+    ForkPosition,
+    PromptInput,
+    StreamingBehavior,
 };
 pub use outbound::{
-    DaemonClosingReason, DaemonErrorInfo, DaemonEventEnvelope, DaemonOutbound,
-    DaemonPeerTransportTicket, DaemonResponse, DaemonRuntimeIdentity, DaemonSavedSessionInfo,
-    DaemonSessionClosedReason, DaemonSessionSnapshot, SnapshotPurpose, SocketIdentity,
-    KERNEL_NOT_RUNNING_MESSAGE, UPDATE_RESTART_PREPARING_MESSAGE,
+    DaemonClosingReason,
+    DaemonErrorInfo,
+    DaemonEventEnvelope,
+    DaemonOutbound,
+    DaemonPeerTransportTicket,
+    DaemonResponse,
+    DaemonRuntimeIdentity,
+    DaemonSavedSessionInfo,
+    DaemonSessionClosedReason,
+    DaemonSessionSnapshot,
+    KERNEL_NOT_RUNNING_MESSAGE,
+    SnapshotPurpose,
+    SocketIdentity,
+    UPDATE_RESTART_PREPARING_MESSAGE,
 };
 pub use plane::{
-    command_plane, is_daemon_mutating_command, is_session_plane_daemon_command,
-    is_update_drain_command, DaemonCommandPlane,
+    DaemonCommandPlane,
+    command_plane,
+    is_daemon_mutating_command,
+    is_session_plane_daemon_command,
+    is_update_drain_command,
 };
 pub use update_flow::{
-    legacy_update_restart_status, legacy_update_restarts_dir, prepared_marker_expiry,
-    socket_update_dir, update_intent_path, update_marker_path, update_prepared_dir,
-    update_restarts_dir, update_roster_path, update_status_path, update_transition_allowed,
-    PreparedMarkerExpiry, UpdateHeartbeatDeliveryMode, UpdateHeartbeatStatus, UpdateId,
-    UpdateIntent, UpdatePreparedMarker, UpdateProcessIdentity, UpdateRoster, UpdateRosterBinary,
-    UpdateRosterHeartbeat, UpdateRosterInFlight, UpdateRosterQueue, UpdateRosterSession,
-    UpdateRosterSessionKind, UpdateRosterSubagent, UpdateRosterSubagentStatus, UpdateRosterWorker,
-    UpdateState, UpdateStatus, UpdateStatusCounts, UpdateStatusFailure, UpdateSupervisorIdentity,
-    UpdateTimeoutBudget, UPDATE_ENV_PREFIX, UPDATE_ROSTER_FORMAT_VERSION,
+    PreparedMarkerExpiry,
+    UPDATE_ENV_PREFIX,
+    UPDATE_ROSTER_FORMAT_VERSION,
     UPDATE_STATUS_FORMAT_VERSION,
+    UpdateHeartbeatDeliveryMode,
+    UpdateHeartbeatStatus,
+    UpdateId,
+    UpdateIntent,
+    UpdatePreparedMarker,
+    UpdateProcessIdentity,
+    UpdateRoster,
+    UpdateRosterBinary,
+    UpdateRosterHeartbeat,
+    UpdateRosterInFlight,
+    UpdateRosterQueue,
+    UpdateRosterSession,
+    UpdateRosterSessionKind,
+    UpdateRosterSubagent,
+    UpdateRosterSubagentStatus,
+    UpdateRosterWorker,
+    UpdateState,
+    UpdateStatus,
+    UpdateStatusCounts,
+    UpdateStatusFailure,
+    UpdateSupervisorIdentity,
+    UpdateTimeoutBudget,
+    legacy_update_restart_status,
+    legacy_update_restarts_dir,
+    prepared_marker_expiry,
+    socket_update_dir,
+    update_intent_path,
+    update_marker_path,
+    update_prepared_dir,
+    update_restarts_dir,
+    update_roster_path,
+    update_status_path,
+    update_transition_allowed,
 };
 pub use worker::{
-    DaemonPeerCommand, DaemonUpdateRestartManifest, DaemonUpdateRestartQueue,
-    DaemonUpdateRestartSession, DaemonWorkerCommand, DaemonWorkerDescriptor,
-    DaemonWorkerFrameHeader, DaemonWorkerLifecycle, DaemonWorkerPeerGrant,
-    DaemonWorkerRosterOutbound, DurableDaemonCreateCommand, PayloadEncoding,
     DAEMON_UPDATE_RESTART_FORMAT_VERSION,
+    DaemonPeerCommand,
+    DaemonUpdateRestartManifest,
+    DaemonUpdateRestartQueue,
+    DaemonUpdateRestartSession,
+    DaemonWorkerCommand,
+    DaemonWorkerDescriptor,
+    DaemonWorkerFrameHeader,
+    DaemonWorkerLifecycle,
+    DaemonWorkerPeerGrant,
+    DaemonWorkerRosterOutbound,
+    DurableDaemonCreateCommand,
+    PayloadEncoding,
 };
 
 /// Round-trip helper: a parsed type must serialize back to the exact original value.

@@ -30,10 +30,12 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
         Some("protocol-7-schema-30-8e4b17c2a9f5".to_string())
     );
     assert!(hello["supervisorOwnerToken"].is_string());
-    assert!(hello["supervisorProcessStartId"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("proc:"));
+    assert!(
+        hello["supervisorProcessStartId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("proc:")
+    );
     assert_eq!(
         hello["serverCapabilities"],
         serde_json::json!([
@@ -227,12 +229,16 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
     assert_eq!(sessions[0]["runtimeKind"], "top-level");
     assert_eq!(sessions[0]["rlmDepth"], 0);
     assert_eq!(sessions[0]["unfinishedActionCount"], 0);
-    assert!(sessions[0]["modified"]
-        .as_str()
-        .is_some_and(|v| v.ends_with('Z')));
-    assert!(sessions[0]["lastActivityAt"]
-        .as_str()
-        .is_some_and(|v| v.ends_with('Z')));
+    assert!(
+        sessions[0]["modified"]
+            .as_str()
+            .is_some_and(|v| v.ends_with('Z'))
+    );
+    assert!(
+        sessions[0]["lastActivityAt"]
+            .as_str()
+            .is_some_and(|v| v.ends_with('Z'))
+    );
     // Usage from the scripted turn: input tokens and cost, zero total absent.
     let usage = &sessions[0]["usage"];
     assert!(usage["inputTokens"].as_u64().unwrap_or_default() > 0);
@@ -266,10 +272,12 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             Some("session_list_item") => {
                 items += 1;
                 let session = line["session"].clone();
-                assert!(session["path"]
-                    .as_str()
-                    .and_then(|path| Path::new(path).extension())
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")));
+                assert!(
+                    session["path"]
+                        .as_str()
+                        .and_then(|path| Path::new(path).extension())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+                );
                 assert!(session["firstMessage"].is_string());
                 assert!(session["state"]["status"].is_string());
                 rows.push(session);

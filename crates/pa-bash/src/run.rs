@@ -125,7 +125,7 @@ fn collect(job: &Job, followed: &mut Followed, wait: Duration) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::RunCancel;
     use crate::runner::JobTable;

@@ -143,8 +143,9 @@ fn has_artifacts(path: &Path, session_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     struct Fixture {
         _root: tempfile::TempDir,

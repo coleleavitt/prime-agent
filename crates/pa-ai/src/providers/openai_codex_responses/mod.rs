@@ -2,46 +2,79 @@
 //! Codex endpoint over WebSocket (session-cached connections with connection-anchored continuation
 //! deltas, SSE fallback on transport failures) and plain SSE.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::openai_codex_responses::errors::{
-    append_transport_failure_diagnostic, apply_codex_service_tier_pricing,
-    is_stale_codex_continuation_error, map_codex_event, parse_error_response,
-    resolve_codex_service_tier, CodexProtocolError, CodexStreamError,
+    CodexProtocolError,
+    CodexStreamError,
+    append_transport_failure_diagnostic,
+    apply_codex_service_tier_pricing,
+    is_stale_codex_continuation_error,
+    map_codex_event,
+    parse_error_response,
+    resolve_codex_service_tier,
 };
 use crate::providers::openai_codex_responses::request::{
-    build_sse_headers, build_websocket_headers, create_codex_request_id, extract_account_id,
-    resolve_codex_url, resolve_codex_websocket_url,
+    build_sse_headers,
+    build_websocket_headers,
+    create_codex_request_id,
+    extract_account_id,
+    resolve_codex_url,
+    resolve_codex_websocket_url,
 };
 use crate::providers::openai_codex_responses::session::{
-    clear_continuation, is_websocket_sse_fallback_active, record_request_stats,
-    record_websocket_failure, record_websocket_sse_fallback, take_continuation_for,
+    clear_continuation,
+    is_websocket_sse_fallback_active,
+    record_request_stats,
+    record_websocket_failure,
+    record_websocket_sse_fallback,
+    take_continuation_for,
 };
 use crate::providers::openai_codex_responses::websocket::{
-    acquire_websocket, build_cached_websocket_request_body, release_connection, ContinuationState,
+    ContinuationState,
+    acquire_websocket,
+    build_cached_websocket_request_body,
+    release_connection,
 };
 use crate::providers::openai_responses_shared::{
-    convert_responses_messages, convert_responses_tools, ConvertResponsesMessagesOptions,
-    ConvertResponsesToolsOptions, ReasoningSummary, ResponsesStreamHooks, ResponsesStreamProcessor,
+    ConvertResponsesMessagesOptions,
+    ConvertResponsesToolsOptions,
     OPENAI_TOOL_CALL_PROVIDERS,
+    ReasoningSummary,
+    ResponsesStreamHooks,
+    ResponsesStreamProcessor,
+    convert_responses_messages,
+    convert_responses_tools,
 };
 use crate::providers::simple_options::build_base_options;
 use crate::registry::Provider;
 use crate::types::{
-    done_reason, error_reason, AssistantMessage, Context, Model, ModelThinkingLevel, ServiceTier,
-    SimpleStreamOptions, StopReason, StreamOptions, Transport, Usage,
+    AssistantMessage,
+    Context,
+    Model,
+    ModelThinkingLevel,
+    ServiceTier,
+    SimpleStreamOptions,
+    StopReason,
+    StreamOptions,
+    Transport,
+    Usage,
+    done_reason,
+    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::parse_json_with_repair;
 use crate::utils_inner::sse::SseDecoder;
-use crate::utils_inner::stream_failure::{record_stream_failure, ProviderError};
+use crate::utils_inner::stream_failure::{ProviderError, record_stream_failure};
 
 mod errors;
 pub(crate) mod request;
@@ -638,10 +671,12 @@ fn build_request_body(
     body.insert("stream".into(), json!(true));
     body.insert(
         "instructions".into(),
-        json!(context
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| "You are a helpful assistant.".to_string())),
+        json!(
+            context
+                .system_prompt
+                .clone()
+                .unwrap_or_else(|| "You are a helpful assistant.".to_string())
+        ),
     );
     body.insert("input".into(), Value::Array(messages));
     body.insert(
@@ -812,8 +847,9 @@ impl Provider for OpenAICodexResponsesProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     /// The user-facing text for a failed codex stream is the verbatim error message; the
     /// raw-`fetch` connection failure surfaces the runtime's own refused-connect text.
@@ -865,7 +901,12 @@ mod tests {
     }
 
     use crate::types::{
-        Message, ModelInput, TextContent, ToolResultMessage, UserMessage, UserMessageContent,
+        Message,
+        ModelInput,
+        TextContent,
+        ToolResultMessage,
+        UserMessage,
+        UserMessageContent,
         UserOrToolContent,
     };
 

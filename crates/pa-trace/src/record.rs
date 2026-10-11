@@ -200,8 +200,9 @@ fn new_span_id() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn formats_iso_timestamps_like_javascript() {

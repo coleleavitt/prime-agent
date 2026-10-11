@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{is_heartbeat_cron_job, AgentCronJob, AgentCronSchedule, DeliveryMode, JobStatus};
+use super::{AgentCronJob, AgentCronSchedule, DeliveryMode, JobStatus, is_heartbeat_cron_job};
 
 mod heartbeat;
 mod jobs;

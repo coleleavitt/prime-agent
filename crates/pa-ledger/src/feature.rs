@@ -17,22 +17,36 @@ use std::time::{Duration, Instant};
 
 use pa_agent::types::{AgentMessage, Message};
 use pa_core::features::{
-    FeatureFuture, SessionFeature, SessionFeatureContext, ToolResultObservation,
+    FeatureFuture,
+    SessionFeature,
+    SessionFeatureContext,
+    ToolResultObservation,
 };
 use pa_telemetry::Properties;
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
 use serde_json::Value;
 
-use crate::extract::{observe_message, tool_result_text, IPYTHON_TOOL_NAME};
+use crate::extract::{IPYTHON_TOOL_NAME, observe_message, tool_result_text};
 use crate::fingerprint::fingerprint_tool_result_text;
 use crate::harness::{
-    global_failure_ledger_enabled_from_env, global_harness_state_dir, harness_state_path,
-    local_harness_state_dir, with_harness_state_lock, HarnessDocument, HarnessStateError,
+    HarnessDocument,
+    HarnessStateError,
+    global_failure_ledger_enabled_from_env,
+    global_harness_state_dir,
+    harness_state_path,
+    local_harness_state_dir,
+    with_harness_state_lock,
 };
 use crate::ledger::{
-    apply_replay_verifications, merge_failure_observations, observation_ordinal,
-    update_failure_ledger, FailureLedger, FailureObservation, FailureRecord, ReplayVerification,
     DEFAULT_RECURRENCE_THRESHOLD,
+    FailureLedger,
+    FailureObservation,
+    FailureRecord,
+    ReplayVerification,
+    apply_replay_verifications,
+    merge_failure_observations,
+    observation_ordinal,
+    update_failure_ledger,
 };
 use crate::resolution::{ResolutionCell, ResolutionIndex, ResolutionIndexOptions, ResolutionStore};
 use crate::resolution_store::open_resolution_store;

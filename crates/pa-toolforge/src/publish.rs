@@ -22,14 +22,24 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pa_core::kernel::bootstrap::{
-    install_python_skill_package, installed_kernel_python, PythonSkillPackageInstall,
+    PythonSkillPackageInstall,
     PythonSkillPackageInstallResult,
+    install_python_skill_package,
+    installed_kernel_python,
 };
 
-use crate::gate::{run_exit_test, OutcomeKind, DEFAULT_GATE_TIMEOUT};
+use crate::gate::{DEFAULT_GATE_TIMEOUT, OutcomeKind, run_exit_test};
 use crate::ledger::{
-    append_record, content_sha, ledger_path, load_ledger, next_version, toolforge_dir, GatePhase,
-    GateRun, LedgerRecord, PublishStatus,
+    GatePhase,
+    GateRun,
+    LedgerRecord,
+    PublishStatus,
+    append_record,
+    content_sha,
+    ledger_path,
+    load_ledger,
+    next_version,
+    toolforge_dir,
 };
 use crate::name::{js_len, validate_name};
 use crate::package::{promote, src_path, stage_package, stage_stub};

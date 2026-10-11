@@ -4,9 +4,10 @@
 //! keeps that first line byte-identical and appends the holder's identity and next steps — a
 //! sanctioned divergence.
 
-use serde_json::Value;
 use std::fmt::Write;
 use std::path::Path;
+
+use serde_json::Value;
 
 /// The live session holding a session file (one roster row's fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,8 +228,9 @@ fn canonical_form(path: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn row(file: &str, id: &str, name: Option<&str>, cwd: Option<&str>) -> Value {
         let mut row = json!({"sessionFile": file, "activeSessionId": id});

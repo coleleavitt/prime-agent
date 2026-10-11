@@ -4,7 +4,7 @@
 //! `sudo`/`doas`) is refused: root escapes the containment every other
 //! guard relies on.
 
-use super::{opaque, Check, Rule};
+use super::{Check, Rule, opaque};
 use crate::model::evidence::first_word;
 use crate::model::{Arg, Invocation};
 use crate::verdict::GuardKind;

@@ -25,7 +25,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pa_core::platform::LockDir;
-
 use support::ts_binary;
 
 /// A fresh sandbox (removed with the returned guard) holding the four

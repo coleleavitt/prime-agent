@@ -5,11 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-
+use anyhow::{Context, Result, anyhow};
 use pa_types::daemon::{DaemonWorkerDescriptor, DaemonWorkerLifecycle, DurableDaemonCreateCommand};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 /// TS `daemon-supervisor.ts` names this file without a JSON extension
 /// (`supervisor-config`) so descriptor sweeps filtered on `.json` skip it.
@@ -282,8 +281,9 @@ fn write_file_atomic_at(path: &Path, content: &str, sync: TempSync) -> Result<()
 /// actually served a launch.
 #[cfg(test)]
 pub(crate) mod atomic_write_probe {
-    use super::{PathBuf, TempSync};
     use std::sync::Mutex;
+
+    use super::{PathBuf, TempSync};
 
     static RECORDED: Mutex<Vec<(PathBuf, TempSync)>> = Mutex::new(Vec::new());
 
@@ -464,8 +464,9 @@ use std::io::Write as _;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::Map;
+
+    use super::*;
 
     #[test]
     fn write_file_atomic_replaces_an_existing_destination() {

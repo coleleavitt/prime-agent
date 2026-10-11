@@ -6,9 +6,14 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    compact_harness_text, HarnessEntry, HarnessState, RefinementKind,
-    DEFAULT_OVERVIEW_CONTENT_LIMIT, DEFAULT_OVERVIEW_ENTRY_LIMIT,
-    DEFAULT_OVERVIEW_REFINEMENT_LIMIT, REFINEMENT_KINDS,
+    DEFAULT_OVERVIEW_CONTENT_LIMIT,
+    DEFAULT_OVERVIEW_ENTRY_LIMIT,
+    DEFAULT_OVERVIEW_REFINEMENT_LIMIT,
+    HarnessEntry,
+    HarnessState,
+    REFINEMENT_KINDS,
+    RefinementKind,
+    compact_harness_text,
 };
 
 /// Term -> weight, built from task signal (goal, recent messages).
@@ -638,7 +643,7 @@ fn kind_for(name: &str) -> RefinementKind {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{empty_harness_state, HarnessScope};
+    use super::super::{HarnessScope, empty_harness_state};
     use super::*;
 
     #[test]

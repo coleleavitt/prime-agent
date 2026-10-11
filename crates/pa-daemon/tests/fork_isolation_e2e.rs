@@ -467,7 +467,9 @@ fn the_fork_is_a_fully_detached_session() {
         "the fork's own message must appear in the fork's transcript: {fork_texts:?}"
     );
     assert!(
-        fork_texts.iter().any(|text| text.contains("original turn one")),
+        fork_texts
+            .iter()
+            .any(|text| text.contains("original turn one")),
         "the fork's turn must answer on the fork's transcript (the replacement restarts the script): {fork_texts:?}"
     );
 

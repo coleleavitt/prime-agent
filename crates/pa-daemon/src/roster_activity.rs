@@ -185,6 +185,17 @@ pub(crate) fn spawn_roster_activity_watch(events: &Arc<EventPump>, queue: Roster
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::sync::Mutex;
+    #[cfg(unix)]
+    use std::time::Duration;
+
+    #[cfg(unix)]
+    use serde_json::Value;
+    use serde_json::json;
+    #[cfg(unix)]
+    use tokio::io::AsyncWriteExt;
+
     use super::*;
     // The socket-harness test below is the only user of these; the
     // import gates keep the portable tests above import-clean on
@@ -193,15 +204,6 @@ mod tests {
     use crate::supervisor_link::SupervisorLink;
     #[cfg(unix)]
     use crate::worker::SessionCore;
-    use serde_json::json;
-    #[cfg(unix)]
-    use serde_json::Value;
-    #[cfg(unix)]
-    use std::sync::Mutex;
-    #[cfg(unix)]
-    use std::time::Duration;
-    #[cfg(unix)]
-    use tokio::io::AsyncWriteExt;
 
     fn session_event_frame(event: &serde_json::Value) -> OutboundFrame {
         let payload = json!({

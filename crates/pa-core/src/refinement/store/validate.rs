@@ -10,8 +10,7 @@
 
 use serde_json::{Map, Value};
 
-use super::pyfmt;
-use super::{StoreError, StoreErrorKind};
+use super::{StoreError, StoreErrorKind, pyfmt};
 
 /// The marker key a kernel client puts in place of a value JSON cannot
 /// carry: `{"__rlm_harness_unserializable__": "<Python type name>"}`.
@@ -266,7 +265,7 @@ impl FactoryChecks {
                 return Err(StoreError::new(
                     StoreErrorKind::Runtime,
                     "factory spec validation results are missing from the request".to_string(),
-                ))
+                ));
             }
         };
         if errors.is_empty() {

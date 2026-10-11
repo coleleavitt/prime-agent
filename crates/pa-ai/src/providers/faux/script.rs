@@ -6,9 +6,16 @@
 use serde_json::Value;
 
 use super::{
-    faux_assistant_message, faux_text, faux_thinking, faux_tool_call, register_faux_provider,
-    FauxAssistantMessageOptions, FauxModelDefinition, FauxProviderRegistration, FauxResponseStep,
+    FauxAssistantMessageOptions,
+    FauxModelDefinition,
+    FauxProviderRegistration,
+    FauxResponseStep,
     RegisterFauxProviderOptions,
+    faux_assistant_message,
+    faux_text,
+    faux_thinking,
+    faux_tool_call,
+    register_faux_provider,
 };
 use crate::types::StopReason;
 

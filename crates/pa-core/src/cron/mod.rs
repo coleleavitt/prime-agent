@@ -1063,10 +1063,12 @@ mod tests {
         assert_eq!(schedule.kind, ScheduleKind::Interval);
         assert_eq!(schedule.interval_ms, Some(30_000));
         assert_eq!(next, BASE + 30_000);
-        assert!(parse_agent_cron_schedule("every 5s", BASE)
-            .unwrap_err()
-            .to_string()
-            .contains("at least 10 seconds"));
+        assert!(
+            parse_agent_cron_schedule("every 5s", BASE)
+                .unwrap_err()
+                .to_string()
+                .contains("at least 10 seconds")
+        );
         assert!(parse_agent_cron_schedule("", BASE).is_err());
         let (_, next) = parse_agent_cron_schedule("at 2100-01-01T00:00:00Z", BASE).unwrap();
         assert_eq!(next, 4_102_444_800_000);

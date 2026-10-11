@@ -21,18 +21,28 @@ use tokio_util::sync::CancellationToken;
 
 use crate::child::{ChildRuntimeScope, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult};
 use crate::experiment::{
-    experiment_id_for, run_experiment_with_hooks, ExperimentArm, ExperimentArmRunner,
-    ExperimentBudget, ExperimentError, ExperimentHooks, ExperimentProgressEvent,
-    ExperimentRunOptions, ExperimentSpec, LocalArmRunner, EXPERIMENT_ARMS, LOCAL_EXPERIMENT_ARMS,
+    EXPERIMENT_ARMS,
+    ExperimentArm,
+    ExperimentArmRunner,
+    ExperimentBudget,
+    ExperimentError,
+    ExperimentHooks,
+    ExperimentProgressEvent,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    LOCAL_EXPERIMENT_ARMS,
+    LocalArmRunner,
+    experiment_id_for,
+    run_experiment_with_hooks,
 };
-use crate::experiment_llm::{assert_guided_arms_served, AgentArmRunner, AgentArmRunnerOptions};
+use crate::experiment_llm::{AgentArmRunner, AgentArmRunnerOptions, assert_guided_arms_served};
 use crate::llm::DreamChildRole;
-use crate::llm_loop::{run_dream_loop_with_agent, DreamLoopWithAgentOptions, DreamProgressEvent};
+use crate::llm_loop::{DreamLoopWithAgentOptions, DreamProgressEvent, run_dream_loop_with_agent};
 use crate::objective::DEFAULT_OBJECTIVE;
-use crate::policy::{ExplorationPolicy, DEFAULT_POLICY};
+use crate::policy::{DEFAULT_POLICY, ExplorationPolicy};
 use crate::rng::{Seed, SeededRng};
-use crate::store::{experiment_result_path, DreamStoreError};
-use crate::tasks::{resolve_task, resolve_task_n, task_prompt_context, DreamTaskId};
+use crate::store::{DreamStoreError, experiment_result_path};
+use crate::tasks::{DreamTaskId, resolve_task, resolve_task_n, task_prompt_context};
 
 /// Why a run ended. `Completed` covers improved and no-improvement finishes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -585,8 +595,8 @@ impl DreamRunService {
         kind: DreamRunKind,
         initial: impl FnOnce(&mut DreamRunStatus),
         body: impl FnOnce(&Self, CancellationToken, u64) -> Result<DreamRunStatus, String>
-            + Send
-            + 'static,
+        + Send
+        + 'static,
     ) -> Result<StartedRun, String> {
         let cancel = CancellationToken::new();
         let (run_id, started_at) = {

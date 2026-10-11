@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 /// The `factory_activity` capability's advertisement gate: the factory is

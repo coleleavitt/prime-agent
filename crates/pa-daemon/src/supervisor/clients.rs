@@ -4,14 +4,46 @@ use anyhow::anyhow;
 use pa_types::sync::MutexExt;
 
 use super::{
-    app_version, broadcast, command_type_name, current_protocol_info,
-    daemon_closing_shutdown_event, input_admission_id, json, parse_supervisor_command_line,
-    response_failure, response_line, response_success, salvage_command_type, salvage_id,
-    subscribers, update_gate_refuses, util, Arc, AsyncWriteExt, BufReader, ClientRouting,
-    ClientTrust, DaemonCommand, DaemonOutbound, DaemonRuntimeIdentity, Duration,
-    EnvelopeParseError, Map, Ordering, Outbound, ResidentWorker, Result, RouteAdmission,
-    Supervisor, TransportStream, TypedCreateRejection, Value, DAEMON_SCHEMA_ID,
-    DAEMON_SCHEMA_REVISION, ROUTE_TIMEOUT_MS, UPDATE_PREPARING_MESSAGE,
+    Arc,
+    AsyncWriteExt,
+    BufReader,
+    ClientRouting,
+    ClientTrust,
+    DAEMON_SCHEMA_ID,
+    DAEMON_SCHEMA_REVISION,
+    DaemonCommand,
+    DaemonOutbound,
+    DaemonRuntimeIdentity,
+    Duration,
+    EnvelopeParseError,
+    Map,
+    Ordering,
+    Outbound,
+    ROUTE_TIMEOUT_MS,
+    ResidentWorker,
+    Result,
+    RouteAdmission,
+    Supervisor,
+    TransportStream,
+    TypedCreateRejection,
+    UPDATE_PREPARING_MESSAGE,
+    Value,
+    app_version,
+    broadcast,
+    command_type_name,
+    current_protocol_info,
+    daemon_closing_shutdown_event,
+    input_admission_id,
+    json,
+    parse_supervisor_command_line,
+    response_failure,
+    response_line,
+    response_success,
+    salvage_command_type,
+    salvage_id,
+    subscribers,
+    update_gate_refuses,
+    util,
 };
 
 /// TS `OWNED_WORKER_DISCONNECT_GRACE_MS`: how long a client-owned worker
@@ -1396,19 +1428,21 @@ impl Supervisor {
 #[cfg(all(test, unix))]
 mod tests {
     #[cfg(unix)]
-    use super::*;
-    #[cfg(unix)]
-    use crate::supervisor::SupervisorOptions;
+    use std::sync::Arc;
+    use std::time::Duration;
+
     #[cfg(unix)]
     use pa_types::daemon::DaemonWorkerDescriptor;
     #[cfg(unix)]
     use pa_types::platform::transport::TransportStream;
     #[cfg(unix)]
     use serde_json::json;
-    #[cfg(unix)]
-    use std::sync::Arc;
-    use std::time::Duration;
     use tokio::io::AsyncBufReadExt as _;
+
+    #[cfg(unix)]
+    use super::*;
+    #[cfg(unix)]
+    use crate::supervisor::SupervisorOptions;
 
     #[cfg(unix)]
     #[tokio::test]

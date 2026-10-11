@@ -181,12 +181,18 @@ pub fn select_from_entries(entries: &[FileEntry]) -> HeadlessTerminalResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::autonomous::{AgentAutonomousStatus, AutonomousLimitReason};
     use pa_types::ai::{
-        AssistantContentBlock, AssistantMessage, StopReason, TextContent, UserContent, UserMessage,
+        AssistantContentBlock,
+        AssistantMessage,
+        StopReason,
+        TextContent,
+        UserContent,
+        UserMessage,
     };
     use pa_types::session::{CompactionSummaryMessage, CustomMessage};
+
+    use super::*;
+    use crate::autonomous::{AgentAutonomousStatus, AutonomousLimitReason};
 
     fn text_assistant(text: &str, stop_reason: StopReason) -> AgentMessage {
         AgentMessage::Assistant(AssistantMessage {

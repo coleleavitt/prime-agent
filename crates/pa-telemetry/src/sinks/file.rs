@@ -2,9 +2,8 @@
 //! read it. One JSON object per line at `<agentDir>/telemetry.jsonl`, rotated
 //! to `.1` at the size cap.
 
-use std::path::{Path, PathBuf};
-
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use anyhow::{Context, Result};

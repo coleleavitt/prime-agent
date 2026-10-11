@@ -6,9 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::fake::{done, node_status, running, strings, Case};
+use super::fake::{Case, done, node_status, running, strings};
 use crate::factory::executor::store::INTERRUPTED_PAUSE_REASON;
 
 fn record(dir: &Path, run_id: &str) -> Value {
@@ -136,10 +136,12 @@ async fn a_host_restart_pauses_the_run_as_interrupted_and_resume_finishes_the_lo
     assert_eq!(resumed["state"], "running");
     let finished = restarted.settle(&result).await;
     assert_eq!(finished["state"], "done");
-    assert!(restarted
-        .host
-        .deleted_targets()
-        .contains(&"child-4".to_string()));
+    assert!(
+        restarted
+            .host
+            .deleted_targets()
+            .contains(&"child-4".to_string())
+    );
     let reviewing = node_status(&finished, "reviewing");
     assert_eq!(reviewing["entries_used"], 3);
     assert_eq!(node_status(&finished, "fixing")["entries_used"], 2);
@@ -154,11 +156,13 @@ async fn a_host_restart_pauses_the_run_as_interrupted_and_resume_finishes_the_lo
         "the re-admitted reviewer carries the attempt suffix: {names:?}"
     );
     // Re-entry re-bound the draft into every reviewer prompt.
-    assert!(restarted
-        .host
-        .spawn_prompts("reviewing")
-        .iter()
-        .all(|prompt| prompt == "Review: DRAFT"));
+    assert!(
+        restarted
+            .host
+            .spawn_prompts("reviewing")
+            .iter()
+            .all(|prompt| prompt == "Review: DRAFT")
+    );
 }
 
 #[tokio::test]

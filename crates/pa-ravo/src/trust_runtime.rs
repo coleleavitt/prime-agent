@@ -13,22 +13,44 @@ use std::time::Instant;
 use indexmap::IndexMap;
 use pa_core::refinement::HarnessScope;
 use pa_ledger::{
-    apply_replay_verifications, observation_ordinal, FailureLedger, FailureRecord, HarnessDocument,
-    LedgerBoundary, LedgerFlush, LedgerHandle, LedgerScope, ReplayCase, ReplayVerification,
+    FailureLedger,
+    FailureRecord,
+    HarnessDocument,
+    LedgerBoundary,
+    LedgerFlush,
+    LedgerHandle,
+    LedgerScope,
+    ReplayCase,
+    ReplayVerification,
+    apply_replay_verifications,
+    observation_ordinal,
 };
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
 use serde_json::{Map, Value};
 
 use crate::referee::ReplayRunner;
 use crate::trust::{
-    has_open_trust_windows, log_trust_settlement, normalize_trust_windows,
-    record_harness_trust_evidence, settle_harness_trust, trust_windows_value, TrustOutcome,
-    TrustSettlement, TrustWindowEvidence, TRUST_WINDOWS_KEY,
+    TRUST_WINDOWS_KEY,
+    TrustOutcome,
+    TrustSettlement,
+    TrustWindowEvidence,
+    has_open_trust_windows,
+    log_trust_settlement,
+    normalize_trust_windows,
+    record_harness_trust_evidence,
+    settle_harness_trust,
+    trust_windows_value,
 };
 use crate::trust_adjudication::{
-    adjudicate_trust_recurrences, find_trust_window_recurrences, plan_trust_adjudications,
-    release_awaiting_trust_adjudication, AwaitingTrustAdjudication, TrustAdjudicationJob,
-    TrustAdjudicationRun, TrustPlanInput, MAX_TRUST_ADJUDICATION_JOBS,
+    AwaitingTrustAdjudication,
+    MAX_TRUST_ADJUDICATION_JOBS,
+    TrustAdjudicationJob,
+    TrustAdjudicationRun,
+    TrustPlanInput,
+    adjudicate_trust_recurrences,
+    find_trust_window_recurrences,
+    plan_trust_adjudications,
+    release_awaiting_trust_adjudication,
 };
 use crate::verification::ReplayVerifier;
 

@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::error::{head, transport, ComputerUseError, ERROR_LIMIT};
+use crate::error::{ComputerUseError, ERROR_LIMIT, head, transport};
 
 /// One finished run.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

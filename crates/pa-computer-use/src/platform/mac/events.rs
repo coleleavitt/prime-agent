@@ -7,8 +7,8 @@
 use std::collections::BTreeSet;
 
 use crate::element::Pair;
-use crate::error::{invalid, Result};
-use crate::keymap::{keycode, Modifier, ParsedChord};
+use crate::error::{Result, invalid};
+use crate::keymap::{Modifier, ParsedChord, keycode};
 use crate::platform::{MouseButton, ScrollDirection};
 
 /// One page of scrolling, in pixels.

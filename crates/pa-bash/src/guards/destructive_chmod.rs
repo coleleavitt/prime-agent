@@ -8,7 +8,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use super::{opaque, Check, Rule};
+use super::{Check, Rule, opaque};
 use crate::model::evidence::first_word;
 use crate::model::files::{expand, join, unescape};
 use crate::model::{Arg, Invocation, Via};
@@ -42,7 +42,9 @@ impl Rule for DestructiveChmod {
 }
 
 fn closing(advice: &str) -> String {
-    format!("\n\n{advice} bash(command, allow_destructive_chmod=True), or start the kernel with {BYPASS_ENV}=1.")
+    format!(
+        "\n\n{advice} bash(command, allow_destructive_chmod=True), or start the kernel with {BYPASS_ENV}=1."
+    )
 }
 
 struct Places {
@@ -240,7 +242,7 @@ fn local_violation(
                     return Some((
                         Reason::Unresolvable("a glob with too many matches".to_string()),
                         None,
-                    ))
+                    ));
                 }
             },
             Arg::Known(_) | Arg::Unknown(_) => vec![join(dir, &text)],

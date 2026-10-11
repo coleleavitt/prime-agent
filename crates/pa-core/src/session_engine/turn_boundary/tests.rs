@@ -1,17 +1,23 @@
 //! The turn-boundary unit battery: the model-info reports, the compact
 //! family round trips, the refine scheduling, and the context usage.
+use pa_agent::agent::{Agent, AgentInitialState, AgentOptions};
+use pa_agent::scripted::ScriptedProvider;
+use pa_agent::types::ThinkingLevel;
+use pa_types::ai::{
+    AssistantContentBlock,
+    AssistantMessage,
+    StopReason,
+    TextContent,
+    Usage,
+    UserContent,
+};
+use pa_types::session::AgentMessage as SessionMessage;
+
 use super::*;
 use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use crate::session::manager::SessionManager;
 use crate::session_engine::tool_bridge::bridge_tool;
 use crate::tools::tool_definition::ToolDefinition;
-use pa_agent::agent::{Agent, AgentInitialState, AgentOptions};
-use pa_agent::scripted::ScriptedProvider;
-use pa_agent::types::ThinkingLevel;
-use pa_types::ai::{
-    AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage, UserContent,
-};
-use pa_types::session::AgentMessage as SessionMessage;
 
 fn payload(data: Value) -> HostRequestPayload {
     HostRequestPayload {

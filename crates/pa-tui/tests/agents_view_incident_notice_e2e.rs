@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pa_tui::agents_view::{AgentsHeadlessPlan, AgentsStep, AgentsViewOptions, AgentsViewUiMode};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Environment mutations are process-global: the `PRIME_AGENT_CODING_AGENT_DIR` redirect serializes
 /// on one lock and restores on exit. A tokio mutex (a std guard across an await is a clippy error).

@@ -40,14 +40,20 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::projection::{validate_projection_semantics, Projection, ProjectionKind};
+use super::projection::{Projection, ProjectionKind, validate_projection_semantics};
 use super::reducer::{
-    check_terminalized_outcome, reduce_fact, revalidate_aggregate, AttemptRecord, DefinitionGraph,
-    NodeState, ReducerError, RunAggregate,
+    AttemptRecord,
+    DefinitionGraph,
+    NodeState,
+    ReducerError,
+    RunAggregate,
+    check_terminalized_outcome,
+    reduce_fact,
+    revalidate_aggregate,
 };
 use super::schema;
 use super::wire::{self, Action, RequestError, WireError};
@@ -1653,7 +1659,7 @@ impl Store {
                     return refuse(
                         StoreCode::WriterLocked,
                         "another writer holds the store lock",
-                    )
+                    );
                 }
                 Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
             }
@@ -1757,13 +1763,13 @@ impl Store {
                 return refuse(
                     StoreCode::ValidateNotMutation,
                     "use validate() for the validate action",
-                )
+                );
             }
             Action::Status | Action::Events => {
                 return refuse(
                     StoreCode::NotMutation,
                     format!("{} is not a mutation", action.wire_name()),
-                )
+                );
             }
             Action::Create | Action::Start | Action::Cancel | Action::Retry => {}
         }

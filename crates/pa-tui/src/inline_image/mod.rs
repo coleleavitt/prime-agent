@@ -21,19 +21,29 @@ mod painter;
 mod payload;
 mod plan;
 
-pub(crate) use painter::Painter;
-pub(crate) use payload::{payload_ready, GlobalSource};
-
 use std::cell::Cell;
 use std::sync::{Arc, LazyLock, Mutex};
 
+pub(crate) use painter::Painter;
+pub(crate) use payload::{GlobalSource, payload_ready};
+
 use crate::terminal_image::kitty_graphics::{
-    is_placeholder_cell, placeholder_cell, placeholder_image_id, placeholder_rgb,
-    MAX_PLACEHOLDER_CELLS, PLACEHOLDER,
+    MAX_PLACEHOLDER_CELLS,
+    PLACEHOLDER,
+    is_placeholder_cell,
+    placeholder_cell,
+    placeholder_image_id,
+    placeholder_rgb,
 };
 use crate::terminal_image::{
-    calculate_image_rows, cell_dimensions, image_protocol, image_terminal, CellDimensions,
-    ImageDimensions, ImageProtocol, ImageTerminal,
+    CellDimensions,
+    ImageDimensions,
+    ImageProtocol,
+    ImageTerminal,
+    calculate_image_rows,
+    cell_dimensions,
+    image_protocol,
+    image_terminal,
 };
 use crate::{Line, Span};
 

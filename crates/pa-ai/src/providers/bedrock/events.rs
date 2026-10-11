@@ -8,9 +8,15 @@ use crate::event_stream::{AssistantMessageEvent, AssistantMessageEventWriter};
 use crate::models::calculate_cost;
 use crate::providers::bedrock::{bedrock_exception_message, map_stop_reason};
 use crate::types::{
-    AssistantContent, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall,
+    AssistantContent,
+    AssistantMessage,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
 };
-use crate::utils_inner::json_parse::{parse_streaming_json, StreamingJsonAccumulator};
+use crate::utils_inner::json_parse::{StreamingJsonAccumulator, parse_streaming_json};
 use crate::utils_inner::stream_failure::ProviderError;
 
 /// Scratch state for the Converse Stream event loop.
@@ -418,9 +424,10 @@ fn handle_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{zero_model_cost, ModelInput, Usage};
     use serde_json::json;
+
+    use super::*;
+    use crate::types::{ModelInput, Usage, zero_model_cost};
 
     /// TS `handleMetadata` assigns `usage.totalTokens = event.usage.totalTokens || input + output`:
     /// an explicitly reported zero total is falsy and falls back to the input/output sum.

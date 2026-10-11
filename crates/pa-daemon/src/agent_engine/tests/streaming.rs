@@ -172,9 +172,11 @@ fn agent_engine_streams_updates_and_final_message() {
         },
     );
     assert!(matches!(&events[0], EngineEvent::UserMessage(_)));
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, EngineEvent::AssistantUpdate { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::AssistantUpdate { .. }))
+    );
     let final_index = events
         .iter()
         .position(|event| matches!(event, EngineEvent::AssistantMessage(_)))

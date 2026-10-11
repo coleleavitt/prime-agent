@@ -2,10 +2,25 @@
 //! integration harness, its script records, the `SessionEngine` impl, and
 //! the abortable delay helper.
 use super::{
-    json, AbortSignal, AssistantSnapshot, BranchSummaryOutcome, BranchSummaryRequest,
-    BranchSummaryRun, CompactionOutcome, CompactionRequest, CompactionRun, EngineEvent,
-    PromptRequest, ProviderRetryPolicy, Result, SessionEngine, SideQuestionOutcome,
-    SideQuestionRequest, SideQuestionSink, Value, UNBOUNDED_BACKOFF_MS,
+    AbortSignal,
+    AssistantSnapshot,
+    BranchSummaryOutcome,
+    BranchSummaryRequest,
+    BranchSummaryRun,
+    CompactionOutcome,
+    CompactionRequest,
+    CompactionRun,
+    EngineEvent,
+    PromptRequest,
+    ProviderRetryPolicy,
+    Result,
+    SessionEngine,
+    SideQuestionOutcome,
+    SideQuestionRequest,
+    SideQuestionSink,
+    UNBOUNDED_BACKOFF_MS,
+    Value,
+    json,
 };
 
 /// A scripted faux session: replays a deterministic sequence of assistant
@@ -489,11 +504,13 @@ impl SessionEngine for ScriptedEngine {
         signal: &AbortSignal,
         sink: &SideQuestionSink,
     ) -> SideQuestionOutcome {
-        use pa_core::session_engine::provider_retry::{
-            complete_with_provider_retry, DEFAULT_PROVIDER_RETRY_POLICY,
-        };
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use pa_core::session_engine::provider_retry::{
+            DEFAULT_PROVIDER_RETRY_POLICY,
+            complete_with_provider_retry,
+        };
 
         // Unscripted side questions echo, like the prompt fallback.
         if self.side_question.responses.is_empty() {
@@ -727,7 +744,11 @@ fn scripted_side_question_turn(
     signal: &AbortSignal,
 ) -> pa_agent::types::AssistantMessage {
     use pa_agent::types::{
-        AssistantContent, AssistantMessage, AssistantMessageDiagnostic, StopReason, TextContent,
+        AssistantContent,
+        AssistantMessage,
+        AssistantMessageDiagnostic,
+        StopReason,
+        TextContent,
     };
     let base = || AssistantMessage {
         content: vec![AssistantContent::Text(TextContent {

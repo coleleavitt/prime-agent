@@ -171,8 +171,9 @@ pub fn build_tree(flat: Vec<TreeNodeData>) -> Vec<TreeNode> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::Map;
+
+    use super::*;
 
     fn node(id: &str, parent: Option<&str>, timestamp: &str) -> TreeNodeData {
         TreeNodeData {

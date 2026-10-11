@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::atspi::{AtSpi, States};
 use super::input::{Availability, KeyStroke, PointerTarget, VirtualInput};

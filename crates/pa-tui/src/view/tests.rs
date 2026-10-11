@@ -1,12 +1,13 @@
+use ratatui::style::Modifier;
+
 use super::frame::{composite_follow_hint, indicator_row};
 use super::*;
+use crate::Line;
 use crate::chat::{AssistantMessage, MessageBlock};
 use crate::osc133::RowMarkers;
 use crate::theme::{ColorMode, Theme, ThemeBg, ThemeColor};
 use crate::tool_card::{ToolCallCard, ToolResultView};
 use crate::width::str_width;
-use crate::Line;
-use ratatui::style::Modifier;
 
 fn view() -> AgentView {
     AgentView::new(Theme::builtin("prime", ColorMode::TrueColor))
@@ -422,20 +423,26 @@ fn compaction_streams_the_summary_under_the_loader_in_expanded_detail() {
 fn follow_hint_shows_when_paused_and_hides_when_following() {
     let mut v = filled(view(), 30);
     let following_frame = v.render_frame(80, 24);
-    assert!(!following_frame
-        .iter()
-        .any(|l| row_text(l).contains("to follow")));
+    assert!(
+        !following_frame
+            .iter()
+            .any(|l| row_text(l).contains("to follow"))
+    );
     v.scroll_by(-(v.page_size() as isize));
     let paused_frame = v.render_frame(80, 24);
-    assert!(paused_frame
-        .iter()
-        .any(|l| row_text(l).contains("ctrl+shift+down to follow")));
+    assert!(
+        paused_frame
+            .iter()
+            .any(|l| row_text(l).contains("ctrl+shift+down to follow"))
+    );
     v.scroll_to_bottom();
     let resumed_frame = v.render_frame(80, 24);
     assert!(v.is_following());
-    assert!(!resumed_frame
-        .iter()
-        .any(|l| row_text(l).contains("to follow")));
+    assert!(
+        !resumed_frame
+            .iter()
+            .any(|l| row_text(l).contains("to follow"))
+    );
     // TS shows the hint for every non-following window, even at the very
     // top.
     v.scroll_to_top();
@@ -704,9 +711,11 @@ fn flush_streams_append_then_repaints_the_changed_tail() {
     // single-span fragments, not strings spanning a style boundary.
     assert!(joined.contains("0.0.0"));
     assert!(joined.contains("first turn"));
-    assert!(first
-        .windows(crate::osc133::ZONE_START.len())
-        .any(|w| w == crate::osc133::ZONE_START.as_bytes()));
+    assert!(
+        first
+            .windows(crate::osc133::ZONE_START.len())
+            .any(|w| w == crate::osc133::ZONE_START.as_bytes())
+    );
     assert!(first.starts_with(b"\r") && first.ends_with(b"\r\n"));
 
     assert!(flush_bytes(&mut v, 80, 24).is_empty());

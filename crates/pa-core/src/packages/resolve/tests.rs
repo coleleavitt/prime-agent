@@ -6,13 +6,12 @@ use std::path::{Path, PathBuf};
 use super::{MetadataSource, ResolvedResource, ResourceOrigin};
 use crate::packages::manager::BundledSkillsDir;
 use crate::packages::source::SourceScope;
-use crate::packages::{PackageManager, PackageManagerOptions};
-use crate::settings::SettingsManager;
-
 /// Environment mutations (HOME, `PI_OFFLINE`) are process-wide: tests that
 /// touch them, and tests that read the env-sensitive update flows,
 /// serialize through the shared packages lock.
 use crate::packages::test_support::lock_env;
+use crate::packages::{PackageManager, PackageManagerOptions};
+use crate::settings::SettingsManager;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -155,10 +154,12 @@ fn resolve_skill_paths_from_settings() {
     fixture.set_user_array("skills", serde_json::json!(["skills"]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == skill_file && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == skill_file && r.enabled)
+    );
 }
 
 #[test]
@@ -171,10 +172,12 @@ fn auto_discovers_root_markdown_skills() {
     );
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == skill_file && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == skill_file && r.enabled)
+    );
 }
 
 #[test]
@@ -186,10 +189,12 @@ fn resolves_project_paths_relative_to_project_config_dir() {
     fixture.set_project_array("prompts", serde_json::json!(["prompts/project.md"]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path == prompt_path && r.enabled));
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|r| r.path == prompt_path && r.enabled)
+    );
 }
 
 #[test]
@@ -200,10 +205,12 @@ fn auto_discovers_user_prompts_with_overrides() {
     fixture.set_user_array("prompts", serde_json::json!(["!prompts/auto.md"]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path == prompt_path && !r.enabled));
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|r| r.path == prompt_path && !r.enabled)
+    );
 }
 
 #[test]
@@ -215,10 +222,12 @@ fn auto_discovers_project_prompts_with_overrides() {
     fixture.set_project_array("prompts", serde_json::json!(["!prompts/is.md"]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path == prompt_path && !r.enabled));
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|r| r.path == prompt_path && !r.enabled)
+    );
 }
 
 /// Unix symlink layout; Windows needs `symlink_dir` and a privileged
@@ -287,10 +296,12 @@ fn agents_skills_scan_stops_at_git_repo_root() {
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
     nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == repo_root_skill && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == repo_root_skill && r.enabled)
+    );
     assert!(result.skills.iter().any(|r| r.path == nested && r.enabled));
     assert!(!result.skills.iter().any(|r| r.path == above_repo));
 }
@@ -316,14 +327,18 @@ fn agents_skills_scan_goes_to_fs_root_without_a_repo() {
     let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
     nested_manager.reload();
     let result = nested_manager.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == root_skill && r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == middle_skill && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == root_skill && r.enabled)
+    );
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == middle_skill && r.enabled)
+    );
 }
 
 #[test]
@@ -433,10 +448,12 @@ fn parent_gitignore_does_not_apply_to_auto_discovery() {
     let skill_path = skill_md(&project_dir.join("skills"), "auto-skill", "Auto");
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path == skill_path && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path == skill_path && r.enabled)
+    );
 }
 
 #[test]
@@ -476,14 +493,18 @@ fn top_level_filters_skills_with_exclusion_pattern() {
     fixture.set_user_array("skills", serde_json::json!(["skills", "!**/bad-skill"]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("good-skill") && r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("bad-skill") && !r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("good-skill") && r.enabled)
+    );
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("bad-skill") && !r.enabled)
+    );
 }
 
 #[test]
@@ -499,14 +520,18 @@ fn manifest_supports_glob_patterns_for_skills() {
 
     fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("good-skill") && r.enabled));
-    assert!(!result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("bad-skill")));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("good-skill") && r.enabled)
+    );
+    assert!(
+        !result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("bad-skill"))
+    );
 }
 
 #[test]
@@ -533,15 +558,18 @@ fn manifest_expands_positive_glob_entries_before_collecting_skills() {
 
     fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pdf-to-markdown") && r.enabled));
-    assert!(result.skills.iter().any(|r| r
-        .path
-        .to_string_lossy()
-        .contains("document-processor-api")
-        && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("pdf-to-markdown") && r.enabled)
+    );
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("document-processor-api") && r.enabled)
+    );
 }
 
 #[test]
@@ -659,18 +687,24 @@ fn force_include_multiple_resources() {
     }]));
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-a") && r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-b") && !r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-c") && r.enabled));
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("skill-a") && r.enabled)
+    );
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("skill-b") && !r.enabled)
+    );
+    assert!(
+        result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("skill-c") && r.enabled)
+    );
 }
 
 #[test]
@@ -823,14 +857,18 @@ fn different_packages_in_both_scopes_both_resolve() {
     fixture.reload();
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pkg1")));
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pkg2")));
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("pkg1"))
+    );
+    assert!(
+        result
+            .prompts
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("pkg2"))
+    );
 }
 
 #[test]
@@ -850,12 +888,14 @@ fn offline_mode_skips_installing_missing_sources() {
     fixture.reload();
 
     let result = fixture.manager.resolve().unwrap();
-    assert!(!result
-        .skills
-        .iter()
-        .chain(&result.prompts)
-        .chain(&result.themes)
-        .any(|r| r.metadata.origin == ResourceOrigin::Package));
+    assert!(
+        !result
+            .skills
+            .iter()
+            .chain(&result.prompts)
+            .chain(&result.themes)
+            .any(|r| r.metadata.origin == ResourceOrigin::Package)
+    );
 
     match previous {
         Some(value) => std::env::set_var("PI_OFFLINE", value),
@@ -889,12 +929,14 @@ fn on_missing_skip_leaves_the_source_out() {
         .manager
         .resolve_with_on_missing(Some(&mut |_| crate::packages::MissingSourceAction::Skip))
         .unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .chain(&result.prompts)
-        .chain(&result.themes)
-        .all(|r| r.metadata.origin != ResourceOrigin::Package));
+    assert!(
+        result
+            .skills
+            .iter()
+            .chain(&result.prompts)
+            .chain(&result.themes)
+            .all(|r| r.metadata.origin != ResourceOrigin::Package)
+    );
 }
 
 #[test]
@@ -987,10 +1029,12 @@ fn disabled_builtin_skills_are_not_collected() {
     });
 
     let result = manager.resolve().unwrap();
-    assert!(!result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("some-skill")));
+    assert!(
+        !result
+            .skills
+            .iter()
+            .any(|r| r.path.to_string_lossy().contains("some-skill"))
+    );
 }
 
 #[test]

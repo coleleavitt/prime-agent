@@ -10,7 +10,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::utils_inner::h2_classify::classify_h2_error;
 use crate::utils_inner::stream_failure::{
-    ConnectionErrorKind, ConnectionErrorProfile, H2Failure, ProviderConnectionError, ProviderError,
+    ConnectionErrorKind,
+    ConnectionErrorProfile,
+    H2Failure,
+    ProviderConnectionError,
+    ProviderError,
 };
 
 /// The bedrock wire transport, mirroring the TS request-handler selection: `NodeHttp2Handler` by
@@ -354,8 +358,9 @@ mod tests {
 /// written/parsed by hand (the probe drives the TS binary through the same wire sequences).
 #[cfg(test)]
 mod h2_wire_tests {
-    use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
 
     const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 

@@ -5,12 +5,19 @@
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use super::gates::{should_autonomously_continue, GateCommandRunner, ShellGateRunner};
+use super::gates::{GateCommandRunner, ShellGateRunner, should_autonomously_continue};
 use super::{
-    add_autonomous_continuation, add_autonomous_discarded_usage, add_autonomous_usage,
-    autonomous_limit_reason, autonomous_status, build_autonomous_gate_failure_continuation,
-    now_millis, AgentAutonomousStatus, AutonomousDecisionReason, AutonomousLimitReason,
+    AgentAutonomousStatus,
+    AutonomousDecisionReason,
+    AutonomousLimitReason,
     AutonomousRuntimeState,
+    add_autonomous_continuation,
+    add_autonomous_discarded_usage,
+    add_autonomous_usage,
+    autonomous_limit_reason,
+    autonomous_status,
+    build_autonomous_gate_failure_continuation,
+    now_millis,
 };
 
 pub type AutonomousFollowUpFuture<'a> =
@@ -161,16 +168,23 @@ impl<R: GateCommandRunner> AutonomousDriver for ShellAutonomousDriver<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::pin;
+
+    use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage};
+
     use super::*;
     use crate::autonomous::gates::{
-        ChildProcessResult, GateCommandRunner, GateRunFuture, SnapshotFuture,
+        ChildProcessResult,
+        GateCommandRunner,
+        GateRunFuture,
+        SnapshotFuture,
     };
     use crate::autonomous::{
-        create_autonomous_runtime_state, AgentAutonomousConfig, AgentAutonomousGateConfig,
+        AgentAutonomousConfig,
+        AgentAutonomousGateConfig,
         GitWorktreeSnapshot,
+        create_autonomous_runtime_state,
     };
-    use pa_types::ai::{AssistantContentBlock, AssistantMessage, StopReason, TextContent, Usage};
-    use std::pin::pin;
 
     fn message(stop_reason: StopReason, usage: Usage) -> AssistantMessage {
         AssistantMessage {

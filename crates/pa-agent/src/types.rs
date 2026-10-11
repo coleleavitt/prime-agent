@@ -3,11 +3,12 @@
 //! Serde field names use camelCase so serialized messages match the TS wire
 //! format exactly (important for the proxy protocol and session JSONL parity).
 
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::abort::AbortSignal;
+use serde::{Deserialize, Serialize};
+
 use crate::BoxFut;
+use crate::abort::AbortSignal;
 
 /// Thinking/reasoning level for models that support it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -2,12 +2,27 @@
 //! grok-mermaid 0.2.3 `parse.ts` (Apache-2.0; see `LICENSE-grok-mermaid`).
 
 use super::super::graph::{
-    parse_dir, ClassInfo, Dir, Edge, Graph, Head, LineKind, Shape, MAX_EDGES, MAX_MEMBERS,
+    ClassInfo,
+    Dir,
+    Edge,
+    Graph,
+    Head,
+    LineKind,
+    MAX_EDGES,
+    MAX_MEMBERS,
+    Shape,
+    parse_dir,
 };
 use super::super::js_text;
 use super::super::labels::{ascii_lower, clean_label, decode_html_entities, is_id_char};
 use super::{
-    collect, drop_style_tags, first_word, header_kind, non_empty, split_once, statements_of,
+    collect,
+    drop_style_tags,
+    first_word,
+    header_kind,
+    non_empty,
+    split_once,
+    statements_of,
 };
 
 /// Relation operators, longest-first so `--|>` wins over `--`.

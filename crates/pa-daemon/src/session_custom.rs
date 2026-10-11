@@ -4,9 +4,9 @@
 //! broadcasts go through the same paths the turn runner uses.
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{response_failure, response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
 /// The session-action recovery snapshot format.
@@ -349,9 +349,11 @@ fn custom_message_value(message: Option<&Value>) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
 
     async fn created_worker() -> crate::test_support::InTestDir<Arc<Worker>> {
         created_worker_named(Some("custom")).await

@@ -36,7 +36,7 @@ mod probe;
 mod serve;
 mod status;
 
-pub(crate) use args::{parse_tailscale_args, TailscaleArgs};
+pub(crate) use args::{TailscaleArgs, parse_tailscale_args};
 pub(crate) use probe::{doctor_facts, probe_tailscale};
 pub(crate) use serve::run_serve;
 pub(crate) use status::run_status;

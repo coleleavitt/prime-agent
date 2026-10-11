@@ -2,10 +2,9 @@
 //! `proper-lockfile` 4.1.2 convention: ordinary locks are empty directories
 //! at `{file}.lock`; harness-state locks add an owner file for safe stale reclaim.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::{fs, io};
 
 /// Minimum staleness threshold, like proper-lockfile's floor.
 const MIN_STALE: Duration = Duration::from_secs(2);

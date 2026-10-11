@@ -1,11 +1,13 @@
 //! Disposable, generation-certified session window snapshots.
-use super::window::{WindowReadStats, WindowStats};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, Metadata};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+
+use serde::{Deserialize, Serialize};
+
+use super::window::{WindowReadStats, WindowStats};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Generation {

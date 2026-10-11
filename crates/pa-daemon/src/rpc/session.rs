@@ -5,8 +5,8 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use pa_agent::agent::Subscription;
 use pa_core::session_engine::engine::SessionEngine;

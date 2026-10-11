@@ -3,34 +3,54 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::cache_pricing::{get_anthropic_cache_write_cost, has_standard_anthropic_cache_pricing};
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::{
-    create_assistant_message_event_stream, AssistantMessageEvent, AssistantMessageEventStream,
+    AssistantMessageEvent,
+    AssistantMessageEventStream,
     AssistantMessageEventWriter,
+    create_assistant_message_event_stream,
 };
 use crate::providers::openai_completions::convert::{map_stop_reason, parse_chunk_usage};
 use crate::providers::openai_completions::errors::{openai_http_error, openrouter_raw_metadata};
-use crate::providers::openai_completions::get_compat_cache_control;
 use crate::providers::openai_completions::params::{build_headers, build_params};
 use crate::providers::openai_completions::{
-    encode_reasoning_details, get_compat, resolve_cache_retention, OpenAICompletionsOptions,
+    OpenAICompletionsOptions,
     REASONING_FIELDS,
+    encode_reasoning_details,
+    get_compat,
+    get_compat_cache_control,
+    resolve_cache_retention,
 };
 use crate::providers::openai_responses_hooks::apply_service_tier_pricing;
 use crate::types::{
-    done_reason, error_reason, AssistantContent, AssistantMessage, CacheRetention, Context, Model,
-    StopReason, TextContent, ThinkingContent, ToolCall, Usage,
+    AssistantContent,
+    AssistantMessage,
+    CacheRetention,
+    Context,
+    Model,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    Usage,
+    done_reason,
+    error_reason,
 };
-use crate::utils_inner::http::{send, HttpResponse, RequestOptions};
+use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{
-    parse_json_with_repair, parse_streaming_json, StreamingJsonAccumulator,
+    StreamingJsonAccumulator,
+    parse_json_with_repair,
+    parse_streaming_json,
 };
 use crate::utils_inner::sse::{ServerSentEvent, SseDecoder};
 use crate::utils_inner::stream_failure::{
-    open_stream_block, record_stream_failure, stream_drop_failure, ProviderError,
+    ProviderError,
+    open_stream_block,
+    record_stream_failure,
+    stream_drop_failure,
 };
 
 struct StreamingState {
@@ -753,9 +773,11 @@ fn parse_sse_event_data(event: &ServerSentEvent) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::SocketAddr;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
 
     #[path = "stream_pins.rs"]
     mod stream_pins;
@@ -838,7 +860,9 @@ mod tests {
 
     fn tier_on_usage_sse(tier: &str) -> String {
         let content = "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n";
-        let usage = format!("data: {{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"service_tier\":\"{tier}\",\"choices\":[],\"usage\":{{\"prompt_tokens\":1000000,\"completion_tokens\":1000000,\"total_tokens\":2000000,\"prompt_tokens_details\":{{\"cached_tokens\":0}}}}}}\n\n");
+        let usage = format!(
+            "data: {{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"service_tier\":\"{tier}\",\"choices\":[],\"usage\":{{\"prompt_tokens\":1000000,\"completion_tokens\":1000000,\"total_tokens\":2000000,\"prompt_tokens_details\":{{\"cached_tokens\":0}}}}}}\n\n"
+        );
         format!("{content}{usage}{DONE}")
     }
 
@@ -846,7 +870,9 @@ mod tests {
     // billing in the final usage chunk.
     fn openrouter_sse(usage_fields: &str) -> String {
         let content = "data: {\"id\":\"gen-01\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-fable-5\",\"service_tier\":\"priority\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n";
-        let usage = format!("data: {{\"id\":\"gen-01\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{{\"prompt_tokens\":50000,\"completion_tokens\":50000,\"total_tokens\":100000,\"prompt_tokens_details\":{{\"cached_tokens\":0}}{usage_fields}}}}}\n\n");
+        let usage = format!(
+            "data: {{\"id\":\"gen-01\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{{\"prompt_tokens\":50000,\"completion_tokens\":50000,\"total_tokens\":100000,\"prompt_tokens_details\":{{\"cached_tokens\":0}}{usage_fields}}}}}\n\n"
+        );
         format!("{content}{usage}{DONE}")
     }
 

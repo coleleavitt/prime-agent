@@ -2,15 +2,19 @@
 //! window, dock at the bottom), the inline exit layout, the hardware-
 //! cursor query, and the compose free helpers.
 
+use ratatui::style::{Modifier, Style};
+
 use super::click::{
-    self, PickerClickSurface, PickerKind, CHOICE_PICKER_CHROME_ROWS, MODEL_PICKER_CHROME_ROWS,
+    self,
+    CHOICE_PICKER_CHROME_ROWS,
+    MODEL_PICKER_CHROME_ROWS,
+    PickerClickSurface,
+    PickerKind,
 };
-use super::AgentView;
-use super::FULLSCREEN_MIN_TRANSCRIPT_ROWS;
+use super::{AgentView, FULLSCREEN_MIN_TRANSCRIPT_ROWS};
 use crate::chrome::{render_prompt_context, render_top_bar};
 use crate::width::str_width;
 use crate::{Line, Span};
-use ratatui::style::{Modifier, Style};
 
 impl AgentView {
     /// Compose the fullscreen frame: top bar, transcript window, dock —

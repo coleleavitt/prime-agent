@@ -2,8 +2,18 @@
 //! goal-tray glue, and the anthropic-subscription warning pair that
 //! rides it.
 use super::{
-    format_goal_status, terminal_columns, AgentView, ChatEntry, DaemonCommand, Duration, Map,
-    SessionUi, StatusKind, Value, ANTHROPIC_SUBSCRIPTION_AUTH_WARNING, UI_REQUEST_TIMEOUT_MS,
+    ANTHROPIC_SUBSCRIPTION_AUTH_WARNING,
+    AgentView,
+    ChatEntry,
+    DaemonCommand,
+    Duration,
+    Map,
+    SessionUi,
+    StatusKind,
+    UI_REQUEST_TIMEOUT_MS,
+    Value,
+    format_goal_status,
+    terminal_columns,
 };
 
 impl SessionUi {

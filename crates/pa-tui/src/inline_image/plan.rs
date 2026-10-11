@@ -1,7 +1,7 @@
 //! The placement plan: which previews a composed frame shows, where, and
 //! how much of each.
 
-use super::{parse_marker, Marker};
+use super::{Marker, parse_marker};
 use crate::Line;
 
 /// One preview's visible band in a frame.

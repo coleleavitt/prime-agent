@@ -11,17 +11,17 @@
 //! overflow the terminal (the detail line drops when the viewport is too
 //! short, never the search field).
 
-use crate::keybindings::{format_key_text, KeybindingsManager};
+use serde_json::Value;
+
+use crate::keybindings::{KeybindingsManager, format_key_text};
 use crate::menu_panel::{menu_list_layout, search_field_lines};
 use crate::search_input::SearchInput;
 use crate::theme::{Theme, ThemeColor};
 use crate::{Line, Span};
 
-use serde_json::Value;
-
 mod rows;
 
-use rows::{flatten_to_single_line, McpCredentialRow, McpRow, McpServiceRow};
+use rows::{McpCredentialRow, McpRow, McpServiceRow, flatten_to_single_line};
 
 /// The search field's placeholder (TS `MenuSearchInput("Search MCP
 /// connections")`).

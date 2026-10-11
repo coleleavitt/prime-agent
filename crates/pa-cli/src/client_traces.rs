@@ -4,15 +4,31 @@
 use std::path::{Path, PathBuf};
 
 use pa_core::agent_traces::{
-    agent_traces_log_path, preview_trace_file, trace_credential, upload_all_traces,
-    upload_trace_file, TracePreviewResult, TraceUploadAllOptions, TraceUploadAllProgress,
-    TraceUploadCancel as EngineCancel, TraceUploadOptions, TraceUploadResult,
     DEFAULT_REQUEST_TIMEOUT_MS,
+    TracePreviewResult,
+    TraceUploadAllOptions,
+    TraceUploadAllProgress,
+    TraceUploadCancel as EngineCancel,
+    TraceUploadOptions,
+    TraceUploadResult,
+    agent_traces_log_path,
+    preview_trace_file,
+    trace_credential,
+    upload_all_traces,
+    upload_trace_file,
 };
 use pa_tui::traces::{
-    TraceLoginOutcome, TracePreviewInfo, TracePreviewOutcome, TraceUploadAllNote,
-    TraceUploadAllNoteSender, TraceUploadAllReport, TraceUploadCancel, TraceUploadOutcome,
-    TraceUploadReport, TracesCommands, TracesFuture,
+    TraceLoginOutcome,
+    TracePreviewInfo,
+    TracePreviewOutcome,
+    TraceUploadAllNote,
+    TraceUploadAllNoteSender,
+    TraceUploadAllReport,
+    TraceUploadCancel,
+    TraceUploadOutcome,
+    TraceUploadReport,
+    TracesCommands,
+    TracesFuture,
 };
 
 #[derive(Clone)]

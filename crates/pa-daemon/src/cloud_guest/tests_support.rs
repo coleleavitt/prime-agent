@@ -8,12 +8,24 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pa_types::daemon::cloud::{
-    cloud_request_digest, parse_cloud_message, serialize_cloud_message, CloudAck,
-    CloudCommandRequest, CloudCommandState, CloudCursor, CloudGetCommand, CloudHello, CloudMessage,
+    CloudAck,
+    CloudCommandRequest,
+    CloudCommandState,
+    CloudCursor,
+    CloudGetCommand,
+    CloudHello,
+    CloudMessage,
     CloudSubmit,
+    cloud_request_digest,
+    parse_cloud_message,
+    serialize_cloud_message,
 };
 use pa_types::platform::transport::{
-    AcceptFuture, AsyncReadHalf, AsyncWriteHalf, TransportListener, TransportStream,
+    AcceptFuture,
+    AsyncReadHalf,
+    AsyncWriteHalf,
+    TransportListener,
+    TransportStream,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;

@@ -12,26 +12,42 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context};
-
+use anyhow::{Context, anyhow};
 use dir_lock::acquire_bootstrap_lock;
 pub use runtime_code::{
-    build_rlm_bootstrap_code, parse_unavailable_python_skills, UnavailablePythonSkills,
     PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER,
+    UnavailablePythonSkills,
+    build_rlm_bootstrap_code,
+    parse_unavailable_python_skills,
 };
 pub(crate) use venv::recorded_kernel_skill_paths;
-use venv::store::{venv_key, VenvOps, VenvStore};
+use venv::store::{VenvOps, VenvStore, venv_key};
 use venv::{
-    bootstrap_venv, ensure_uv, expand_home, has_prime_agent_runtime,
-    missing_python_skill_import_labels, missing_rlm_extra_import_labels, normalize_python_skills,
-    resolve_kernel_venv_location, sync_python_skills, BootstrapPythonSkill, KernelVenvLocation,
+    BootstrapPythonSkill,
+    KernelVenvLocation,
+    bootstrap_venv,
+    ensure_uv,
+    expand_home,
+    has_prime_agent_runtime,
+    kernel_base_ready,
+    kernel_ready,
+    missing_python_skill_import_labels,
+    missing_rlm_extra_import_labels,
+    normalize_python_skills,
+    resolve_kernel_venv_location,
+    sync_python_skills,
 };
 pub use venv::{
-    install_python_skill_package, installed_kernel_python, invalidate_runtime_probe_cache,
-    invalidate_runtime_probe_cache_for, kernel_venv_dir, kernel_venv_python,
-    resolve_runtime_identity, PythonSkillPackageInstall, PythonSkillPackageInstallResult,
+    PythonSkillPackageInstall,
+    PythonSkillPackageInstallResult,
+    install_python_skill_package,
+    installed_kernel_python,
+    invalidate_runtime_probe_cache,
+    invalidate_runtime_probe_cache_for,
+    kernel_venv_dir,
+    kernel_venv_python,
+    resolve_runtime_identity,
 };
-use venv::{kernel_base_ready, kernel_ready};
 
 /// One Python skill the kernel should import at bootstrap.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +129,8 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     // runtime source; when none resolves, name where it was looked for.
     if venv::resolve_runtime_source_dir().is_none() {
         let package = venv::package_dir();
-        let _ = write!(message,
+        let _ = write!(
+            message,
             "\nThe packaged prime-agent-runtime directory was not found (looked next to the executable at {} and PI_PACKAGE_DIR); reinstall prime-agent so the kernel runtime ships beside the binary.",
             package.display()
         );

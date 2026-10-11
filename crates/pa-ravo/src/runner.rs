@@ -68,9 +68,12 @@ fn replay_program(source: &str) -> String {
             .to_string(),
         format!("source = {}", crate::js::json_string(source)),
         "try:".to_string(),
-        "    exec(compile(source, '<replay-case>', 'exec'), {'__name__': '__replay__'})".to_string(),
+        "    exec(compile(source, '<replay-case>', 'exec'), {'__name__': '__replay__'})"
+            .to_string(),
         "except BaseException as exc:".to_string(),
-        format!("    sys.stdout.write('{RAISED_MARKER}' + type(exc).__name__ + '\\n' + str(exc)[:1000])"),
+        format!(
+            "    sys.stdout.write('{RAISED_MARKER}' + type(exc).__name__ + '\\n' + str(exc)[:1000])"
+        ),
         "    sys.stdout.flush()".to_string(),
         "    raise SystemExit(3)".to_string(),
         format!("sys.stdout.write('{CLEAN_MARKER}')"),
@@ -271,7 +274,7 @@ impl PythonReplayRunner {
                 Err(error) => {
                     return ReplayOutcome::Unrunnable {
                         detail: format!("spawn failed for {}: {error}", python.display()),
-                    }
+                    };
                 }
             };
         let pid = child.id().and_then(|pid| i32::try_from(pid).ok());
@@ -350,7 +353,7 @@ impl ReplayRunner for PythonReplayRunner {
                 Err(error) => {
                     return ReplayOutcome::Unrunnable {
                         detail: format!("no working directory for the replay case: {error}"),
-                    }
+                    };
                 }
             };
             let outcome = self.run_in(&python, case, &workdir, env).await;

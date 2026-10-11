@@ -2,9 +2,10 @@
 //! (TS
 //! `agent-roster.ts`): the one status formula, the agent-id formula, and the wire entry shape.
 
-use crate::JsonMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::JsonMap;
 
 /// One status formula output. Surfaces adapt their inputs and never reimplement the
 /// classification.
@@ -242,8 +243,9 @@ pub fn slim_roster_summary(summary: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn status_formula_matches_ts() {

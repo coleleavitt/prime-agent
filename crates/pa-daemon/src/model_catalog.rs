@@ -3,12 +3,12 @@
 //! divergence from TS, which awaits the refresh inside the request); a
 //! changed snapshot broadcasts `model_catalog_changed`.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{response_success, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_success};
 use crate::worker::{OutboundFrame, Worker};
 
 /// The catalog background-refresh coalescing gate: at most one refresh
@@ -138,14 +138,16 @@ fn catalog_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::worker::WorkerConfig;
-    use serde_json::json;
     use std::collections::VecDeque;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
+
+    use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+    use crate::worker::WorkerConfig;
 
     // NOTE on ambient credentials: these tests pin the Prime Inference
     // scope through the temp agent dir's auth.json — an ambient

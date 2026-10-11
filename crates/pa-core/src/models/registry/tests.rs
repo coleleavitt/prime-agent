@@ -1,8 +1,9 @@
 //! The registry unit battery: catalog, auth filters, cache merges, headers.
+use std::sync::Arc;
+
 use super::*;
 use crate::auth::manager::{AuthStorage, NoOAuth};
 use crate::auth::types::AuthStorageData;
-use std::sync::Arc;
 
 fn auth_with(data: &serde_json::Value) -> AuthStorage {
     let data = AuthStorageData(data.as_object().cloned().unwrap_or_default());
@@ -32,10 +33,12 @@ fn in_memory_loads_built_in_catalog() {
     let registry = ModelRegistry::in_memory(auth_with(&serde_json::json!({})));
     assert!(registry.get_error().is_none());
     assert!(!registry.get_all().is_empty());
-    assert!(registry
-        .get_all()
-        .iter()
-        .any(|m| m.id == "internal/glm-5.2-fast"));
+    assert!(
+        registry
+            .get_all()
+            .iter()
+            .any(|m| m.id == "internal/glm-5.2-fast")
+    );
 }
 
 /// TS `755-configured-max-tokens.test.ts`: built-in catalog models stay
@@ -46,10 +49,12 @@ fn in_memory_loads_built_in_catalog() {
 fn built_in_catalog_models_stay_unmarked() {
     let registry = ModelRegistry::in_memory(auth_with(&serde_json::json!({})));
     assert!(!registry.get_all().is_empty());
-    assert!(registry
-        .get_all()
-        .iter()
-        .all(|model| !model.max_tokens_explicit));
+    assert!(
+        registry
+            .get_all()
+            .iter()
+            .all(|model| !model.max_tokens_explicit)
+    );
 }
 
 #[test]
@@ -91,9 +96,11 @@ fn rlm_searchable_models_gate_one_stale_provider_across_its_models() {
     let available = registry.get_available();
     assert!(!available.iter().any(|model| model.provider == "anthropic"));
     assert!(available.iter().any(|model| model.provider == "openai"));
-    assert!(available
-        .iter()
-        .all(|model| model.provider != "zz-no-provider"));
+    assert!(
+        available
+            .iter()
+            .all(|model| model.provider != "zz-no-provider")
+    );
 }
 
 #[test]
@@ -249,13 +256,15 @@ fn live_scope_keyed_cache_merges_over_the_compiled_prime_inference_models() {
         repriced_model.base_url,
         super::super::prime_inference::PRIME_INFERENCE_BASE_URL
     );
-    assert!(all
-        .iter()
-        .any(|model| model.id == "anthropic/live-only-model"));
+    assert!(
+        all.iter()
+            .any(|model| model.id == "anthropic/live-only-model")
+    );
     assert!(all.iter().any(|model| model.id == "my-model"));
-    assert!(all
-        .iter()
-        .any(|model| model.provider == "anthropic" && model.id != repriced.id));
+    assert!(
+        all.iter()
+            .any(|model| model.provider == "anthropic" && model.id != repriced.id)
+    );
     let other_auth = auth_without_env(&serde_json::json!({
         "prime-inference": { "type": "api_key", "key": "other-key",
             "primeTeam": { "teamId": "team-2", "name": "Team 2" } }
@@ -275,9 +284,10 @@ fn live_scope_keyed_cache_merges_over_the_compiled_prime_inference_models() {
         still_compiled.cost.input.as_f64(),
         compiled_price.cost.input.as_f64()
     );
-    assert!(!all
-        .iter()
-        .any(|model| model.id == "anthropic/live-only-model"));
+    assert!(
+        !all.iter()
+            .any(|model| model.id == "anthropic/live-only-model")
+    );
 }
 
 #[test]
@@ -291,10 +301,12 @@ fn a_missing_or_corrupt_cache_falls_back_to_the_bundled_catalog() {
     )
     .unwrap();
     let registry = ModelRegistry::create(auth_with(&serde_json::json!({})), &models_path);
-    assert!(registry
-        .get_all()
-        .iter()
-        .any(|model| model.provider == "prime-inference"));
+    assert!(
+        registry
+            .get_all()
+            .iter()
+            .any(|model| model.provider == "prime-inference")
+    );
     assert!(registry.get_error().is_some());
 }
 

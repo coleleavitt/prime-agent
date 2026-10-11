@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct Supervisor {
     child: Child,
@@ -415,10 +415,12 @@ fn provider_failure_fails_over_to_the_next_provider_and_recovers() {
     assert_eq!(starts[1]["reason"], "backup");
     assert_eq!(starts[1]["backupModel"], "prime-backup/mock-1");
     assert_eq!(starts[1]["delayMs"], 0);
-    assert!(starts[1]["errorMessage"]
-        .as_str()
-        .expect("error message")
-        .contains("mock provider overloaded"));
+    assert!(
+        starts[1]["errorMessage"]
+            .as_str()
+            .expect("error message")
+            .contains("mock provider overloaded")
+    );
 
     let end = retry_end(&client.events);
     assert_eq!(end["success"], true);
@@ -502,10 +504,12 @@ fn every_provider_failing_surfaces_the_final_error() {
     let end = retry_end(&client.events);
     assert_eq!(end["success"], false);
     assert_eq!(end["attempt"], 4);
-    assert!(end["finalError"]
-        .as_str()
-        .expect("final error")
-        .contains("mock provider overloaded"));
+    assert!(
+        end["finalError"]
+            .as_str()
+            .expect("final error")
+            .contains("mock provider overloaded")
+    );
     assert_eq!(end.get("restoredModel"), None);
 
     let failure = client
@@ -516,10 +520,12 @@ fn every_provider_failing_surfaces_the_final_error() {
             event["message"]["role"] == "assistant" && event["message"]["stopReason"] == "error"
         })
         .expect("failed assistant message_end");
-    assert!(failure["message"]["errorMessage"]
-        .as_str()
-        .expect("error message")
-        .contains("mock provider overloaded"));
+    assert!(
+        failure["message"]["errorMessage"]
+            .as_str()
+            .expect("error message")
+            .contains("mock provider overloaded")
+    );
     let turn_end = client
         .events
         .iter()
@@ -529,9 +535,11 @@ fn every_provider_failing_surfaces_the_final_error() {
     // The TS `turn_end` shape: the terminal frame carries the failed assistant
     // message as its payload (no separate error field).
     assert_eq!(turn_end["message"]["stopReason"], "error");
-    assert!(turn_end["message"]["errorMessage"]
-        .as_str()
-        .expect("turn error")
-        .contains("mock provider overloaded"));
+    assert!(
+        turn_end["message"]["errorMessage"]
+            .as_str()
+            .expect("turn error")
+            .contains("mock provider overloaded")
+    );
     assert_eq!(turn_end.get("error"), None, "turn_end: {turn_end}");
 }

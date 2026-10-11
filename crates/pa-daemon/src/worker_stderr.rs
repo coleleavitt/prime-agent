@@ -19,7 +19,7 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 /// The stderr tail attached to not-ready launch failures (Codex
 /// `STDERR_LOG_TAIL_BYTES`).
@@ -292,8 +292,9 @@ pub(crate) fn not_ready_with_tail(base: anyhow::Error, log_path: &Path) -> anyho
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::anyhow;
+
+    use super::*;
 
     fn write_log(dir: &Path, name: &str, contents: &str) -> PathBuf {
         let path = dir.join(name);

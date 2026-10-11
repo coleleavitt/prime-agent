@@ -35,19 +35,18 @@
 //! lower-seq reports per source, which would stick a pane at working).
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 // AtomicBool feeds the unix-gated SOCKET_REFUSAL_LOGGED static only.
 #[cfg(unix)]
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-
-use serde_json::{json, Map, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// The allowlist of client env vars the connector consumes (TS
 /// `DAEMON_CLIENT_ENV_KEYS` — the shared wire contract, in `pa-types` so
 /// clients and the daemon read one list).
 pub use pa_types::daemon::herdr_env::filter_client_env;
+use serde_json::{Map, Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// The tuning env for the idle debounce (a turn that ends with queued
 /// work reports idle only after this window, so a pane does not flicker
@@ -970,21 +969,25 @@ mod tests {
         assert!(HerdrConfig::from_env(&env(&[("HERDR_ENV", "0")])).is_none());
         assert!(HerdrConfig::from_env(&env(&[("HERDR_ENV", "1")])).is_none());
         // The socket and the pane must both be present and non-empty.
-        assert!(HerdrConfig::from_env(&env(&[
-            ("HERDR_ENV", "1"),
-            ("HERDR_SOCKET_PATH", "/tmp/h.sock"),
-        ]))
-        .is_none());
+        assert!(
+            HerdrConfig::from_env(&env(&[
+                ("HERDR_ENV", "1"),
+                ("HERDR_SOCKET_PATH", "/tmp/h.sock"),
+            ]))
+            .is_none()
+        );
         assert!(
             HerdrConfig::from_env(&env(&[("HERDR_ENV", "1"), ("HERDR_PANE_ID", "w1:p1"),]))
                 .is_none()
         );
-        assert!(HerdrConfig::from_env(&env(&[
-            ("HERDR_ENV", "1"),
-            ("HERDR_SOCKET_PATH", "  "),
-            ("HERDR_PANE_ID", "w1:p1"),
-        ]))
-        .is_none());
+        assert!(
+            HerdrConfig::from_env(&env(&[
+                ("HERDR_ENV", "1"),
+                ("HERDR_SOCKET_PATH", "  "),
+                ("HERDR_PANE_ID", "w1:p1"),
+            ]))
+            .is_none()
+        );
         let config = HerdrConfig::from_env(&env(&[
             ("HERDR_ENV", "1"),
             ("HERDR_SOCKET_PATH", " /tmp/h.sock "),

@@ -18,7 +18,7 @@
 //!
 //! Failures are loud: a failed child fails the turn with the error —
 //! never a placeholder, never a fallback swap onto the image model.
-use super::{json, AgentSessionEngine, EngineEvent, TurnPrompt};
+use super::{AgentSessionEngine, EngineEvent, TurnPrompt, json};
 use crate::engine::PromptBatchRow;
 
 /// The durable context row carrying one delegation's description (the

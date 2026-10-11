@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::types::{AssistantMessage, Usage};
 use crate::utils::stream_failure::parse_retry_after_ms;

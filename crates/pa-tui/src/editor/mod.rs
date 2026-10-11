@@ -1,12 +1,13 @@
 //! Line editor ported from `packages/tui/src/components/editor.ts`.
 
-use crate::autocomplete::SlashCommandEntry;
-use crate::keybindings::KeybindingsManager;
-use crate::width::is_whitespace_char;
 use std::collections::HashMap;
 
 use text_utils::{char_at, split_at_char};
 use wrap::{parse_paste_marker, segment_with_markers};
+
+use crate::autocomplete::SlashCommandEntry;
+use crate::keybindings::KeybindingsManager;
+use crate::width::is_whitespace_char;
 
 mod autocomplete;
 mod click;
@@ -24,7 +25,7 @@ mod wrap;
 pub use kill_ring::KillRing;
 pub(crate) use text_utils::decode_printable;
 pub use text_utils::normalize_text;
-pub use wrap::{is_atomic_marker, word_wrap_line, LayoutLine, Segment, TextChunk, VisualLine};
+pub use wrap::{LayoutLine, Segment, TextChunk, VisualLine, is_atomic_marker, word_wrap_line};
 
 pub const MAX_HISTORY: usize = 100;
 /// Large paste threshold: >10 lines or >1000 chars becomes a marker.

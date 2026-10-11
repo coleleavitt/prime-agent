@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// TS `PATH_WATCH_DEBOUNCE_MS`: one batch window for filesystem events.
 pub const PATH_WATCH_DEBOUNCE: Duration = Duration::from_millis(200);

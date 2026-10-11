@@ -259,8 +259,9 @@ pub struct AgentConnectionState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn extracts_text_from_content_blocks() {

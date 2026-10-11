@@ -10,12 +10,11 @@ pub mod protocol;
 pub mod session;
 pub mod session_commands;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
-use serde_json::Value;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use protocol::{ParsedLine, RpcCommand};
+use serde_json::Value;
 use session::{RpcEngineFactory, RpcEngineHandle, RpcSession};
 
 /// Everything the composition root hands the mode.
@@ -162,7 +161,7 @@ pub async fn run_rpc_mode(options: RpcOptions) -> anyhow::Result<i32> {
 /// pair): abort the running turn, settle it, dispose the kernel, drain the queued frames, exit.
 #[cfg(unix)]
 fn spawn_signal_handlers(session: &Arc<RpcSession>, writer: LineWriter) {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
     let terminate_session = Arc::clone(session);
     let terminate_writer = writer.clone();
     tokio::spawn(async move {

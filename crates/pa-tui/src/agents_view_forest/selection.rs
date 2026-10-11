@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::{is_summary_row_identity, AgentsViewRow, RowKind, SelectionKey};
+use super::{AgentsViewRow, RowKind, SelectionKey, is_summary_row_identity};
 
 /// Session ids of every ancestor of a nested row, root-most first: the chain the view
 /// re-expands when the drilled-in child returns to it.

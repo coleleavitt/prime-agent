@@ -1,8 +1,13 @@
+use std::io::Write;
+
 use super::*;
 use crate::agent_traces::tests::{
-    clear_trace_credentials, env_lock, response, Fixture, ScriptedTraceHttp,
+    Fixture,
+    ScriptedTraceHttp,
+    clear_trace_credentials,
+    env_lock,
+    response,
 };
-use std::io::Write;
 
 async fn recover(
     cwd: PathBuf,
@@ -632,10 +637,12 @@ async fn revoked_recovery_retains_intent_and_resumes_after_consent_restoration()
     let mut settings = crate::settings::SettingsManager::create(&fixture.cwd, &fixture.agent_dir);
     settings.set_agent_traces_enabled(false).unwrap();
     cancelled.notified().await;
-    assert!(!tokio::time::timeout(DEBOUNCE * 2, task)
-        .await
-        .unwrap()
-        .unwrap());
+    assert!(
+        !tokio::time::timeout(DEBOUNCE * 2, task)
+            .await
+            .unwrap()
+            .unwrap()
+    );
     assert!(agent_trace_outbox_entry_path(&fixture.agent_dir, &path).exists());
     assert!(delivery_lease(&fixture.agent_dir, &path).is_some());
     assert_eq!(permits.available_permits(), 1);
@@ -890,22 +897,26 @@ async fn replacement_at_capacity_reuses_a_slot_and_preserves_late_retirement() {
     recovered.insert(fixture.agent_dir.clone(), run);
     let snapshot = service.controllers.lock().unwrap().clone();
     retain_live_recoveries(&mut recovered, &snapshot);
-    assert!(recovered[&fixture.agent_dir]
-        .replay_needed
-        .load(Ordering::Acquire));
+    assert!(
+        recovered[&fixture.agent_dir]
+            .replay_needed
+            .load(Ordering::Acquire)
+    );
     let latest = controller(&fixture, &replacement_path, true);
     assert!(service.replace(&first, &latest));
     assert!(first.cancel.is_cancelled());
     acknowledge_replacements(&mut service.controllers.lock().unwrap(), &snapshot);
-    assert!(service
-        .controllers
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|registration| {
-            registration.controller.ptr_eq(&Arc::downgrade(&latest))
-                && registration.retired_predecessor
-        }));
+    assert!(
+        service
+            .controllers
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|registration| {
+                registration.controller.ptr_eq(&Arc::downgrade(&latest))
+                    && registration.retired_predecessor
+            })
+    );
     let current = service.controllers.lock().unwrap().clone();
     retain_live_recoveries(&mut recovered, &current);
     acknowledge_replacements(&mut service.controllers.lock().unwrap(), &current);
@@ -1278,9 +1289,11 @@ async fn bounded_admission_preserves_retirement_and_delivers_on_readmission() {
     assert!(!service.register(&candidate));
     let snapshot = service.controllers.lock().unwrap().clone();
     let retired = retain_live_recoveries(&mut recovered, &snapshot);
-    assert!(recovered[&fixture.agent_dir]
-        .replay_needed
-        .load(Ordering::Acquire));
+    assert!(
+        recovered[&fixture.agent_dir]
+            .replay_needed
+            .load(Ordering::Acquire)
+    );
     assert_eq!(retired.len(), 1);
     acknowledge_retired_registrations(&mut service.controllers.lock().unwrap(), &retired);
     assert!(service.register(&candidate));

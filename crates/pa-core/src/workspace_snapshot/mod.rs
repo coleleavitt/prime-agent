@@ -29,19 +29,21 @@ mod manifest;
 mod tests;
 mod verify;
 
-pub use manifest::{Baseline, CapturedEntry, ExcludeReason, ExcludedEntry, SnapshotManifest};
-pub use verify::verify_workspace_snapshot;
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::Sha256;
-
 use git::{GitStatus, HeadTreeEntry, StatusEntry};
 use manifest::{
-    is_safe_relative_path, symlink_target_stays_inside, BLOBS_DIR, MANIFEST_FILE, MANIFEST_VERSION,
+    BLOBS_DIR,
+    MANIFEST_FILE,
+    MANIFEST_VERSION,
+    is_safe_relative_path,
+    symlink_target_stays_inside,
 };
+pub use manifest::{Baseline, CapturedEntry, ExcludeReason, ExcludedEntry, SnapshotManifest};
+use sha1::{Digest as Sha1Digest, Sha1};
+use sha2::Sha256;
+pub use verify::verify_workspace_snapshot;
 
 /// The hex length of a SHA-256 git object id (the alternate object
 /// format's length; SHA-1's 40 is the historical default).
@@ -449,7 +451,7 @@ fn build_manifest(
                                 "{:?} vanished from the worktree during capture",
                                 tree_entry.path
                             ),
-                        })
+                        });
                     }
                 }
             }
@@ -539,8 +541,8 @@ fn open_leaf(
     max_bytes: usize,
     classify_only: bool,
 ) -> std::io::Result<OpenLeaf> {
-    use nix::fcntl::{openat, AtFlags, OFlag};
-    use nix::sys::stat::{fstat, fstatat, Mode, SFlag};
+    use nix::fcntl::{AtFlags, OFlag, openat};
+    use nix::sys::stat::{Mode, SFlag, fstat, fstatat};
     let dir_flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
     let root = openat(None, root, dir_flags, Mode::empty()).map_err(io_from_errno)?;
     let mut dir = FdGuard(root);

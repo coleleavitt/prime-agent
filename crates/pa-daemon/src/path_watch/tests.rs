@@ -67,11 +67,13 @@ async fn registers_a_watch_and_delivers_a_debounced_change_batch() {
         shared.join("signal-2.txt").display().to_string(),
     ];
     let changes = changed_until(&mut rx, &expected).await;
-    assert!(changes
-        .iter()
-        .all(|change| change.watch_id == watch.watch_id
-            && change.path == watch.path
-            && !change.truncated));
+    assert!(
+        changes
+            .iter()
+            .all(|change| change.watch_id == watch.watch_id
+                && change.path == watch.path
+                && !change.truncated)
+    );
     assert!(format_path_watch_changed(&changes[0]).starts_with(&format!(
         "[watch-path id:{} path:{}]\n\nChanged paths:\n- ",
         watch.watch_id,

@@ -9,17 +9,36 @@ mod v2_support;
 
 use pa_types::ai::{AssistantContentBlock, StopReason, Usage};
 use pa_workflow::v2::capture::{
-    classify_result, AgentEndObservation, AssistantTerminalObservation, CaptureStopReason,
-    ExactResult, NoneReason, TerminalCaptureSlot, TurnBinding, MAX_INLINE_RESULT_BYTES,
+    AgentEndObservation,
+    AssistantTerminalObservation,
+    CaptureStopReason,
+    ExactResult,
+    MAX_INLINE_RESULT_BYTES,
+    NoneReason,
+    TerminalCaptureSlot,
+    TurnBinding,
+    classify_result,
 };
 use pa_workflow::v2::settlement::{
-    reduce_settlement, validate_settlement_commit, AtomicSettlementCommit, CancelEvidence,
-    CommitInvalid, Fence, ProviderEntry, Quiescence, SettlementInput, SettlementRejection,
+    AtomicSettlementCommit,
+    CancelEvidence,
+    CommitInvalid,
+    Fence,
+    ProviderEntry,
+    Quiescence,
+    SettlementInput,
+    SettlementRejection,
+    reduce_settlement,
+    validate_settlement_commit,
 };
 use pa_workflow::v2::store::Table;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use v2_support::{
-    drive_to_admission_bound, open_writer, read_settlement_cases, store_root, TestClock,
+    TestClock,
+    drive_to_admission_bound,
+    open_writer,
+    read_settlement_cases,
+    store_root,
 };
 
 fn binding_of(value: &Value) -> TurnBinding {
@@ -301,10 +320,12 @@ fn rejections_name_their_reason() {
 #[test]
 fn the_inline_cap_is_exact() {
     let text = |n: usize| {
-        vec![serde_json::from_value::<AssistantContentBlock>(
-            json!({ "type": "text", "text": "x".repeat(n) }),
-        )
-        .unwrap()]
+        vec![
+            serde_json::from_value::<AssistantContentBlock>(
+                json!({ "type": "text", "text": "x".repeat(n) }),
+            )
+            .unwrap(),
+        ]
     };
     assert!(matches!(
         classify_result(CaptureStopReason::Stop, &text(MAX_INLINE_RESULT_BYTES), MAX_INLINE_RESULT_BYTES),

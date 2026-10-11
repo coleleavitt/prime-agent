@@ -5,7 +5,7 @@
 //! Lenient: an unreadable statement is dropped and recorded. Entities use
 //! `Node::sections` as `[title, attrs]`.
 
-use super::super::graph::{parse_dir, Edge, Graph, Head, LineKind, Node, Shape, MAX_MEMBERS};
+use super::super::graph::{Edge, Graph, Head, LineKind, MAX_MEMBERS, Node, Shape, parse_dir};
 use super::super::js_text;
 use super::super::labels::{clean_label, decode_html_entities, display_generics};
 use super::super::layout::layout_class;

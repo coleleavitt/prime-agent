@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::storage::{atomic_write_with, AtomicWriteOptions};
+use crate::settings::storage::{AtomicWriteOptions, atomic_write_with};
 
 /// The connections file version.
 const FILE_VERSION: u8 = 1;

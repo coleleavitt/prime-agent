@@ -8,23 +8,34 @@
 
 use std::sync::Arc;
 
+use pa_types::session::{AgentMessage as SessionAgentMessage, CustomMessage, FileEntry};
 use serde_json::json;
 
-use super::now_ms;
-use super::registry::{record_matches, InProcessChildRecord};
-use super::InProcessRlmHost;
+use super::registry::{InProcessChildRecord, record_matches};
+use super::{InProcessRlmHost, now_ms};
 use crate::kernel::shared::HostRequestHandlers;
 use crate::session_engine::agent_messaging::{
-    create_agent_session_message_id, create_agent_session_message_prompt,
-    create_agent_session_message_row, register_agent_message_host_handlers,
-    register_agent_observe_host_handlers, AgentFamilyMember, AgentFamilyRelationship,
-    AgentMessageController, AgentMessageDeliveryStatus, AgentMessagePromptPayload,
-    AgentMessageReceipt, AgentMessageSendInput, AgentObserveActivity, AgentObserveController,
-    AgentObserveMessagePreview, AgentObservePendingToolCalls, AgentObserveSummary,
-    AgentSessionMessageRowPayload, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    AgentFamilyMember,
+    AgentFamilyRelationship,
+    AgentMessageController,
+    AgentMessageDeliveryStatus,
+    AgentMessagePromptPayload,
+    AgentMessageReceipt,
+    AgentMessageSendInput,
+    AgentObserveActivity,
+    AgentObserveController,
+    AgentObserveMessagePreview,
+    AgentObservePendingToolCalls,
+    AgentObserveSummary,
+    AgentSessionMessageRowPayload,
+    DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    create_agent_session_message_id,
+    create_agent_session_message_prompt,
+    create_agent_session_message_row,
+    register_agent_message_host_handlers,
+    register_agent_observe_host_handlers,
 };
 use crate::session_engine::engine::SessionEngine;
-use pa_types::session::{AgentMessage as SessionAgentMessage, CustomMessage, FileEntry};
 
 /// The remote family surface a resident embedding composes into its root
 /// host (the guest's supervisor-routed rows and sends): the family

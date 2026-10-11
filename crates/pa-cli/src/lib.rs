@@ -77,13 +77,14 @@ pub mod print_runtime;
 pub(crate) mod print_session_command;
 pub mod update_flow;
 pub mod util_time;
-pub use print_runtime::PrintRuntime;
-
 /// Daemon wiring shared by the interactive runtime and the integration
 /// tests: spawn/probe the supervisor on a socket, and map `--daemon-socket`.
 pub use interactive_mode::{
-    ensure_daemon_running, ensure_daemon_running_with, resolve_socket_path,
+    ensure_daemon_running,
+    ensure_daemon_running_with,
+    resolve_socket_path,
 };
+pub use print_runtime::PrintRuntime;
 
 /// Entry point shared by the binary and the integration tests. Returns the
 /// process exit code.
@@ -146,7 +147,7 @@ fn serve_test_bash_host(root: &std::path::Path) -> i32 {
         Err(error) => {
             return pa_bash::serve_stdio(pa_bash::JobSandbox::Unavailable(format!(
                 "the test bash host requires the OS sandbox: {error}"
-            )))
+            )));
         }
     };
     if std::env::var_os(ENV_TEST_BASH_HOST_CONFINED).is_none() {

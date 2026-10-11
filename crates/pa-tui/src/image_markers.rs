@@ -5,9 +5,9 @@
 //! history) brings it back while the bytes stay in the registry.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
 use fancy_regex::Regex;
-use std::sync::LazyLock;
 
 static IMAGE_MARKER_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[image #(\d+)\]").expect("valid marker regex"));

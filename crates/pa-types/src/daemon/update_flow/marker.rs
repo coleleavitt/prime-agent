@@ -3,9 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::JsonMap;
-
 use super::artifact::UpdateId;
+use crate::JsonMap;
 
 /// The supervisor identity recorded in update artifacts: `{pid,
 /// process_start_id, generation}` (spec §7, §8).
@@ -146,11 +145,7 @@ fn rfc3339_nanos(timestamp: &str) -> Option<i64> {
                 return None;
             }
             let magnitude = oh * 3600 + om * 60;
-            if sign == b'-' {
-                -magnitude
-            } else {
-                magnitude
-            }
+            if sign == b'-' { -magnitude } else { magnitude }
         }
         _ => return None,
     };

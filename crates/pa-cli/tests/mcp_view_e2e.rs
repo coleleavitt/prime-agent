@@ -22,7 +22,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_types::daemon::DaemonCommand;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The committed stdio echo fixture (pure stdlib; any Python 3 runs it).
 fn echo_fixture() -> PathBuf {

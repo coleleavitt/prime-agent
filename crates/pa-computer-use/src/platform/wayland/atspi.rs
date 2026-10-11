@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use super::niri::WindowRecord;
-use crate::element::{cap, Element, MAX_ACTIONS, MAX_DEPTH, MAX_ELEMENTS};
+use crate::element::{Element, MAX_ACTIONS, MAX_DEPTH, MAX_ELEMENTS, cap};
 use crate::pyfmt::repr_float;
 use crate::secure::ATSPI_SECURE_ROLE;
 

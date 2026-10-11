@@ -1,13 +1,15 @@
 //! Compact-session tests, the split-turn family: the mid-turn cut's
 //! two summarizer calls and merged turn context, the injected-custom-
 //! turn whole-turn cut, and the no-history prefix-only arm.
-use super::*;
-
 use std::sync::Arc;
 
+use super::*;
 use crate::session_engine::semantic_edges::{
-    CompactionStatus, SemanticEdgeIdentity, SemanticEdgeLedgerEvent as LedgerEvent,
-    SemanticEdgeRecorder, SEMANTIC_EDGES_LEDGER_FILENAME,
+    CompactionStatus,
+    SEMANTIC_EDGES_LEDGER_FILENAME,
+    SemanticEdgeIdentity,
+    SemanticEdgeLedgerEvent as LedgerEvent,
+    SemanticEdgeRecorder,
 };
 
 /// A turn-spanning cut is a split turn: the compaction runs TWO
@@ -140,8 +142,10 @@ async fn split_turn_compaction_runs_two_summarizer_calls_and_merges_the_turn_con
         .expect("turn-prefix call");
     assert!(prefix_request.contains("[User]: big turn"));
     assert!(prefix_request.contains("This is the PREFIX of a turn that was too large to keep."));
-    assert!(prefix_request
-        .ends_with("Be concise. Focus on what's needed to understand the kept suffix."));
+    assert!(
+        prefix_request
+            .ends_with("Be concise. Focus on what's needed to understand the kept suffix.")
+    );
     assert!(!prefix_request.contains("checkpoint summary"));
     assert_eq!(prefix_response, "the turn prefix summary");
     assert_eq!(

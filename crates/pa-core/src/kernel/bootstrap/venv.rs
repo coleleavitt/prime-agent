@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use sha2::Digest;
 
 use super::{
-    default_rlm_extra_uv_args, EnsureKernelPythonOptions, KernelPythonSkill,
     DEFAULT_RLM_EXTRA_PACKAGES,
+    EnsureKernelPythonOptions,
+    KernelPythonSkill,
+    default_rlm_extra_uv_args,
 };
 
 // The concern children (the flows + the shared record stay in the
@@ -27,45 +29,59 @@ mod uv;
 mod version;
 
 pub use install::{
-    install_python_skill_package, installed_kernel_python, PythonSkillPackageInstall,
+    PythonSkillPackageInstall,
     PythonSkillPackageInstallResult,
+    install_python_skill_package,
+    installed_kernel_python,
 };
 use layout::home_dir;
-pub(crate) use layout::{expand_home, resolve_kernel_venv_location, KernelVenvLocation};
+pub(crate) use layout::{KernelVenvLocation, expand_home, resolve_kernel_venv_location};
 pub use layout::{kernel_venv_dir, kernel_venv_python};
-#[cfg(test)]
-use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
-pub use probe::{invalidate_runtime_probe_cache, invalidate_runtime_probe_cache_for};
-// The memo-clear helper and the live-probe package-dir walk exist only behind
-// the unix tests (see their gates in probe.rs and tests.rs).
-#[cfg(test)]
-use crate::platform::process::windows_executable_candidates;
 #[cfg(all(test, unix))]
 use probe::{clear_in_process_probe_memo_for_tests, installed_package_dir};
 pub(crate) use probe::{
-    has_prime_agent_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
+    has_prime_agent_runtime,
+    missing_python_skill_import_labels,
+    missing_rlm_extra_import_labels,
 };
 use probe::{has_prime_agent_runtime_memoized, installed_runtime_identity};
+#[cfg(test)]
+use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
+pub use probe::{invalidate_runtime_probe_cache, invalidate_runtime_probe_cache_for};
 use runtime_source::collect_python_files;
 #[cfg(test)]
 use runtime_source::hash_runtime_source;
 pub use runtime_source::resolve_runtime_identity;
 pub(super) use runtime_source::{
-    package_dir, resolve_runtime_source_dir, runtime_candidate_dirs, RUNTIME_SOURCE_ENV,
+    RUNTIME_SOURCE_ENV,
+    package_dir,
+    resolve_runtime_source_dir,
+    runtime_candidate_dirs,
 };
+pub(crate) use skills::{BootstrapPythonSkill, normalize_python_skills};
 #[cfg(test)]
 use skills::{
-    file_content_hash, read_python_skill_dependency_names, read_python_skill_project_name,
+    file_content_hash,
+    read_python_skill_dependency_names,
+    read_python_skill_project_name,
 };
-pub(crate) use skills::{normalize_python_skills, BootstrapPythonSkill};
 pub(crate) use uv::ensure_uv;
-use version::{
-    bootstrap_base_version_current, bootstrap_skill_key, bootstrap_version_current,
-    read_bootstrap_version, read_bootstrap_version_raw, write_bootstrap_version,
-    STATE_SNAPSHOT_REQUIREMENT,
-};
 #[cfg(test)]
-use version::{recorded_skills_cover, BOOTSTRAP_SCHEMA};
+use version::{BOOTSTRAP_SCHEMA, recorded_skills_cover};
+use version::{
+    STATE_SNAPSHOT_REQUIREMENT,
+    bootstrap_base_version_current,
+    bootstrap_skill_key,
+    bootstrap_version_current,
+    read_bootstrap_version,
+    read_bootstrap_version_raw,
+    write_bootstrap_version,
+};
+
+// The memo-clear helper and the live-probe package-dir walk exist only behind
+// the unix tests (see their gates in probe.rs and tests.rs).
+#[cfg(test)]
+use crate::platform::process::windows_executable_candidates;
 
 const PYTHON_VERSION: &str = "3.11";
 const RUNTIME_REQUIREMENT: &str = "prime-agent-runtime";

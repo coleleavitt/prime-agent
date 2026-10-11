@@ -4,10 +4,17 @@
 use futures::FutureExt as _;
 
 use super::{
-    anyhow, json, lock, Arc, Duration, HostRequestPayload, Inner, Value,
+    Arc,
+    Duration,
+    HostRequestPayload,
+    Inner,
     MAX_HANDLED_HOST_REQUEST_IDS,
+    Value,
+    anyhow,
+    json,
+    lock,
 };
-use crate::kernel::shared::{with_host_request_cancellation, HostHandlerFuture};
+use crate::kernel::shared::{HostHandlerFuture, with_host_request_cancellation};
 
 /// The cell source attached to a host request is capped at this many characters (TS #2475:
 /// `MAX_CELL_SOURCE_CHARS`): the spawning cell's source rides on every host request it triggers.
@@ -253,7 +260,7 @@ mod tests {
 
         use crate::kernel::manager::ReplKernelManager;
         use crate::kernel::protocol::Event;
-        use crate::kernel::shared::{host_handler, HostRequestHandlers, KernelManagerOptions};
+        use crate::kernel::shared::{HostRequestHandlers, KernelManagerOptions, host_handler};
 
         let withdrawn = Arc::new(AtomicBool::new(false));
         let mut host_handlers = HostRequestHandlers::new();

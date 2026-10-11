@@ -11,10 +11,19 @@ use indexmap::IndexMap;
 use pa_agent::types::AgentMessage;
 use pa_core::features::{SessionFeature, SessionFeatureContext, ToolResultObservation};
 use pa_ledger::{
-    fingerprint_failure, FailureKind, FailureLedger, FailureLedgerFeature, FailureRecord,
-    HarnessDocument, LedgerBoundary, LedgerFlush, LedgerObserver, LedgerOptions, LedgerScope,
+    FailureKind,
+    FailureLedger,
+    FailureLedgerFeature,
+    FailureRecord,
+    HarnessDocument,
+    LedgerBoundary,
+    LedgerFlush,
+    LedgerObserver,
+    LedgerOptions,
+    LedgerScope,
+    fingerprint_failure,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const AT: &str = "2026-01-01T00:00:00.000Z";
 

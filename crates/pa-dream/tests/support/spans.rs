@@ -4,9 +4,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::{Map, Value};
+use tracing::Subscriber;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
-use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 

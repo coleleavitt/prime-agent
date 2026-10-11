@@ -45,7 +45,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use pa_types::platform::test_isolation::TestState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The bind-capture gap the oracles set: wide enough that the replacement
 /// provably lands inside the window, small enough to keep the oracle fast.

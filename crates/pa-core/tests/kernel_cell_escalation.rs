@@ -22,9 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
-use pa_core::kernel::shared::{host_handler, HostRequestHandlers};
-use pa_core::{create_ipython_tool_definition, IpythonToolOptions, ToolContentBlock};
-use serde_json::{json, Value};
+use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
+use pa_core::{IpythonToolOptions, ToolContentBlock, create_ipython_tool_definition};
+use serde_json::{Value, json};
 
 /// The kernel Python with prime-agent-runtime installed; set
 /// `PA_CORE_KERNEL_PYTHON` to point at an explicit interpreter instead.

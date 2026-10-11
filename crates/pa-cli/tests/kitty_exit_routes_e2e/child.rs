@@ -180,9 +180,13 @@ fn replay_stream() -> (tempfile::TempDir, pa_tui::session::JsonlSessionStream) {
     (dir, stream)
 }
 
-use pa_tui::agents_view::{run_agents_view, AgentsViewOptions, AgentsViewUiMode};
+use pa_tui::agents_view::{AgentsViewOptions, AgentsViewUiMode, run_agents_view};
 use pa_tui::interactive::{
-    run_interactive, InteractiveOptions, ModelSelection, SessionSelection, UiMode,
+    InteractiveOptions,
+    ModelSelection,
+    SessionSelection,
+    UiMode,
+    run_interactive,
 };
 
 fn child_options(socket: PathBuf) -> InteractiveOptions {

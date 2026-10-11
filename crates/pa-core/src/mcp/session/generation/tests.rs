@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -85,7 +85,11 @@ async fn the_page_cap_refuses_a_partial_inventory() {
                 McpErrorKind::Discovery,
                 "MCP server 'svc' paginated tools/list beyond 3 pages; refusing to publish a partial tool inventory"
             )),
-            vec![None, Some("cursor-0".to_string()), Some("cursor-1".to_string())]
+            vec![
+                None,
+                Some("cursor-0".to_string()),
+                Some("cursor-1".to_string())
+            ]
         )
     );
 }
@@ -128,9 +132,11 @@ async fn a_successful_startup_discards_the_stderr_it_captured() {
     };
     let launch = StdioLaunch {
         command: python,
-        args: vec![super::super::tests::fixture("stdio_server.py")
-            .to_string_lossy()
-            .to_string()],
+        args: vec![
+            super::super::tests::fixture("stdio_server.py")
+                .to_string_lossy()
+                .to_string(),
+        ],
         cwd: std::env::temp_dir(),
         env: vec![(
             "FIXTURE_STDERR_NOTE".to_string(),
@@ -195,9 +201,11 @@ async fn a_stdio_server_spawns_under_the_session_sandbox() {
     }
     let launch = |pid_file: &std::path::Path| StdioLaunch {
         command: python.clone(),
-        args: vec![super::super::tests::fixture("stdio_server.py")
-            .to_string_lossy()
-            .to_string()],
+        args: vec![
+            super::super::tests::fixture("stdio_server.py")
+                .to_string_lossy()
+                .to_string(),
+        ],
         cwd: work.clone(),
         env: vec![(
             "FIXTURE_PID_FILE".to_string(),

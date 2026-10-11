@@ -3,9 +3,9 @@
 //! negotiation — which stays unavailable until the retained host ABI and
 //! the controller exist (§12 slice 9).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::wire::{decode_as, Def};
+use super::wire::{Def, decode_as};
 
 /// The mandatory feature set, in the contract's order.
 pub const FEATURES: [&str; 7] = [

@@ -4,7 +4,12 @@
 use super::*;
 use crate::element::Element;
 use crate::testing::{
-    element, large_tree, small_tree, with_added_child, with_changed_value, without_child,
+    element,
+    large_tree,
+    small_tree,
+    with_added_child,
+    with_changed_value,
+    without_child,
 };
 
 fn marked(text: &str, marker: char) -> Vec<&str> {

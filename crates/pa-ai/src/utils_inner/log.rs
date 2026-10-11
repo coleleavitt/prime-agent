@@ -1,9 +1,9 @@
 //! Minimal structured logger shared by pa-ai and its consumers: entries go to an injectable sink;
 //! the library never writes files and logging must never throw into the caller.
 
-use pa_types::sync::RwLockExt;
 use std::sync::RwLock;
 
+use pa_types::sync::RwLockExt;
 use serde::{Serialize, Serializer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

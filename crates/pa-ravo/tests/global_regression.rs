@@ -10,10 +10,13 @@ use std::time::Duration;
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_ledger::{
-    fingerprint_tool_result_text, FailureLedgerFeature, HarnessDocument, LedgerOptions,
+    FailureLedgerFeature,
+    HarnessDocument,
+    LedgerOptions,
+    fingerprint_tool_result_text,
 };
 use pa_ravo::{RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::registry::LookupSpan;
 

@@ -7,11 +7,19 @@ use ratatui::style::Modifier;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::fuzzy::fuzzy_filter;
-use crate::hyperlinks::{osc8_open, OSC8_CLOSE};
+use crate::hyperlinks::{OSC8_CLOSE, osc8_open};
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::{
-    hint_row, key_hint, login_field_row, menu_row, no_match_row, scroll_row, scrub_controls,
-    search_field_lines, search_field_plain_row, MenuSegment,
+    MenuSegment,
+    hint_row,
+    key_hint,
+    login_field_row,
+    menu_row,
+    no_match_row,
+    scroll_row,
+    scrub_controls,
+    search_field_lines,
+    search_field_plain_row,
 };
 use crate::provider_auth::ProviderAuthOutcome;
 use crate::search_input::SearchInput;

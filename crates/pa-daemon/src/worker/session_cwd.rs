@@ -15,9 +15,9 @@
 use std::path::{Component, Path, PathBuf};
 
 use pa_types::sync::MutexExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{response_failure, response_success, SessionFile, Worker};
+use super::{SessionFile, Worker, response_failure, response_success};
 use crate::protocol::DaemonResponse;
 
 /// The branch entry recording one `/cwd` move (TS `session_cwd_state`).

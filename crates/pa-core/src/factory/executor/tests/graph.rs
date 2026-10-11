@@ -2,15 +2,15 @@
 //! lane's frame cap (ports of `FactoryGraphWatchTest`,
 //! `FactoryFrameCapTest`, and the opt-in gate's lane test).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::fake::{done, failed, node_status, running, Case, SleepMode};
+use super::fake::{Case, SleepMode, done, failed, node_status, running};
 use crate::factory::executor::snapshot::cap_factory_frame;
 use crate::factory::executor::{GRAPH_EVENTS_TAIL, GRAPH_RUNS_WINDOW, LAST_FIRED_WINDOW};
-use crate::factory::lane::{activity, FactoryLaneContext, StoredSpec, FACTORY_DISABLED_MESSAGE};
+use crate::factory::lane::{FACTORY_DISABLED_MESSAGE, FactoryLaneContext, StoredSpec, activity};
 use crate::factory::pyvalue::PyValue;
 use crate::factory::spec::RUN_MAX_CHILDREN_DEFAULT;
 
@@ -156,10 +156,12 @@ async fn graph_fuses_structure_and_live_state() {
         .map(|node| node["id"].clone())
         .collect();
     assert_eq!(ids, [json!("collect"), json!("reviewing"), json!("fixing")]);
-    assert!(graph["active_nodes"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("collect")));
+    assert!(
+        graph["active_nodes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("collect"))
+    );
     assert_eq!(
         graph["usage"]["spawns"],
         result["started"].as_array().unwrap().len()
@@ -293,10 +295,12 @@ async fn graph_lists_every_live_run_and_marks_active_nodes() {
         .collect();
     assert_eq!(ids, [first["run_id"].clone(), second["run_id"].clone()]);
     assert_eq!(listing["runs"][0]["active_nodes"], json!([]));
-    assert!(listing["runs"][1]["active_nodes"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("collect")));
+    assert!(
+        listing["runs"][1]["active_nodes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("collect"))
+    );
 }
 
 #[tokio::test]
@@ -345,10 +349,12 @@ async fn graph_keeps_a_failed_foreach_entrys_stage_active_while_siblings_run() {
     assert_eq!(fan["queued"], 0);
     assert_eq!(graph["state"], "running");
     assert_eq!(graph["usage"]["running"], 1);
-    assert!(graph["active_nodes"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("fan")));
+    assert!(
+        graph["active_nodes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("fan"))
+    );
 }
 
 #[tokio::test]
@@ -407,16 +413,20 @@ async fn compact_snapshot_sheds_answers_and_carries_the_short_tail() {
     assert!(compact["events"].as_array().unwrap().len() <= GRAPH_EVENTS_TAIL);
     assert!(!kinds(&compact).contains(&"answer_captured".to_string()));
     assert!(kinds(&full).contains(&"answer_captured".to_string()));
-    assert!(!compact["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|node| node.get("answer_preview").is_some()));
-    assert!(full["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|node| node.get("answer_preview").is_some()));
+    assert!(
+        !compact["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node.get("answer_preview").is_some())
+    );
+    assert!(
+        full["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node.get("answer_preview").is_some())
+    );
 }
 
 #[tokio::test]

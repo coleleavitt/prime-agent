@@ -68,10 +68,12 @@ fn an_image_presents_its_preview_in_a_display_only_row() {
         })
     );
     // The preview is the user's: the model's request never carries the row.
-    assert!(crate::session_engine::messages::convert_to_llm(&[
-        pa_types::session::AgentMessage::Custom(captured.message)
-    ])
-    .is_empty());
+    assert!(
+        crate::session_engine::messages::convert_to_llm(&[
+            pa_types::session::AgentMessage::Custom(captured.message)
+        ])
+        .is_empty()
+    );
     // The source can go away: the capture is the durable copy.
     std::fs::remove_file(&source).unwrap();
     assert!(captured_path.is_file());
@@ -144,7 +146,9 @@ fn invalid_requests_refuse_with_the_reason() {
         "artifact.present preview is not a image/png image (PNG, JPEG, GIF, or WebP)"
     );
     assert_eq!(
-        refusal(json!({ "path": "pic.png", "preview": { "data": "x".repeat(MAX_PREVIEW_BASE64_CHARS + 1), "mime_type": "image/png" } })),
+        refusal(
+            json!({ "path": "pic.png", "preview": { "data": "x".repeat(MAX_PREVIEW_BASE64_CHARS + 1), "mime_type": "image/png" } })
+        ),
         format!(
             "artifact.present preview is {} base64 characters; previews must be at most {MAX_PREVIEW_BASE64_CHARS}",
             MAX_PREVIEW_BASE64_CHARS + 1

@@ -2,15 +2,20 @@
 //! colors. The refinement components live in the sibling `refinement`
 //! module; compaction outcomes render through the chat status rows.
 
+use ratatui::style::Style;
+
 use super::{
-    AgentMessageDirection, AgentMessageRow, CustomPanelRow, ShellCompletionRow, AGENT_MESSAGE_LABEL,
+    AGENT_MESSAGE_LABEL,
+    AgentMessageDirection,
+    AgentMessageRow,
+    CustomPanelRow,
+    ShellCompletionRow,
 };
 use crate::chat::Detail;
 use crate::markdown::MermaidMode;
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{pad_line, str_width, truncate_line, wrap_line, wrap_text};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 pub(crate) fn spacer() -> Line {
     Vec::new()
@@ -298,9 +303,9 @@ pub(crate) fn render_custom_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Span;
     use crate::chat::Detail;
     use crate::theme::{ColorMode, Theme};
-    use crate::Span;
 
     fn theme() -> Theme {
         Theme::builtin("prime", ColorMode::TrueColor)
@@ -433,9 +438,11 @@ mod tests {
             Span::styled("\u{2570}\u{2500} ".to_string(), dim)
         );
         assert_eq!(rows[2][1], Span::raw("   "));
-        assert!(rows[1]
-            .iter()
-            .any(|span| span.content == "line one" && span.style == body));
+        assert!(
+            rows[1]
+                .iter()
+                .any(|span| span.content == "line one" && span.style == body)
+        );
     }
 
     /// No diagram renderer is installed in this binary: agent-message bodies and custom
@@ -582,8 +589,11 @@ mod tests {
     #[test]
     fn a_presented_preview_reserves_its_image_rows_where_images_place() {
         use crate::terminal_image::{
-            clear_image_protocol_override, set_cell_dimensions_override,
-            set_image_protocol_override, CellDimensions, ImageProtocol,
+            CellDimensions,
+            ImageProtocol,
+            clear_image_protocol_override,
+            set_cell_dimensions_override,
+            set_image_protocol_override,
         };
         let row = presented_preview_row();
         let text = |rows: &[Line]| -> Vec<String> {

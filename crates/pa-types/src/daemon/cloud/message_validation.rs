@@ -4,17 +4,27 @@
 use serde_json::Value;
 
 use super::checks::{
-    expect_fields, expect_integer, expect_one_of, expect_string, first_problem, record_field,
+    expect_fields,
+    expect_integer,
+    expect_one_of,
+    expect_string,
+    first_problem,
+    record_field,
     string_utf16_units,
 };
 use super::event_validation::cloud_event_problem;
-use super::frames::{cloud_request_digest, CLOUD_MESSAGE_TYPES};
+use super::frames::{CLOUD_MESSAGE_TYPES, cloud_request_digest};
 use super::request_validation::{cloud_id_problem, cloud_request_problem};
 use super::shapes_validation::{capabilities_problem, cursor_problem, receipt_problem};
 use super::{
-    CLOUD_MAX_ERROR_CHARS, CLOUD_MAX_ID_CHARS, CLOUD_MAX_INFERENCE_MESSAGES,
-    CLOUD_MAX_MODEL_ID_CHARS, CLOUD_MAX_QUEUED_COMMANDS, CLOUD_MAX_REQUEST_JSON_CHARS,
-    CLOUD_MAX_SNAPSHOT_EVENTS, CLOUD_MAX_TOKEN_CHARS,
+    CLOUD_MAX_ERROR_CHARS,
+    CLOUD_MAX_ID_CHARS,
+    CLOUD_MAX_INFERENCE_MESSAGES,
+    CLOUD_MAX_MODEL_ID_CHARS,
+    CLOUD_MAX_QUEUED_COMMANDS,
+    CLOUD_MAX_REQUEST_JSON_CHARS,
+    CLOUD_MAX_SNAPSHOT_EVENTS,
+    CLOUD_MAX_TOKEN_CHARS,
 };
 
 /// TS `cloudMessageProblem`: runtime validation for any protocol frame;

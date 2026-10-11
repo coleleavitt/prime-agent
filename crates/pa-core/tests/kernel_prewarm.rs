@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pa_core::session_engine::compact_session::CompactOutcome;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
 use pa_core::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
-use pa_core::session_engine::telemetry::{build_client, TelemetryWiring};
+use pa_core::session_engine::telemetry::{TelemetryWiring, build_client};
 use pa_core::session_engine::{PromptOptions, PromptOutcome};
 use pa_core::settings::SettingsManager;
 use pa_types::session::FileEntry;

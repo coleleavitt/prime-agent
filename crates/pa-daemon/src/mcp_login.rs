@@ -6,8 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-
+use anyhow::{Result, anyhow};
 use pa_core::mcp::{McpLoginUi, McpManager};
 
 /// The environment path (when set) that additionally records each
@@ -88,14 +87,16 @@ pub fn wire_worker_mcp_login(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
     use anyhow::Result;
     use pa_core::auth::{AuthCredential, AuthStorage};
     use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
     use pa_core::mcp::{McpManager, McpManagerOptions, McpServerConfig, OAuthHttpResponse};
     use serde_json::json;
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
+
+    use super::*;
 
     /// A scripted transport (exact URL -> response); unknown URLs fail so
     /// the flow cannot silently talk to the network.

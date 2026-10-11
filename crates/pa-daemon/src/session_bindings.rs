@@ -6,9 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
-
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// One session's durable identity plus its latest known active id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,9 +125,11 @@ mod tests {
     #[test]
     fn record_indexes_by_active_id_and_file() {
         let table = SessionBindingTable::new();
-        assert!(table
-            .record("worker-1", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
-            .is_none());
+        assert!(
+            table
+                .record("worker-1", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
+                .is_none()
+        );
         let binding = table.binding_for("worker-1").expect("binding");
         assert_eq!(binding.active_session_id, "worker-1");
         assert_eq!(binding.session_id.as_deref(), Some("sess-uuid"));
@@ -193,9 +193,11 @@ mod tests {
         let table = SessionBindingTable::new();
         table.record("worker-1", Some("sess-uuid"), Some("/tmp/sess.jsonl"));
         // A relaunch re-records the same identity: no supersede, no event.
-        assert!(table
-            .record("worker-1", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
-            .is_none());
+        assert!(
+            table
+                .record("worker-1", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -231,9 +233,11 @@ mod tests {
         assert!(table.binding_for("worker-2").is_none());
         // A re-record after the prune rebuilds the binding (the delete pruned the old
         // state, not the session's future).
-        assert!(table
-            .record("worker-3", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
-            .is_none());
+        assert!(
+            table
+                .record("worker-3", Some("sess-uuid"), Some("/tmp/sess.jsonl"))
+                .is_none()
+        );
         assert_eq!(
             table
                 .binding_for("worker-3")
@@ -267,9 +271,11 @@ mod tests {
         table.record("worker-1", Some("sess-a"), Some("/tmp/sess.jsonl"));
         // The file path is reused by a DIFFERENT durable session: no supersede,
         // no silent rebind into the foreign session.
-        assert!(table
-            .record("worker-2", Some("sess-b"), Some("/tmp/sess.jsonl"))
-            .is_none());
+        assert!(
+            table
+                .record("worker-2", Some("sess-b"), Some("/tmp/sess.jsonl"))
+                .is_none()
+        );
         assert_eq!(
             table
                 .binding_for("worker-1")
@@ -295,9 +301,11 @@ mod tests {
         // durable session.
         let table = SessionBindingTable::new();
         table.record("worker-1", Some("sess-a"), Some("/tmp/sess.jsonl"));
-        assert!(table
-            .record("worker-2", None, Some("/tmp/sess.jsonl"))
-            .is_none());
+        assert!(
+            table
+                .record("worker-2", None, Some("/tmp/sess.jsonl"))
+                .is_none()
+        );
         assert_eq!(
             table
                 .binding_for("worker-1")

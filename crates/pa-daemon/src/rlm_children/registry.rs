@@ -2,12 +2,25 @@
 //! deletes with their tombstone receipts, the close walk, the target
 //! lookup/resolution, and the ledger reseed; the close-failure no-op
 //! marker is registry-only.
-use pa_types::sync::MutexExt;
 use std::path::{Path, PathBuf};
 
+use pa_types::sync::MutexExt;
+
 use super::{
-    bail, json, rlm_child_label, Arc, ChildCloseReason, ChildRecord, Context, DaemonCommand,
-    DeletedChild, Map, Mutex, Result, SupervisorChildSessionsInner, KILL_TIMEOUT_MS,
+    Arc,
+    ChildCloseReason,
+    ChildRecord,
+    Context,
+    DaemonCommand,
+    DeletedChild,
+    KILL_TIMEOUT_MS,
+    Map,
+    Mutex,
+    Result,
+    SupervisorChildSessionsInner,
+    bail,
+    json,
+    rlm_child_label,
 };
 use crate::lease::canonical_session_path;
 

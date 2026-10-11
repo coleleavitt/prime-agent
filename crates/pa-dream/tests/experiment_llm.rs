@@ -12,28 +12,44 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pa_dream::child::{
-    ChildRuntimeScope, RunAgent, RunAgentOptions, RunAgentRequest, RunAgentResult, RunAgentStatus,
+    ChildRuntimeScope,
+    RunAgent,
+    RunAgentOptions,
+    RunAgentRequest,
+    RunAgentResult,
+    RunAgentStatus,
 };
-use pa_dream::dream_loop::{dream_run_id, priming_tree_id, DreamHandlerCalls};
-use pa_dream::dreams::{dreams_path, read_dreams_log, DreamsLogLine};
+use pa_dream::dream_loop::{DreamHandlerCalls, dream_run_id, priming_tree_id};
+use pa_dream::dreams::{DreamsLogLine, dreams_path, read_dreams_log};
 use pa_dream::experiment::{
-    is_experiment_result, plan_experiment, read_experiment_result, run_experiment, ExperimentArm,
-    ExperimentArmMode, ExperimentArmResult, ExperimentArmRunner, ExperimentBudget, ExperimentError,
-    ExperimentProgressEvent, ExperimentResult, ExperimentRunOptions, ExperimentSpec,
     EXPERIMENT_ARMS,
+    ExperimentArm,
+    ExperimentArmMode,
+    ExperimentArmResult,
+    ExperimentArmRunner,
+    ExperimentBudget,
+    ExperimentError,
+    ExperimentProgressEvent,
+    ExperimentResult,
+    ExperimentRunOptions,
+    ExperimentSpec,
+    is_experiment_result,
+    plan_experiment,
+    read_experiment_result,
+    run_experiment,
 };
-use pa_dream::experiment_llm::{run_experiment_with_agent, AgentArmRunner, AgentArmRunnerOptions};
+use pa_dream::experiment_llm::{AgentArmRunner, AgentArmRunnerOptions, run_experiment_with_agent};
 use pa_dream::improve::CandidateOrigin;
 use pa_dream::json;
 use pa_dream::llm::DreamChildRole;
-use pa_dream::policy::{policy_id, SelectionRule, StopRule, DEFAULT_POLICY, PRIMING_DIVERSE};
+use pa_dream::policy::{DEFAULT_POLICY, PRIMING_DIVERSE, SelectionRule, StopRule, policy_id};
 use pa_dream::proposer::{ProposalRejectReason, RejectCounts};
 use pa_dream::rejections::{read_rejections, rejections_path};
 use pa_dream::rng::Seed;
 use pa_dream::store::{experiment_arm_dir, experiment_result_path, list_trees, read_tree};
 use pa_dream::tasks::DreamTaskId;
 use serde_json::json;
-use support::spans::{capture, named, SpanRecord};
+use support::spans::{SpanRecord, capture, named};
 use support::stub::Answer;
 use tokio_util::sync::CancellationToken;
 
@@ -272,10 +288,12 @@ fn round_1_is_shared_across_every_arm_and_each_arm_is_charged_its_own_calls_and_
         result.arms.iter().map(|a| a.arm).collect::<Vec<_>>(),
         EXPERIMENT_ARMS.to_vec()
     );
-    assert!(result
-        .arms
-        .iter()
-        .all(|a| a.rounds.len() == 2 && a.mode.proposer == "llm" && a.mode.dreamer == "llm"));
+    assert!(
+        result
+            .arms
+            .iter()
+            .all(|a| a.rounds.len() == 2 && a.mode.proposer == "llm" && a.mode.dreamer == "llm")
+    );
     assert_eq!(result.headline.as_ref().unwrap().reference, "fixed");
     assert!(!dir.path().join("trees").exists());
 
@@ -328,18 +346,21 @@ fn round_1_is_shared_across_every_arm_and_each_arm_is_charged_its_own_calls_and_
         (u64::from(first.probes), u64::from(first.probes), 0)
     );
     assert_eq!(first.llm_rejected, RejectCounts::default());
-    assert!(!rejections_path(
-        &arm_dir(dir.path(), &result, ExperimentArm::Dream),
-        &format!("{}-shared", result.experiment_id)
-    )
-    .exists());
+    assert!(
+        !rejections_path(
+            &arm_dir(dir.path(), &result, ExperimentArm::Dream),
+            &format!("{}-shared", result.experiment_id)
+        )
+        .exists()
+    );
     for a in &result.arms {
         assert_eq!(a.totals.agent_generated_calls, a.totals.probes);
         assert_eq!(a.totals.local_fallbacks, 0);
-        assert!(a
-            .rounds
-            .iter()
-            .all(|row| u64::from(row.agent_generated_calls) == row.llm_accepted));
+        assert!(
+            a.rounds
+                .iter()
+                .all(|row| u64::from(row.agent_generated_calls) == row.llm_accepted)
+        );
     }
     let arm_proposer_calls: u64 = EXPERIMENT_ARMS
         .iter()
@@ -386,16 +407,22 @@ fn round_1_is_shared_across_every_arm_and_each_arm_is_charged_its_own_calls_and_
         assert_eq!(a.rounds[1].handler_calls.guidance, u64::from(a.guided));
         let prompts = &tally.prompts["proposer"];
         assert!(!prompts.is_empty());
-        assert!(prompts
-            .iter()
-            .all(|prompt| prompt.contains(GUIDANCE_PREFIX) == a.guided));
-        assert!(prompts
-            .iter()
-            .all(|prompt| prompt.contains(INSIGHTS) == a.guided));
+        assert!(
+            prompts
+                .iter()
+                .all(|prompt| prompt.contains(GUIDANCE_PREFIX) == a.guided)
+        );
+        assert!(
+            prompts
+                .iter()
+                .all(|prompt| prompt.contains(INSIGHTS) == a.guided)
+        );
     }
-    assert!(!shared.prompts["proposer"]
-        .iter()
-        .any(|prompt| prompt.contains(GUIDANCE_PREFIX)));
+    assert!(
+        !shared.prompts["proposer"]
+            .iter()
+            .any(|prompt| prompt.contains(GUIDANCE_PREFIX))
+    );
     let every: Vec<String> = stub
         .tallies
         .lock()
@@ -473,14 +500,19 @@ fn rejected_child_results_are_reported_apart_from_the_agents_work() {
             .count() as u64,
         first.local_fallbacks
     );
-    assert!(shared_log
-        .iter()
-        .all(|line| line.input.iteration == 0 && line.input.reason == ProposalRejectReason::Shape));
-    assert!(!rejections_path(
-        &arm_dir(dir.path(), &result, ExperimentArm::Dream),
-        &format!("{}-shared", result.experiment_id)
-    )
-    .exists());
+    assert!(
+        shared_log
+            .iter()
+            .all(|line| line.input.iteration == 0
+                && line.input.reason == ProposalRejectReason::Shape)
+    );
+    assert!(
+        !rejections_path(
+            &arm_dir(dir.path(), &result, ExperimentArm::Dream),
+            &format!("{}-shared", result.experiment_id)
+        )
+        .exists()
+    );
     for a in &result.arms {
         let second = &a.rounds[1];
         assert_eq!(second.llm_proposals, second.llm_accepted + rejected(second));
@@ -653,9 +685,11 @@ fn the_prompt_context_and_the_child_model_reach_every_proposer_call() {
         .flat_map(|tally| tally.prompts.get("proposer").cloned().unwrap_or_default())
         .collect();
     assert_eq!(prompts.len(), result.arms[0].totals.probes as usize);
-    assert!(prompts
-        .iter()
-        .all(|prompt| prompt.contains("Contract: public examples only.")));
+    assert!(
+        prompts
+            .iter()
+            .all(|prompt| prompt.contains("Contract: public examples only."))
+    );
     assert_eq!(result.arms[0].totals.tokens, stub.tokens());
 }
 
@@ -719,9 +753,10 @@ fn the_experiment_and_every_arm_run_are_detached_roots_linked_through_their_trig
             (Some(json!(false)), Some(json!(true)))
         ]
     );
-    assert!(arms.iter().all(|span| span
-        .attr("dream.run_id")
-        .is_some_and(serde_json::Value::is_string)));
+    assert!(arms.iter().all(|span| {
+        span.attr("dream.run_id")
+            .is_some_and(serde_json::Value::is_string)
+    }));
     let explores: Vec<&SpanRecord> = named(&spans, "dream.explore");
     let shared: Vec<&&SpanRecord> = explores
         .iter()
@@ -952,10 +987,12 @@ fn autocorrelation_n32_records_mixed_verdicts_the_final_selection_and_the_dreams
         (result.task.0, result.n),
         (DreamTaskId::Autocorrelation, Some(32))
     );
-    assert!(result
-        .notes
-        .iter()
-        .any(|note| note.starts_with("k1 6 <= initialPolicy.beta 6")));
+    assert!(
+        result
+            .notes
+            .iter()
+            .any(|note| note.starts_with("k1 6 <= initialPolicy.beta 6"))
+    );
     assert!(is_experiment_result(
         &read_experiment_result(dir.path(), &result.experiment_id).unwrap()
     ));
@@ -966,9 +1003,11 @@ fn autocorrelation_n32_records_mixed_verdicts_the_final_selection_and_the_dreams
         .values()
         .flat_map(|tally| tally.prompts.get("proposer").cloned().unwrap_or_default())
         .collect();
-    assert!(prompts
-        .iter()
-        .all(|prompt| prompt.contains("exactly 32 weights")));
+    assert!(
+        prompts
+            .iter()
+            .all(|prompt| prompt.contains("exactly 32 weights"))
+    );
     assert!(result.arms.iter().all(|a| a.totals.local_fallbacks == 0));
     let dream = arm(&result, ExperimentArm::Dream);
     let step = dream.rounds[1].dreaming.as_ref().unwrap();
@@ -986,10 +1025,11 @@ fn autocorrelation_n32_records_mixed_verdicts_the_final_selection_and_the_dreams
             (3, CandidateOrigin::Local)
         ]
     );
-    assert!(step
-        .candidate_verdicts
-        .iter()
-        .all(|verdict| !verdict.changed.is_empty()));
+    assert!(
+        step.candidate_verdicts
+            .iter()
+            .all(|verdict| !verdict.changed.is_empty())
+    );
     assert_eq!(
         step.candidate_verdicts
             .iter()
@@ -1004,9 +1044,11 @@ fn autocorrelation_n32_records_mixed_verdicts_the_final_selection_and_the_dreams
         dream.rounds[1].policy_id
     );
     assert_eq!(dream.stopped_early, 0);
-    assert!(arm(&result, ExperimentArm::Fixed)
-        .final_selection
-        .is_empty());
+    assert!(
+        arm(&result, ExperimentArm::Fixed)
+            .final_selection
+            .is_empty()
+    );
     let lines = read_dreams_log(&dreams_path(
         &arm_dir(dir.path(), &result, ExperimentArm::Dream),
         &dream.run_id,

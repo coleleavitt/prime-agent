@@ -1,15 +1,39 @@
 //! Startup and child wiring: kernel process spawn, python resolution, stderr
 //! capture, and readiness handshake.
 
+use std::ops::ControlFlow;
+
 use super::line_framer::{ProtocolLineFramer, PushOutcome};
 use super::{
-    anyhow, live_kernels, lock, oneshot, orphan_journal, parse_event, Arc, AsyncReadExt, BufReader,
-    ChildHandle, Duration, ExitInfo, HashMap, Inner, KernelShutdownOptions, KernelStartOptions,
-    KernelState, Mutex, Ordering, Signal, StderrLog, Write, KERNEL_STDERR_LOG_BUDGET_MARKER,
-    MAX_KERNEL_STDERR_CHARS, MAX_KERNEL_STDERR_LOG_BYTES, MAX_PROTOCOL_LINE_BYTES,
-    READY_TIMEOUT_MS, REPL_PROTOCOL_VERSION,
+    Arc,
+    AsyncReadExt,
+    BufReader,
+    ChildHandle,
+    Duration,
+    ExitInfo,
+    HashMap,
+    Inner,
+    KERNEL_STDERR_LOG_BUDGET_MARKER,
+    KernelShutdownOptions,
+    KernelStartOptions,
+    KernelState,
+    MAX_KERNEL_STDERR_CHARS,
+    MAX_KERNEL_STDERR_LOG_BYTES,
+    MAX_PROTOCOL_LINE_BYTES,
+    Mutex,
+    Ordering,
+    READY_TIMEOUT_MS,
+    REPL_PROTOCOL_VERSION,
+    Signal,
+    StderrLog,
+    Write,
+    anyhow,
+    live_kernels,
+    lock,
+    oneshot,
+    orphan_journal,
+    parse_event,
 };
-use std::ops::ControlFlow;
 
 /// Bound on waiting for a dead kernel's stderr pipe to drain before its
 /// exit is described.

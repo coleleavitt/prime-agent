@@ -7,9 +7,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use serde_json::Value;
-
 use pa_core::mcp::AcpMcpServerConfig;
+use serde_json::Value;
 
 /// Wire shape of one `session/new` `mcpServers` entry (ACP SDK
 /// `McpServer` union: stdio by `command`, http by `type`).
@@ -310,8 +309,9 @@ pub fn acp_mcp_tool_names(servers: &[AcpMcpServerConfig]) -> Result<Vec<String>,
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn stdio(name: &str) -> Value {
         json!({ "name": name, "type": "stdio", "command": "cat", "args": [], "env": [] })

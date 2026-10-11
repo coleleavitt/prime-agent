@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::engine::{create_session, SessionEngine, SessionEngineConfig};
+use super::engine::{SessionEngine, SessionEngineConfig, create_session};
 
 async fn build_session(root: &Path, agent_dir: &std::path::Path) -> SessionEngine {
     let model = pa_agent::types::Model {
@@ -127,7 +127,9 @@ async fn decision_api_preimports_the_skill_only_while_the_setting_is_set() {
         );
         engine.dispose_kernel().await;
     }
-    println!("DECISION_API_REAL_FIXTURE_EXECUTED: decision_api_preimports_the_skill_only_while_the_setting_is_set");
+    println!(
+        "DECISION_API_REAL_FIXTURE_EXECUTED: decision_api_preimports_the_skill_only_while_the_setting_is_set"
+    );
 }
 
 #[tokio::test]
@@ -136,8 +138,12 @@ async fn decision_api_real_runtime_loop_routes_decisions_and_child_delivery_then
 
     use crate::kernel::manager::{KernelStartOptions, ReplKernelManager};
     use crate::kernel::shared::{
-        host_handler, ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions,
+        ExecuteOptions,
+        ExecuteStatus,
+        HostRequestHandlers,
+        KernelManagerOptions,
         KernelShutdownOptions,
+        host_handler,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,5 +339,7 @@ print("fixture passed")
         deleted.1["target"], spawned.1["kwargs"]["name"],
         "the loop's teardown deletes its decision child"
     );
-    println!("DECISION_API_REAL_FIXTURE_EXECUTED: decision_api_real_runtime_loop_routes_decisions_and_child_delivery_then_cleans_up");
+    println!(
+        "DECISION_API_REAL_FIXTURE_EXECUTED: decision_api_real_runtime_loop_routes_decisions_and_child_delivery_then_cleans_up"
+    );
 }

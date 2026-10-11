@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pa_core::update::release::{
-    parse_channel_manifest, sha256_hex, LatestRelease, ReleaseArtifact,
+    LatestRelease,
+    ReleaseArtifact,
+    parse_channel_manifest,
+    sha256_hex,
 };
 
 /// The workspace root (crates/pa-core -> crates -> root): the workflow and

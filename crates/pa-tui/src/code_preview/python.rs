@@ -2,10 +2,17 @@
 //! `previewIpythonCode` and their statement scanner. Behavior matches the
 //! TS source.
 
-use super::bash::re_once;
 use super::bash::{
-    descriptor, is_comment_line, js_trim, js_trim_end, path_tail, preview_bash_command,
-    simplify_bash_command_line, CodePreview, S,
+    CodePreview,
+    S,
+    descriptor,
+    is_comment_line,
+    js_trim,
+    js_trim_end,
+    path_tail,
+    preview_bash_command,
+    re_once,
+    simplify_bash_command_line,
 };
 use super::cell::parse_ipython_bash_cell;
 

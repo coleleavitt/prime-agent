@@ -8,9 +8,9 @@
 
 use std::fmt::Write as _;
 
-use super::super::pyvalue::{py_repr, py_str_repr, py_strip, PyValue};
-use super::pyjson::{self, type_name, LoadError};
+use super::super::pyvalue::{PyValue, py_repr, py_str_repr, py_strip};
 use super::Raise;
+use super::pyjson::{self, LoadError, type_name};
 
 pub const MACHINE_FILE_NAME: &str = "MACHINE.md";
 pub const MACHINE_SPEC_FENCE: &str = "machine-spec";
@@ -310,7 +310,7 @@ pub fn parse_machine_file(
                     "{source}: the ```{MACHINE_SPEC_FENCE} block must contain a JSON object ({})",
                     error.message()
                 )],
-            ))
+            ));
         }
     };
     if !spec.is_dict() {
@@ -624,7 +624,7 @@ fn write_pretty(value: &PyValue, level: usize, out: &mut String) -> Result<(), R
                         return Err(Raise::Type(format!(
                             "keys must be str, int, float, bool or None, not {}",
                             type_name(key)
-                        )))
+                        )));
                     }
                     scalar => pyjson::dumps(scalar).map_err(Raise::Type)?,
                 };

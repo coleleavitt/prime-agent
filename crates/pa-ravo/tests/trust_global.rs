@@ -12,7 +12,7 @@ use std::time::Duration;
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_ledger::{FailureLedgerFeature, HarnessDocument, LedgerOptions, ReplayCase};
 use pa_ravo::{RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::registry::LookupSpan;
 
@@ -241,9 +241,11 @@ fn global_windows_settle_at_this_sessions_global_flushes() {
         (&window["outcome"], &window["settledTurn"]),
         (&json!("contested"), &json!(2))
     );
-    assert!(annotations
-        .take()
-        .contains(&("trust.contested".to_string(), "1".to_string())));
+    assert!(
+        annotations
+            .take()
+            .contains(&("trust.contested".to_string(), "1".to_string()))
+    );
 
     // A skill window: the recurrence's case is self-checked, the awaiting
     // replay is released, raises (upheld), and its verdict is flushed to the

@@ -134,8 +134,9 @@ pub(crate) const ERROR_LIMIT: usize = 200;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn the_wire_codes_are_the_skills_thirteen() {

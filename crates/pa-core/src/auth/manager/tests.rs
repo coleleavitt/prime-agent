@@ -155,13 +155,15 @@ fn set_and_remove_credentials() {
     assert_eq!(auth.get_api_key("anthropic").as_deref(), Some("sk-ant"));
     // The generic `set` keeps the TS omit shape: a non-prime key
     // carries no `primeTeam` property.
-    assert!(!auth
-        .get_all()
-        .get("anthropic")
-        .unwrap()
-        .as_object()
-        .unwrap()
-        .contains_key("primeTeam"));
+    assert!(
+        !auth
+            .get_all()
+            .get("anthropic")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("primeTeam")
+    );
     auth.logout("anthropic");
     assert!(!auth.has("anthropic"));
     assert_eq!(auth.get_api_key("anthropic"), None);
@@ -1074,8 +1076,9 @@ mod unsaved_refresh;
 /// at once: the network refresh runs once across all of them. The test
 /// binary re-runs itself as the peer processes (`child` below).
 mod cross_process {
-    use super::*;
     use std::io::{BufRead as _, Write as _};
+
+    use super::*;
 
     const PROVIDER: &str = "x-cross-process-refresh";
     const CHILD_DIR_ENV: &str = "PA_AUTH_REFRESH_CHILD_DIR";

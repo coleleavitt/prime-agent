@@ -3,10 +3,11 @@
 // bits (std::os::unix::fs::PermissionsExt).
 #![cfg(unix)]
 
-use pa_core::kernel::cancellation::AbortSignal;
-use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
+
+use pa_core::kernel::cancellation::AbortSignal;
+use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 
 fn failing_kernel() -> (
     tempfile::TempDir,

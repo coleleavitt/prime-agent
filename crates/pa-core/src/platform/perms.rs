@@ -279,8 +279,9 @@ pub fn create_dir_all_private(path: &Path) -> std::io::Result<()> {
 
 #[cfg(all(test, unix))]
 mod unix_tests {
-    use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
 
     /// The process-access execute probe follows `access(2)`: our own
     /// executable file passes it, a mode without execute bits fails it, and

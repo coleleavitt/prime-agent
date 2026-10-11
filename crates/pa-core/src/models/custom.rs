@@ -2,10 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use serde::{Deserialize, Serialize};
-
-use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput};
 use pa_types::JsNumber;
+use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput};
+use serde::{Deserialize, Serialize};
 
 /// Strip `//` line comments and trailing commas, leaving strings intact.
 #[must_use]
@@ -377,7 +376,7 @@ pub fn load_custom_models(
             return CustomModelsResult {
                 error: Some(error),
                 ..Default::default()
-            }
+            };
         }
     };
     if let Err(error) = validate_config(&config, built_in_providers) {

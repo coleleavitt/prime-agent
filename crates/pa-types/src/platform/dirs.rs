@@ -94,8 +94,9 @@ fn expand_tilde(path: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Mutex;
+
+    use super::*;
 
     /// Environment mutations are process-global: tests take this lock and
     /// restore previous values on exit.

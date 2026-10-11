@@ -8,44 +8,91 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use pa_core::features::{FeatureFuture, FeatureTelemetry, SessionFeature, SessionFeatureContext};
 use pa_core::refinement::gate::{
-    GateAdmission, RefineGuard, RefinementGate, RefinementGateRequest, RefinementGateVerdict,
+    GateAdmission,
+    RefineGuard,
+    RefinementGate,
+    RefinementGateRequest,
+    RefinementGateVerdict,
 };
-use pa_core::refinement::planner::{refused_refinement_edits, RefinementProposal};
+use pa_core::refinement::planner::{RefinementProposal, refused_refinement_edits};
 use pa_core::refinement::prompt_hook::{
-    HarnessPromptAdjustment, HarnessPromptHook, WithheldHarnessEntries,
+    HarnessPromptAdjustment,
+    HarnessPromptHook,
+    WithheldHarnessEntries,
 };
-use pa_core::refinement::ranking::{format_harness_state_for_prompt, HarnessStatePromptOptions};
+use pa_core::refinement::ranking::{HarnessStatePromptOptions, format_harness_state_for_prompt};
 use pa_core::refinement::{
-    HarnessScope, HarnessState, RefinementAction, RefinementKind, RefinementResult,
+    HarnessScope,
+    HarnessState,
+    RefinementAction,
+    RefinementKind,
+    RefinementResult,
 };
 use pa_core::session_engine::refine::RefinementSource;
 use pa_core::session_engine::turn_boundary::{PendingRefine, RefineRequester};
 use pa_ledger::{
-    find_provisional_regressions, format_recurrence_refine_instructions,
-    format_regression_refine_instructions, local_harness_state_dir, normalize_failure_ledger,
-    observation_ordinal, record_provisional_regressions, recurring_failures, FailureLedger,
-    FailureRecord, HarnessDocument, LedgerBoundary, LedgerFlush, LedgerHandle, LedgerObserver,
-    LedgerScope, ProvisionalRegression,
+    FailureLedger,
+    FailureRecord,
+    HarnessDocument,
+    LedgerBoundary,
+    LedgerFlush,
+    LedgerHandle,
+    LedgerObserver,
+    LedgerScope,
+    ProvisionalRegression,
+    find_provisional_regressions,
+    format_recurrence_refine_instructions,
+    format_regression_refine_instructions,
+    local_harness_state_dir,
+    normalize_failure_ledger,
+    observation_ordinal,
+    record_provisional_regressions,
+    recurring_failures,
 };
 use pa_telemetry::Properties;
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
 use serde_json::{Map, Value};
 
-use crate::authority::{assisted_ravo_binding_matches, DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS};
+use crate::authority::{DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS, assisted_ravo_binding_matches};
 use crate::gate::{
-    carry_observed_recurrences, gate_start_state, judge_conversation_text, proposal_artifact,
-    ravo_evaluate_proposal, refinement_baseline_view, refinement_rejection_cause, scope_name,
-    set_stored_ravo_state, stored_ravo_state, GateEvaluation, RavoDecision, RavoGateReport,
-    RefineReason, RejectionCause, RAVO_BASELINE_CHANGED_RATIONALE, RAVO_DEFAULT_CONFIG, RAVO_KEY,
+    GateEvaluation,
+    RAVO_BASELINE_CHANGED_RATIONALE,
+    RAVO_DEFAULT_CONFIG,
+    RAVO_KEY,
+    RavoDecision,
+    RavoGateReport,
+    RefineReason,
+    RejectionCause,
+    carry_observed_recurrences,
+    gate_start_state,
+    judge_conversation_text,
+    proposal_artifact,
+    ravo_evaluate_proposal,
+    refinement_baseline_view,
+    refinement_rejection_cause,
+    scope_name,
+    set_stored_ravo_state,
+    stored_ravo_state,
 };
 use crate::reducer::RavoWindowClock;
 use crate::referee::ReplayRunner;
-use crate::trigger::{failure_refine, queue, read_trigger, FailureRequest, RequestKind};
+use crate::trigger::{FailureRequest, RequestKind, failure_refine, queue, read_trigger};
 use crate::trust::{
-    empty_entry_trust, harness_entry_ref, is_dormant_trust, log_trust_settlement,
-    normalize_entry_trust, open_trust_window, record_harness_trust_evidence, reference_imports,
-    settle_harness_trust, stored_trust_windows, trust_windows_value, TrustClaim, TrustSettlement,
-    TRUST_KEY, TRUST_WINDOWS_KEY,
+    TRUST_KEY,
+    TRUST_WINDOWS_KEY,
+    TrustClaim,
+    TrustSettlement,
+    empty_entry_trust,
+    harness_entry_ref,
+    is_dormant_trust,
+    log_trust_settlement,
+    normalize_entry_trust,
+    open_trust_window,
+    record_harness_trust_evidence,
+    reference_imports,
+    settle_harness_trust,
+    stored_trust_windows,
+    trust_windows_value,
 };
 use crate::trust_runtime::{TrustRunner, TrustTracker};
 use crate::verification::ReplayVerifier;
@@ -203,7 +250,6 @@ impl RavoFeature {
 
     /// Prompt `ravo.run`'s children with the model `factory` builds for a
     /// session instead of the session model (tests script it).
-    ///
     #[must_use]
     pub fn with_run_model(self, factory: crate::run_host::ModelFactory) -> Self {
         *self
@@ -1374,7 +1420,7 @@ impl RavoLedgerObserver {
 
 #[cfg(test)]
 mod tests {
-    use pa_ledger::{fingerprint_failure, FailureKind, FailureLedger, FailureRecord};
+    use pa_ledger::{FailureKind, FailureLedger, FailureRecord, fingerprint_failure};
 
     use super::*;
 

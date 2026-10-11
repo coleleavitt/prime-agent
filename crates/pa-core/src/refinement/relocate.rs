@@ -15,7 +15,9 @@ use serde_json::{Map, Value};
 
 use super::entries::lock_harness_state;
 use super::{
-    empty_harness_state, get_global_harness_state_dir, get_harness_state_path,
+    empty_harness_state,
+    get_global_harness_state_dir,
+    get_harness_state_path,
     get_refinement_history_path,
 };
 
@@ -206,7 +208,7 @@ fn merge_history(misplaced_path: &Path, canonical_path: &Path) -> anyhow::Result
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => {
-            return Err(error).with_context(|| format!("reading {}", canonical_path.display()))
+            return Err(error).with_context(|| format!("reading {}", canonical_path.display()));
         }
     };
     let mut seen: std::collections::HashSet<&str> = existing.lines().collect();
@@ -253,8 +255,9 @@ fn move_aside(path: &Path) -> anyhow::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn entry(id: &str, content: &str) -> Value {
         json!({

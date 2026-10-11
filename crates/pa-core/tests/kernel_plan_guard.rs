@@ -17,11 +17,18 @@ use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::plan_guard::{
-    KernelPlanGuard, PlanEnforcement, PlanMode, PlanModeApplied, PlanModeSwitch,
+    KernelPlanGuard,
+    PlanEnforcement,
+    PlanMode,
+    PlanModeApplied,
+    PlanModeSwitch,
 };
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 use serde_json::Value;
 

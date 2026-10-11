@@ -495,7 +495,9 @@ pub fn close_pidfd(fd: i32) {
 #[cfg(target_os = "linux")]
 pub async fn wait_for_exit(pid: u32) -> std::io::Result<()> {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use tokio::io::{unix::AsyncFd, Interest};
+
+    use tokio::io::Interest;
+    use tokio::io::unix::AsyncFd;
 
     let fd = match open_pidfd(pid) {
         Ok(fd) => fd,
@@ -537,7 +539,9 @@ pub async fn wait_for_exit(pid: u32) -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 pub async fn wait_for_exit(pid: u32) -> std::io::Result<()> {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use tokio::io::{unix::AsyncFd, Interest};
+
+    use tokio::io::Interest;
+    use tokio::io::unix::AsyncFd;
 
     // SAFETY: `kqueue()` takes no arguments.
     let kq = unsafe { libc::kqueue() };

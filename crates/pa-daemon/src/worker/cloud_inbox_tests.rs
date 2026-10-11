@@ -339,21 +339,25 @@ async fn detach_and_wire_release_cannot_unpause_a_failing_cloud_commit() {
         )
         .await;
     assert!(!failed.success, "no receipt after failed sync: {failed:?}");
-    assert!(failed
-        .error
-        .as_deref()
-        .unwrap()
-        .starts_with(crate::cloud_family::CLOUD_COMMIT_UNCERTAIN));
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .unwrap()
+            .starts_with(crate::cloud_family::CLOUD_COMMIT_UNCERTAIN)
+    );
     assert!(worker.input_pauses.paused());
     assert!(queue_texts(&worker.core, Lane::Steering).is_empty());
-    assert!(worker
-        .recovery
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .cloud_inbox_receipt("msgreq_detach")
-        .is_none());
+    assert!(
+        worker
+            .recovery
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .cloud_inbox_receipt("msgreq_detach")
+            .is_none()
+    );
     worker.core.lock().unwrap().busy = false;
     worker.work_notify.notify_one();
     tokio::task::yield_now().await;
@@ -426,11 +430,13 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             !failed.success,
             "a failed fsync cannot acknowledge: {failed:?}"
         );
-        assert!(failed
-            .error
-            .as_deref()
-            .unwrap()
-            .starts_with(crate::cloud_family::CLOUD_COMMIT_UNCERTAIN));
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .unwrap()
+                .starts_with(crate::cloud_family::CLOUD_COMMIT_UNCERTAIN)
+        );
         assert!(worker.input_pauses.paused(), "keep the runner parked");
         assert_eq!(
             unstamped(&queue_texts(&worker.core, Lane::Steering)),
@@ -438,9 +444,11 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
         );
         let journal_path = &config.recovery_journal_path;
         let written = std::fs::read(journal_path).unwrap();
-        assert!(written
-            .windows(b"msgreq_failed".len())
-            .any(|w| w == b"msgreq_failed"));
+        assert!(
+            written
+                .windows(b"msgreq_failed".len())
+                .any(|w| w == b"msgreq_failed")
+        );
         // No later local (unkeyed) command or direct checkpoint is allowed
         // to advance the snapshot past the unresolved transaction.
         let blocked = worker
@@ -464,31 +472,35 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
             worker.record_recovery(false, "turn_end").is_err(),
             "the idle/background settle must not compact"
         );
-        assert!(worker
-            .recovery
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .record_queue_snapshot("target-session", &[], &[],)
-            .is_err());
-        assert!(worker
-            .recovery
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .record_queue_checkpoint(
-                "target-session",
-                "",
-                None,
-                false,
-                "turn_end",
-                &[],
-                &[],
-                None,
-            )
-            .is_err());
+        assert!(
+            worker
+                .recovery
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .record_queue_snapshot("target-session", &[], &[],)
+                .is_err()
+        );
+        assert!(
+            worker
+                .recovery
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .record_queue_checkpoint(
+                    "target-session",
+                    "",
+                    None,
+                    false,
+                    "turn_end",
+                    &[],
+                    &[],
+                    None,
+                )
+                .is_err()
+        );
         assert_eq!(std::fs::read(journal_path).unwrap(), written);
         worker.core.lock().unwrap().busy = false;
         worker.work_notify.notify_one();

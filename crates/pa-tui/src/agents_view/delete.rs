@@ -1,8 +1,15 @@
 //! The stop-or-delete flow: the armed confirm, the wire dispatch the confirm executes, and the
 //! no-effect outcome summary.
 use super::{
-    mpsc, AgentsViewMode, AgentsViewRow, DaemonClient, DaemonCommand, RowKind, StatusTone, UiInput,
+    AgentsViewMode,
+    AgentsViewRow,
+    DaemonClient,
+    DaemonCommand,
+    RowKind,
+    StatusTone,
+    UiInput,
     Value,
+    mpsc,
 };
 
 /// The armed stop-or-delete row: which row waits on the second press, and the word its hint

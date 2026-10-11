@@ -15,17 +15,17 @@
 //! the whole file behind a stat guard, so staleness is bounded to in-flight
 //! appends.
 
-use pa_types::sync::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use pa_types::sync::MutexExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::lease::canonical_session_path;
 use crate::util::now_iso;
@@ -33,18 +33,28 @@ use crate::util::now_iso;
 mod replay;
 
 use replay::{
-    canonicalize_dir, edge_key, file_identity, is_file, parse_ledger_line, sole_edge_by_child_id,
-    LedgerRecord, LivePathResolver, ReplaySnapshot, ReplayState,
+    LedgerRecord,
+    LivePathResolver,
+    ReplaySnapshot,
+    ReplayState,
+    canonicalize_dir,
+    edge_key,
+    file_identity,
+    is_file,
+    parse_ledger_line,
+    sole_edge_by_child_id,
 };
 
 mod legacy_registry;
 
 pub(crate) use legacy_registry::read_legacy_registry;
 #[cfg(test)]
-use legacy_registry::{legacy_registry_path, LEGACY_REGISTRY_HEADER_READ_MAX_BYTES};
+use legacy_registry::{LEGACY_REGISTRY_HEADER_READ_MAX_BYTES, legacy_registry_path};
 pub use legacy_registry::{
-    read_rlm_subagent_display, write_rlm_subagent_display, LegacyRlmSubagentEntry,
+    LegacyRlmSubagentEntry,
     RlmSubagentDisplayEntry,
+    read_rlm_subagent_display,
+    write_rlm_subagent_display,
 };
 
 /// Ledger files live under `<agent-dir>/rlm-ledger/`, one per sessions dir.

@@ -11,10 +11,9 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::daemon_client::DaemonClient;
-use crate::daemon_client::DaemonClientEvent;
+use crate::daemon_client::{DaemonClient, DaemonClientEvent};
 use crate::daemon_reconnect::RecoveryKind;
 use crate::exit_guard::ExitGuard;
 use crate::keybindings::KeybindingsManager;
@@ -23,7 +22,7 @@ use crate::view::AgentView;
 
 mod onboarding;
 
-use onboarding::{run_onboarding_phase, PaneDrive};
+use onboarding::{PaneDrive, run_onboarding_phase};
 
 mod headless;
 
@@ -35,26 +34,31 @@ pub use headless::{HeadlessPlan, HeadlessStep, UiMode};
 pub use onboarding::{ModelReadiness, OnboardingSink, OnboardingTask};
 pub(crate) use render::write_flush_rows;
 use render::{
-    apply_startup_chrome, check_tmux_keyboard_setup, spawn_session_reader, Renderer,
+    Renderer,
     TerminalHandoff,
+    apply_startup_chrome,
+    check_tmux_keyboard_setup,
+    spawn_session_reader,
 };
 
 mod reconnect;
 
-use reconnect::{
-    arm_shutdown_recovery, ReconnectConnect, ReconnectLoop, SessionReconnect,
-    SESSION_RECONNECT_ATTEMPT_TIMEOUT_S,
-};
 #[cfg(test)]
 use reconnect::{DAEMON_SHUTDOWN_RECONNECT_WINDOW, SHUTDOWN_RECONNECT_RETRY};
+use reconnect::{
+    ReconnectConnect,
+    ReconnectLoop,
+    SESSION_RECONNECT_ATTEMPT_TIMEOUT_S,
+    SessionReconnect,
+    arm_shutdown_recovery,
+};
 
 mod run;
-
-pub use run::{run_interactive, run_interactive_agents_view_open};
 
 use crossterm::event::KeyEvent;
 use crossterm::terminal;
 use ratatui::Terminal;
+pub use run::{run_interactive, run_interactive_agents_view_open};
 use tokio::sync::mpsc;
 
 #[cfg(test)]
@@ -220,7 +224,7 @@ pub trait InteractionTelemetry: Send + Sync {
     /// choice — `send_text_only` / `ask_agent` / `cancel` (the panel's
     /// escape arm counts as `cancel`). Never the prompt text.
     fn image_fallback(&self, action: &'static str)
-        -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
     /// A submission parked in the follow-up queue behind a running turn: `lane` is `steering`
     /// (Enter) / `follow_up` (the follow-up key); `steering_mode` is the session's queue delivery
     /// mode (TS `steeringMode`: `all` = batched at the boundary, `one-at-a-time` = one steer per

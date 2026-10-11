@@ -12,8 +12,8 @@
 //! wallet-bound-key) is a platform prerequisite that does not exist
 //! yet; until it does, live inference stays disabled here.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::future::BoxFuture;
 use pa_types::daemon::cloud::CloudCommandRequest;
@@ -25,8 +25,7 @@ use crate::engine::{EngineEvent, PromptRequest, SessionEngine};
 /// The explicit refusal every turn-facing command settles with while
 /// no safe guest inference credential exists (honest unsupported, not
 /// a stubbed success).
-pub const INFERENCE_DISABLED_MESSAGE: &str =
-    "guest inference credential wiring is disabled in this slice: no safe delegated-credential mechanism exists yet";
+pub const INFERENCE_DISABLED_MESSAGE: &str = "guest inference credential wiring is disabled in this slice: no safe delegated-credential mechanism exists yet";
 
 /// The session-engine executor for the resident guest.
 pub struct EngineGuestExecutor {

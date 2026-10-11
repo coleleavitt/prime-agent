@@ -11,8 +11,8 @@
 
 use serde_json::Value;
 
-use crate::properties::Properties;
 use crate::TelemetryClient;
+use crate::properties::Properties;
 
 /// A fresh prompt or a loop continuation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

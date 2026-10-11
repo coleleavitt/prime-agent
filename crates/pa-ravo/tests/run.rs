@@ -12,13 +12,19 @@ use std::time::Duration;
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
-use pa_core::refinement::{load_harness_state, HarnessScope, RefinementKind};
+use pa_core::refinement::{HarnessScope, RefinementKind, load_harness_state};
 use pa_ledger::ReplayCase;
 use pa_ravo::{
-    ModelFailure, ModelReply, RavoFeature, RavoModel, RavoOptions, ReplayEnvironment,
-    ReplayOutcome, ReplayRunner,
+    ModelFailure,
+    ModelReply,
+    RavoFeature,
+    RavoModel,
+    RavoOptions,
+    ReplayEnvironment,
+    ReplayOutcome,
+    ReplayRunner,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 struct NeverRuns;
@@ -254,10 +260,12 @@ async fn a_run_repairs_a_rejected_proposal_and_commits_the_repair() {
     for pair in events.windows(2) {
         assert_eq!(pair[1]["prevDigest"], pair[0]["digest"]);
     }
-    assert!(!session
-        .harness_dir()
-        .join(format!("ravo/runs/{run_id}.json"))
-        .exists());
+    assert!(
+        !session
+            .harness_dir()
+            .join(format!("ravo/runs/{run_id}.json"))
+            .exists()
+    );
     assert_eq!(
         *session.model.asked.lock().unwrap(),
         [

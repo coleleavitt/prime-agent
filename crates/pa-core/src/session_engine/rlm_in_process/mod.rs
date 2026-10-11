@@ -53,19 +53,21 @@ mod spawn;
 #[cfg(test)]
 mod tests;
 
-pub use family::{
-    family_host_handlers, FamilyHostHandlers, FamilySelf, InProcessFamilyController,
-    RlmRemoteFamily,
-};
-pub use model::{assert_thinking_supported, resolve_child_model, ResolvedChildModel};
-use pa_types::sync::{MutexExt, RwLockExt};
-pub use registry::{ChildIdentity, InProcessChildRecord};
-
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
+pub use family::{
+    FamilyHostHandlers,
+    FamilySelf,
+    InProcessFamilyController,
+    RlmRemoteFamily,
+    family_host_handlers,
+};
+pub use model::{ResolvedChildModel, assert_thinking_supported, resolve_child_model};
 use pa_agent::stream::StreamFn;
 use pa_agent::types::Model as AgentModel;
+use pa_types::sync::{MutexExt, RwLockExt};
+pub use registry::{ChildIdentity, InProcessChildRecord};
 use tokio::sync::Mutex;
 
 use super::engine::SessionEngine;

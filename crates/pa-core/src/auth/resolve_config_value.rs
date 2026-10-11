@@ -1,11 +1,11 @@
 //! Resolve config values: `!command` (successful results are cached),
 //! env var, or literal.
 
-use pa_types::sync::MutexExt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use anyhow::Result;
+use pa_types::sync::MutexExt;
 
 static COMMAND_RESULT_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 

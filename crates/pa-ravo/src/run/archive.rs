@@ -10,7 +10,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::js::{canonical_json, sha256_hex};
 
@@ -202,7 +202,7 @@ impl RavoArchive {
                     return Err(ArchiveError::Io {
                         path: lock_path,
                         source,
-                    })
+                    });
                 }
             }
         }

@@ -246,7 +246,7 @@ impl SessionManager {
     pub fn latest_quota_park(
         &self,
     ) -> Option<crate::session_engine::provider_park::PersistedQuotaPark> {
-        use crate::session_engine::provider_park::{scan_quota_park_entries, BranchParkScan};
+        use crate::session_engine::provider_park::{BranchParkScan, scan_quota_park_entries};
         // The loaded branch is a borrow scan; the windowed fallback below
         // reads the older metadata records line by line.
         let branch: Vec<FileEntry> = self.active_branch_entries().into_iter().cloned().collect();

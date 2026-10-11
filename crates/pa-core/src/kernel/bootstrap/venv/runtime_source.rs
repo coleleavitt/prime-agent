@@ -2,7 +2,7 @@
 //! sidecar layout, the runtime embedded in the binary, and the content identity
 //! that invalidates an existing venv on any runtime change.
 
-use super::{expand_home, Digest, Path, PathBuf, RUNTIME_CONSTRAINTS_FILE, RUNTIME_REQUIREMENT};
+use super::{Digest, Path, PathBuf, RUNTIME_CONSTRAINTS_FILE, RUNTIME_REQUIREMENT, expand_home};
 
 /// Directory of the installed `prime-agent-runtime` sources. The Rust binary ships the same sidecar
 /// layout the compiled TS executable uses.

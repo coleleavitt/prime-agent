@@ -25,11 +25,19 @@ use crate::error::{SandboxError, SandboxErrorCode};
 use crate::record::parse_sandbox;
 use crate::transport::{ReqwestSandboxTransport, SandboxTransport, TransportRequest};
 use crate::types::{
-    Method, Sandbox, SandboxStatus, VmCreateRequest, WaitOptions, DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_REQUEST_TIMEOUT,
+    Method,
     PRIME_SANDBOX_CREATE_MAX_ATTEMPTS,
+    Sandbox,
+    SandboxStatus,
+    VmCreateRequest,
+    WaitOptions,
 };
 use crate::wire::{
-    assert_sandbox_id, build_create_body, normalize_base_url, validate_create_request,
+    assert_sandbox_id,
+    build_create_body,
+    normalize_base_url,
+    validate_create_request,
 };
 
 /// The Prime platform API origin (TS `DEFAULT_BASE_URL` in

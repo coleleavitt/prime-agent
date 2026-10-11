@@ -3,22 +3,47 @@
 //! and each is replayed here with whole-value (and exact-byte) comparisons.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pa_agent::types::AgentMessage;
 use pa_ledger::{
-    apply_replay_verifications, derive_replay_case, extract_failures, find_provisional_regressions,
-    fingerprint_failure, fingerprint_tool_result_text, format_failure_ledger_for_prompt,
-    format_recurrence_refine_instructions, format_regression_refine_instructions,
-    merge_failure_observations, normalize_failure_ledger, normalize_failure_message,
-    normalize_replay_cases, observation_ordinal, parse_python_traceback,
-    record_provisional_regressions, recurring_failures, replay_probe_of, resolution_store_path,
-    update_failure_ledger, FailureFingerprint, FailureKind, FailureLedger, FailureObservation,
-    FailureRecord, FileResolutionStore, HarnessDocument, ProvisionalRegression, ReplayVerification,
-    ResolutionCell, ResolutionIndex, ResolutionIndexOptions, ResolutionStore, DEFAULT_PROMPT_LIMIT,
+    DEFAULT_PROMPT_LIMIT,
+    FailureFingerprint,
+    FailureKind,
+    FailureLedger,
+    FailureObservation,
+    FailureRecord,
+    FileResolutionStore,
+    HarnessDocument,
+    ProvisionalRegression,
+    ReplayVerification,
+    ResolutionCell,
+    ResolutionIndex,
+    ResolutionIndexOptions,
+    ResolutionStore,
+    apply_replay_verifications,
+    derive_replay_case,
+    extract_failures,
+    find_provisional_regressions,
+    fingerprint_failure,
+    fingerprint_tool_result_text,
+    format_failure_ledger_for_prompt,
+    format_recurrence_refine_instructions,
+    format_regression_refine_instructions,
+    merge_failure_observations,
+    normalize_failure_ledger,
+    normalize_failure_message,
+    normalize_replay_cases,
+    observation_ordinal,
+    parse_python_traceback,
+    record_provisional_regressions,
+    recurring_failures,
+    replay_probe_of,
+    resolution_store_path,
+    update_failure_ledger,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

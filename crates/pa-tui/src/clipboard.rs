@@ -47,8 +47,7 @@ fn tmux_clipboard_setting_blocks(output: &[u8]) -> bool {
     )
 }
 
-pub(crate) const TMUX_CLIPBOARD_BLOCKED: &str =
-    "tmux cannot forward this copy to a clipboard. Check its attached client's Ms capability and each outer tmux hop.";
+pub(crate) const TMUX_CLIPBOARD_BLOCKED: &str = "tmux cannot forward this copy to a clipboard. Check its attached client's Ms capability and each outer tmux hop.";
 pub(crate) const CLIPBOARD_REQUESTED: &str =
     "Clipboard request sent; paste in the local terminal to verify delivery";
 /// The oversized remote fallback's report: the helper wrote the machine

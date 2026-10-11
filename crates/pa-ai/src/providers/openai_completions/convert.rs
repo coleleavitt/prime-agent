@@ -1,13 +1,25 @@
 //! `OpenAI` Completions conversion: reasoning-details signatures, messages, and tools.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::models::{calculate_cost, CostOverrides};
-use crate::providers::openai_completions::{decode_reasoning_details, ResolvedCompat};
+use crate::models::{CostOverrides, calculate_cost};
+use crate::providers::openai_completions::{ResolvedCompat, decode_reasoning_details};
 use crate::providers::transform_messages::transform_messages_with_normalizer;
 use crate::types::{
-    AssistantContent, Context, MessageExt, Model, ModelInput, StopReason, TextContent,
-    ThinkingContent, Tool, ToolCall, Usage, UsageCost, UserMessageContent, UserOrToolContent,
+    AssistantContent,
+    Context,
+    MessageExt,
+    Model,
+    ModelInput,
+    StopReason,
+    TextContent,
+    ThinkingContent,
+    Tool,
+    ToolCall,
+    Usage,
+    UsageCost,
+    UserMessageContent,
+    UserOrToolContent,
 };
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 
@@ -527,9 +539,10 @@ pub(crate) fn map_stop_reason(reason: &str) -> (StopReason, Option<String>) {
 
 #[cfg(test)]
 mod tests {
+    use pa_types::JsNumber;
+
     use super::*;
     use crate::types::{ModelCost, ModelInput};
-    use pa_types::JsNumber;
 
     fn model(provider: &str, input: f64, output: f64) -> Model {
         Model {

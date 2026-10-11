@@ -2,11 +2,31 @@
 //! reconciled roster+catalog with the query filter), the roster update apply, the saved-catalog
 //! stream reconcile, and the selection/key/mouse dispatch residue.
 use super::{
-    build_rows, compute_rollups, filter_empty_sessions, filter_unified_sessions,
-    parse_search_query, reconcile_unified_sessions, resolve_selection, scope_ancestors, scope_root,
-    scope_to_subtree, AgentsViewMode, AgentsViewRow, AgentsViewScope, Composer, OpenedRow, PathBuf,
-    PressedMouseClick, RowKind, SavedScope, ScopeRoot, SelectionEdge, SelectionKey,
-    SessionSelection, Value, ANCHOR_LOADING_HINT,
+    ANCHOR_LOADING_HINT,
+    AgentsViewMode,
+    AgentsViewRow,
+    AgentsViewScope,
+    Composer,
+    OpenedRow,
+    PathBuf,
+    PressedMouseClick,
+    RowKind,
+    SavedScope,
+    ScopeRoot,
+    SelectionEdge,
+    SelectionKey,
+    SessionSelection,
+    Value,
+    build_rows,
+    compute_rollups,
+    filter_empty_sessions,
+    filter_unified_sessions,
+    parse_search_query,
+    reconcile_unified_sessions,
+    resolve_selection,
+    scope_ancestors,
+    scope_root,
+    scope_to_subtree,
 };
 
 impl AgentsViewMode {

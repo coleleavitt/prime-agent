@@ -10,16 +10,39 @@ use pa_core::refinement::executor::RefinerFn;
 use pa_core::refinement::planner::normalize_refinement_proposal;
 use pa_ledger::{FailureRecord, ReplayCase};
 use pa_ravo::{
-    authorize_assisted_ravo, canonical_json, normalize_assisted_ravo_state, parse_judge_verdict,
-    ravo_artifact_digest, ravo_evaluate_proposal, ravo_fast_screen, ravo_mark_provisional,
-    ravo_observe_champion, ravo_step, sha256_hex, AssistedRavoObservation, AuthorityInput,
-    GateEvaluation, GateStatus, RavoConfig, RavoEvaluation, RavoProposal, RavoState,
-    RavoWindowClock, RefereeVerdict, RefineKind, ReplayEnvironment, ReplayOutcome, ReplayRunner,
-    UnclaimedCommitPolicy, WindowSpan, DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS, RAVO_DEFAULT_CONFIG,
+    AssistedRavoObservation,
+    AuthorityInput,
+    DEFAULT_RAVO_OBSERVATION_WINDOW_TURNS,
+    GateEvaluation,
+    GateStatus,
+    RAVO_DEFAULT_CONFIG,
+    RavoConfig,
+    RavoEvaluation,
+    RavoProposal,
+    RavoState,
+    RavoWindowClock,
+    RefereeVerdict,
+    RefineKind,
+    ReplayEnvironment,
+    ReplayOutcome,
+    ReplayRunner,
+    UnclaimedCommitPolicy,
+    WindowSpan,
+    authorize_assisted_ravo,
+    canonical_json,
+    normalize_assisted_ravo_state,
+    parse_judge_verdict,
+    ravo_artifact_digest,
+    ravo_evaluate_proposal,
+    ravo_fast_screen,
+    ravo_mark_provisional,
+    ravo_observe_champion,
+    ravo_step,
+    sha256_hex,
 };
 use pa_types::ai::{AssistantContentBlock, AssistantMessage, Model, StopReason, TextContent};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Value {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

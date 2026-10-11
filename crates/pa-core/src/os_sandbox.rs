@@ -14,7 +14,12 @@ use std::path::{Path, PathBuf};
 
 pub use pa_os_sandbox::SandboxMode;
 use pa_os_sandbox::{
-    Assessment, Confinement, NetworkAccess, SandboxError, SandboxPaths, SandboxPolicy,
+    Assessment,
+    Confinement,
+    NetworkAccess,
+    SandboxError,
+    SandboxPaths,
+    SandboxPolicy,
 };
 
 use crate::settings::{SandboxSettings, SettingsManager};

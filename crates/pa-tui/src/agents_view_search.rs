@@ -81,7 +81,7 @@ pub fn parse_search_query(query: &str) -> ParsedSearchQuery {
                     regex: Some(regex),
                     tokens: Vec::new(),
                     matches_never: false,
-                }
+                };
             }
             Err(_) => true,
         };

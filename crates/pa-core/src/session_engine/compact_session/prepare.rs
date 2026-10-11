@@ -3,8 +3,13 @@
 //! session-cut test seam.
 use super::recent_state_anchor::extract_recent_state_anchor;
 use super::{
-    context_tokens, find_cut_point, message_from_entry, AgentMessage, CutPointResult, FileEntry,
+    AgentMessage,
+    CutPointResult,
+    FileEntry,
     SessionManager,
+    context_tokens,
+    find_cut_point,
+    message_from_entry,
 };
 
 /// Why a compaction cannot prepare: `/compact` raises the message,
