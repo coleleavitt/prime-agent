@@ -33,9 +33,20 @@ fn chain_is_stale(error: &(dyn StdError + 'static)) -> bool {
                     | std::io::ErrorKind::NotConnected
                     | std::io::ErrorKind::UnexpectedEof
                     | std::io::ErrorKind::TimedOut
-            )
+            ) || is_peer_tls_alert(io)
         })
     })
+}
+
+/// A fatal alert the peer sent on an already-established TLS session (a handshake failure is a
+/// connect error and never reaches here). The peer rejected our records - `bad_record_mac` when a
+/// middlebox or a desynced idle session corrupted them - and closed the connection without
+/// producing a response, so the request is safe to re-send on a fresh session. Left unclassified,
+/// every poisoned idle connection in the pool failed one whole turn into the retry ladder.
+fn is_peer_tls_alert(io: &std::io::Error) -> bool {
+    io.get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        .is_some_and(|tls| matches!(tls, rustls::Error::AlertReceived(_)))
 }
 
 /// The underlying cause of a request-send failure: each source's text, outermost first, joined
@@ -108,6 +119,20 @@ mod tests {
                 "{kind:?} is a stale connection"
             );
         }
+        let alert = std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            rustls::Error::AlertReceived(rustls::AlertDescription::BadRecordMac),
+        );
+        assert!(
+            chain_is_stale(&Wrapped(alert)),
+            "a fatal alert from the peer on an established session is a stale connection"
+        );
+        let other_invalid_data =
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed chunk header");
+        assert!(
+            !chain_is_stale(&Wrapped(other_invalid_data)),
+            "invalid data that is not a TLS alert is not a stale connection"
+        );
         for kind in [
             std::io::ErrorKind::ConnectionRefused,
             std::io::ErrorKind::PermissionDenied,

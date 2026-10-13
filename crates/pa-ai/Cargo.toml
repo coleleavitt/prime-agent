@@ -31,6 +31,9 @@ h2 = { version = "0.4", features = ["stream"] }
 # connection the peer already closed) through the reqwest error chain; the same version the
 # graph resolves for reqwest.
 hyper = { version = "1", default-features = false }
+# rustls: the same test reads a fatal TLS alert the peer sent on an established connection
+# (`bad_record_mac`) through the chain; the version reqwest's `rustls-tls` already resolves.
+rustls = { version = "0.23", default-features = false }
 bytes = "1"
 regex = "1"
 rand = "0.8"

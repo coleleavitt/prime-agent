@@ -1873,6 +1873,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rsa",
+ "rustls",
  "serde",
  "serde_json",
  "sha1",
