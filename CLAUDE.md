@@ -77,11 +77,11 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 
 ## Current State
 
-Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` merged
-through #3264/#3290, then every open upstream PR (99) was triaged: 56 merged (one merge commit each, resolution
-decisions in the commit messages), 43 not merged — 22 TS-only, 14 superseded by a merged Rust port, 5 TS-only in
-substance or targeting tooling the port deleted, and #2351 (`rlm.watch`) / #2352 (`messaging_stats`), which need a
-Rust host port first. Live handoff notes: `MEMORY.md`.
+Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` is merged
+through `cf119a7a8` (#3545, v0.10.1-beta.20; merge `ea2530012`, its resolution decisions in the commit message): the
+Decision API revert (#3522) followed, `serde-saphyr` kept over upstream's `yaml_serde`, the `ipython` -> `python_repl`
+rename (#3400) followed. Upstream merges go through a merge driver that formats base/ours/theirs in the fork's style
+first, and `Cargo.lock` is rebuilt as the union of both locks pruned by cargo. Live handoff notes: `MEMORY.md`.
 
 The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
 `pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
@@ -92,9 +92,12 @@ formats are byte-compatible with the TS fork, proven by node-generated goldens i
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
 Open:
-- Workflow V2's durable controller (the TS fork never built it; needs a store dependency decision). The factory
-  executor's host-side control loop, child port and restart reconciliation are reusable for it; its JSON record
-  store is not the transactional event-sourced store `WORKFLOW-V2.md` specifies.
+- Workflow V2's durable controller: new work, not a port (the TS fork stopped after slices 2-4, which exist here
+  dormant: the SQLite store, reducer, capture/settlement, dispatch guard). Remaining are `WORKFLOW-V2.md` slices
+  5-9 (controller/executor adapter and create/start, settlement policy/acceptance/budgets/retry, cancellation and
+  the crash-window suite, the Python/status/events/view projections, release attestation) plus slice 3's native
+  halves in `pa-daemon` (composite request-id admission, the retained child runtime). The factory executor's
+  host-side control loop, child port and restart reconciliation are reusable for it.
 - Computer use's Rust backends (`crates/pa-computer-use`) are tested over test doubles only (macOS compile-checked
   for aarch64-apple-darwin, never run); none has been live-tested yet. The removed Python Wayland backend was
   live-tested on niri 26.04 with a GTK 4 window; tiled windows lacked coordinate input and screenshots there (niri
