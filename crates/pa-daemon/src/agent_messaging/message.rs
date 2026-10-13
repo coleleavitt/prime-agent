@@ -79,6 +79,25 @@ async fn roster_summaries(
         .unwrap_or_default())
 }
 
+/// The Parent member for a parent the live roster does not list, keyed by the recorded
+/// parent edge's durable id (the persisted session id, else the session file's stem); the
+/// last-known live id stays an alias. `None` without a durable edge: nothing could wake it.
+fn durable_parent_member(identity: &super::FamilyIdentity) -> Option<AgentFamilyMember> {
+    let durable = identity.parent_session_id.clone().or_else(|| {
+        identity
+            .parent_session_path
+            .as_deref()
+            .and_then(|path| std::path::Path::new(path).file_stem())
+            .map(|stem| stem.to_string_lossy().into_owned())
+    })?;
+    Some(AgentFamilyMember {
+        relationship: AgentFamilyRelationship::Parent,
+        id: durable,
+        name: None,
+        aliases: identity.parent_active_session_id.iter().cloned().collect(),
+    })
+}
+
 impl AgentMessageController for LinkAgentMessageController {
     async fn family(&self) -> anyhow::Result<Vec<AgentFamilyMember>> {
         let sessions = roster_summaries(&self.link, &self.worker_token).await?;
@@ -204,6 +223,13 @@ impl AgentMessageController for LinkAgentMessageController {
                 .aliases
                 .push(std::mem::replace(&mut member.id, durable));
             child_members.push(member);
+        }
+        // A parent the roster does not list (an idle-passivated parent worker) is addressed
+        // the same way: by its durable id, which the send_message wake resolves (the saved
+        // catalog for a root, the spawn ledger for a subagent) and relaunches - a long-running
+        // child must still be able to report back once its parent went idle.
+        if parent_member.is_none() {
+            parent_member = durable_parent_member(&identity);
         }
         // TS `selectAgentFamily` order: parent, siblings by name, then
         // children by name.

@@ -283,6 +283,41 @@ async fn family_resolves_the_parent_by_session_id() {
     assert_eq!(family[0].id, "rrr777");
 }
 
+/// A parent the live roster does not list (its worker idle-passivated) stays addressable by
+/// its durable id, which the supervisor's `send_message` wake relaunches; without it a child's
+/// `send(role="parent")` failed with "No parent matches the current agent".
+#[tokio::test]
+async fn family_keeps_an_off_roster_parent_addressable() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("sup.sock");
+    spawn_fake_supervisor(
+        socket.clone(),
+        json!({ "sessions": [
+            { "activeSessionId": "aaa111", "sessionId": "sess-a" },
+        ]}),
+        None,
+    )
+    .await;
+    let own_summary = Some(json!({
+        "activeSessionId": "aaa111",
+        "sessionId": "sess-a",
+        "rlmDepth": 2,
+        "parentActiveSessionId": "gone77",
+        "parentSessionPath": "/sessions/artifacts/sub-p/01a13366-parent.jsonl",
+    }));
+    let controller = controller(socket, own_summary);
+    let family = controller.family().await.unwrap();
+    assert_eq!(family.len(), 1, "{family:?}");
+    let parent = &family[0];
+    assert_eq!(parent.relationship, AgentFamilyRelationship::Parent);
+    assert_eq!(
+        parent.id, "01a13366-parent",
+        "the wake-resolvable durable id"
+    );
+    assert_eq!(parent.name, None);
+    assert_eq!(parent.aliases, ["gone77"]);
+}
+
 /// Registry children the roster does not list stay addressable as Child
 /// members keyed by their durable session id (the wake-resolvable
 /// selector), the spawn-time live id kept as an alias.
