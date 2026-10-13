@@ -263,6 +263,37 @@ fn running_cell_summary_ticks_live_elapsed() {
 }
 
 #[test]
+fn a_started_cell_without_a_result_frame_renders_running() {
+    // A silent cell streams no partial frames: between the execution start
+    // and the final result the card has no result at all, and must keep
+    // the running marker and the waiting placeholder rather than read as
+    // a finished cell with no output.
+    let card = ToolCallCard {
+        id: "toolu_1".into(),
+        name: "ipython".into(),
+        args: json!({ "code": "time.sleep(120)" }),
+        started: true,
+        started_at: Some(std::time::Instant::now()),
+        ..Default::default()
+    };
+    let lines = render(&card, 0, Detail::All, &theme(), 100, true);
+    let flat: Vec<String> = lines.iter().map(text_of).collect();
+    let marker = super::super::working_icon(0);
+    assert!(
+        flat[0].starts_with(&format!(" {marker} python")),
+        "got: {flat:?}"
+    );
+    assert!(
+        flat.iter().any(|row| row.contains("waiting for output...")),
+        "got: {flat:?}"
+    );
+    assert!(
+        !flat.iter().any(|row| row.contains("no output")),
+        "got: {flat:?}"
+    );
+}
+
+#[test]
 fn background_shell_duration_label_and_exit() {
     let code = "h = bash('sleep 0.1')";
     let details = json!({

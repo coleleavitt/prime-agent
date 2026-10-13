@@ -39,6 +39,15 @@ pub struct ToolCallCard {
     pub aborted: bool,
 }
 
+impl ToolCallCard {
+    /// The final result has not landed: no result frame yet, or only a
+    /// partial one (TS `isPartial`, which starts `true` until the first
+    /// final `updateResult`).
+    pub(crate) fn result_pending(&self) -> bool {
+        self.result_partial || self.result.is_none()
+    }
+}
+
 /// One (partial or final) tool result.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ToolResultView {

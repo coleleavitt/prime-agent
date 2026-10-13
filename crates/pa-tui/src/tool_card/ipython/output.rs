@@ -228,7 +228,7 @@ pub(super) fn render_output(
         rendered_text_output = true;
     }
 
-    if !rendered_text_output && card.result_partial {
+    if !rendered_text_output && card.result_pending() {
         start_output(&mut output_started, lines);
         let prefix = output_prefix(&mut output_marker_pending);
         add_wrapped(

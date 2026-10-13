@@ -79,7 +79,9 @@ impl CardStatus {
                 || !details.sent_agent_messages.is_empty()
                 || !r.content.is_empty()
         });
-        if !card.result_partial && (status.is_some() || card.started || has_result) {
+        // A started cell with no result frame yet is still running: the
+        // final frame is what settles it, not the execution start.
+        if !card.result_pending() && (status.is_some() || card.started || has_result) {
             return CardStatus::Done;
         }
         if card.result_partial || card.started {
