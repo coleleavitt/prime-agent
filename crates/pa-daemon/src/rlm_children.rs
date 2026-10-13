@@ -78,7 +78,11 @@ const WATCH_SETTLE_GRACE_MS: u64 = 250;
 const CREATE_TIMEOUT_MS: u64 = 120_000;
 const PROMPT_TIMEOUT_MS: u64 = 30_000;
 const STATE_TIMEOUT_MS: u64 = 30_000;
-const KILL_TIMEOUT_MS: u64 = 30_000;
+/// The parent's wait for a child kill: the supervisor answers a kill only after its
+/// forward, the stop's shutdown route and the stop escalation, so a shorter wait reports
+/// a kill that is still landing as failed.
+const KILL_TIMEOUT_MS: u64 = crate::supervisor::KILL_ROUTE_BUDGET_MS + 5_000;
+const _: () = assert!(KILL_TIMEOUT_MS > crate::supervisor::KILL_ROUTE_BUDGET_MS);
 /// The `abort` rest marker `rlm.interrupt_subagent` routes to a child
 /// worker: abort only the in-flight run and answer `{ "interrupted": bool }`.
 pub(crate) const INTERRUPT_RUN_MARKER: &str = "interruptRun";
@@ -932,6 +936,23 @@ impl SupervisorChildSessionsInner {
         self.link
             .request_success(wire, Duration::from_millis(timeout_ms))
             .await
+    }
+
+    /// Deadline-based variant of [`Self::command`]: uses the remaining time
+    /// until `deadline` for the request timeout. Returns early with an error
+    /// if the deadline has already passed or less than `min_budget_ms` remains.
+    async fn command_by(
+        &self,
+        command: &DaemonCommand,
+        deadline: Instant,
+        min_budget_ms: u64,
+    ) -> Result<Value> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(min_budget_ms) {
+            bail!("deadline exhausted before command");
+        }
+        let wire = serde_json::to_value(command).context("serialize supervisor link command")?;
+        self.link.request_success(wire, remaining).await
     }
 
     /// A name conflicts when any retained or live child already holds it

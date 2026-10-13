@@ -10,7 +10,7 @@ use super::launch_budget::{
 };
 #[cfg(not(unix))]
 use super::launch_budget::{WORKER_PROBE_BACKOFF_MAX_MS, WORKER_PROBE_BACKOFF_MIN_MS};
-use super::routing::WORKER_REQUEST_TIMEOUT_MS;
+use super::routing::{STOP_SHUTDOWN_FLOOR_MS, WORKER_REQUEST_TIMEOUT_MS};
 use super::{
     Arc,
     Context,
@@ -605,8 +605,9 @@ impl Supervisor {
         self: &Arc<Self>,
         resident: &Arc<ResidentWorker>,
         rest: &Map<String, Value>,
+        deadline: tokio::time::Instant,
     ) {
-        if let Err(error) = self.stop_worker(resident).await {
+        if let Err(error) = self.stop_worker_by(resident, deadline).await {
             self.log_line(&format!(
                 "session worker {} stop after kill failed: {error:#}; the stop never durably started and stays retryable",
                 resident.worker_id
@@ -702,7 +703,10 @@ impl Supervisor {
         ) else {
             return response_success(Some(command_id), type_name, None);
         };
-        match self.stop_worker_releasing(&resident, Some(fence)).await {
+        match self
+            .stop_worker_releasing(&resident, Some(fence), ROUTE_TIMEOUT_MS)
+            .await
+        {
             Ok(()) => {
                 self.log_line(&format!(
                     "session worker {} passivated idle (idleEvictionMinutes={threshold})",
@@ -723,7 +727,21 @@ impl Supervisor {
         self: &Arc<Self>,
         resident: &Arc<ResidentWorker>,
     ) -> anyhow::Result<()> {
-        self.stop_worker_releasing(resident, None).await
+        self.stop_worker_releasing(resident, None, ROUTE_TIMEOUT_MS)
+            .await
+    }
+
+    /// [`Self::stop_worker`] inside a caller's deadline: the shutdown route gets what is
+    /// left of it, never less than [`STOP_SHUTDOWN_FLOOR_MS`] (a worker that is merely
+    /// slow still gets its graceful exit before the escalation).
+    pub(crate) async fn stop_worker_by(
+        self: &Arc<Self>,
+        resident: &Arc<ResidentWorker>,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<()> {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        self.stop_worker_releasing(resident, None, shutdown_budget_ms(remaining))
+            .await
     }
 
     /// The graceful stop; `fence` (the idle passivation's) is released
@@ -732,6 +750,7 @@ impl Supervisor {
         self: &Arc<Self>,
         resident: &Arc<ResidentWorker>,
         fence: Option<tokio::sync::OwnedSemaphorePermit>,
+        shutdown_budget_ms: u64,
     ) -> anyhow::Result<()> {
         // The stop's durable intent persists BEFORE the worker is told (TS
         // `persistWorkerStopTombstone`): a supervisor that dies mid-stop, or a worker that
@@ -752,7 +771,7 @@ impl Supervisor {
                 resident,
                 "shutdown",
                 json!({}),
-                ROUTE_TIMEOUT_MS,
+                shutdown_budget_ms,
                 RouteAdmission::SupervisorInternal,
             )
             .await
@@ -843,6 +862,14 @@ impl Supervisor {
             }
         }
     }
+}
+
+/// The shutdown route's share of a deadline-bound stop: what is left, floored at
+/// [`STOP_SHUTDOWN_FLOOR_MS`] and never past [`ROUTE_TIMEOUT_MS`].
+fn shutdown_budget_ms(remaining: Duration) -> u64 {
+    u64::try_from(remaining.as_millis())
+        .unwrap_or(u64::MAX)
+        .clamp(STOP_SHUTDOWN_FLOOR_MS, ROUTE_TIMEOUT_MS)
 }
 
 /// A dead process or a verified replacement identity proves the old writer
@@ -1018,6 +1045,28 @@ mod tests {
         let pid = child.id();
         let _ = child.wait();
         pid
+    }
+
+    /// A kill whose forward used up the budget still gives the shutdown route its floor,
+    /// not a fresh full route budget, so the whole kill answers inside
+    /// `KILL_ROUTE_BUDGET_MS` (the RLM parent stopped waiting at 30 s while the
+    /// supervisor's forward and shutdown took 30 s each).
+    #[test]
+    fn a_deadline_bound_stop_shares_the_kill_budget() {
+        let expected = [
+            (Duration::ZERO, STOP_SHUTDOWN_FLOOR_MS),
+            (Duration::from_millis(500), STOP_SHUTDOWN_FLOOR_MS),
+            (Duration::from_millis(12_345), 12_345),
+            (Duration::from_millis(ROUTE_TIMEOUT_MS), ROUTE_TIMEOUT_MS),
+            (Duration::from_secs(3_600), ROUTE_TIMEOUT_MS),
+        ];
+        for (remaining, budget) in expected {
+            assert_eq!(
+                shutdown_budget_ms(remaining),
+                budget,
+                "remaining {remaining:?}"
+            );
+        }
     }
 
     #[test]

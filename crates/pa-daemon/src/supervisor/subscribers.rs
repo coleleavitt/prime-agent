@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use pa_types::sync::MutexExt;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
+use tokio_util::sync::CancellationToken;
 
 /// The frame type telling a client it lost session events (its queue overflowed) and
 /// must re-fetch the session's state. Rust-only (the TS daemon streamed a `resync`
@@ -67,6 +68,7 @@ pub(crate) struct ClientSubscriptions {
     connection_id: String,
     sessions: Mutex<Vec<String>>,
     link: SubscriberLink,
+    closed: CancellationToken,
 }
 
 impl ClientSubscriptions {
@@ -78,7 +80,15 @@ impl ClientSubscriptions {
                 queue,
                 lagged: Arc::new(LaggedSessions::default()),
             },
+            closed: CancellationToken::new(),
         })
+    }
+
+    /// Cancelled once the client connection is gone: a route whose only
+    /// product is the reply (a parked idle wait) stops holding the worker's
+    /// in-flight slot when nobody can read that reply.
+    pub(crate) fn closed(&self) -> &CancellationToken {
+        &self.closed
     }
 
     /// This connection's lag marks (the writer awaits [`LaggedSessions::notified`]).

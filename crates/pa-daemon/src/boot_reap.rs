@@ -18,6 +18,9 @@ const KILL_VERIFY: Duration = Duration::from_secs(1);
 /// Hard deadline after SIGKILL on the intentional-stop path (TS `STOP_FORCE_TIMEOUT`):
 /// a killed worker's teardown may still take before the stop reports the survivor.
 const STOP_FORCE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest [`stop_process`] runs: the SIGTERM grace plus the post-SIGKILL deadline.
+pub(crate) const STOP_PROCESS_BUDGET_MS: u64 =
+    TERM_GRACE.as_millis() as u64 + STOP_FORCE_TIMEOUT.as_millis() as u64;
 const POLL: Duration = Duration::from_millis(25);
 
 /// One reap target discovered on this socket.

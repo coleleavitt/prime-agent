@@ -5,10 +5,12 @@
 //! saved-session catalog.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use pa_types::daemon::{DaemonCommand, DaemonWorkerCommand};
 use serde_json::{Map, Value, json};
+use tokio::time::Instant;
 
 use crate::backpressure::RouteAdmission;
 use crate::protocol::{DaemonResponse, response_failure, response_success};
@@ -16,12 +18,23 @@ use crate::registry::ResidentWorker;
 use crate::supervisor::Supervisor;
 
 /// Worker round-trip budget for the sender-summary read and the delivery
-/// route (TS `WORKER_REQUEST_TIMEOUT_MS`).
+/// route (TS `WORKER_REQUEST_TIMEOUT_MS`). The `send_message` path runs two
+/// serial operations (source summary + delivery) under a shared deadline,
+/// so this covers both; the client's outer timeout must be at least this.
 const WORKER_REQUEST_TIMEOUT_MS: u64 = 30_000;
+
+/// Minimum time to reserve for the delivery route after reading the source
+/// summary: if less time remains, the delivery will almost certainly time
+/// out, so fail fast with a clearer error.
+const DELIVERY_RESERVE_MS: u64 = 5_000;
 
 impl Supervisor {
     /// `send_message`: route to the target worker as `worker_deliver_message`;
     /// an unknown target wakes the saved session before the TS error.
+    ///
+    /// Both the source-summary read and the delivery route share a single
+    /// deadline to avoid the nested-timeout bug where two serial 30s operations
+    /// could exceed the caller's 30s outer timeout.
     pub(crate) async fn handle_send_message(
         self: &Arc<Self>,
         command_id: &str,
@@ -39,6 +52,10 @@ impl Supervisor {
             return response_failure(Some(command_id), "send_message", "invalid command", None);
         };
         let fail = |error: String| response_failure(Some(command_id), "send_message", &error, None);
+
+        // Shared deadline for all serial operations in this handler.
+        let deadline = Instant::now() + Duration::from_millis(WORKER_REQUEST_TIMEOUT_MS);
+
         // Source first, like the TS supervisor: an unknown source answers
         // with the same unknown-session error as an unknown target.
         let source = match from_active_session_id {
@@ -58,7 +75,7 @@ impl Supervisor {
                 // the catalog's local pass); a woken target is never the
                 // source, so the read precedes the self-target guard.
                 let wake_source = match &source {
-                    Some(source) => match self.source_worker_summary(source).await {
+                    Some(source) => match self.source_worker_summary_by(source, deadline).await {
                         Ok(summary) => Some((Arc::clone(source), summary)),
                         Err(error) => return fail(format!("{error:#}")),
                     },
@@ -136,7 +153,7 @@ impl Supervisor {
                 // other path reads it here.
                 let summary = match source_summary.take() {
                     Some(summary) => summary,
-                    None => match self.source_worker_summary(source).await {
+                    None => match self.source_worker_summary_by(source, deadline).await {
                         Ok(summary) => summary,
                         Err(error) => return fail(format!("{error:#}")),
                     },
@@ -147,6 +164,14 @@ impl Supervisor {
             // the client id (`createAgentSessionMessageSender`).
             None => json!({ "clientId": client_id }),
         };
+
+        // Check that enough time remains for delivery; fail fast with a
+        // clearer error than letting the route time out immediately.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(DELIVERY_RESERVE_MS) {
+            return fail("send_message deadline exhausted reading source state".to_string());
+        }
+
         let delivery = DaemonWorkerCommand::WorkerDeliverMessage {
             id: None,
             target_active_session_id: target.worker_id.clone(),
@@ -164,7 +189,7 @@ impl Supervisor {
                 &target,
                 "worker_deliver_message",
                 payload,
-                WORKER_REQUEST_TIMEOUT_MS,
+                remaining.as_millis() as u64,
                 RouteAdmission::SupervisorInternal,
             )
             .await;
@@ -283,14 +308,24 @@ impl Supervisor {
 
     /// The send source's live session summary (`get_state`), strict: the
     /// read's error fails the send (the roster's `worker_summary` downgrades
-    /// instead).
-    async fn source_worker_summary(&self, resident: &Arc<ResidentWorker>) -> Result<Value> {
+    /// instead). Uses the
+    /// remaining time until `deadline` for the route timeout, failing fast
+    /// when the deadline has already passed.
+    async fn source_worker_summary_by(
+        &self,
+        resident: &Arc<ResidentWorker>,
+        deadline: Instant,
+    ) -> Result<Value> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(anyhow!("source summary deadline already passed"));
+        }
         let state = self
             .route_command_typed(
                 resident,
                 "get_state",
                 json!({}),
-                WORKER_REQUEST_TIMEOUT_MS,
+                remaining.as_millis() as u64,
                 RouteAdmission::SupervisorInternal,
             )
             .await?;

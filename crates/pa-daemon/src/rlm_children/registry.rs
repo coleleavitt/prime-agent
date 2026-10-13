@@ -13,6 +13,8 @@ use super::{
     Context,
     DaemonCommand,
     DeletedChild,
+    Duration,
+    Instant,
     KILL_TIMEOUT_MS,
     Map,
     Mutex,
@@ -64,6 +66,9 @@ impl SupervisorChildSessionsInner {
     /// settle the row as `cancelled`, then abort the worker's in-flight
     /// turn (best-effort; the registry is the user-visible state).
     pub(super) async fn cancel_child_run(&self, child_id: &str) -> bool {
+        // Shared deadline for all operations to avoid nested timeout mismatch.
+        let deadline = Instant::now() + Duration::from_millis(KILL_TIMEOUT_MS);
+
         let children = self.children.lock().await.clone();
         for record in &children {
             let (matched, running, active_session_id) = {
@@ -100,7 +105,7 @@ impl SupervisorChildSessionsInner {
                 rest: Map::default(),
             };
             let _ = self
-                .command(&abort, KILL_TIMEOUT_MS)
+                .command_by(&abort, deadline, 1_000)
                 .await
                 .with_context(|| format!("abort RLM child session {active_session_id}"));
             // The settled/cancelled child releases an owed goal continuation.
@@ -113,6 +118,9 @@ impl SupervisorChildSessionsInner {
     /// Delete one inactive child by id: refresh the registry row first, refuse one still in flight,
     /// and tear a settled one down with its ledger tombstone (same as `rlm.delete_subagent`).
     pub(super) async fn delete_inactive_subagent(&self, child_id: &str) -> Result<&'static str> {
+        // Shared deadline for all operations to avoid nested timeout mismatch.
+        let deadline = Instant::now() + Duration::from_millis(KILL_TIMEOUT_MS);
+
         let children = self.children.lock().await.clone();
         for record in &children {
             let matched = record.lock().await.rlm_child_id == child_id;
@@ -143,7 +151,7 @@ impl SupervisorChildSessionsInner {
                     ("rlmChildId".to_string(), json!(child_id)),
                 ]),
             };
-            self.command(&command, KILL_TIMEOUT_MS)
+            self.command_by(&command, deadline, 1_000)
                 .await
                 .with_context(|| format!("kill RLM child \"{child_id}\""))?;
             // Rows can land between the pre-kill capture and the kill

@@ -342,6 +342,10 @@ impl Supervisor {
         // Connection state shared with the per-command dispatch tasks (the registry
         // insertion is the delivery boundary).
         let attached = subscribers::ClientSubscriptions::new(connection_id.clone(), targeted_tx);
+        // Every exit from this loop (EOF, error, `?`) cancels the connection's
+        // parked waits; their detached dispatch tasks would otherwise hold a
+        // worker in-flight slot until the session idles.
+        let _cancel_parked_waits = attached.closed().clone().drop_guard();
         // Roster subscription flag shared with the per-command dispatch
         // tasks (`roster_subscribe` flips it; the event arm filters pushes).
         let roster_subscribed: Arc<std::sync::atomic::AtomicBool> =
@@ -2119,6 +2123,116 @@ mod tests {
             after["success"], true,
             "a command answered after the crossed window: {after}"
         );
+        connection.abort();
+    }
+
+    /// An RLM parent's sliced `wait_for_child` gives up on a busy child and drops its link
+    /// connection; the parked `wait_for_idle` it left behind must release the child's
+    /// in-flight slot with the connection. Leaked slots accumulate one per poll until the
+    /// bound is full and every route to the child (message delivery, kill, shutdown)
+    /// times out.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_closed_client_releases_its_parked_wait_slot() {
+        use crate::backpressure::WORKER_INFLIGHT_CAPACITY;
+        use crate::registry::{ResidentWorker, WorkerRequest};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let supervisor = Arc::new(
+            Supervisor::new(SupervisorOptions {
+                tcp_port: None,
+                tcp_bind_host: None,
+                remote_agent_mesh: None,
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: dir.path().join("agent"),
+            })
+            .expect("supervisor"),
+        );
+        let descriptor: pa_types::daemon::DaemonWorkerDescriptor = serde_json::from_value(json!({
+            "version": 2,
+            "workerId": "w-busy-child",
+            "pid": 0,
+            "socketPath": "/tmp/none.sock",
+            "recoveryJournalPath": "/tmp/none.jsonl",
+            "supervisorSocketPath": "/tmp/none.sock",
+            "authenticationToken": "test",
+            "rootActiveSessionId": "w-busy-child",
+            "createdAt": "t",
+            "updatedAt": "t",
+            "lifecycle": "ready",
+            "createCommand": {},
+            "consecutiveFailures": 0,
+        }))
+        .expect("descriptor");
+        let resident = Arc::new(ResidentWorker::new(
+            "w-busy-child".to_string(),
+            descriptor,
+            dir.path().join("w-busy-child.descriptor.json"),
+        ));
+        // A child that stays busy: its worker takes the wait and never answers.
+        let (cmd_tx, mut cmd_rx) =
+            tokio::sync::mpsc::channel::<WorkerRequest>(WORKER_INFLIGHT_CAPACITY);
+        *resident.cmd_tx.lock().await = Some(cmd_tx);
+        supervisor.registry.insert(Arc::clone(&resident)).await;
+        resident.note_connection_live();
+        resident.note_session_ready();
+
+        let (server_side, client_side) = tokio::net::UnixStream::pair().expect("socket pair");
+        let connection = {
+            let supervisor = Arc::clone(&supervisor);
+            let stream: Box<dyn TransportStream> = Box::new(server_side);
+            tokio::spawn(async move {
+                supervisor
+                    .handle_client(stream, crate::supervisor::ClientTrust::Local)
+                    .await
+            })
+        };
+        let (client_read, mut client_write) = client_side.into_split();
+        let mut client = BufReader::new(client_read);
+        let mut hello = String::new();
+        client.read_line(&mut hello).await.expect("hello line");
+        let envelope = json!({
+            "type": "command",
+            "id": "link-0",
+            "protocol": {"name": "prime-agent.daemon", "version": 7},
+            "command": {
+                "type": "wait_for_idle",
+                "activeSessionId": "w-busy-child",
+                "waitForRlmQuiescence": true,
+            },
+        });
+        client_write
+            .write_all((serde_json::to_string(&envelope).unwrap() + "\n").as_bytes())
+            .await
+            .expect("send the wait");
+        let landed = tokio::time::timeout(Duration::from_secs(5), cmd_rx.recv())
+            .await
+            .expect("the wait reaches the worker")
+            .expect("the worker channel stays open");
+        assert_eq!(landed.command_type, "wait_for_idle");
+        assert_eq!(
+            resident.inflight.available_permits(),
+            WORKER_INFLIGHT_CAPACITY - 1,
+            "the parked wait holds one slot while its client waits"
+        );
+
+        // The parent's budget ran out: it drops the connection.
+        drop(client);
+        drop(client_write);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let released = resident.inflight.available_permits() == WORKER_INFLIGHT_CAPACITY;
+            let cleared = resident.pending.lock().await.is_empty();
+            if released && cleared {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the abandoned wait still holds the slot (released {released}, reply slot cleared {cleared})"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         connection.abort();
     }
 }

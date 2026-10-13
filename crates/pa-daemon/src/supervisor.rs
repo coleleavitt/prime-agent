@@ -77,6 +77,7 @@ use pa_types::daemon::{
 };
 use pa_types::platform::transport::{TransportStream, bind_transport, connect_transport};
 pub(crate) use routing::{
+    KILL_ROUTE_BUDGET_MS,
     ROUTE_TIMEOUT_MS,
     SUMMARY_TIMEOUT_MS,
     WORKER_NOT_CONNECTED,

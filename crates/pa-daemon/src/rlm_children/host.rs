@@ -461,6 +461,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn interrupt_subagent(&self, target: String) -> RlmHostFuture<RlmInterruptSubagentResult> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            // Shared deadline for all operations to avoid nested timeout mismatch.
+            let deadline = Instant::now() + Duration::from_millis(KILL_TIMEOUT_MS);
+
             let mut matches = this.matching_records(&target).await;
             let record = match matches.len() {
                 0 => return Ok(RlmInterruptSubagentResult::not_found()),
@@ -481,7 +484,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 active_session_id: record.active_session_id.clone(),
                 rest: serde_json::Map::from_iter([(INTERRUPT_RUN_MARKER.to_string(), json!(true))]),
             };
-            let aborted = match this.command(&command, KILL_TIMEOUT_MS).await {
+            let aborted = match this.command_by(&command, deadline, 1_000).await {
                 Ok(data) => data
                     .get("interrupted")
                     .and_then(Value::as_bool)
@@ -503,6 +506,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            // Shared deadline for all serial operations in this handler,
+            // avoiding nested timeout budget mismatch.
+            let deadline = Instant::now() + Duration::from_millis(KILL_TIMEOUT_MS);
+
             // Selector errors surface unwrapped (the TS message is the
             // product surface); only the kill below gets a delete context.
             let record = match this.resolve_record(&target, "subagent").await {
@@ -581,7 +588,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // Capture before the kill: a deleted running child's durable
             // rows are its last observable spend on the parent side.
             this.emit_child_usage(&record).await;
-            this.command(&command, KILL_TIMEOUT_MS)
+            // Use remaining time from the shared deadline instead of
+            // an independent timeout to avoid nested timeout mismatch.
+            this.command_by(&command, deadline, 1_000)
                 .await
                 .with_context(|| format!("kill RLM child \"{target}\""))?;
             // Rows can land between the pre-kill capture and the kill

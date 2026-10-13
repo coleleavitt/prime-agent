@@ -40,12 +40,45 @@ pub(super) enum WakeRoute {
 }
 
 pub(crate) const ROUTE_TIMEOUT_MS: u64 = 30_000;
+/// The least a kill's stop gives the worker's `shutdown` route, however much of the
+/// kill's budget the forward used.
+pub(crate) const STOP_SHUTDOWN_FLOOR_MS: u64 = 2_000;
+/// The longest a routed `kill` answers in: the forward and the stop's shutdown route
+/// share [`ROUTE_TIMEOUT_MS`] (the shutdown keeps its floor), then the stop escalation.
+pub(crate) const KILL_ROUTE_BUDGET_MS: u64 =
+    ROUTE_TIMEOUT_MS + STOP_SHUTDOWN_FLOOR_MS + crate::boot_reap::STOP_PROCESS_BUDGET_MS;
 pub(crate) const SUMMARY_TIMEOUT_MS: u64 = 5_000;
 /// The route failure for a worker whose command channel is gone: the request did not
 /// leave the supervisor, so the route may retry it without risking a duplicate landing.
 pub(crate) const WORKER_NOT_CONNECTED: &str = "Session worker is not connected";
 /// TS daemon-worker-client.ts:98 reports this when the worker socket closes.
 pub(crate) const WORKER_SOCKET_CLOSED: &str = "Daemon worker socket closed";
+
+/// A route's reply slot, removed when the route ends however it ends: a route future
+/// dropped mid-wait (a parked wait cancelled by its client's disconnect) must not leave
+/// its slot behind for a reply that may never come. Delivered and timed-out slots are
+/// gone already, so the removal is then a no-op.
+struct PendingSlot {
+    resident: Arc<ResidentWorker>,
+    request_id: String,
+}
+
+impl Drop for PendingSlot {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.resident.pending.try_lock() {
+            pending.remove(&self.request_id);
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let resident = Arc::clone(&self.resident);
+        let request_id = std::mem::take(&mut self.request_id);
+        runtime.spawn(async move {
+            resident.pending.lock().await.remove(&request_id);
+        });
+    }
+}
 
 /// Resolve a pending request whose frame provably never reached the worker with the
 /// retryable not-connected failure, never an ambiguous timeout.
@@ -156,6 +189,10 @@ impl Supervisor {
             .lock()
             .await
             .insert(request_id.clone(), reply_tx);
+        let _slot = PendingSlot {
+            resident: Arc::clone(resident),
+            request_id: request_id.clone(),
+        };
         // A full channel means the writer pump is wedged: client commands answer the same
         // overload refusal (a cancelled send enqueues nothing, so a retry cannot duplicate).
         let request = WorkerRequest {
@@ -601,6 +638,9 @@ impl Supervisor {
             }
         }
         let timeout = client_route_timeout(command);
+        // A kill's forward and its stop's shutdown route share one budget, so the whole
+        // kill fits `KILL_ROUTE_BUDGET_MS` (the RLM parent's link waits that long).
+        let kill_deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
         let (worker_command, mut payload) = match client_command_payload(command, client_id) {
             Ok(payload) => payload,
             Err(error) => {
@@ -653,6 +693,22 @@ impl Supervisor {
                         .await
                         .unwrap_or_else(|error| Err(anyhow!(error))),
                     Err(error) => Err(anyhow!(error)),
+                }
+            }
+            // A parked wait's only product is its reply and its route budget is a day: once
+            // the client is gone, holding its in-flight slot until the session idles would
+            // let abandoned polls (an RLM parent's sliced `wait_for_child`) fill the bound and
+            // lock every other route out of the worker.
+            DaemonCommand::WaitForIdle { .. } | DaemonCommand::WaitForHeadlessCompletion { .. } => {
+                tokio::select! {
+                    response = self.route_command_ready(
+                        &resident,
+                        worker_command,
+                        payload,
+                        timeout,
+                        admission,
+                    ) => response,
+                    () = attached.closed().cancelled() => return (Vec::new(), false),
                 }
             }
             _ => {
@@ -841,11 +897,12 @@ impl Supervisor {
                     // TS's root-kill `finally`: the stop completes on a rejected or timed-out
                     // forward too; the marker-carrying child closes keep the success gate.
                     if plain_kill {
-                        self.finish_plain_kill_stop(&resident, rest).await;
+                        self.finish_plain_kill_stop(&resident, rest, kill_deadline)
+                            .await;
                     } else if response.success {
                         // A cascade-stop failure is observable (logged) instead of silently
                         // skipping the retire/registry/passivation tail.
-                        if let Err(error) = self.stop_worker(&resident).await {
+                        if let Err(error) = self.stop_worker_by(&resident, kill_deadline).await {
                             self.log_line(&format!(
                                 "session worker {} stop after kill failed: {error:#}; the tombstoned descriptor holds the stop for the next boot",
                                 resident.worker_id
@@ -894,7 +951,8 @@ impl Supervisor {
                 // lease cannot outlive the command; child closes keep the plain forward.
                 if plain_kill {
                     if let DaemonCommand::Kill { rest, .. } = command {
-                        self.finish_plain_kill_stop(&resident, rest).await;
+                        self.finish_plain_kill_stop(&resident, rest, kill_deadline)
+                            .await;
                     }
                 }
                 (

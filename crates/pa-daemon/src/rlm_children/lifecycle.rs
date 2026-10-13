@@ -15,6 +15,7 @@ use super::{
     DaemonSessionLifecycle,
     Duration,
     IDLE_WAIT_GRACE_MS,
+    Instant,
     KILL_TIMEOUT_MS,
     Map,
     Mutex,
@@ -381,6 +382,19 @@ impl SupervisorChildSessionsInner {
         active_session_id: &str,
         reason: ChildCloseReason,
     ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(KILL_TIMEOUT_MS);
+        self.kill_child_by(active_session_id, reason, deadline)
+            .await
+    }
+
+    /// Deadline-based variant of [`Self::kill_child`]: uses the remaining
+    /// time until `deadline` for the request timeout.
+    pub(super) async fn kill_child_by(
+        &self,
+        active_session_id: &str,
+        reason: ChildCloseReason,
+        deadline: Instant,
+    ) -> Result<()> {
         let mut rest = serde_json::Map::new();
         if let Some(marker) = reason.wire_marker() {
             rest.insert("rlmCloseReason".to_string(), json!(marker));
@@ -390,7 +404,7 @@ impl SupervisorChildSessionsInner {
             active_session_id: active_session_id.to_string(),
             rest,
         };
-        self.command(&command, KILL_TIMEOUT_MS)
+        self.command_by(&command, deadline, 1_000)
             .await
             .with_context(|| format!("kill RLM child session {active_session_id}"))?;
         Ok(())
