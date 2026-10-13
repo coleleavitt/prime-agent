@@ -50,7 +50,7 @@ fn backfill_matches_the_ts_era_script_byte_for_byte() {
     let options = parse_backfill_args(&args, Path::new("/unused-agent-dir")).unwrap();
     let mut progress = Vec::new();
     let written = run_backfill(&options, SEALED_AT, &mut |line| {
-        progress.push(line.to_string())
+        progress.push(line.to_string());
     })
     .unwrap();
     assert_eq!(
