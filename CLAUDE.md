@@ -78,7 +78,8 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 ## Current State
 
 Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` is merged
-through `cf119a7a8` (#3545, v0.10.1-beta.20; merge `ea2530012`, its resolution decisions in the commit message): the
+through `33da15a2c` (#3564, past v0.10.1-beta.20; merges `ea2530012` and `8b83861ca`, their resolution decisions in
+the commit messages): the
 Decision API revert (#3522) followed, `serde-saphyr` kept over upstream's `yaml_serde`, the `ipython` -> `python_repl`
 rename (#3400) followed. Upstream merges go through a merge driver that formats base/ours/theirs in the fork's style
 first, and `Cargo.lock` is rebuilt as the union of both locks pruned by cargo. Live handoff notes: `MEMORY.md`.
