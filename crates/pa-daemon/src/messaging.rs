@@ -21,7 +21,7 @@ use crate::supervisor::Supervisor;
 /// route (TS `WORKER_REQUEST_TIMEOUT_MS`). The `send_message` path runs two
 /// serial operations (source summary + delivery) under a shared deadline,
 /// so this covers both; the client's outer timeout must be at least this.
-const WORKER_REQUEST_TIMEOUT_MS: u64 = 30_000;
+pub(crate) const WORKER_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
 /// Minimum time to reserve for the delivery route after reading the source
 /// summary: if less time remains, the delivery will almost certainly time

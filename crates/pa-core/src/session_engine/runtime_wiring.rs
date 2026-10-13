@@ -258,7 +258,9 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
 /// Build the kernel provisioner for a session: host handlers for the goal/heartbeat bridge
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
-/// leak its own paths into the kernel (#109). `cwd` is the SESSION's working directory.
+/// leak its own paths into the kernel (#109). A persistent session's artifact dir is
+/// likewise propagated (`RLM_SESSION_DIR` + `RLM_HARNESS_STATE_DIR`), so kernel-side
+/// harness writes land in the session-local store. `cwd` is the SESSION's working directory.
 /// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
 /// `create_session`, not the kernel boot.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
@@ -270,7 +272,7 @@ pub fn kernel_provisioner(
     cwd: std::path::PathBuf,
     agent_dir: &std::path::Path,
     shell_path: Option<std::path::PathBuf>,
-    snapshot_dir: Option<std::path::PathBuf>,
+    session_artifact_dir: Option<std::path::PathBuf>,
     on_restore: Option<crate::kernel::provisioner::RestoreCallback>,
     on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
@@ -280,7 +282,10 @@ pub fn kernel_provisioner(
     sandbox: Option<crate::os_sandbox::SessionSandbox>,
 ) -> Arc<KernelProvisioner> {
     let mut env = kernel_env_overrides(agent_dir);
-    env.extend(kernel_harness_env(agent_dir, snapshot_dir.as_deref()));
+    env.extend(kernel_harness_env(
+        agent_dir,
+        session_artifact_dir.as_deref(),
+    ));
     Arc::new(KernelProvisioner::new(
         cwd,
         IpythonKernelProvisionerOptions {
@@ -293,7 +298,7 @@ pub fn kernel_provisioner(
             python_skills,
             // Only persistent sessions (which have an artifact dir) get
             // a revivable snapshot (TS `snapshotDir`).
-            snapshot_dir,
+            snapshot_dir: session_artifact_dir,
             ready_gate: None,
             on_restore,
             on_background_work_settled,
@@ -331,6 +336,13 @@ fn kernel_harness_env(
     env.retain(|(name, _)| {
         std::env::var_os(name).is_none_or(|value| value.to_string_lossy().trim().is_empty())
     });
+    // The session's own artifact dir: `rlm.harness` falls back to it when no store is named.
+    if let Some(dir) = session_artifact_dir {
+        env.push((
+            "RLM_SESSION_DIR".to_string(),
+            dir.to_string_lossy().to_string(),
+        ));
+    }
     // Only the product binary serves the one-shot; a test harness or an
     // embedding binary does not.
     if let Ok(executable) = std::env::current_exe() {

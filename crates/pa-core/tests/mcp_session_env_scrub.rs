@@ -118,3 +118,73 @@ async fn scrub_credentials_hides_provider_keys_from_stdio_servers() {
         )
     );
 }
+
+/// A server configured after the session registered its handlers (the
+/// daemon `/mcp` view's `refresh()`) dispatches without a session restart:
+/// the session resolver reads the manager's live integrations, not a
+/// registration-time copy.
+#[tokio::test]
+async fn a_server_configured_mid_session_dispatches_after_refresh() {
+    let Some(python) = python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let servers: Arc<Mutex<HashMap<String, McpServerConfig>>> = Arc::default();
+    let user_servers = Arc::clone(&servers);
+    let manager = Arc::new(Mutex::new(McpManager::new(McpManagerOptions {
+        auth_storage: pa_core::auth::AuthStorage::create_with_oauth(
+            dir.path(),
+            Arc::new(McpOAuth::new()),
+        ),
+        get_user_servers: Box::new(move || Some(user_servers.lock().unwrap().clone())),
+        begin_login: None,
+        agent_dir: None,
+        get_catalog_sources: None,
+        remote_source: None,
+        probe_override: None,
+    })));
+    let mut handlers = HostRequestHandlers::new();
+    let sessions = McpManager::register_session_handlers(
+        &manager,
+        &mut handlers,
+        McpSessionOptions {
+            cwd: dir.path().to_path_buf(),
+            ..McpSessionOptions::default()
+        },
+    );
+    servers.lock().unwrap().insert(
+        "svc".to_string(),
+        McpServerConfig::Stdio {
+            command: python.to_string_lossy().to_string(),
+            args: Some(vec![
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/mcp/stdio_server.py")
+                    .to_string_lossy()
+                    .to_string(),
+            ]),
+            cwd: None,
+            env: None,
+            enabled: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            startup_timeout_ms: None,
+            call_timeout_ms: None,
+        },
+    );
+    manager.lock().unwrap().refresh();
+    let handler = handlers.get("mcp.session.call_tool").unwrap().clone();
+    let reply = with_host_request_cancellation(
+        tokio_util::sync::CancellationToken::new(),
+        handler(HostRequestPayload {
+            data: json!({ "server": "svc", "tool": "fixture/raw.tool" }),
+            cell_source_code: None,
+        }),
+    )
+    .await
+    .unwrap();
+    sessions.close_all().await;
+    assert!(
+        reply["value"].is_string(),
+        "the refreshed server dispatches: {reply}"
+    );
+}

@@ -320,7 +320,7 @@ impl McpManager {
 /// (credentials from the host store), or a user `mcpServers` entry; `{}`
 /// when the server is not dispatchable.
 fn resolve_server_config(
-    integrations: &HashMap<String, ResolvedIntegration>,
+    manager: &std::sync::Mutex<McpManager>,
     acp_servers: &std::sync::Mutex<HashMap<String, AcpMcpServerConfig>>,
     usage: Option<&McpUsageReporter>,
     server: &str,
@@ -336,7 +336,10 @@ fn resolve_server_config(
         }
         return Ok(config);
     }
-    let Some(integration) = integrations.get(server) else {
+    // Read the live map, not a registration-time copy: `refresh()` re-resolves it when a server
+    // is connected or configured mid-session.
+    let integration = manager.lock_or_recover().integrations.get(server).cloned();
+    let Some(integration) = integration else {
         return Ok(json!({}));
     };
     if !integration.user_declared {
@@ -623,8 +626,8 @@ impl McpManager {
     /// Register the `mcp.*` host-request handlers: `refresh`/`config`/`begin_login` dispatch
     /// plumbing plus the inventory surface the kernel's generic `mcp` module reaches for.
     ///
-    /// The inventory handlers capture this manager so each request serves LIVE views; view
-    /// computation reads the blocking auth-store snapshot.
+    /// The `config` and inventory handlers capture this manager so each request serves
+    /// live views; inventory view computation reads the blocking auth-store snapshot.
     pub fn register_host_handlers(
         manager: &Arc<std::sync::Mutex<Self>>,
         handlers: &mut HostRequestHandlers,
@@ -657,22 +660,13 @@ impl McpManager {
             Ok(number.min(max_limit as u64) as usize)
         }
 
-        let (
-            auth,
-            acp_servers,
-            usage_refresh,
-            acp_servers_for_config,
-            integrations,
-            usage_config,
-            begin_login,
-        ) = {
+        let (auth, acp_servers, usage_refresh, acp_servers_for_config, usage_config, begin_login) = {
             let manager = manager.lock_or_recover();
             (
                 manager.auth_storage.clone(),
                 manager.acp_servers.clone(),
                 manager.usage_report.clone(),
                 manager.acp_servers.clone(),
-                manager.integrations.clone(),
                 manager.usage_report.clone(),
                 manager.begin_login.clone(),
             )
@@ -717,10 +711,11 @@ impl McpManager {
                 })
             }),
         );
+        let manager_for_config = std::sync::Arc::clone(manager);
         handlers.register(
             "mcp.config",
             host_handler(move |payload| {
-                let integrations = integrations.clone();
+                let manager = std::sync::Arc::clone(&manager_for_config);
                 let acp_servers = acp_servers_for_config.clone();
                 let usage_config = usage_config.clone();
                 Box::pin(async move {
@@ -733,12 +728,7 @@ impl McpManager {
                     if server.is_empty() {
                         return Err(anyhow::anyhow!("mcp.config requires a server"));
                     }
-                    resolve_server_config(
-                        &integrations,
-                        &acp_servers,
-                        usage_config.as_ref(),
-                        &server,
-                    )
+                    resolve_server_config(&manager, &acp_servers, usage_config.as_ref(), &server)
                 })
             }),
         );
@@ -896,19 +886,24 @@ impl McpManager {
         handlers: &mut HostRequestHandlers,
         options: McpSessionOptions,
     ) -> McpSessions {
-        let (auth, integrations, acp_servers, usage) = {
+        let (auth, acp_servers, usage) = {
             let manager = manager.lock_or_recover();
             (
                 manager.auth_storage.clone(),
-                manager.integrations.clone(),
                 manager.acp_servers.clone(),
                 manager.usage_report.clone(),
             )
         };
         let config_usage = usage.clone();
+        let manager_for_config = Arc::clone(manager);
         let sessions = McpSessions::new(
             Box::new(move |server| {
-                resolve_server_config(&integrations, &acp_servers, config_usage.as_ref(), server)
+                resolve_server_config(
+                    &manager_for_config,
+                    &acp_servers,
+                    config_usage.as_ref(),
+                    server,
+                )
             }),
             auth,
             usage,
