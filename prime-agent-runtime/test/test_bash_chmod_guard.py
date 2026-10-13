@@ -1440,7 +1440,6 @@ class RecursiveChmodGuardTest(guard_safety.RefusalSafe, unittest.IsolatedAsyncio
         self.addCleanup(outside.cleanup)
         Path(outside.name, "sub").mkdir(parents=True, exist_ok=True)
         Path(outside.name, "sub", "pa-guard-path.sh").write_text("chmod -R 755 /\n")
-        victim = Path(outside.name, "sub", "pa-guard-path.sh")
         inside_link_dir = Path(self.test_dir, "bindir")
         inside_link_dir.mkdir()
         os.symlink(str(Path(outside.name, "sub")), str(inside_link_dir / "linkdir"))
