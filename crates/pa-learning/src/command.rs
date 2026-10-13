@@ -61,6 +61,13 @@ pub const LEARNING_OPTIONS: &[&str] = &[
     "  --include-backfill  Fold in the offline cross-tool backfill days (confound-flagged, CLI table only)",
     "  --min-windows <n>   Withhold every label below this many observed windows (default: 4)",
     "  --gap <m>           Absent-window count that makes a recurring fingerprint DROPPED (default: 2)",
+    "backfill              Write the offline cross-tool backfill days (prime, Claude Code, opencode corpora; read-only)",
+    "  --corpus <name>     Limit to prime, claude or opencode (repeatable; default: all)",
+    "  --out <dir>         Write the day files here (default: ~/.prime/agent/learning/backfill)",
+    "  --prime-dir <dir>   prime sessions root (default: ~/.prime/agent/sessions)",
+    "  --claude-dir <dir>  Claude Code projects root (default: ~/.claude/projects)",
+    "  --opencode-store <dir>  opencode storage root (default: ~/.local/share/opencode/storage)",
+    "  --home <dir>        Derive the default roots from this home directory",
 ];
 /// The help examples.
 pub const LEARNING_EXAMPLES: &[&str] = &[
@@ -69,6 +76,7 @@ pub const LEARNING_EXAMPLES: &[&str] = &[
     "learning --no-seal --no-chart",
     "learning trajectory",
     "learning trajectory --include-backfill --json",
+    "learning backfill --corpus claude",
 ];
 
 const MAX_ROWS: usize = 40;
@@ -87,6 +95,7 @@ pub trait LearningCommandIo {
 pub enum LearningSubcommand {
     Report,
     Trajectory,
+    Backfill,
 }
 
 impl LearningSubcommand {
@@ -95,6 +104,7 @@ impl LearningSubcommand {
         match self {
             Self::Report => "report",
             Self::Trajectory => "trajectory",
+            Self::Backfill => "backfill",
         }
     }
 }
@@ -475,8 +485,10 @@ pub fn run_learning_command(
     agent_dir: &Path,
     io: &mut dyn LearningCommandIo,
 ) -> LearningCommandOutcome {
-    if args.first().map(String::as_str) == Some("trajectory") {
-        return run_trajectory(&args[1..], agent_dir, io);
+    match args.first().map(String::as_str) {
+        Some("trajectory") => return run_trajectory(&args[1..], agent_dir, io),
+        Some("backfill") => return run_backfill_command(&args[1..], agent_dir, io),
+        _ => {}
     }
     let options = match parse_learning_args(args) {
         Ok(options) => options,
@@ -1048,5 +1060,65 @@ fn run_trajectory(
             sealed,
             backfill: options.include_backfill,
         }),
+    }
+}
+
+/// `learning backfill`: write the offline cross-tool backfill days.
+fn run_backfill_command(
+    args: &[String],
+    agent_dir: &Path,
+    io: &mut dyn LearningCommandIo,
+) -> LearningCommandOutcome {
+    let report = |outcome, days| LearningRunReport {
+        subcommand: LearningSubcommand::Backfill,
+        outcome,
+        days,
+        sealed: 0,
+        backfill: true,
+    };
+    let options = match crate::backfill::parse_backfill_args(args, agent_dir) {
+        Ok(options) => options,
+        Err(error) => {
+            io.stderr(&format!("Error: {error}"));
+            io.stderr(&format!(
+                "Usage: prime-agent {}",
+                crate::backfill::BACKFILL_USAGE
+            ));
+            return LearningCommandOutcome {
+                exit_code: 1,
+                report: Some(report(LearningOutcome::Failed, 0)),
+            };
+        }
+    };
+    let sealed_at =
+        pa_core::session::manager::format_iso(i64::try_from(io.now()).unwrap_or(i64::MAX));
+    let mut progress = Vec::new();
+    let result = crate::backfill::run_backfill(&options, &sealed_at, &mut |line| {
+        progress.push(line.to_string());
+    });
+    for line in &progress {
+        io.stderr(line);
+    }
+    match result {
+        Ok(written) => {
+            io.stderr(&format!(
+                "wrote {written} backfill day file(s) under {}",
+                display_path(&options.out_dir)
+            ));
+            LearningCommandOutcome {
+                exit_code: 0,
+                report: Some(report(LearningOutcome::Reported, written)),
+            }
+        }
+        Err(error) => {
+            io.stderr(&format!(
+                "Error: cannot write backfill days under {}: {error}",
+                display_path(&options.out_dir)
+            ));
+            LearningCommandOutcome {
+                exit_code: 1,
+                report: Some(report(LearningOutcome::Failed, 0)),
+            }
+        }
     }
 }

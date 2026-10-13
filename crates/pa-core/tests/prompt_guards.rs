@@ -689,10 +689,11 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "rlm-heartbeat",
     "skill-creator",
     "system-router",
-    // The fork's offline Engineer Trajectory Index backfill script (TS
-    // `perf/session-catalog-resume`), read by `prime-agent learning trajectory
-    // --include-backfill` (pa-learning). Model-invisible
-    // (`disable-model-invocation`): it adds no prompt text.
+    // The fork's offline Engineer Trajectory Index backfill (TS
+    // `perf/session-catalog-resume`): documents `prime-agent learning
+    // backfill`, whose output `learning trajectory --include-backfill` reads
+    // (pa-learning). Model-invisible (`disable-model-invocation`): it adds
+    // no prompt text.
     "trajectory-backfill",
     "websearch",
 ];

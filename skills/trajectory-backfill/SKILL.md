@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Trajectory Backfill
 
-`backfill.py` reconstructs a coarse, cross-tool failure history from the session
+`prime-agent learning backfill` reconstructs a coarse, cross-tool failure history from the session
 corpora already on this machine and writes it in the same day-signature schema
 the Engineer Trajectory Index (ETI) reads, so `prime-agent learning trajectory
 --include-backfill` can fold it into its printed table.
@@ -27,7 +27,7 @@ It is a study/bootstrapping tool, not part of any live loop:
 ## Run it (from the Python REPL)
 
 ```python
-bash("python3 skills/trajectory-backfill/backfill.py")
+bash("prime-agent learning backfill")
 ```
 
 It walks three corpora, bucketing every record by UTC calendar day:

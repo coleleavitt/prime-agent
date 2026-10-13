@@ -10,6 +10,7 @@
 //! through [`pa_ravo::RecurrenceFilter`]; `pa-cli` installs
 //! [`LearningFeature`] and wires `learning` behind its `learning` feature.
 
+pub mod backfill;
 mod chart;
 pub mod command;
 mod feature;

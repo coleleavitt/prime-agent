@@ -1,0 +1,11 @@
+{"type": "user", "timestamp": "2026-10-01T09:00:00Z", "message": {"role": "user", "content": "plain user text"}}
+{"type": "user", "timestamp": "2026-10-01T09:00:01Z", "message": {"role": "user", "content": [{"type": "text", "text": "x"}]}}
+{"type": "assistant", "timestamp": "2026-10-01T09:00:02Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "y"}]}}
+{"type": "assistant", "timestamp": "2026-10-01T09:00:03Z", "isSidechain": true, "message": {"role": "assistant", "content": []}}
+{"type": "user", "timestamp": "2026-10-01T09:00:04Z", "isMeta": true, "message": {"role": "user", "content": "meta"}}
+{"type": "user", "timestamp": "2026-10-01T09:00:05Z", "message": {"role": "user", "content": [{"type": "tool_result", "is_error": true, "content": "fatal: not a git repository\nPermission denied"}]}}
+{"type": "user", "timestamp": "2026-10-01T09:00:06Z", "message": {"role": "user", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "npm ERR! code ELIFECYCLE"}, {"type": "text", "text": "No such file or directory"}, {"type": "image"}]}]}}
+{"type": "user", "timestamp": "2026-10-01T09:00:07Z", "message": {"role": "user", "content": [{"type": "tool_result", "is_error": 1, "content": []}]}}
+{"type": "summary", "timestamp": "2026-10-01T09:00:08Z"}
+{"type": "user", "message": {"role": "user", "content": "no timestamp"}}
+{"type": "assistant", "timestamp": "2026-10-04T00:00:00Z", "message": {"role": "assistant", "content": [{"type": "tool_result", "content": "AErrorBError CError DError EError FError GError HError IError JError"}]}}

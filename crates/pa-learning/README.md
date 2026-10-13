@@ -37,8 +37,17 @@ on `perf/session-catalog-resume` (key commits `5fdd7f6dc`, `24bf91607`, `4c99bf8
 - **`prime-agent learning trajectory [--index <dir>] [--include-backfill] [--min-windows <n>] [--gap <m>] [--no-seal]
   [--limit <n>] [--json]`**: seal the index, compute and store the prime-only trajectory (in a `trajectory.seal` span:
   `windows`, `labelled`, `withheld`, `backfill`), print the table and the rate; `--include-backfill` folds the offline
-  cross-tool day files (`skills/trajectory-backfill/backfill.py`) into the printed table only. Exit 2 when every prime
+  cross-tool day files (`learning backfill`) into the printed table only. Exit 2 when every prime
   label is withheld.
+- **`prime-agent learning backfill [--corpus prime|claude|opencode]... [--out <dir>] [--prime-dir <dir>]
+  [--claude-dir <dir>] [--opencode-store <dir>] [--home <dir>]`**: the offline cross-tool backfill generator (the
+  TS-era `skills/trajectory-backfill/backfill.py`, byte-compatible output pinned by `tests/backfill.rs`): walks the
+  prime sessions, Claude Code projects and opencode storage read-only, never opening `auth.json` /
+  `anthropic-auth-state.json`, buckets records by UTC day and writes one day file per (corpus, day) under
+  `<agentDir>/learning/backfill/<corpus>/` with message counts and structural error-class tokens only (exception
+  class names, `rustc`/`tsc` codes, well-known shell/git/npm failure strings; at most 8 per blob), each fingerprint
+  `sha1(corpus \0 tool \0 token)[:16]`, `commits` always empty. With `--home`, every default root derives from it.
+  Records that are not JSON objects are skipped (the script crashed on them).
 - **Lever 1 (digest)**: entries joined to a labelled fingerprint through the state's `trustWindows` (and the ledger's
   `addressedByProposalIds`) rank stable gaps first, then new, then the unlabelled, then internalized ones (security
   classes never internalized); up to three confound-flagged stable-gap lines render under `engineer trajectory
@@ -52,7 +61,6 @@ on `perf/session-catalog-resume` (key commits `5fdd7f6dc`, `24bf91607`, `4c99bf8
   join reads `trustWindows` wherever a producer stored them.
 - The resolution of the known double count (an in-cell traceback counted on `kernel.cell` and on the enclosing
   `tool.execute`), deliberately left as in TS.
-- Running `backfill.py`: it is a standalone offline script; this crate only reads its output.
 
 ## Seams
 
@@ -76,7 +84,8 @@ Byte-compatible with the TS product (proved by `tests/golden.rs` against outputs
   the `proper-lockfile` lock `trajectory.json.lock` (40 attempts 5 ms apart, 10 s stale), `0600`; validated on read
   (version 1, at most 8 MiB, every label with a known kind and non-empty confounds), else treated as absent.
 - `<agentDir>/learning/.gitignore` (`trajectory.json`, `backfill/` appended when missing).
-- Read only: `<agentDir>/learning/backfill/<corpus>/<YYYY-MM-DD>.json` (the backfill script's output).
+- `<agentDir>/learning/backfill/<corpus>/<YYYY-MM-DD>.json`: written by `learning backfill` (temp file + rename,
+  `0600` in `0700` directories), read by `learning trajectory --include-backfill`.
 
 Known, deliberate differences: `refinement.committed` lines are read in the TS shape (`proposalId`, `addressed`
 array) and in the shape `pa-ravo` records through `tracing` (`proposal_id`, `addressed` joined with commas).
@@ -87,13 +96,15 @@ ranking only fires for a state that stores them; the stable-gap lines always ren
 
 ## Telemetry
 
-`learning_report` (schema v4, emitted by `pa-cli` per parsed invocation): `subcommand` (`report` | `trajectory`),
-`outcome` (`reported` | `withheld` | `failed`), `days` (sealed days read), `sealed` (days this run sealed), `backfill`,
+`learning_report` (schema v4, emitted by `pa-cli` per parsed invocation): `subcommand` (`report` | `trajectory` |
+`backfill`), `outcome` (`reported` | `withheld` | `failed`), `days` (sealed days read; day files written for
+`backfill`), `sealed` (days this run sealed), `backfill`,
 `duration_ms`. Never a fingerprint, a path, a rate or a p-value.
 
 ## Public API
 
-`LearningFeature` (`recurrence_filter`); `command` (`run_learning_command`, `LearningCommandIo`,
+`LearningFeature` (`recurrence_filter`); `backfill` (`run_backfill`, `parse_backfill_args`, `BackfillOptions`,
+`Corpus`, `error_tokens`, `parse_iso_ms`, `synthetic_fingerprint`, `BACKFILL_USAGE`); `command` (`run_learning_command`, `LearningCommandIo`,
 `LearningCommandOutcome`, `LearningRunReport`, `LearningSubcommand`, `LearningOutcome`, the help constants,
 `format_learning_report`, `format_significance`, `learning_chart_lines`, `build_trajectory_report`,
 `format_trajectory_report`); the index (`roll_up_learning_days`, `seal_learning_days`, `read_learning_index`,

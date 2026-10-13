@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "day": "2025-10-03",
+  "sealedAt": "2026-10-13T00:00:00.000Z",
+  "turns": 0,
+  "parseErrors": 0,
+  "sourceFiles": [],
+  "commits": [],
+  "fingerprints": [
+    {
+      "fingerprint": "77be320f92a805b0",
+      "name": "tool:error",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "tool:error"
+    }
+  ]
+}

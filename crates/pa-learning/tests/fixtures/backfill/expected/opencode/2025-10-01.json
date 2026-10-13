@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "day": "2025-10-01",
+  "sealedAt": "2026-10-13T00:00:00.000Z",
+  "turns": 2,
+  "parseErrors": 0,
+  "sourceFiles": [],
+  "commits": [],
+  "fingerprints": [
+    {
+      "fingerprint": "ae6d4f33af7dcab4",
+      "name": "exc:TypeError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:TypeError"
+    },
+    {
+      "fingerprint": "7bd98d0ecb154d2e",
+      "name": "tool:error",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "tool:error"
+    }
+  ]
+}

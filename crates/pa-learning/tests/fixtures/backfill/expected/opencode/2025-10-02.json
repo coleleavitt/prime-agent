@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "day": "2025-10-02",
+  "sealedAt": "2026-10-13T00:00:00.000Z",
+  "turns": 1,
+  "parseErrors": 0,
+  "sourceFiles": [],
+  "commits": [],
+  "fingerprints": [
+    {
+      "fingerprint": "eb5b32982deffa8a",
+      "name": "exc:OSError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:OSError"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "day": "2026-10-01",
+  "sealedAt": "2026-10-13T00:00:00.000Z",
+  "turns": 3,
+  "parseErrors": 0,
+  "sourceFiles": [],
+  "commits": [],
+  "fingerprints": [
+    {
+      "fingerprint": "4c8ac06bfe83694b",
+      "name": "git:fatal",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "git:fatal"
+    },
+    {
+      "fingerprint": "13561707e0da0837",
+      "name": "npm:err",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "npm:err"
+    },
+    {
+      "fingerprint": "8a9c7cd47fdf9f67",
+      "name": "sh:no-such-file",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "sh:no-such-file"
+    },
+    {
+      "fingerprint": "47b84a9fa7077dd3",
+      "name": "sh:permission-denied",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "sh:permission-denied"
+    },
+    {
+      "fingerprint": "7959b5430dffd6f0",
+      "name": "tool_result:is_error",
+      "status": "error",
+      "failure": true,
+      "count": 2,
+      "message": "tool_result:is_error"
+    }
+  ]
+}

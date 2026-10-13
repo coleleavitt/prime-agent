@@ -1394,9 +1394,10 @@ const WORKFLOW_V2_REQUEST: EventRule = EventRule {
 };
 
 /// `learning_report` (v4): one parsed `prime-agent learning` invocation (the
-/// fork's `pa-learning` feature): which report, how it ended (a p-value or a
-/// label reported, everything withheld, or an error), how many sealed days it
-/// read and sealed, whether backfill was folded in, and the duration — never
+/// fork's `pa-learning` feature): which report (or `backfill`, whose `days`
+/// counts the day files it wrote), how it ended (a p-value or a label
+/// reported, everything withheld, or an error), how many sealed days it read
+/// and sealed, whether backfill was folded in, and the duration — never
 /// a fingerprint, a path, a rate, or a p-value.
 const LEARNING_REPORT: EventRule = EventRule {
     name: "learning_report",
@@ -1404,7 +1405,10 @@ const LEARNING_REPORT: EventRule = EventRule {
     properties: &[
         (
             "subcommand",
-            required(enum_rule(&["report", "trajectory", "unknown"], "unknown")),
+            required(enum_rule(
+                &["report", "trajectory", "backfill", "unknown"],
+                "unknown",
+            )),
         ),
         (
             "outcome",

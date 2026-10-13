@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "day": "2026-10-04",
+  "sealedAt": "2026-10-13T00:00:00.000Z",
+  "turns": 1,
+  "parseErrors": 0,
+  "sourceFiles": [],
+  "commits": [],
+  "fingerprints": [
+    {
+      "fingerprint": "f2f702d702253a75",
+      "name": "exc:AErrorBError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:AErrorBError"
+    },
+    {
+      "fingerprint": "641977f7f318bff0",
+      "name": "exc:CError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:CError"
+    },
+    {
+      "fingerprint": "a91d08c04d1fe2e3",
+      "name": "exc:DError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:DError"
+    },
+    {
+      "fingerprint": "0298d819dcfec764",
+      "name": "exc:EError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:EError"
+    },
+    {
+      "fingerprint": "14e50c8561b00043",
+      "name": "exc:FError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:FError"
+    },
+    {
+      "fingerprint": "887b82c73d82023b",
+      "name": "exc:GError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:GError"
+    },
+    {
+      "fingerprint": "b30de1cf017f18b0",
+      "name": "exc:HError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:HError"
+    },
+    {
+      "fingerprint": "681b3a69d85149a1",
+      "name": "exc:IError",
+      "status": "error",
+      "failure": true,
+      "count": 1,
+      "message": "exc:IError"
+    }
+  ]
+}

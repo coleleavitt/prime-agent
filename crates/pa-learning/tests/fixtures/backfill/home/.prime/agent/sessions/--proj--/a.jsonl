@@ -1,0 +1,10 @@
+{"type": "session", "id": "s", "timestamp": "2026-10-01T10:00:00.000Z"}
+{"type": "message", "timestamp": "2026-10-01T10:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "hi KeyError"}]}}
+{"type": "message", "timestamp": "2026-10-01T10:00:02.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "ValueError in prose is not counted"}]}}
+{"type": "message", "timestamp": "2026-10-01T10:00:03.000Z", "message": {"role": "toolResult", "content": [{"type": "text", "text": "Traceback (most recent call last):\nKeyError: 'x'", "name": "python_repl"}, {"type": "toolResult", "text": "bash: foo: command not found"}, {"type": "image", "data": "x"}]}}
+{"type": "message", "timestamp": "2026-10-01T23:30:00-02:00", "message": {"role": "user", "content": "crosses midnight"}}
+{"type": "message", "timestamp": "2026-10-02 08:00", "message": {"role": "assistant", "content": []}}
+not json at all
+{"type": "message", "timestamp": "bogus", "message": {"role": "user"}}
+
+
