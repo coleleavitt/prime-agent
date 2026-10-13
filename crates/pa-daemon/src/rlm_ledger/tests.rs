@@ -328,6 +328,19 @@ fn unknown_op_records_are_skipped_forward_compatible() {
     assert_eq!(edges[0].child_id, "sub-1");
 }
 
+/// The writer opens every ledger with a `meta` header: replay must know its own header,
+/// not report it as an unknown op on each cache miss (235 bogus daemon-log warnings).
+#[test]
+fn the_meta_header_is_a_known_record() {
+    let meta = "{\"v\":1,\"op\":\"meta\",\"at\":\"t\",\"sessionsDir\":\"x\"}";
+    assert!(matches!(
+        parse_ledger_line(meta, 0),
+        Ok(Some(LedgerRecord::Meta))
+    ));
+    let future = "{\"v\":1,\"op\":\"future\",\"at\":\"t\"}";
+    assert!(matches!(parse_ledger_line(future, 1), Ok(None)));
+}
+
 #[test]
 fn seeds_from_legacy_registries_once_and_atomically() {
     let dir = temp_dir("seed");

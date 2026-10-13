@@ -679,6 +679,7 @@ impl RlmSpawnLedger {
                 }
             };
             match record {
+                LedgerRecord::Meta => {}
                 LedgerRecord::Spawn {
                     child_id,
                     parent,

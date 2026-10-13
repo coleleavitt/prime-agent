@@ -21,6 +21,8 @@ use super::{
 /// One replayed ledger record (`meta` records carry no edge and are skipped).
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum LedgerRecord {
+    /// The header every ledger opens with (the writer's and the seed's first line).
+    Meta,
     Spawn {
         child_id: String,
         parent: String,
@@ -97,6 +99,7 @@ pub(super) fn parse_ledger_line(line: &str, index: usize) -> Result<Option<Ledge
     let child_id = || str_field(&record, "childId");
     let child = || str_field(&record, "child");
     match op {
+        "meta" => Ok(Some(LedgerRecord::Meta)),
         "spawn" => {
             let (Some(child_id), Some(parent), Some(child), Some(name)) = (
                 child_id(),
