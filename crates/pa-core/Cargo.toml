@@ -47,7 +47,9 @@ unicode-normalization = "0.1"
 # harness store's id slugs, search terms and `repr` text (general category;
 # already in the workspace through pa-tui).
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
-serde_yaml = "0.9"
+# YAML (skill frontmatter) is read-only: the pure-Rust parser, deserialize half only
+# (`serde_yaml` is deprecated and its `unsafe-libyaml` core is RUSTSEC-2024-0449).
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
 ignore = "0.4"
 # MCP client sessions (stdio servers and streamable HTTP) run in the host
 # with the official Rust SDK, client side only. Its reqwest client feature

@@ -43,11 +43,11 @@ fn repo_root() -> PathBuf {
 /// The committed windows-runtime-triage workflow, parsed as YAML. YAML 1.1
 /// readers may hand back the `on` key as a boolean (`true`), so the trigger
 /// accessor handles both spellings.
-fn workflow_yaml() -> (serde_yaml::Value, serde_yaml::Value) {
+fn workflow_yaml() -> (serde_json::Value, serde_json::Value) {
     let text = fs::read_to_string(repo_root().join(".github/workflows/windows-runtime-triage.yml"))
         .expect("read .github/workflows/windows-runtime-triage.yml");
-    let workflow: serde_yaml::Value =
-        serde_yaml::from_str(&text).expect("windows-runtime-triage.yml parses as YAML");
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(&text).expect("windows-runtime-triage.yml parses as YAML");
     let triggers = workflow
         .get("on")
         .or_else(|| workflow.get("true"))
@@ -57,7 +57,7 @@ fn workflow_yaml() -> (serde_yaml::Value, serde_yaml::Value) {
 }
 
 /// One job's definition by name.
-fn job(workflow: &serde_yaml::Value, name: &str) -> serde_yaml::Value {
+fn job(workflow: &serde_json::Value, name: &str) -> serde_json::Value {
     workflow
         .get("jobs")
         .and_then(|jobs| jobs.get(name))
@@ -66,15 +66,15 @@ fn job(workflow: &serde_yaml::Value, name: &str) -> serde_yaml::Value {
 }
 
 /// The steps' `run:` scripts of one job, in order.
-fn step_runs(job: &serde_yaml::Value) -> Vec<String> {
+fn step_runs(job: &serde_json::Value) -> Vec<String> {
     job.get("steps")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
         .map(|steps| {
             steps
                 .iter()
                 .map(|step| {
                     step.get("run")
-                        .and_then(serde_yaml::Value::as_str)
+                        .and_then(serde_json::Value::as_str)
                         .unwrap_or_default()
                         .to_string()
                 })
@@ -116,7 +116,7 @@ fn the_pr_wave_runs_on_windows_touched_paths() {
         .expect("the workflow carries the pull_request trigger");
     let branches = pull_request
         .get("branches")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
         .expect("the pull_request trigger names its branches");
     assert!(
         branches
@@ -126,9 +126,9 @@ fn the_pr_wave_runs_on_windows_touched_paths() {
     );
     let paths = pull_request
         .get("paths")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
         .expect("the pull_request trigger carries a Windows-touched paths filter");
-    let paths: Vec<&str> = paths.iter().filter_map(serde_yaml::Value::as_str).collect();
+    let paths: Vec<&str> = paths.iter().filter_map(serde_json::Value::as_str).collect();
     assert!(
         paths.contains(&"crates/**"),
         "every crate-source PR is Windows-touched: {paths:?}"
@@ -150,7 +150,7 @@ fn the_nightly_wave_runs_on_main() {
     let (_, triggers) = workflow_yaml();
     let schedule = triggers
         .get("schedule")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
         .expect("the workflow carries the nightly schedule");
     assert!(
         schedule.iter().any(|entry| entry.get("cron").is_some()),
@@ -176,7 +176,7 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     // reviewed-baseline rule the release build's job comment carries).
     let runs_on = job
         .get("runs-on")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the job pins its runner");
     assert_eq!(
         runs_on, "windows-2022",
@@ -189,11 +189,11 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     let needs = job
         .get("needs")
         .map(|needs| match needs {
-            serde_yaml::Value::Sequence(entries) => entries
+            serde_json::Value::Array(entries) => entries
                 .iter()
-                .filter_map(serde_yaml::Value::as_str)
+                .filter_map(serde_json::Value::as_str)
                 .collect::<Vec<_>>(),
-            serde_yaml::Value::String(single) => vec![single.as_str()],
+            serde_json::Value::String(single) => vec![single.as_str()],
             _ => Vec::new(),
         })
         .unwrap_or_default();
@@ -203,7 +203,7 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     );
     let condition = job
         .get("if")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the job gates itself on the trust verdict");
     assert!(
         condition.contains("outputs.allowed == 'true'"),
@@ -251,19 +251,19 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     // inspects, uploaded on red runs too.
     let steps = job
         .get("steps")
-        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(serde_json::Value::as_array)
         .expect("the job carries steps");
     let upload = steps
         .iter()
         .find(|step| {
             step.get("uses")
-                .and_then(serde_yaml::Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .is_some_and(|uses| uses.starts_with("actions/upload-artifact"))
         })
         .expect("the job uploads the pane dumps");
     let upload_if = upload
         .get("if")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the upload step carries its condition");
     assert!(
         upload_if.contains("always()"),
@@ -272,7 +272,7 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     let upload_name = upload
         .get("with")
         .and_then(|with| with.get("name"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the upload names its artifact");
     assert!(
         upload_name.starts_with("windows-tui-dumps-"),
@@ -281,7 +281,7 @@ fn the_tui_battery_job_boots_the_binary_and_dumps_the_panes() {
     let upload_path = upload
         .get("with")
         .and_then(|with| with.get("path"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the upload names its path");
     assert!(
         upload_path.contains("win-tui-dumps"),
@@ -295,7 +295,7 @@ fn the_deep_battery_stays_off_the_pr_wave() {
     let job = job(&workflow, "windows-battery");
     let condition = job
         .get("if")
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the deep battery job keeps its dispatch/nightly gating");
     assert!(
         condition.contains("github.event_name != 'pull_request'"),

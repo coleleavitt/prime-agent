@@ -31,6 +31,15 @@ fn extract_frontmatter(content: &str) -> (Option<String>, String) {
     (Some(yaml.to_string()), body)
 }
 
+/// YAML 1.2 core resolution, as the TS `yaml` reader resolves frontmatter: only `true`/`false`
+/// are booleans (YAML 1.1 `yes`/`no`/`on`/`off` stay strings) and `<<` is an ordinary key.
+fn yaml_options() -> serde_saphyr::Options {
+    let mut options = serde_saphyr::Options::default();
+    options.strict_booleans = true;
+    options.merge_keys = serde_saphyr::MergeKeyPolicy::AsOrdinary;
+    options
+}
+
 /// Parse `---` YAML frontmatter into a JSON object plus the body.
 #[must_use]
 pub fn parse_frontmatter(content: &str) -> (Value, String) {
@@ -38,11 +47,11 @@ pub fn parse_frontmatter(content: &str) -> (Value, String) {
     let Some(yaml_string) = yaml_string else {
         return (serde_json::Map::new().into(), body);
     };
-    let parsed: serde_yaml::Value = match serde_yaml::from_str(&yaml_string) {
+    // A block that is not valid YAML, or whose mapping keys are not strings, is no frontmatter.
+    let converted: Value = match serde_saphyr::from_str_with_options(&yaml_string, yaml_options()) {
         Ok(parsed) => parsed,
         Err(_) => return (serde_json::Map::new().into(), body),
     };
-    let converted = serde_json::to_value(parsed).unwrap_or_else(|_| serde_json::Map::new().into());
     let frontmatter = if converted.is_null() {
         serde_json::Map::new().into()
     } else {
@@ -101,6 +110,40 @@ mod tests {
         let (frontmatter, body) = parse_frontmatter("---x\n---\nbody");
         assert!(frontmatter.as_object().unwrap().is_empty());
         assert_eq!(body, "---x\n---\nbody");
+    }
+
+    /// YAML 1.2 core scalars, as the TS `yaml` reader (and the `serde_yaml` this replaced)
+    /// resolve them: the YAML 1.1 `yes`/`no`/`on`/`off` stay strings.
+    #[test]
+    fn scalars_resolve_by_the_yaml_1_2_core_schema() {
+        let (frontmatter, _) = parse_frontmatter(
+            "---\nname: x\nflag: yes\noff: no\nenabled: true\ncount: 3\ntags: [a, b]\n---\nbody",
+        );
+        assert_eq!(
+            frontmatter,
+            serde_json::json!({
+                "name": "x",
+                "flag": "yes",
+                "off": "no",
+                "enabled": true,
+                "count": 3,
+                "tags": ["a", "b"],
+            })
+        );
+    }
+
+    /// `<<` stays an ordinary key, and a duplicate key spoils the block (no frontmatter), as
+    /// the YAML 1.2 readers this tracks behave.
+    #[test]
+    fn merge_keys_are_literal_and_duplicate_keys_are_no_frontmatter() {
+        let (frontmatter, _) = parse_frontmatter("---\n<<: base\nname: x\n---\nbody");
+        assert_eq!(
+            frontmatter,
+            serde_json::json!({ "<<": "base", "name": "x" })
+        );
+        let (frontmatter, body) = parse_frontmatter("---\nname: x\nname: y\n---\nbody");
+        assert_eq!(frontmatter, serde_json::json!({}));
+        assert_eq!(body, "body");
     }
 
     #[test]

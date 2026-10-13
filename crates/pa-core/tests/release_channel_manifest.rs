@@ -81,7 +81,7 @@ fn load_workflow() -> (String, Workflow) {
     let text = std::fs::read_to_string(workspace_root().join(".github/workflows/release.yml"))
         .expect("read .github/workflows/release.yml");
     let workflow: Workflow =
-        serde_yaml::from_str(&text).expect("release.yml parses as the expected schema");
+        serde_saphyr::from_str(&text).expect("release.yml parses as the expected schema");
     (text, workflow)
 }
 

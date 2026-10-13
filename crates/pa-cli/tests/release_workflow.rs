@@ -107,16 +107,16 @@ struct Step {
     uses: Option<String>,
     run: Option<String>,
     #[serde(default)]
-    with: Option<serde_yaml::Value>,
+    with: Option<serde_json::Value>,
     #[serde(default)]
-    env: Option<serde_yaml::Value>,
+    env: Option<serde_json::Value>,
 }
 
 /// The promote job's steps from the committed `.github/workflows/release.yml`.
 fn promote_steps() -> Vec<Step> {
     let text = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
         .expect("read .github/workflows/release.yml");
-    let workflow: Workflow = serde_yaml::from_str(&text).expect("release.yml parses as YAML");
+    let workflow: Workflow = serde_saphyr::from_str(&text).expect("release.yml parses as YAML");
     workflow
         .jobs
         .get("promote")
@@ -432,7 +432,7 @@ fn run_promote_gates(cwd: &Path, steps: &[Step]) -> (String, serde_json::Value) 
 fn native_release_jobs_gate_fresh_and_legacy_installation() {
     let text = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
         .expect("read release.yml");
-    let workflow: Workflow = serde_yaml::from_str(&text).expect("release.yml parses as YAML");
+    let workflow: Workflow = serde_saphyr::from_str(&text).expect("release.yml parses as YAML");
     for job_name in ["build-gnu", "build-darwin"] {
         let steps = &workflow.jobs.get(job_name).expect("native build job").steps;
         let fresh = step_position(steps, "Verify fresh channel install and reinstall");
@@ -467,7 +467,7 @@ fn native_release_jobs_gate_fresh_and_legacy_installation() {
 fn windows_build_job_contract() {
     let text = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
         .expect("read release.yml");
-    let workflow: Workflow = serde_yaml::from_str(&text).expect("release.yml parses as YAML");
+    let workflow: Workflow = serde_saphyr::from_str(&text).expect("release.yml parses as YAML");
     let windows = workflow
         .jobs
         .get("build-windows")
@@ -552,7 +552,7 @@ fn windows_build_job_contract() {
 fn the_windows_build_links_the_static_vc_runtime() {
     let text = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
         .expect("read release.yml");
-    let workflow: Workflow = serde_yaml::from_str(&text).expect("release.yml parses as YAML");
+    let workflow: Workflow = serde_saphyr::from_str(&text).expect("release.yml parses as YAML");
     let windows = workflow
         .jobs
         .get("build-windows")
@@ -572,7 +572,7 @@ fn the_windows_build_links_the_static_vc_runtime() {
         .env
         .as_ref()
         .and_then(|env| env.get("RUSTFLAGS"))
-        .and_then(serde_yaml::Value::as_str)
+        .and_then(serde_json::Value::as_str)
         .expect("the Windows build step must set RUSTFLAGS");
     assert!(
         rustflags.contains("target-feature=+crt-static"),
@@ -590,7 +590,7 @@ fn the_windows_build_links_the_static_vc_runtime() {
                             .env
                             .as_ref()
                             .and_then(|env| env.get("RUSTFLAGS"))
-                            .and_then(serde_yaml::Value::as_str)
+                            .and_then(serde_json::Value::as_str)
                             .is_some_and(|flags| flags.contains("crt-static")),
                         "crt-static is the Windows launcher's fix, never a gnu/darwin flag"
                     );
@@ -636,7 +636,7 @@ fn promote_download_layout_contract() {
         .as_ref()
         .expect("the download declares inputs");
     assert_eq!(
-        with.get("path").and_then(serde_yaml::Value::as_str),
+        with.get("path").and_then(serde_json::Value::as_str),
         Some("incoming"),
         "the download must target the promote job's incoming directory"
     );
@@ -650,7 +650,7 @@ fn promote_download_layout_contract() {
     );
     assert_ne!(
         with.get("merge-multiple")
-            .and_then(serde_yaml::Value::as_bool),
+            .and_then(serde_json::Value::as_bool),
         Some(true),
         "merge-multiple would collide the per-target manifests and sums"
     );
@@ -834,7 +834,7 @@ fn zero_artifacts_fail_loudly_instead_of_verifying_nothing() {
 fn production_installers_are_published_only_by_stable_releases() {
     let text = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
         .expect("read release.yml");
-    let workflow: Workflow = serde_yaml::from_str(&text).expect("release.yml parses as YAML");
+    let workflow: Workflow = serde_saphyr::from_str(&text).expect("release.yml parses as YAML");
     let publish = workflow
         .jobs
         .get("promote")
