@@ -11,6 +11,7 @@ use crate::fuzzy::fuzzy_filter;
 use crate::width::str_width;
 use crate::{Line, Span};
 
+mod file_index;
 mod fuzzy_file_search;
 pub use fuzzy_file_search::FileSearch;
 
@@ -749,6 +750,8 @@ pub struct CombinedAutocompleteProvider {
     /// command's argument position (e.g. the `/tier` tier choices).
     arguments: std::collections::HashMap<&'static str, Vec<CompletionItem>>,
     paths: PathCompletionProvider,
+    /// The `@` file search's in-memory file index (one per session view).
+    file_index: file_index::FileIndex,
 }
 
 impl CombinedAutocompleteProvider {
@@ -783,6 +786,7 @@ impl CombinedAutocompleteProvider {
             hidden: HashSet::default(),
             arguments: HashMap::default(),
             paths: PathCompletionProvider { base },
+            file_index: file_index::FileIndex::new(),
         }
     }
 
@@ -896,6 +900,11 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
     }
 
     fn set_base_dir(&mut self, base: std::path::PathBuf) {
+        // The file index answers for the base it was built under: a moved
+        // session (`/cwd`) starts a fresh index that builds on its next query.
+        if base != self.paths.base {
+            self.file_index = file_index::FileIndex::new();
+        }
         self.paths.base = base;
     }
 
@@ -911,6 +920,7 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         if let Some(at_prefix) = extract_at_prefix(&before) {
             return Some(SuggestionLookup::Searching(fuzzy_file_search::spawn(
                 &self.paths.base,
+                self.file_index.clone(),
                 at_prefix,
             )));
         }
@@ -937,6 +947,7 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
                             return Some(SuggestionLookup::Searching(
                                 fuzzy_file_search::spawn_with_mode(
                                     &self.paths.base,
+                                    self.file_index.clone(),
                                     context.prefix.clone(),
                                     fuzzy_file_search::SearchMode::DirectoryArgument,
                                 ),

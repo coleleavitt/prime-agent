@@ -256,7 +256,7 @@ impl Process {
                 context,
                 &ToolCallObservation {
                     tool_call_id: id.to_string(),
-                    tool_name: "ipython".to_string(),
+                    tool_name: pa_types::ai::PYTHON_TOOL_NAME.to_string(),
                     args: serde_json::json!({ "code": code }),
                 },
             )

@@ -57,7 +57,7 @@ fn faux_script(dir: &Path) -> PathBuf {
             "responses": [
                 {"content": [
                     {"type": "text", "text": "Running the first sleep cell."},
-                    {"type": "toolCall", "name": "ipython", "id": "toolu_sleep01",
+                    {"type": "toolCall", "name": "python_repl", "id": "toolu_sleep01",
                      // The cell holds the tool call open until the test has parked every
                      // steer (a fixed sleep raced a loaded box: the call could end before
                      // the third steer landed); the bound only stops a broken test.

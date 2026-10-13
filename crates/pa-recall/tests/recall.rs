@@ -1232,7 +1232,13 @@ async fn records_a_build_command_that_exited_0_while_the_workspace_held_still() 
 
     process.tool_call(&ctx, "cell-1", &tsgo_cell()).await;
     process
-        .tool_result_with(&ctx, "cell-1", "ipython", cell_facts(), 0)
+        .tool_result_with(
+            &ctx,
+            "cell-1",
+            pa_types::ai::PYTHON_TOOL_NAME,
+            cell_facts(),
+            0,
+        )
         .await;
     let outcome = process.agent_end(&ctx);
     let mark = written(&outcome);
@@ -1265,7 +1271,13 @@ async fn records_nothing_when_the_workspace_changed_while_the_cell_ran() {
     process.tool_call(&ctx, "cell-1", &tsgo_cell()).await;
     write(&repo.join("a.txt"), "alpha, written by the cell\n");
     process
-        .tool_result_with(&ctx, "cell-1", "ipython", cell_facts(), 0)
+        .tool_result_with(
+            &ctx,
+            "cell-1",
+            pa_types::ai::PYTHON_TOOL_NAME,
+            cell_facts(),
+            0,
+        )
         .await;
     assert_eq!(written(&process.agent_end(&ctx)).claims, Vec::new());
 }
@@ -1280,7 +1292,13 @@ async fn a_cell_that_names_no_build_command_records_no_claim() {
 
     process.tool_call(&ctx, "cell-1", "print('hello')").await;
     process
-        .tool_result_with(&ctx, "cell-1", "ipython", cell_facts(), 0)
+        .tool_result_with(
+            &ctx,
+            "cell-1",
+            pa_types::ai::PYTHON_TOOL_NAME,
+            cell_facts(),
+            0,
+        )
         .await;
     assert_eq!(written(&process.agent_end(&ctx)).claims, Vec::new());
 }

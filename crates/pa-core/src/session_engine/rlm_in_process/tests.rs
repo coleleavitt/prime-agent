@@ -222,7 +222,6 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         spawned_by_request_id: None,
         cell_source_code: None,
         token_budget: None,
-        decision_child: false,
     }
 }
 
@@ -1110,7 +1109,7 @@ async fn progress_notes_surface_in_the_roster() {
         .unwrap();
     // The child's own `rlm.progress.note` store feeds the roster row.
     let child = rig.first_child().await;
-    let _ = child.engine.rlm.notes.note("halfway there", 1_000).await;
+    let _ = child.engine.rlm.notes.note("halfway there", 1_000);
     let roster = rig.host.list_subagents().await.unwrap();
     assert_eq!(roster[0].progress_note.as_deref(), Some("halfway there"));
     let _ = rig.host.delete_subagent(handle.rlm_child_id).await;
@@ -1319,7 +1318,7 @@ async fn the_parent_reaches_and_observes_its_children() {
     // The parent messages the child by name: delivered as the child's
     // own turn.
     let child = rig.first_child().await;
-    let _ = child.engine.rlm.notes.note("unrelated", 1).await;
+    let _ = child.engine.rlm.notes.note("unrelated", 1);
     rig.catalog.provider("glm-5.3-turbo").push_text_turn("ack");
     let receipt = controller
         .send_agent_message(AgentMessageSendInput {

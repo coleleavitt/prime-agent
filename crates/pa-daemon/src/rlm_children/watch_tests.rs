@@ -359,7 +359,6 @@ async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
             cell_source_code: None,
             spawned_by_request_id: None,
             token_budget: None,
-            decision_child: false,
         })
         .await
         .expect("spawn must succeed against the fake supervisor")
@@ -1388,8 +1387,13 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         prompt_admitted: true,
         error: None,
         closed_by_parent: false,
+        retirement_finished: false,
+        retirement_notified: false,
+        retirement_roster_emitted: false,
+        usage_registration_forgotten: false,
         session_file: None,
         attributed_rows: Some(0),
+        pending_usage_report: None,
         usage_watch_live: false,
         usage_rearm: false,
         emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
@@ -1950,6 +1954,10 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         prompt_admitted: true,
         error: None,
         closed_by_parent: false,
+        retirement_finished: false,
+        retirement_notified: false,
+        retirement_roster_emitted: false,
+        usage_registration_forgotten: false,
         session_file: Some(
             std::env::temp_dir()
                 .join(format!(
@@ -1960,6 +1968,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
                 .to_string(),
         ),
         attributed_rows: Some(0),
+        pending_usage_report: None,
         usage_watch_live: false,
         usage_rearm: false,
         emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),

@@ -2,7 +2,6 @@
 //! worker-facing engine contract - model and goal config surfaces, the
 //! turn state machine, and the export/telemetry reads.
 
-use pa_core::session_engine::agent_messaging::AgentFamilyRelationship;
 use pa_types::sync::{MutexExt, RwLockExt};
 
 use super::image_delegation::ImageDelegationRun;
@@ -31,7 +30,6 @@ use super::{
     json,
     map_thinking_level,
     now_millis,
-    persisted_rlm_max_depth,
 };
 
 impl SessionEngine for AgentSessionEngine {
@@ -40,32 +38,6 @@ impl SessionEngine for AgentSessionEngine {
     /// not carry the replaced session's subscriptions into the new one).
     fn clear_agent_watches(&self) {
         AgentSessionEngine::clear_agent_watches(self);
-    }
-
-    fn route_decision_api_event(
-        &self,
-        relationship: Option<AgentFamilyRelationship>,
-        sender_name: &str,
-        message: &str,
-    ) -> bool {
-        if relationship != Some(AgentFamilyRelationship::Child) {
-            return false;
-        }
-        let Ok(decision) = serde_json::from_str::<Value>(message) else {
-            return false;
-        };
-        if decision["type"] != "decision_api.decision" {
-            return false;
-        }
-        if let Some(slot) = self
-            .decision_replies
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get_mut(sender_name)
-        {
-            *slot = Some(decision);
-        }
-        true
     }
 
     /// Withdraw the queued minted goal-context turns so a state change leaves nothing stale to run.
@@ -363,6 +335,29 @@ impl SessionEngine for AgentSessionEngine {
         }
     }
 
+    /// The session's newest accepted progress note; `None` before the
+    /// first build and after a run boundary cleared it.
+    fn progress_note(&self) -> Option<String> {
+        self.progress_notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|notes| notes.latest_note())
+            .map(|(note, _)| note)
+    }
+
+    /// Clears the stored note at the run boundary; the throttle clock stays.
+    fn clear_progress_note(&self) {
+        if let Some(notes) = self
+            .progress_notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            notes.clear();
+        }
+    }
+
     fn configure_service_tier(&self, tier: Option<pa_types::ai::ServiceTier>) {
         *self.service_tier.write_or_recover() = tier;
         if let Some(target) = self.provider_target.write_or_recover().as_mut() {
@@ -429,6 +424,14 @@ impl SessionEngine for AgentSessionEngine {
             return false;
         };
         {
+            // The switch's resolve-and-install serializes with `/reload`'s
+            // live-input refresh (the failover callbacks' fence): a reload
+            // landing between this resolution and the slot write must not
+            // be clobbered by the switch's older pair.
+            let _reload_serialized = self
+                .reload_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let (api_key, headers) = self.resolve_request_key_and_headers(&model);
             let mut target = self.provider_target.write_or_recover();
             *target = Some(ProviderTarget {
@@ -857,28 +860,13 @@ impl SessionEngine for AgentSessionEngine {
                 .ok_or_else(|| anyhow::anyhow!("unknown thinking level \"{thinking}\""))?;
         }
         // The depth bound's precedence: chat override > inherited > global
-        // setting > env > default.
-        let (max_depth, source) = persisted_rlm_max_depth(identity.session_file.as_deref())
-            .map(|depth| (depth, "chat"))
-            .or_else(|| {
-                identity
-                    .rlm_max_depth
-                    .map(|depth| (u64::from(depth), "inherited"))
-            })
-            .or_else(|| {
-                let settings =
-                    pa_core::settings::SettingsManager::create(self.cwd(), &self.config.agent_dir);
-                settings.get_rlm_max_depth().map(|depth| (depth, "global"))
-            })
-            .or_else(|| {
-                std::env::var("RLM_MAX_DEPTH")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .filter(|value| *value >= 1)
-                    .map(|depth| (depth, "env"))
-            })
-            .unwrap_or((u64::from(DEFAULT_RLM_MAX_DEPTH), "default"));
+        // setting > env > default (the shared resolver).
+        let (max_depth, source) = pa_core::session_engine::rlm_host::resolve_rlm_max_depth(
+            identity.session_file.as_deref(),
+            identity.rlm_max_depth,
+            &self.cwd(),
+            &self.config.agent_dir,
+        );
         *self.rlm_max_depth_source.lock_or_recover() = source;
         // The semantic-edge identity (TS `semanticEdgeLedgerPath` +
         // provenance): a spawned child's ledger lives in its rlm session

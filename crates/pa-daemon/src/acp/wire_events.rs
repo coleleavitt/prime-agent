@@ -20,9 +20,6 @@ use super::types::{
     UserContentBlock,
 };
 
-/// The model-facing Python REPL tool.
-const IPYTHON_TOOL_NAME: &str = "ipython";
-
 /// Correlates streamed chunks with their owning assistant message (the
 /// daemon stream carries the delta on `assistantMessageEvent`) and bash
 /// output chunks with the run that produced them.
@@ -654,7 +651,7 @@ fn tool_call_start(
     args: Value,
     cells: &mut std::collections::HashMap<String, String>,
 ) -> AcpSessionUpdate {
-    let cell = (tool_name == IPYTHON_TOOL_NAME)
+    let cell = pa_types::ai::is_python_tool_name(tool_name)
         .then(|| args.get("code").and_then(Value::as_str).map(str::to_string))
         .flatten();
     let Some(code) = cell else {

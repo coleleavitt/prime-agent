@@ -156,6 +156,10 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,
+        should_stop_after_turn: None,
+        rlm_usage_store: None,
+        progress_note_emit: None,
+        daemonless: true,
         rlm_token_allowance: None,
     })
     .await

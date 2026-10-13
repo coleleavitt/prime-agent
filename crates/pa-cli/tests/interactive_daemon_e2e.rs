@@ -30,6 +30,22 @@ const MINIMAL_PNG: &[u8] = &[
     5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 
+/// Point the clipboard seam (`PRIME_AGENT_TEST_CLIPBOARD_IMAGE`, read on ctrl+v) at one
+/// process-wide fixture image. The var is process-global, so every test that pastes shares
+/// one file that outlives them all: a per-test temp file would vanish when its test ends
+/// while a parallel test still pastes through the var.
+fn install_clipboard_fixture() {
+    static FIXTURE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let path = FIXTURE.get_or_init(|| {
+        let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+        std::fs::create_dir_all(dir).expect("target tmp dir");
+        let path = dir.join(format!("clipboard-fixture-{}.png", std::process::id()));
+        std::fs::write(&path, MINIMAL_PNG).expect("write fixture image");
+        path
+    });
+    std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", path);
+}
+
 struct Supervisor {
     child: Child,
     socket: PathBuf,
@@ -1275,6 +1291,11 @@ async fn ensure_daemon_running_spawns_supervisor_and_tui_attaches() {
     for (name, value) in
         pa_types::platform::test_isolation::TestState::for_agent_dir(&agent_dir).env()
     {
+        // The env is process-wide: the sweep of `PRIME_AGENT_*` must not
+        // unset the clipboard seam the parallel paste tests read on ctrl+v.
+        if name == "PRIME_AGENT_TEST_CLIPBOARD_IMAGE" {
+            continue;
+        }
         match value {
             Some(value) => std::env::set_var(name, value),
             None => std::env::remove_var(name),
@@ -3796,9 +3817,7 @@ async fn tui_prompt_stash_survives_the_agents_view_handoff() {
 
     // The draft carries a pasted image, so the handoff must round-trip the
     // bytes (the reopened chat's paste registry is empty — the stash hydrates it).
-    let png_path = dir.path().join("fixture.png");
-    std::fs::write(&png_path, MINIMAL_PNG).expect("write fixture image");
-    std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", &png_path);
+    install_clipboard_fixture();
     let prompt_stash: std::sync::Arc<std::sync::Mutex<pa_tui::prompt_stash::PromptStashStore>> =
         std::sync::Arc::default();
     let make_options = || pa_tui::interactive::InteractiveOptions {
@@ -3937,11 +3956,9 @@ async fn tui_prompt_stash_restores_a_pasted_image_with_the_draft() {
     let session_dir = agent_dir.join("sessions");
     std::fs::create_dir_all(&session_dir).expect("session dir");
     // A one-pixel PNG: the fixture stands in for the system clipboard (no display server).
-    let png_path = dir.path().join("fixture.png");
-    std::fs::write(&png_path, MINIMAL_PNG).expect("write fixture image");
     // The seam only applies to the paste path (ctrl+v). The var stays set for
     // the whole process: a cross-test remove would race the parallel stash tests.
-    std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", &png_path);
+    install_clipboard_fixture();
     let supervisor = spawn_supervisor(dir.path());
     let script = serde_json::json!({
         "engine": "faux",
@@ -4075,9 +4092,7 @@ async fn tui_ctrl_s_stashes_and_restores_the_prompt_draft() {
     let session_dir = agent_dir.join("sessions");
     std::fs::create_dir_all(&session_dir).expect("session dir");
     // The draft carries a pasted image, so the manual stash must round-trip the bytes too.
-    let png_path = dir.path().join("fixture.png");
-    std::fs::write(&png_path, MINIMAL_PNG).expect("write fixture image");
-    std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", &png_path);
+    install_clipboard_fixture();
     let supervisor = spawn_supervisor(dir.path());
     let script = serde_json::json!({
         "engine": "faux",
@@ -5993,18 +6008,22 @@ async fn assert_close_reason_survives_late_turn_status(reason: &str, explanation
         !rendered.contains("reply must not arrive"),
         "held response leaked:\n{rendered}"
     );
-    let last = outcome.frames.last().expect("final frame");
     assert!(
-        last.contains("turn failed: prompt cancelled"),
-        "the post-close cancellation must reach the frame:\n{last}"
+        !rendered.contains("timed out waiting for the headless render condition"),
+        "the close/cancellation render barrier must complete:\n{rendered}"
     );
+    // Verify coexistence after the cancellation status in one observed frame.
+    // A later successful reconnect may resync the transcript again.
+    let checkpoint = outcome
+        .frames
+        .iter()
+        .find(|frame| frame.contains("turn failed: prompt cancelled") && frame.contains(&error_row))
+        .unwrap_or_else(|| {
+            panic!("the close error and cancellation must share a frame:\n{rendered}")
+        });
     assert!(
-        last.contains(&error_row),
-        "close error row must persist after cancellation:\n{last}"
-    );
-    assert!(
-        !last.contains(&format!("session closed ({reason})")),
-        "info downgrade remains:\n{last}"
+        !checkpoint.contains(&format!("session closed ({reason})")),
+        "info downgrade remains:\n{checkpoint}"
     );
     drop(supervisor);
 }

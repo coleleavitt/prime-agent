@@ -30,7 +30,7 @@ fn client() -> reqwest::Client {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     slot.get_or_insert_with(|| {
-        reqwest::Client::builder()
+        crate::utils_inner::tls::http_client_builder()
             .http1_only()
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
@@ -54,7 +54,7 @@ fn discard_pooled_connections() {
 fn h2_alpn_client() -> reqwest::Client {
     H2_ALPN_CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            crate::utils_inner::tls::http_client_builder()
                 .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .expect("reqwest h2 client")

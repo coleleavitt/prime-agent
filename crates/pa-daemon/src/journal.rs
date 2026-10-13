@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
@@ -14,6 +14,16 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub(crate) const RECOVERY_JOURNAL_SUFFIX: &str = ".recovery.jsonl";
+
+/// The worker's orphan-process journal file suffix (TS
+/// `${workerId}.orphans.jsonl`, beside the recovery journal).
+pub(crate) const ORPHAN_JOURNAL_SUFFIX: &str = ".orphans.jsonl";
+
+/// The worker's orphan-process journal path under its descriptor dir.
+#[must_use]
+pub(crate) fn orphan_journal_path(descriptor_dir: &Path, worker_id: &str) -> std::path::PathBuf {
+    descriptor_dir.join(format!("{worker_id}{ORPHAN_JOURNAL_SUFFIX}"))
+}
 
 pub(crate) fn validate_journal_file(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
@@ -491,6 +501,87 @@ pub(crate) fn rewrite_records(path: &Path, records: &[Value], finalize: Finalize
         File::open(parent)?.sync_all()?;
     }
     Ok(())
+}
+
+// Complete records must decode exactly before recovery can replace their history.
+// Only an unterminated final JSON fragment may end with incomplete UTF-8.
+pub(crate) fn decode_journal_lines<'a>(bytes: &'a [u8], path: &Path) -> Result<Vec<&'a str>> {
+    let mut lines = Vec::new();
+    let mut records = bytes.split(|byte| *byte == b'\n').peekable();
+    while let Some(raw) = records.next() {
+        match std::str::from_utf8(raw) {
+            Ok(line) => lines.push(line),
+            Err(error) => {
+                let incomplete_final = records.peek().is_none()
+                    && !bytes.ends_with(b"\n")
+                    && serde_json::from_slice::<Value>(raw).is_err_and(|error| error.is_eof());
+                if !incomplete_final {
+                    return Err(error)
+                        .with_context(|| format!("invalid UTF-8 in journal {}", path.display()));
+                }
+            }
+        }
+    }
+    Ok(lines)
+}
+
+pub(crate) struct JournalWriteOwner {
+    file: File,
+}
+
+impl Drop for JournalWriteOwner {
+    fn drop(&mut self) {
+        // Closing one descriptor can leave the lock held by an inherited copy.
+        if let Err(error) = pa_core::platform::unlock_file(&self.file) {
+            // Drop has no error channel; report without panicking if stderr is unavailable.
+            let _ = writeln!(
+                std::io::stderr(),
+                "Prime Agent: failed to release journal ownership: {error}"
+            );
+        }
+    }
+}
+
+// Keep the sidecar inode stable: unlinking can admit a second ownership inode.
+// Empty sidecars remain after retirement; directory entries/inodes can accumulate.
+// Explicit unlock is attempted on guard drop; a failure leaves close as fallback.
+pub(crate) fn journal_write_owner(path: &Path) -> Result<JournalWriteOwner> {
+    let mut ownership_path = path.as_os_str().to_os_string();
+    ownership_path.push(".writer-lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(std::path::PathBuf::from(ownership_path))
+        .with_context(|| format!("open journal ownership {}", path.display()))?;
+    pa_core::platform::try_lock_exclusive(&file)
+        .with_context(|| format!("acquire journal ownership {}", path.display()))?;
+    Ok(JournalWriteOwner { file })
+}
+
+pub(crate) fn tail_is_torn(path: &Path) -> Result<bool> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("open journal tail {}", path.display()));
+        }
+    };
+    if file
+        .metadata()
+        .with_context(|| format!("stat journal tail {}", path.display()))?
+        .len()
+        == 0
+    {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::End(-1))
+        .with_context(|| format!("seek journal tail {}", path.display()))?;
+    let mut tail = [0u8];
+    file.read_exact(&mut tail)
+        .with_context(|| format!("read journal tail {}", path.display()))?;
+    Ok(tail[0] != b'\n')
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -987,6 +1078,8 @@ const CLOUD_INBOX_WINDOW: usize = 50_000;
 /// plus the latest queue snapshot per session, plus the request-id-keyed
 /// cloud inbox admissions (the cross-boundary receiver dedupe).
 pub struct WorkerRecoveryJournal {
+    // Fences competing writers (a rival open or settle) for this journal's lifetime.
+    _write_owner: JournalWriteOwner,
     path: std::path::PathBuf,
     latest: HashMap<String, WorkerRecoveryRecord>,
     queue_snapshots: HashMap<String, WorkerQueueSnapshotRecord>,
@@ -1011,7 +1104,8 @@ impl WorkerRecoveryJournal {
     ///
     /// # Errors
     ///
-    /// Returns an error when the parent directory cannot be created, or
+    /// Returns an error when the parent directory cannot be created, write
+    /// ownership cannot be acquired (another writer holds the journal), or
     /// the queue-snapshot pass cannot read an existing journal.
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_sync(path, File::sync_all)
@@ -1025,6 +1119,9 @@ impl WorkerRecoveryJournal {
             pa_core::platform::perms::create_dir_all_private(parent)?;
         }
         validate_journal_file(path)?;
+        // Write ownership before any replay: a rival writer must not rewrite
+        // (repair, migrate, compact) a journal another worker still appends to.
+        let write_owner = journal_write_owner(path)?;
         // A failed append may have left complete bytes in the OS page cache.
         // Sync the journal before trusting ANY bytes on reopen, including a
         // process restart that cannot retain the previous process's fd.
@@ -1048,7 +1145,8 @@ impl WorkerRecoveryJournal {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(error).with_context(|| format!("open {} before replay", path.display()));
+                return Err(error)
+                    .with_context(|| format!("open {} before replay", path.display()));
             }
         }
         // The file itself is private from its first write (the creation
@@ -1082,6 +1180,7 @@ impl WorkerRecoveryJournal {
             }
         }
         Ok(WorkerRecoveryJournal {
+            _write_owner: write_owner,
             path: path.to_path_buf(),
             latest: folded.latest,
             queue_snapshots: folded.queue_snapshots,
@@ -1187,8 +1286,8 @@ impl WorkerRecoveryJournal {
     ///
     /// # Errors
     ///
-    /// Never errors: a missing or unreadable journal reads as an empty
-    /// set (the `Result` wrapper keeps the reading seam uniform).
+    /// Returns an error when an existing journal cannot be read or is
+    /// corrupted mid-file; a missing journal reads as an empty set.
     pub fn read_latest(path: &Path) -> Result<Vec<WorkerRecoveryRecord>> {
         let scan = scan_worker_journal(path)?;
         if scan.corruption == JournalCorruption::MidFile {
@@ -1767,6 +1866,7 @@ mod tests {
         let record: Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(record["busy"], false);
         assert_eq!(record["operation"], "turn_end");
+        drop(journal);
         let reopened = WorkerRecoveryJournal::open(&path).unwrap();
         let latest = reopened.get_latest();
         assert_eq!(latest.len(), 1);
@@ -1855,6 +1955,7 @@ mod tests {
         // the compact keeps the LATEST snapshot per session: the
         // settle's (empty) lanes, not the admission's parked row.
         assert_eq!(snapshot["steering"].as_array().map(Vec::len), Some(0));
+        drop(journal);
         let reopened = WorkerRecoveryJournal::open(&path).unwrap();
         assert!(!WorkerRecoveryJournal::read_interrupted(&path));
         let restored = reopened.latest_queue_snapshot("s1").unwrap();
@@ -1932,6 +2033,7 @@ mod tests {
                 Some(("msgreq_tx1", &receipt)),
             )
             .unwrap();
+        drop(journal);
         let reloaded = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(
             reloaded.cloud_inbox_receipt("msgreq_tx1"),
@@ -1992,6 +2094,7 @@ mod tests {
         fs::write(&path, &torn).unwrap();
         // The reload: the torn transaction replays as nothing (no
         // snapshot, no key) and the file is repaired (the fragment gone).
+        drop(journal);
         let reloaded = WorkerRecoveryJournal::open(&path).unwrap();
         assert!(
             reloaded.cloud_inbox_receipt("msgreq_tx2").is_none(),
@@ -2007,6 +2110,7 @@ mod tests {
             "the torn fragment was truncated: {repaired}"
         );
         // The next append writes onto the clean boundary and replays.
+        drop(reloaded);
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal
             .record_queue_checkpoint(
@@ -2020,6 +2124,7 @@ mod tests {
                 Some(("msgreq_tx3", &receipt)),
             )
             .unwrap();
+        drop(journal);
         let reloaded = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(
             reloaded.cloud_inbox_receipt("msgreq_tx3"),
@@ -2059,6 +2164,8 @@ mod tests {
                 .record("sess-a", "sess-a-file", None, false, "turn_end")
                 .is_err()
         );
+        // The restart: the quarantined writer is gone before the reopen.
+        drop(journal);
         let before = fs::read(&path).unwrap();
         // Even a readable complete line is not admissible if the restart
         // cannot successfully sync the journal before replaying it.
@@ -2069,7 +2176,6 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read(&path).unwrap(), before);
-        drop(journal);
         let mut reopened = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(reopened.cloud_inbox_receipt("msgreq_sync"), Some(&receipt));
         // Settling all sessions compacts via synced replacement + parent
@@ -2077,6 +2183,7 @@ mod tests {
         reopened
             .record("sess-a", "sess-a-file", None, false, "turn_end")
             .unwrap();
+        drop(reopened);
         let settled = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(settled.cloud_inbox_receipt("msgreq_sync"), Some(&receipt));
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 3);
@@ -2106,17 +2213,20 @@ mod tests {
         let mut bytes = fs::read(&path).unwrap();
         bytes.pop(); // valid complete transaction without newline
         fs::write(&path, bytes).unwrap();
+        drop(journal);
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(journal.cloud_inbox_receipt("msgreq_v"), Some(&receipt));
         journal
             .record("sess-a", "sess-a-file", None, false, "turn_end")
             .unwrap();
+        drop(journal);
         assert_eq!(
             WorkerRecoveryJournal::open(&path)
                 .unwrap()
                 .cloud_inbox_receipt("msgreq_v"),
             Some(&receipt)
         );
+        let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         // Compaction has replaced the original transaction. Append another
         // keyed checkpoint to test a future-format transaction.
         journal
@@ -2131,6 +2241,7 @@ mod tests {
                 Some(("msgreq_v2", &receipt)),
             )
             .unwrap();
+        drop(journal);
         let content = fs::read_to_string(&path).unwrap();
         let last = content.lines().last().unwrap();
         let mut value: Value = serde_json::from_str(last).unwrap();
@@ -2213,6 +2324,7 @@ mod tests {
             Some(0o700),
             "the parent is tightened to the private mode"
         );
+        drop(journal);
         let reopened = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(
             reopened.cloud_inbox_receipt("msgreq_normal"),
@@ -2280,6 +2392,7 @@ mod tests {
         let before = fs::symlink_metadata(&path).unwrap();
         let bytes = fs::read(&path).unwrap();
 
+        drop(journal);
         let reopened = WorkerRecoveryJournal::open(&path).unwrap();
 
         let after = fs::symlink_metadata(&path).unwrap();
@@ -2444,6 +2557,7 @@ mod tests {
         journal
             .record("sess-c", "sess-c-file", None, true, "prompt_accepted")
             .unwrap();
+        drop(journal);
         let valid = fs::read_to_string(&path).unwrap();
         // The corruption: a bad line, then a valid append after it.
         fs::write(&path, format!("{{this is not json\n{valid}")).unwrap();
@@ -2497,6 +2611,7 @@ mod tests {
         assert_ne!(corrupted, content, "the digest must be corruptible");
         fs::write(&path, corrupted).unwrap();
         // The scan drops the whole transaction and repairs the tail.
+        drop(journal);
         let reloaded = WorkerRecoveryJournal::open(&path).unwrap();
         assert!(
             reloaded.cloud_inbox_receipt("msgreq_tx4").is_none(),
@@ -2507,5 +2622,87 @@ mod tests {
             "a mismatched seal never replays its queue row"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Upstream #3387: a rival writer (a second open, or the supervisor's
+    /// settle) is fenced while another worker still appends, and the
+    /// active append survives intact.
+    #[test]
+    fn competing_worker_writers_cannot_replace_an_active_append() {
+        for contender in ["open", "settle"] {
+            let path = temp_path("active-append.recovery.jsonl");
+            let mut owner = WorkerRecoveryJournal::open(&path).unwrap();
+            owner
+                .record("s1", "sess1", None, true, "prompt_accepted")
+                .unwrap();
+            let first = owner.get_latest().pop().unwrap();
+            let record = WorkerRecoveryRecord {
+                active_session_id: "s2".to_string(),
+                session_id: "sess2".to_string(),
+                session_file: None,
+                busy: true,
+                operation: "prompt_accepted".to_string(),
+                recorded_at: "2026-10-11T00:00:01Z".to_string(),
+            };
+            let mut bytes = serde_json::to_vec(&record).unwrap();
+            bytes.push(b'\n');
+            let split = bytes.len() / 2;
+            let mut active_append = OpenOptions::new().append(true).open(&*path).unwrap();
+            active_append.write_all(&bytes[..split]).unwrap();
+            let expected = fs::read(&path).unwrap();
+            let result = match contender {
+                "open" => WorkerRecoveryJournal::open(&path).map(drop),
+                "settle" => WorkerRecoveryJournal::settle_busy_records(&path, "worker_gave_up"),
+                _ => unreachable!("known contender"),
+            };
+            assert_eq!(fs::read(&path).unwrap(), expected);
+            assert!(
+                result.is_err(),
+                "a rival writer must not acquire the active journal"
+            );
+            active_append.write_all(&bytes[split..]).unwrap();
+            active_append.sync_all().unwrap();
+            drop(active_append);
+            drop(owner);
+            let reopened = WorkerRecoveryJournal::open(&path).unwrap();
+            let mut latest = reopened.get_latest();
+            latest.sort_by(|left, right| left.active_session_id.cmp(&right.active_session_id));
+            assert_eq!(latest, vec![first, record]);
+        }
+    }
+
+    /// Upstream #3387: dropping the journal releases write ownership even
+    /// while an inherited duplicate of the lock descriptor survives, and
+    /// closing that duplicate never releases the successor's ownership.
+    #[cfg(unix)]
+    #[test]
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "duplicates the private lifetime guard to model an inherited descriptor"
+    )]
+    fn dropping_a_journal_releases_ownership_while_a_duplicate_handle_survives() {
+        let path = temp_path("duplicate-owner.recovery.jsonl");
+        let mut owner = WorkerRecoveryJournal::open(&path).unwrap();
+        owner
+            .record("s1", "sess1", None, true, "prompt_accepted")
+            .unwrap();
+        let expected = owner.get_latest();
+        let inherited = owner._write_owner.file.try_clone().unwrap();
+        assert!(WorkerRecoveryJournal::open(&path).is_err());
+
+        drop(owner);
+        let successor = WorkerRecoveryJournal::open(&path)
+            .expect("logical owner drop releases its lock even while a duplicate handle survives");
+        assert_eq!(successor.get_latest(), expected);
+        assert!(WorkerRecoveryJournal::open(&path).is_err());
+
+        drop(inherited);
+        assert!(
+            WorkerRecoveryJournal::open(&path).is_err(),
+            "closing the old handle must not release the successor's ownership",
+        );
+        drop(successor);
+        let reopened = WorkerRecoveryJournal::open(&path).unwrap();
+        assert_eq!(reopened.get_latest(), expected);
     }
 }

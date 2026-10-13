@@ -212,7 +212,6 @@ async def spawn(
     cwd: str | None = None,
     target: str | None = None,
     token_budget: int | None = None,
-    kind: str | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -232,8 +231,6 @@ async def spawn(
     grant is drawn from this session's pool and must fit what is left and
     the per-depth cap; without one it funds the child alone. Omitted, a
     budgeted session grants whatever is left (up to the per-depth cap).
-    ``kind`` selects a dedicated child kind; ``"decision"`` spawns the Decision API
-    child (the model comes from the decisionApi.systemOneModel setting).
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
@@ -243,8 +240,6 @@ async def spawn(
         not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget <= 0
     ):
         raise TypeError(f"token_budget must be a positive int, got {token_budget!r}")
-    if kind is not None and kind != "decision":
-        raise TypeError(f"kind must be 'decision' or None, got {kind!r}")
     kwargs: dict[str, Any] = {"name": name}
     if model is not None:
         kwargs["model"] = model
@@ -256,8 +251,6 @@ async def spawn(
         kwargs["target"] = target
     if token_budget is not None:
         kwargs["token_budget"] = token_budget
-    if kind is not None:
-        kwargs["kind"] = kind
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -1027,7 +1020,6 @@ class _RLMNamespace:
         cwd: str | None = None,
         target: str | None = None,
         token_budget: int | None = None,
-        kind: str | None = None,
     ) -> RLMSpawnHandle:
         return await spawn(
             prompt,
@@ -1037,7 +1029,6 @@ class _RLMNamespace:
             cwd=cwd,
             target=target,
             token_budget=token_budget,
-            kind=kind,
         )
 
     async def create_session(

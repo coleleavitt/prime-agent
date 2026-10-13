@@ -434,6 +434,7 @@ pub(crate) struct SummaryInputs {
     pub(crate) subagents_running: bool,
     /// The model's context window, for the summary's context percentage.
     pub(crate) model_context_window: Option<u64>,
+    pub(crate) progress_note: Option<String>,
 }
 
 impl SummaryInputs {
@@ -470,6 +471,7 @@ impl SummaryInputs {
             quota_parked: engine.is_quota_parked(),
             subagents_running: engine.has_running_subagents(),
             model_context_window: engine.model_context_window(),
+            progress_note: engine.progress_note(),
         }
     }
 }
@@ -603,6 +605,7 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         created: store.map(|s| s.header.timestamp.clone()),
         modified,
         first_message: store.and_then(crate::session_store::SessionFile::first_message),
+        progress_note: inputs.progress_note,
         parent_session_path: store.and_then(|store| store.header.parent_session.clone()),
         parent_active_session_id: core.parent_active_session_id.clone(),
         parent_session_id: core.parent_session_id.clone(),

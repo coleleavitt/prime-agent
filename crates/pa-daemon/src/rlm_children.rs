@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use pa_core::kernel::rlm_runtime::create_default_rlm_subagent_session_name;
+pub use pa_core::session_engine::rlm_host::DEFAULT_RLM_MAX_DEPTH;
 use pa_core::session_engine::rlm_host::{
     RlmChildResult,
     RlmCreateSessionHandle,
@@ -21,6 +22,9 @@ use pa_core::session_engine::rlm_host::{
     RlmSubagentActivity,
     RlmSubagentEntry,
     RlmSubagentHost,
+    rlm_child_session_dir,
+    rlm_depth_limit_error,
+    spawn_name_unavailable_error,
 };
 use pa_core::session_engine::rlm_notices::{
     RlmChildTerminalNotice,
@@ -44,8 +48,6 @@ use crate::rlm_child_model::{
 };
 use crate::supervisor_link::SupervisorLink;
 use crate::util::now_ms;
-
-pub const DEFAULT_RLM_MAX_DEPTH: u32 = 2;
 
 /// Close reasons: `Killed` — jobs cancel, the session file archives;
 /// `Shutdown` — the resume entry survives, so a later scheduled wake can
@@ -193,6 +195,14 @@ struct ChildRecord {
     /// The parent session closed while this child ran: the settle watcher
     /// exits without a notice — none is owed to a session being torn down.
     closed_by_parent: bool,
+    /// Confirmed retirement completed its roster, notice and settle bookkeeping.
+    retirement_finished: bool,
+    /// Claim the synchronous delete notifier once across interrupted retirement retries.
+    retirement_notified: bool,
+    /// Claim the retirement roster event once even if a later await is canceled.
+    retirement_roster_emitted: bool,
+    /// The final unregister acknowledged completion; retries must not repeat it.
+    usage_registration_forgotten: bool,
     /// The child's durable session file: the usage walk's source.
     session_file: Option<String>,
     /// Rows of [`ChildRecord::session_file`] already folded into the
@@ -201,6 +211,8 @@ struct ChildRecord {
     /// nothing has been observed since the reseed, and the first delivery
     /// primes the cursor at the file's tail.
     attributed_rows: Option<usize>,
+    /// Frozen before delivery: cancellation and retries keep the same row identities.
+    pending_usage_report: Option<(RlmChildUsageReport, usize)>,
     /// A follow-up usage watcher is live for this retained child
     /// (delayed agent messaging after the task run settled).
     usage_watch_live: bool,
@@ -336,6 +348,18 @@ pub type DeleteNotifier = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
 pub(crate) type ChildUpdateSink = std::sync::Arc<dyn Fn(Value) + Send + Sync>;
 
+#[derive(Debug, Clone, Copy)]
+enum RetirementIntent {
+    Delete { was_running: bool },
+    Close,
+}
+
+#[derive(Clone)]
+struct RetiredChild {
+    record: Arc<Mutex<ChildRecord>>,
+    intent: RetirementIntent,
+}
+
 struct SupervisorChildSessionsInner {
     link: Arc<SupervisorLink>,
     agent_dir: PathBuf,
@@ -352,6 +376,8 @@ struct SupervisorChildSessionsInner {
     /// id): nothing else owns them, so the registry removes each when its child leaves the
     /// registry (delete or close), and the rest when the registry itself goes.
     ephemeral_child_dirs: std::sync::Mutex<std::collections::HashMap<String, PathBuf>>,
+    /// Confirmed-dead children whose final usage remains owed. Not roster or slot owners.
+    retired_usage: std::sync::Mutex<Vec<RetiredChild>>,
     /// Spawn-name reservations held until admission is durable, so
     /// parallel same-name spawns cannot both admit (default names never reserve).
     pending_spawn_names: std::sync::Mutex<std::collections::HashSet<String>>,
@@ -418,6 +444,7 @@ impl SupervisorChildSessions {
                 identity: std::sync::Mutex::new(ParentIdentity::with_default_depth()),
                 children: Mutex::new(Vec::new()),
                 ephemeral_child_dirs: std::sync::Mutex::new(std::collections::HashMap::new()),
+                retired_usage: std::sync::Mutex::new(Vec::new()),
                 pending_spawn_names: std::sync::Mutex::new(std::collections::HashSet::new()),
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
                 turn_done: tokio::sync::watch::Sender::new(0),
@@ -701,6 +728,11 @@ impl SupervisorChildSessions {
                 usage_rearm: false,
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                retirement_finished: false,
+                retirement_notified: false,
+                retirement_roster_emitted: false,
+                usage_registration_forgotten: false,
+                pending_usage_report: None,
                 last_emitted_status: None,
                 answer_text: None,
             })));
@@ -734,8 +766,13 @@ impl SupervisorChildSessions {
                 prompt_admitted: true,
                 error: None,
                 closed_by_parent: false,
+                retirement_finished: false,
+                retirement_notified: false,
+                retirement_roster_emitted: false,
+                usage_registration_forgotten: false,
                 session_file: None,
                 attributed_rows: Some(0),
+                pending_usage_report: None,
                 usage_watch_live: false,
                 usage_rearm: false,
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
@@ -894,30 +931,6 @@ impl SupervisorChildSessionsInner {
         sink(row);
     }
 
-    pub(crate) async fn emit_child_removal(&self, record: &Arc<Mutex<ChildRecord>>) {
-        let sink = self
-            .child_update_sink
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let Some(sink) = sink else {
-            return;
-        };
-        let row = {
-            let record = record.lock().await;
-            json!({
-                "id": record.rlm_child_id,
-                "activeSessionId": record.active_session_id,
-                "sessionName": record.session_name,
-                "label": record.session_name,
-                "status": "cancelled",
-                "sessionDir": record.session_dir,
-                "error": "Deleted by parent orchestrator",
-            })
-        };
-        sink(row);
-    }
-
     /// Wait for the parent turn that spawned a task to complete (generation
     /// strictly greater than the one captured at spawn admission). Bounded:
     /// a turn that never settles releases the child anyway.
@@ -961,7 +974,7 @@ impl SupervisorChildSessionsInner {
         let children = self.children.lock().await;
         for record in children.iter() {
             if record.lock().await.session_name == name {
-                return Err(spawn_name_unavailable(name, depth));
+                return Err(spawn_name_unavailable_error(name, depth));
             }
         }
         Ok(())
@@ -986,22 +999,15 @@ impl SupervisorChildSessionsInner {
 
     /// The per-child session directory under the parent's artifacts tree.
     fn child_session_dir(&self, child_id: &str, identity: &ParentIdentity) -> Result<PathBuf> {
-        let base = if let Some(session_id) = &identity.session_id {
-            self.agent_dir
-                .join("session-artifacts")
-                .join(session_id)
-                .join(child_id)
-        } else {
+        let dir = rlm_child_session_dir(&self.agent_dir, identity.session_id.as_deref(), child_id)
+            .with_context(|| format!("spawn RLM child session dir {child_id}"))?;
+        if identity.session_id.is_none() {
             // No persistent parent artifacts dir: an ephemeral temp dir, tracked for removal.
-            let base = std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}"));
             self.ephemeral_child_dirs
                 .lock_or_recover()
-                .insert(child_id.to_string(), base.clone());
-            base
-        };
-        std::fs::create_dir_all(&base)
-            .with_context(|| format!("create RLM child session dir {}", base.display()))?;
-        Ok(base)
+                .insert(child_id.to_string(), dir.clone());
+        }
+        Ok(dir)
     }
 
     /// Remove the ephemeral temp dir of a child that left the registry, or whose create
@@ -1043,13 +1049,6 @@ impl Drop for EphemeralChildDirs {
             children.inner.discard_all_ephemeral_child_dirs();
         }
     }
-}
-
-/// One source so the reservation refusal and the availability check stay byte-identical.
-fn spawn_name_unavailable(name: &str, depth: u32) -> anyhow::Error {
-    anyhow!(
-        "Agent name \"{name}\" is unavailable: an agent of that name already exists at depth {depth} under this parent"
-    )
 }
 
 mod delegation;

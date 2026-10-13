@@ -433,13 +433,7 @@ impl InProcessChildRecord {
     pub(crate) async fn entry(&self, now_ms: u64) -> RlmSubagentEntry {
         let state = self.state().await;
         let running = state.settled_status.is_none();
-        let progress_note = self
-            .engine
-            .rlm
-            .notes
-            .latest_note()
-            .await
-            .map(|(note, _)| note);
+        let progress_note = self.engine.rlm.notes.latest_note().map(|(note, _)| note);
         let activity_stale_ms = running
             .then(|| {
                 let stale_candidate = state

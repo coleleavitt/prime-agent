@@ -445,6 +445,8 @@ async fn fetch_messages(
         .request(DaemonCommand::GetMessages {
             id: None,
             active_session_id: daemon_session_id.to_string(),
+            before: None,
+            capabilities: None,
             rest: Map::default(),
         })
         .await?;

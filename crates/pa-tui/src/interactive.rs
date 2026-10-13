@@ -62,7 +62,7 @@ pub use run::{run_interactive, run_interactive_agents_view_open};
 use tokio::sync::mpsc;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Which session the interactive run opens.
 #[derive(Debug, Clone, PartialEq, Eq)]

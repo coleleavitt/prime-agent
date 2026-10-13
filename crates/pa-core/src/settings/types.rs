@@ -218,16 +218,6 @@ pub struct ImageSettings {
     pub block_images: Option<bool>,
 }
 
-/// `decisionApi`: the experimental Decision API's model configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DecisionApiSettings {
-    /// The System 1 decision model reference ("provider/model-id" or a bare
-    /// id), resolved through the model registry exactly like `imageModel`.
-    /// Unset (or unresolvable): the Decision API stays off.
-    pub system_one_model: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingBudgetsSettings {
@@ -375,9 +365,14 @@ pub struct Settings {
     /// session model does not accept image input. Default: none - image turns on a text-only model
     /// fail with a configuration hint instead of silently dropping the images.
     pub image_model: Option<String>,
-    /// The experimental Decision API's model configuration.
-    pub decision_api: Option<DecisionApiSettings>,
     pub autonomous: Option<AutonomousSettings>,
+    /// Custom shell that runs every kernel `bash()` and user-bash command as
+    /// `<shell> -c <command>`: an absolute path to an existing executable,
+    /// validated once at session start (a bad value fails session creation
+    /// naming this setting). Project `.prime/agent/settings.json` overrides
+    /// the global value (TS parity), so opening an untrusted repo lets it
+    /// choose the binary that wraps every agent shell command - review
+    /// project settings before running the agent there.
     pub shell_path: Option<String>,
     pub quiet_startup: Option<bool>,
     pub shell_command_prefix: Option<String>,

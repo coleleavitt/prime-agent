@@ -351,12 +351,16 @@ mod tests {
                     resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
                     extra_builtin_skill_overrides: Vec::new(),
                     rlm_subagent_host: None,
+                    rlm_usage_store: None,
+                    progress_note_emit: None,
+                    daemonless: true,
                     rlm_depth: None,
                     model_info: Some(model.clone()),
                     prewarm_ipython_kernel: None,
                     on_background_work_settled: None,
                     queued_goal_context_purge: None,
                     queued_steering_probe: None,
+                    should_stop_after_turn: None,
                     image_model_router: None,
                     steering_mode: None,
                     follow_up_mode: None,
@@ -379,6 +383,7 @@ mod tests {
             &model,
             &goal,
             &run,
+            /*root_node*/ None,
         );
         let autonomous = run.state_handle();
         Bed {

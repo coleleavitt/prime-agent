@@ -204,6 +204,11 @@ impl SupervisorChildSessionsInner {
             usage_rearm: false,
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            retirement_finished: false,
+            retirement_notified: false,
+            retirement_roster_emitted: false,
+            usage_registration_forgotten: false,
+            pending_usage_report: None,
             last_emitted_status: None,
             answer_text: None,
         }));

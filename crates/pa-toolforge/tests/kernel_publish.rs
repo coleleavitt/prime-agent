@@ -144,6 +144,10 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,
+        should_stop_after_turn: None,
+        rlm_usage_store: None,
+        progress_note_emit: None,
+        daemonless: true,
         rlm_token_allowance: None,
     })
     .await

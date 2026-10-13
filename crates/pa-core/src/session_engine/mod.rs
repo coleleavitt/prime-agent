@@ -14,7 +14,6 @@ pub mod compaction_trace;
 pub mod compaction_utils;
 pub(crate) mod computer_use_host;
 pub mod context_limit;
-pub mod decision_api;
 pub mod engine;
 pub mod error_classify;
 pub mod factory_host;
@@ -646,5 +645,3 @@ mod compaction_outcome_tests;
 
 #[cfg(test)]
 mod compaction_unblocked_tests;
-#[cfg(test)]
-mod decision_runtime_tests;

@@ -600,6 +600,7 @@ async fn flush_pending_usage(host: &InProcessRlmHost, record: &Arc<InProcessChil
     parent
         .rlm_usage
         .record_child_usage(crate::session_engine::rlm_usage::RlmChildUsageReport {
+            report_id: uuid::Uuid::new_v4().to_string(),
             rlm_child_id: record.rlm_child_id.clone(),
             batches,
         })

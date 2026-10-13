@@ -17,6 +17,7 @@ mod harness_dir;
 mod model_resolution;
 mod plan_mode;
 mod quota_park;
+mod reload;
 mod rlm_children;
 mod saved_context;
 mod session;

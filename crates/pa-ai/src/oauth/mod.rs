@@ -103,7 +103,7 @@ impl CodexHttp for ReqwestCodexHttp {
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<CodexHttpResponse, String>> + Send + 'a>>
     {
         Box::pin(async move {
-            let client = reqwest::Client::builder()
+            let client = crate::utils_inner::tls::http_client_builder()
                 .timeout(Duration::from_millis(timeout_ms))
                 .build()
                 .map_err(|error| error.to_string())?;

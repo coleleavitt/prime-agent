@@ -17,6 +17,7 @@ mod hover_band;
 mod key_bindings;
 mod notices;
 mod optimistic_rename;
+mod progress_note;
 mod render_pulse;
 mod reply;
 mod running_lines;

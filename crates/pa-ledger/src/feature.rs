@@ -26,7 +26,7 @@ use pa_telemetry::Properties;
 use pa_types::trace_context::SPAN_ATTRIBUTES_TARGET;
 use serde_json::Value;
 
-use crate::extract::{IPYTHON_TOOL_NAME, observe_message, tool_result_text};
+use crate::extract::{observe_message, tool_result_text};
 use crate::fingerprint::fingerprint_tool_result_text;
 use crate::harness::{
     HarnessDocument,
@@ -686,9 +686,9 @@ impl SessionFeature for FailureLedgerFeature {
             );
         }
         let code = result.args.get("code").and_then(Value::as_str);
-        let (true, IPYTHON_TOOL_NAME, Some(code), Some(is_error)) = (
-            self.inner.options.resolution_index,
-            result.tool_name.as_str(),
+        let (true, Some(code), Some(is_error)) = (
+            self.inner.options.resolution_index
+                && pa_types::ai::is_python_tool_name(&result.tool_name),
             code,
             executed_cell(&result.details),
         ) else {

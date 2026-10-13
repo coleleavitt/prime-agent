@@ -77,7 +77,6 @@ use turn_types::{
 
 mod model;
 
-use model::persisted_rlm_max_depth;
 pub(crate) use model::saved_session_context_from_parts;
 
 mod config;
@@ -99,6 +98,7 @@ mod image_delegation;
 // images through the same image-model child.
 mod vision_read;
 
+mod reload;
 mod session_engine_impl;
 
 mod turn;
@@ -128,10 +128,6 @@ pub(crate) type SettledKernelRelease =
 
 /// A [`SessionEngine`] running real agent turns.
 pub struct AgentSessionEngine {
-    /// Latest decision reply per live decision child; shared with its kernel
-    /// host handler (`decision_api.decision`).
-    pub(crate) decision_replies:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, Option<Value>>>>,
     pub(crate) runtime: crate::async_safe_runtime::AsyncSafeRuntime,
     pub(crate) config: AgentEngineConfig,
     /// The session-scoped ACP MCP store, shared with the core engine's prompt gating.
@@ -243,7 +239,9 @@ pub struct AgentSessionEngine {
     /// Built once on the first prompt, reused across prompts: long-running
     /// arms clone the Arc and release this mutex before their awaits, so
     /// every read seam answers while a turn streams.
-    pub(crate) session: tokio::sync::Mutex<Option<Arc<CoreSessionEngine>>>,
+    pub(crate) session: Arc<tokio::sync::Mutex<Option<Arc<CoreSessionEngine>>>>,
+    threshold_yielded: Arc<std::sync::atomic::AtomicBool>,
+    threshold_checks_enabled: Arc<std::sync::atomic::AtomicBool>,
     /// The build gate: at most one `build_session` in flight; the eager build
     /// and the first demand seam meet at one build.
     pub(crate) session_build: tokio::sync::Mutex<()>,
@@ -270,11 +268,23 @@ pub struct AgentSessionEngine {
     /// session. `None` without a worker pump.
     compaction_summary_sink:
         std::sync::Mutex<Option<pa_core::session_engine::compaction_exec::SummaryDeltaSink>>,
+    /// The built session's progress-note store, mirrored at every build
+    /// adoption; `None` until the first build.
+    pub(crate) progress_notes: std::sync::Mutex<
+        Option<std::sync::Arc<pa_core::session_engine::rlm_host::RlmProgressNotes>>,
+    >,
+    /// The worker's accepted-note announcer, threaded into every session
+    /// build; `None` without a worker pump.
+    progress_note_emit:
+        std::sync::Mutex<Option<pa_core::session_engine::rlm_host::RlmProgressNoteEmit>>,
     /// The attribution producer the children registry's sink last got:
     /// children outlive a rebuild, so their spawn registrations are adopted
     /// forward.
     usage_producer: std::sync::Mutex<
         Option<std::sync::Arc<pa_core::session_engine::rlm_usage::RlmChildUsageAttributions>>,
+    >,
+    rlm_usage_store: std::sync::Mutex<
+        Option<std::sync::Arc<dyn pa_core::session_engine::rlm_usage::RlmChildUsageStore>>,
     >,
     own_summary: std::sync::Arc<std::sync::Mutex<Option<Value>>>,
     pub(crate) create_resources: std::sync::RwLock<CreateSessionResources>,
@@ -331,6 +341,13 @@ pub struct AgentSessionEngine {
     /// every model-turn attempt so retries keep serving it; cleared when the
     /// episode settles.
     pub(crate) image_route: std::sync::Mutex<Option<ImageRoute>>,
+    /// Serializes `/reload`'s whole live-input refresh: overlapping reloads
+    /// resolve the store at their own read times, so an earlier reload's
+    /// already-resolved key/header pair must never land over a later
+    /// reload's fresher pair (the last reload to run leaves the target
+    /// serving the newest store).
+    pub(crate) reload_lock: std::sync::Mutex<()>,
+
     /// Turn-boundary runs register their controller here;
     /// [`SessionEngine::abort_auto_compaction`] aborts whatever holds it.
     pub(crate) auto_compaction_abort: std::sync::Mutex<Option<std::sync::Arc<AbortController>>>,

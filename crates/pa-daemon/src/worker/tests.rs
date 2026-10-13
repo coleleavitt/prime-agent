@@ -14,7 +14,6 @@ async fn created_dispatch_worker() -> crate::test_support::InTestDir<std::sync::
         recovery_journal_path: dir.join("recovery.jsonl"),
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
-        decision_child: false,
     };
     let worker = std::sync::Arc::new(Worker::new(config, None));
     let created = worker
@@ -50,6 +49,7 @@ mod kill_broadcast_tests;
 mod queue_tests;
 mod summary_tests;
 mod warning_marker_tests;
+mod windowed_attach_tests;
 #[tokio::test]
 async fn background_refinement_event_is_fenced_to_its_review_session() {
     let dir = std::env::temp_dir().join(format!("pa-refine-event-{}", uuid::Uuid::new_v4()));
@@ -64,7 +64,6 @@ async fn background_refinement_event_is_fenced_to_its_review_session() {
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": [] })),
-            decision_child: false,
         },
         None,
     );

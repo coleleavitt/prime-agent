@@ -133,13 +133,17 @@ async fn faux_engine_with_telemetry(
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
+        rlm_usage_store: None,
+        progress_note_emit: None,
         rlm_depth: None,
+        daemonless: true,
         model_info: Some(model.clone()),
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,
         queued_steering_probe: None,
         rlm_token_allowance: None,
+        should_stop_after_turn: None,
     })
     .await
     .expect("the faux session assembles");
@@ -546,6 +550,7 @@ async fn autonomous_continuation_turns_cross_the_boundary_arms() {
         &model,
         &goal,
         &run,
+        /*root_node*/ None,
     );
     admit(
         &mut boundary,

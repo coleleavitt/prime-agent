@@ -193,6 +193,18 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
         })
 }
 
+/// The fingerprint source a tool name records: every name of the Python
+/// tool (`python_repl`, and the earlier `ipython`/`python`) is the one
+/// `ipython` source, so a failure keeps its id across the tool's rename and
+/// matches the records the TS fork wrote.
+fn canonical_source(source: &str) -> &str {
+    if pa_types::ai::is_python_tool_name(source) {
+        crate::extract::IPYTHON_TOOL_NAME
+    } else {
+        source
+    }
+}
+
 /// Fingerprint one failure.
 #[must_use]
 pub fn fingerprint_failure(
@@ -202,6 +214,7 @@ pub fn fingerprint_failure(
     raw_message: &str,
 ) -> FailureFingerprint {
     let message = normalize_failure_message(raw_message);
+    let source = source.map(canonical_source);
     let digest = Sha256::digest(canonical_identity(kind, source, exception_class, &message));
     FailureFingerprint {
         id: hex(&digest[..8]),
@@ -414,6 +427,25 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.id.len(), 16);
         assert!(a.id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn every_python_tool_name_fingerprints_as_the_ipython_source() {
+        // The model's Python tool was renamed `ipython` -> `python_repl`:
+        // the same failure keeps the id the ledger already recorded.
+        let fingerprint = |source| {
+            fingerprint_failure(
+                FailureKind::PythonException,
+                Some(source),
+                Some("KeyError"),
+                "KeyError: 'missing'",
+            )
+        };
+        let recorded = fingerprint("ipython");
+        assert_eq!(fingerprint("python_repl"), recorded);
+        assert_eq!(fingerprint("python"), recorded);
+        assert_eq!(recorded.source.as_deref(), Some("ipython"));
+        assert_ne!(fingerprint("bash").id, recorded.id);
     }
 
     #[test]

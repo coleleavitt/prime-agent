@@ -304,6 +304,7 @@ impl Worker {
             }
         }
         core.follow_up = retained_follow_up;
+        crate::worker::clear_withdrawn_progress_note(&core, self.engine.as_ref());
         let snapshot = Self::snapshot_locked(&core);
         drop(core);
         // The sweep may have settled the session: the verdict follows the remaining lanes.
@@ -338,7 +339,6 @@ mod tests {
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
-            decision_child: false,
         };
         let worker = Arc::new(Worker::new(config, None));
         let created = worker
@@ -536,7 +536,6 @@ mod tests {
             recovery_journal_path: dir.path().join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ack"] })),
-            decision_child: false,
         };
         let worker = Arc::new(Worker::new(config, None));
         let created = worker

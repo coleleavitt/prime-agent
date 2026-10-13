@@ -16,6 +16,7 @@ fancy-regex = "0.14"
 url = "2"
 regex = "1"
 ignore = "0.4"
+notify = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 anyhow = "1"
@@ -31,6 +32,7 @@ gif = { version = "0.14.2", default-features = false, features = ["std"] }
 image-webp = { version = "0.2.4", default-features = false }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "process"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 uuid = { version = "1", features = ["v4"] }
 
 [[bin]]

@@ -39,6 +39,10 @@ pub struct RlmWiring {
     /// Child-session machinery backing `rlm.spawn`/`rlm.create_session` and
     /// the roster/collect/delete surface.
     pub subagent_host: Option<Arc<dyn RlmSubagentHost>>,
+    pub usage_store: Option<Arc<dyn super::rlm_usage::RlmChildUsageStore>>,
+    /// Announces every accepted `rlm.progress.note`; `None` keeps the store
+    /// the only surface.
+    pub progress_note_emit: Option<super::rlm_host::RlmProgressNoteEmit>,
 }
 
 /// The embedding's cron wiring for the kernel's `rlm_heartbeat.*` host
@@ -185,7 +189,8 @@ pub fn wire_session_runtime(
         Arc::new(registry)
     });
     let rlm_usage = Arc::new(super::rlm_usage::RlmChildUsageAttributions::new(
-        session.clone(),
+        rlm.usage_store
+            .unwrap_or_else(|| Arc::new(super::rlm_usage::SessionUsageStore(session.clone()))),
     ));
     // The daemon supplies the child-session host; an embedding without
     // one keeps the no-children behavior, whose self-rename appends the
@@ -197,6 +202,7 @@ pub fn wire_session_runtime(
         model_registry,
         subagent_host,
         rlm_usage.clone(),
+        rlm.progress_note_emit,
     ));
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
     // The kernel's `rlm.harness` store calls.
@@ -253,15 +259,17 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
 /// leak its own paths into the kernel (#109). `cwd` is the SESSION's working directory.
+/// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
+/// `create_session`, not the kernel boot.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
 #[must_use]
 pub fn kernel_provisioner(
     session_id: String,
     handlers: HostRequestHandlers,
     python_skills: Vec<KernelPythonSkill>,
-    preimport_filter: crate::kernel::provisioner::PythonSkillPreimportFilter,
     cwd: std::path::PathBuf,
     agent_dir: &std::path::Path,
+    shell_path: Option<std::path::PathBuf>,
     snapshot_dir: Option<std::path::PathBuf>,
     on_restore: Option<crate::kernel::provisioner::RestoreCallback>,
     on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
@@ -279,11 +287,10 @@ pub fn kernel_provisioner(
             python: None,
             env,
             command_prefix: None,
-            shell_path: None,
+            shell_path,
             session_id: Some(session_id),
             host_handlers: handlers,
             python_skills,
-            preimport_filter: Some(preimport_filter),
             // Only persistent sessions (which have an artifact dir) get
             // a revivable snapshot (TS `snapshotDir`).
             snapshot_dir,

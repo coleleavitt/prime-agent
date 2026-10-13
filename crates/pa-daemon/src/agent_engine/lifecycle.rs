@@ -1,6 +1,8 @@
 //! The engine's lifecycle surface: the constructor and the session
 //! build/adopt/retire cycle, the closed-state markers, the skill
 //! expansion and session-command funnels, and the kernel host wiring.
+use std::sync::atomic::Ordering;
+
 use pa_types::sync::{MutexExt, RwLockExt};
 
 use super::{
@@ -140,7 +142,6 @@ impl AgentSessionEngine {
         // unseeded (None keeps the TS default "one-at-a-time").
         let queue_modes = std::sync::Mutex::new((None, None));
         Ok(Self {
-            decision_replies: Arc::default(),
             runtime,
             config,
             mcp,
@@ -176,11 +177,16 @@ impl AgentSessionEngine {
             initial_selection: std::sync::RwLock::new(selection),
             effective_thinking: std::sync::RwLock::new(None),
             service_tier: std::sync::RwLock::new(None),
-            session: tokio::sync::Mutex::new(None),
+            session: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            threshold_yielded: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            threshold_checks_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
             session_build: tokio::sync::Mutex::new(()),
             pending_branch: std::sync::Mutex::new(None),
             provider_target: std::sync::Arc::new(std::sync::RwLock::new(None)),
             image_route: std::sync::Mutex::new(None),
+            reload_lock: std::sync::Mutex::new(()),
             own_summary: std::sync::Arc::new(std::sync::Mutex::new(None)),
             create_resources: std::sync::RwLock::default(),
             sandbox: std::sync::RwLock::default(),
@@ -191,6 +197,7 @@ impl AgentSessionEngine {
             _ephemeral_child_dirs: crate::rlm_children::EphemeralChildDirs(children.clone()),
             children,
             usage_producer: std::sync::Mutex::new(None),
+            rlm_usage_store: std::sync::Mutex::new(None),
             quota_park: std::sync::Arc::new(std::sync::Mutex::new(None)),
             quota_parked_this_run: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             autonomous_driver,
@@ -211,6 +218,8 @@ impl AgentSessionEngine {
             overflow_recovery: std::sync::Mutex::new(OverflowRecovery::default()),
             auto_compaction_abort: std::sync::Mutex::new(None),
             compaction_summary_sink: std::sync::Mutex::new(None),
+            progress_notes: std::sync::Mutex::new(None),
+            progress_note_emit: std::sync::Mutex::new(None),
             model_refusal_telemetry,
             semantic_identity: std::sync::Mutex::new(None),
             presented_artifact_sink: std::sync::Mutex::new(None),
@@ -303,6 +312,29 @@ impl AgentSessionEngine {
         *self.compaction_summary_sink.lock_or_recover() = Some(sink);
     }
 
+    pub(crate) fn set_rlm_usage_store(
+        &self,
+        store: std::sync::Arc<dyn pa_core::session_engine::rlm_usage::RlmChildUsageStore>,
+    ) {
+        *self.rlm_usage_store.lock().expect("rlm usage store lock") = Some(store);
+    }
+
+    /// Installs the worker's accepted-note announcer, threaded into every
+    /// session build.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the announcer slot's mutex is poisoned.
+    pub fn set_progress_note_emit(
+        &self,
+        emit: pa_core::session_engine::rlm_host::RlmProgressNoteEmit,
+    ) {
+        *self
+            .progress_note_emit
+            .lock()
+            .expect("progress note emit lock") = Some(emit);
+    }
+
     /// The stale-row guard's deferred durable write: the terminal row
     /// lands AFTER the context adoption, so the active row stops being
     /// rediscovered.
@@ -337,6 +369,8 @@ impl AgentSessionEngine {
         // The build's own resolution is the one its kernel runs under.
         *self.sandbox.write_or_recover() =
             super::config::SandboxSlot::Resolved(built.sandbox.clone());
+        *self.progress_notes.lock_or_recover() =
+            Some(std::sync::Arc::clone(&built.rlm_progress_notes));
         if let Some(sink) = self.compaction_summary_sink.lock_or_recover().clone() {
             built.session.set_compaction_summary_sink(sink);
         }
@@ -522,9 +556,6 @@ impl AgentSessionEngine {
         }
         if let Some(entries) = pending_branch {
             built.session.rebuild_branch_context(entries).await?;
-            // The Decision API follows the adopted context: the provider
-            // row the restored branch carries becomes the session's switch
-            // before the engine is installed and any turn runs.
             // A moved branch restores its own park (the early return would leave the previous
             // branch's park armed).
             self.restore_quota_park(built).await;
@@ -626,6 +657,7 @@ impl AgentSessionEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         *self.goal_runtime.lock_or_recover() = None;
+        *self.progress_notes.lock_or_recover() = None;
         *self.turn_agent.lock_or_recover() = None;
         *self.autonomous_boundary.lock_or_recover() = None;
         *self.background_bash_probe.lock_or_recover() = None;
@@ -789,31 +821,6 @@ impl AgentSessionEngine {
             self.children.clone(),
         ));
         let mut handlers = HostRequestHandlers::default();
-        let replies = Arc::clone(&self.decision_replies);
-        handlers.register(
-            "decision_api.decision",
-            pa_core::kernel::shared::host_handler(move |payload| {
-                let replies = Arc::clone(&replies);
-                Box::pin(async move {
-                    let name = payload.data["name"].as_str().ok_or_else(|| {
-                        anyhow::anyhow!("decision_api.decision requires a child name")
-                    })?;
-                    let mut replies = replies
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if payload.data["close"] == true {
-                        replies.remove(name);
-                        Ok(Value::Null)
-                    } else {
-                        Ok(replies
-                            .entry(name.to_string())
-                            .or_default()
-                            .take()
-                            .unwrap_or(Value::Null))
-                    }
-                })
-            }),
-        );
         register_agent_message_host_handlers(sender, &mut handlers);
         register_agent_observe_host_handlers(observer, &mut handlers);
         self.register_bash_notice_host_handlers(&mut handlers);
@@ -859,7 +866,7 @@ impl AgentSessionEngine {
         })
     }
 
-    pub(super) async fn build_session(&self, model: &Model) -> anyhow::Result<CoreSessionEngine> {
+    async fn build_session(&self, model: &Model) -> anyhow::Result<CoreSessionEngine> {
         let agent_model =
             json_round_trip(model).ok_or_else(|| anyhow::anyhow!("model conversion failed"))?;
         // The live queue-delivery modes: read under a scoped lock (a std
@@ -878,6 +885,30 @@ impl AgentSessionEngine {
         // rebuild.
         let stream_fn = switchable_stream_fn(std::sync::Arc::clone(&self.provider_target));
         {
+            // The build's resolve-and-install serializes with `/reload`'s
+            // live-input refresh (the other slot writers' fence): a reload
+            // landing between this resolution and the slot write must not
+            // be clobbered by the build's older pair. The lock is
+            // acquired by yielding, never by blocking this worker: a
+            // reload holds the lock across auth-file I/O and a possible
+            // OAuth refresh, so a blocking acquire on an async path
+            // would stall the executor for that span.
+            let _reload_serialized = loop {
+                match self.reload_lock.try_lock() {
+                    Ok(guard) => break guard,
+                    Err(std::sync::TryLockError::WouldBlock) => {}
+                    // The poisoned error CARRIES the acquired guard (the
+                    // panicking holder is gone, the lock is free): recover
+                    // it — a fresh .lock() here would wait on the guard
+                    // this match's scrutinee still holds.
+                    Err(std::sync::TryLockError::Poisoned(poison)) => break poison.into_inner(),
+                }
+                // Park, never hot-spin: a reload holds the lock across
+                // auth-file I/O and a possible OAuth refresh, and
+                // yield_now would leave this task immediately runnable
+                // through all of it.
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            };
             let (api_key, headers) = self.resolve_request_key_and_headers(model);
             let mut target = self.provider_target.write_or_recover();
             *target = Some(ProviderTarget {
@@ -913,7 +944,6 @@ impl AgentSessionEngine {
             }
             None => pa_core::session::manager::SessionManager::in_memory(&cwd),
         };
-
         if let Some(children) = &self.children {
             children.set_model(format!("{}/{}", model.provider, model.id));
         }
@@ -941,6 +971,8 @@ impl AgentSessionEngine {
         // Bound before the awaited build: the purge-clone must not hold the lock guard across the
         // await.
         let queued_goal_context_purge = self.goal_queue_purge.lock_or_recover().clone();
+        let rlm_usage_store = self.rlm_usage_store.lock_or_recover().clone();
+        let progress_note_emit = self.progress_note_emit.lock_or_recover().clone();
         // The kernel's last live background `bash()` handle settling
         // (or a mid-run teardown) retries the owed continuations. No
         // registered arc wires nothing.
@@ -974,7 +1006,7 @@ impl AgentSessionEngine {
             model: Some(agent_model),
             thinking_level: Some(map_thinking_level(self.effective_thinking())),
             stream_fn: Some(stream_fn),
-            // Model tools: `ipython` only; the engine adds the kernel-backed `ipython` tool itself.
+            // Model tools: `python_repl` only; the engine adds the kernel-backed `python_repl` tool itself.
             tools: vec![],
             custom_system_prompt: create_resources.system_prompt,
             prompt_guidelines: create_resources.append_system_prompt,
@@ -990,7 +1022,11 @@ impl AgentSessionEngine {
             rlm_subagent_host: self.children.clone().map(|children| {
                 children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>
             }),
+            rlm_usage_store,
+            progress_note_emit,
             rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),
+            // The worker session runs under the daemon scheduler and its wake-ups.
+            daemonless: false,
             model_info: Some(model.clone()),
             // Prewarm; the depth gate keeps subagent workers lazy.
             prewarm_ipython_kernel: Some(true),
@@ -999,6 +1035,64 @@ impl AgentSessionEngine {
             queued_goal_context_purge,
             // The steering lane owns the stop hooks (a queued steer cuts the next turn).
             queued_steering_probe: self.config.queued_steering_probe.clone(),
+            should_stop_after_turn: Some({
+                let session = Arc::downgrade(&self.session);
+                let target = Arc::clone(&self.provider_target);
+                let yielded = Arc::clone(&self.threshold_yielded);
+                let enabled = Arc::clone(&self.threshold_checks_enabled);
+                Arc::new(move |context| {
+                    let session = session.clone();
+                    let target = Arc::clone(&target);
+                    let yielded = Arc::clone(&yielded);
+                    let enabled = Arc::clone(&enabled);
+                    Box::pin(async move {
+                        if context.tool_results.is_empty() || !enabled.load(Ordering::SeqCst) {
+                            return Ok(false);
+                        }
+                        let Some(session) = session.upgrade() else {
+                            return Ok(false);
+                        };
+                        let engine = session.lock().await.clone();
+                        let Some(engine) = engine else {
+                            return Ok(false);
+                        };
+                        // Capture the actual serving model before AgentEnd clears a routed override.
+                        let model = target
+                            .read()
+                            .expect("provider target lock")
+                            .as_ref()
+                            .map(|target| target.model.clone());
+                        let Some(model) = model else { return Ok(false) };
+                        let agent = engine.session.agent();
+                        let thinking = match agent.model_override() {
+                            Some(route) => route.thinking_level,
+                            None => agent.state().await.thinking_level,
+                        };
+                        let messages = context
+                            .context
+                            .messages
+                            .iter()
+                            .filter_map(|message| serde_json::to_value(message).ok())
+                            .filter_map(|value| serde_json::from_value(value).ok())
+                            .collect::<Vec<_>>();
+                        let due = pa_core::session_engine::compaction::threshold_compaction_due(
+                            &messages,
+                            model.context_window,
+                            pa_core::session_engine::compaction::request_output_budget(
+                                &model,
+                                pa_core::session_engine::provider_adapter::model_thinking_level(
+                                    thinking,
+                                ),
+                            ),
+                            &engine.session.compaction_settings(),
+                        );
+                        if due {
+                            yielded.store(true, Ordering::SeqCst);
+                        }
+                        Ok(due)
+                    })
+                })
+            }),
             // Seeded from settings at create; the live switch updates the slot ahead of any later
             // build.
             steering_mode,
@@ -1068,93 +1162,5 @@ impl AgentSessionEngine {
                 engine.session.agent().set_follow_up_mode(mode);
             }
         })
-    }
-}
-
-#[cfg(test)]
-mod decision_reply_tests {
-    use pa_core::kernel::shared::HostRequestPayload;
-    use serde_json::json;
-
-    use super::*;
-    use crate::worker::{Worker, WorkerConfig};
-
-    #[tokio::test]
-    async fn child_decision_replies_reach_the_loop_without_queuing_a_parent_turn() {
-        let dir = tempfile::tempdir().unwrap();
-        let worker = Worker::new(
-            WorkerConfig {
-                socket_path: dir.path().join("worker.sock"),
-                supervisor_socket_path: dir.path().join("supervisor.sock"),
-                token: "token".into(),
-                worker_instance_id: String::new(),
-                active_session_id: "parent".into(),
-                agent_dir: dir.path().join("agent"),
-                recovery_journal_path: dir.path().join("recovery.jsonl"),
-                telemetry_disabled: Some(true),
-                script: None,
-                decision_child: false,
-            },
-            /*registration*/ None,
-        );
-        let created = worker
-            .dispatch("create", &json!({"noSession":true,"cwd":dir.path()}))
-            .await;
-        assert!(created.success);
-        let handlers = worker
-            .agent_engine
-            .as_ref()
-            .unwrap()
-            .extra_host_handlers()
-            .unwrap();
-        let poll = handlers
-            .get("decision_api.decision")
-            .expect("decision route registered");
-        let call = |data| {
-            poll(HostRequestPayload {
-                data,
-                cell_source_code: None,
-            })
-        };
-        assert_eq!(
-            call(json!({"name":"system-1-test"})).await.unwrap(),
-            Value::Null
-        );
-        let decision = json!({
-            "type":"decision_api.decision","seq":0,
-            "decision":{"action":"left","confidence":0.9}
-        });
-        let mut delivery = json!({"message":decision.to_string(),"sender":{
-            "activeSessionId":"child","sessionName":"system-1-test",
-            "parentActiveSessionId":"parent","runtimeKind":"subagent"
-        }});
-        worker.core.lock().unwrap().busy = true;
-        assert!(worker.handle_worker_deliver_message(&delivery).success);
-        assert_eq!(
-            call(json!({"name":"system-1-test"})).await.unwrap(),
-            decision
-        );
-        assert_eq!(
-            call(json!({"name":"system-1-test"})).await.unwrap(),
-            Value::Null
-        );
-        assert!(worker.core.lock().unwrap().steering.is_empty());
-        assert!(worker.core.lock().unwrap().follow_up.is_empty());
-        worker.core.lock().unwrap().busy = false;
-        call(json!({"name":"system-1-test","close":true}))
-            .await
-            .unwrap();
-        assert!(worker.handle_worker_deliver_message(&delivery).success);
-        assert!(
-            worker.core.lock().unwrap().steering.is_empty(),
-            "a closed decision child must not wake the parent"
-        );
-        delivery["sender"]["parentActiveSessionId"] = json!("another-parent");
-        assert!(worker.handle_worker_deliver_message(&delivery).success);
-        assert_eq!(
-            worker.core.lock().unwrap().steering.len(),
-            1,
-            "other agents retain normal routing"
-        );
     }
 }

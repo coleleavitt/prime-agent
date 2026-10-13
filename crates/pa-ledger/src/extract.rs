@@ -25,8 +25,9 @@ use crate::js::js_trim;
 use crate::ledger::FailureObservation;
 use crate::replay::derive_replay_case;
 
-/// The kernel tool: its error details carry the traceback of the exception a
-/// cell itself raised.
+/// The kernel tool's fingerprint source: its error details carry the
+/// traceback of the exception a cell itself raised. Every Python tool name
+/// (`pa_types::ai::is_python_tool_name`) records under this one source.
 pub const IPYTHON_TOOL_NAME: &str = "ipython";
 
 /// A tool result's text parts joined by newlines (TS `messageText`).
@@ -55,7 +56,7 @@ fn kernel_cell_traceback(
     message: &ToolResultMessage,
     fingerprint: &FailureFingerprint,
 ) -> Option<ParsedTraceback> {
-    if message.tool_name != IPYTHON_TOOL_NAME {
+    if !pa_types::ai::is_python_tool_name(&message.tool_name) {
         return None;
     }
     let details = message.details.as_ref()?.as_object()?;

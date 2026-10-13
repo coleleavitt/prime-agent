@@ -13,7 +13,6 @@ fn worker_with_journal() -> crate::test_support::InTestDir<Arc<Worker>> {
         recovery_journal_path: dir.join("recovery.jsonl"),
         telemetry_disabled: None,
         script: Some(json!({ "responses": ["ack"] })),
-        decision_child: false,
     };
     let worker = Arc::new(Worker::new(config, None));
     // The journal is opened in `serve()`; tests open it directly so the
@@ -198,6 +197,7 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
             pid: 4321,
             command: "another command".to_string(),
         },
+        Some(worker.engine.as_ref()),
     );
     assert!(
         worker.core.lock().unwrap().steering.len() == 1,
@@ -214,6 +214,8 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
             pid: 4321,
             command: "sleep 12; echo RW_WAKE_DONE".to_string(),
         },
+        /*engine*/
+        None, // A retired engine must not prevent withdrawal or its checkpoint.
     );
     {
         let core = worker.core.lock().unwrap();

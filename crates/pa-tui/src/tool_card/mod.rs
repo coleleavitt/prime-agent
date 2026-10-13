@@ -157,7 +157,9 @@ pub(crate) fn render_tool_card_in(
     mermaid: crate::markdown::MermaidMode,
 ) -> Vec<Line> {
     match card.name.as_str() {
-        "ipython" => ipython::render_in(card, frame, detail, theme, width, show_images, mermaid),
+        name if pa_types::ai::is_python_tool_name(name) => {
+            ipython::render_in(card, frame, detail, theme, width, show_images, mermaid)
+        }
         "bash" => bash::render(card, frame, detail, theme, width, show_images),
         _ => generic::render(card, frame, detail, theme, width, show_images),
     }
@@ -406,7 +408,9 @@ pub(crate) fn count_tool_card(
     mermaid: crate::markdown::MermaidMode,
 ) -> usize {
     match card.name.as_str() {
-        "ipython" => ipython::count(card, frame, detail, theme, width, show_images, mermaid),
+        name if pa_types::ai::is_python_tool_name(name) => {
+            ipython::count(card, frame, detail, theme, width, show_images, mermaid)
+        }
         "bash" => bash::count(card, frame, detail, theme, width, show_images),
         _ => generic::count(card, frame, detail, theme, width, show_images),
     }

@@ -15,6 +15,7 @@ use super::{
     TurnSettle,
     VecDeque,
     Worker,
+    clear_withdrawn_progress_note,
     json,
     persist_custom_row,
     response_failure,
@@ -113,7 +114,7 @@ impl Worker {
                 self.handle_wait_for_headless_completion(payload).await
             }
             "get_state" => self.handle_get_state(),
-            "get_messages" => self.handle_get_messages(),
+            "get_messages" => self.handle_get_messages(payload),
             "get_session_header" => self.handle_get_session_header(),
             "get_session_stats" => self.handle_get_session_stats(payload),
             "get_model_catalog" => self.handle_get_model_catalog(),
@@ -172,7 +173,7 @@ impl Worker {
             "factory_activity" => self.handle_factory_activity(payload).await,
             "execute_bash" => self.handle_execute_bash(payload),
             "execute_bash_and_wait" => self.handle_execute_bash_and_wait(payload).await,
-            "abort_bash" => self.handle_abort_bash().await,
+            "abort_bash" => self.handle_abort_bash(),
             "list_kernel_bash" | "tail_kernel_bash" | "kill_kernel_bash" => {
                 self.handle_kernel_bash_activity(command_type, payload)
                     .await
@@ -181,7 +182,7 @@ impl Worker {
             "restore_next_turn" => self.handle_restore_next_turn(payload),
             "restore_actions" => self.handle_restore_actions(payload),
             "refine" => self.handle_refine(payload).await,
-            "reload" => self.handle_reload(),
+            "reload" => self.handle_reload().await,
             "cancel_rlm_child" => self.handle_cancel_rlm_child(payload).await,
             "delete_rlm_subagent" => self.handle_delete_rlm_subagent(payload).await,
             // The engine call blocks on the engine runtime, so it
@@ -422,6 +423,7 @@ impl Worker {
             };
             cancel(&mut core.steering);
             cancel(&mut core.follow_up);
+            clear_withdrawn_progress_note(&core, self.engine.as_ref());
         }
         // A withdrawn continuation's pending guard already released at ITS admission,
         // so the withdraw clears nothing (a mirror clear could drop an unrelated guard).
@@ -429,6 +431,8 @@ impl Worker {
         // The in-flight turn's fetch cancels now, not at its next
         // streamed event.
         self.engine.abort_in_flight_turn();
+        // An idle withdrawal has no turn-end event to refresh the roster.
+        self.push_roster_delta();
     }
 
     fn handle_abort(&self, payload: &Value) -> DaemonResponse {
@@ -520,17 +524,52 @@ impl Worker {
         response_success(None, "get_session_stats", Some(stats))
     }
 
-    fn handle_get_messages(&self) -> DaemonResponse {
+    fn handle_get_messages(&self, payload: &Value) -> DaemonResponse {
         if let Err(response) = self.require_created("get_messages") {
             return response;
         }
-        let core = self.core.lock_or_recover();
-        let messages: Vec<Value> = core
-            .store
-            .as_ref()
-            .map(crate::session_store::SessionFile::messages)
+        let before = payload
+            .get("before")
+            .and_then(Value::as_u64)
+            .and_then(|before| usize::try_from(before).ok());
+        let capabilities = payload
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .map(|capabilities| {
+                capabilities
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
-        response_success(None, "get_messages", Some(json!({ "messages": messages })))
+        let core = self.core.lock_or_recover();
+        // Validate ancestry atomically with the positional read. Appends keep the
+        // attached leaf on this branch; navigation to another branch does not.
+        let history_leaf = payload.get("historyLeafId").filter(|_| before.is_some());
+        if let Some(anchor) = history_leaf {
+            let valid = anchor.as_str().is_some_and(|leaf| {
+                core.store
+                    .as_ref()
+                    .is_some_and(|store| store.branch().iter().any(|entry| entry.id == leaf))
+            });
+            if !valid {
+                return response_failure(None, "get_messages", "History branch changed", None);
+            }
+        }
+        let mut messages: Vec<Value> = match (core.store.as_ref(), before) {
+            (Some(store), Some(before)) => store.messages_before(before),
+            (Some(store), None) => store.messages(),
+            (None, _) => Vec::new(),
+        };
+        if crate::snapshot_stream::wants_image_elision(&capabilities) {
+            crate::snapshot_stream::elide_snapshot_image_payloads(&mut messages);
+        }
+        let mut data = json!({ "messages": messages });
+        if let Some(anchor) = history_leaf {
+            data["historyLeafId"] = anchor.clone();
+        }
+        response_success(None, "get_messages", Some(data))
     }
 
     fn handle_get_queue(&self) -> DaemonResponse {
@@ -567,6 +606,7 @@ impl Worker {
         };
         let steering: Vec<String> = drain_lane(&mut core.steering);
         let follow_up: Vec<String> = drain_lane(&mut core.follow_up);
+        clear_withdrawn_progress_note(&core, self.engine.as_ref());
         let snapshot = Self::snapshot_locked(&core);
         drop(core);
         // The verdict refresh rides the same checkpoint as the snapshot: a stale

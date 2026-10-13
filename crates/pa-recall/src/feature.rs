@@ -60,7 +60,6 @@ use crate::witness::witness_workspace;
 /// The kill switch: `0`, `off`, `false` or `no` disables Workspace Recall.
 pub const WORKSPACE_RECALL_ENV: &str = "PRIME_AGENT_WORKSPACE_RECALL";
 
-const WITNESS_TOOL_NAME: &str = "ipython";
 /// How long a witness waits for its session's first mark to record the
 /// mark it is about to replace.
 const PRIOR_MARK_WAIT: Duration = Duration::from_millis(300);
@@ -857,7 +856,7 @@ impl SessionFeature for WorkspaceRecall {
     ) -> FeatureFuture<()> {
         // Every tool call passes here: the checks before the source scan
         // stay allocation- and I/O-free.
-        if call.tool_name != WITNESS_TOOL_NAME || context.rlm_depth > 0 {
+        if !pa_types::ai::is_python_tool_name(&call.tool_name) || context.rlm_depth > 0 {
             return Box::pin(async {});
         }
         let Some(code) = call.args.get("code").and_then(serde_json::Value::as_str) else {
@@ -896,7 +895,7 @@ impl SessionFeature for WorkspaceRecall {
         context: &Arc<SessionFeatureContext>,
         result: &ToolResultObservation,
     ) -> FeatureFuture<Option<String>> {
-        if result.tool_name != WITNESS_TOOL_NAME || !self.inner.enabled() {
+        if !pa_types::ai::is_python_tool_name(&result.tool_name) || !self.inner.enabled() {
             return Box::pin(async { None });
         }
         let inner = Arc::clone(&self.inner);

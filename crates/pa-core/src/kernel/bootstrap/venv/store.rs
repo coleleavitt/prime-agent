@@ -158,7 +158,7 @@ impl VenvStore {
             Self::mark_in_use(&venv);
         }
         if !ops.ready(&venv) {
-            let lock = crate::kernel::bootstrap::dir_lock::acquire_bootstrap_lock(&venv).await;
+            let lock = crate::kernel::bootstrap::dir_lock::acquire_bootstrap_lock(&venv).await?;
             let built = async {
                 if ops.ready(&venv) {
                     return Ok(());

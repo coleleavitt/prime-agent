@@ -414,12 +414,15 @@ fn concurrent_global_flushes_never_lose_each_others_records() {
     }
 }
 
-/// An `ipython` result as the loop reports it: a cell that raised returns
+/// A Python tool result as the loop reports it: a cell that raised returns
 /// normally (the loop's `is_error` is false); only its details say `error`.
+/// The tool's current name, `python_repl`: its failures record under the
+/// ledger's `ipython` source, so the hint below matches an `ipython`
+/// fingerprint.
 fn ipython_result(code: &str, text: &str, is_error: bool) -> ToolResultObservation {
     ToolResultObservation {
         tool_call_id: "c".to_string(),
-        tool_name: "ipython".to_string(),
+        tool_name: pa_types::ai::PYTHON_TOOL_NAME.to_string(),
         args: json!({ "code": code }),
         is_error: false,
         content: vec![pa_agent::types::ToolResultContent::text(text)],

@@ -27,7 +27,6 @@ async fn compaction_admission_worker(
             "responses": ["steer reply"],
             "compaction": compaction,
         })),
-        decision_child: false,
     };
     let worker = Arc::new(Worker::new(config, None));
     let created = worker

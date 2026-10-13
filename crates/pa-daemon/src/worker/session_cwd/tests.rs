@@ -17,7 +17,6 @@ fn worker_in(dir: &Path) -> Arc<Worker> {
             recovery_journal_path: dir.join("recovery.jsonl"),
             telemetry_disabled: None,
             script: Some(json!({ "responses": ["ok"] })),
-            decision_child: false,
         },
         None,
     ))

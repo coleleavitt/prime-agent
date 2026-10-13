@@ -16,7 +16,6 @@
 #![cfg(unix)]
 
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
@@ -28,41 +27,13 @@ use pa_core::kernel::shared::{
     KernelShutdownOptions,
 };
 
-/// Speaks protocol v3: ready, then per request the oversized unterminated
+/// Speaks the current kernel protocol (5): ready, then per request the oversized unterminated
 /// line (the corruption under test), a multi-MiB blank line followed by a
 /// plain stdout frame (the linear-scan test), or a plain done frame.
-const FAKE_RUNTIME: &str = r#"#!/usr/bin/env python3
-import json
-import sys
-import time
-
-print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
-for line in sys.stdin:
-    try:
-        req = json.loads(line)
-    except Exception:
-        continue
-    if req.get("code") == "corrupt-huge-line":
-        sys.stdout.write("x" * (33 * 1024 * 1024))
-        sys.stdout.flush()
-        time.sleep(30)
-        break
-    if req.get("code") in ("big-frame", "unicode-blank-frame"):
-        padding = " " * (31 * 1024 * 1024) if req.get("code") == "big-frame" else " \t\r\v\f\u0085\u00a0\u2000\u2028\u2029\u3000 "
-        sys.stdout.write(padding + "\n")
-        sys.stdout.write(json.dumps({"event": "stdout", "id": req.get("id"), "text": "big"}) + "\n")
-    sys.stdout.write(json.dumps({"event": "done", "id": req.get("id"), "status": "ok"}) + "\n")
-    sys.stdout.flush()
-"#;
-
-/// The fake runtime script; the returned guard keeps it on disk for the test and removes it
-/// afterwards.
-fn fake_runtime() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let path = dir.path().join("fake-kernel");
-    std::fs::write(&path, FAKE_RUNTIME).expect("write fake runtime");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    (dir, path)
+fn fake_runtime_path() -> std::path::PathBuf {
+    // An immutable program avoids writable executable descriptors during concurrent spawns.
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/protocol_caps_kernel.py")
 }
 
 fn manager(python: std::path::PathBuf) -> ReplKernelManager {
@@ -85,7 +56,7 @@ fn manager(python: std::path::PathBuf) -> ReplKernelManager {
 
 #[tokio::test]
 async fn oversized_unterminated_protocol_line_poisons_and_repairs() {
-    let (_runtime_dir, runtime) = fake_runtime();
+    let runtime = fake_runtime_path();
     let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())
@@ -116,7 +87,7 @@ async fn oversized_unterminated_protocol_line_poisons_and_repairs() {
 async fn normal_protocol_lines_still_stream_through_the_bounded_reader() {
     // Multiple frames in one 64 Ki chunk plus a trailing partial line must
     // all dispatch: the chunked reader only poisons past the ceiling.
-    let (_runtime_dir, runtime) = fake_runtime();
+    let runtime = fake_runtime_path();
     let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())
@@ -152,7 +123,7 @@ async fn a_multi_mib_blank_protocol_line_is_skipped_and_the_next_frame_lands() {
     // A 31 MiB blank line arrives in pipe reads of at most 64 KiB and is skipped; the frame after
     // it still dispatches. The linear-scan invariant (each byte examined once) is pinned
     // deterministically by the framer's unit test, not by a wall-clock budget here.
-    let (_runtime_dir, runtime) = fake_runtime();
+    let runtime = fake_runtime_path();
     let manager = manager(runtime);
     manager
         .start(KernelStartOptions::default())

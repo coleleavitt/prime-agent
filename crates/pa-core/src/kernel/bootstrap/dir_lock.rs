@@ -4,12 +4,19 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::venv::{
     BOOTSTRAP_LOCK_NAME,
     BOOTSTRAP_LOCK_RETRY_MS,
     BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS,
 };
+
+// A lock without a start identity (pid-only, or the legacy directory lock)
+// cannot tell its original owner from an unrelated process that later got
+// the same pid, so it is never evicted while that pid lives: the caller's
+// wait is bounded instead.
+const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(120);
 
 /// The recorded owner still holds the lock (TS `isProcessIdentityAlive`): its
 /// pid is live and, when the lock recorded a start identity, the pid still
@@ -186,11 +193,25 @@ impl Drop for BootstrapLock {
 pub(crate) async fn acquire_bootstrap_lock(venv: &Path) -> anyhow::Result<BootstrapLock> {
     let lock_path = bootstrap_lock_path(venv);
     std::fs::create_dir_all(lock_path.parent().unwrap_or(Path::new("/")))?;
+    let deadline = tokio::time::Instant::now() + BOOTSTRAP_LOCK_WAIT;
     loop {
         match try_acquire_dir_lock(&lock_path)? {
             DirLockAttempt::Acquired => return Ok(BootstrapLock(lock_path)),
             DirLockAttempt::Held | DirLockAttempt::Reclaimed => {
-                tokio::time::sleep(std::time::Duration::from_millis(BOOTSTRAP_LOCK_RETRY_MS)).await;
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "Timed out after {} seconds waiting for the Python kernel bootstrap lock at {}. \
+                         Another Prime Agent process may still be setting up this runtime. \
+                         Retry after it finishes. If setup was interrupted, verify that no process \
+                         is setting up this runtime before removing this lock and retrying.",
+                        BOOTSTRAP_LOCK_WAIT.as_secs(),
+                        lock_path.display()
+                    );
+                }
+                tokio::time::sleep_until(deadline.min(
+                    tokio::time::Instant::now() + Duration::from_millis(BOOTSTRAP_LOCK_RETRY_MS),
+                ))
+                .await;
             }
         }
     }
@@ -312,5 +333,84 @@ mod tests {
             try_acquire_dir_lock(&lock_path).unwrap(),
             DirLockAttempt::Reclaimed
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_pid_file_has_a_bounded_wait_without_removing_the_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let venv = root.path().join("kernel-venv");
+        let lock = root.path().join("kernel-venv.bootstrap.lock");
+        // An unrelated live PID is indistinguishable from a recycled owner.
+        let owner = format!("{}\n", std::process::id());
+        std::fs::write(&lock, &owner).unwrap();
+
+        let result = tokio::time::timeout(
+            BOOTSTRAP_LOCK_WAIT + Duration::from_secs(1),
+            acquire_bootstrap_lock(&venv),
+        )
+        .await
+        .expect("lock acquisition must return an error rather than wait forever");
+        let error = match result {
+            Ok(_) => panic!("must not acquire a live owner's lock"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("Timed out"), "{error}");
+        assert!(error.contains(&lock.display().to_string()), "{error}");
+        assert_eq!(std::fs::read_to_string(&lock).unwrap(), owner);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn legacy_directory_has_a_bounded_wait_without_removing_the_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let venv = root.path().join("kernel-venv");
+        let lock = root.path().join("kernel-venv.bootstrap.lock");
+        std::fs::create_dir(&lock).unwrap();
+        let owner = format!("{}\n", std::process::id());
+        std::fs::write(lock.join("pid"), &owner).unwrap();
+
+        let result = tokio::time::timeout(
+            BOOTSTRAP_LOCK_WAIT + Duration::from_secs(1),
+            acquire_bootstrap_lock(&venv),
+        )
+        .await
+        .expect("legacy lock acquisition must also have a deadline");
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(lock.join("pid")).unwrap(), owner);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_owner_releasing_before_the_deadline_allows_acquisition() {
+        let root = tempfile::tempdir().unwrap();
+        let venv = root.path().join("kernel-venv");
+        let lock = root.path().join("kernel-venv.bootstrap.lock");
+        let owner = acquire_bootstrap_lock(&venv).await.unwrap();
+        let mut waiter = Box::pin(acquire_bootstrap_lock(&venv));
+        assert!(matches!(
+            futures::poll!(&mut waiter),
+            std::task::Poll::Pending
+        ));
+        drop(owner);
+        let successor = waiter.await.unwrap();
+        assert!(lock.exists());
+        drop(successor);
+        assert!(!lock.exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_a_waiter_preserves_the_owner_and_cleans_candidates() {
+        let root = tempfile::tempdir().unwrap();
+        let venv = root.path().join("kernel-venv");
+        let lock = root.path().join("kernel-venv.bootstrap.lock");
+        let owner = acquire_bootstrap_lock(&venv).await.unwrap();
+        let mut waiter = Box::pin(acquire_bootstrap_lock(&venv));
+        assert!(matches!(
+            futures::poll!(&mut waiter),
+            std::task::Poll::Pending
+        ));
+        drop(waiter);
+        assert!(lock.exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        drop(owner);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

@@ -74,6 +74,7 @@ mod tests {
                     quota_parked: false,
                     subagents_running: false,
                     model_context_window: None,
+                    progress_note: None,
                 },
             ))
             .unwrap()

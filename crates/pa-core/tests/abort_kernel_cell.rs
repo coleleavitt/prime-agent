@@ -114,7 +114,7 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         Some("running the wedge cell"),
         vec![(
             "call-1",
-            "ipython",
+            "python_repl",
             json!({ "code": wedge_cell(&started, &finished) }),
         )],
     );
@@ -147,7 +147,10 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
+        rlm_usage_store: None,
+        progress_note_emit: None,
         rlm_depth: None,
+        daemonless: true,
         telemetry: None,
         model_info: None,
         mcp_manager: None,
@@ -155,6 +158,7 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         on_background_work_settled: None,
         queued_goal_context_purge: None,
         queued_steering_probe: None,
+        should_stop_after_turn: None,
         image_model_router: None,
         rlm_token_allowance: None,
     })

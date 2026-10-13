@@ -273,7 +273,7 @@ pub struct Supervisor {
     /// when the worker could not answer; feeds the replacement-worker create replay,
     /// cleared by a landed `compaction_end`.
     pub(crate) compaction_journal:
-        std::sync::Mutex<crate::compaction_supervision::TerminalCompactionJournal>,
+        std::sync::Mutex<Option<crate::compaction_supervision::TerminalCompactionJournal>>,
     /// The bound tailnet TCP listener (TS #2517); absent when no port
     /// resolved. The accept loop clones the Arc; the shutdown wake takes
     /// it out here and drops it, so the port is released with the daemon
@@ -292,11 +292,11 @@ pub struct Supervisor {
 }
 
 impl Supervisor {
-    /// Build the supervisor: descriptor dir, persisted config, event channel, log, journal.
+    /// Build the supervisor: descriptor dir, persisted config, event channel, and log.
     ///
     /// # Errors
     ///
-    /// Returns an error when the descriptor dir, sessions dir, config, or journal cannot be opened.
+    /// Returns an error when the descriptor dir, sessions dir, or config cannot be opened.
     pub fn new(options: SupervisorOptions) -> Result<Self> {
         let descriptor_dir =
             crate::descriptor::descriptor_dir(&options.agent_dir, &options.socket_path);
@@ -318,9 +318,6 @@ impl Supervisor {
             &options.socket_path,
             &options.agent_dir,
         ));
-        let compaction_journal = crate::compaction_supervision::TerminalCompactionJournal::open(
-            &descriptor_dir.join("compaction-supervision.jsonl"),
-        )?;
         // The mesh cache and its roster-change queue (TS #2516): the scan
         // callback cannot capture `Arc<Self>` this early, so changes ride
         // the queue; the drain task in `run` publishes them.
@@ -367,7 +364,7 @@ impl Supervisor {
             passive_scan_gate: tokio::sync::Mutex::new(()),
             passive_scan_pending: std::sync::atomic::AtomicBool::new(false),
             passive_catalog_epoch: std::sync::atomic::AtomicU64::new(0),
-            compaction_journal: std::sync::Mutex::new(compaction_journal),
+            compaction_journal: std::sync::Mutex::new(None),
             tcp_listener: std::sync::Mutex::new(None),
             remote_mesh,
             mesh_roster_rx: std::sync::Mutex::new(Some(mesh_roster_rx)),
@@ -379,7 +376,8 @@ impl Supervisor {
     /// # Errors
     ///
     /// Returns an error when the socket path cannot be prepared (already in use), the
-    /// socket cannot be bound, or the accept loop exhausts its give-up budget.
+    /// socket cannot be bound, the recovery journal cannot be opened, or the accept loop
+    /// exhausts its give-up budget.
     pub async fn run(self: Arc<Self>) -> Result<()> {
         // The admission contract (TS daemon-supervisor.ts start():855-857,
         // the choreography slot before prepare/listen and before any
@@ -467,6 +465,19 @@ impl Supervisor {
         *self.bound_socket_identity.lock_or_recover() =
             socket::socket_identity(&self.options.socket_path);
         socket::restrict_socket_path(&self.options.socket_path);
+        match crate::compaction_supervision::TerminalCompactionJournal::open(
+            &self.descriptor_dir.join("compaction-supervision.jsonl"),
+        ) {
+            Ok(journal) => {
+                *self.compaction_journal.lock_or_recover() = Some(journal);
+            }
+            Err(error) => {
+                drop(listener);
+                let identity = self.bound_socket_identity.lock_or_recover().clone();
+                socket::cleanup_socket_path_after_close(&self.options.socket_path, identity);
+                return Err(error);
+            }
+        }
         // The optional tailnet TCP listener (TS #2517): binds beside the
         // unix socket (never replaces it) when a port resolves (CLI flag >
         // env > settings); binding failures fail startup loudly, and the

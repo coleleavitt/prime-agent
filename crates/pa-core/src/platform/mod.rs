@@ -13,7 +13,14 @@ pub mod shell;
 pub mod sync_dir;
 
 pub use fs::fsync;
-pub use lock_dir::{HeartbeatLock, LockDir, LockHolder, lock_exclusive, try_lock_exclusive};
+pub use lock_dir::{
+    HeartbeatLock,
+    LockDir,
+    LockHolder,
+    lock_exclusive,
+    try_lock_exclusive,
+    unlock_file,
+};
 // The rename-onto-destination primitive (bounded win32 destination-busy
 // retry) lives in pa-telemetry — the bottom crate every persist owner
 // already depends on; re-exported so the platform wall stays the engine's
