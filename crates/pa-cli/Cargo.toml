@@ -14,6 +14,7 @@ default = [
     "learning",
     "ledger",
     "mermaid",
+    "plugins",
     "ravo",
     "recall",
     "session-index",
@@ -38,6 +39,11 @@ ledger = ["dep:pa-ledger"]
 # flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
 # in agent/custom messages and /btw (crates/pa-mermaid).
 mermaid = ["dep:pa-mermaid"]
+# WebAssembly plugins (crates/pa-plugins): sandboxed components from
+# `<agent dir>/plugins/` (and a trusted project's) that review tool calls and
+# kernel host requests, add prompt context, show status, and answer the
+# kernel's `wasm-plugins` skill. Brings wasmtime.
+plugins = ["dep:pa-plugins"]
 # RAVO: the gate on harness refinements, its lineage and provisional-regression
 # recording (crates/pa-ravo); it observes the failure ledger.
 ravo = ["ledger", "dep:pa-ravo"]
@@ -76,6 +82,7 @@ pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
+pa-plugins = { path = "../pa-plugins", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

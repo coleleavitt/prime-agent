@@ -25,6 +25,7 @@ members = [
     "crates/pa-mermaid",
     "crates/pa-anthropic-auth",
     "crates/pa-computer-use",
+    "crates/pa-plugins",
 ]
 # Vendored path dependencies with their own manifests stay outside the workspace
 # (third-party code: not linted by the workspace gates).

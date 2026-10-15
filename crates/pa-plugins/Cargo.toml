@@ -1,0 +1,37 @@
+[package]
+name = "pa-plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebAssembly plugins: sandboxed components that review tool calls and kernel actions, add prompt context, show status, and answer kernel calls."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-agent = { path = "../pa-agent" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+toml.workspace = true
+# Component model + cranelift; no cache, no debugging, no async host calls
+# (each call runs on a blocking thread under an epoch deadline).
+wasmtime = { version = "=49.0.3", default-features = false, features = [
+    "component-model",
+    "cranelift",
+    "parallel-compilation",
+    "runtime",
+    "std",
+] }
+# WASI preview 2 only, deny-by-default (no preopens, env, or network).
+wasmtime-wasi = { version = "=49.0.3", default-features = false, features = ["p2"] }
+
+[dev-dependencies]
+tempfile = "3"
+pa-types = { path = "../pa-types" }
+tokio = { workspace = true, features = ["test-util"] }
+# The tests load the fixture plugin from its component text format.
+wasmtime = { version = "=49.0.3", default-features = false, features = ["wat"] }
+
+[lints]
+workspace = true

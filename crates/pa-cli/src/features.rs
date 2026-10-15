@@ -36,6 +36,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
+    // The user's WebAssembly plugins: policy on tool calls and kernel host
+    // requests, prompt context, status panels, the `wasm-plugins` skill.
+    #[cfg(feature = "plugins")]
+    features.push(Arc::new(pa_plugins::PluginsFeature::new()));
     features
 }
 
@@ -111,6 +115,7 @@ impl InstalledFeatures {
 /// directory on its first listing.
 #[must_use]
 pub fn install_enabled_features() -> InstalledFeatures {
+    install_trust_gates();
     pa_core::features::install(enabled_features());
     install_credential_sources();
     install_tui_features();
@@ -130,6 +135,17 @@ pub fn install_enabled_features() -> InstalledFeatures {
         ))
         .ok(),
     }
+}
+
+/// Gate what the enabled features load from a project and run behind
+/// workspace trust: (feature `plugins`) `.prime/agent/plugins/`. Idempotent;
+/// no I/O.
+pub fn install_trust_gates() {
+    #[cfg(feature = "plugins")]
+    pa_core::workspace_trust::register_gated_project_dir(
+        pa_plugins::PLUGINS_DIR,
+        "WebAssembly plugins",
+    );
 }
 
 /// Install the enabled features' provider credential sources and request

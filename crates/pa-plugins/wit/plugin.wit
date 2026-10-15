@@ -1,0 +1,103 @@
+package prime-agent:plugin@0.1.0;
+
+/// Shared shapes. Every JSON payload is a UTF-8 string holding one JSON value.
+interface types {
+    /// What a plugin may know about the session that loaded it.
+    record session-info {
+        session-id: string,
+        cwd: string,
+        /// 0 for a top-level session, N for an RLM child at depth N.
+        rlm-depth: u32,
+        /// `provider/model-id`.
+        model: string,
+    }
+
+    /// A model tool call about to run (arguments validated).
+    record tool-call {
+        tool-call-id: string,
+        tool-name: string,
+        args-json: string,
+    }
+
+    /// A tool call's executed result, before the model sees it.
+    record tool-result {
+        tool-call-id: string,
+        tool-name: string,
+        args-json: string,
+        is-error: bool,
+        /// The result's text blocks, joined by newlines.
+        text: string,
+    }
+
+    /// A kernel host request about to run: `bash.run`, `computer_use.click`, ...
+    /// The kernel's `bash()` reaches the host as `bash.*` requests, so this is
+    /// where a policy sees the commands the model runs.
+    record host-request {
+        request-type: string,
+        data-json: string,
+    }
+
+    /// A policy answer. `block` refuses with a reason the model sees.
+    variant verdict {
+        allow,
+        block(string),
+    }
+
+    /// The answer to a submitted prompt.
+    variant prompt-decision {
+        /// Optional hidden context added ahead of the prompt.
+        context(option<string>),
+        /// Refuse the prompt with a reason.
+        block(string),
+    }
+}
+
+/// What the host gives a plugin.
+interface host {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    /// Write one line to the agent's log, tagged with the plugin's name.
+    log: func(level: level, message: string);
+
+    /// Replace this plugin's status for a session: `line` is the agents-view
+    /// summary (`none` clears it), `panel` the rows shown under the chat
+    /// editor (empty hides the panel).
+    set-status: func(session-id: string, line: option<string>, panel: list<string>);
+}
+
+world plugin {
+    use types.{session-info, tool-call, tool-result, host-request, verdict, prompt-decision};
+
+    import host;
+
+    /// The plugin's name (used in logs, status and `wasm_plugins.call`) and a
+    /// one-line description.
+    export metadata: func() -> tuple<string, string>;
+
+    /// A session started (or resumed).
+    export on-session-start: func(session: session-info);
+
+    /// A session's agent run ended.
+    export on-agent-end: func(session-id: string);
+
+    /// Review a model tool call before it runs. A trap blocks the call.
+    export review-tool-call: func(session-id: string, call: tool-call) -> verdict;
+
+    /// Observe a result; returned text is appended to what the model sees.
+    export after-tool-call: func(session-id: string, outcome: tool-result) -> option<string>;
+
+    /// Review a kernel host request before it runs. A trap blocks it.
+    export review-host-request: func(session-id: string, request: host-request) -> verdict;
+
+    /// Review a submitted prompt; may add hidden context or refuse it.
+    export prompt-context: func(session-id: string, prompt: string) -> prompt-decision;
+
+    /// A method the kernel invokes through `wasm_plugins.call(name, method, **data)`:
+    /// JSON in, JSON out.
+    export call: func(session-id: string, method: string, data-json: string) -> result<string, string>;
+}
