@@ -10,7 +10,9 @@
 //! settles with the run it joined; its admission id counts as running. A
 //! steer the session refused (an installed feature's prompt review) goes
 //! back to the lane's front and the run ends for it, so the restart's
-//! admission refuses it the usual, visible way.
+//! admission refuses it the usual, visible way. A held input pause (a
+//! client editing the queue, an agent message's admission committing)
+//! keeps the lane where it is.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,6 +63,7 @@ pub(crate) struct WorkerSteeringFold {
     pub(crate) core: Arc<Mutex<SessionCore>>,
     pub(crate) events: Arc<super::EventPump>,
     pub(crate) recovery: Arc<Mutex<Option<WorkerRecoveryJournal>>>,
+    pub(crate) input_pauses: crate::session_input_pause::InputPauseTable,
     pub(crate) next_ticket: AtomicU64,
 }
 
@@ -106,6 +109,9 @@ impl WorkerSteeringFold {
 impl SteeringFold for WorkerSteeringFold {
     fn take(&self) -> Vec<FoldedSteer> {
         let mut taken = Vec::new();
+        if self.input_pauses.paused() {
+            return taken;
+        }
         {
             let mut core = self.core.lock_or_recover();
             // Only a running turn takes steers; a paused or aborting lane keeps them.
@@ -215,6 +221,7 @@ mod tests {
             core: Arc::clone(&core),
             events: Arc::new(super::super::EventPump::new()),
             recovery: Arc::new(Mutex::new(None)),
+            input_pauses: crate::session_input_pause::InputPauseTable::new(),
             next_ticket: AtomicU64::new(1),
         };
         let (done, mut settled) = oneshot::channel();
@@ -229,6 +236,13 @@ mod tests {
         }
         assert!(fold.take().is_empty());
         core.lock().unwrap().busy = true;
+        // A held pause (a client editing the queue) keeps the lane queued.
+        let pause = fold.input_pauses.acquire("s", "client", "queue-edit");
+        assert!(fold.take().is_empty());
+        assert_eq!(
+            fold.input_pauses.release(&pause, "client", "s"),
+            crate::session_input_pause::ReleaseOutcome::Released
+        );
         let taken = fold.take();
         let texts: Vec<&str> = taken.iter().map(|steer| steer.text.as_str()).collect();
         assert_eq!(texts, ["first steer", "second steer"]);

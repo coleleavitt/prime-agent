@@ -142,6 +142,7 @@ impl SessionUi {
             pending_thinking_suffix: None,
             pending_queue: None,
             queue_selection: crate::queued::QueueSelection::default(),
+            queue_hold: None,
             context: None,
             list_rows: Vec::new(),
             turn_active: false,

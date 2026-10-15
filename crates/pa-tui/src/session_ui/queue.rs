@@ -16,6 +16,10 @@ use super::{
     anyhow,
 };
 
+/// The lease key of the queue-edit hold: one per client and session, so a
+/// repeated acquire answers the same pause.
+const QUEUE_EDIT_LEASE: &str = "tui-queue-edit";
+
 impl SessionUi {
     pub(crate) fn sync_queue_selection(&mut self, view: &mut AgentView) {
         view.queue_selected = self.queue_selection.selected().cloned();
@@ -50,6 +54,55 @@ impl SessionUi {
             self.emit_queue_edit("select");
         }
         self.sync_queue_selection(view);
+    }
+
+    /// Hold the queue while a parked message is browsed (Claude Code takes
+    /// a message out of its queue to edit it; the browse edits in place, so
+    /// it pauses the session's queued input instead): acquire the pause when
+    /// a browse opens, release it when the browse ends. Fails open — a
+    /// refused or timed-out request leaves the browse working, unheld. A
+    /// detach releases every pause this client holds.
+    pub(crate) async fn reconcile_queue_hold(&mut self) {
+        let browsing = self.queue_selection.is_browsing();
+        match (&self.queue_hold, browsing) {
+            (None, true) => {
+                let acquired = self
+                    .bounded_request(
+                        Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                        DaemonCommand::AcquireSessionInputPause {
+                            id: None,
+                            active_session_id: self.active_session_id.clone(),
+                            lease_key: QUEUE_EDIT_LEASE.to_string(),
+                            rest: Map::default(),
+                        },
+                    )
+                    .await;
+                if let Some(pause_id) = acquired.ok().as_ref().and_then(|data| {
+                    data.get("pauseId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                }) {
+                    self.queue_hold = Some((self.active_session_id.clone(), pause_id));
+                }
+            }
+            (Some(_), false) => {
+                let Some((session_id, pause_id)) = self.queue_hold.take() else {
+                    return;
+                };
+                let _ = self
+                    .bounded_request(
+                        Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                        DaemonCommand::ReleaseSessionInputPause {
+                            id: None,
+                            active_session_id: session_id,
+                            pause_id,
+                            rest: Map::default(),
+                        },
+                    )
+                    .await;
+            }
+            (None, false) | (Some(_), true) => {}
+        }
     }
 
     /// Send one `mutate_queued_message` and return its status string (every outcome answers

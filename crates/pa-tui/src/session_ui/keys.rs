@@ -414,6 +414,17 @@ impl SessionUi {
         view: &mut AgentView,
         running: &mut bool,
     ) -> Result<()> {
+        let handled = self.handle_key_inner(key, view, running).await;
+        self.reconcile_queue_hold().await;
+        handled
+    }
+
+    async fn handle_key_inner(
+        &mut self,
+        key: KeyEvent,
+        view: &mut AgentView,
+        running: &mut bool,
+    ) -> Result<()> {
         // Any non-Escape key re-arms the double-Esc tree shortcut (one shot per input chain);
         // Escape itself never resets, so repeated Escape converges to the inert empty state.
         if key_event_to_id(&key).is_some_and(|id| id != "escape") {

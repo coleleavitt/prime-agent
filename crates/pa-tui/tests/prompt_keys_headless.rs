@@ -147,6 +147,9 @@ impl MockSupervisor {
                     write_json(&mut writer, &response(json!({})));
                     write_json(&mut writer, &queue_update(&queue));
                 }
+                "acquire_session_input_pause" => {
+                    write_json(&mut writer, &response(json!({ "pauseId": "pause-1" })));
+                }
                 "clear_queue" => {
                     queue.clear();
                     write_json(&mut writer, &response(json!({})));
@@ -436,6 +439,43 @@ fn up_on_an_empty_editor_takes_the_queued_messages_into_it() {
     assert!(
         !pulled.contains("Steering:"),
         "they left the queue strip:\n{pulled}"
+    );
+}
+
+/// Alt+Up edits a parked message in place, so the browse holds the
+/// session's queued input (an input pause) until it ends: a turn boundary
+/// meanwhile can neither fold the message into the run nor stop for it.
+#[test]
+fn browsing_the_queue_holds_it_until_the_browse_ends() {
+    let (_frames, commands, _copies) = run(
+        true,
+        vec!["only queued"],
+        1,
+        vec![
+            wait_for("only queued"),
+            key(KeyCode::Up, KeyModifiers::ALT),
+            HeadlessStep::WaitMs(200),
+            // Back past the newest message: the draft returns, the browse ends.
+            key(KeyCode::Down, KeyModifiers::ALT),
+            HeadlessStep::WaitMs(200),
+            ctrl('c'),
+            HeadlessStep::WaitMs(100),
+        ],
+    );
+    let pauses: Vec<(&str, Value)> = commands
+        .iter()
+        .filter_map(|command| match command["type"].as_str() {
+            Some("acquire_session_input_pause") => Some(("acquire", command["leaseKey"].clone())),
+            Some("release_session_input_pause") => Some(("release", command["pauseId"].clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        pauses,
+        vec![
+            ("acquire", json!("tui-queue-edit")),
+            ("release", json!("pause-1"))
+        ]
     );
 }
 

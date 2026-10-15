@@ -263,6 +263,11 @@ pub(crate) struct SessionUi {
     pending_thinking_suffix: Option<String>,
     pending_queue: Option<crate::queued::QueuedMessages>,
     queue_selection: crate::queued::QueueSelection,
+    /// The input pause held while a parked message is browsed for editing:
+    /// `(session id, pause id)`. The daemon keeps the queue where it is
+    /// (no fold, no boundary stop, no admission), so the message being
+    /// edited is never delivered mid-edit.
+    queue_hold: Option<(String, String)>,
     context: Option<crate::chrome::ContextUsage>,
     list_rows: Vec<Value>,
     pub(crate) turn_active: bool,

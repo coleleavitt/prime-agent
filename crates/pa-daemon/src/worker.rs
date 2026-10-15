@@ -391,16 +391,21 @@ impl Worker {
         let active_session_id = config.active_session_id.clone();
         let script = config.script.clone();
         let core = Arc::new(Mutex::new(core));
+        let input_pauses = crate::session_input_pause::InputPauseTable::new();
         // TS `_steeringStopPending`: a queued steer stops the running turn
-        // at its next boundary — the follow-up lane never stops the run.
+        // at its next boundary — the follow-up lane never stops the run. A
+        // held input pause keeps the lane queued, so it stops nothing: the
+        // run would end for input the next admission refuses.
         let queued_steering_probe: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>> = Some({
             let core = Arc::clone(&core);
+            let input_pauses = input_pauses.clone();
             std::sync::Arc::new(move || {
-                !core
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .steering
-                    .is_empty()
+                !input_pauses.paused()
+                    && !core
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .steering
+                        .is_empty()
             })
         });
         // Shared worker recovery journal: the turn runner persists queue
@@ -414,6 +419,7 @@ impl Worker {
             core: Arc::clone(&core),
             events: Arc::clone(&events),
             recovery: Arc::clone(&recovery),
+            input_pauses: input_pauses.clone(),
             next_ticket: std::sync::atomic::AtomicU64::new(1),
         });
         let work_notify = Arc::new(Notify::new());
@@ -427,7 +433,6 @@ impl Worker {
         ));
         let worker_token = std::env::var(WORKER_TOKEN_ENV).unwrap_or_default();
         let roster_delta_sequence = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let input_pauses = crate::session_input_pause::InputPauseTable::new();
         // The shared pane-reporter slot: the worker binds it at create and
         // the turn runner reads it at every boundary (a slot, not a
         // snapshot, so a create-time rebind reaches the runner too).
