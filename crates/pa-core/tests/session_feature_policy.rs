@@ -369,6 +369,7 @@ impl pa_core::session_engine::steering_fold::SteeringFold for QueuedSteers {
                 |(ticket, text)| pa_core::session_engine::steering_fold::FoldedSteer {
                     text: (*text).to_string(),
                     ticket: ticket as u64,
+                    custom: None,
                 },
             )
             .collect()
@@ -461,6 +462,112 @@ async fn queued_steers_join_the_running_turn_through_admission() {
             "tool result",
             "context",
             "fold me in",
+            "assistant"
+        ]
+    );
+}
+
+/// The embedding's queue for the notice fold test: one host notice (a
+/// finished background command's row) waiting at the first boundary.
+#[derive(Default)]
+struct QueuedNotice {
+    taken: std::sync::Mutex<bool>,
+    settled: std::sync::Mutex<Vec<Result<(), String>>>,
+}
+
+impl pa_core::session_engine::steering_fold::SteeringFold for QueuedNotice {
+    fn take(&self) -> Vec<pa_core::session_engine::steering_fold::FoldedSteer> {
+        let mut taken = self.taken.lock().unwrap();
+        if *taken {
+            return Vec::new();
+        }
+        *taken = true;
+        let row = pa_core::session_engine::messages::create_async_bash_completion_message(
+            4321, "sleep 1", 0, 1,
+        );
+        vec![pa_core::session_engine::steering_fold::FoldedSteer {
+            text: "[bash-done pid:4321 exit:0]".to_string(),
+            ticket: 0,
+            custom: Some(
+                serde_json::to_value(pa_types::session::AgentMessage::Custom(row)).unwrap(),
+            ),
+        }]
+    }
+
+    fn settled(
+        &self,
+        _steer: pa_core::session_engine::steering_fold::FoldedSteer,
+        outcome: Result<(), String>,
+    ) {
+        self.settled.lock().unwrap().push(outcome);
+    }
+}
+
+/// A host notice joins the running turn as its own custom row (Claude Code's
+/// task notification after a tool batch), without the prompt review a
+/// user's steer goes through and without restarting the run.
+#[tokio::test]
+async fn a_queued_host_notice_joins_the_running_turn_as_its_row() {
+    install_policy();
+    let model = model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    provider.push_tool_call_turn(None, vec![("call-1", "echo", json!({}))]);
+    provider.push_text_turn("saw the notice");
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let queue = Arc::new(QueuedNotice::default());
+    let echo = ToolDefinition {
+        name: "echo".to_string(),
+        label: "Echo".to_string(),
+        description: "echo".to_string(),
+        prompt_snippet: String::new(),
+        parameters: json!({ "type": "object", "properties": {} }),
+        execution_mode: Some(ExecutionMode::Sequential),
+        prepare_arguments: None,
+        execute: Arc::new(|_id, _params, _signal, _on_update| {
+            Box::pin(async { Ok(ToolExecutionResult::text("echoed")) })
+        }),
+    };
+    let engine = Box::pin(create_session(SessionEngineConfig {
+        cwd,
+        agent_dir: tmp.path().join("agent"),
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        tools: vec![bridge_tool(echo)],
+        steering_fold: Some(Arc::clone(&queue) as Arc<_>),
+        ..SessionEngineConfig::default()
+    }))
+    .await
+    .unwrap();
+    engine
+        .prompt("start", PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+
+    assert_eq!(*queue.settled.lock().unwrap(), vec![Ok(())]);
+    let state = engine.session.agent().state().await;
+    let tail: Vec<String> = state
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Custom(row) if row.payload["customType"] == "async_bash_completion" => {
+                Some("async_bash_completion".to_string())
+            }
+            AgentMessage::Standard(Message::User(user)) => Some(text_of(&user.content)),
+            AgentMessage::Standard(Message::ToolResult(_)) => Some("tool result".to_string()),
+            AgentMessage::Standard(Message::Assistant(_)) => Some("assistant".to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tail,
+        [
+            "start",
+            "assistant",
+            "tool result",
+            "async_bash_completion",
             "assistant"
         ]
     );

@@ -27,7 +27,7 @@ pub(crate) use digest::AGENT_MESSAGE_INBOX_ENTRY_CUSTOM_TYPE;
 pub(crate) use digest::AgentMessageDigest;
 
 mod queue;
-mod steer_fold;
+pub(crate) mod steer_fold;
 
 pub(crate) use queue::{
     ABORTED_TURN_SETTLE_ERROR,

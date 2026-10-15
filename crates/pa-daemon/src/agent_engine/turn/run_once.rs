@@ -271,6 +271,26 @@ impl AgentSessionEngine {
                                             let _ = tx.send(EngineEvent::UserMessage(value));
                                         }
                                     }
+                                    // A host notice folded into the run (a finished
+                                    // background command, a watch event) persists and
+                                    // reaches clients as its custom row, like the row
+                                    // that starts a run.
+                                    pa_agent::types::AgentMessage::Custom(row)
+                                        if boundary_passed
+                                            .load(std::sync::atomic::Ordering::SeqCst)
+                                            && row
+                                                .payload
+                                                .get("customType")
+                                                .and_then(Value::as_str)
+                                                .is_some_and(|kind| {
+                                                    crate::worker::steer_fold::FOLDABLE_NOTICE_TYPES
+                                                        .contains(&kind)
+                                                }) =>
+                                    {
+                                        if let Some(value) = session_wire_value(agent_message) {
+                                            let _ = tx.send(EngineEvent::CustomMessage(value));
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }

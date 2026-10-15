@@ -3,10 +3,13 @@
 //! admitted into the running turn by the session (Claude Code's mid-turn
 //! delivery), instead of ending the run and starting the next one on them.
 //!
-//! An item joins only when it is a plain user steer: queued by a client
+//! An item joins when it is a plain user steer: queued by a client
 //! (visible, ordinary turn policy), text only, no injected row, no session
-//! command, no agent-message or scheduler origin. Everything else keeps the
-//! stop-and-restart delivery. A folded item's waiter (`prompt_and_wait`)
+//! command, no agent-message or scheduler origin. A host notice joins too,
+//! as its own row (Claude Code folds its task notifications in after a tool
+//! batch): a finished background command or a watch event queued on a busy
+//! session ([`FOLDABLE_NOTICE_TYPES`]). Everything else (heartbeats,
+//! injected rows, agent messages) keeps the stop-and-restart delivery. A folded item's waiter (`prompt_and_wait`)
 //! settles with the run it joined; its admission id counts as running. A
 //! steer the session refused (an installed feature's prompt review) goes
 //! back to the lane's front and the run ends for it, so the restart's
@@ -47,15 +50,28 @@ pub(crate) struct FoldState {
     pub(crate) front_refused: bool,
 }
 
+/// The host notice rows that join a running turn: a finished background
+/// command and a watch event.
+pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 2] = [
+    pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE,
+    crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
+];
+
 /// Whether `item` can join a running turn.
 fn joinable(item: &QueuedItem) -> bool {
-    item.queue_visible
+    let plain = item.queue_visible
         && item.policy == TurnPolicy::Queued
-        && item.custom_message.is_none()
         && item.images.is_empty()
         && item.agent_message.is_none()
-        && item.queue_key.is_none()
-        && crate::session_commands::parse_prompt_session_command(&item.message).is_none()
+        && item.queue_key.is_none();
+    plain
+        && match &item.custom_message {
+            None => crate::session_commands::parse_prompt_session_command(&item.message).is_none(),
+            Some(row) => row
+                .get("customType")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| FOLDABLE_NOTICE_TYPES.contains(&kind)),
+        }
 }
 
 /// The worker's steering lane as the session's [`SteeringFold`].
@@ -133,6 +149,7 @@ impl SteeringFold for WorkerSteeringFold {
                 taken.push(FoldedSteer {
                     text: item.message.clone(),
                     ticket,
+                    custom: item.custom_message.clone(),
                 });
                 core.steer_fold.taken.insert(ticket, item);
             }
@@ -212,6 +229,52 @@ mod tests {
         let mut agent = item("x");
         agent.agent_message = Some("x".to_string());
         assert!(!joinable(&agent));
+    }
+
+    /// A finished background command's notice and a watch event join the
+    /// running turn as their rows; other host rows keep the restart.
+    #[test]
+    fn host_notices_join_and_other_host_rows_do_not() {
+        let notice = |custom_type: &str| {
+            let mut item = item("[bash-done pid:1 exit:0]");
+            item.priority = super::super::queue::QueuePriority::Background;
+            item.custom_message = Some(serde_json::json!({
+                "role": "custom",
+                "customType": custom_type,
+                "content": "x",
+                "display": true,
+                "timestamp": 0,
+            }));
+            item
+        };
+        assert!(joinable(&notice("async_bash_completion")));
+        assert!(joinable(&notice("agent_watch_notice")));
+        assert!(!joinable(&notice("heartbeat_prompt")));
+        // An idle session's notice is injected, not queued: the runner takes it.
+        let mut injected = notice("async_bash_completion");
+        injected.policy = TurnPolicy::Injected;
+        injected.queue_visible = false;
+        assert!(!joinable(&injected));
+
+        let core = Arc::new(Mutex::new(SessionCore::test_core(None, "/tmp".to_string())));
+        let fold = WorkerSteeringFold {
+            core: Arc::clone(&core),
+            events: Arc::new(super::super::EventPump::new()),
+            recovery: Arc::new(Mutex::new(None)),
+            input_pauses: crate::session_input_pause::InputPauseTable::new(),
+            next_ticket: AtomicU64::new(1),
+        };
+        {
+            let mut core = core.lock().unwrap();
+            core.busy = true;
+            core.steering.push_back(notice("async_bash_completion"));
+        }
+        let taken = fold.take();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(
+            taken[0].custom.as_ref().unwrap()["customType"],
+            "async_bash_completion"
+        );
     }
 
     #[test]

@@ -400,6 +400,145 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
     drop(supervisor);
 }
 
+/// The notice-fold script: the first cell starts a background command and
+/// returns (its completion notice queues on the busy session); the second
+/// cell waits until the host accepted that notice, so it is queued by the
+/// latest boundary; the run ends on its own reply.
+fn notice_fold_script(dir: &Path) -> PathBuf {
+    let path = dir.join("notice-fold-script.json");
+    std::fs::write(
+        &path,
+        json!({
+            "engine": "faux",
+            "modelId": "faux-1",
+            "modelName": "Faux Model",
+            "reasoning": false,
+            "contextWindow": 128_000,
+            "tokensPerSecond": 30,
+            "responses": [
+                {"content": [
+                    {"type": "text", "text": "Starting the background command."},
+                    {"type": "toolCall", "name": "python_repl", "id": "toolu_bg01",
+                     "arguments": {"code":
+                        "from rlm import bash\nh = bash('printf BG-NOTICE-DONE')\nh.pid"}}
+                ]},
+                {"content": [
+                    {"type": "text", "text": "Waiting for the notice."},
+                    // The host accepted the notice once the handle armed its
+                    // withdrawal; the bound only stops a broken test.
+                    {"type": "toolCall", "name": "python_repl", "id": "toolu_wait01",
+                     "arguments": {"code":
+                        "import asyncio, time\ndeadline = time.time() + 120\nwhile h._consumed_notice is None and time.time() < deadline:\n    await asyncio.sleep(0.02)\nprint('notice accepted')"}}
+                ]},
+                {"content": [{"type": "text", "text": "saw the folded notice"}]},
+                {"content": [{"type": "text", "text": "spare reply"}]}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write faux script");
+    path
+}
+
+/// A finished background command's notice joins the running turn at its next
+/// boundary (Claude Code's task notification after a tool batch) instead of
+/// ending the run and starting another: one run, the `[bash-done]` row with
+/// the output's last lines inside it, the reply to it, and the row saved in
+/// the session.
+#[test]
+fn a_background_completion_notice_joins_the_running_turn() {
+    let Some(_kernel) = kernel_python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let cwd = dir.path().join("work");
+    std::fs::create_dir_all(&cwd).expect("work dir");
+    let script = notice_fold_script(dir.path());
+    let socket = dir.path().join("notice-fold.sock");
+    let supervisor = spawn_supervisor(&socket, &agent_dir, &script);
+    let mut client = Client::connect(&socket);
+    let created = client.send(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": { "cwd": cwd.to_string_lossy(), "model": "faux-1" },
+        }),
+    );
+    assert_eq!(created["success"], true, "create failed");
+    let session_id = created["data"]["id"]
+        .as_str()
+        .or_else(|| created["data"]["sessionId"].as_str())
+        .expect("session id")
+        .to_string();
+    let attached = client.send(
+        "a1",
+        &json!({ "type": "attach", "activeSessionId": session_id }),
+    );
+    assert_eq!(attached["success"], true, "attach failed");
+    let started = client.send(
+        "p1",
+        &json!({ "type": "prompt", "activeSessionId": session_id, "message": "run it" }),
+    );
+    assert_eq!(started["success"], true, "prompt failed");
+
+    let settled = Instant::now() + Duration::from_mins(3);
+    loop {
+        client.drain_events(Duration::from_millis(100));
+        if event_types(&client.events).iter().any(|t| t == "agent_end") {
+            break;
+        }
+        assert!(
+            Instant::now() < settled,
+            "the run never settled; events: {:#?}",
+            event_types(&client.events)
+        );
+    }
+    // Late frames of a restart would follow the first end: give them a beat.
+    client.drain_events(Duration::from_millis(500));
+
+    let types = event_types(&client.events);
+    assert_eq!(
+        types.iter().filter(|t| *t == "agent_start").count(),
+        1,
+        "the notice joined the run, no second run: {types:?}"
+    );
+    let rows = event_rows(&client.events);
+    let notice = rows
+        .iter()
+        .position(|(role, text)| role == "custom" && text.starts_with("[bash-done pid:"))
+        .unwrap_or_else(|| panic!("the notice row reached the client: {rows:?}"));
+    assert!(
+        rows[notice].1.contains("BG-NOTICE-DONE"),
+        "the notice carries the output's end: {:?}",
+        rows[notice].1
+    );
+    // The run went on after the notice (whichever boundary it reached first):
+    // the next row is the model's, not a new prompt.
+    assert_eq!(
+        rows[notice + 1].0,
+        "assistant",
+        "the run continues on the folded notice: {rows:?}"
+    );
+    assert_eq!(
+        rows.last().map(|(_, text)| text.as_str()),
+        Some("saw the folded notice"),
+        "the run settles on its own reply: {rows:?}"
+    );
+
+    let messages = client.send(
+        "m1",
+        &json!({ "type": "get_messages", "activeSessionId": session_id }),
+    );
+    assert_eq!(messages["success"], true, "get_messages failed");
+    let saved = serde_json::to_string(&messages["data"]).expect("messages json");
+    assert!(
+        saved.contains("async_bash_completion") && saved.contains("BG-NOTICE-DONE"),
+        "the folded notice is saved in the session"
+    );
+    drop(supervisor);
+}
+
 fn event_types(events: &[Value]) -> Vec<String> {
     events
         .iter()

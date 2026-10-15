@@ -7,6 +7,11 @@
 //! run continues instead of ending and restarting on them. Steers that
 //! cannot join (session commands, image-bearing prompts, injected rows: the
 //! embedding decides) stay queued and still end the run at the boundary.
+//!
+//! A host notice (a finished background command, a watch event: the
+//! embedding decides which) joins the same way as its own custom row, the
+//! way Claude Code folds a task notification in after a tool batch. The host
+//! wrote it, so it skips the expansion and review a user's text goes through.
 
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -22,6 +27,9 @@ pub struct FoldedSteer {
     pub text: String,
     /// The embedding's handle for [`SteeringFold::settled`].
     pub ticket: u64,
+    /// A host notice's session custom row (`role: "custom"`): it joins as
+    /// that row instead of a user prompt built from `text`.
+    pub custom: Option<serde_json::Value>,
 }
 
 /// The embedding's queued steering, consulted at every turn boundary.
@@ -52,6 +60,18 @@ pub(super) struct FoldAdmission {
 pub(super) type FoldAdmissionSlot = Arc<OnceLock<FoldAdmission>>;
 
 impl FoldAdmission {
+    /// The row a host notice joins the run as: its own custom row, unreviewed.
+    fn admit_notice(row: &serde_json::Value) -> Result<AgentMessageBatch, String> {
+        let parsed = serde_json::from_value::<SessionAgentMessage>(row.clone())
+            .map_err(|error| format!("the queued notice does not parse: {error}"))?;
+        if !matches!(parsed, SessionAgentMessage::Custom(_)) {
+            return Err("a queued notice must carry role \"custom\"".to_string());
+        }
+        session_message_to_loop(&parsed)
+            .map(Into::into)
+            .ok_or_else(|| "the queued notice has no loop form".to_string())
+    }
+
     /// The rows one folded steer joins the run as, or the refusal.
     async fn admit(&self, text: &str) -> Result<AgentMessageBatch, String> {
         let (skill_expanded, _) = crate::skills::expand_skill_command(text, &self.skills);
@@ -97,7 +117,11 @@ pub(super) async fn fold_queued_steers(fold: &dyn SteeringFold, slot: &FoldAdmis
         return;
     };
     for steer in fold.take() {
-        match admission.admit(&steer.text).await {
+        let admitted = match &steer.custom {
+            Some(row) => FoldAdmission::admit_notice(row),
+            None => admission.admit(&steer.text).await,
+        };
+        match admitted {
             Ok(batch) => {
                 agent.steer(batch);
                 fold.settled(steer, Ok(()));
