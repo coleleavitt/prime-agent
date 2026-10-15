@@ -36,6 +36,8 @@ pub(crate) struct SessionCore {
     /// Admission ids belonging to the current in-flight turn. The queue
     /// handoff and owned cancellation both inspect this under the core lock.
     pub(crate) running_admission_ids: std::collections::HashSet<String>,
+    /// Steers folded into the running turn (see `worker::steer_fold`).
+    pub(crate) steer_fold: super::steer_fold::FoldState,
     /// TS `autoCompactionEnabled` (settings default: on).
     pub(crate) auto_compaction_enabled: bool,
     /// The last broadcast queue snapshot (TS `_lastSessionActionSnapshot`):
@@ -142,6 +144,7 @@ impl SessionCore {
             compacting: false,
             running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
+            steer_fold: super::steer_fold::FoldState::default(),
             auto_compaction_enabled: true,
             last_action_snapshot: Some(SessionActionSnapshot::default()),
             rlm_depth: 0,

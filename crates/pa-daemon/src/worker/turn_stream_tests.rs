@@ -66,6 +66,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         cwd_override: false,
         running_tool_calls: std::collections::HashMap::new(),
         running_admission_ids: std::collections::HashSet::new(),
+        steer_fold: super::steer_fold::FoldState::default(),
     }));
     TurnRunner {
         core,

@@ -591,8 +591,9 @@ fn queue_pickup_projection_reaches_clients_before_the_delivered_turn_starts() {
         "the queue drains in lane order, one item per turn"
     );
 
-    // The delivered batch leaves the projection BEFORE its turn starts (TS emits at the
-    // `preparing` transition); under the batched default BOTH steers leave in one pickup.
+    // The steers leave the projection BEFORE the model sees them: they join the running
+    // turn one at its boundary (`worker::steer_fold`), both in one pickup; the follow-up
+    // still waits for its own run and leaves the projection before it starts.
     let agent_starts: Vec<usize> = client
         .events
         .iter()
@@ -602,18 +603,27 @@ fn queue_pickup_projection_reaches_clients_before_the_delivered_turn_starts() {
         .collect();
     assert_eq!(
         agent_starts.len(),
-        3,
-        "turn one, the steers' one batched turn, the follow-up's: {agent_starts:?}, events: {:?}",
+        2,
+        "turn one (the steers joined it), then the follow-up's run: {agent_starts:?}, events: {:?}",
         event_types(&client.events)
     );
     let parked_at = parked[0];
-    let batch_start = agent_starts[1];
-    let follow_c_start = agent_starts[2];
+    let batch_start = client
+        .events
+        .iter()
+        .position(|event| {
+            event.get("type").and_then(Value::as_str) == Some("message_start")
+                && event["message"]["role"] == "user"
+                && event["message"]["content"][0]["text"] == "steer A"
+        })
+        .expect("steer A delivered");
+    assert!(batch_start < agent_starts[1], "the steers joined run one");
+    let follow_c_start = agent_starts[1];
     assert!(
         action_updates_with(&client.events[..batch_start], &[], &["follow C"])
             .iter()
             .any(|index| *index > parked_at),
-        "the steer batch's pickup must project before the batched turn starts (events: {:?})",
+        "the steer batch's pickup must project before the steers reach the model (events: {:?})",
         event_types(&client.events)
     );
     assert!(

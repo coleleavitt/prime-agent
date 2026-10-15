@@ -646,19 +646,11 @@ impl SessionUi {
             self.interrupt_running_work(view);
             return Ok(());
         }
-        // Ctrl+D on an empty editor: the same double press as Ctrl+C (an
-        // interrupt while work runs, then the exit hint, then the exit).
+        // Ctrl+D on an empty editor exits at once (a detach: the session keeps
+        // running in the daemon), the terminal's end-of-input habit.
         if view.editor.keybindings().matches(&id, "app.exit") && view.editor.get_text().is_empty() {
-            if self.has_interruptible_work(view) {
-                self.interrupt_running_work(view);
-                self.clear_ctrl_c_hint();
-            } else if self.ctrl_c_hint_visible() && self.ctrl_c_hint_action == "app.exit" {
-                self.exit_reason = "ctrl_d";
-                *running = false;
-            } else {
-                self.show_ctrl_c_hint("app.exit");
-            }
-            self.dirty = true;
+            self.exit_reason = "ctrl_d";
+            *running = false;
             return Ok(());
         }
         // `app.interrupt` routes through the `app.clear` handlers; only the

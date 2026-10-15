@@ -39,6 +39,11 @@ pub struct AgentEngineConfig {
     /// the next boundary and the steer delivers next (the follow-up lane
     /// never stops the run).
     pub queued_steering_probe: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// The steering lane's joinable items, folded into the running turn at
+    /// each boundary instead of ending it (see
+    /// `pa_core::session_engine::steering_fold`).
+    pub steering_fold:
+        Option<std::sync::Arc<dyn pa_core::session_engine::steering_fold::SteeringFold>>,
 }
 
 impl AgentEngineConfig {

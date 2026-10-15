@@ -116,6 +116,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         semantic_edges: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
         image_model_router: None,
         steering_mode: None,
         follow_up_mode: None,

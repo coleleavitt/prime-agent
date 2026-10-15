@@ -845,6 +845,7 @@ pub(crate) async fn build_headless_engine_with(
             on_background_work_settled: None,
             queued_goal_context_purge: None,
             queued_steering_probe: None,
+            steering_fold: None,
             should_stop_after_turn: None,
             image_model_router,
             rlm_token_allowance: match embedding {

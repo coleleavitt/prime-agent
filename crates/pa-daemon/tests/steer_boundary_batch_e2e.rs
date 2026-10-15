@@ -1,7 +1,8 @@
 //! Multi-steer tool-boundary batching: parked steering messages co-deliver
-//! at the next tool-call boundary as ONE batched turn. Deliberate divergence
-//! from TS "one-at-a-time" (Kevin 2026-09-23); "one-at-a-time" stays
-//! selectable.
+//! at the next tool-call boundary as ONE batch that joins the running turn
+//! (the run continues on them, Claude Code's mid-turn delivery; see
+//! `worker::steer_fold`). Deliberate divergence from TS "one-at-a-time"
+//! (Kevin 2026-09-23); "one-at-a-time" stays selectable.
 // Stack-resident futures by design on the daemon's hot paths.
 #![allow(clippy::large_futures)]
 // Narrowing casts sit at OS boundaries (pid/fd/time/size) where the kernel
@@ -310,9 +311,8 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
     // Every steer and the follow-up are parked: let the tool call finish.
     std::fs::write(cwd.join("release-sleep-one"), "1").expect("release the sleep cell");
 
-    // Drain until the queue settled: the long turn, then the steer batch's
-    // turn and the follow-up's turn (the expected shape) each end with an
-    // `agent_end`. A quiet-wire heuristic misread a loaded box's pauses as
+    // Drain until the queue settled: the long run (which the steer batch
+    // joined) and the follow-up's own run each end with an `agent_end`. A quiet-wire heuristic misread a loaded box's pauses as
     // the end; a wrong shape still fails the assertions below.
     let settled = Instant::now() + Duration::from_mins(3);
     loop {
@@ -321,7 +321,7 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
             .iter()
             .filter(|t| *t == "agent_end")
             .count();
-        if ends >= 3 {
+        if ends >= 2 {
             break;
         }
         assert!(
@@ -331,22 +331,36 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
         );
     }
 
-    // The delivery window is everything after the long turn's first
-    // `agent_end`.
+    // The steers joined the long run: one `agent_start` before its end, and
+    // only the follow-up's run after it.
     let types = event_types(&client.events);
     let first_agent_end = types
         .iter()
         .position(|t| t == "agent_end")
-        .expect("the long turn settled");
-    let delivery = &types[first_agent_end + 1..];
-
-    let agent_starts: usize = delivery
-        .iter()
-        .filter(|t| *t == &"agent_start".to_string())
-        .count();
+        .expect("the long run settled");
+    let starts = |events: &[String]| events.iter().filter(|t| *t == "agent_start").count();
     assert_eq!(
-        agent_starts, 2,
-        "the steer batch runs as ONE turn, the follow-up as its own: {delivery:?}"
+        starts(&types[..first_agent_end]),
+        1,
+        "the steer batch joined the running run: {types:?}"
+    );
+    assert_eq!(
+        starts(&types[first_agent_end + 1..]),
+        1,
+        "the follow-up runs as its own: {types:?}"
+    );
+    let rows = event_rows(&client.events);
+    let batch_reply = rows
+        .iter()
+        .position(|(_, text)| text == "batch reply for all three steers")
+        .expect("the batch reply delivered");
+    let long_run_rows = types[..first_agent_end]
+        .iter()
+        .filter(|t| *t == "message_end")
+        .count();
+    assert!(
+        batch_reply < long_run_rows,
+        "the batch reply belongs to the long run: {rows:?}"
     );
 
     let texts = event_texts(&client.events);

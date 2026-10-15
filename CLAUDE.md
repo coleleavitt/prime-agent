@@ -62,6 +62,11 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   Protocol 5: the runtime needs a host that serves `bash.*` and `computer_use.*`; the handshake refuses a skewed pair.
 - Runtime: kernel span tracing, workflow v1/v2, bash activity rows (`bashCommands`, `bash.consumed`), the fd-2 stderr
   tee, the pidfd owner watchdog with a raw-syscall fallback.
+- Queued steers join the running turn at its next boundary (Claude Code's mid-turn delivery) instead of ending the
+  run: `pa-core::session_engine::steering_fold` admits them like a busy-session steer (skill and template expansion,
+  the features' prompt review), `pa-daemon::worker::steer_fold` takes the lane's plain user steers and settles their
+  waiters with the run; session commands, image prompts, injected rows and a refused steer keep the stop-and-restart
+  delivery.
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
 - The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the

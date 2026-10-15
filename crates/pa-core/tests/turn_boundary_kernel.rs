@@ -161,6 +161,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         semantic_edges: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
         should_stop_after_turn: None,
         image_model_router: None,
         steering_mode: None,

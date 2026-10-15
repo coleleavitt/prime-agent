@@ -39,6 +39,7 @@ fn faux_executor(cwd: &std::path::Path) -> Arc<EngineGuestExecutor> {
         telemetry_disabled: Some(true),
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     };
     Arc::new(
         EngineGuestExecutor::new(config, Some("faux/faux-1".to_string()))

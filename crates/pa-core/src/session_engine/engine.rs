@@ -74,6 +74,10 @@ pub struct SessionEngineConfig {
     /// `true` while a steering-lane action is queued or mid-selection: the
     /// running turn stops at the next boundary and the queued steer delivers.
     pub queued_steering_probe: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// The embedding's queued steers that may join the running turn at a
+    /// boundary instead of ending it (see [`super::steering_fold`]); folded
+    /// before `queued_steering_probe` is consulted.
+    pub steering_fold: Option<std::sync::Arc<dyn super::steering_fold::SteeringFold>>,
     /// Embedding-owned turn boundary, consulted after queued steering.
     /// Returning true yields the run; the embedding owns any continuation.
     pub should_stop_after_turn: Option<pa_agent::agent_loop::ShouldStopAfterTurnFn>,
@@ -971,6 +975,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Whether a queued steer is waiting: a run that ends with one continues
     // on it at once, so the features hear no agent stop.
     let steering_probe = config.queued_steering_probe.clone();
+    // What the boundary needs to fold queued steers; set once the agent is built.
+    let fold_admission: super::steering_fold::FoldAdmissionSlot = std::sync::Arc::default();
     let agent = Agent::new(AgentOptions {
         initial_state: AgentInitialState {
             system_prompt: Some(system_prompt.clone()),
@@ -994,16 +1000,26 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             super::request_timing::pass_through_transform(),
         )),
         should_stop_after_turn: {
+            let fold = config.steering_fold.take();
+            let fold_slot = std::sync::Arc::clone(&fold_admission);
             let steering = config.queued_steering_probe.take();
             let boundary = config.should_stop_after_turn.take();
             // A funded subagent that spent its grant stops at this
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
             Some(std::sync::Arc::new(move |context| {
+                let fold = fold.clone();
+                let fold_slot = std::sync::Arc::clone(&fold_slot);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
                 Box::pin(async move {
+                    // Queued steers that can join this run go into the agent's
+                    // steering queue now (the loop drains it before its next
+                    // model call); only the ones that cannot still end the run.
+                    if let Some(fold) = &fold {
+                        super::steering_fold::fold_queued_steers(fold.as_ref(), &fold_slot).await;
+                    }
                     let exhausted = budget.as_ref().is_some_and(|budget| {
                         let exhausted = budget.exhausted();
                         if exhausted {
@@ -1063,6 +1079,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await;
 
     let agent = Arc::new(agent);
+    let _ = fold_admission.set(super::steering_fold::FoldAdmission {
+        agent: Arc::downgrade(&agent),
+        skills: resources.skills.clone(),
+        prompt_templates: resources.prompts.clone(),
+        features: crate::features::installed().to_vec(),
+        feature_context: Arc::clone(&feature_context),
+        feature_notes: feature_notes.clone(),
+    });
     // TS `_startRlmChildRun`'s spawn anchor: the `rlm.spawn` host handler
     // names the parent's in-flight turn through this weak seam (the
     // bridge is built before the agent exists, and a strong edge would

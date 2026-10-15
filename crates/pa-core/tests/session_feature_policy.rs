@@ -346,3 +346,122 @@ async fn a_feature_refuses_the_kernels_host_requests_and_bash() {
         "{out}"
     );
 }
+
+/// The embedding's queue for the fold test: two steers waiting at the first
+/// boundary, taken once; the verdicts recorded.
+#[derive(Default)]
+struct QueuedSteers {
+    taken: std::sync::Mutex<bool>,
+    settled: std::sync::Mutex<Vec<(String, Result<(), String>)>>,
+}
+
+impl pa_core::session_engine::steering_fold::SteeringFold for QueuedSteers {
+    fn take(&self) -> Vec<pa_core::session_engine::steering_fold::FoldedSteer> {
+        let mut taken = self.taken.lock().unwrap();
+        if *taken {
+            return Vec::new();
+        }
+        *taken = true;
+        ["fold me in", "refuse me"]
+            .iter()
+            .enumerate()
+            .map(
+                |(ticket, text)| pa_core::session_engine::steering_fold::FoldedSteer {
+                    text: (*text).to_string(),
+                    ticket: ticket as u64,
+                },
+            )
+            .collect()
+    }
+
+    fn settled(
+        &self,
+        steer: pa_core::session_engine::steering_fold::FoldedSteer,
+        outcome: Result<(), String>,
+    ) {
+        self.settled.lock().unwrap().push((steer.text, outcome));
+    }
+}
+
+/// A queued steer joins the running turn at its boundary through the same
+/// admission as a busy-session steer: the feature's context rides ahead of
+/// it, and the steer the feature refuses goes back to the embedding.
+#[tokio::test]
+async fn queued_steers_join_the_running_turn_through_admission() {
+    install_policy();
+    let model = model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    provider.push_tool_call_turn(None, vec![("call-1", "echo", json!({}))]);
+    provider.push_text_turn("folded reply");
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let queue = Arc::new(QueuedSteers::default());
+    let echo = ToolDefinition {
+        name: "echo".to_string(),
+        label: "Echo".to_string(),
+        description: "echo".to_string(),
+        prompt_snippet: String::new(),
+        parameters: json!({ "type": "object", "properties": {} }),
+        execution_mode: Some(ExecutionMode::Sequential),
+        prepare_arguments: None,
+        execute: Arc::new(|_id, _params, _signal, _on_update| {
+            Box::pin(async { Ok(ToolExecutionResult::text("echoed")) })
+        }),
+    };
+    let engine = Box::pin(create_session(SessionEngineConfig {
+        cwd,
+        agent_dir: tmp.path().join("agent"),
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        tools: vec![bridge_tool(echo)],
+        steering_fold: Some(Arc::clone(&queue) as Arc<_>),
+        ..SessionEngineConfig::default()
+    }))
+    .await
+    .unwrap();
+    engine
+        .prompt("start", PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+
+    assert_eq!(
+        *queue.settled.lock().unwrap(),
+        vec![
+            ("fold me in".to_string(), Ok(())),
+            (
+                "refuse me".to_string(),
+                Err("The prompt was refused: policy refuses this prompt".to_string())
+            ),
+        ]
+    );
+    let state = engine.session.agent().state().await;
+    let tail: Vec<String> = state
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Custom(row) if row.payload["customType"] == "feature_context" => {
+                Some("context".to_string())
+            }
+            AgentMessage::Standard(Message::User(user)) => Some(text_of(&user.content)),
+            AgentMessage::Standard(Message::ToolResult(_)) => Some("tool result".to_string()),
+            AgentMessage::Standard(Message::Assistant(_)) => Some("assistant".to_string()),
+            _ => None,
+        })
+        .collect();
+    // One run: the tool turn, then the folded steer (with its context) and
+    // the reply to it.
+    assert_eq!(
+        tail,
+        [
+            "context",
+            "start",
+            "assistant",
+            "tool result",
+            "context",
+            "fold me in",
+            "assistant"
+        ]
+    );
+}

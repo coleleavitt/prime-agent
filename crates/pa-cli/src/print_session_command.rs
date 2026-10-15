@@ -360,6 +360,7 @@ mod tests {
                     on_background_work_settled: None,
                     queued_goal_context_purge: None,
                     queued_steering_probe: None,
+                    steering_fold: None,
                     should_stop_after_turn: None,
                     image_model_router: None,
                     steering_mode: None,

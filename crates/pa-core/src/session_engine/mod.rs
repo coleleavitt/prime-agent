@@ -49,6 +49,7 @@ pub mod side_question;
 pub mod skills_unavailable_notice;
 pub mod slash_commands;
 pub mod state_restore_notice;
+pub mod steering_fold;
 // The `system_router.run` handler is registered by the engine wiring and
 // tested in-module; nothing outside the crate consumes it.
 pub(crate) mod system_router_host;

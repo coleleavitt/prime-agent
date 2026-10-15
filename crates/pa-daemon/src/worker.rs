@@ -27,6 +27,7 @@ pub(crate) use digest::AGENT_MESSAGE_INBOX_ENTRY_CUSTOM_TYPE;
 pub(crate) use digest::AgentMessageDigest;
 
 mod queue;
+mod steer_fold;
 
 pub(crate) use queue::{
     ABORTED_TURN_SETTLE_ERROR,
@@ -385,6 +386,7 @@ impl Worker {
             cwd_override: false,
             running_tool_calls: std::collections::HashMap::new(),
             running_admission_ids: std::collections::HashSet::new(),
+            steer_fold: steer_fold::FoldState::default(),
         };
         let active_session_id = config.active_session_id.clone();
         let script = config.script.clone();
@@ -404,6 +406,16 @@ impl Worker {
         // Shared worker recovery journal: the turn runner persists queue
         // snapshots, `serve` opens the file, commands record busy state.
         let recovery = Arc::new(Mutex::new(None));
+        // The steering lane's plain user steers join the running turn at its
+        // boundaries (see `steer_fold`).
+        let steering_fold: std::sync::Arc<
+            dyn pa_core::session_engine::steering_fold::SteeringFold,
+        > = std::sync::Arc::new(steer_fold::WorkerSteeringFold {
+            core: Arc::clone(&core),
+            events: Arc::clone(&events),
+            recovery: Arc::clone(&recovery),
+            next_ticket: std::sync::atomic::AtomicU64::new(1),
+        });
         let work_notify = Arc::new(Notify::new());
         let idle_notify = Arc::new(Notify::new());
         // The supervisor link and worker token for roster pushes: one
@@ -482,6 +494,7 @@ impl Worker {
                         telemetry_disabled: config.telemetry_disabled,
                         cron_store: Some(kernel_cron_wiring(&scheduled)),
                         queued_steering_probe: queued_steering_probe.clone(),
+                        steering_fold: Some(steering_fold.clone()),
                     }) {
                         Ok(engine) => {
                             let concrete = std::sync::Arc::new(engine);
@@ -512,6 +525,7 @@ impl Worker {
                         telemetry_disabled: config.telemetry_disabled,
                         cron_store: Some(kernel_cron_wiring(&scheduled)),
                         queued_steering_probe: queued_steering_probe.clone(),
+                        steering_fold: Some(steering_fold.clone()),
                     }) {
                         Ok(engine) => {
                             let concrete = std::sync::Arc::new(engine);

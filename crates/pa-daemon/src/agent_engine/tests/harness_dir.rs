@@ -63,6 +63,7 @@ fn harness_command_edits_the_canonical_global_store() {
         telemetry_disabled: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .unwrap();
 

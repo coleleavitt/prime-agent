@@ -1035,6 +1035,7 @@ impl AgentSessionEngine {
             queued_goal_context_purge,
             // The steering lane owns the stop hooks (a queued steer cuts the next turn).
             queued_steering_probe: self.config.queued_steering_probe.clone(),
+            steering_fold: self.config.steering_fold.clone(),
             should_stop_after_turn: Some({
                 let session = Arc::downgrade(&self.session);
                 let target = Arc::clone(&self.provider_target);

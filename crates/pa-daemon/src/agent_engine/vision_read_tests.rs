@@ -236,6 +236,7 @@ fn a_session_without_children_does_not_register_the_read() {
             telemetry_disabled: None,
             cron_store: None,
             queued_steering_probe: None,
+            steering_fold: None,
         })
         .unwrap(),
     );

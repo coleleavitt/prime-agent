@@ -128,6 +128,7 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
         semantic_edges: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
         image_model_router: None,
         steering_mode: None,
         follow_up_mode: None,

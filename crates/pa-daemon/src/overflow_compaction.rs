@@ -455,6 +455,7 @@ mod tests {
             telemetry_disabled: None,
             cron_store: None,
             queued_steering_probe: None,
+            steering_fold: None,
         })
         .unwrap();
         (engine, dir)

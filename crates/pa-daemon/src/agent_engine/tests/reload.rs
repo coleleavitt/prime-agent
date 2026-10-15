@@ -70,6 +70,7 @@ fn credential_backed_engine_with_override(
         telemetry_disabled: Some(true),
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .expect("engine")
 }
@@ -89,6 +90,7 @@ fn credential_backed_engine(dir: &std::path::Path) -> AgentSessionEngine {
         telemetry_disabled: Some(true),
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .expect("engine")
 }
@@ -505,6 +507,7 @@ fn prime_inference_backed_engine(dir: &std::path::Path) -> AgentSessionEngine {
         telemetry_disabled: Some(true),
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .expect("engine")
 }

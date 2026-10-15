@@ -38,6 +38,7 @@ async fn get_commands_enumerates_skills_before_the_first_prompt() {
             telemetry_disabled: None,
             cron_store: None,
             queued_steering_probe: None,
+            steering_fold: None,
         })
         .unwrap();
         let engine = std::sync::Arc::new(engine);
@@ -351,6 +352,7 @@ fn run_skill_prompt_body(
         telemetry_disabled: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .unwrap();
     let engine = std::sync::Arc::new(engine);

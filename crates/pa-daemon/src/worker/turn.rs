@@ -88,6 +88,9 @@ impl TurnRunner {
                     core.busy = false;
                     None
                 } else if core.steering.front().is_some() {
+                    // A fold-refused front item is delivered now: its run
+                    // re-admits it the usual way.
+                    core.steer_fold.front_refused = false;
                     let items = gather_delivery_batch(&mut core, Lane::Steering);
                     core.running_admission_ids = items
                         .iter()
@@ -1155,14 +1158,22 @@ impl TurnRunner {
         }
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
-        for admission_id in settled_admissions {
+        // Steers folded into this run settle with it.
+        let (folded_done, folded_admissions) = {
+            let mut core = self.core.lock_or_recover();
+            (
+                std::mem::take(&mut core.steer_fold.done),
+                std::mem::take(&mut core.steer_fold.admissions),
+            )
+        };
+        for admission_id in settled_admissions.into_iter().chain(folded_admissions) {
             self.prompt_admissions.clear(&admission_id);
         }
         // The turn is fully unwound: the waiting prompt now resolves, so
         // a client's next request always observes the idle session.
         let settled_outcome = turn_outcome.lock_or_recover().take();
         if let Some(result) = settled_outcome {
-            for done in items_done {
+            for done in items_done.into_iter().chain(folded_done) {
                 let _ = done.send(result.clone());
             }
         }

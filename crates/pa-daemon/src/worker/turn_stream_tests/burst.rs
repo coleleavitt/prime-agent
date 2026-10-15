@@ -192,6 +192,7 @@ async fn streamed_turn_pipeline_benchmark() {
             telemetry_disabled: Some(true),
             cron_store: None,
             queued_steering_probe: None,
+            steering_fold: None,
         })
         .unwrap();
         let started = std::time::Instant::now();
@@ -235,6 +236,7 @@ async fn the_last_parked_update_carries_the_final_content() {
         telemetry_disabled: Some(true),
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .unwrap();
     let events = turn_session_events(Arc::new(engine)).await;

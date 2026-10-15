@@ -82,6 +82,7 @@ impl EngineGuestExecutor {
             telemetry_disabled: Some(true),
             cron_store: None,
             queued_steering_probe: None,
+            steering_fold: None,
         };
         Self::new(config, env.model.clone())
     }

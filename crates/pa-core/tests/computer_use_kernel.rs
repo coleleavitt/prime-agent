@@ -172,6 +172,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         semantic_edges: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
         image_model_router: None,
         steering_mode: None,
         follow_up_mode: None,

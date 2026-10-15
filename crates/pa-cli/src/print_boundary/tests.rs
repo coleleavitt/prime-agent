@@ -142,6 +142,7 @@ async fn faux_engine_with_telemetry(
         on_background_work_settled: None,
         queued_goal_context_purge: None,
         queued_steering_probe: None,
+        steering_fold: None,
         rlm_token_allowance: None,
         should_stop_after_turn: None,
     })
