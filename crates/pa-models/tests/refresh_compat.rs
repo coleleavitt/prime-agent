@@ -551,17 +551,27 @@ async fn a_dropped_refresh_resolves_the_gate_and_the_next_refresh_starts_fresh()
 
     // A coalesced waiter joins the dropped driver: it must wake with a
     // failed refresh (None), never hang on the abandoned gate. Both waits
-    // are bounded — the 2s bound fails the test instead of wedging it.
-    let dropped = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        cache.refresh(
+    // are bounded — the 2s bound fails the test instead of wedging it. The
+    // driver is dropped once the server holds its request, not on a timer:
+    // dropped earlier, the held response would go to the next refresh.
+    let dropped = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let driver = cache.refresh(
             PUBLIC_SCOPE,
             RefreshOptions {
                 force: true,
                 ..Default::default()
             },
-        ),
-    );
+        );
+        let held = async {
+            while server.request_count() == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        };
+        tokio::select! {
+            _ = driver => false,
+            () = held => true,
+        }
+    });
     let joined = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         cache.refresh(
@@ -573,9 +583,10 @@ async fn a_dropped_refresh_resolves_the_gate_and_the_next_refresh_starts_fresh()
         ),
     );
     let (dropped, joined) = tokio::join!(dropped, joined);
-    assert!(
-        dropped.is_err(),
-        "the bounded wait must return while the fetch is held"
+    assert_eq!(
+        dropped.ok(),
+        Some(true),
+        "the driver is dropped while the fetch is held"
     );
     let joined = joined.expect("the coalesced waiter wakes on the abandoned gate");
     assert!(
