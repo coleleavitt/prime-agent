@@ -166,7 +166,10 @@ pub struct AgentSession {
     /// reviewed through them ([`crate::features::SessionFeature::prompt_context`]).
     /// `None` until the engine wiring installs it, and when no feature is
     /// installed.
-    feature_context: Option<std::sync::Arc<crate::features::SessionFeatureContext>>,
+    feature_context: Option<(
+        std::sync::Arc<crate::features::SessionFeatureContext>,
+        crate::features::FeatureNotes,
+    )>,
     /// TS `_pendingNextTurnMessages`: custom rows the NEXT admitted
     /// turn carries ahead of its own prompt row.
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,

@@ -5,8 +5,9 @@
 //! a tool call (the model sees the reason as the tool's error and the tool
 //! never runs), adds hidden context ahead of an admitted prompt, refuses a
 //! prompt, and, over a real kernel, refuses host requests the kernel sends,
-//! the kernel's `bash()` included. Its own test binary, because
-//! installation is process-global.
+//! the kernel's `bash()` included, asks about one (refused: nobody can be
+//! asked without a client surface), and notes what ran on the cell's
+//! result. Its own test binary, because installation is process-global.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -17,6 +18,7 @@ use pa_core::features::{
     FeatureFuture,
     FeatureVerdict,
     HostRequestObservation,
+    HostRequestOutcome,
     PromptDecision,
     SessionFeature,
     SessionFeatureContext,
@@ -29,8 +31,10 @@ use pa_core::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 use serde_json::json;
 
 /// Refuses the `danger` tool, any host request of type `test.forbidden`, and
-/// any request whose payload mentions `forbidden-marker`; refuses the prompt
-/// `refuse me` and adds context to every other.
+/// any request whose payload mentions `forbidden-marker`; asks about any
+/// whose payload mentions `ask-marker`; notes every reply that carries
+/// `allowed-marker`; refuses the prompt `refuse me` and adds context to
+/// every other.
 struct Policy;
 
 impl SessionFeature for Policy {
@@ -56,14 +60,29 @@ impl SessionFeature for Policy {
         _context: &Arc<SessionFeatureContext>,
         request: &HostRequestObservation,
     ) -> FeatureFuture<FeatureVerdict> {
-        let verdict = if request.request_type == "test.forbidden"
-            || request.data.to_string().contains("forbidden-marker")
-        {
-            FeatureVerdict::Block("policy says no".to_string())
-        } else {
-            FeatureVerdict::Allow
-        };
+        let payload = request.data.to_string();
+        let verdict =
+            if request.request_type == "test.forbidden" || payload.contains("forbidden-marker") {
+                FeatureVerdict::Block("policy says no".to_string())
+            } else if payload.contains("ask-marker") {
+                FeatureVerdict::Ask("policy asks".to_string())
+            } else {
+                FeatureVerdict::Allow
+            };
         Box::pin(async move { verdict })
+    }
+
+    fn after_host_request(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+        request: &HostRequestObservation,
+        outcome: HostRequestOutcome<'_>,
+    ) -> FeatureFuture<Option<String>> {
+        let note = outcome
+            .ok()
+            .filter(|reply| reply.to_string().contains("allowed-marker\\n"))
+            .map(|_| format!("policy saw allowed-marker in {}", request.request_type));
+        Box::pin(async move { note })
     }
 
     fn prompt_context(
@@ -243,6 +262,7 @@ async fn a_feature_refuses_the_kernels_host_requests_and_bash() {
         "import json\nfrom rlm import host_request\nout = {{}}\n\
          for key, request in [('custom', lambda: host_request('test.forbidden', {{}})),\n\
          ('bash_refused', lambda: bash('echo forbidden-marker')),\n\
+         ('bash_asked', lambda: bash('echo ask-marker')),\n\
          ('bash_allowed', lambda: bash('echo allowed-marker'))]:\n\
          \x20   try:\n\
          \x20       out[key] = 'ok: ' + str(await request())\n\
@@ -273,7 +293,32 @@ async fn a_feature_refuses_the_kernels_host_requests_and_bash() {
         .await
         .unwrap();
     engine.session.agent().wait_for_idle().await;
+    let state = engine.session.agent().state().await;
     engine.dispose_kernel().await;
+    // The command's output reached the host in a `bash.*` reply: the note
+    // rides the cell's result.
+    let cell_result: String = state
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::Standard(Message::ToolResult(result)) => Some(
+                result
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ToolResultContent::Text(text) => Some(text.text.clone()),
+                        ToolResultContent::Image(_) => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .expect("the cell's result");
+    assert!(
+        cell_result.contains("policy saw allowed-marker in bash."),
+        "{cell_result}"
+    );
 
     let raw = std::fs::read_to_string(&receipt)
         .unwrap_or_else(|_| panic!("the cell wrote no receipt at {}", receipt.display()));
@@ -287,6 +332,12 @@ async fn a_feature_refuses_the_kernels_host_requests_and_bash() {
     assert!(
         field("bash_refused").starts_with("error: ")
             && field("bash_refused").contains("refused: policy says no"),
+        "{out}"
+    );
+    assert_eq!(
+        field("bash_asked"),
+        "error: bash.run refused: policy asks (it needs the user's confirmation, and no client \
+         can ask for it)",
         "{out}"
     );
     assert!(

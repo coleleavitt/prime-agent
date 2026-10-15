@@ -298,8 +298,9 @@ impl AgentSession {
     pub fn set_feature_context(
         &mut self,
         context: std::sync::Arc<crate::features::SessionFeatureContext>,
+        notes: crate::features::FeatureNotes,
     ) {
-        self.feature_context = Some(context);
+        self.feature_context = Some((context, notes));
     }
 
     /// The installed features' answer for a prompt this session is admitting:
@@ -309,10 +310,12 @@ impl AgentSession {
         &self,
         prompt: &str,
     ) -> anyhow::Result<Option<pa_agent::types::AgentMessage>> {
-        let Some(context) = self.feature_context.as_ref() else {
+        let Some((context, notes)) = self.feature_context.as_ref() else {
             return Ok(None);
         };
-        match crate::features::review_prompt(crate::features::installed(), context, prompt).await {
+        match crate::features::review_prompt(crate::features::installed(), context, notes, prompt)
+            .await
+        {
             crate::features::PromptDecision::Block(reason) => {
                 anyhow::bail!("The prompt was refused: {reason}")
             }

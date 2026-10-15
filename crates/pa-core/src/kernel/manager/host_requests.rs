@@ -88,8 +88,9 @@ impl Inner {
 
     /// Resolve the handler for one request and start it: the returned future
     /// owns everything it needs, so the caller can poll it in line first.
-    /// With a session gate set, the gate reviews the request first and the
-    /// handler is resolved only once it allows it.
+    /// With a session gate set, the gate reviews the request first, the
+    /// handler is resolved only once it allows it, and the gate observes the
+    /// outcome before the reply is sent.
     fn host_request_future(&self, data: &Value) -> HostHandlerFuture {
         let handlers = &self.options.host_handlers;
         let request_type = data
@@ -99,16 +100,39 @@ impl Inner {
         let (Some(gate), Some(request_type)) = (handlers.gate().cloned(), request_type) else {
             return dispatch_host_request(&self.bash_jobs, handlers, data);
         };
-        let review = gate(request_type, data);
+        let review = gate.review(request_type, data);
         let request_type = request_type.to_string();
         let bash_jobs = Arc::clone(&self.bash_jobs);
         let handlers = handlers.clone();
         let data = data.clone();
         Box::pin(async move {
-            if let Some(reason) = review.await {
+            // A review may wait on the user; a `host_cancel` (the cell was
+            // interrupted) stops the wait and refuses the request.
+            let refusal = match crate::kernel::shared::host_request_cancellation() {
+                Some(token) => tokio::select! {
+                    biased;
+                    refusal = review => refusal,
+                    () = token.cancelled() => {
+                        Some("the request was cancelled before it was allowed".to_string())
+                    }
+                },
+                None => review.await,
+            };
+            if let Some(reason) = refusal {
                 return Err(anyhow!("{request_type} refused: {reason}"));
             }
-            dispatch_host_request(&bash_jobs, &handlers, &data).await
+            let outcome = dispatch_host_request(&bash_jobs, &handlers, &data).await;
+            let error = outcome
+                .as_ref()
+                .err()
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_default();
+            let observed = match &outcome {
+                Ok(answer) => Ok(answer),
+                Err(_) => Err(error.as_str()),
+            };
+            gate.after(&request_type, &data, observed).await;
+            outcome
         })
     }
 }

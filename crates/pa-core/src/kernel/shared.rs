@@ -350,11 +350,32 @@ pub struct HostRequestPayload {
 pub type HostHandlerFuture = Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>>;
 pub type HostHandlerFn = Arc<dyn Fn(HostRequestPayload) -> HostHandlerFuture + Send + Sync>;
 
-/// A session's review of each kernel host request before it is dispatched:
-/// `Some(reason)` refuses the request (the kernel raises with the reason),
-/// `None` lets it run. Called with the request type and its payload.
-pub type HostRequestGate =
-    Arc<dyn Fn(&str, &Value) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
+/// A session's policy over its kernel host requests: every request passes
+/// [`Self::review`] before it is dispatched, and its outcome passes
+/// [`Self::after`] before the reply leaves for the kernel. A policy keeps
+/// both futures ready when it has nothing to do, so a request's synchronous
+/// prefix still runs in line (see `kernel::manager::host_requests`).
+pub trait HostRequestPolicy: Send + Sync {
+    /// Review a request: `Some(reason)` refuses it (the kernel raises with
+    /// the reason), `None` lets it run.
+    fn review(
+        &self,
+        request_type: &str,
+        data: &Value,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>;
+
+    /// Observe a dispatched request's outcome: its handler's answer, or the
+    /// error the kernel will raise.
+    fn after(
+        &self,
+        request_type: &str,
+        data: &Value,
+        outcome: Result<&Value, &str>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
+
+/// The policy a session's host requests pass (see [`HostRequestPolicy`]).
+pub type HostRequestGate = Arc<dyn HostRequestPolicy>;
 
 /// Handles one typed request from Python code running in the kernel.
 /// The returned value is delivered verbatim to the Python caller.

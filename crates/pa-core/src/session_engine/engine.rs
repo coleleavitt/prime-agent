@@ -170,6 +170,9 @@ pub struct SessionEngine {
     /// The embedding's feature-status sink, held here so the process
     /// registry's weak entry lives exactly as long as the engine.
     feature_status_sink: std::sync::Mutex<Option<crate::features::FeatureStatusSink>>,
+    /// Registered with the status sink: the features may ask the user
+    /// while the engine lives.
+    confirmation_surface: std::sync::Mutex<Option<crate::features::ConfirmationSurface>>,
     /// Where the process's auth notices for this session go (held for the
     /// engine's life; the registry holds it weakly).
     auth_notice_sink: std::sync::Mutex<Option<crate::auth::AuthNoticeSink>>,
@@ -506,13 +509,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .map(|skill| skill.import_name.clone())
         .collect();
     let feature_context = Arc::new(feature_context);
+    // Notes features return after the kernel's host requests, waiting for
+    // the next tool result or admitted prompt.
+    let feature_notes = crate::features::FeatureNotes::default();
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
     // Installed features review every kernel host request (the kernel's
     // `bash()` included) before it is dispatched; later registrations keep
     // the gate.
-    if let Some(gate) =
-        crate::features::host_request_gate(crate::features::installed(), &feature_context)
-    {
+    if let Some(gate) = crate::features::host_request_gate(
+        crate::features::installed(),
+        &feature_context,
+        &feature_notes,
+    ) {
         handlers.set_gate(gate);
     }
     // The `system_router.run` host handler the bundled system-router skill
@@ -945,8 +953,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     // Installed features observe the session's tool calls; with none
     // installed both hooks stay `None` and the loop runs as native.
-    let (before_tool_call, after_tool_call) =
-        crate::features::tool_call_hooks(crate::features::installed(), &feature_context);
+    let (before_tool_call, after_tool_call) = crate::features::tool_call_hooks(
+        crate::features::installed(),
+        &feature_context,
+        &feature_notes,
+    );
     // Plan mode refuses the host's own mutating tools ahead of every hook.
     let before_tool_call = Some(super::plan_mode::gate_tool_calls(
         plan_mode.clone(),
@@ -1069,7 +1080,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_plan_mode_switch(plan_mode.clone());
     if !crate::features::installed().is_empty() {
-        session.set_feature_context(Arc::clone(&feature_context));
+        session.set_feature_context(Arc::clone(&feature_context), feature_notes);
     }
     session.set_agent_dir(config.agent_dir.clone());
     let refinement_gate =
@@ -1262,6 +1273,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         provisioner,
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
+        confirmation_surface: std::sync::Mutex::new(None),
         auth_notice_sink: std::sync::Mutex::new(None),
         plan_mode,
         plan_mode_fallback: plan.fallback_reason().map(str::to_string),
@@ -1277,13 +1289,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
 
 impl SessionEngine {
     /// Route the installed features' status for this session to `sink` (the
-    /// embedding's event surface) for as long as the engine lives.
+    /// embedding's event surface) for as long as the engine lives. The
+    /// surface also renders the questions features put to the user (see
+    /// [`crate::features::confirm()`]), so the session may ask from now on.
     pub fn set_feature_status_sink(&self, sink: crate::features::FeatureStatusSink) {
         crate::features::register_feature_status_sink(&self.feature_context.session_id, &sink);
-        *self
+        let mut slot = self
             .feature_status_sink
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *self
+                .confirmation_surface
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
+                crate::features::register_confirmation_surface(&self.feature_context.session_id),
+            );
+        }
+        *slot = Some(sink);
     }
 
     /// Route the process's non-fatal auth notices ([`crate::auth::AuthNotice`])

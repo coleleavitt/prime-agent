@@ -1,7 +1,9 @@
 //! Verifier integration test: a runtime `host_cancel` frame reaches the
-//! cancellation token of the host-request handler it names. A fake runtime
-//! issues one host request per cell, optionally cancels it at once, then
-//! echoes the terminal `host_reply` it receives as the cell's stdout.
+//! cancellation token of the host-request handler it names, and ends a
+//! session gate's review that is still waiting (a question to the user). A
+//! fake runtime issues one host request per cell, optionally cancels it at
+//! once, then echoes the terminal `host_reply` it receives as the cell's
+//! stdout.
 
 #![cfg(unix)]
 
@@ -13,6 +15,7 @@ use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
     ExecuteOptions,
     HostRequestHandlers,
+    HostRequestPolicy,
     KernelManagerOptions,
     KernelShutdownOptions,
     host_handler,
@@ -96,24 +99,28 @@ async fn run_cell(manager: &ReplKernelManager, code: &str) -> Value {
     serde_json::from_str(result.stdout.trim()).expect("reply json on stdout")
 }
 
-#[tokio::test]
-async fn host_cancel_fires_the_named_request_token_and_the_reply_still_settles() {
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let manager = ReplKernelManager::new(KernelManagerOptions {
+fn manager(dir: &tempfile::TempDir, host_handlers: HostRequestHandlers) -> ReplKernelManager {
+    ReplKernelManager::new(KernelManagerOptions {
         sandbox: None,
         environment: pa_core::kernel::shared::KernelEnvironment::Inherit,
         plan_guard: None,
-        python: Some(fake_runtime_path(&dir)),
+        python: Some(fake_runtime_path(dir)),
         cwd: Some(dir.path().to_path_buf()),
         env: HashMap::new(),
         session_id: Some("host-cancel-test".to_string()),
-        host_handlers: handlers(),
+        host_handlers,
         python_skills: Vec::new(),
         snapshot: None,
         bootstrap_code: None,
         stderr_log_path: None,
         on_background_work_settled: None,
-    });
+    })
+}
+
+#[tokio::test]
+async fn host_cancel_fires_the_named_request_token_and_the_reply_still_settles() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let manager = manager(&dir, handlers());
     manager
         .start(KernelStartOptions::default())
         .await
@@ -124,6 +131,63 @@ async fn host_cancel_fires_the_named_request_token_and_the_reply_still_settles()
         json!({ "status": "ok", "result": { "cancelled": true } })
     );
     // A request nobody cancelled runs with a live token.
+    assert_eq!(
+        run_cell(&manager, "probe.peek").await,
+        json!({ "status": "ok", "result": { "cancelled": false } })
+    );
+
+    let _ = tokio::time::timeout(
+        Duration::from_secs(10),
+        manager.shutdown(KernelShutdownOptions::default()),
+    )
+    .await;
+}
+
+/// A gate whose review of `probe.wait` never settles (a question nobody
+/// answers); every other request runs.
+struct Waiting;
+
+impl HostRequestPolicy for Waiting {
+    fn review(
+        &self,
+        request_type: &str,
+        _data: &Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>> {
+        if request_type == "probe.wait" {
+            Box::pin(std::future::pending())
+        } else {
+            Box::pin(async { None })
+        }
+    }
+
+    fn after(
+        &self,
+        _request_type: &str,
+        _data: &Value,
+        _outcome: Result<&Value, &str>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        Box::pin(async {})
+    }
+}
+
+#[tokio::test]
+async fn host_cancel_ends_a_review_that_is_still_waiting() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let mut gated = handlers();
+    gated.set_gate(std::sync::Arc::new(Waiting));
+    let manager = manager(&dir, gated);
+    manager
+        .start(KernelStartOptions::default())
+        .await
+        .expect("fake kernel must start");
+
+    assert_eq!(
+        run_cell(&manager, "probe.wait").await,
+        json!({
+            "status": "error",
+            "error": "probe.wait refused: the request was cancelled before it was allowed"
+        })
+    );
     assert_eq!(
         run_cell(&manager, "probe.peek").await,
         json!({ "status": "ok", "result": { "cancelled": false } })
