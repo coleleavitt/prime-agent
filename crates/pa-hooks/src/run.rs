@@ -207,6 +207,8 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
 mod tests {
     use std::time::Duration;
 
+    // Only the POSIX shell test builds JSON input.
+    #[cfg(unix)]
     use serde_json::json;
 
     use super::*;
