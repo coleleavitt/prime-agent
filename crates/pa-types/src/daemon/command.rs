@@ -553,6 +553,19 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Answer a question a session's hooks or plugins put to the user
+    /// before an action (the session's `confirmation` feature status):
+    /// `allow` lets the action run, otherwise it is refused. Rust-native
+    /// extension, advertised by the `feature_confirmation` capability.
+    AnswerFeatureConfirmation {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        confirmation_id: String,
+        allow: bool,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     CancelRlmChild {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

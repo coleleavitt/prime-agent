@@ -42,6 +42,29 @@ pub(crate) fn publish(
     );
 }
 
+/// `answer_feature_confirmation`: answer a question the session's hooks or
+/// plugins put to the user (`pa_core::features::confirm`). Answers
+/// `{"answered": false}` when it is no longer pending (already answered by
+/// another client, timed out, or the action was aborted).
+pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::DaemonResponse {
+    const COMMAND: &str = "answer_feature_confirmation";
+    let field = |key: &str| payload.get(key).and_then(Value::as_str).unwrap_or_default();
+    let (session_id, confirmation_id) = (field("activeSessionId"), field("confirmationId"));
+    let Some(allow) = payload.get("allow").and_then(Value::as_bool) else {
+        return crate::protocol::response_failure(None, COMMAND, "allow is required", None);
+    };
+    if session_id.is_empty() || confirmation_id.is_empty() {
+        return crate::protocol::response_failure(
+            None,
+            COMMAND,
+            "activeSessionId and confirmationId are required",
+            None,
+        );
+    }
+    let answered = pa_core::features::answer_confirmation(session_id, confirmation_id, allow);
+    crate::protocol::response_success(None, COMMAND, Some(json!({ "answered": answered })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +120,45 @@ mod tests {
             json!({ "type": "feature_status", "feature": "stub", "line": "stub: running", "status": { "phase": "running" } })
         );
         assert!(crate::roster_activity::frame_triggers_roster_flush(&first));
+    }
+
+    #[tokio::test]
+    async fn a_confirmation_answer_is_validated_and_reaches_the_pending_question() {
+        let missing = answer_feature_confirmation(&json!({ "activeSessionId": "s" }));
+        assert!(!missing.success);
+        assert_eq!(missing.error.as_deref(), Some("allow is required"));
+        let unnamed = answer_feature_confirmation(&json!({ "allow": true }));
+        assert_eq!(
+            unnamed.error.as_deref(),
+            Some("activeSessionId and confirmationId are required")
+        );
+        let stale = answer_feature_confirmation(&json!({
+            "activeSessionId": "daemon-confirm", "confirmationId": "confirm-0", "allow": true
+        }));
+        assert!(stale.success);
+        assert_eq!(stale.data, Some(json!({ "answered": false })));
+
+        let _surface = pa_core::features::register_confirmation_surface("daemon-confirm");
+        let asking = tokio::spawn(pa_core::features::confirm(
+            "daemon-confirm",
+            "Run `x`",
+            "why",
+            std::time::Duration::from_secs(30),
+        ));
+        let id = loop {
+            if let Some(question) = pa_core::features::pending_confirmations("daemon-confirm").pop()
+            {
+                break question.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        let answered = answer_feature_confirmation(&json!({
+            "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": false
+        }));
+        assert_eq!(answered.data, Some(json!({ "answered": true })));
+        assert_eq!(
+            asking.await.unwrap(),
+            pa_core::features::ConfirmationAnswer::Denied
+        );
     }
 }

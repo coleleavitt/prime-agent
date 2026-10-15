@@ -171,6 +171,9 @@ impl Worker {
             "mutate_queued_message" => self.handle_mutate_queued_message(payload),
             "resume_queue" => self.handle_resume_queue(),
             "factory_activity" => self.handle_factory_activity(payload).await,
+            "answer_feature_confirmation" => {
+                crate::feature_status::answer_feature_confirmation(payload)
+            }
             "execute_bash" => self.handle_execute_bash(payload),
             "execute_bash_and_wait" => self.handle_execute_bash_and_wait(payload).await,
             "abort_bash" => self.handle_abort_bash(),
