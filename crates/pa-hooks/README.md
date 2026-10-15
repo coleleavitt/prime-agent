@@ -14,7 +14,8 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
   - `PreToolUse`: refuses a tool call or a kernel host request, or asks the user about it.
   - `PostToolUse`: a note is appended to the result. For the kernel's `bash()` it fires when the command's result
     arrives (`kernel_bash`), and the note rides the cell's result.
-  - `Stop`: fire and forget.
+  - `Stop`: fire and forget, when the agent finished. A run a queued steer ended (the agent goes on with
+    the steer) fires no `Stop`.
 - **Tool names hooks see:**
   - The model's own tool calls keep their names (`python_repl`, ...).
   - The kernel's `bash()` (`bash.run`) is `Bash` with `tool_input.command`.
@@ -50,7 +51,7 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 ## Seams it plugs into
 
 `pa_core::features::SessionFeature`: `on_session_start`, `prompt_context`, `review_tool_call`,
-`review_host_request`, `after_host_request`, `after_tool_call` and `on_agent_end`.
+`review_host_request`, `after_host_request`, `after_tool_call` and `on_agent_stop`.
 
 ## Files it owns
 

@@ -112,7 +112,8 @@ world plugin {
     /// A session started (or resumed).
     export on-session-start: func(session: session-info);
 
-    /// A session's agent run ended.
+    /// A session's agent finished responding (not when a queued steer ended
+    /// the run and the agent goes on with it).
     export on-agent-end: func(session-id: string);
 
     /// Review a model tool call before it runs. A trap blocks the call.

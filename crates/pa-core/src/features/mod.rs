@@ -350,9 +350,19 @@ pub trait SessionFeature: Send + Sync {
         let _ = (context, message);
     }
 
-    /// The session's agent run ended. Called from the run's event stream:
-    /// it must not block, so durable work is handed to the feature's own
-    /// background worker.
+    /// The agent finished responding: its run ended and it is not continuing
+    /// on a queued steer (a steer ends the run at the next boundary and a
+    /// new run starts on it at once). Claude Code's `Stop`. Called after
+    /// [`Self::on_agent_end`], from the run's event stream: it must not
+    /// block.
+    fn on_agent_stop(&self, context: &Arc<SessionFeatureContext>) {
+        let _ = context;
+    }
+
+    /// The session's agent run ended (every run, including one a queued
+    /// steer ended; see [`Self::on_agent_stop`]). Called from the run's
+    /// event stream: it must not block, so durable work is handed to the
+    /// feature's own background worker.
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
         let _ = context;
     }
@@ -624,11 +634,14 @@ pub(crate) fn observe_session_start(
 }
 
 /// Report every finalized message and the end of every agent run of
-/// `agent` to `features`; nothing is subscribed when there are no features.
+/// `agent` to `features`, and the agent's stop when no queued steer
+/// (`steering_probe`) continues it; nothing is subscribed when there are no
+/// features.
 pub(crate) async fn observe_agent_events(
     features: &[Arc<dyn SessionFeature>],
     context: &Arc<SessionFeatureContext>,
     agent: &pa_agent::agent::Agent,
+    steering_probe: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 ) {
     if features.is_empty() {
         return;
@@ -648,6 +661,11 @@ pub(crate) async fn observe_agent_events(
                 pa_agent::types::AgentEvent::AgentEnd { .. } => {
                     for feature in &features {
                         feature.on_agent_end(&context);
+                    }
+                    if !steering_probe.as_ref().is_some_and(|probe| probe()) {
+                        for feature in &features {
+                            feature.on_agent_stop(&context);
+                        }
                     }
                 }
                 _ => {}

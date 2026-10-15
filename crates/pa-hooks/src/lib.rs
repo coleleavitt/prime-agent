@@ -410,7 +410,9 @@ impl SessionFeature for HooksFeature {
         }
     }
 
-    fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
+    /// `Stop` fires when the agent finished, not when a queued steer ended
+    /// the run and the agent goes on with it.
+    fn on_agent_stop(&self, context: &Arc<SessionFeatureContext>) {
         let hooks = self.session(context);
         if !hooks.config.has(HookEvent::Stop) {
             return;

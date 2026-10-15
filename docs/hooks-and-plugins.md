@@ -23,6 +23,7 @@ Cargo features, built on `pa_core::features::SessionFeature`. `--no-default-feat
 | prompt context | `prompt_context` -> `PromptDecision` | `Context(text)` adds a hidden row ahead of the user's prompt; `Block(reason)` refuses the prompt |
 | status panel | `publish_feature_status` (existing) | `status.panel` (an array of strings) renders under the chat editor; `line` stays the agents-view summary |
 | confirmation | `features::confirm` | puts an `Ask` to the user (below) |
+| agent stop | `on_agent_stop` | the agent finished: a run a queued steer ended (the agent goes on with the steer at once) does not count; `on_agent_end` still sees every run end. Hooks' `Stop` and plugins' `on-agent-end` use it |
 | slash commands | `slash_commands` / `execute_slash_command` (existing) | `/wasm` |
 
 Verdicts compose in install order: the first `Block` wins, then any `Ask` asks the user (one question carrying every

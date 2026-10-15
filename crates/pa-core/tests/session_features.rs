@@ -1,7 +1,8 @@
 //! The session-feature lifecycle seam end to end: a stub feature installed
 //! the way the composition root installs one observes a session's tool
-//! calls, appends text to the result the model sees, hears the run end,
-//! and is flushed. Its own test binary, because installation is
+//! calls, appends text to the result the model sees, hears the run end and
+//! the agent's stop (but no stop when a queued steer ended the run), and is
+//! flushed. Its own test binary, because installation is
 //! process-global.
 
 use std::sync::{Arc, Mutex};
@@ -34,6 +35,7 @@ enum Seen {
         session_id: String,
         rlm_depth: u32,
     },
+    AgentStop,
     Flush,
 }
 
@@ -84,6 +86,10 @@ impl SessionFeature for Stub {
             session_id: context.session_id.clone(),
             rlm_depth: context.rlm_depth,
         });
+    }
+
+    fn on_agent_stop(&self, _context: &Arc<SessionFeatureContext>) {
+        self.seen.lock().unwrap().push(Seen::AgentStop);
     }
 
     fn flush(&self, _deadline: Instant) {
@@ -148,6 +154,8 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
     );
     provider.push_text_turn("all done");
 
+    // The daemon's queued-steer probe: off for the first run.
+    let steering = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
@@ -157,6 +165,10 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
         model: Some(model),
         stream_fn: Some(provider.stream_fn()),
         tools: vec![bridge_tool(echo_definition())],
+        queued_steering_probe: Some({
+            let steering = Arc::clone(&steering);
+            Arc::new(move || steering.load(std::sync::atomic::Ordering::SeqCst))
+        }),
         conversation_log_path: Some(tmp.path().join("sessions").join("project").join("s1.jsonl")),
         ..SessionEngineConfig::default()
     }))
@@ -210,12 +222,36 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
             Seen::MessageEnd("toolResult".to_string()),
             Seen::MessageEnd("assistant".to_string()),
             Seen::AgentEnd {
-                session_id,
+                session_id: session_id.clone(),
                 rlm_depth: 0
             },
+            Seen::AgentStop,
             Seen::Flush,
         ]
     );
+
+    // A queued steer ends the next run at its first boundary: the run ends,
+    // the agent does not stop (it goes on with the steer).
+    stub.seen.lock().unwrap().clear();
+    provider.push_tool_call_turn(
+        None,
+        vec![("call-3", "echo", serde_json::json!({ "text": "steered" }))],
+    );
+    steering.store(true, std::sync::atomic::Ordering::SeqCst);
+    engine
+        .prompt("echo once more", PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+    let seen = stub.seen.lock().unwrap().clone();
+    assert_eq!(
+        seen.last(),
+        Some(&Seen::AgentEnd {
+            session_id,
+            rlm_depth: 0
+        })
+    );
+    assert!(!seen.contains(&Seen::AgentStop), "{seen:?}");
 
     let state = engine.session.agent().state().await;
     let first_result = state

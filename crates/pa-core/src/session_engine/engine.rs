@@ -968,6 +968,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
         initial_messages.as_deref().unwrap_or_default(),
     );
+    // Whether a queued steer is waiting: a run that ends with one continues
+    // on it at once, so the features hear no agent stop.
+    let steering_probe = config.queued_steering_probe.clone();
     let agent = Agent::new(AgentOptions {
         initial_state: AgentInitialState {
             system_prompt: Some(system_prompt.clone()),
@@ -1051,8 +1054,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         repetition_guard,
         ..Default::default()
     });
-    crate::features::observe_agent_events(crate::features::installed(), &feature_context, &agent)
-        .await;
+    crate::features::observe_agent_events(
+        crate::features::installed(),
+        &feature_context,
+        &agent,
+        steering_probe,
+    )
+    .await;
 
     let agent = Arc::new(agent);
     // TS `_startRlmChildRun`'s spawn anchor: the `rlm.spawn` host handler

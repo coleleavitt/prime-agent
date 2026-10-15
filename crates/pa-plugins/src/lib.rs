@@ -556,7 +556,9 @@ impl SessionFeature for PluginsFeature {
         }
     }
 
-    fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
+    /// `on-agent-end` means the agent finished: a run a queued steer ended
+    /// (and the agent goes on with it) does not count.
+    fn on_agent_stop(&self, context: &Arc<SessionFeatureContext>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
