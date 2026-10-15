@@ -224,32 +224,67 @@ fn status_sinks() -> &'static StatusSinks {
     SINKS.get_or_init(StatusSinks::default)
 }
 
+/// Statuses published for a session before its sink registered, latest
+/// per feature: a feature may publish while the session is still being
+/// built (its load runs off the creation path), before the embedding
+/// registers the session's sink.
+type PendingStatuses = std::sync::Mutex<std::collections::HashMap<String, Vec<FeatureStatus>>>;
+
+/// How many sessions may hold undelivered statuses at once; a session
+/// beyond it (an embedding that never registers sinks) keeps none.
+const MAX_PENDING_STATUS_SESSIONS: usize = 64;
+
+fn pending_statuses() -> &'static PendingStatuses {
+    static PENDING: OnceLock<PendingStatuses> = OnceLock::new();
+    PENDING.get_or_init(PendingStatuses::default)
+}
+
 /// Route session `session_id`'s feature statuses to `sink` while the caller
 /// keeps it alive (the registry holds it weakly); replaces an earlier sink.
+/// Statuses published for the session before any sink registered are
+/// delivered to it now, latest per feature.
 pub fn register_feature_status_sink(session_id: &str, sink: &FeatureStatusSink) {
-    let mut sinks = status_sinks()
+    {
+        let mut sinks = status_sinks()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sinks.retain(|_, sink| sink.strong_count() > 0);
+        sinks.insert(session_id.to_string(), Arc::downgrade(sink));
+    }
+    let held = pending_statuses()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    sinks.retain(|_, sink| sink.strong_count() > 0);
-    sinks.insert(session_id.to_string(), Arc::downgrade(sink));
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(session_id)
+        .unwrap_or_default();
+    for status in held {
+        sink(status);
+    }
 }
 
 /// Publish a feature's status for a session; `false` when the session has
-/// no live sink (an embedding without an event surface, or a closed
-/// session). Never blocks on the surface beyond the sink's own call.
+/// no live sink yet (the latest status per feature is held for the sink
+/// that registers next, see [`register_feature_status_sink`]). Never
+/// blocks on the surface beyond the sink's own call.
 pub fn publish_feature_status(session_id: &str, status: FeatureStatus) -> bool {
     let sink = status_sinks()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(session_id)
         .and_then(std::sync::Weak::upgrade);
-    match sink {
-        Some(sink) => {
-            sink(status);
-            true
-        }
-        None => false,
+    if let Some(sink) = sink {
+        sink(status);
+        return true;
     }
+    let mut pending = pending_statuses()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if pending.len() >= MAX_PENDING_STATUS_SESSIONS && !pending.contains_key(session_id) {
+        return false;
+    }
+    let held = pending.entry(session_id.to_string()).or_default();
+    held.retain(|earlier| earlier.feature != status.feature);
+    held.push(status);
+    false
 }
 
 /// One optional capability. Implementations live in their own crates and
@@ -777,6 +812,37 @@ pub(crate) async fn observe_agent_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A status published before the session's sink registered reaches the
+    /// sink when it registers, latest per feature; later ones go straight
+    /// through.
+    #[test]
+    fn a_status_published_before_the_sink_registers_is_delivered_to_it() {
+        let status = |feature: &str, line: &str| FeatureStatus {
+            feature: feature.to_string(),
+            line: Some(line.to_string()),
+            status: serde_json::Value::Null,
+        };
+        let session = "held-status-session";
+        assert!(!publish_feature_status(session, status("a", "first")));
+        assert!(!publish_feature_status(session, status("a", "second")));
+        assert!(!publish_feature_status(session, status("b", "only")));
+        let seen: Arc<std::sync::Mutex<Vec<FeatureStatus>>> = Arc::default();
+        let sink: FeatureStatusSink = {
+            let seen = Arc::clone(&seen);
+            Arc::new(move |status| seen.lock().unwrap().push(status))
+        };
+        register_feature_status_sink(session, &sink);
+        assert!(publish_feature_status(session, status("a", "live")));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                status("a", "second"),
+                status("b", "only"),
+                status("a", "live")
+            ]
+        );
+    }
 
     /// Named through a const: `prompt_guards` reads every request-type
     /// literal registered in `src/` as model-facing surface.
