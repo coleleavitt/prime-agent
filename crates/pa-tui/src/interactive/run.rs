@@ -2202,6 +2202,20 @@ async fn run_interactive_surface(
         }
     }
     session.release_prompt_stash_session();
+    // Agents-back and `/resume` hand the pane to the agents view; the alternate screen stays in
+    // place for it (TS `stop({ preserveAltScreen: true })`).
+    let preserve_alt_screen = session.open_agents_view;
+    // The terminal is restored (the alternate screen left, the transcript flushed to the main
+    // screen) BEFORE the daemon round-trips below: right after a double Ctrl+C the worker is
+    // still settling the interrupted turn, the round-trips ran out their bounds, and the
+    // force-quit deadline fired first, leaving the alternate screen with no flush, so the view
+    // jumped to the launch-time screen. With the terminal restored, the remaining steps are
+    // bookkeeping: the deadline restarts and each bounded step proves progress.
+    let frames = renderer.finish(&mut view, preserve_alt_screen);
+    if !handing_off {
+        exit_guard.arm_for_exit();
+        crate::exit_guard::note_exit_progress();
+    }
     // Fetch the session stats while the connection is alive, then print the resume hint after
     // teardown; the agents-view handoff never prints it, so the round-trip is dead work on that
     // path.
@@ -2210,6 +2224,7 @@ async fn run_interactive_surface(
     } else {
         session.exit_resume_hint().await
     };
+    crate::exit_guard::note_exit_progress();
     // Detach explicitly so the session's attached-client count stays honest; bounded hard: a
     // wedged worker socket can never hold the exit path. The agents-view handoff fires the detach
     // in the background instead (bookkeeping must not delay the switch).
@@ -2218,6 +2233,7 @@ async fn run_interactive_surface(
     } else {
         session.detach_for_exit().await;
     }
+    crate::exit_guard::note_exit_progress();
     // `tui exit` (schema v1): how the run ended. Bounded the same way as the detach — telemetry
     // must never hold the exit path open. The handoff still emits the event but does not wait for
     // the flush.
@@ -2237,15 +2253,12 @@ async fn run_interactive_surface(
                     .await;
         }
     }
-    // Agents-back and `/resume` hand the pane to the agents view; the alternate screen stays in
-    // place for it (TS `stop({ preserveAltScreen: true })`).
-    let preserve_alt_screen = session.open_agents_view;
     let outcome = InteractiveOutcome {
         active_session_id: session.active_session_id.clone(),
         session_id: session.session_id.clone(),
         resume_hint,
         last_assistant_text: session.last_assistant_text.clone(),
-        frames: renderer.finish(&mut view, preserve_alt_screen),
+        frames,
         // The headless OSC 52 capture (terminal runs wrote the sequences to stdout as they
         // happened).
         clipboard_emissions: session.take_osc_emissions(),
