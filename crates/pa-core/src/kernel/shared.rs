@@ -350,6 +350,12 @@ pub struct HostRequestPayload {
 pub type HostHandlerFuture = Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>>;
 pub type HostHandlerFn = Arc<dyn Fn(HostRequestPayload) -> HostHandlerFuture + Send + Sync>;
 
+/// A session's review of each kernel host request before it is dispatched:
+/// `Some(reason)` refuses the request (the kernel raises with the reason),
+/// `None` lets it run. Called with the request type and its payload.
+pub type HostRequestGate =
+    Arc<dyn Fn(&str, &Value) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
+
 /// Handles one typed request from Python code running in the kernel.
 /// The returned value is delivered verbatim to the Python caller.
 pub trait HostRequestHandler: Send + Sync {
@@ -404,10 +410,12 @@ where
     Arc::new(move |payload| Box::pin(f(payload)) as HostHandlerFuture)
 }
 
-/// Host request handlers keyed by request type (e.g. `rlm.run`, `goal.complete`).
+/// Host request handlers keyed by request type (e.g. `rlm.run`, `goal.complete`),
+/// and the session's [`HostRequestGate`] every request passes first.
 #[derive(Clone, Default)]
 pub struct HostRequestHandlers {
     handlers: Arc<HashMap<String, HostHandlerFn>>,
+    gate: Option<HostRequestGate>,
 }
 
 impl HostRequestHandlers {
@@ -423,9 +431,26 @@ impl HostRequestHandlers {
         self.handlers = Arc::new(map);
     }
 
+    /// Review every request with `gate` before it is dispatched, the
+    /// natively served ones (the kernel's `bash.*`) included. Replaces an
+    /// earlier gate; later registrations keep it.
+    pub fn set_gate(&mut self, gate: HostRequestGate) {
+        self.gate = Some(gate);
+    }
+
+    /// The gate requests pass before dispatch, when one is set.
+    #[must_use]
+    pub fn gate(&self) -> Option<&HostRequestGate> {
+        self.gate.as_ref()
+    }
+
     /// Merge another registry into this one; the other registry's entries
-    /// win on key collisions (later registrations override).
+    /// win on key collisions (later registrations override), and its gate,
+    /// when it has one, replaces this one's.
     pub fn merge(&mut self, other: Self) {
+        if other.gate.is_some() {
+            self.gate.clone_from(&other.gate);
+        }
         let other_map = Arc::try_unwrap(other.handlers).unwrap_or_else(|shared| (*shared).clone());
         let mut map = Arc::try_unwrap(std::mem::take(&mut self.handlers))
             .unwrap_or_else(|shared| (*shared).clone());

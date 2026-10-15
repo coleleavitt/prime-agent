@@ -85,6 +85,9 @@ pub enum GatedItem {
     /// `.agents/skills/`, or a project `skills` settings entry): its
     /// Python skills install into the kernel venv and import at startup.
     ProjectSkills(String),
+    /// A project directory a composition root registered as gated
+    /// ([`register_gated_project_dir`]): `.prime/agent/<dir>/`.
+    ProjectDir { dir: String, label: String },
 }
 
 impl fmt::Display for GatedItem {
@@ -98,8 +101,35 @@ impl fmt::Display for GatedItem {
             GatedItem::AppendSystemPrompt => write!(f, "{config_dir}/APPEND_SYSTEM.md"),
             GatedItem::PromptTemplates => write!(f, "{config_dir}/prompts/ (prompt templates)"),
             GatedItem::ProjectSkills(location) => write!(f, "{location} (project skills)"),
+            GatedItem::ProjectDir { dir, label } => write!(f, "{config_dir}/{dir}/ ({label})"),
         }
     }
+}
+
+/// Project directories the composition root gates beyond the native ones:
+/// `(dir under .prime/agent, label)`.
+static GATED_PROJECT_DIRS: std::sync::Mutex<Vec<(&'static str, &'static str)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Gate the project directory `.prime/agent/<dir>/` like project skills: a
+/// workspace whose `dir` has entries needs trust, and its content is part
+/// of the trusted fingerprint (a change asks again). For what a composition
+/// root loads from a project and runs (`label` names it in the trust
+/// prompt). Idempotent; call before the first evaluation.
+pub fn register_gated_project_dir(dir: &'static str, label: &'static str) {
+    let mut dirs = GATED_PROJECT_DIRS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !dirs.iter().any(|(known, _)| *known == dir) {
+        dirs.push((dir, label));
+    }
+}
+
+fn gated_project_dirs() -> Vec<(&'static str, &'static str)> {
+    GATED_PROJECT_DIRS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// The trust answer for one workspace.

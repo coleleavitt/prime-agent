@@ -513,3 +513,36 @@ fn an_untrusted_project_can_opt_out_of_trace_sharing_but_never_opt_in() {
         )]
     );
 }
+
+#[test]
+fn a_registered_project_dir_is_gated_and_fingerprinted() {
+    register_gated_project_dir("trust-test-gated", "test payloads");
+    let fixture = Fixture::new();
+    // An empty registered dir gates nothing.
+    fs::create_dir_all(fixture.project_file("trust-test-gated")).unwrap();
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::NotRequired, Vec::new())
+    );
+    let gated = GatedItem::ProjectDir {
+        dir: "trust-test-gated".to_string(),
+        label: "test payloads".to_string(),
+    };
+    fixture.write_project("trust-test-gated/one.bin", "first");
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::Unknown, vec![gated.clone()])
+    );
+    assert_eq!(
+        gated.to_string(),
+        ".prime/agent/trust-test-gated/ (test payloads)"
+    );
+    fixture.trust();
+    assert_eq!(fixture.evaluate().state, TrustState::Trusted);
+    // New content in the dir asks again.
+    fixture.write_project("trust-test-gated/two.bin", "second");
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::Changed, vec![gated])
+    );
+}

@@ -17,7 +17,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use pa_agent::agent_loop::{AfterToolCallFn, BeforeToolCallFn};
-use pa_agent::types::{AfterToolCallResult, AgentMessage, Message, ToolResultContent};
+use pa_agent::types::{
+    AfterToolCallResult,
+    AgentMessage,
+    BeforeToolCallResult,
+    Message,
+    ToolResultContent,
+};
 use pa_telemetry::{Properties, TelemetryClient, base_properties, lookup};
 
 use crate::kernel::shared::HostRequestHandlers;
@@ -83,6 +89,35 @@ pub struct ToolResultObservation {
     /// Results of the same tool already in the session's context, this call
     /// excluded (a resumed session counts its restored history).
     pub earlier_results_of_tool: usize,
+}
+
+/// A kernel host request about to run (`bash.run`, `computer_use.click`,
+/// `mcp.session.call_tool`, ...): the kernel's actions reach the host this
+/// way, so a `bash()` call in a cell is reviewed as the command it runs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostRequestObservation {
+    pub request_type: String,
+    /// The request's payload as the kernel sent it (`type` included).
+    pub data: serde_json::Value,
+}
+
+/// A feature's policy answer for a tool call or host request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FeatureVerdict {
+    Allow,
+    /// Refuse it: the model sees the reason as the call's error (a tool
+    /// call's error result; the kernel's raised error for a host request).
+    Block(String),
+}
+
+/// A feature's answer for a submitted prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptDecision {
+    /// Admit it, with optional hidden context the turn carries ahead of the
+    /// prompt.
+    Continue { context: Option<String> },
+    /// Refuse the prompt; the reason is the admission error.
+    Block(String),
 }
 
 /// A feature's handle onto its session's telemetry client: catalogued
@@ -260,6 +295,45 @@ pub trait SessionFeature: Send + Sync {
     ) -> FeatureFuture<Option<String>> {
         let _ = (context, result);
         Box::pin(async { None })
+    }
+
+    /// Decide whether a tool call may run, after plan mode allowed it. Every
+    /// installed feature answers; the first `Block`, in installation order,
+    /// refuses the call. Awaited on the tool path, so it must stay bounded.
+    fn review_tool_call(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        call: &ToolCallObservation,
+    ) -> FeatureFuture<FeatureVerdict> {
+        let _ = (context, call);
+        Box::pin(async { FeatureVerdict::Allow })
+    }
+
+    /// Decide whether a kernel host request may run (the kernel's `bash()`,
+    /// computer use, MCP calls, ...). Every installed feature answers; the
+    /// first `Block` refuses the request before its handler runs. Awaited on
+    /// the kernel's request path, so it must stay bounded.
+    fn review_host_request(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &HostRequestObservation,
+    ) -> FeatureFuture<FeatureVerdict> {
+        let _ = (context, request);
+        Box::pin(async { FeatureVerdict::Allow })
+    }
+
+    /// Review a prompt the session is admitting as a new turn: add hidden
+    /// context the turn carries ahead of it, or refuse it. Every installed
+    /// feature answers; a `Block` refuses, and the contexts join in
+    /// installation order. Awaited on the admission path, so it must stay
+    /// bounded.
+    fn prompt_context(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        prompt: &str,
+    ) -> FeatureFuture<PromptDecision> {
+        let _ = (context, prompt);
+        Box::pin(async { PromptDecision::Continue { context: None } })
     }
 
     /// The session was created: `history` is the conversation it resumed
@@ -482,13 +556,24 @@ pub(crate) fn tool_call_hooks(
                 tool_name: call.tool_call.name.clone(),
                 args: call.args,
             };
-            let pending: Vec<_> = features
+            let observers: Vec<_> = features
                 .iter()
                 .map(|feature| feature.before_tool_call(&context, &observation))
                 .collect();
+            let reviews: Vec<_> = features
+                .iter()
+                .map(|feature| feature.review_tool_call(&context, &observation))
+                .collect();
             Box::pin(async move {
-                futures::future::join_all(pending).await;
-                Ok(None)
+                let (_, verdicts) = futures::future::join(
+                    futures::future::join_all(observers),
+                    futures::future::join_all(reviews),
+                )
+                .await;
+                Ok(first_block(verdicts).map(|reason| BeforeToolCallResult {
+                    block: true,
+                    reason: Some(reason),
+                }))
             })
         })
     };
@@ -542,6 +627,69 @@ pub(crate) fn tool_call_hooks(
         })
     };
     (Some(before), Some(after))
+}
+
+/// The first refusal among `verdicts`, which are in installation order.
+fn first_block(verdicts: Vec<FeatureVerdict>) -> Option<String> {
+    verdicts.into_iter().find_map(|verdict| match verdict {
+        FeatureVerdict::Allow => None,
+        FeatureVerdict::Block(reason) => Some(reason),
+    })
+}
+
+/// The kernel host-request gate that routes one session's host requests
+/// through `features`' [`SessionFeature::review_host_request`]; `None` when
+/// there are no features, so the kernel dispatches natively.
+pub(crate) fn host_request_gate(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> Option<crate::kernel::shared::HostRequestGate> {
+    if features.is_empty() {
+        return None;
+    }
+    let features = features.to_vec();
+    let context = Arc::clone(context);
+    Some(Arc::new(
+        move |request_type: &str, data: &serde_json::Value| {
+            let observation = HostRequestObservation {
+                request_type: request_type.to_string(),
+                data: data.clone(),
+            };
+            let reviews: Vec<_> = features
+                .iter()
+                .map(|feature| feature.review_host_request(&context, &observation))
+                .collect();
+            Box::pin(async move { first_block(futures::future::join_all(reviews).await) })
+        },
+    ))
+}
+
+/// Every installed feature's answer for a prompt being admitted: the first
+/// `Block` in installation order, or the contexts joined in that order.
+pub(crate) async fn review_prompt(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+    prompt: &str,
+) -> PromptDecision {
+    let answers = futures::future::join_all(
+        features
+            .iter()
+            .map(|feature| feature.prompt_context(context, prompt)),
+    )
+    .await;
+    let mut contexts = Vec::new();
+    for answer in answers {
+        match answer {
+            PromptDecision::Block(reason) => return PromptDecision::Block(reason),
+            PromptDecision::Continue {
+                context: Some(text),
+            } if !text.trim().is_empty() => contexts.push(text),
+            PromptDecision::Continue { .. } => {}
+        }
+    }
+    PromptDecision::Continue {
+        context: (!contexts.is_empty()).then(|| contexts.join("\n\n")),
+    }
 }
 
 /// The first refinement gate `features` offer the session; `None` when no

@@ -177,6 +177,21 @@ impl TrustInputs {
         }
         let settings = gated_settings(&project_dir);
         trees.extend(project_skill_trees(cwd, &project_dir, &settings));
+        for (dir, label) in super::gated_project_dirs() {
+            let root = project_dir.join(dir);
+            if dir_has_entries(&root) {
+                trees.push((
+                    GatedItem::ProjectDir {
+                        dir: dir.to_string(),
+                        label: label.to_string(),
+                    },
+                    GatedTree {
+                        label: format!("project-dir:{dir}"),
+                        root,
+                    },
+                ));
+            }
+        }
         TrustInputs {
             settings,
             system_prompt: file("SYSTEM.md"),

@@ -88,59 +88,88 @@ impl Inner {
 
     /// Resolve the handler for one request and start it: the returned future
     /// owns everything it needs, so the caller can poll it in line first.
+    /// With a session gate set, the gate reviews the request first and the
+    /// handler is resolved only once it allows it.
     fn host_request_future(&self, data: &Value) -> HostHandlerFuture {
-        let Some(obj) = data.as_object() else {
-            return Box::pin(async { Err(anyhow!("host request payload must be an object")) });
-        };
-        let Some(request_type) = obj
+        let handlers = &self.options.host_handlers;
+        let request_type = data
             .get("type")
             .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-        else {
-            return Box::pin(async {
-                Err(anyhow!("host request payload must have a string type"))
-            });
+            .filter(|t| !t.is_empty());
+        let (Some(gate), Some(request_type)) = (handlers.gate().cloned(), request_type) else {
+            return dispatch_host_request(&self.bash_jobs, handlers, data);
         };
-        if pa_bash::REQUEST_TYPES.contains(&request_type) {
-            // The kernel's bash() commands run here, on the kernel's behalf
-            // (its cwd and environment ride on every request). The answer may
-            // block (a run or a follow waits for the job's events), so it runs
-            // on a blocking thread. A `host_cancel` (the kernel was
-            // interrupted while it waited) ends a `bash.run`: its job is
-            // killed and the run still answers, once the group is gone; the
-            // other requests treat cancellation as advisory.
-            let table = Arc::clone(&self.bash_jobs);
-            let data = data.clone();
-            return Box::pin(async move {
-                let cancel = pa_bash::RunCancel::default();
-                let canceller = cancel.clone();
-                let mut answer = tokio::task::spawn_blocking(move || {
-                    pa_bash::handle_cancellable(&table, &data, &canceller)
-                });
-                let token = crate::kernel::shared::host_request_cancellation();
-                let reply = match token {
-                    Some(token) => {
-                        tokio::select! {
-                            reply = &mut answer => reply,
-                            () = token.cancelled() => {
-                                cancel.cancel();
-                                answer.await
-                            }
+        let review = gate(request_type, data);
+        let request_type = request_type.to_string();
+        let bash_jobs = Arc::clone(&self.bash_jobs);
+        let handlers = handlers.clone();
+        let data = data.clone();
+        Box::pin(async move {
+            if let Some(reason) = review.await {
+                return Err(anyhow!("{request_type} refused: {reason}"));
+            }
+            dispatch_host_request(&bash_jobs, &handlers, &data).await
+        })
+    }
+}
+
+/// Resolve the handler for one request and start it.
+fn dispatch_host_request(
+    bash_jobs: &Arc<pa_bash::JobTable>,
+    handlers: &crate::kernel::shared::HostRequestHandlers,
+    data: &Value,
+) -> HostHandlerFuture {
+    let Some(obj) = data.as_object() else {
+        return Box::pin(async { Err(anyhow!("host request payload must be an object")) });
+    };
+    let Some(request_type) = obj
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+    else {
+        return Box::pin(async { Err(anyhow!("host request payload must have a string type")) });
+    };
+    if pa_bash::REQUEST_TYPES.contains(&request_type) {
+        // The kernel's bash() commands run here, on the kernel's behalf
+        // (its cwd and environment ride on every request). The answer may
+        // block (a run or a follow waits for the job's events), so it runs
+        // on a blocking thread. A `host_cancel` (the kernel was
+        // interrupted while it waited) ends a `bash.run`: its job is
+        // killed and the run still answers, once the group is gone; the
+        // other requests treat cancellation as advisory.
+        let table = Arc::clone(bash_jobs);
+        let data = data.clone();
+        return Box::pin(async move {
+            let cancel = pa_bash::RunCancel::default();
+            let canceller = cancel.clone();
+            let mut answer = tokio::task::spawn_blocking(move || {
+                pa_bash::handle_cancellable(&table, &data, &canceller)
+            });
+            let token = crate::kernel::shared::host_request_cancellation();
+            let reply = match token {
+                Some(token) => {
+                    tokio::select! {
+                        reply = &mut answer => reply,
+                        () = token.cancelled() => {
+                            cancel.cancel();
+                            answer.await
                         }
                     }
-                    None => answer.await,
-                };
-                reply.map_err(|error| anyhow!("bash host request failed: {error}"))
-            });
-        }
-        let Some(handler) = self.options.host_handlers.get(request_type).cloned() else {
-            let error =
-                anyhow!("host request type \"{request_type}\" is not available in this session");
-            return Box::pin(async move { Err(error) });
-        };
-        handler(HostRequestPayload { data: data.clone() })
+                }
+                None => answer.await,
+            };
+            reply.map_err(|error| anyhow!("bash host request failed: {error}"))
+        });
     }
+    let Some(handler) = handlers.get(request_type).cloned() else {
+        let error =
+            anyhow!("host request type \"{request_type}\" is not available in this session");
+        return Box::pin(async move { Err(error) });
+    };
+    handler(HostRequestPayload { data: data.clone() })
+}
 
+impl Inner {
     /// Wait (bounded) for the in-flight host request tasks to settle.
     pub(crate) async fn wait_for_host_requests_to_settle(
         &self,

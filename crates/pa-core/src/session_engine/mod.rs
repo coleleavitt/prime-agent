@@ -162,6 +162,11 @@ pub struct AgentSession {
     /// The session's plan mode: while on, every admitted turn carries the
     /// plan-mode context row. `None` until the engine wiring installs it.
     plan_mode: Option<plan_mode::PlanModeSwitch>,
+    /// The installed features' view of this session: an admitted prompt is
+    /// reviewed through them ([`crate::features::SessionFeature::prompt_context`]).
+    /// `None` until the engine wiring installs it, and when no feature is
+    /// installed.
+    feature_context: Option<std::sync::Arc<crate::features::SessionFeatureContext>>,
     /// TS `_pendingNextTurnMessages`: custom rows the NEXT admitted
     /// turn carries ahead of its own prompt row.
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,
@@ -308,6 +313,7 @@ impl AgentSession {
             compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             plan_mode: None,
+            feature_context: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
             skill_telemetry: None,

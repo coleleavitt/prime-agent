@@ -67,7 +67,7 @@ fn now_millis() -> u64 {
         .unwrap_or_default()
 }
 
-fn hidden_row(custom_type: &str, text: &str) -> CustomMessage {
+pub(crate) fn hidden_row(custom_type: &str, text: &str) -> CustomMessage {
     CustomMessage {
         custom_type: custom_type.to_string(),
         content: pa_types::ai::UserContent::Text(text.to_string()),

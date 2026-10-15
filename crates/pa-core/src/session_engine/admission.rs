@@ -10,6 +10,10 @@ use super::{
     user_prompt_message,
 };
 
+/// The custom type of the hidden row carrying installed features' prompt
+/// context.
+pub const FEATURE_CONTEXT_CUSTOM_TYPE: &str = "feature_context";
+
 impl AgentSession {
     /// Submit a prompt. Session commands (compact/refine/goal/autonomous)
     /// are recognized before admission and never reach the model.
@@ -190,8 +194,16 @@ impl AgentSession {
         // (matching TS `_processAgentEvent`); appending here too would
         // double-persist.
 
+        // Installed features review the prompt before it is queued or run:
+        // a refusal never reaches the model, and their context rides ahead
+        // of it.
+        let feature_row = self.feature_prompt_row(&normalized).await?;
         if busy {
             let message = user_prompt_message(&normalized, &images);
+            let message: pa_agent::agent::AgentMessageBatch = match feature_row {
+                Some(row) => vec![row, message].into(),
+                None => message.into(),
+            };
             match options.streaming_behavior {
                 Some(StreamingBehavior::Steer) => self.agent.steer(message),
                 Some(StreamingBehavior::FollowUp) => self.agent.follow_up(message),
@@ -213,6 +225,7 @@ impl AgentSession {
             }
             prompt_messages.extend(self.take_next_turn_rows().await);
             prompt_messages.extend(self.plan_mode_context_row());
+            prompt_messages.extend(feature_row);
             prompt_messages.push(user_prompt_message(&normalized, &images));
             // Each batched action contributes its user row after the
             // primary, through the same admission normalization (TS
@@ -278,6 +291,38 @@ impl AgentSession {
     /// Install the session's plan-mode switch (the engine wiring).
     pub fn set_plan_mode_switch(&mut self, mode: super::plan_mode::PlanModeSwitch) {
         self.plan_mode = Some(mode);
+    }
+
+    /// Route admitted prompts through the installed features (the engine
+    /// wiring; only when a feature is installed).
+    pub fn set_feature_context(
+        &mut self,
+        context: std::sync::Arc<crate::features::SessionFeatureContext>,
+    ) {
+        self.feature_context = Some(context);
+    }
+
+    /// The installed features' answer for a prompt this session is admitting:
+    /// `Ok` with the hidden context row the turn carries ahead of the prompt
+    /// (`None` without one), `Err` when a feature refuses the prompt.
+    async fn feature_prompt_row(
+        &self,
+        prompt: &str,
+    ) -> anyhow::Result<Option<pa_agent::types::AgentMessage>> {
+        let Some(context) = self.feature_context.as_ref() else {
+            return Ok(None);
+        };
+        match crate::features::review_prompt(crate::features::installed(), context, prompt).await {
+            crate::features::PromptDecision::Block(reason) => {
+                anyhow::bail!("The prompt was refused: {reason}")
+            }
+            crate::features::PromptDecision::Continue { context: None } => Ok(None),
+            crate::features::PromptDecision::Continue {
+                context: Some(text),
+            } => Ok(session_message_to_loop(&SessionAgentMessage::Custom(
+                super::plan_mode::hidden_row(FEATURE_CONTEXT_CUSTOM_TYPE, &text),
+            ))),
+        }
     }
 
     /// The plan-mode context row an admitted turn carries while plan mode is

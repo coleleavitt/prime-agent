@@ -31,6 +31,15 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      appended to the result the model sees), `on_message_end` (every finalized message, in order, non-blocking),
      `on_agent_end` (every run end, non-blocking), and `flush` (bounded, once at process exit); the context carries the
      session's artifact dir. Installed only when a feature is.
+   - policy: `SessionFeature::review_tool_call` (refuse a model tool call after plan mode allowed it; the model sees
+     the reason as the tool's error result and the tool never runs), `review_host_request` (refuse a kernel host
+     request before its handler is resolved; the session's `HostRequestHandlers::set_gate` gate covers the natively
+     served `bash.*` requests too, so a `bash()` call in a cell is reviewed as the command it runs), and
+     `prompt_context` (refuse a prompt being admitted, or add a hidden `feature_context` row ahead of it). Every
+     installed feature answers; the first `Block` in installation order wins.
+   - workspace trust: `pa_core::workspace_trust::register_gated_project_dir(dir, label)` gates
+     `.prime/agent/<dir>/` like project skills (its entries need trust and are part of the trusted fingerprint);
+     for anything a composition root loads from a project and runs.
    - refinement gate: `SessionFeature::refinement_gate` hands the session a `pa_core::refinement::gate::RefinementGate`
      that evaluates every planned, non-empty, non-rollback refinement (with one model call), admits or refuses its edit
      set against the store re-read at apply time, records its own keys in the saved harness state and on the

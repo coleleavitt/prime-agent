@@ -507,6 +507,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .collect();
     let feature_context = Arc::new(feature_context);
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
+    // Installed features review every kernel host request (the kernel's
+    // `bash()` included) before it is dispatched; later registrations keep
+    // the gate.
+    if let Some(gate) =
+        crate::features::host_request_gate(crate::features::installed(), &feature_context)
+    {
+        handlers.set_gate(gate);
+    }
     // The `system_router.run` host handler the bundled system-router skill
     // reaches through `rlm.host_request` (#2484).
     super::system_router_host::register_system_router_handlers(
@@ -1060,6 +1068,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_plan_mode_switch(plan_mode.clone());
+    if !crate::features::installed().is_empty() {
+        session.set_feature_context(Arc::clone(&feature_context));
+    }
     session.set_agent_dir(config.agent_dir.clone());
     let refinement_gate =
         crate::features::session_refinement_gate(crate::features::installed(), &feature_context);
