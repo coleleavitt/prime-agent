@@ -281,6 +281,10 @@ mod tests {
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
+            #[cfg(feature = "hooks")]
+            "hooks",
+            #[cfg(feature = "plugins")]
+            "plugins",
         ];
         assert_eq!(names, expected);
     }
