@@ -36,6 +36,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
+    // The user's command hooks (Claude Code's `hooks` settings key), ahead
+    // of the plugins: a refusal from either stops the action.
+    #[cfg(feature = "hooks")]
+    features.push(Arc::new(pa_hooks::HooksFeature::new()));
     // The user's WebAssembly plugins: policy on tool calls and kernel host
     // requests, prompt context, status panels, the `wasm-plugins` skill.
     #[cfg(feature = "plugins")]

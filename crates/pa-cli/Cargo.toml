@@ -11,6 +11,7 @@ description = "The prime-agent binary."
 default = [
     "anthropic-auth",
     "dream",
+    "hooks",
     "learning",
     "ledger",
     "mermaid",
@@ -29,6 +30,10 @@ anthropic-auth = ["dep:pa-anthropic-auth"]
 # Dream-RSI (pa-dream): `prime-agent dream`, the standalone zero-token runner,
 # and the in-session `dream.*` host requests, `/dream` and the `dream` skill.
 dream = ["dep:pa-dream"]
+# Claude Code-compatible command hooks (crates/pa-hooks): the `hooks` settings
+# key runs commands on SessionStart, UserPromptSubmit, PreToolUse, PostToolUse
+# and Stop; the kernel's bash() is the `Bash` tool.
+hooks = ["dep:pa-hooks"]
 # The continual-learning gate: the learning index, `prime-agent learning`, and
 # the Engineer Trajectory Index's digest hook and RAVO recurrence filter
 # (crates/pa-learning).
@@ -83,6 +88,7 @@ pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
+pa-hooks = { path = "../pa-hooks", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
