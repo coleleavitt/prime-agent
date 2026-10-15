@@ -337,6 +337,7 @@ pub(crate) fn draw(
         // Mode setup flushes stdout, so it must follow the completed first paint.
         crate::enhanced_keys::enable(&mut stdout())?;
     }
+    crate::exit_guard::remember_frame(frame);
     Ok(())
 }
 

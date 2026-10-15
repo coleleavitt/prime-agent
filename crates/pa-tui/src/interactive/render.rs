@@ -393,6 +393,7 @@ impl Renderer {
         if !matches!(self, Renderer::Terminal { .. }) {
             return Ok(());
         }
+        crate::exit_guard::forget_frame();
         crate::altscreen::leave()?;
         if !exit_flush_enabled() {
             return Ok(());
@@ -524,6 +525,9 @@ impl Renderer {
         match self {
             Renderer::Terminal { .. } => {
                 if preserve_alt_screen {
+                    // The adopting surface paints its own frames: this one is no longer
+                    // the screen a forced exit should reprint.
+                    crate::exit_guard::forget_frame();
                     // ratatui's `Terminal` drop restores the cursor its last frame hid: run the
                     // drop before the hide so the hide is the handoff's final word — the
                     // adopting mount must not race a stale show against its own hide.

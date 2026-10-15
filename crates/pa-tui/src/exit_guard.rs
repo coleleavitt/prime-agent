@@ -34,6 +34,57 @@ const WATCHDOG_THREAD_NAME: &str = "tui-exit-watchdog";
 /// other layers; one TUI process, one exit.
 static LAST_EXIT_PROGRESS: Mutex<Option<Instant>> = Mutex::new(None);
 
+/// The last frame painted on the alternate screen, until the main-screen
+/// flush starts: the force-quit fallback reprints it, so a stalled exit
+/// still leaves the screen the user was looking at instead of the one from
+/// before launch.
+static LAST_FRAME: Mutex<Option<Vec<crate::Line>>> = Mutex::new(None);
+
+/// Keep `frame` as the screen a forced exit reprints (the paint path moves
+/// its frame in; nothing is copied).
+pub(crate) fn remember_frame(frame: Vec<crate::Line>) {
+    if let Ok(mut last) = LAST_FRAME.lock() {
+        *last = Some(frame);
+    }
+}
+
+/// The main-screen flush has started: from here on the flush owns what
+/// the main screen shows, and a forced exit reprints nothing.
+pub(crate) fn forget_frame() {
+    if let Ok(mut last) = LAST_FRAME.lock() {
+        *last = None;
+    }
+}
+
+/// The remembered frame as one main-screen write: markers stripped (OSC 8,
+/// OSC 133, image placements), trailing blank rows dropped. `None` once the
+/// flush started, or while the painter holds the lock (never wait on it).
+fn remembered_frame_text() -> Option<String> {
+    let frame = LAST_FRAME.try_lock().ok()?.take()?;
+    let mut rows: Vec<crate::Line> = frame
+        .into_iter()
+        .map(|mut row| {
+            crate::osc133::strip(&mut row);
+            crate::inline_image::strip_markers(&mut row);
+            crate::inline_image::blank_placeholders(&mut row);
+            crate::hyperlinks::strip_osc8(&mut row);
+            row
+        })
+        .collect();
+    while rows
+        .last()
+        .is_some_and(|row| row.iter().all(|span| span.content.trim().is_empty()))
+    {
+        rows.pop();
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    let mut text = String::new();
+    crate::interactive::write_flush_rows(&mut text, &rows);
+    Some(text)
+}
+
 /// Report exit-path progress: the writer completed a real step. One
 /// mutex store per bounded chunk, exit path only.
 pub fn note_exit_progress() {
@@ -247,10 +298,17 @@ fn spawn_watchdog(state: &Arc<GuardState>) {
     }
 }
 
-/// Force-quit right now: restore the terminal best-effort and exit the
-/// process with code 0 (the exit is deliberate, not a crash).
+/// Force-quit right now: restore the terminal best-effort, reprint the last
+/// frame when the main-screen flush never started, and exit the process
+/// with code 0 (the exit is deliberate, not a crash).
 fn force_quit() -> ! {
     crate::exit_restore::restore_terminal();
+    if let Some(text) = remembered_frame_text() {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(text.as_bytes());
+        let _ = out.flush();
+    }
     eprintln!("Prime Agent: shutdown stalled; forced exit.");
     std::process::exit(0)
 }
@@ -258,6 +316,28 @@ fn force_quit() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A forced exit before the main-screen flush reprints the last frame
+    /// (markers stripped, trailing blank rows dropped); once the flush
+    /// started, or after a handoff, it reprints nothing.
+    #[test]
+    fn a_forced_exit_reprints_the_frame_only_before_the_flush() {
+        let row = |text: &str| -> crate::Line { vec![crate::Span::raw(text)] };
+        remember_frame(vec![
+            row("user: hello"),
+            row("assistant: hi"),
+            row("   "),
+            row(""),
+        ]);
+        let text = remembered_frame_text().expect("the frame is reprinted");
+        assert!(text.contains("user: hello"), "{text:?}");
+        assert!(text.contains("assistant: hi"), "{text:?}");
+        assert!(text.ends_with("assistant: hi\r\n"), "{text:?}");
+        assert_eq!(remembered_frame_text(), None, "the frame is taken once");
+        remember_frame(vec![row("stale")]);
+        forget_frame();
+        assert_eq!(remembered_frame_text(), None, "the flush owns the screen");
+    }
 
     /// Serializes the tests that touch the process-global progress stamp:
     /// a reader must hold it across its whole observation window.
