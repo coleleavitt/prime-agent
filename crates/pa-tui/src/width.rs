@@ -503,7 +503,7 @@ pub fn is_punctuation_char(c: char) -> bool {
 pub fn normalize_terminal_output(s: &str) -> String {
     let needs_work = s
         .chars()
-        .any(|c| matches!(c, '\u{0e33}' | '\u{0eb3}') || c.is_control());
+        .any(|c| matches!(c, '\u{0e33}' | '\u{0eb3}') || c.is_control() || is_bidi_control(c));
     if !needs_work {
         return s.to_string();
     }
@@ -520,12 +520,21 @@ pub fn normalize_terminal_output(s: &str) -> String {
             '\u{0e33}' => out.push_str("\u{0e4d}\u{0e32}"),
             '\u{0eb3}' => out.push_str("\u{0ecd}\u{0eb2}"),
             '\t' => out.push_str("   "),
-            c if c.is_control() => {}
+            c if c.is_control() || is_bidi_control(c) => {}
             c => out.push(c),
         }
         rest = &rest[c.len_utf8()..];
     }
     out
+}
+
+/// The bidirectional embedding, override and isolate controls and the
+/// Arabic letter mark (Claude Code's set). A terminal that applies bidi
+/// would reorder the text after them, so what is shown could differ from
+/// what was written ("Trojan Source"). They measure zero columns, so
+/// dropping them keeps the layout.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 fn base_char_width(c: char) -> usize {
@@ -828,6 +837,11 @@ fn normalize_terminal_output_drops_controls_and_escapes() {
         ("title\x1b]0;pwned\x07!", "title!"),
         ("lone \x1b escape", "lone  escape"),
         ("tab\there", "tab   here"),
+        (
+            "if (admin\u{202e} \u{2066}// check\u{2069} \u{2066}) {",
+            "if (admin // check ) {",
+        ),
+        ("a\u{061c}b\u{202a}c\u{202c}d", "abcd"),
     ] {
         let normalized = normalize_terminal_output(input);
         assert_eq!(normalized, expected, "for {input:?}");
