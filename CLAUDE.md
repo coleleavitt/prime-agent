@@ -78,8 +78,8 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 ## Current State
 
 Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` is merged
-through `33da15a2c` (#3564, past v0.10.1-beta.20; merges `ea2530012` and `8b83861ca`, their resolution decisions in
-the commit messages): the
+through `5f218f780` (#3591, past v0.10.1-beta.20; merges `ea2530012`, `8b83861ca` and `bd0564dec`, their resolution
+decisions in the commit messages): the
 Decision API revert (#3522) followed, `serde-saphyr` kept over upstream's `yaml_serde`, the `ipython` -> `python_repl`
 rename (#3400) followed. Upstream merges go through a merge driver that formats base/ours/theirs in the fork's style
 first, and `Cargo.lock` is rebuilt as the union of both locks pruned by cargo. Live handoff notes: `MEMORY.md`.
@@ -132,16 +132,23 @@ unset PA_TS_BINARY PRIME_AGENT_KERNEL_VENV PRIME_AGENT_KERNEL_PYTHON PA_CORE_KER
 cargo +1.98.1 fmt --all -- --check --config-path $S/rustfmt.toml      # rustfmt finds ~/.rustfmt.toml via parents
 cargo +1.98.1 clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.98.1 clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
-cargo +1.98.1 build --locked --workspace --bins && ./target/debug/prime-agent --prime-agent-bootstrap   # kernel venv
+T=$(cargo +1.98.1 metadata --format-version 1 --no-deps | jq -r .target_directory)   # not always ./target
+cargo +1.98.1 build --locked --workspace --bins && $T/debug/prime-agent --prime-agent-bootstrap   # kernel venv
 cargo +1.98.1 test --workspace --locked --no-fail-fast
 cargo +1.98.1 deny --all-features --workspace check advisories licenses
-(cd prime-agent-runtime && uv run python -m unittest discover -s test && uv run ruff check src test)
+(cd prime-agent-runtime && PRIME_AGENT_EXECUTABLE=$T/debug/prime-agent uv run python -m unittest discover -s test && uv run ruff check src test)
 (cd skills/computer-use && PYTHONPATH=src:tests ../../prime-agent-runtime/.venv/bin/python -m unittest discover -s tests)
 ```
 
 `make check` is upstream's mirror of these gates (it assumes a default environment). The toolchain is pinned to
 1.98.1 (CI); the machine default is a nightly. A kernel-backed test run needs the sandbox HOME's venv bootstrapped by
 **this** checkout's binary — two checkouts testing concurrently against one venv will clobber each other.
+
+On this machine every checkout under `forks/` shares one build directory (`forks/.cargo/config.toml`, outside the
+repo: `forks/target`; keep the name `target`: dev-build detection keys on it), so worktrees also share `debug/prime-agent` and the last build wins. Superseded test
+binaries are never deleted by cargo and reached 634 GB on 2026-10-15: check its size before a full test run and
+prune with `cargo sweep --maxsize 150GB`. The runtime tests otherwise look for the bash host at `<checkout>/target/debug`,
+hence `PRIME_AGENT_EXECUTABLE` above.
 
 ## Project Claude Layout
 
