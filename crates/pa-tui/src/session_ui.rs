@@ -55,8 +55,8 @@ use settings::PendingConfirm;
 pub(crate) use settings::ReloadNote;
 pub(crate) use share::{ShareNote, TracesUploadNote, UpdateNote};
 use share::{ShareRun, TraceUploadAllRun, TracesLoginIntent};
-pub(crate) use stream::resume_hint_from_stats;
 use stream::{LoaderTokenTracker, SpeedStats, already_running_warning, streaming_tray_hint};
+pub(crate) use stream::{resume_hint_from_stats, still_running_note};
 use tokio::sync::mpsc;
 
 use crate::bash_view::{BashView, BashViewAction};

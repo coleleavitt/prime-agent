@@ -223,6 +223,50 @@ pub(crate) fn resume_hint_from_stats(stats: &Value) -> Option<String> {
     ))
 }
 
+/// The exit line naming what the daemon keeps doing after the client goes
+/// (Claude Code shows a "will stop when you exit" dialog; here nothing
+/// stops, so one line says what continues). `None` when nothing does.
+pub(crate) fn still_running_note(turn_active: bool, queued_messages: usize) -> Option<String> {
+    let mut parts = Vec::new();
+    if turn_active {
+        parts.push("the current turn".to_string());
+    }
+    match queued_messages {
+        0 => {}
+        1 => parts.push("1 queued message".to_string()),
+        n => parts.push(format!("{n} queued messages")),
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Still running in the background: {}.",
+        parts.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod still_running_note_tests {
+    use super::still_running_note;
+
+    #[test]
+    fn names_the_running_turn_and_the_queue() {
+        assert_eq!(still_running_note(false, 0), None);
+        assert_eq!(
+            still_running_note(true, 0).as_deref(),
+            Some("Still running in the background: the current turn.")
+        );
+        assert_eq!(
+            still_running_note(false, 1).as_deref(),
+            Some("Still running in the background: 1 queued message.")
+        );
+        assert_eq!(
+            still_running_note(true, 3).as_deref(),
+            Some("Still running in the background: the current turn, 3 queued messages.")
+        );
+    }
+}
+
 #[cfg(test)]
 mod streaming_tray_hint_tests {
     use super::streaming_tray_hint;

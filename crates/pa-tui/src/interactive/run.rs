@@ -2226,7 +2226,16 @@ async fn run_interactive_surface(
     let resume_hint = if session.open_agents_view {
         None
     } else {
-        session.exit_resume_hint().await
+        let hint = session.exit_resume_hint().await;
+        // What the daemon keeps doing goes above the resume line (the client never owns it).
+        let running = crate::session_ui::still_running_note(
+            session.turn_active,
+            crate::queued::flatten(&view.queued).len(),
+        );
+        match (running, hint) {
+            (Some(running), Some(hint)) => Some(format!("{running}\n{hint}")),
+            (running, hint) => running.or(hint),
+        }
     };
     crate::exit_guard::note_exit_progress();
     // Detach explicitly so the session's attached-client count stays honest; bounded hard: a
