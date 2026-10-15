@@ -2211,8 +2211,12 @@ async fn run_interactive_surface(
     // force-quit deadline fired first, leaving the alternate screen with no flush, so the view
     // jumped to the launch-time screen. With the terminal restored, the remaining steps are
     // bookkeeping: the deadline restarts and each bounded step proves progress.
+    // Only a terminal run arms the watchdog (headless verification keeps deterministic
+    // teardown): a headless exit forced mid-test would end the whole test process with
+    // status 0, so the tests after it would never run and still read as passed.
+    let owns_terminal = renderer.is_terminal();
     let frames = renderer.finish(&mut view, preserve_alt_screen);
-    if !handing_off {
+    if owns_terminal && !handing_off {
         exit_guard.arm_for_exit();
         crate::exit_guard::note_exit_progress();
     }

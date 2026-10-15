@@ -4763,11 +4763,12 @@ async fn tui_dispatches_declared_editor_keybindings() {
             key(KeyCode::Esc, KeyModifiers::NONE),
             pa_tui::interactive::HeadlessStep::Submit("start the slow turn".to_string()),
             wait_render("the slow turn is streaming"),
+            // The bound interrupt ends the turn; an interrupting press never arms the exit
+            // (Claude Code's rule), so no exit hint shows.
             key(
                 KeyCode::Char('i'),
                 KeyModifiers::CONTROL | KeyModifiers::ALT,
             ),
-            wait_render("Press Ctrl+C again to exit"),
             pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
             // A draft in the editor when the new-session key lands: it must not ride along.
             pa_tui::interactive::HeadlessStep::Type("stale draft".to_string()),
@@ -4784,12 +4785,14 @@ async fn tui_dispatches_declared_editor_keybindings() {
         .await
         .expect("interactive run");
     let rendered = outcome.frames.join("\n");
-    for status in ["Press Ctrl+C again to exit", "started session"] {
-        assert!(
-            rendered.contains(status),
-            "the {status:?} row rendered:\n{rendered}"
-        );
-    }
+    assert!(
+        rendered.contains("started session"),
+        "the \"started session\" row rendered:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("again to exit"),
+        "an interrupting press arms no exit:\n{rendered}"
+    );
     assert!(
         rendered.contains("Search models"),
         "ctrl+l opened the model picker:\n{rendered}"
