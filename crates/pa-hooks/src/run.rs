@@ -26,6 +26,9 @@ pub enum HookAnswer {
     Pass { context: Option<String> },
     /// The hook allows explicitly (`permissionDecision: allow`).
     Allow { context: Option<String> },
+    /// The hook asks the user (`permissionDecision: ask`), with the reason
+    /// shown to them.
+    Ask(String),
     /// The hook refuses, with the reason the model sees.
     Block(String),
 }
@@ -183,13 +186,13 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
                     .unwrap_or_else(|| "denied by a hook".to_string()),
             );
         }
-        // No client confirmation surface: a policy hook must not fail open.
+        // The session asks the user; without anyone to ask the action is
+        // refused (a policy hook must not fail open).
         Some("ask") => {
-            let reason = text(specific, "permissionDecisionReason")
-                .unwrap_or_else(|| "a hook asks for confirmation".to_string());
-            return HookAnswer::Block(format!(
-                "{reason} (needs confirmation, which this session cannot ask for)"
-            ));
+            return HookAnswer::Ask(
+                text(specific, "permissionDecisionReason")
+                    .unwrap_or_else(|| "a hook asks for confirmation".to_string()),
+            );
         }
         Some("allow") => return HookAnswer::Allow { context },
         _ => {}
@@ -233,8 +236,16 @@ mod tests {
         let pre = HookEvent::PreToolUse;
         let cases = [
             (pre, outcome(0, "", ""), HookAnswer::Pass { context: None }),
-            (pre, outcome(2, "", "no rm -rf\n"), HookAnswer::Block("no rm -rf".to_string())),
-            (pre, outcome(1, "", "oops"), HookAnswer::Pass { context: None }),
+            (
+                pre,
+                outcome(2, "", "no rm -rf\n"),
+                HookAnswer::Block("no rm -rf".to_string()),
+            ),
+            (
+                pre,
+                outcome(1, "", "oops"),
+                HookAnswer::Pass { context: None },
+            ),
             (
                 pre,
                 outcome(
@@ -246,15 +257,29 @@ mod tests {
             ),
             (
                 pre,
-                outcome(0, r#"{"hookSpecificOutput":{"permissionDecision":"ask"}}"#, ""),
-                HookAnswer::Block(
-                    "a hook asks for confirmation (needs confirmation, which this session cannot ask for)"
-                        .to_string(),
+                outcome(
+                    0,
+                    r#"{"hookSpecificOutput":{"permissionDecision":"ask"}}"#,
+                    "",
                 ),
+                HookAnswer::Ask("a hook asks for confirmation".to_string()),
             ),
             (
                 pre,
-                outcome(0, r#"{"hookSpecificOutput":{"permissionDecision":"allow"}}"#, ""),
+                outcome(
+                    0,
+                    r#"{"hookSpecificOutput":{"permissionDecision":"ask","permissionDecisionReason":"touches prod"}}"#,
+                    "",
+                ),
+                HookAnswer::Ask("touches prod".to_string()),
+            ),
+            (
+                pre,
+                outcome(
+                    0,
+                    r#"{"hookSpecificOutput":{"permissionDecision":"allow"}}"#,
+                    "",
+                ),
                 HookAnswer::Allow { context: None },
             ),
             (
@@ -285,7 +310,11 @@ mod tests {
                 outcome(0, r#"{"continue":false,"stopReason":"maintenance"}"#, ""),
                 HookAnswer::Block("maintenance".to_string()),
             ),
-            (pre, outcome(0, "plain text", ""), HookAnswer::Pass { context: None }),
+            (
+                pre,
+                outcome(0, "plain text", ""),
+                HookAnswer::Pass { context: None },
+            ),
         ];
         for (event, outcome, expected) in cases {
             assert_eq!(answer(event, &hook("h"), &outcome), expected, "{outcome:?}");

@@ -11,8 +11,9 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 - **Events:**
   - `SessionStart`: the context rides the first admitted prompt.
   - `UserPromptSubmit`: adds context, or refuses the prompt.
-  - `PreToolUse`: refuses a tool call, or a kernel host request.
-  - `PostToolUse`: a note is appended to the result.
+  - `PreToolUse`: refuses a tool call or a kernel host request, or asks the user about it.
+  - `PostToolUse`: a note is appended to the result. For the kernel's `bash()` it fires when the command's result
+    arrives (`kernel_bash`), and the note rides the cell's result.
   - `Stop`: fire and forget.
 - **Tool names hooks see:**
   - The model's own tool calls keep their names (`python_repl`, ...).
@@ -22,7 +23,8 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 - **Answers:**
   - Exit 2 refuses, with stderr as the reason.
   - JSON on stdout refuses with `permissionDecision: "deny"`, with `decision: "block"`, or with `continue: false`.
-    `permissionDecision: "ask"` also refuses: there is no confirmation surface, and a policy must not fail open.
+    `permissionDecision: "ask"` asks the user (`pa_core::features::confirm`); without a client that can ask, or
+    without an answer, the action is refused (a policy must not fail open).
   - Additional context comes from `hookSpecificOutput.additionalContext`, or from plain stdout for `SessionStart`
     and `UserPromptSubmit`.
   - Any other exit, a timeout or a spawn failure is a reported, non-blocking error.
@@ -34,21 +36,21 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 
 - Claude Code's `prompt` hooks and its other events (`Notification`, `SubagentStop`, `PreCompact`, `SessionEnd`).
   These are reported as unsupported and skipped.
-- `PostToolUse` for the kernel's `bash()`: no seam runs after a host request.
 - `transcript_path`: always empty, because the conversation log belongs to the daemon.
-- Interactive confirmation.
+- Separate `stdout`/`stderr` in a `Bash` `tool_response`: the kernel's commands write one merged stream.
 
 ## Public API
 
 - `HooksFeature`: the `SessionFeature` `pa-cli` installs (feature `hooks`).
 - `config::{HooksConfig, HookEvent, HookCommand, DEFAULT_TIMEOUT}`.
 - `run::{run, answer, HookAnswer, Outcome}`.
+- `kernel_bash::{KernelJobs, FinishedCommand}`: a session's running kernel commands, for `PostToolUse`.
 - `host_request_as_tool` and `FEATURE_NAME`.
 
 ## Seams it plugs into
 
 `pa_core::features::SessionFeature`: `on_session_start`, `prompt_context`, `review_tool_call`,
-`review_host_request`, `after_tool_call` and `on_agent_end`.
+`review_host_request`, `after_host_request`, `after_tool_call` and `on_agent_end`.
 
 ## Files it owns
 
@@ -60,11 +62,14 @@ None.
 
 ## Tests
 
-- `src/config.rs`, `src/run.rs` and `src/lib.rs` cover matchers and skipped entries, every answer shape, a real
-  command's stdin and timeout, and the host-request tool mapping.
+- `src/config.rs`, `src/run.rs`, `src/kernel_bash.rs` and `src/lib.rs` cover matchers and skipped entries, every
+  answer shape, a real command's stdin and timeout, job tracking across `bash.run`/`bash.follow` (spilled output,
+  the cap), and the host-request tool mapping.
 - `tests/session.rs` uses POSIX shell hooks in real sessions:
   - start and submit context;
   - a refused prompt that leaves the start context for the next one;
   - a `PreToolUse` refusal and a `PostToolUse` note;
   - `Stop`'s input;
-  - over a real kernel, a `Bash` hook denying `rm -rf` through `permissionDecision` while `echo` runs.
+  - over a real kernel, a `Bash` hook denying `rm -rf` through `permissionDecision`, asking about two commands (one
+    allowed, one refused through the confirmation surface) while `echo` runs, and a `PostToolUse` `Bash` hook whose
+    feedback reaches the cell's result.

@@ -4,9 +4,11 @@
 //! Code's JSON on stdin and its answers on stdout / exit code. The kernel's
 //! `bash()` commands are presented as the `Bash` tool and the kernel's MCP
 //! calls as `mcp__<server>__<tool>`, so existing Claude Code hook scripts
-//! work unmodified. See `README.md` and `docs/hooks-and-plugins.md`.
+//! work unmodified. A `PreToolUse` `ask` puts the action to the user. See
+//! `README.md` and `docs/hooks-and-plugins.md`.
 
 pub mod config;
+pub mod kernel_bash;
 pub mod run;
 
 use std::collections::HashMap;
@@ -18,6 +20,7 @@ use pa_core::features::{
     FeatureFuture,
     FeatureVerdict,
     HostRequestObservation,
+    HostRequestOutcome,
     PromptDecision,
     SessionFeature,
     SessionFeatureContext,
@@ -66,6 +69,8 @@ struct SessionHooks {
     /// The `SessionStart` run's context, carried by the first admitted
     /// prompt.
     start: tokio::sync::Mutex<StartContext>,
+    /// The kernel's running `bash()` commands, for `PostToolUse`.
+    kernel_jobs: kernel_bash::KernelJobs,
 }
 
 /// Where the session's `SessionStart` context is.
@@ -120,7 +125,7 @@ fn contexts(answers: &[HookAnswer]) -> Vec<String> {
         .iter()
         .filter_map(|answer| match answer {
             HookAnswer::Pass { context } | HookAnswer::Allow { context } => context.clone(),
-            HookAnswer::Block(_) => None,
+            HookAnswer::Ask(_) | HookAnswer::Block(_) => None,
         })
         .collect()
 }
@@ -128,8 +133,41 @@ fn contexts(answers: &[HookAnswer]) -> Vec<String> {
 fn first_block(answers: &[HookAnswer]) -> Option<String> {
     answers.iter().find_map(|answer| match answer {
         HookAnswer::Block(reason) => Some(reason.clone()),
-        HookAnswer::Pass { .. } | HookAnswer::Allow { .. } => None,
+        HookAnswer::Pass { .. } | HookAnswer::Allow { .. } | HookAnswer::Ask(_) => None,
     })
+}
+
+/// The `PreToolUse` answers as one verdict: the first refusal, else the
+/// questions asked (joined), else allowed.
+fn verdict(answers: &[HookAnswer]) -> FeatureVerdict {
+    if let Some(reason) = first_block(answers) {
+        return FeatureVerdict::Block(reason);
+    }
+    let asks: Vec<&str> = answers
+        .iter()
+        .filter_map(|answer| match answer {
+            HookAnswer::Ask(reason) => Some(reason.as_str()),
+            HookAnswer::Pass { .. } | HookAnswer::Allow { .. } | HookAnswer::Block(_) => None,
+        })
+        .collect();
+    if asks.is_empty() {
+        FeatureVerdict::Allow
+    } else {
+        FeatureVerdict::Ask(asks.join("; "))
+    }
+}
+
+/// What `PostToolUse` answers say to the model: a "block" is feedback (the
+/// tool already ran), and context joins it.
+fn post_tool_notes(answers: Vec<HookAnswer>) -> Vec<String> {
+    answers
+        .into_iter()
+        .filter_map(|answer| match answer {
+            HookAnswer::Block(reason) => Some(reason),
+            HookAnswer::Pass { context } | HookAnswer::Allow { context } => context,
+            HookAnswer::Ask(_) => None,
+        })
+        .collect()
 }
 
 /// The hooks feature, installed by the composition root.
@@ -160,6 +198,7 @@ impl HooksFeature {
                         session_id: context.session_id.clone(),
                         cwd: context.cwd.clone(),
                         start: tokio::sync::Mutex::new(StartContext::None),
+                        kernel_jobs: kernel_bash::KernelJobs::default(),
                     })
                 }),
         )
@@ -180,7 +219,28 @@ impl HooksFeature {
             extra.insert("tool_name".to_string(), json!(tool));
             extra.insert("tool_input".to_string(), input);
             let answers = hooks.fire(HookEvent::PreToolUse, Some(&tool), extra).await;
-            first_block(&answers).map_or(FeatureVerdict::Allow, FeatureVerdict::Block)
+            verdict(&answers)
+        })
+    }
+
+    /// Fire `PostToolUse` for a tool that already ran; the notes come back
+    /// prefixed with `subject` (they reach the model on the enclosing
+    /// cell's result).
+    fn post_tool_use(
+        hooks: Arc<SessionHooks>,
+        tool: String,
+        input: Value,
+        response: Value,
+        subject: String,
+    ) -> FeatureFuture<Option<String>> {
+        Box::pin(async move {
+            let mut extra = serde_json::Map::new();
+            extra.insert("tool_name".to_string(), json!(tool));
+            extra.insert("tool_input".to_string(), input);
+            extra.insert("tool_response".to_string(), response);
+            let notes =
+                post_tool_notes(hooks.fire(HookEvent::PostToolUse, Some(&tool), extra).await);
+            (!notes.is_empty()).then(|| format!("Hook feedback on {subject}: {}", notes.join("\n")))
         })
     }
 }
@@ -303,18 +363,51 @@ impl SessionFeature for HooksFeature {
             json!({ "content": result_text(&result.content), "is_error": result.is_error }),
         );
         Box::pin(async move {
-            let answers = hooks.fire(HookEvent::PostToolUse, Some(&tool), extra).await;
-            // A PostToolUse "block" is feedback for the model (the tool
-            // already ran); context joins it.
-            let notes: Vec<String> = answers
-                .into_iter()
-                .filter_map(|answer| match answer {
-                    HookAnswer::Block(reason) => Some(reason),
-                    HookAnswer::Pass { context } | HookAnswer::Allow { context } => context,
-                })
-                .collect();
+            let notes =
+                post_tool_notes(hooks.fire(HookEvent::PostToolUse, Some(&tool), extra).await);
             (!notes.is_empty()).then(|| notes.join("\n"))
         })
+    }
+
+    /// `PostToolUse` for what the kernel ran: a `bash()` command once its
+    /// result arrives (as `Bash`), an MCP call once it answered.
+    fn after_host_request(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &HostRequestObservation,
+        outcome: HostRequestOutcome<'_>,
+    ) -> FeatureFuture<Option<String>> {
+        let hooks = self.session(context);
+        let Ok(reply) = outcome else {
+            return Box::pin(async { None });
+        };
+        if !hooks.config.has(HookEvent::PostToolUse) {
+            return Box::pin(async { None });
+        }
+        if request.request_type.starts_with("bash.") {
+            let Some(finished) =
+                hooks
+                    .kernel_jobs
+                    .observe(&request.request_type, &request.data, reply)
+            else {
+                return Box::pin(async { None });
+            };
+            let subject = format!("`{}`", finished.command);
+            return Self::post_tool_use(
+                hooks,
+                "Bash".to_string(),
+                json!({ "command": finished.command }),
+                finished.response,
+                subject,
+            );
+        }
+        match host_request_as_tool(request) {
+            Some((tool, input)) => {
+                let subject = format!("`{tool}`");
+                Self::post_tool_use(hooks, tool, input, reply.clone(), subject)
+            }
+            None => Box::pin(async { None }),
+        }
     }
 
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {

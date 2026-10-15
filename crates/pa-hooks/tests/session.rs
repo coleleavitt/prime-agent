@@ -8,8 +8,9 @@
 //! `SessionStart` and `UserPromptSubmit` context, a refused prompt, a
 //! `PreToolUse` refusal (exit 2), a `PostToolUse` note, `Stop`, and, over a
 //! real kernel, a `PreToolUse` `Bash` hook that denies a destructive
-//! `bash()` through `permissionDecision`. Its own test binary: installation
-//! is process-global.
+//! `bash()` through `permissionDecision` and asks the user about another,
+//! and a `PostToolUse` `Bash` hook whose note reaches the cell's result.
+//! Its own test binary: installation is process-global.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,7 +65,12 @@ fn agent_dir(root: &Path, stop_marker: &Path) -> std::path::PathBuf {
     let guard = script(
         &bin,
         "guard.sh",
-        "input=$(cat)\ncase \"$input\" in *'rm -rf'*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"guard denies rm -rf\"}}';; esac",
+        "input=$(cat)\ncase \"$input\" in *'rm -rf'*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"guard denies rm -rf\"}}';; *ask-me*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"guard asks first\"}}';; esac",
+    );
+    let post_bash = script(
+        &bin,
+        "post-bash.sh",
+        "input=$(cat)\ncase \"$input\" in *hook-harmless*'\"exit_code\":0'*) printf '%s' '{\"decision\":\"block\",\"reason\":\"post-bash saw it exit 0\"}';; esac",
     );
     let post = script(
         &bin,
@@ -87,7 +93,10 @@ fn agent_dir(root: &Path, stop_marker: &Path) -> std::path::PathBuf {
                     { "matcher": "danger", "hooks": command(&danger) },
                     { "matcher": "Bash", "hooks": command(&guard) },
                 ],
-                "PostToolUse": [{ "matcher": "echo", "hooks": command(&post) }],
+                "PostToolUse": [
+                    { "matcher": "echo", "hooks": command(&post) },
+                    { "matcher": "Bash", "hooks": command(&post_bash) },
+                ],
                 "Stop": [{ "hooks": command(&stop) }],
             }
         })
@@ -285,7 +294,7 @@ async fn the_first_prompt_carries_the_session_start_context() {
 }
 
 #[tokio::test]
-async fn a_bash_hook_denies_the_kernels_destructive_command() {
+async fn bash_hooks_deny_ask_about_and_follow_the_kernels_commands() {
     let Some(kernel_python) =
         pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
     else {
@@ -305,7 +314,7 @@ async fn a_bash_hook_denies_the_kernels_destructive_command() {
     let receipt = tmp.path().join("receipt.json");
     let cell = format!(
         "import json\nout = {{}}\n\
-         for key, command in [('destructive', 'rm -rf /nonexistent-hook-target'), ('harmless', 'echo hook-harmless')]:\n\
+         for key, command in [('destructive', 'rm -rf /nonexistent-hook-target'), ('asked', 'echo ask-me'), ('refused', 'echo ask-me again'), ('harmless', 'echo hook-harmless')]:\n\
          \x20   try:\n\
          \x20       out[key] = ['ok', str(await bash(command))]\n\
          \x20   except Exception as error:\n\
@@ -330,11 +339,55 @@ async fn a_bash_hook_denies_the_kernels_destructive_command() {
     }))
     .await
     .unwrap();
+    // A client surface answers the hook's questions: the first is allowed,
+    // the second refused.
+    let session_id = engine.session.session_id().await;
+    let surface = pa_core::features::register_confirmation_surface(&session_id);
+    let answerer = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            let mut answers = vec![false, true];
+            while let Some(allow) = answers.pop() {
+                let question = loop {
+                    if let Some(question) =
+                        pa_core::features::pending_confirmations(&session_id).pop()
+                    {
+                        break question;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                };
+                assert_eq!(question.reason, "guard asks first");
+                assert!(
+                    question.action.starts_with("Run `echo ask-me"),
+                    "{question:?}"
+                );
+                assert!(pa_core::features::answer_confirmation(
+                    &session_id,
+                    &question.id,
+                    allow
+                ));
+            }
+        })
+    };
     engine
         .prompt("run the cell", PromptOptions::default())
         .await
         .unwrap();
     engine.session.agent().wait_for_idle().await;
+    answerer.await.unwrap();
+    drop(surface);
+    let state = engine.session.agent().state().await;
+    let cell_result = state
+        .messages
+        .iter()
+        .filter_map(text)
+        .find(|(tool, _)| tool.starts_with("python_repl"))
+        .map(|(_, text)| text)
+        .unwrap_or_default();
+    assert!(
+        cell_result.contains("Hook feedback on `echo hook-harmless`: post-bash saw it exit 0"),
+        "{cell_result}"
+    );
     engine.dispose_kernel().await;
     let raw = std::fs::read_to_string(&receipt)
         .unwrap_or_else(|_| panic!("the cell wrote no receipt at {}", receipt.display()));
@@ -342,6 +395,15 @@ async fn a_bash_hook_denies_the_kernels_destructive_command() {
     assert_eq!(
         out["destructive"],
         json!(["error", "bash.run refused: guard denies rm -rf"]),
+        "{out}"
+    );
+    assert_eq!(out["asked"][0], "ok", "{out}");
+    assert_eq!(
+        out["refused"],
+        json!([
+            "error",
+            "bash.run refused: guard asks first (the user refused it)"
+        ]),
         "{out}"
     );
     assert_eq!(out["harmless"][0], "ok", "{out}");
