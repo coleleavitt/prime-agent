@@ -714,6 +714,10 @@ const NET_NEW_BUNDLED_SKILLS: &[&str] = &[
     // `present_artifact()`, the user-visible inline preview over the
     // `artifact.present` host request.
     "present-artifact",
+    // The model's task list (Claude Code's TaskCreate/TaskGet/TaskUpdate/
+    // TaskList, which replaced TodoWrite; the TS product has no counterpart):
+    // a pure-Python skill persisting `tasks.json` under `RLM_SESSION_DIR`.
+    "tasks",
 ];
 
 #[test]

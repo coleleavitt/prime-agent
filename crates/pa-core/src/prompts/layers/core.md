@@ -174,6 +174,15 @@ In goal mode prime-agent helps an agent stay on track until a task is fully fini
 - `goal.pause(reason: str) -> dict`: pause the active goal while it is blocked on the user or an external event (the harness stops continuing it)
 - `goal.resume() -> dict`: resume a goal you paused once the awaited input arrives
 
+## Tasks
+
+A per-session task list for multi-step work, persisted in the session directory (it survives compaction, kernel restarts, and resume). Plan with it, keep one task `in_progress` at a time, and mark each `completed` as soon as it is done.
+
+- `tasks.create(subject: str, description: str = "", active_form: str | None = None, metadata: dict | None = None) -> dict`: add a `pending` task; ids are `"1"`, `"2"`, ... and never reused; `active_form` is the present-continuous label shown while the task is in progress
+- `tasks.get(id: str | int) -> dict`: one task in full, including `blocks`, `blocked_by`, and `metadata`
+- `tasks.update(id: str | int, *, status: Literal["pending", "in_progress", "completed", "deleted"] | None = None, subject: str | None = None, description: str | None = None, active_form: str | None = None, owner: str | None = None, add_blocks=None, add_blocked_by=None, metadata: dict | None = None) -> dict`: change one task; `add_blocks`/`add_blocked_by` take ids and record the dependency on both tasks; a second `in_progress` task is applied with a warning
+- `tasks.list() -> list[dict]`: non-deleted tasks ordered by id (id, subject, status, owner, open `blocked_by`); its repr is a checklist, so end a cell with it to show the user where the work stands
+
 ## Heartbeat
 
 In prime-agent, agents can create heartbeats to wake themselves up after a given period of time with remembered instructions, recurrently on a given schedule.
