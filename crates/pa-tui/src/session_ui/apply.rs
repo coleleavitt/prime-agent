@@ -771,6 +771,11 @@ impl SessionUi {
             TurnUpdate::GoalUpdate(goal) => {
                 self.apply_goal_update(goal, view);
             }
+            TurnUpdate::FeatureStatus { feature, status } => {
+                crate::feature_panel::apply_status(&mut self.feature_panels, &feature, &status);
+                view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
+                self.dirty = true;
+            }
             TurnUpdate::BashStart {
                 command,
                 exclude_from_context,

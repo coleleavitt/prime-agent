@@ -344,6 +344,8 @@ pub(crate) struct SessionUi {
     subagents_focused: bool,
     activity_group: crate::chrome::ActivityGroup,
     subagent_counts: crate::subagents::SubagentCounts,
+    /// The installed features' panel rows for this session, by feature.
+    feature_panels: crate::feature_panel::FeaturePanels,
     /// This session's persisted file path (family identity of the
     /// subagent linkage; `None` for unpersisted sessions).
     session_file: Option<String>,

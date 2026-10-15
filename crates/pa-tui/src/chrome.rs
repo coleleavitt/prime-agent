@@ -86,6 +86,9 @@ pub struct ChromeState {
     /// The footer's tok/sec readout: the dim bottom row's text; `None`
     /// renders no row (kept until the first completed response).
     pub speed_text: Option<String>,
+    /// The installed features' panel rows under the editor (see
+    /// [`crate::feature_panel`]); empty renders nothing.
+    pub feature_panel: Vec<String>,
     /// Hide the splash `cwd` line (the scoped agents view keeps its
     /// metadata rows centered against the logo).
     pub splash_hide_cwd: bool,

@@ -2378,3 +2378,19 @@ fn windowed_prompt_time_prefers_the_readable_tail_over_an_older_scalar() {
         );
     }
 }
+
+#[test]
+fn feature_status_decodes_the_feature_and_its_status() {
+    assert_eq!(
+        event_to_update(&json!({
+            "type": "feature_status",
+            "feature": "plugin:fixture",
+            "line": "fixture ready",
+            "status": { "panel": ["row"] },
+        })),
+        Some(TurnUpdate::FeatureStatus {
+            feature: "plugin:fixture".to_string(),
+            status: json!({ "panel": ["row"] }),
+        })
+    );
+}

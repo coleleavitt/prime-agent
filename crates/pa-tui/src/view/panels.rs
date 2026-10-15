@@ -33,6 +33,13 @@ impl AgentView {
         let (editor_rows, cursor) = self.render_editor_surface(width, context_rows + overlay_count);
         self.dock_cursor = cursor.map(|(row, col)| (context_rows + overlay_count + row, col));
         lines.extend(editor_rows);
+        // The installed features' panel (a plugin's status rows) sits
+        // directly under the editor.
+        lines.extend(crate::feature_panel::render(
+            &self.chrome.feature_panel,
+            &self.theme,
+            width,
+        ));
         // The tray's `← manage` hint is a click region (operator directive 2026-09-29): its own
         // cells, never the depth label, perform the handoff.
         let tray_row = lines.len();

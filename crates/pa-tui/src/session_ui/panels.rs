@@ -99,6 +99,12 @@ impl SessionUi {
         // The title's spend is the family rollup the agents view bills the
         // session's row.
         view.chrome.cost_usd = crate::subagents::family_cost(&self.roster, &identity);
+        // The roster summary is authoritative for the feature panel: it
+        // carries statuses published before this client attached.
+        if let Some(summary) = crate::subagents::own_summary(&self.roster, &identity) {
+            self.feature_panels = crate::feature_panel::panels_from_summary(&summary);
+        }
+        view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
         let dock = self.activity_dock_state();
         // A focused selection must stay on a rendered group: only the goal group can leave the row
         // (its goal ended), and the selection steps back to the group that now ends the row.

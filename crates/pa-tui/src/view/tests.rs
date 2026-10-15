@@ -1710,3 +1710,38 @@ fn enter_over_a_stale_slash_menu_submits_the_typed_command() {
         v.editor.get_text()
     );
 }
+
+/// The installed features' panel rows sit directly under the editor
+/// surface, above the tray.
+#[test]
+fn the_feature_panel_renders_under_the_editor() {
+    let mut v = view();
+    v.editor.set_text("hello there");
+    let without = v.render_dock(80);
+    v.chrome.feature_panel = vec!["plugin row one".to_string(), "plugin row two".to_string()];
+    let with = v.render_dock(80);
+    assert_eq!(with.len(), without.len() + 2);
+    let texts: Vec<String> = with.iter().map(text_of).collect();
+    let editor_row = texts
+        .iter()
+        .position(|row| row.contains("hello there"))
+        .expect("the editor row");
+    let panel_row = texts
+        .iter()
+        .position(|row| row == "plugin row one")
+        .expect("the panel row");
+    assert!(panel_row > editor_row, "{texts:#?}");
+    assert_eq!(texts[panel_row + 1], "plugin row two");
+    assert_eq!(
+        with[panel_row][0].style,
+        v.theme.fg_style(ThemeColor::Muted)
+    );
+    // Everything after the panel is the tray and below, unchanged.
+    assert_eq!(
+        with[panel_row + 2..]
+            .iter()
+            .map(text_of)
+            .collect::<Vec<_>>(),
+        without[panel_row..].iter().map(text_of).collect::<Vec<_>>()
+    );
+}

@@ -319,6 +319,20 @@ pub(crate) fn family_cost(roster: &[Value], session: &SessionIdentity) -> Option
         .map(|rollup| rollup.cost)
 }
 
+/// The roster summary of `session` itself, when the roster lists it.
+pub(crate) fn own_summary(roster: &[Value], session: &SessionIdentity) -> Option<Value> {
+    let keys = session.keys();
+    roster
+        .iter()
+        .filter_map(|entry| entry.get("summary"))
+        .find(|summary| {
+            summary_identity_keys(summary)
+                .iter()
+                .any(|key| keys.contains(key))
+        })
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -406,6 +420,30 @@ mod tests {
             counts.running,
             counts.running_direct + counts.running_nested
         );
+    }
+
+    #[test]
+    fn own_summary_finds_the_sessions_row_by_any_identity() {
+        let roster = vec![
+            entry(
+                "a1",
+                &json!({ "activeSessionId": "other", "sessionId": "s-other" }),
+                "idle",
+            ),
+            entry(
+                "a2",
+                &json!({ "activeSessionId": "mine", "sessionId": "s-mine", "featureStatus": { "plugin:p": { "line": "x" } } }),
+                "running",
+            ),
+        ];
+        let by_session = SessionIdentity::new(None, Some("s-mine".to_string()), None);
+        assert_eq!(
+            own_summary(&roster, &by_session)
+                .and_then(|summary| summary.get("featureStatus").cloned()),
+            Some(json!({ "plugin:p": { "line": "x" } }))
+        );
+        let stranger = SessionIdentity::new(Some("nobody".to_string()), None, None);
+        assert_eq!(own_summary(&roster, &stranger), None);
     }
 
     #[test]

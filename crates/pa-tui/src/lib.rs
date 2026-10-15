@@ -64,6 +64,7 @@ pub mod exit_restore;
 pub mod export_share;
 mod external_editor;
 pub mod factory_view;
+pub mod feature_panel;
 pub mod fuzzy;
 pub mod goal_surface;
 pub mod harness_selector;

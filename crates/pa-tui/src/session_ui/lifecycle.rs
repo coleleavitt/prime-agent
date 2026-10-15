@@ -188,6 +188,7 @@ impl SessionUi {
             subagents_focused: false,
             activity_group: crate::chrome::ActivityGroup::Subagents,
             subagent_counts: crate::subagents::SubagentCounts::default(),
+            feature_panels: crate::feature_panel::FeaturePanels::new(),
             session_file: None,
             pending_selection: None,
             return_to_agents_view: !options.no_session,
@@ -546,6 +547,9 @@ impl SessionUi {
         if mounted_session_changes {
             self.turn_ends_seen = 0;
             self.last_prompt_turn_end = 0;
+            // Another session's feature panel never shows here; the roster
+            // refresh seeds this one's.
+            self.feature_panels.clear();
         }
         // The stash state follows the stable id of the session now rendered: the initial attach and
         // every in-place switch rebind through here.

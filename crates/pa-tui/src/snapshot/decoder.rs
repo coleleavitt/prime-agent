@@ -73,6 +73,9 @@ pub enum TurnUpdate {
     },
     /// `agent_end`: the prompt queue drained.
     Idle,
+    /// `feature_status`: an installed feature's status for the session (its
+    /// `status.panel` rows render under the editor).
+    FeatureStatus { feature: String, status: Value },
     /// `compaction_start`: a compaction run began.
     CompactionStart {
         /// Why the compaction runs (`manual`/`requested`/`overflow`/`threshold`).
@@ -353,6 +356,14 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .get("restoredModel")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+        }),
+        "feature_status" => Some(TurnUpdate::FeatureStatus {
+            feature: event
+                .get("feature")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            status: event.get("status").cloned().unwrap_or(Value::Null),
         }),
         "goal_update" => Some(TurnUpdate::GoalUpdate(
             event.get("goal").cloned().unwrap_or(Value::Null),
