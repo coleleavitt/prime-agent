@@ -103,6 +103,10 @@ impl SessionUi {
         // carries statuses published before this client attached.
         if let Some(summary) = crate::subagents::own_summary(&self.roster, &identity) {
             self.feature_panels = crate::feature_panel::panels_from_summary(&summary);
+            self.apply_feature_questions(
+                super::feature_confirm::questions_from_summary(&summary),
+                view,
+            );
         }
         view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
         let dock = self.activity_dock_state();

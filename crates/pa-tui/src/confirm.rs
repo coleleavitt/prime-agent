@@ -54,6 +54,16 @@ impl ConfirmPanel {
         }
     }
 
+    /// [`Self::yes_no`] with No selected: a question whose Yes runs an
+    /// action, opened while the user may be typing.
+    #[must_use]
+    pub fn yes_no_defaulting_to_no(title: &str, message: &str) -> Self {
+        ConfirmPanel {
+            selected: 1,
+            ..Self::yes_no(title, message)
+        }
+    }
+
     /// The image-routing fallback's three-way choice (an image-bearing
     /// prompt on a text-only model with no configured imageModel). The
     /// submitted draft stays parked with the pending confirm until a

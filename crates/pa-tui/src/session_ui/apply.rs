@@ -772,6 +772,12 @@ impl SessionUi {
                 self.apply_goal_update(goal, view);
             }
             TurnUpdate::FeatureStatus { feature, status } => {
+                if feature == super::feature_confirm::CONFIRMATION_FEATURE {
+                    self.apply_feature_questions(
+                        super::feature_confirm::questions_of(&status),
+                        view,
+                    );
+                }
                 crate::feature_panel::apply_status(&mut self.feature_panels, &feature, &status);
                 view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
                 self.dirty = true;

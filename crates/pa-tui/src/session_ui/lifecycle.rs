@@ -189,6 +189,8 @@ impl SessionUi {
             activity_group: crate::chrome::ActivityGroup::Subagents,
             subagent_counts: crate::subagents::SubagentCounts::default(),
             feature_panels: crate::feature_panel::FeaturePanels::new(),
+            feature_questions: Vec::new(),
+            answered_questions: std::collections::HashSet::new(),
             session_file: None,
             pending_selection: None,
             return_to_agents_view: !options.no_session,
@@ -548,8 +550,11 @@ impl SessionUi {
             self.turn_ends_seen = 0;
             self.last_prompt_turn_end = 0;
             // Another session's feature panel never shows here; the roster
-            // refresh seeds this one's.
+            // refresh seeds this one's. Its questions go with it: the
+            // refresh closes an open one's panel, which is not this session's.
             self.feature_panels.clear();
+            self.feature_questions.clear();
+            self.answered_questions.clear();
         }
         // The stash state follows the stable id of the session now rendered: the initial attach and
         // every in-place switch rebind through here.

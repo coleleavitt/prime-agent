@@ -8,6 +8,7 @@ mod auth;
 mod bash;
 mod commands;
 mod factory;
+mod feature_confirm;
 mod harness;
 mod heartbeats;
 mod keys;
@@ -346,6 +347,12 @@ pub(crate) struct SessionUi {
     subagent_counts: crate::subagents::SubagentCounts,
     /// The installed features' panel rows for this session, by feature.
     feature_panels: crate::feature_panel::FeaturePanels,
+    /// The questions this session's hooks and plugins are waiting on,
+    /// oldest first (see [`feature_confirm`]).
+    feature_questions: Vec<feature_confirm::FeatureQuestion>,
+    /// Questions this client answered that the daemon may still list (a
+    /// roster summary can lag the answer); forgotten once it stops.
+    answered_questions: std::collections::HashSet<String>,
     /// This session's persisted file path (family identity of the
     /// subagent linkage; `None` for unpersisted sessions).
     session_file: Option<String>,

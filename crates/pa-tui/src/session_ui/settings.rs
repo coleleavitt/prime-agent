@@ -34,6 +34,9 @@ pub(super) enum PendingConfirm {
     /// `/update`: `Yes` spawns the out-of-band installer run (the confirm
     /// guards the binary replacement, not the session).
     Update,
+    /// A question the session's hooks or plugins put to the user before an
+    /// action: `Yes` allows it, `No` or escape refuses it.
+    FeatureQuestion { id: String },
     /// An image-bearing prompt parked at the image-routing fallback (a
     /// text-only model, no configured imageModel): the draft with its
     /// markers and bytes until one of the panel's three choices lands.
@@ -95,6 +98,11 @@ impl SessionUi {
             crate::confirm::ConfirmAction::None => {}
             crate::confirm::ConfirmAction::Cancel => {
                 view.confirm = None;
+                if let Some(PendingConfirm::FeatureQuestion { id }) = &self.pending_confirm {
+                    let id = id.clone();
+                    self.pending_confirm = None;
+                    self.answer_feature_question(id, false);
+                }
                 // The image fallback's parked prompt keeps its draft: the
                 // editor cleared when the submit opened the panel, and
                 // the panel owned the frame while open, so the draft
@@ -112,6 +120,9 @@ impl SessionUi {
                     Some(PendingConfirm::ImagePrompt { text, behavior }) => {
                         self.apply_image_prompt_choice(&option, &text, behavior, view)?;
                     }
+                    Some(PendingConfirm::FeatureQuestion { id }) => {
+                        self.answer_feature_question(id, option == "Yes");
+                    }
                     pending => {
                         if option == "Yes" {
                             match pending {
@@ -124,15 +135,22 @@ impl SessionUi {
                                 Some(PendingConfirm::Update) => {
                                     self.spawn_update(view);
                                 }
-                                // The image prompt's choice dispatched in the
-                                // outer arm; it never reaches the Yes ladder.
-                                Some(PendingConfirm::ImagePrompt { .. }) | None => {}
+                                // The image prompt's and a feature question's
+                                // choices dispatched in the outer arm; they
+                                // never reach the Yes ladder.
+                                Some(
+                                    PendingConfirm::ImagePrompt { .. }
+                                    | PendingConfirm::FeatureQuestion { .. },
+                                )
+                                | None => {}
                             }
                         }
                     }
                 }
             }
         }
+        // A question that waited behind this confirm opens now.
+        self.open_next_feature_question(view);
         self.dirty = true;
         Ok(())
     }
