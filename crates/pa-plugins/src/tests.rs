@@ -1,6 +1,6 @@
 //! One plugin instance over the fixture component (`tests/fixtures`): every
-//! export, the host imports, the deadline, the memory cap, and recovery
-//! after a trap.
+//! export, the declared tools and commands, the host imports, the deadline,
+//! the memory cap, and recovery after a trap.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -67,6 +67,26 @@ fn the_fixture_loads_names_itself_and_publishes_its_status() {
         (plugin.name(), plugin.description(), plugin.session_id()),
         ("fixture", "test plugin", "s-load")
     );
+    assert_eq!(
+        plugin.tools(),
+        [PluginTool {
+            name: "echo".to_string(),
+            description: "Echo the arguments back".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"],
+            }),
+        }]
+    );
+    assert_eq!(
+        plugin.commands(),
+        [PluginCommand {
+            name: "hello".to_string(),
+            description: "Echo the arguments".to_string(),
+            argument_hint: Some("<text>".to_string()),
+        }]
+    );
     assert_eq!(*seen.lock().unwrap(), vec![ready_status()]);
 }
 
@@ -118,6 +138,15 @@ fn every_review_export_answers() {
                 )
             })
             .unwrap(),
+        plugin
+            .call(|p, s| {
+                p.call_review_host_request(
+                    s,
+                    "s-review",
+                    &request("bash.run", r#"{"command":"echo ask-me"}"#),
+                )
+            })
+            .unwrap(),
     );
     assert_eq!(
         answers,
@@ -127,8 +156,77 @@ fn every_review_export_answers() {
             wit::Verdict::Block("fixture: destructive command".to_string()),
             wit::Verdict::Allow,
             wit::Verdict::Allow,
+            wit::Verdict::Ask("fixture asks first".to_string()),
         )
     );
+}
+
+#[test]
+fn after_host_request_and_run_command_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let plugin =
+        SessionPlugin::load(&plugin_path(dir.path(), ""), fixture(), info("s-after")).unwrap();
+    let request = |request_type: &str| wit::HostRequest {
+        request_type: request_type.to_string(),
+        data_json: "{}".to_string(),
+    };
+    let answers = (
+        plugin
+            .call(|p, s| p.call_after_host_request(s, "s-after", &request("bash.run"), Ok("{}")))
+            .unwrap(),
+        plugin
+            .call(|p, s| {
+                p.call_after_host_request(s, "s-after", &request("bash.run"), Err("refused"))
+            })
+            .unwrap(),
+        plugin
+            .call(|p, s| p.call_after_host_request(s, "s-after", &request("bash.follow"), Ok("{}")))
+            .unwrap(),
+        plugin
+            .call(|p, s| p.call_run_command(s, "s-after", "hello", "world"))
+            .unwrap(),
+        plugin
+            .call(|p, s| p.call_run_command(s, "s-after", "nope", ""))
+            .unwrap(),
+    );
+    assert_eq!(
+        answers,
+        (
+            Some("fixture after bash.run".to_string()),
+            None,
+            None,
+            Ok("world".to_string()),
+            Err("unknown command".to_string()),
+        )
+    );
+}
+
+#[test]
+fn verdicts_combine_block_first_then_ask() {
+    let ok = |verdict: wit::Verdict| ("p".to_string(), Ok(verdict));
+    assert_eq!(
+        verdict_of(vec![
+            ok(wit::Verdict::Ask("check".to_string())),
+            ok(wit::Verdict::Block("no".to_string())),
+        ]),
+        FeatureVerdict::Block("plugin p: no".to_string())
+    );
+    assert_eq!(
+        verdict_of(vec![
+            ok(wit::Verdict::Allow),
+            ok(wit::Verdict::Ask("one".to_string())),
+            ("q".to_string(), Ok(wit::Verdict::Ask("two".to_string()))),
+        ]),
+        FeatureVerdict::Ask("plugin p: one; plugin q: two".to_string())
+    );
+    assert_eq!(
+        verdict_of(vec![(
+            "p".to_string(),
+            Err("plugin p failed: trap".to_string())
+        )]),
+        FeatureVerdict::Block("plugin p failed: trap".to_string())
+    );
+    assert_eq!(verdict_of(Vec::new()), FeatureVerdict::Allow);
 }
 
 #[test]

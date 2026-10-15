@@ -3,12 +3,14 @@
 
 //! The plugins feature in a real session, installed the way `pa-cli`
 //! installs it, with the fixture plugin in the agent dir: it names itself,
-//! publishes its status panel, adds prompt context, refuses the `forbidden`
-//! tool, and, over a real kernel, refuses a destructive `bash()` command and
-//! answers `plugin.list` / `plugin.call` (what the `wasm-plugins` skill wraps; a
-//! test kernel is a given interpreter, so the skill itself is not installed
-//! into it). Its own test binary: installation is
-//! process-global.
+//! publishes its status panel, announces its tools and adds prompt context,
+//! refuses the `forbidden` tool, runs its `/wasm` command, and, over a real
+//! kernel, refuses a destructive `bash()` command, asks the user about
+//! another, follows what ran with a note on the cell's result, and answers
+//! `plugin.list` / `plugin.call` with a declared tool's arguments validated
+//! (what the `wasm-plugins` skill wraps; a test kernel is a given
+//! interpreter, so the skill itself is not installed into it). Its own test
+//! binary: installation is process-global.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -17,7 +19,9 @@ use pa_agent::scripted::ScriptedProvider;
 use pa_agent::types::{AgentMessage, Message, ToolResultContent};
 use pa_core::features::{FeatureStatus, FeatureStatusSink, SessionFeature};
 use pa_core::session_engine::PromptOptions;
-use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::engine::{SessionEngine, SessionEngineConfig, create_session};
+use pa_core::session_engine::session_commands::{SessionCommandParams, execute_session_command};
+use pa_core::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 use pa_core::session_engine::tool_bridge::bridge_tool;
 use pa_core::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 use serde_json::json;
@@ -54,6 +58,35 @@ fn model() -> pa_agent::types::Model {
         context_window: 100_000,
         max_tokens: 100,
         max_tokens_explicit: false,
+    }
+}
+
+/// Run `text` as a session command: the result row's text, or the error.
+async fn run_command(engine: &SessionEngine, text: &str) -> Result<String, String> {
+    let command = parse_session_command(&SlashCommandRegistry::builtin(), text)
+        .unwrap_or_else(|| panic!("{text} is a session command"));
+    let mut autonomous = pa_core::autonomous::create_autonomous_runtime_state(None, None);
+    let model: pa_types::ai::Model = serde_json::from_value(json!({
+        "id": "m", "name": "m", "api": "openai-completions", "provider": "test",
+        "baseUrl": "http://localhost", "reasoning": false, "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 1000, "maxTokens": 100
+    }))
+    .unwrap();
+    let global_harness = tempfile::tempdir().unwrap();
+    let mut params = SessionCommandParams {
+        model: &model,
+        api_key: None,
+        global_harness_dir: global_harness.path().to_path_buf(),
+        autonomous: &mut autonomous,
+    };
+    let execution = execute_session_command(engine, &mut params, &command).await;
+    if let Some(error) = execution.error {
+        return Err(error);
+    }
+    match &execution.messages.last().expect("a result row").content {
+        pa_types::ai::UserContent::Text(text) => Ok(text.clone()),
+        pa_types::ai::UserContent::Blocks(_) => Ok(String::new()),
     }
 }
 
@@ -129,7 +162,18 @@ async fn the_fixture_plugin_shapes_a_session() {
             _ => None,
         })
         .collect();
-    assert_eq!(context_rows, vec!["fixture context".to_string()]);
+    // The first admitted prompt announces the plugin's tools; the refused
+    // one before it announced nothing.
+    assert_eq!(
+        context_rows,
+        vec![
+            "The user's WebAssembly plugins offer these tools. Call one from the Python REPL as \
+             `await wasm_plugins.call(\"<plugin>\", \"<tool>\", **args)`; `await \
+             wasm_plugins.tools()` lists them again.\n\
+             - fixture: echo(text: string) - Echo the arguments back\n\nfixture context"
+                .to_string()
+        ]
+    );
     let result: Vec<String> = state
         .messages
         .iter()
@@ -150,6 +194,23 @@ async fn the_fixture_plugin_shapes_a_session() {
     assert_eq!(
         result,
         vec!["plugin fixture: fixture blocks forbidden".to_string()]
+    );
+    // `/wasm` lists the plugins' commands and runs one.
+    assert_eq!(
+        run_command(&engine, "/wasm").await,
+        Ok("fixture - test plugin\n  /wasm fixture hello <text> - Echo the arguments".to_string())
+    );
+    assert_eq!(
+        run_command(&engine, "/wasm fixture hello  big   world").await,
+        Ok("big   world".to_string())
+    );
+    assert_eq!(
+        run_command(&engine, "/wasm fixture nope").await,
+        Err("plugin fixture has no command nope; /wasm fixture lists them".to_string())
+    );
+    assert_eq!(
+        run_command(&engine, "/wasm other x").await,
+        Err("no plugin named other is loaded; /wasm lists them".to_string())
     );
     // The plugin loaded off the creation path, maybe before the sink
     // existed: a held status reaches the sink when it registers. Its panel
@@ -189,8 +250,10 @@ async fn the_fixture_plugin_reviews_the_kernels_bash_and_answers_calls() {
          for key, request in [\n\
          \x20   ('destructive', lambda: bash('rm -rf /nonexistent-plugin-target')),\n\
          \x20   ('harmless', lambda: bash('echo harmless-marker')),\n\
+         \x20   ('asked', lambda: bash('echo ask-me')),\n\
          \x20   ('listed', lambda: host_request('plugin.list', {{}})),\n\
-         \x20   ('echoed', lambda: host_request('plugin.call', {{'plugin': 'fixture', 'method': 'echo', 'data': {{'k': 1}}}})),\n\
+         \x20   ('echoed', lambda: host_request('plugin.call', {{'plugin': 'fixture', 'method': 'echo', 'data': {{'text': 'hi'}}}})),\n\
+         \x20   ('invalid', lambda: host_request('plugin.call', {{'plugin': 'fixture', 'method': 'echo', 'data': {{'k': 1}}}})),\n\
          \x20   ('unknown', lambda: host_request('plugin.call', {{'plugin': 'fixture', 'method': 'nope', 'data': {{}}}})),\n\
          ]:\n\
          \x20   try:\n\
@@ -217,11 +280,64 @@ async fn the_fixture_plugin_reviews_the_kernels_bash_and_answers_calls() {
     }))
     .await
     .unwrap();
+    // A client surface allows the plugin's question.
+    let session_id = engine.session.session_id().await;
+    let surface = pa_core::features::register_confirmation_surface(&session_id);
+    let answerer = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            let question = loop {
+                if let Some(question) = pa_core::features::pending_confirmations(&session_id).pop()
+                {
+                    break question;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            };
+            assert_eq!(
+                (question.action.as_str(), question.reason.as_str()),
+                ("Run `echo ask-me`", "plugin fixture: fixture asks first")
+            );
+            assert!(pa_core::features::answer_confirmation(
+                &session_id,
+                &question.id,
+                true
+            ));
+        })
+    };
     engine
         .prompt("run the cell", PromptOptions::default())
         .await
         .unwrap();
     engine.session.agent().wait_for_idle().await;
+    answerer.await.unwrap();
+    drop(surface);
+    // Every `bash.run` the plugin let run left its note on the cell's result.
+    let state = engine.session.agent().state().await;
+    let cell_result: Vec<String> = state
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::Standard(Message::ToolResult(result)) => Some(
+                result
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ToolResultContent::Text(text) => Some(text.text.clone()),
+                        ToolResultContent::Image(_) => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("the cell's result");
+    assert_eq!(
+        cell_result
+            .iter()
+            .filter(|text| *text == "plugin fixture: fixture after bash.run")
+            .count(),
+        2,
+        "{cell_result:?}"
+    );
     engine.dispose_kernel().await;
 
     let raw = std::fs::read_to_string(&receipt)
@@ -246,7 +362,21 @@ async fn the_fixture_plugin_reviews_the_kernels_bash_and_answers_calls() {
     assert_eq!(out["listed"][0], "ok", "{out}");
     assert_eq!(out["listed"][1][0]["name"], "fixture", "{out}");
     assert_eq!(out["listed"][1][0]["description"], "test plugin", "{out}");
-    assert_eq!(out["echoed"], json!(["ok", { "k": 1 }]), "{out}");
+    assert_eq!(
+        out["listed"][1][0]["tools"][0]["signature"], "echo(text: string)",
+        "{out}"
+    );
+    assert_eq!(out["listed"][1][0]["commands"][0]["name"], "hello", "{out}");
+    assert_eq!(out["asked"][0], "ok", "{out}");
+    assert_eq!(out["echoed"], json!(["ok", { "text": "hi" }]), "{out}");
+    assert_eq!(out["invalid"][0], "error", "{out}");
+    assert!(
+        out["invalid"][1]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Required property 'text' is missing"),
+        "{out}"
+    );
     assert_eq!(out["unknown"][0], "error", "{out}");
     assert!(
         out["unknown"][1]

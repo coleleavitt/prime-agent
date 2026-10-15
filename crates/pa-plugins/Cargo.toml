@@ -8,6 +8,7 @@ description = "WebAssembly plugins: sandboxed components that review tool calls 
 [dependencies]
 pa-core = { path = "../pa-core" }
 pa-agent = { path = "../pa-agent" }
+pa-types = { path = "../pa-types" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,7 +29,6 @@ wasmtime-wasi = { version = "=49.0.3", default-features = false, features = ["p2
 
 [dev-dependencies]
 tempfile = "3"
-pa-types = { path = "../pa-types" }
 tokio = { workspace = true, features = ["test-util"] }
 # The tests load the fixture plugin from its component text format.
 wasmtime = { version = "=49.0.3", default-features = false, features = ["wat"] }

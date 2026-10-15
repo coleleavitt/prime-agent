@@ -13,15 +13,30 @@ from rlm import host_request
 
 
 async def list() -> Any:  # noqa: A001 - the skill's documented name
-    """The session's loaded plugins: `[{"name", "description", "path"}, ...]`."""
+    """The session's loaded plugins.
+
+    `[{"name", "description", "path", "tools", "commands"}, ...]`; each tool
+    is `{"name", "description", "signature", "parameters"}`.
+    """
     return await host_request("plugin.list")
 
 
-async def call(name: str, method: str, **data: Any) -> Any:
-    """Call plugin `name`'s `method` with `data` as a JSON object.
+async def tools() -> Any:
+    """Every loaded plugin's tools, flattened.
 
-    Returns the plugin's JSON answer. Raises when the plugin is not loaded,
-    does not know the method, or fails.
+    `[{"plugin", "name", "description", "signature", "parameters"}, ...]`;
+    call one with `call(plugin, name, **args)`.
+    """
+    plugins = await host_request("plugin.list")
+    return [{"plugin": plugin["name"], **tool} for plugin in plugins for tool in plugin.get("tools", [])]
+
+
+async def call(name: str, method: str, **data: Any) -> Any:
+    """Call plugin `name`'s `method` (one of its tools) with `data` as a JSON object.
+
+    Returns the plugin's JSON answer. A declared tool's arguments are checked
+    against its schema first. Raises when the plugin is not loaded, the
+    arguments do not match, the plugin does not know the method, or it fails.
     """
     if not isinstance(name, str) or not name.strip():
         raise TypeError("name must be a non-empty str")

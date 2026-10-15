@@ -10,6 +10,7 @@ use wasmtime::Store;
 
 use crate::bindings::prime_agent::plugin::types::SessionInfo;
 use crate::bindings::{Plugin, PluginPre};
+use crate::declared::{PluginCommand, PluginTool};
 use crate::engine::{EPOCH_TICK, engine};
 use crate::manifest::Manifest;
 use crate::state::State;
@@ -23,6 +24,8 @@ struct Live {
 pub struct SessionPlugin {
     name: String,
     description: String,
+    tools: Vec<PluginTool>,
+    commands: Vec<PluginCommand>,
     path: PathBuf,
     manifest: Manifest,
     pre: Arc<PluginPre<State>>,
@@ -31,13 +34,14 @@ pub struct SessionPlugin {
 }
 
 impl SessionPlugin {
-    /// Instantiate the plugin for `session`, read its metadata, and deliver
-    /// `on-session-start`. Blocking: run it off the async runtime.
+    /// Instantiate the plugin for `session`, read its metadata (name,
+    /// description, tools, commands), and deliver `on-session-start`.
+    /// Blocking: run it off the async runtime.
     ///
     /// # Errors
     ///
-    /// The manifest, sandbox, instantiation, `metadata`, or `on-session-start`
-    /// failed.
+    /// The manifest, sandbox, instantiation, `metadata` (including a
+    /// malformed tool or command declaration), or `on-session-start` failed.
     pub fn load(
         path: &Path,
         pre: Arc<PluginPre<State>>,
@@ -51,6 +55,8 @@ impl SessionPlugin {
         let mut plugin = Self {
             name: stem,
             description: String::new(),
+            tools: Vec::new(),
+            commands: Vec::new(),
             path: path.to_path_buf(),
             manifest,
             pre,
@@ -58,13 +64,17 @@ impl SessionPlugin {
             live: Mutex::new(None),
         };
         let mut live = plugin.instantiate()?;
-        let (name, description) =
+        let metadata =
             plugin.within_deadline(&mut live, |plugin, store| plugin.call_metadata(store))?;
-        if !name.trim().is_empty() {
-            plugin.name = name.trim().to_string();
+        if !metadata.name.trim().is_empty() {
+            plugin.name = metadata.name.trim().to_string();
             live.store.data_mut().plugin.clone_from(&plugin.name);
         }
-        plugin.description = description;
+        plugin.description = metadata.description;
+        plugin.tools = crate::declared::tools(metadata.tools)
+            .map_err(|error| format!("plugin {}: {error}", plugin.name))?;
+        plugin.commands = crate::declared::commands(metadata.commands)
+            .map_err(|error| format!("plugin {}: {error}", plugin.name))?;
         plugin.start(&mut live)?;
         *plugin.live.lock().unwrap_or_else(PoisonError::into_inner) = Some(live);
         Ok(plugin)
@@ -78,6 +88,18 @@ impl SessionPlugin {
     #[must_use]
     pub fn description(&self) -> &str {
         &self.description
+    }
+
+    /// The tools the plugin offers the model.
+    #[must_use]
+    pub fn tools(&self) -> &[PluginTool] {
+        &self.tools
+    }
+
+    /// The slash commands the plugin offers the user.
+    #[must_use]
+    pub fn commands(&self) -> &[PluginCommand] {
+        &self.commands
     }
 
     #[must_use]

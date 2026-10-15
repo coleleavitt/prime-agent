@@ -1,4 +1,4 @@
-package prime-agent:plugin@0.1.0;
+package prime-agent:plugin@0.2.0;
 
 /// Shared shapes. Every JSON payload is a UTF-8 string holding one JSON value.
 interface types {
@@ -37,9 +37,12 @@ interface types {
         data-json: string,
     }
 
-    /// A policy answer. `block` refuses with a reason the model sees.
+    /// A policy answer. `ask` puts the action to the user with the reason
+    /// (refused when nobody can answer: print mode, or no answer within
+    /// five minutes); `block` refuses with a reason the model sees.
     variant verdict {
         allow,
+        ask(string),
         block(string),
     }
 
@@ -49,6 +52,34 @@ interface types {
         context(option<string>),
         /// Refuse the prompt with a reason.
         block(string),
+    }
+
+    /// A tool the plugin offers the model. The model calls it from the
+    /// Python REPL as `await wasm_plugins.call("<plugin>", "<name>", **args)`;
+    /// the host validates the arguments against `parameters-json` (a JSON
+    /// Schema for the arguments object) and then calls `call` with method
+    /// `name`. The session's first prompt lists every plugin's tools.
+    record tool-spec {
+        name: string,
+        description: string,
+        parameters-json: string,
+    }
+
+    /// A slash command the user runs as `/wasm <plugin> <name> [args]`.
+    record command-spec {
+        name: string,
+        description: string,
+        argument-hint: option<string>,
+    }
+
+    /// What a plugin declares about itself.
+    record plugin-metadata {
+        /// Used in logs, status, `wasm_plugins.call` and `/wasm`.
+        name: string,
+        /// One line.
+        description: string,
+        tools: list<tool-spec>,
+        commands: list<command-spec>,
     }
 }
 
@@ -71,13 +102,12 @@ interface host {
 }
 
 world plugin {
-    use types.{session-info, tool-call, tool-result, host-request, verdict, prompt-decision};
+    use types.{session-info, tool-call, tool-result, host-request, verdict, prompt-decision, plugin-metadata};
 
     import host;
 
-    /// The plugin's name (used in logs, status and `wasm_plugins.call`) and a
-    /// one-line description.
-    export metadata: func() -> tuple<string, string>;
+    /// The plugin's name, description, tools and slash commands.
+    export metadata: func() -> plugin-metadata;
 
     /// A session started (or resumed).
     export on-session-start: func(session: session-info);
@@ -91,8 +121,17 @@ world plugin {
     /// Observe a result; returned text is appended to what the model sees.
     export after-tool-call: func(session-id: string, outcome: tool-result) -> option<string>;
 
-    /// Review a kernel host request before it runs. A trap blocks it.
+    /// Review a kernel host request before it runs. A trap blocks it. The
+    /// kernel's reads of its own jobs (`bash.follow`, `bash.output`, ...)
+    /// and its bookkeeping are not reviewed.
     export review-host-request: func(session-id: string, request: host-request) -> verdict;
+
+    /// Observe a kernel host request's outcome before the kernel sees it:
+    /// `ok` is the reply JSON (a `bash.run` or `bash.follow` reply carries a
+    /// command's `finished` event), `err` the error the kernel raises.
+    /// Returned text reaches the model on the result of the cell that sent
+    /// the request.
+    export after-host-request: func(session-id: string, request: host-request, outcome: result<string, string>) -> option<string>;
 
     /// Review a submitted prompt; may add hidden context or refuse it.
     export prompt-context: func(session-id: string, prompt: string) -> prompt-decision;
@@ -100,4 +139,8 @@ world plugin {
     /// A method the kernel invokes through `wasm_plugins.call(name, method, **data)`:
     /// JSON in, JSON out.
     export call: func(session-id: string, method: string, data-json: string) -> result<string, string>;
+
+    /// Run one of the plugin's slash commands (`/wasm <plugin> <name> args`):
+    /// `ok` is the command's result row, `err` its failure.
+    export run-command: func(session-id: string, name: string, args: string) -> result<string, string>;
 }

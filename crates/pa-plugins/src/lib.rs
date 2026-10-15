@@ -1,25 +1,30 @@
 //! WebAssembly plugins: sandboxed components (`wit/plugin.wit`) loaded from
 //! `<agent dir>/plugins/` and, in a trusted workspace, the project's
 //! `.prime/agent/plugins/`. Each plugin reviews the session's tool calls and
-//! kernel host requests, may add hidden prompt context, publishes status
-//! (the agents-view line and the panel under the chat editor), and answers
-//! the kernel's `wasm_plugins.call(...)`. See `README.md` and
+//! kernel host requests (refusing them or putting them to the user),
+//! observes what the kernel ran, may add hidden prompt context, publishes
+//! status (the agents-view line and the panel under the chat editor),
+//! offers the model tools (`wasm_plugins.call(...)` in the kernel) and the
+//! user slash commands (`/wasm <plugin> <command>`). See `README.md` and
 //! `docs/hooks-and-plugins.md`.
 
+mod declared;
 mod engine;
 mod instance;
 pub mod manifest;
 mod state;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pa_agent::types::ToolResultContent;
 use pa_core::features::{
+    FeatureCommandOutcome,
     FeatureFuture,
     FeatureVerdict,
     HostRequestObservation,
+    HostRequestOutcome,
     PromptDecision,
     SessionFeature,
     SessionFeatureContext,
@@ -29,6 +34,7 @@ use pa_core::features::{
 use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
 use serde_json::{Value, json};
 
+pub use crate::declared::{PluginCommand, PluginTool, signature};
 pub use crate::instance::SessionPlugin;
 pub use crate::state::status_feature;
 
@@ -52,8 +58,11 @@ pub const PLUGINS_SKILL: &str = "wasm-plugins";
 pub const PLUGINS_DIR: &str = "plugins";
 /// Host request: call a plugin's `call` export (`{plugin, method, data}`).
 pub const CALL_REQUEST: &str = "plugin.call";
-/// Host request: the session's loaded plugins.
+/// Host request: the session's loaded plugins, with their tools and
+/// commands.
 pub const LIST_REQUEST: &str = "plugin.list";
+/// The slash command that lists and runs the plugins' commands.
+pub const COMMAND: &str = "wasm";
 
 /// The plugin files a session loads, in order: the user's (agent dir), then
 /// the project's when its workspace is trusted. Each directory is read in
@@ -137,6 +146,8 @@ type SessionCell = Arc<tokio::sync::OnceCell<SessionPlugins>>;
 #[derive(Default)]
 struct Registry {
     sessions: Mutex<HashMap<String, SessionCell>>,
+    /// Sessions whose model was told about the plugins' tools.
+    announced: Mutex<HashSet<String>>,
 }
 
 impl Registry {
@@ -182,6 +193,15 @@ async fn each<R: Send + 'static>(
     results
 }
 
+/// The loaded plugin named `name`.
+fn find_plugin(plugins: &SessionPlugins, name: &str) -> Result<Arc<SessionPlugin>, String> {
+    plugins
+        .iter()
+        .find(|plugin| plugin.name() == name)
+        .cloned()
+        .ok_or_else(|| format!("no plugin named {name} is loaded; /wasm lists them"))
+}
+
 fn plugin_name(plugins: &SessionPlugins, index: usize) -> String {
     plugins
         .get(index)
@@ -189,19 +209,46 @@ fn plugin_name(plugins: &SessionPlugins, index: usize) -> String {
         .unwrap_or_default()
 }
 
-/// The first refusal among policy answers; a failed plugin refuses (a
-/// policy fails closed).
-fn first_block(results: Vec<(String, Result<wit::Verdict, String>)>) -> FeatureVerdict {
+/// The plugins' policy answers as one verdict: the first refusal (a failed
+/// plugin refuses: a policy fails closed), else the questions they ask,
+/// joined, else allowed.
+fn verdict_of(results: Vec<(String, Result<wit::Verdict, String>)>) -> FeatureVerdict {
+    let mut asks = Vec::new();
     for (name, result) in results {
         match result {
             Ok(wit::Verdict::Allow) => {}
+            Ok(wit::Verdict::Ask(reason)) => asks.push(format!("plugin {name}: {reason}")),
             Ok(wit::Verdict::Block(reason)) => {
                 return FeatureVerdict::Block(format!("plugin {name}: {reason}"));
             }
             Err(error) => return FeatureVerdict::Block(error),
         }
     }
-    FeatureVerdict::Allow
+    if asks.is_empty() {
+        FeatureVerdict::Allow
+    } else {
+        FeatureVerdict::Ask(asks.join("; "))
+    }
+}
+
+/// One plugin as `plugin.list` reports it.
+fn listed(plugin: &SessionPlugin) -> Value {
+    json!({
+        "name": plugin.name(),
+        "description": plugin.description(),
+        "path": plugin.path().to_string_lossy(),
+        "tools": plugin.tools().iter().map(|tool| json!({
+            "name": tool.name,
+            "description": tool.description,
+            "signature": signature(tool),
+            "parameters": tool.parameters,
+        })).collect::<Vec<_>>(),
+        "commands": plugin.commands().iter().map(|command| json!({
+            "name": command.name,
+            "description": command.description,
+            "argumentHint": command.argument_hint,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn result_text(content: &[ToolResultContent]) -> String {
@@ -248,16 +295,7 @@ impl SessionFeature for PluginsFeature {
                 async move {
                     let plugins = registry.plugins(&session).await;
                     Ok(Value::Array(
-                        plugins
-                            .iter()
-                            .map(|plugin| {
-                                json!({
-                                    "name": plugin.name(),
-                                    "description": plugin.description(),
-                                    "path": plugin.path().to_string_lossy(),
-                                })
-                            })
-                            .collect(),
+                        plugins.iter().map(|plugin| listed(plugin)).collect(),
                     ))
                 }
             }),
@@ -290,6 +328,17 @@ impl SessionFeature for PluginsFeature {
                         .find(|plugin| plugin.name() == target)
                         .cloned()
                         .ok_or_else(|| anyhow::anyhow!("no plugin named {target} is loaded"))?;
+                    // A declared tool's arguments are checked against its
+                    // schema before the plugin sees them.
+                    let data = match plugin.tools().iter().find(|tool| tool.name == method) {
+                        Some(tool) => pa_agent::validation::validate_tool_arguments(
+                            &format!("{target}.{method}"),
+                            &tool.parameters,
+                            &data,
+                        )
+                        .map_err(|error| anyhow::anyhow!(error))?,
+                        None => data,
+                    };
                     let data_json = data.to_string();
                     let answer = tokio::task::spawn_blocking(move || {
                         let session_id = plugin.session_id().to_string();
@@ -326,7 +375,7 @@ impl SessionFeature for PluginsFeature {
         Box::pin(async move {
             let plugins = registry.plugins(&context).await;
             let session_id = context.session_id.clone();
-            first_block(
+            verdict_of(
                 each(&plugins, move |plugin| {
                     plugin.call(|instance, store| {
                         instance.call_review_tool_call(store, &session_id, &call)
@@ -387,7 +436,7 @@ impl SessionFeature for PluginsFeature {
         Box::pin(async move {
             let plugins = registry.plugins(&context).await;
             let session_id = context.session_id.clone();
-            first_block(
+            verdict_of(
                 each(&plugins, move |plugin| {
                     plugin.call(|instance, store| {
                         instance.call_review_host_request(store, &session_id, &request)
@@ -395,6 +444,45 @@ impl SessionFeature for PluginsFeature {
                 })
                 .await,
             )
+        })
+    }
+
+    fn after_host_request(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &HostRequestObservation,
+        outcome: HostRequestOutcome<'_>,
+    ) -> FeatureFuture<Option<String>> {
+        let registry = Arc::clone(&self.registry);
+        let context = Arc::clone(context);
+        let request = wit::HostRequest {
+            request_type: request.request_type.clone(),
+            data_json: request.data.to_string(),
+        };
+        let outcome = outcome.map(Value::to_string).map_err(str::to_string);
+        Box::pin(async move {
+            let plugins = registry.plugins(&context).await;
+            if plugins.is_empty() {
+                return None;
+            }
+            let session_id = context.session_id.clone();
+            let notes: Vec<String> = each(&plugins, move |plugin| {
+                plugin.call(|instance, store| {
+                    let outcome = outcome.as_deref().map_err(String::as_str);
+                    instance.call_after_host_request(store, &session_id, &request, outcome)
+                })
+            })
+            .await
+            .into_iter()
+            .filter_map(|(name, result)| match result {
+                Ok(note) => note.map(|note| format!("plugin {name}: {note}")),
+                Err(error) => {
+                    tracing::warn!(target: "pa_plugins", plugin = name.as_str(), "{error}");
+                    None
+                }
+            })
+            .collect();
+            (!notes.is_empty()).then(|| notes.join("\n"))
         })
     }
 
@@ -416,6 +504,16 @@ impl SessionFeature for PluginsFeature {
             })
             .await;
             let mut contexts = Vec::new();
+            // The session's first admitted prompt tells the model about the
+            // plugins' tools.
+            let first = registry
+                .announced
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(context.session_id.clone());
+            if let Some(tools) = first.then(|| declared::tools_context(&plugins)).flatten() {
+                contexts.push(tools);
+            }
             for (name, answer) in answers {
                 match answer {
                     Ok(wit::PromptDecision::Context(Some(text))) if !text.trim().is_empty() => {
@@ -423,6 +521,13 @@ impl SessionFeature for PluginsFeature {
                     }
                     Ok(wit::PromptDecision::Context(_)) => {}
                     Ok(wit::PromptDecision::Block(reason)) => {
+                        // A refused prompt announced nothing: the next
+                        // admitted one carries the tools.
+                        registry
+                            .announced
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .remove(&context.session_id);
                         return PromptDecision::Block(format!("plugin {name}: {reason}"));
                     }
                     // Context is advisory: a failed plugin adds none.
@@ -470,6 +575,67 @@ impl SessionFeature for PluginsFeature {
                 }
             }
         });
+    }
+
+    fn slash_commands(&self) -> Vec<pa_types::slash_commands::BuiltinSlashCommand> {
+        vec![pa_types::slash_commands::BuiltinSlashCommand {
+            name: COMMAND,
+            description: "List the WebAssembly plugins' commands, or run one",
+            execution: pa_types::slash_commands::SlashCommandExecution::Session,
+            argument_hint: Some("[<plugin> <command> [args]]"),
+            aliases: &[],
+            takes_argument: true,
+        }]
+    }
+
+    fn execute_slash_command(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        name: &str,
+        args: &str,
+    ) -> Option<FeatureFuture<Result<FeatureCommandOutcome, String>>> {
+        if name != COMMAND {
+            return None;
+        }
+        let registry = Arc::clone(&self.registry);
+        let context = Arc::clone(context);
+        let args = args.to_string();
+        Some(Box::pin(async move {
+            let plugins = registry.plugins(&context).await;
+            let text = match declared::parse_wasm_command(&args) {
+                declared::WasmCommand::List => declared::listing(plugins.iter()),
+                declared::WasmCommand::Plugin(target) => {
+                    let plugin = find_plugin(&plugins, target)?;
+                    declared::listing(std::iter::once(&plugin))
+                }
+                declared::WasmCommand::Run {
+                    plugin: target,
+                    command,
+                    args,
+                } => {
+                    let plugin = find_plugin(&plugins, target)?;
+                    if !plugin.commands().iter().any(|known| known.name == command) {
+                        return Err(format!(
+                            "plugin {target} has no command {command}; /wasm {target} lists them"
+                        ));
+                    }
+                    let (command, args) = (command.to_string(), args.to_string());
+                    let session_id = context.session_id.clone();
+                    tokio::task::spawn_blocking(move || {
+                        plugin.call(|instance, store| {
+                            instance.call_run_command(store, &session_id, &command, &args)
+                        })
+                    })
+                    .await
+                    .map_err(|error| format!("plugin {target} panicked: {error}"))??
+                    .map_err(|error| format!("plugin {target}: {error}"))?
+                }
+            };
+            Ok(FeatureCommandOutcome {
+                text,
+                completion: None,
+            })
+        }))
     }
 
     fn bundled_skills(&self) -> Vec<&'static str> {

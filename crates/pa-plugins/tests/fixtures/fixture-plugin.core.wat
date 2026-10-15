@@ -3,20 +3,24 @@
 ;; component the tests load.
 ;;
 ;; Behavior (what the tests pin):
-;; - metadata: ("fixture", "test plugin")
+;; - metadata: name "fixture", description "test plugin", tool `echo`
+;;   (requires a string `text`), command `hello` (hint `<text>`)
 ;; - on-session-start: log(info, "started"); set-status(sid, some("fixture ready"),
 ;;   ["panel row one", "panel row two"])
 ;; - review-tool-call: block "fixture blocks forbidden" when the tool is `forbidden`
 ;; - after-tool-call: some("fixture note")
 ;; - review-host-request: block "fixture: destructive command" when the request
-;;   is `bash.run` and its data contains `rm -rf`
+;;   is `bash.run` and its data contains `rm -rf`; ask "fixture asks first"
+;;   when it is `bash.run` and its data contains `ask-me`
+;; - after-host-request: some("fixture after bash.run") for an ok `bash.run`
 ;; - prompt-context: block "fixture refuses" for the prompt `forbidden prompt`,
 ;;   otherwise context(some("fixture context"))
 ;; - call: `echo` -> ok(data); `trap` -> trap; `spin` -> loops forever;
 ;;   `grow` -> grows memory by 4096 pages; anything else -> err("unknown method")
+;; - run-command: `hello` -> ok(args); anything else -> err("unknown command")
 (module
-  (import "prime-agent:plugin/host@0.1.0" "log" (func $log (param i32 i32 i32)))
-  (import "prime-agent:plugin/host@0.1.0" "set-status"
+  (import "prime-agent:plugin/host@0.2.0" "log" (func $log (param i32 i32 i32)))
+  (import "prime-agent:plugin/host@0.2.0" "set-status"
     (func $set_status (param i32 i32 i32 i32 i32 i32 i32)))
 
   (memory (export "memory") 2)
@@ -44,6 +48,19 @@
   (data (i32.const 1344) "unknown method")                 ;; 14
   ;; The panel list: two (ptr, len) pairs.
   (data (i32.const 1408) "\40\04\00\00\0d\00\00\00\50\04\00\00\0d\00\00\00")
+  (data (i32.const 1600) "fixture after bash.run")        ;; 22
+  (data (i32.const 1632) "hello")                         ;; 5
+  (data (i32.const 1640) "unknown command")               ;; 15
+  (data (i32.const 1664) "Echo the arguments back")       ;; 23
+  (data (i32.const 1696) "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}");; 77
+  (data (i32.const 1792) "Echo the arguments")            ;; 18
+  (data (i32.const 1824) "<text>")                        ;; 6
+  (data (i32.const 1840) "ask-me")                        ;; 6
+  (data (i32.const 1848) "fixture asks first")            ;; 18
+  ;; The tool list: one tool-spec (name, description, parameters-json).
+  (data (i32.const 1872) "\20\05\00\00\04\00\00\00\80\06\00\00\17\00\00\00\a0\06\00\00\4d\00\00\00")
+  ;; The command list: one command-spec (name, description, some(hint)).
+  (data (i32.const 1904) "\60\06\00\00\05\00\00\00\00\07\00\00\12\00\00\00\01\00\00\00\20\07\00\00\06\00\00\00")
 
   ;; The return area every multi-value export writes into.
   (global $ret i32 (i32.const 512))
@@ -104,11 +121,17 @@
     (i32.store offset=8 (global.get $ret) (local.get $len))
     (global.get $ret))
 
+  ;; plugin-metadata: name(ptr, len) description(ptr, len) tools(ptr, len)
+  ;; commands(ptr, len)
   (func (export "metadata") (result i32)
     (i32.store (global.get $ret) (i32.const 1024))
     (i32.store offset=4 (global.get $ret) (i32.const 7))
     (i32.store offset=8 (global.get $ret) (i32.const 1040))
     (i32.store offset=12 (global.get $ret) (i32.const 11))
+    (i32.store offset=16 (global.get $ret) (i32.const 1872))
+    (i32.store offset=20 (global.get $ret) (i32.const 1))
+    (i32.store offset=24 (global.get $ret) (i32.const 1904))
+    (i32.store offset=28 (global.get $ret) (i32.const 1))
     (global.get $ret))
 
   ;; session-info: sid(ptr, len) cwd(ptr, len) depth model(ptr, len)
@@ -127,7 +150,7 @@
     (param i32 i32) (param i32 i32) (param $name i32) (param $namelen i32) (param i32 i32)
     (result i32)
     (if (call $eq (local.get $name) (local.get $namelen) (i32.const 1120) (i32.const 9))
-      (then (return (call $ret_variant (i32.const 1) (i32.const 1136) (i32.const 24)))))
+      (then (return (call $ret_variant (i32.const 2) (i32.const 1136) (i32.const 24)))))
     (call $ret_variant (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; sid(2) tool-result{id(2) name(2) args(2) is-error text(2)}
@@ -135,6 +158,7 @@
     (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $ret_variant (i32.const 1) (i32.const 1168) (i32.const 12)))
 
+  ;; verdict: allow = 0, ask(string) = 1, block(string) = 2.
   ;; sid(2) host-request{type(2) data(2)}
   (func (export "review-host-request")
     (param i32 i32) (param $rt i32) (param $rtlen i32) (param $data i32) (param $datalen i32)
@@ -142,7 +166,23 @@
     (if (i32.and
           (call $eq (local.get $rt) (local.get $rtlen) (i32.const 1184) (i32.const 8))
           (call $contains (local.get $data) (local.get $datalen) (i32.const 1200) (i32.const 6)))
-      (then (return (call $ret_variant (i32.const 1) (i32.const 1216) (i32.const 28)))))
+      (then (return (call $ret_variant (i32.const 2) (i32.const 1216) (i32.const 28)))))
+    (if (i32.and
+          (call $eq (local.get $rt) (local.get $rtlen) (i32.const 1184) (i32.const 8))
+          (call $contains (local.get $data) (local.get $datalen) (i32.const 1840) (i32.const 6)))
+      (then (return (call $ret_variant (i32.const 1) (i32.const 1848) (i32.const 18)))))
+    (call $ret_variant (i32.const 0) (i32.const 0) (i32.const 0)))
+
+  ;; sid(2) host-request{type(2) data(2)} outcome: result<string, string>
+  ;; (disc, ptr, len) -> option<string>
+  (func (export "after-host-request")
+    (param i32 i32) (param $rt i32) (param $rtlen i32) (param i32 i32)
+    (param $outcome i32) (param i32 i32)
+    (result i32)
+    (if (i32.and
+          (i32.eqz (local.get $outcome))
+          (call $eq (local.get $rt) (local.get $rtlen) (i32.const 1184) (i32.const 8)))
+      (then (return (call $ret_variant (i32.const 1) (i32.const 1600) (i32.const 22)))))
     (call $ret_variant (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; prompt-decision: context(option<string>) = 0, block(string) = 1.
@@ -172,4 +212,12 @@
         (if (i32.eq (memory.grow (i32.const 4096)) (i32.const -1))
           (then unreachable))))
     (call $ret_variant (i32.const 1) (i32.const 1344) (i32.const 14)))
+
+  ;; sid(2) name(2) args(2) -> result<string, string>
+  (func (export "run-command")
+    (param i32 i32) (param $name i32) (param $namelen i32) (param $args i32) (param $argslen i32)
+    (result i32)
+    (if (call $eq (local.get $name) (local.get $namelen) (i32.const 1632) (i32.const 5))
+      (then (return (call $ret_variant (i32.const 0) (local.get $args) (local.get $argslen)))))
+    (call $ret_variant (i32.const 1) (i32.const 1640) (i32.const 15)))
 )
