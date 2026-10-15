@@ -32,7 +32,6 @@ import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, NoReturn, final, overload
 
 from . import plan_guard, trace
@@ -281,18 +280,13 @@ class _Slot:
             pass  # the awaiting loop already closed
 
 
-def _checkout_host() -> Path | None:
-    """The host binary of the source checkout this runtime runs from, if built."""
-    name = "prime-agent.exe" if os.name == "nt" else "prime-agent"
-    checkout = Path(__file__).resolve().parents[3] / "target" / "debug" / name
-    return checkout if checkout.is_file() else None
-
-
 def _host_executable() -> str:
     configured = (os.environ.get("PRIME_AGENT_EXECUTABLE") or "").strip()
     if configured:
         return configured
-    checkout = _checkout_host()
+    from ._host import checkout_host
+
+    checkout = checkout_host()
     if checkout is not None:
         return str(checkout)
     raise BashHostUnavailable(

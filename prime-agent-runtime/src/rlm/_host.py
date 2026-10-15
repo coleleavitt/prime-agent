@@ -18,6 +18,7 @@ import json
 import math
 import os
 import subprocess
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -166,13 +167,44 @@ def _env_value(name: str) -> str | None:
     return value or None
 
 
+def _configured_target_dir(config: Path) -> Path | None:
+    """`build.target-dir` of one cargo config file, resolved against the
+    directory that holds its `.cargo` directory."""
+    try:
+        target = tomllib.loads(config.read_text(encoding="utf-8")).get("build", {}).get("target-dir")
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        return None
+    if not isinstance(target, str) or not target:
+        return None
+    path = Path(target).expanduser()
+    return path if path.is_absolute() else config.parent.parent / path
+
+
+def cargo_target_dir(checkout: Path) -> Path:
+    """Where cargo builds `checkout`: `CARGO_TARGET_DIR`, else the nearest
+    `build.target-dir` in a `.cargo/config.toml` from the checkout up (then
+    `$CARGO_HOME`'s), else `<checkout>/target`."""
+    if (configured := _env_value("CARGO_TARGET_DIR")) is not None:
+        path = Path(configured).expanduser()
+        return path if path.is_absolute() else checkout / path
+    cargo_home = Path(_env_value("CARGO_HOME") or Path.home() / ".cargo")
+    configs = [parent / ".cargo" / name for parent in (checkout, *checkout.parents) for name in ("config.toml", "config")]
+    configs += [cargo_home / "config.toml", cargo_home / "config"]
+    for config in configs:
+        if config.is_file() and (target := _configured_target_dir(config)) is not None:
+            return target
+    return checkout / "target"
+
+
 def checkout_host() -> Path | None:
-    """The host binary of the source checkout this runtime runs from, if built."""
+    """The host binary of the source checkout this runtime runs from, if built
+    (in the checkout's cargo build directory, see `cargo_target_dir`)."""
     name = "prime-agent.exe" if os.name == "nt" else "prime-agent"
     for parent in Path(__file__).resolve().parents:
         if (parent / "Cargo.toml").is_file() and (parent / "crates").is_dir():
+            target = cargo_target_dir(parent)
             for profile in ("debug", "release"):
-                candidate = parent / "target" / profile / name
+                candidate = target / profile / name
                 if candidate.is_file():
                     return candidate
             return None
