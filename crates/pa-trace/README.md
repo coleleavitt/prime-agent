@@ -28,13 +28,16 @@ exporter. Behavioural spec: the fork's `docs/observability.md` (TS branch `perf/
   and per-name delta metrics (`prime_agent.span.count`, `.error_count`, `.duration_ms`) as OTLP/HTTP JSON to
   `<endpoint>/v1/traces` and `/v1/metrics`, batches of 128, at most 2,048 queued (oldest dropped), flushed every 5 s,
   10 s request timeout, credential-looking attribute keys dropped. Recording only queues; one background worker owns
-  delivery. An orderly exit drains for at most one second.
+  delivery. An orderly exit drains for at most one second. `OTEL_TRACES_EXPORTER=none` disables export;
+  `OTEL_METRICS_EXPORTER=none` posts spans only (a trace-only collector such as Jaeger).
+- **Span sinks**: `add_span_sink` registers an in-process callback that receives a `SpanRecord` for every finished
+  span, on the closing thread (TS `addSpanSink`); `remove_span_sink` drops it.
 
 ## Non-goals
 
 No `opentelemetry` dependency, no collector contact unless configured, no metrics database. Session-file
-`traceId`/`spanId` stamping, the daemon envelope carrier, and the remaining contract spans live in native crates
-(see the porting report).
+`traceId`/`spanId` stamping (`pa-types`/`pa-core`), the daemon command carrier (`pa-tui`/`pa-daemon`) and the
+contract spans (`docs/observability.md`) live in the native crates that own those paths.
 
 ## Public API
 
@@ -42,7 +45,8 @@ No `opentelemetry` dependency, no collector contact unless configured, no metric
 source), `install_context_source()`, `RecorderConfig::from_env`, `RecorderHandle::{flush, shutdown, otlp_stats}`,
 `run_trace_command`, `run_health_command`, `CommandOutcome`, `retained_log_files` / `read_log_text` (the retained
 generations of a log, oldest first, and one generation's text, gzip bounded at 64 MiB), `OtlpConfig`, `OtlpStats`, `parse_otlp_headers`,
-`SHUTDOWN_DRAIN`, `OTLP_ENDPOINT_ENV`, `OTLP_HEADERS_ENV`.
+`SHUTDOWN_DRAIN`, `OTLP_ENDPOINT_ENV`, `OTLP_HEADERS_ENV`, `OTLP_TRACES_EXPORTER_ENV`, `OTLP_METRICS_EXPORTER_ENV`,
+`add_span_sink`, `remove_span_sink`, `SpanSink`, `SpanSinkId`, `SpanRecord`.
 
 ## Seams
 

@@ -20,6 +20,11 @@ use crate::record::{SpanIds, js_number};
 pub const OTLP_ENDPOINT_ENV: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 /// Optional comma-separated `key=value` request headers.
 pub const OTLP_HEADERS_ENV: &str = "OTEL_EXPORTER_OTLP_HEADERS";
+/// `none` stops the metrics export (a trace-only collector such as Jaeger
+/// answers `/v1/metrics` with 404).
+pub const OTLP_METRICS_EXPORTER_ENV: &str = "OTEL_METRICS_EXPORTER";
+/// `none` turns the whole export off even with an endpoint set.
+pub const OTLP_TRACES_EXPORTER_ENV: &str = "OTEL_TRACES_EXPORTER";
 
 const DEFAULT_BATCH_SIZE: usize = 128;
 const DEFAULT_MAX_QUEUE_SIZE: usize = 2048;
@@ -41,6 +46,8 @@ pub struct OtlpConfig {
     pub flush_interval: Duration,
     pub max_metric_series: usize,
     pub request_timeout: Duration,
+    /// Post the derived per-name metrics to `/v1/metrics` too.
+    pub export_metrics: bool,
 }
 
 impl OtlpConfig {
@@ -56,6 +63,7 @@ impl OtlpConfig {
             flush_interval: DEFAULT_FLUSH_INTERVAL,
             max_metric_series: DEFAULT_MAX_METRIC_SERIES,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            export_metrics: true,
         }
     }
 
@@ -64,12 +72,16 @@ impl OtlpConfig {
     pub fn from_env(service_version: &str) -> Option<Self> {
         let endpoint = std::env::var(OTLP_ENDPOINT_ENV).ok()?;
         let endpoint = endpoint.trim();
-        if endpoint.is_empty() {
+        let disabled = |name: &str| {
+            std::env::var(name).is_ok_and(|value| value.trim().eq_ignore_ascii_case("none"))
+        };
+        if endpoint.is_empty() || disabled(OTLP_TRACES_EXPORTER_ENV) {
             return None;
         }
         let mut config = OtlpConfig::new(endpoint);
         config.headers = parse_otlp_headers(std::env::var(OTLP_HEADERS_ENV).ok().as_deref());
         config.service_version = Some(service_version.to_string());
+        config.export_metrics = !disabled(OTLP_METRICS_EXPORTER_ENV);
         Some(config)
     }
 }
@@ -313,6 +325,9 @@ impl OtlpExporter {
         let started = now.saturating_sub(millis_to_nanos(longest_ms));
         let trace_body = self.trace_body(batch);
         let metric_body = self.metric_body(metrics, started, now);
+        if !self.config.export_metrics {
+            return u64::from(!self.post(client, "traces", &trace_body).await);
+        }
         let (traces, metrics) = tokio::join!(
             self.post(client, "traces", &trace_body),
             self.post(client, "metrics", &metric_body)

@@ -354,6 +354,20 @@ where
         }
         let level = if failed { Level::Warn } else { Level::Info };
         self.write(entry.finish(SystemTime::now(), level, TRACE_COMPONENT, SPAN_END_MSG));
+        if crate::sink::any() {
+            crate::sink::deliver(&crate::sink::SpanRecord {
+                name: state.name.to_string(),
+                trace_id: state.ids.context.trace_id_hex(),
+                span_id: state.ids.context.span_id_hex(),
+                parent_span_id: state
+                    .ids
+                    .parent_span_id
+                    .map(pa_types::trace_context::format_span_id),
+                duration_ms: duration,
+                attrs: state.attrs.clone(),
+                error: state.error.clone(),
+            });
+        }
         if let Some(otlp) = &self.otlp {
             otlp.export(FinishedSpan {
                 name: state.name.to_string(),

@@ -15,6 +15,7 @@ mod log_file;
 mod otlp;
 mod record;
 mod retained;
+mod sink;
 mod trace_command;
 mod writer;
 
@@ -24,9 +25,18 @@ use std::time::Duration;
 
 pub use health::run_health_command;
 pub use layer::{JSON_FIELD_SUFFIX, TraceLayer};
-pub use otlp::{OTLP_ENDPOINT_ENV, OTLP_HEADERS_ENV, OtlpConfig, OtlpStats, parse_otlp_headers};
+pub use otlp::{
+    OTLP_ENDPOINT_ENV,
+    OTLP_HEADERS_ENV,
+    OTLP_METRICS_EXPORTER_ENV,
+    OTLP_TRACES_EXPORTER_ENV,
+    OtlpConfig,
+    OtlpStats,
+    parse_otlp_headers,
+};
 use pa_types::trace_context::{TRACEPARENT_ENV, TraceContext};
 pub use retained::{read_log_text, retained_log_files};
+pub use sink::{SpanRecord, SpanSink, SpanSinkId, add_span_sink, remove_span_sink};
 pub use trace_command::run_trace_command;
 use tracing_subscriber::layer::SubscriberExt;
 

@@ -326,3 +326,21 @@ fn a_hanging_collector_never_delays_traced_code() {
     assert!(started.elapsed() < WAIT);
     assert!(writer.flush(WAIT));
 }
+
+/// `OTEL_METRICS_EXPORTER=none` (a trace-only collector such as Jaeger):
+/// only `/v1/traces` is posted.
+#[test]
+fn a_trace_only_exporter_posts_no_metrics() {
+    let (endpoint, received) = answering_collector();
+    let mut config = OtlpConfig::new(endpoint);
+    config.batch_size = 1;
+    config.export_metrics = false;
+    let exporter = OtlpExporter::new(config);
+    exporter.export(span("tool.execute", None));
+    let request = received.recv_timeout(WAIT).expect("collector request");
+    assert_eq!(request.path, "/v1/traces");
+    assert!(
+        received.recv_timeout(Duration::from_millis(500)).is_err(),
+        "no metrics request follows"
+    );
+}
