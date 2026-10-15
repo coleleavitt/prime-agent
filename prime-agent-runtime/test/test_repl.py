@@ -1216,11 +1216,29 @@ class ReplTest(unittest.TestCase):
                 "pid": pid,
                 "command": "sleep 0.05; printf detached",
                 "exitCode": 0,
+                # The end of the output rides the notice, read without consuming
+                # the result (the notice stays armed for withdrawal below).
+                "outputTail": "detached",
+                "outputBytes": 8,
             },
         )
         reply_ok(self.repl, request)
         inspected = self.repl.execute("bash-inspect", "handle.poll().output")
         self.assertIn("detached", one(inspected, "result")["text"])
+
+    def test_completion_notice_tail_keeps_the_last_lines_within_the_cap(self):
+        import importlib
+
+        # `rlm.bash` the attribute is the function; the module holds the helper.
+        bash_module = importlib.import_module("rlm.bash")
+
+        output = "\n".join(f"line {index}" for index in range(100))
+        tail = bash_module._notice_tail(output)
+        self.assertEqual(tail.splitlines(), [f"line {index}" for index in range(80, 100)])
+        long_line = "y" * 5000
+        bounded = bash_module._notice_tail(long_line)
+        self.assertTrue(bounded.startswith("... "))
+        self.assertEqual(len(bounded), 4 + 2000)
 
     def test_result_read_after_notice_requests_one_withdrawal(self):
         reads = (

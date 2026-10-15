@@ -236,6 +236,18 @@ pub fn create_heartbeat_prompt_message(
     }
 }
 
+/// The end of a finished command's output, as its completion notice carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BashCompletionOutput {
+    /// The last lines (the kernel bounds them; the row bounds them again).
+    pub tail: String,
+    /// Every byte the command wrote, past the buffer caps included.
+    pub bytes: u64,
+}
+
+/// The longest output tail a completion row carries, in characters.
+const BASH_COMPLETION_TAIL_MAX_CHARS: usize = 4_000;
+
 /// The detached kernel bash completion notice: the `[bash-done pid:N exit:M]` header
 /// plus the JSON-encoded command. A later kernel read that reaches the model first
 /// withdraws it through its details (`bash.consumed`).
@@ -246,9 +258,27 @@ pub fn create_async_bash_completion_message(
     exit_code: i64,
     timestamp: u64,
 ) -> pa_types::session::CustomMessage {
+    create_async_bash_completion_message_with_output(pid, command, exit_code, None, timestamp)
+}
+
+/// [`create_async_bash_completion_message`] plus the end of the command's output
+/// (Claude Code's completion notices name the output; a model that only needs the
+/// result's last lines acts without reading the handle).
+#[must_use]
+pub fn create_async_bash_completion_message_with_output(
+    pid: u32,
+    command: &str,
+    exit_code: i64,
+    output: Option<&BashCompletionOutput>,
+    timestamp: u64,
+) -> pa_types::session::CustomMessage {
     // TS `JSON.stringify(details.command)`: the quoted, escaped command.
     let encoded_command = serde_json::to_string(command).unwrap_or_default();
-    let content = format!("[bash-done pid:{pid} exit:{exit_code}]\n\nCommand: {encoded_command}");
+    let mut content =
+        format!("[bash-done pid:{pid} exit:{exit_code}]\n\nCommand: {encoded_command}");
+    if let Some(output) = output {
+        content.push_str(&bash_completion_output_text(output));
+    }
     pa_types::session::CustomMessage {
         custom_type: ASYNC_BASH_COMPLETION_CUSTOM_TYPE.to_string(),
         content: UserContent::Text(content),
@@ -261,6 +291,51 @@ pub fn create_async_bash_completion_message(
         timestamp,
         rest: serde_json::Map::default(),
     }
+}
+
+/// The output section of a completion row: the size, then the tail fenced
+/// (a fence longer than any backtick run inside it).
+fn bash_completion_output_text(output: &BashCompletionOutput) -> String {
+    let size = human_bytes(output.bytes);
+    let tail = output.tail.trim_end();
+    if tail.is_empty() {
+        return if output.bytes == 0 {
+            "\n\nOutput: none".to_string()
+        } else {
+            format!("\n\nOutput: {size}, read it from the handle")
+        };
+    }
+    let tail = match tail
+        .char_indices()
+        .rev()
+        .nth(BASH_COMPLETION_TAIL_MAX_CHARS - 1)
+    {
+        Some((cut, _)) => format!("... {}", &tail[cut..]),
+        None => tail.to_string(),
+    };
+    let lines = tail.lines().count();
+    let fence = "`".repeat(longest_backtick_run(&tail).max(2) + 1);
+    format!("\n\nOutput ({size}; last {lines} lines):\n{fence}\n{tail}\n{fence}")
+}
+
+/// A byte count as the notice shows it: `512 B`, `3.4 KB`, `12.0 MB`.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
+}
+
+/// The longest run of backticks in `text`.
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
 }
 
 /// Bash output rendered as a fenced block with a fence longer than any
@@ -750,6 +825,54 @@ state
             if text.starts_with("[bash-done pid:11 exit:2]\n\nCommand: \"echo \\\"done\\\" && exit 2\"")));
         let details = message.details.unwrap();
         assert_eq!(details["exitCode"], 2);
+    }
+
+    /// The notice carries the end of the output, so the model can act on a
+    /// finished background command without reading the handle.
+    #[test]
+    fn a_completion_row_carries_the_output_tail_and_size() {
+        let text = |output: BashCompletionOutput| {
+            let message = create_async_bash_completion_message_with_output(
+                7,
+                "make test",
+                1,
+                Some(&output),
+                0,
+            );
+            match message.content {
+                UserContent::Text(text) => text,
+                UserContent::Blocks(_) => unreachable!("a text row"),
+            }
+        };
+        assert_eq!(
+            text(BashCompletionOutput {
+                tail: "ok 3\nFAILED: parse\n".to_string(),
+                bytes: 3_500,
+            }),
+            "[bash-done pid:7 exit:1]\n\nCommand: \"make test\"\n\nOutput (3.4 KB; last 2 lines):\n```\nok 3\nFAILED: parse\n```"
+        );
+        assert_eq!(
+            text(BashCompletionOutput {
+                tail: String::new(),
+                bytes: 0,
+            }),
+            "[bash-done pid:7 exit:1]\n\nCommand: \"make test\"\n\nOutput: none"
+        );
+        // A fence inside the output gets a longer fence around it.
+        assert!(
+            text(BashCompletionOutput {
+                tail: "```rust\nfn main() {}\n```".to_string(),
+                bytes: 25,
+            })
+            .contains("````\n```rust")
+        );
+        // The row bounds the tail again, whatever the kernel sent.
+        let long = text(BashCompletionOutput {
+            tail: "x".repeat(10_000),
+            bytes: 10_000,
+        });
+        assert!(long.len() < 4_200, "{}", long.len());
+        assert!(long.contains("\n... xxx"));
     }
 
     #[test]

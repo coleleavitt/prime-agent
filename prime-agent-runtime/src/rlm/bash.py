@@ -44,6 +44,10 @@ _CANCEL_TERM_GRACE = 0.5
 _CANCEL_KILL_WAIT = 2.0
 _ACTIVE_INVENTORY_LIMIT = 100
 _COMPLETION_NOTICE_COMMAND_CAP = 1000
+# The completion notice carries the end of the output so the model can act on
+# it without a read: at most this many lines, and this many characters.
+_COMPLETION_NOTICE_TAIL_LINES = 20
+_COMPLETION_NOTICE_TAIL_CHARS = 2000
 _CELL_COMMAND_CAP = 300
 # Display MIME the host aggregates into a per-cell summary of the bash()
 # commands the cell ran (first capped command, count, line total).
@@ -592,6 +596,14 @@ def _consume_notice_task(task: asyncio.Task[None]) -> None:
     """Retrieve detached notifier failures so they never become loop warnings."""
     if not task.cancelled():
         task.exception()
+
+
+def _notice_tail(output: str) -> str:
+    """The last lines of a finished command's output, bounded for the notice."""
+    tail = "\n".join(output.splitlines()[-_COMPLETION_NOTICE_TAIL_LINES:])
+    if len(tail) > _COMPLETION_NOTICE_TAIL_CHARS:
+        tail = "... " + tail[-_COMPLETION_NOTICE_TAIL_CHARS:]
+    return tail
 
 
 def _capped(command: str) -> str:
@@ -1231,12 +1243,16 @@ class BashHandle:
             if self._awaited_by_creating_cell or self._result_consumed or not repl.is_active():
                 return
             command = _capped(self.command)
+            # The result's text, not output()/tail(): those count as reading the
+            # result and would withdraw the very notice being sent.
             reply = await repl.host_request(
                 {
                     "type": "bash.completed",
                     "pid": self._pid,
                     "command": command,
                     "exitCode": result.exit_code,
+                    "outputTail": _notice_tail(result.output),
+                    "outputBytes": int(self._fields.get("bash.output_bytes", len(result.output.encode()))),
                 }
             )
             if isinstance(reply, dict) and reply.get("status") == "ok":

@@ -245,6 +245,8 @@ pub struct BashCompletionNotice {
     pub pid: u32,
     pub command: String,
     pub exit_code: i64,
+    /// The end of the output (a kernel before the tail sends none).
+    pub output: Option<pa_core::session_engine::messages::BashCompletionOutput>,
 }
 
 /// The queue-admission seam for one completion notice (the worker's

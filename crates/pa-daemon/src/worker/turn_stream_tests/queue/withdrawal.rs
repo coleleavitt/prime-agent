@@ -67,6 +67,7 @@ async fn queue_withdrawals_clear_only_the_last_idle_notes() {
                         pid: 4321,
                         command: "fixture command".to_string(),
                         exit_code: 0,
+                        output: None,
                     },
                     || false,
                 );

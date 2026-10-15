@@ -78,10 +78,25 @@ fn validate_completion(data: &Value) -> anyhow::Result<BashCompletionNotice> {
         .get("exitCode")
         .and_then(Value::as_i64)
         .ok_or_else(|| anyhow::anyhow!("bash.completed exitCode must be an integer"))?;
+    // The output tail is optional: a runtime without it still notifies.
+    let output = data
+        .get("outputBytes")
+        .and_then(Value::as_u64)
+        .map(
+            |bytes| pa_core::session_engine::messages::BashCompletionOutput {
+                tail: data
+                    .get("outputTail")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                bytes,
+            },
+        );
     Ok(BashCompletionNotice {
         pid: consumed.pid,
         command: consumed.command,
         exit_code,
+        output,
     })
 }
 

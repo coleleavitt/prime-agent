@@ -91,6 +91,7 @@ async fn a_bash_completion_notice_admits_the_steering_lane_with_busy_evidence() 
             pid: 4321,
             command: "sleep 12; echo RW_WAKE_DONE".to_string(),
             exit_code: 0,
+            output: None,
         },
         || false,
     );
@@ -156,6 +157,7 @@ async fn a_bash_completion_notice_on_a_busy_session_queues_a_visible_steer_row()
             pid: 99,
             command: "make gates".to_string(),
             exit_code: 2,
+            output: None,
         },
         || false,
     );
@@ -181,6 +183,7 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
             pid: 4321,
             command: "sleep 12; echo RW_WAKE_DONE".to_string(),
             exit_code: 0,
+            output: None,
         },
         || false,
     );

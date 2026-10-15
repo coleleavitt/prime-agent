@@ -585,16 +585,22 @@ pub(crate) fn admit_bash_completion_notice(
     notice: &crate::engine::BashCompletionNotice,
     session_is_closed: impl Fn() -> bool,
 ) {
-    let row = pa_core::session_engine::messages::create_async_bash_completion_message(
+    let row = pa_core::session_engine::messages::create_async_bash_completion_message_with_output(
         notice.pid,
         &notice.command,
         notice.exit_code,
+        notice.output.as_ref(),
         crate::util::now_ms(),
     );
     let content = match &row.content {
         pa_types::ai::UserContent::Text(text) => text.clone(),
         pa_types::ai::UserContent::Blocks(_) => String::new(),
     };
+    // The queue strip previews the header and the command, never the output.
+    let preview_text = content
+        .split_once("\n\nOutput")
+        .map_or(content.as_str(), |(head, _)| head)
+        .to_string();
     // The busy sample and the push share ONE critical section: a turn starting
     // between them would queue an invisible row for a busy session.
     let mut core_guard = core.lock_or_recover();
@@ -613,7 +619,7 @@ pub(crate) fn admit_bash_completion_notice(
             priority: QueuePriority::Background,
             // The queue strip's labeled preview (TS `previewLabel`).
             preview: Some(format!(
-                "{}: {content}",
+                "{}: {preview_text}",
                 pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_PREVIEW_LABEL
             )),
             message: content,
