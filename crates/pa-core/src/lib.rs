@@ -61,7 +61,6 @@ pub use tools::path_utils::resolve_read_path;
 // Result-rendering helpers: the image metadata pair the daemon's snapshot
 // elision consumes alongside the tool renderers (narrow re-export).
 pub use tools::render_utils::{IMAGE_DIMENSIONS_PREFIX_BYTES, get_image_dimensions_prefix};
-pub use tools::rlm_bootstrap::{PythonSkillRuntimeInfo, build_rlm_bootstrap_code};
 pub use tools::tool_definition::{
     AbortSignal,
     ExecuteFn,

@@ -347,6 +347,25 @@ pub async fn execute_refinement_gated(
     agent_dir: Option<&Path>,
     gating: Option<RefinementGating>,
 ) -> anyhow::Result<(RefinementResult, Vec<String>)> {
+    // The master switch (upstream #3578): a disabled session plans nothing.
+    let settings = match agent_dir {
+        Some(dir) => {
+            let cwd = session.get_cwd().to_path_buf();
+            let dir = dir.to_path_buf();
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    let settings = crate::settings::SettingsManager::create(&cwd, &dir);
+                    anyhow::ensure!(
+                        super::refinement_gate::enabled(Some(&settings)),
+                        "Harness refinements are disabled in /settings"
+                    );
+                    Ok::<_, anyhow::Error>(settings)
+                })
+                .await??,
+            )
+        }
+        None => None,
+    };
     // Held until this refine's harness write landed or it failed.
     let _refine_guard = gating
         .as_ref()
@@ -468,9 +487,18 @@ pub async fn execute_refinement_gated(
     // harness writes and the ledger flush take the same `{file}.lock`.
     let store_lock = {
         let dir = target_dir.clone();
-        tokio::task::spawn_blocking(move || crate::refinement::lock_harness_state(&dir))
-            .await
-            .map_err(|error| anyhow::anyhow!("refinement harness lock task failed: {error}"))??
+        tokio::task::spawn_blocking(move || {
+            let lock = crate::refinement::lock_harness_state(&dir)?;
+            // Re-read under the store lock: a switch turned off while the
+            // model planned discards the result before anything is saved.
+            anyhow::ensure!(
+                super::refinement_gate::enabled(settings.as_ref()),
+                "Harness refinements were disabled during planning; the result was discarded"
+            );
+            Ok(lock)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("refinement harness lock task failed: {error}"))??
     };
     let mut state = load_harness_state(&target_dir, target_scope);
     if let Some(verdict) = &verdict {
@@ -815,6 +843,9 @@ impl AgentSession {
         turns_since_last_review: u32,
         branch_version: u64,
     ) -> anyhow::Result<Option<AutoRefineReview>> {
+        if !self.harness_refinements_enabled() {
+            return Ok(None);
+        }
         // The review reads the same planning inputs the run plans
         // against, extracted under this lock from the retained rows.
         let (parts, merged_state, history) = {
@@ -1041,6 +1072,50 @@ mod tests {
             timestamp: 0,
             rest: serde_json::Map::default(),
         })
+    }
+
+    #[tokio::test]
+    async fn disabling_refinements_blocks_planning_and_discards_in_flight_results() {
+        let dir = TempDir::new().unwrap();
+        let mut session = persisted_session(&dir);
+        let global_dir = dir.path().join("harness");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let settings = agent_dir.join("settings.json");
+        std::fs::write(&settings, r#"{"harnessRefinements":false}"#).unwrap();
+        let entries_before = session.retained_entries().to_vec();
+        let error = execute_refinement(
+            &mut session,
+            RefinementTranscript {
+                messages: &[],
+                refinement_history: &[],
+            },
+            &global_dir,
+            &test_model(),
+            &RefineOptions::default(),
+            RefinementSource::User,
+            Box::new(|_, _, _| panic!("disabled refinement must not call the planner")),
+            Some(&agent_dir),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("disabled"));
+        std::fs::write(&settings, r#"{"harnessRefinements":true}"#).unwrap();
+        let error = execute_refinement(
+            &mut session, RefinementTranscript { messages: &[user_message("remember this")], refinement_history: &[] },
+            &global_dir, &test_model(), &RefineOptions::default(), RefinementSource::SelfRefine,
+            flip_seam(&settings, r#"{"harnessRefinements":false}"#,
+                r#"{"summary":"memory","edits":[{"action":"create","kind":"memory","id":"note","title":"Note","content":"Remember this"}]}"#),
+            Some(&agent_dir),
+        ).await.unwrap_err();
+        assert!(error.to_string().contains("discarded"));
+        assert_eq!(session.retained_entries(), entries_before.as_slice());
+        assert!(
+            !local_harness_state_dir(&session)
+                .join("harness_state.json")
+                .exists()
+        );
+        assert!(!global_dir.exists());
     }
 
     #[test]

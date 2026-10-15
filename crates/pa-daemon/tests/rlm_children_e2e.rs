@@ -239,7 +239,6 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         model: None,
         thinking: None,
         target: RlmSpawnTarget::Local,
-        cell_source_code: None,
         spawned_by_request_id: None,
         token_budget: None,
     }

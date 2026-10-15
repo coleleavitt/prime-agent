@@ -238,12 +238,7 @@ mod tests {
 
         async fn call(&self, request_type: &str, data: Value) -> Value {
             let handler = self.handlers.get(request_type).expect("registered");
-            handler(HostRequestPayload {
-                data,
-                cell_source_code: None,
-            })
-            .await
-            .expect("handled")
+            handler(HostRequestPayload { data }).await.expect("handled")
         }
     }
 

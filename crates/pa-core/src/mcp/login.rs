@@ -399,7 +399,6 @@ mod tests {
         let begin_login = handlers.get("mcp.begin_login").expect("wired").clone();
         begin_login(HostRequestPayload {
             data: json!({ "server": "fixture" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();
@@ -494,7 +493,6 @@ mod tests {
         let begin_login = handlers.get("mcp.begin_login").expect("wired").clone();
         begin_login(HostRequestPayload {
             data: json!({ "server": "linear" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();
@@ -526,19 +524,15 @@ mod tests {
         let begin_login = handlers.get("mcp.begin_login").expect("wired").clone();
         let error = begin_login(HostRequestPayload {
             data: json!({ "server": "nope" }),
-            cell_source_code: None,
         })
         .await
         .unwrap_err()
         .to_string();
         assert_eq!(error, "Unknown MCP integration: nope");
-        let error = begin_login(HostRequestPayload {
-            data: json!({}),
-            cell_source_code: None,
-        })
-        .await
-        .unwrap_err()
-        .to_string();
+        let error = begin_login(HostRequestPayload { data: json!({}) })
+            .await
+            .unwrap_err()
+            .to_string();
         assert_eq!(error, "mcp.begin_login requires a server");
     }
 
@@ -591,7 +585,6 @@ mod tests {
         let refresh = handlers.get("mcp.refresh").expect("wired").clone();
         let error = refresh(HostRequestPayload {
             data: json!({ "server": "fixture" }),
-            cell_source_code: None,
         })
         .await
         .unwrap_err()
@@ -620,7 +613,6 @@ mod tests {
 
         refresh(HostRequestPayload {
             data: json!({ "server": "fixture" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();
@@ -649,7 +641,6 @@ mod tests {
         let refresh = handlers.get("mcp.refresh").expect("wired").clone();
         let error = refresh(HostRequestPayload {
             data: json!({ "server": "session-tool" }),
-            cell_source_code: None,
         })
         .await
         .unwrap_err()

@@ -202,10 +202,7 @@ async fn the_host_request_records_the_row_and_answers_the_receipt() {
         .get("artifact.present")
         .expect("registered")
         .clone();
-    let payload = |data: Value| HostRequestPayload {
-        data,
-        cell_source_code: None,
-    };
+    let payload = |data: Value| HostRequestPayload { data };
     let receipt = handler(payload(json!({ "path": "pic.png" })))
         .await
         .unwrap();

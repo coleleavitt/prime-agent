@@ -186,12 +186,7 @@ impl Harness {
 
 async fn call(handlers: &HostRequestHandlers, request: &str, payload: Value) -> Value {
     let handler = handlers.get(request).expect("registered").clone();
-    handler(HostRequestPayload {
-        data: payload,
-        cell_source_code: None,
-    })
-    .await
-    .unwrap()
+    handler(HostRequestPayload { data: payload }).await.unwrap()
 }
 
 async fn ravo(

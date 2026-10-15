@@ -302,7 +302,6 @@ mod tests {
         let call = || {
             handlers.get("rlm.create_session").unwrap()(crate::kernel::shared::HostRequestPayload {
                 data: serde_json::json!({}),
-                cell_source_code: None,
             })
         };
         assert_eq!(

@@ -118,10 +118,7 @@ impl Harness {
         cancel: CancellationToken,
     ) -> Value {
         let handler = self.handlers.get(request_type).expect("registered").clone();
-        let payload = HostRequestPayload {
-            data,
-            cell_source_code: None,
-        };
+        let payload = HostRequestPayload { data };
         with_host_request_cancellation(cancel, handler(payload))
             .await
             .expect("session requests always answer")

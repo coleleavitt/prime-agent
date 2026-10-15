@@ -79,11 +79,7 @@ impl Harness {
             .get(request_type)
             .unwrap_or_else(|| panic!("missing handler {request_type}"))
             .clone();
-        handler(HostRequestPayload {
-            data,
-            cell_source_code: None,
-        })
-        .await
+        handler(HostRequestPayload { data }).await
     }
 }
 
@@ -474,10 +470,7 @@ async fn messaging_stats_serves_the_snapshot_and_counts_send_outcomes() {
     engine.register_messaging_stats_host_handlers(&mut handlers);
     let call = |request: &str, data: Value| {
         let handler = handlers.get(request).expect("handler").clone();
-        handler(HostRequestPayload {
-            data,
-            cell_source_code: None,
-        })
+        handler(HostRequestPayload { data })
     };
     call(
         "agent_message.send",
@@ -527,10 +520,7 @@ async fn path_watch_handlers_resolve_validate_notify_and_die_with_the_session() 
     engine.register_path_watch_host_handlers(&mut handlers);
     let call = |request: &str, data: Value| {
         let handler = handlers.get(request).expect("handler").clone();
-        handler(HostRequestPayload {
-            data,
-            cell_source_code: None,
-        })
+        handler(HostRequestPayload { data })
     };
     let registered = call("rlm.watch.path", json!({ "path": "relative" }))
         .await

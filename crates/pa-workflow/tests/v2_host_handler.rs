@@ -113,7 +113,6 @@ impl Harness {
         let handler = self.handlers.get("workflow.v2.request").unwrap().clone();
         handler(HostRequestPayload {
             data: json!({ "type": "workflow.v2.request", "request": request }),
-            cell_source_code: None,
         })
         .await
     }

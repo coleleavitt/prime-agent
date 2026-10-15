@@ -26,6 +26,13 @@ fn main() {
     if args == [pa_cli::HARNESS_REQUEST_FLAG] {
         std::process::exit(pa_cli::run_harness_request());
     }
+    // A fresh top-level invocation sheds an inherited worker identity before
+    // any thread exists (edition 2021 makes `remove_var` safe, but it must
+    // still run single-threaded): everything but the supervisor-spawned
+    // `worker` subcommand.
+    if args.first().map(String::as_str) != Some("worker") {
+        pa_daemon::worker::strip_inherited_worker_env();
+    }
     let features = pa_cli::features::install_enabled_features();
     let code = pa_cli::main_with_runtime(&args, &pa_cli::PrintRuntime);
     pa_cli::features::flush_enabled_features();

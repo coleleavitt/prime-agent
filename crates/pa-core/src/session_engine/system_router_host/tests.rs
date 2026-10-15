@@ -390,7 +390,6 @@ async fn the_registered_handler_runs_a_non_catalog_session_model() {
             "actions": { "look": { "description": "Look at the screen." } },
             "environment": { "stdio": { "command": ["sh", "-c", "exit 0"] } }
         }),
-        cell_source_code: None,
     };
     let error = handler(payload).await.unwrap_err().to_string();
     assert!(
@@ -424,7 +423,6 @@ async fn the_registered_handler_reaches_the_segment() {
             "actions": { "look": { "description": "Look at the screen." } },
             "environment": { "stdio": { "command": ["sh", "-c", "exit 0"] } }
         }),
-        cell_source_code: None,
     };
     let error = handler(payload).await.unwrap_err().to_string();
     assert!(
@@ -443,7 +441,6 @@ async fn the_registered_handler_rejects_a_malformed_spec() {
     let handler = handlers.get("system_router.run").unwrap().clone();
     let payload = HostRequestPayload {
         data: json!({ "type": "system_router.run" }),
-        cell_source_code: None,
     };
     let error = handler(payload).await.unwrap_err().to_string();
     assert!(

@@ -356,7 +356,6 @@ async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
             model: None,
             thinking: None,
             target: RlmSpawnTarget::Local,
-            cell_source_code: None,
             spawned_by_request_id: None,
             token_budget: None,
         })

@@ -379,7 +379,9 @@ impl Supervisor {
         // busy mesh's chatter must not keep a silent peer's cap slot
         // open past its idle window).
         let mut saw_socket_traffic = false;
-        loop {
+        // The loop yields the connection's result; a write failure parks the
+        // error and falls through the shared exit tail below.
+        let served: Result<()> = 'serve: loop {
             line.clear();
             // An authenticated TCP socket's idle window resets on socket
             // traffic only (the pre-auth windows stay absolute - nothing
@@ -401,15 +403,15 @@ impl Supervisor {
                 biased;
                 read = crate::bounded_line::read_bounded_line(&mut reader, &mut line, &mut line_bytes, line_cap), if dispatch_slots.available_permits() > 0 => {
                     match read {
-                        Err(_error) => break,
+                        Err(_error) => break 'serve Ok(()),
                         Ok(crate::bounded_line::BoundedLine::Overflow) => {
                             let transport = if trust.tcp_auth_token().is_some() { "TCP" } else { "local" };
                             self.log_line(&format!(
                                 "Refused {transport} command line longer than {line_cap} bytes; closing connection"
                             ));
-                            return Err(anyhow!("{transport} command line exceeded the length bound"));
+                            break 'serve Err(anyhow!("{transport} command line exceeded the length bound"));
                         }
-                        Ok(crate::bounded_line::BoundedLine::Eof) => break,
+                        Ok(crate::bounded_line::BoundedLine::Eof) => break 'serve Ok(()),
                         Ok(crate::bounded_line::BoundedLine::Line) => {}
                     }
                     saw_socket_traffic = true;
@@ -433,7 +435,7 @@ impl Supervisor {
                             let _ =
                                 deadline_write(write_deadline, write_line(&mut writer, &failure))
                                     .await;
-                            return Err(anyhow!(
+                            break 'serve Err(anyhow!(
                                 "TCP authentication failed ({}); closing connection",
                                 verdict.reason
                             ));
@@ -472,18 +474,9 @@ impl Supervisor {
                         if dispatch_tx.send((lines, stop)).await.is_err() && stop {
                             // Only a terminal shutdown owns the descriptor-deleting stop pass; an
                             // update restart must leave its descriptors for the successor.
-                            let is_shutdown_owner = supervisor
-                                .shutdown_owner
-                                .lock()
-                                .unwrap()
-                                .as_deref()
-                                == Some(connection_id.as_str());
-                            if is_shutdown_owner
-                                && supervisor.shutting_down.load(Ordering::SeqCst)
-                                && !supervisor.accept_exit.load(Ordering::SeqCst)
-                            {
-                                supervisor.ensure_shutdown_started().await;
-                            }
+                            supervisor
+                                .start_shutdown_if_owner(&connection_id)
+                                .await;
                         }
                         // The slot frees only once the bundle is in the queue.
                         drop(dispatch_slot);
@@ -506,27 +499,12 @@ impl Supervisor {
                         if written.is_ok() && targeted_rx.is_empty() {
                             attached.queue_pending_resyncs();
                         }
-                        if let Err(error) = written
-                        {
-                            // An event-write failure must not strand an
-                            // accepted shutdown: if this connection owns
-                            // the stop, it still starts the pass.
-                            let is_shutdown_owner = self
-                                .shutdown_owner
-                                .lock()
-                                .unwrap()
-                                .as_deref()
-                                == Some(connection_id.as_str());
-                            if is_shutdown_owner
-                                && self.shutting_down.load(Ordering::SeqCst)
-                                && !self.accept_exit.load(Ordering::SeqCst)
-                            {
-                                self.ensure_shutdown_started().await;
-                            }
-                            return Err(error);
+                        if let Err(error) = written {
+                            // An event-write failure exits through the shared cleanup below.
+                            break 'serve Err(error);
                         }
                     } else {
-                        break;
+                        break 'serve Ok(());
                     }
                 }
                 // A frame dropped after the queue already drained (the publisher's lag
@@ -537,7 +515,7 @@ impl Supervisor {
                     }
                 }
                 dispatched = dispatch_rx.recv() => {
-                    let Some((lines, stop)) = dispatched else { break };
+                    let Some((lines, stop)) = dispatched else { break 'serve Ok(()) };
                     for outbound in lines {
                         let written = match &outbound {
                             Outbound::Line(value) => {
@@ -557,7 +535,7 @@ impl Supervisor {
                                 if stop {
                                     self.ensure_shutdown_started().await;
                                 }
-                                return Err(error);
+                                break 'serve Err(error);
                             }
                         };
                         // A large outbound response freed big transients: return the heap to
@@ -594,7 +572,7 @@ impl Supervisor {
                         // above; only now may the stop pass end the runtime (the accept loop
                         // stays up until begin_shutdown sets accept_exit).
                         self.ensure_shutdown_started().await;
-                        break;
+                        break 'serve Ok(());
                     }
                 }
                 expired = async { match tcp_expired_rx.as_mut() { Some(rx) => rx.recv().await, None => std::future::pending().await } }, if tcp_admission_armed => {
@@ -609,7 +587,7 @@ impl Supervisor {
                     } else {
                         self.log_line("Closed unauthenticated TCP client connection");
                     }
-                    return Err(anyhow!("TCP admission deadline expired"));
+                    break 'serve Err(anyhow!("TCP admission deadline expired"));
                 }
                 event = events.recv() => {
                     match event {
@@ -629,20 +607,8 @@ impl Supervisor {
                                     deadline_write(write_deadline, write_line(&mut writer, &payload))
                                         .await
                                 {
-                                    // An event-write failure must not strand an accepted shutdown.
-                                    let is_shutdown_owner = self
-                                        .shutdown_owner
-                                        .lock()
-                                        .unwrap()
-                                        .as_deref()
-                                        == Some(connection_id.as_str());
-                                    if is_shutdown_owner
-                                        && self.shutting_down.load(Ordering::SeqCst)
-                                        && !self.accept_exit.load(Ordering::SeqCst)
-                                    {
-                                        self.ensure_shutdown_started().await;
-                                    }
-                                    return Err(error);
+                                    // An event-write failure exits through the shared cleanup below.
+                                    break 'serve Err(error);
                                 }
                             }
                         }
@@ -653,22 +619,16 @@ impl Supervisor {
                                 "client {connection_id} lagged on the event ring: {skipped} events dropped"
                             ));
                         }
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Closed) => break 'serve Ok(()),
                     }
                 }
             }
-        }
+        };
         // Only the connection that accepted the shutdown may run the stop pass from this
         // fallback: another client disconnecting in the response window must not preempt the
-        // acknowledgement.
-        let is_shutdown_owner =
-            self.shutdown_owner.lock_or_recover().as_deref() == Some(connection_id.as_str());
-        if is_shutdown_owner
-            && self.shutting_down.load(Ordering::SeqCst)
-            && !self.accept_exit.load(Ordering::SeqCst)
-        {
-            self.ensure_shutdown_started().await;
-        }
+        // acknowledgement. Every exit path lands here, including the write failures.
+        self.retire_client_dispatches(&mut dispatch_rx, &connection_id)
+            .await;
         // Detach from every attached session on disconnect (a TUI exit does not
         // stop the session). The registry entries go first — no session event may
         // be enqueued for a connection whose loop has exited.
@@ -692,7 +652,35 @@ impl Supervisor {
         // lease releases, and waiting prompt admissions cancel with the TS cancellation error.
         self.release_all_client_pauses(&connection).await;
         connection.prompt_admissions.cancel_all_waiting();
-        Ok(())
+        served
+    }
+
+    /// Retire a connection's response path before its asynchronous cleanup.
+    async fn retire_client_dispatches(
+        self: &Arc<Self>,
+        dispatch_rx: &mut tokio::sync::mpsc::Receiver<(Vec<Outbound>, bool)>,
+        connection_id: &str,
+    ) {
+        // Cleanup below awaits worker replies. A shutdown that claims this
+        // connection later must fail its send and run the owner fallback,
+        // rather than successfully enqueueing into a loop that has exited.
+        dispatch_rx.close();
+        self.start_shutdown_if_owner(connection_id).await;
+    }
+
+    /// The accepted-shutdown fallback on a connection's exit: only the
+    /// connection that accepted the shutdown may start the stop pass, so
+    /// another client disconnecting in the response window cannot preempt
+    /// the acknowledgement.
+    async fn start_shutdown_if_owner(self: &Arc<Self>, connection_id: &str) {
+        let is_shutdown_owner =
+            self.shutdown_owner.lock_or_recover().as_deref() == Some(connection_id);
+        if is_shutdown_owner
+            && self.shutting_down.load(Ordering::SeqCst)
+            && !self.accept_exit.load(Ordering::SeqCst)
+        {
+            self.ensure_shutdown_started().await;
+        }
     }
 
     /// Whether any live connection still speaks for `client_id` (one
@@ -1447,6 +1435,85 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::supervisor::SupervisorOptions;
+
+    /// A response-write failure can retire the serve loop while an accepted
+    /// shutdown task has not claimed its owner yet. Keep the receiver alive
+    /// through that cleanup window, then release the real shutdown dispatch.
+    #[tokio::test]
+    async fn a_late_shutdown_cannot_send_into_a_retired_client_queue() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let supervisor = Arc::new(
+            Supervisor::new(SupervisorOptions {
+                tcp_port: None,
+                tcp_bind_host: None,
+                remote_agent_mesh: None,
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: dir.path().join("agent"),
+            })
+            .expect("supervisor"),
+        );
+        let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::channel(1);
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let late_dispatch = {
+            let supervisor = Arc::clone(&supervisor);
+            tokio::spawn(async move {
+                release_rx.await.expect("release the in-flight dispatch");
+                let effective = Arc::new(std::sync::Mutex::new("shutdown-client".to_string()));
+                let (targeted_tx, _targeted_rx) = tokio::sync::mpsc::channel(1);
+                let attached = subscribers::ClientSubscriptions::new(
+                    "shutdown-client".to_string(),
+                    targeted_tx,
+                );
+                let roster = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let connection = Arc::new(crate::input_pause_lease::ClientConnectionState::new());
+                let command = json!({
+                    "type": "command", "id": "late-stop",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                    "command": { "type": "shutdown", "force": true }
+                })
+                .to_string();
+                let (lines, stop) = supervisor
+                    .dispatch_client(
+                        &command,
+                        &effective,
+                        &attached,
+                        &roster,
+                        &connection,
+                        "shutdown-client",
+                        &dispatch_tx,
+                    )
+                    .await;
+                assert!(stop, "the real shutdown dispatch accepted the stop");
+                let rejected = dispatch_tx.send((lines, stop)).await.is_err();
+                if rejected {
+                    supervisor.start_shutdown_if_owner("shutdown-client").await;
+                }
+                rejected
+            })
+        };
+        assert!(supervisor.shutdown_owner.lock().unwrap().is_none());
+        supervisor
+            .retire_client_dispatches(&mut dispatch_rx, "shutdown-client")
+            .await;
+        assert!(!supervisor.accept_exit.load(Ordering::SeqCst));
+        release_tx.send(()).expect("resume the in-flight shutdown");
+        let rejected = tokio::time::timeout(Duration::from_secs(5), late_dispatch)
+            .await
+            .expect("late dispatch settles")
+            .expect("late dispatch task");
+        assert!(
+            rejected,
+            "a retired response queue accepted the shutdown bundle"
+        );
+        assert!(supervisor.shutting_down.load(Ordering::SeqCst));
+        assert!(supervisor.shutdown_started.load(Ordering::SeqCst));
+        assert!(
+            supervisor.accept_exit.load(Ordering::SeqCst),
+            "the failed-send fallback completed the stop pass"
+        );
+        // The caller still owns the receiver during this cleanup window.
+        assert!(dispatch_rx.recv().await.is_none());
+    }
 
     #[cfg(unix)]
     #[tokio::test]

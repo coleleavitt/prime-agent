@@ -139,7 +139,6 @@ pub(crate) struct ActiveExecution {
     request_id: String,
     /// The request's protocol type, named when the kernel dies serving it.
     request_type: &'static str,
-    code: String,
     started: Instant,
     max_chars: usize,
     opts: ExecuteOptions,
@@ -357,9 +356,6 @@ struct Guarded {
     mcp_status_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
     active_execution: Option<Arc<ActiveExecution>>,
-    /// Source of the most recently started cell, retained after it finishes so
-    /// rlm.run spawns from detached asyncio tasks can still attribute their spawning program.
-    last_cell_code: Option<String>,
     ready_tx: Option<oneshot::Sender<anyhow::Result<i64>>>,
     /// The kernel process's death outside a host-owned teardown, if it died.
     unexpected_exit: Option<crate::kernel::shared::KernelUnexpectedExit>,
@@ -527,7 +523,6 @@ impl ReplKernelManager {
                 mcp_status_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
                 active_execution: None,
-                last_cell_code: None,
                 ready_tx: None,
                 unexpected_exit: None,
             }),
@@ -779,7 +774,6 @@ impl ReplKernelManager {
             Request::Execute {
                 code: code.to_string(),
             },
-            code,
             opts,
             execution_timeout_ms,
         )
@@ -876,10 +870,7 @@ impl ReplKernelManager {
             signal,
             ..ExecuteOptions::default()
         };
-        match self
-            .enqueue_request(Request::ListNames, "", opts, None)
-            .await
-        {
+        match self.enqueue_request(Request::ListNames, opts, None).await {
             Ok(r) if r.result.status == ExecuteStatus::Ok => {
                 let names = r
                     .done_fields

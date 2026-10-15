@@ -98,6 +98,7 @@ pub use env::{
     WORKER_SUPERVISOR_SOCKET_ENV,
     WORKER_TELEMETRY_DISABLED_ENV,
     WORKER_TOKEN_ENV,
+    strip_inherited_worker_env,
 };
 use pa_core::session_engine::agent_messaging::{
     AGENT_MESSAGE_SOURCE,

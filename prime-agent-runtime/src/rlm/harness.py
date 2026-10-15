@@ -93,6 +93,17 @@ def _agent_dir() -> Path:
     return guard_state_path("agent dir", Path(raw).expanduser().resolve())
 
 
+def _require_refinements_enabled() -> None:
+    """Read the host's global-only master switch, without caching it."""
+    try:
+        document = json.loads((_agent_dir() / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    value = document.get("harnessRefinements") if isinstance(document, dict) else None
+    if value is False:
+        raise RuntimeError("Harness refinements are disabled in /settings")
+
+
 def _resolve_global_flag(global_: bool = False, extra: Mapping[str, object] | None = None) -> bool:
     extra = dict(extra or {})
     if "global" in extra:
@@ -440,6 +451,9 @@ class HarnessState:
 
     def _call(self, request_type: str, extra: JsonObject | None = None, **args: object) -> JsonValue:
         """Run one store operation on this store and mirror its state."""
+        # Every read and write: the host's master switch (upstream #3578),
+        # re-read per call so a toggle applies to a long-lived view.
+        _require_refinements_enabled()
         payload: JsonObject = {
             "store": {
                 "file": str(self.file_path) if self.file_path is not None else None,
@@ -494,6 +508,7 @@ class HarnessState:
         return target
 
     def save(self) -> "HarnessState":
+        _require_refinements_enabled()
         if self.file_path is None:
             # in_memory: the view is the store.
             return self
@@ -988,6 +1003,7 @@ def get_harness_state(
     state_dir: str | Path | None = None, *, global_: bool = False, **kwargs: Unpack[_ScopeKwargs]
 ) -> HarnessState:
     """Return the cached local harness state, or global when requested."""
+    _require_refinements_enabled()
     global_ = _resolve_global_flag(global_, kwargs)
     file_path = _state_file(state_dir, global_=global_)
     scope: HarnessScope = "global" if global_ else "local"

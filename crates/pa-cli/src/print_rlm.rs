@@ -1261,7 +1261,6 @@ mod tests {
             model: None,
             thinking: None,
             spawned_by_request_id: None,
-            cell_source_code: None,
             target: pa_core::session_engine::rlm_host::RlmSpawnTarget::Local,
             plan_mode: false,
             token_budget: None,

@@ -114,11 +114,7 @@ async fn call(
     payload: Value,
 ) -> anyhow::Result<Value> {
     let handler = handlers.get(request).unwrap().clone();
-    handler(HostRequestPayload {
-        data: payload,
-        cell_source_code: None,
-    })
-    .await
+    handler(HostRequestPayload { data: payload }).await
 }
 
 async fn command(

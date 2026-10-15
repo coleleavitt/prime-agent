@@ -86,7 +86,6 @@ async fn fixture_env(python: &Path, environment: KernelEnvironment) -> Value {
         tokio_util::sync::CancellationToken::new(),
         handler(HostRequestPayload {
             data: json!({ "server": "svc", "tool": "fixture/raw.tool" }),
-            cell_source_code: None,
         }),
     )
     .await
@@ -177,7 +176,6 @@ async fn a_server_configured_mid_session_dispatches_after_refresh() {
         tokio_util::sync::CancellationToken::new(),
         handler(HostRequestPayload {
             data: json!({ "server": "svc", "tool": "fixture/raw.tool" }),
-            cell_source_code: None,
         }),
     )
     .await

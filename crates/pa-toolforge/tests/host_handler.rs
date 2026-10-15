@@ -44,12 +44,9 @@ fn context(agent_dir: PathBuf, loaded: &[&str], tracked: &Tracked) -> SessionFea
 
 async fn call(handlers: &HostRequestHandlers, data: Value) -> Value {
     let handler = handlers.get(PUBLISH_REQUEST).expect("registered").clone();
-    handler(HostRequestPayload {
-        data,
-        cell_source_code: None,
-    })
-    .await
-    .expect("the handler answers rejections as values")
+    handler(HostRequestPayload { data })
+        .await
+        .expect("the handler answers rejections as values")
 }
 
 fn properties(pairs: &[(&str, Value)]) -> Properties {

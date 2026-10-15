@@ -107,7 +107,7 @@ impl FactoryChildren for SessionChildren {
             }
             let payload = json!({ "prompt": request.prompt, "kwargs": kwargs });
             let handle = bridge
-                .spawn_from_payload(&payload, None)
+                .spawn_from_payload(&payload)
                 .await
                 .map_err(|error| format!("{error:#}"))?;
             handle

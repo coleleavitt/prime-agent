@@ -297,9 +297,18 @@ pub fn update_harness_state<R>(
     scope: HarnessScope,
     update: impl FnOnce(&mut HarnessState) -> R,
 ) -> anyhow::Result<(R, PathBuf)> {
+    try_update_harness_state(harness_state_dir, scope, |state| Ok(update(state)))
+}
+
+/// A rejected update must exit before saving, including an apply-time setting gate.
+pub(crate) fn try_update_harness_state<R>(
+    harness_state_dir: &Path,
+    scope: HarnessScope,
+    update: impl FnOnce(&mut HarnessState) -> anyhow::Result<R>,
+) -> anyhow::Result<(R, PathBuf)> {
     let lock = lock_harness_state(harness_state_dir)?;
     let mut state = load_harness_state(harness_state_dir, scope);
-    let result = update(&mut state);
+    let result = update(&mut state)?;
     lock.ensure_owned()?;
     let written = save_harness_state(harness_state_dir, &state)?;
     Ok((result, written))
@@ -653,6 +662,21 @@ mod tests {
             version: 1,
             extensions: serde_json::Map::new(),
         }
+    }
+
+    #[test]
+    fn rejected_harness_update_preserves_saved_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = empty_harness_state();
+        let path = save_harness_state(dir.path(), &state).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let result: anyhow::Result<((), PathBuf)> =
+            try_update_harness_state(dir.path(), HarnessScope::Global, |state| {
+                state.schema = 99;
+                anyhow::bail!("disabled before commit")
+            });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
     }
 
     #[test]

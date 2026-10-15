@@ -170,7 +170,7 @@ impl AgentSession {
 
     /// Whether the session may run auto-refinement.
     pub fn auto_refine_allowed(&self) -> bool {
-        self.auto_refine_allowed
+        self.auto_refine_allowed && self.harness_refinements_enabled()
     }
 
     /// The resolved auto-refine gates.
@@ -191,10 +191,18 @@ impl AgentSession {
     /// headroom without owning the session (a compaction in flight owns it across its model turn).
     /// The `/context-limit` session override applies over the settings.
     pub fn compaction_settings(&self) -> compaction::CompactionSettings {
-        let settings = *self
+        let mut settings = *self
             .compaction
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Read only the percentage at decision boundaries, off the paint path.
+        // Like auxiliary-model routing, another client's settings save applies
+        // to an already-running session without changing manual summary budgets.
+        if let Some(context) = &self.auxiliary_model {
+            settings.threshold_percent =
+                crate::settings::SettingsManager::create(&context.cwd, &context.agent_dir)
+                    .get_compaction_threshold_percent();
+        }
         self.apply_context_limit(settings)
     }
 

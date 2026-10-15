@@ -1015,12 +1015,9 @@ async fn observe_list_rows_carry_the_live_cwd_only() {
         &mut handlers,
     );
     let list = handlers.get("agent_observe.list").unwrap().clone();
-    let listed = list(pa_core::kernel::shared::HostRequestPayload {
-        data: json!({}),
-        cell_source_code: None,
-    })
-    .await
-    .unwrap();
+    let listed = list(pa_core::kernel::shared::HostRequestPayload { data: json!({}) })
+        .await
+        .unwrap();
     let cwds: Vec<(Value, Value)> = listed["agents"]
         .as_array()
         .unwrap()

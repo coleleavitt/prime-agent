@@ -239,6 +239,14 @@ fn daemon_acp_create(
         create_config["childScript"] =
             serde_json::Value::String(child_script.to_string_lossy().to_string());
     }
+    // TS main.ts `launchEnv` (:1092 via the daemon-client create): the
+    // client's own environment travels on the create so the session's
+    // worker runs in the environment of the terminal that invoked it,
+    // not the daemon's boot environment.
+    let launch_env = {
+        let env = pa_types::daemon::launch_env::collect_process_launch_env();
+        (!env.is_empty()).then_some(env)
+    };
     let create = pa_types::daemon::DaemonCommand::Create {
         id: None,
         session_path: session_path.map(|path| path.display().to_string()),
@@ -250,7 +258,7 @@ fn daemon_acp_create(
         runtime_metadata: None,
         lifecycle: Some(lifecycle),
         env: None,
-        launch_env: None,
+        launch_env,
         rest: serde_json::Map::default(),
     };
     Ok((cwd, create))
@@ -2006,7 +2014,6 @@ mod tests {
         let config = handlers.get("mcp.config").unwrap().clone();
         let result = config(pa_core::kernel::shared::HostRequestPayload {
             data: serde_json::json!({ "server": "fixture-echo" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();
@@ -2037,7 +2044,6 @@ mod tests {
         }
         let result = config(pa_core::kernel::shared::HostRequestPayload {
             data: serde_json::json!({ "server": "second-echo" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();
@@ -2047,7 +2053,6 @@ mod tests {
         );
         let withdrawn = config(pa_core::kernel::shared::HostRequestPayload {
             data: serde_json::json!({ "server": "fixture-echo" }),
-            cell_source_code: None,
         })
         .await
         .unwrap();

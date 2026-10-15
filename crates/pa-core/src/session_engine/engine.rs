@@ -257,6 +257,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         settings.settings().shell_path.as_deref(),
     )?
     .map(std::path::PathBuf::from);
+    // TS injects the prefix only when truthy (an empty string stays unset).
+    let kernel_command_prefix = settings
+        .settings()
+        .shell_command_prefix
+        .clone()
+        .filter(|prefix| !prefix.is_empty());
     let traces = session_manager
         .is_persisted()
         .then(|| {
@@ -284,6 +290,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.cron_store.clone(),
     );
 
+    let refinement_settings = settings.reopen();
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
     // compaction budget and the auto-refine gates.
@@ -310,6 +317,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         context_cap_source,
         sandbox.as_ref(),
     );
+    let compaction_threshold_percent = settings.get_compaction_threshold_percent();
     let auto_refine_gates =
         super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
@@ -608,6 +616,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     {
         session_counters.note_adoption(super::telemetry::SessionAdoption::PackageHarnessEntry);
     }
+    let _ = turn_boundary
+        .refinement_settings
+        .set(refinement_settings.reopen());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -676,6 +687,26 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     // Last, so the gate wraps every registered handler it names.
     super::plan_mode::gate_host_requests(&mut handlers, &plan_mode);
+    // TS resolves the serper credential on the host: `!command` key refs
+    // cannot run in-kernel (the websearch skill's auth.json fallback reads
+    // literals and env-var names, not commands). The credential is read
+    // under the auth lock, then resolved off the async runtime (a `!command`
+    // key can block).
+    let serper_api_key = {
+        let credential = {
+            let auth = mcp_manager.lock_or_recover().auth_storage_handle();
+            let guard = auth.lock().await;
+            guard
+                .get_all()
+                .credential(crate::auth::SERPER_CREDENTIAL_ID)
+        };
+        let skills = resources.skills.clone();
+        tokio::task::spawn_blocking(move || {
+            super::runtime_wiring::websearch_api_key(&skills, credential)
+        })
+        .await
+        .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
+    };
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -683,6 +714,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         cwd.clone(),
         &config.agent_dir,
         kernel_shell_path,
+        kernel_command_prefix,
+        serper_api_key,
         session_artifact_dir,
         on_restore,
         config.on_background_work_settled.clone(),
@@ -819,6 +852,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // bind. An engine not bound to that host must keep its original
         // context instead of silently hiding durable rows.
         let messages = super::compact_session::rebuilt_context_after_compaction(&session);
+        let messages = if super::refinement_gate::enabled(Some(&refinement_settings)) {
+            messages
+        } else {
+            super::refinement_gate::without_refinements(messages)
+        };
         let has_thinking_entry = session.has_thinking_level();
         let has_service_tier_entry = session.has_service_tier();
         (messages, has_thinking_entry, has_service_tier_entry)
@@ -925,7 +963,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // else (the harness digest included) becomes a user turn.
         convert_to_llm: Some(super::request_timing::instrument_convert_to_llm(
             std::sync::Arc::clone(&request_timing_wiring),
-            super::messages::engine_convert_to_llm(),
+            super::refinement_gate::convert_to_llm(refinement_settings.reopen()),
         )),
         // The Rust engine wires no transform, so the instrumented seam
         // wraps a pass-through that marks the turn's dispatch moment.
@@ -1016,7 +1054,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent.clone(),
         wiring.session.clone(),
         resources.prompts.clone(),
-        Some(digest_context),
+        super::refinement_gate::enabled(Some(&refinement_settings))
+            .then_some(digest_context.clone()),
     )
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
@@ -1038,10 +1077,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         crate::features::installed(),
         &feature_context,
     ));
+    // Keep the context descriptor even while disabled, so re-enabling can load it.
+    session.harness_digest = Some(digest_context);
+    session.refinement_settings = Some(refinement_settings);
+    // A disabled startup has never delivered its filtered digest. Defer that
+    // first delivery without re-arming digests already consumed in a live session.
+    if !session.harness_refinements_enabled() {
+        session
+            .digest_pending
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
     session.set_compaction_settings(crate::session_engine::compaction::CompactionSettings {
+        threshold_percent: compaction_threshold_percent,
         enabled: compaction_settings.enabled.unwrap_or(true),
         reserve_tokens: compaction_settings
             .reserve_tokens

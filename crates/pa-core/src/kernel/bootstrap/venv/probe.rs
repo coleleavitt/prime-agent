@@ -28,6 +28,9 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
         .stderr(Stdio::null());
     // Hidden window on Windows (TS `spawnHidden`).
     crate::platform::process::set_no_window(&mut child);
+    if cfg!(windows) {
+        child.env("PYTHONUTF8", "1");
+    }
     // A transiently busy interpreter (being rewritten) is not a broken
     // runtime: the spawn rides out ETXTBSY before judging.
     matches!(

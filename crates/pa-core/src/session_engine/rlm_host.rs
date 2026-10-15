@@ -220,7 +220,6 @@ pub struct RlmSpawnRequest {
     /// placement contract). `Local` when the kwarg is omitted — the only
     /// placement a host admits until the cloud backend exists.
     pub target: RlmSpawnTarget,
-    pub cell_source_code: Option<String>,
     /// The parent's plan mode at spawn; the child starts in it.
     pub plan_mode: bool,
     /// The child's delegation grant (upstream #1192), drawn from this
@@ -740,11 +739,7 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
         "rlm.run",
         host_handler(move |payload| {
             let bridge = Arc::clone(&bridge);
-            Box::pin(async move {
-                bridge
-                    .spawn_from_payload(&payload.data, payload.cell_source_code.clone())
-                    .await
-            })
+            Box::pin(async move { bridge.spawn_from_payload(&payload.data).await })
         }),
     );
 }
@@ -767,16 +762,11 @@ impl RlmHostBridge {
     ///
     /// The payload's validation errors, the gates' refusals, a budget
     /// refusal, or the host's spawn failure.
-    pub async fn spawn_from_payload(
-        &self,
-        data: &Value,
-        cell_source_code: Option<String>,
-    ) -> anyhow::Result<Value> {
+    pub async fn spawn_from_payload(&self, data: &Value) -> anyhow::Result<Value> {
         let Some(prompt) = data.get("prompt").and_then(Value::as_str) else {
             anyhow::bail!("rlm.spawn prompt must be a string");
         };
         let mut request = spawn_request_from_payload(prompt, data)?;
-        request.cell_source_code = cell_source_code;
         // A child spawned during plan mode must not be an edit
         // escape hatch.
         request.plan_mode = self
@@ -872,7 +862,6 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         thinking,
         spawned_by_request_id: None,
         target: target.unwrap_or_default(),
-        cell_source_code: None,
         plan_mode: false,
         token_budget,
     })
@@ -1358,10 +1347,7 @@ mod tests {
     }
 
     fn payload(data: Value) -> HostRequestPayload {
-        HostRequestPayload {
-            data,
-            cell_source_code: None,
-        }
+        HostRequestPayload { data }
     }
 
     async fn call(

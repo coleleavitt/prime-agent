@@ -28,6 +28,19 @@ fn row_texts(lines: &[Line]) -> Vec<String> {
         .collect()
 }
 
+/// A list's item text lines in source order, nested levels included (a list
+/// block keeps its rows on its items, not on `Block::lines`).
+fn list_texts(list: &ListBlock) -> Vec<String> {
+    list.items
+        .iter()
+        .flat_map(|item| &item.parts)
+        .flat_map(|part| match part {
+            ListPart::Text(text) | ListPart::LazyText(text) => vec![text.clone()],
+            ListPart::List(child) => list_texts(child),
+        })
+        .collect()
+}
+
 /// The blocks in marked's vocabulary: `[type, blank line before, row texts]`.
 fn block_shape(block: &Block) -> Value {
     let (kind, rows): (&str, Vec<String>) = match &block.kind {
@@ -48,8 +61,8 @@ fn block_shape(block: &Block) -> Value {
                 .collect(),
         ),
         BlockKind::Code { .. } => ("code", block.lines.clone()),
-        BlockKind::Heading => ("heading", block.lines.clone()),
-        BlockKind::List { .. } => ("list", block.lines.clone()),
+        BlockKind::Heading { .. } => ("heading", block.lines.clone()),
+        BlockKind::List(list) => ("list", list_texts(list)),
         BlockKind::Quote => ("blockquote", block.lines.clone()),
         BlockKind::Hr => ("hr", Vec::new()),
         BlockKind::Table { .. } => ("table", block.lines.clone()),

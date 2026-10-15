@@ -162,6 +162,9 @@ impl SupervisorChildSessionsInner {
                 None,
                 Some(runtime_metadata),
                 &identity,
+                // A delegated child runs in the parent worker's env, as an
+                // `rlm.spawn` child does.
+                Some(pa_types::daemon::launch_env::collect_process_launch_env()),
             )
             .await
         {

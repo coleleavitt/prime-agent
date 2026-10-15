@@ -22,10 +22,7 @@ fn call(handlers: &HostRequestHandlers, request_type: &str, data: Value) -> anyh
         .clone();
     tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(handler(HostRequestPayload {
-            data,
-            cell_source_code: None,
-        }))
+        .block_on(handler(HostRequestPayload { data }))
 }
 
 /// The engine of a daemon-backed text-only session with its self-arc

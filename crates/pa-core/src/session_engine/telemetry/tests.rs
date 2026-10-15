@@ -1519,7 +1519,6 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
             "name": "computer_use_session_started",
             "properties": { "platform": "mac" }
         }),
-        cell_source_code: None,
     })
     .await
     .unwrap();
@@ -1546,7 +1545,6 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
             "name": "not a catalogued event",
             "properties": {}
         }),
-        cell_source_code: None,
     })
     .await
     .unwrap();
@@ -1557,14 +1555,12 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
             "name": "agent error",
             "properties": { "error_message": "private screen text" }
         }),
-        cell_source_code: None,
     })
     .await
     .unwrap();
     assert_eq!(response, serde_json::json!({ "emitted": false }));
     let response = emit(HostRequestPayload {
         data: serde_json::json!({ "type": "telemetry.emit" }),
-        cell_source_code: None,
     })
     .await
     .unwrap();
@@ -1578,7 +1574,6 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
             "name": "computer_use_session_started",
             "properties": { "platform": "linux" }
         }),
-        cell_source_code: None,
     })
     .await
     .unwrap();

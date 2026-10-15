@@ -7,6 +7,19 @@ use crate::Line;
 use crate::chat::{ChatEntry, render_loader};
 use crate::chrome::render_splash;
 
+/// The rendering options that affect cached entry rows, shared by local entry caches and
+/// cross-view handoffs: theme, code-block indent, Mermaid mode, image rows, the fullscreen
+/// image fallback, the inline-image geometry inputs, and the link base (the session cwd).
+pub(super) type LayoutOptions = (
+    crate::theme::Theme,
+    String,
+    crate::markdown::MermaidMode,
+    bool,
+    bool,
+    crate::inline_image::LayoutKey,
+    Option<url::Url>,
+);
+
 #[cfg(test)]
 thread_local! {
     pub(super) static ENTRY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -326,6 +339,7 @@ impl AgentView {
             self.show_images,
             crate::image_component::fullscreen_image_fallback_active(),
             crate::inline_image::layout_key(),
+            url::Url::from_directory_path(&self.chrome.cwd).ok(),
         );
         if self.layout_width != width || self.layout_options.as_ref() != Some(&options) {
             self.entry_heights.clear();

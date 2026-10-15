@@ -314,13 +314,23 @@ pub fn render_user_block(
     code_block_indent: &str,
     width: usize,
 ) -> Vec<Line> {
+    let mut md = crate::markdown::MarkdownStyle::from_theme(theme);
+    md.code_block_indent = code_block_indent.to_string();
+    render_user_block_with_style(text, theme, &md, width)
+}
+
+/// The view supplies its session cwd through Markdown style, keeping href resolution local.
+pub(crate) fn render_user_block_with_style(
+    text: &str,
+    theme: &Theme,
+    md: &crate::markdown::MarkdownStyle,
+    width: usize,
+) -> Vec<Line> {
     let bg = theme.bg_style(ThemeBg::UserMessageBg);
     let content_width = width.saturating_sub(4).max(1);
     let body = theme.fg_style(ThemeColor::UserMessageText);
-    let mut md = crate::markdown::MarkdownStyle::from_theme(theme);
-    md.code_block_indent = code_block_indent.to_string();
     let mask = geometry::user_mask(text);
-    let rendered = crate::markdown::render_markdown(&mask.text, content_width, &md);
+    let rendered = crate::markdown::render_markdown(&mask.text, content_width, md);
     let mut rows: Vec<Line> = Vec::new();
     let blank = vec![Span::styled(" ".repeat(width), bg)];
     rows.push(blank.clone());
@@ -378,25 +388,47 @@ pub fn render_assistant(
     preceded_by_tool_activity: bool,
     cache: &mut crate::markdown::MarkdownBlockCache,
 ) -> Vec<Line> {
-    let visible_blocks = geometry::visible_blocks(message, detail);
-    let has_visible_content = !visible_blocks.is_empty();
-    let mut out: Vec<Line> = Vec::new();
-    if has_visible_content {
-        out.push(spacer());
-    }
     let mut md = crate::markdown::MarkdownStyle::from_theme(theme);
     md.code_block_indent = code_block_indent.to_string();
     md.mermaid = Some(crate::markdown::MermaidRender {
         mode: mermaid,
         streaming: message.streaming,
     });
+    render_assistant_with_style(
+        message,
+        detail,
+        theme,
+        &md,
+        width,
+        preceded_by_tool_activity,
+        cache,
+    )
+}
+
+/// Render with the owning view's session-local Markdown context. Mermaid fences render per
+/// `md.mermaid`, which the caller sets for this message (`None` keeps them as code).
+pub(crate) fn render_assistant_with_style(
+    message: &AssistantMessage,
+    detail: Detail,
+    theme: &Theme,
+    md: &crate::markdown::MarkdownStyle,
+    width: usize,
+    preceded_by_tool_activity: bool,
+    cache: &mut crate::markdown::MarkdownBlockCache,
+) -> Vec<Line> {
+    let visible_blocks = geometry::visible_blocks(message, detail);
+    let has_visible_content = !visible_blocks.is_empty();
+    let mut out: Vec<Line> = Vec::new();
+    if has_visible_content {
+        out.push(spacer());
+    }
     for (index, block) in visible_blocks.iter().enumerate() {
         match block {
             MessageBlock::Text(text) => {
-                out.extend(render_markdown_block(text, &md, width, cache));
+                out.extend(render_markdown_block(text, md, width, cache));
             }
             MessageBlock::Thinking(text) => {
-                out.extend(render_thinking_block(text, theme, &md, width, cache));
+                out.extend(render_thinking_block(text, theme, md, width, cache));
                 // Thinking adds spacing only when another visible block follows.
                 if index + 1 < visible_blocks.len() {
                     out.push(spacer());

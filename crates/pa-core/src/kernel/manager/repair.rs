@@ -172,7 +172,6 @@ impl Inner {
             Request::Execute {
                 code: code.to_string(),
             },
-            code,
             ExecuteOptions {
                 internal: true,
                 protocol_repair: true,

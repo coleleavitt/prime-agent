@@ -7,7 +7,12 @@ use super::AgentView;
 #[cfg(test)]
 use super::layout;
 use crate::Line;
-use crate::chat::{ChatEntry, render_assistant, render_text_rows, render_user_block};
+use crate::chat::{
+    ChatEntry,
+    render_assistant_with_style,
+    render_text_rows,
+    render_user_block_with_style,
+};
 use crate::theme::ThemeColor;
 
 /// TS `getSpacingContent`: an assistant message's conversation-spacing
@@ -112,6 +117,9 @@ impl AgentView {
                 rows
             }
             ChatEntry::User { text } => {
+                let mut md = crate::markdown::MarkdownStyle::from_theme(&self.theme);
+                md.code_block_indent.clone_from(&self.code_block_indent);
+                md.link_base_url = url::Url::from_directory_path(&self.chrome.cwd).ok();
                 let mut rows = Vec::new();
                 // TS `addMessageToChat`: a user submission leads with `Spacer(1)` EXCEPT the
                 // skill invocation's argument text, which joins the card below.
@@ -120,12 +128,7 @@ impl AgentView {
                 if !first && !follows_skill_card {
                     rows.push(Vec::new());
                 }
-                rows.extend(render_user_block(
-                    text,
-                    &self.theme,
-                    &self.code_block_indent,
-                    width,
-                ));
+                rows.extend(render_user_block_with_style(text, &self.theme, &md, width));
                 rows
             }
             ChatEntry::SlashCommand { text } => {
@@ -167,17 +170,23 @@ impl AgentView {
                 rows
             }
             ChatEntry::Assistant(message) => {
+                let mut md = crate::markdown::MarkdownStyle::from_theme(&self.theme);
+                md.code_block_indent.clone_from(&self.code_block_indent);
+                md.link_base_url = url::Url::from_directory_path(&self.chrome.cwd).ok();
+                md.mermaid = Some(crate::markdown::MermaidRender {
+                    mode: self.mermaid_mode,
+                    streaming: message.streaming,
+                });
                 // The per-entry block cache (TS's per-component `blockCache`): a streaming
                 // message's settled blocks replay per frame; a settled message drops the copy.
                 if message.streaming {
                     let mut caches = self.md_caches.borrow_mut();
                     let cache = caches.entry(index).or_default();
-                    render_assistant(
+                    render_assistant_with_style(
                         message,
                         detail,
                         &self.theme,
-                        &self.code_block_indent,
-                        self.mermaid_mode,
+                        &md,
                         width,
                         preceded_by_tool_activity,
                         cache,
@@ -185,12 +194,11 @@ impl AgentView {
                 } else {
                     self.md_caches.borrow_mut().remove(&index);
                     let mut settled = crate::markdown::MarkdownBlockCache::default();
-                    render_assistant(
+                    render_assistant_with_style(
                         message,
                         detail,
                         &self.theme,
-                        &self.code_block_indent,
-                        self.mermaid_mode,
+                        &md,
                         width,
                         preceded_by_tool_activity,
                         &mut settled,

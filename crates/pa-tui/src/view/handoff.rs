@@ -7,21 +7,10 @@ use std::sync::{Mutex, OnceLock};
 
 use super::AgentView;
 use super::layout::EntryLayout;
-use crate::theme::Theme;
 
 /// The render-shape inputs a packed layout's rows depend on: the width
 /// plus the view's `layout_options` tuple.
-pub(super) type LayoutShape = (usize, LayoutOptions);
-/// The rendering options that affect cached entry rows: theme, code-block indent, Mermaid
-/// mode, image rows, the fullscreen image fallback, and the inline-image geometry inputs.
-pub(super) type LayoutOptions = (
-    Theme,
-    String,
-    crate::markdown::MermaidMode,
-    bool,
-    bool,
-    crate::inline_image::LayoutKey,
-);
+pub(super) type LayoutShape = (usize, super::layout::LayoutOptions);
 
 /// One visible-window entry's held layouts, per detail slot (a pack is
 /// valid for the slot it was built under).

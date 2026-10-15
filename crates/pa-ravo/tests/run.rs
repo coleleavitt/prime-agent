@@ -145,11 +145,7 @@ fn session_at_depth(model: Scripted, artifacts: bool, rlm_depth: u32) -> Session
 impl Session {
     async fn call(&self, kind: &str, data: Value) -> anyhow::Result<Value> {
         let handler = self.handlers.get(kind).expect("registered").clone();
-        handler(HostRequestPayload {
-            data,
-            cell_source_code: None,
-        })
-        .await
+        handler(HostRequestPayload { data }).await
     }
 
     /// Read `ravo.status` until the run settled.

@@ -1039,7 +1039,6 @@ async fn an_untrusted_project_mcp_server_never_starts() {
         let handler = handlers.get("mcp.session.call_tool").unwrap().clone();
         let reply = handler(crate::kernel::shared::HostRequestPayload {
             data: serde_json::json!({ "server": "evil", "tool": "t", "arguments": {} }),
-            cell_source_code: None,
         })
         .await
         .unwrap();

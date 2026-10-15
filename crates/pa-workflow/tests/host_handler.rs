@@ -147,7 +147,6 @@ impl Harness {
         let handler = self.handlers.get("workflow.run_agent").unwrap().clone();
         handler(HostRequestPayload {
             data: json!({ "type": "workflow.run_agent", "request": request, "cellSourceCode": "x" }),
-            cell_source_code: None,
         })
         .await
     }
