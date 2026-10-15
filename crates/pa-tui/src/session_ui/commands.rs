@@ -59,13 +59,17 @@ impl SessionUi {
         match name.as_str() {
             "help" => {
                 self.note(
-                    "/help           this list\n/list           live sessions\n/switch <n|id>  switch to a session from /list\n/switch         switch this session's model, keeping the saved default\n/new            start a new session\n/exit           detach and exit",
+                    "/help           this list\n/list           live sessions\n/search <text>  find in the transcript (F3 older, Shift+F3 newer, Esc clears)\n/switch <n|id>  switch to a session from /list\n/switch         switch this session's model, keeping the saved default\n/new            start a new session\n/exit           detach and exit",
                     view,
                 );
                 return Ok(());
             }
             "list" => {
                 self.refresh_list(view).await?;
+                return Ok(());
+            }
+            "search" => {
+                self.start_search(&args, view);
                 return Ok(());
             }
             // `/switch <n|id>` moves to another live session; bare `/switch` falls through to the

@@ -21,8 +21,10 @@ use super::{
     key_event_to_id,
 };
 
-/// How long the Ctrl+C exit hint arms the second-press exit.
-const CTRL_C_EXIT_HINT_MS: u64 = 2_000;
+/// How long the Ctrl+C exit hint arms the second-press exit (Claude Code's
+/// double-press window: short enough that two presses meant to stop a turn
+/// and then clear the editor do not read as an exit).
+const CTRL_C_EXIT_HINT_MS: u64 = 800;
 /// How long a drag must hold the window edge before auto-scroll starts.
 const SELECTION_AUTO_SCROLL_DELAY: Duration = Duration::from_millis(150);
 
@@ -76,8 +78,41 @@ impl SessionUi {
             .is_some_and(|until| Instant::now() < until)
     }
 
-    fn show_ctrl_c_hint(&mut self) {
+    fn show_ctrl_c_hint(&mut self, action: &'static str) {
         self.ctrl_c_hint_until = Some(Instant::now() + Duration::from_millis(CTRL_C_EXIT_HINT_MS));
+        self.ctrl_c_hint_action = action;
+    }
+
+    /// The exit-hint key's action (`app.clear` for Ctrl+C, `app.exit` for
+    /// Ctrl+D): the tray names the key that armed it.
+    pub(crate) fn ctrl_c_hint_action(&self) -> &'static str {
+        self.ctrl_c_hint_action
+    }
+
+    /// Whether a Ctrl+C now has work to interrupt: a turn, a compaction, a
+    /// user bash command, or a side question. Such a press only interrupts;
+    /// it never arms the exit.
+    fn has_interruptible_work(&self, view: &AgentView) -> bool {
+        self.turn_active
+            || view.compaction.is_some()
+            || self.user_bash_running
+            || self.active_side_question_id.is_some()
+    }
+
+    /// Up on an empty editor restores the draft the last Ctrl+C cleared.
+    pub(super) fn restore_cleared_draft(&mut self, view: &mut AgentView) -> bool {
+        match self.cleared_draft.take() {
+            Some(draft) if view.editor.get_text().is_empty() => {
+                view.editor.set_text(&draft);
+                self.dirty = true;
+                true
+            }
+            Some(draft) => {
+                self.cleared_draft = Some(draft);
+                false
+            }
+            None => false,
+        }
     }
 
     /// Disarm the hint: escape, editing text, or shutdown.
@@ -128,6 +163,7 @@ impl SessionUi {
         }
         if let Some(delta) = crate::mouse::wheel_scroll_delta(&event) {
             if !overlay_focused {
+                let delta = self.wheel_acceleration.step(delta.signum(), Instant::now());
                 view.scroll_by(delta);
                 self.dirty = true;
             }
@@ -455,18 +491,21 @@ impl SessionUi {
                 kb.matches(&id, "tui.viewport.follow"),
             )
         };
+        // A page key moves half a viewport (Claude Code's step): the rows read
+        // last stay on screen for context.
+        let half_page = (view.page_size() / 2).max(1) as isize;
         if page_up {
             // The viewport consumes the key before the editor, so a selection must
             // collapse here or it survives the scroll as a stale replace range.
             view.editor.clear_selection();
-            view.scroll_by(-(view.page_size() as isize));
+            view.scroll_by(-half_page);
             self.track_scroll("page_up", view.is_following());
             self.dirty = true;
             return Ok(());
         }
         if page_down {
             view.editor.clear_selection();
-            view.scroll_by(view.page_size() as isize);
+            view.scroll_by(half_page);
             self.track_scroll("page_down", view.is_following());
             self.dirty = true;
             return Ok(());
@@ -556,6 +595,10 @@ impl SessionUi {
                 return Ok(());
             }
             self.clear_ctrl_c_hint();
+            // A shown search match takes the first Escape: the highlight clears.
+            if self.clear_search(view) {
+                return Ok(());
+            }
             // An open side-question pane owns the key: the running turn aborts and
             // the pane closes; the armed escape-repeat disarms first.
             if view.side_pane.is_some() {
@@ -603,9 +646,19 @@ impl SessionUi {
             self.interrupt_running_work(view);
             return Ok(());
         }
+        // Ctrl+D on an empty editor: the same double press as Ctrl+C (an
+        // interrupt while work runs, then the exit hint, then the exit).
         if view.editor.keybindings().matches(&id, "app.exit") && view.editor.get_text().is_empty() {
-            self.exit_reason = "ctrl_d";
-            *running = false;
+            if self.has_interruptible_work(view) {
+                self.interrupt_running_work(view);
+                self.clear_ctrl_c_hint();
+            } else if self.ctrl_c_hint_visible() && self.ctrl_c_hint_action == "app.exit" {
+                self.exit_reason = "ctrl_d";
+                *running = false;
+            } else {
+                self.show_ctrl_c_hint("app.exit");
+            }
+            self.dirty = true;
             return Ok(());
         }
         // `app.interrupt` routes through the `app.clear` handlers; only the
@@ -622,13 +675,54 @@ impl SessionUi {
                 self.clear_ctrl_c_hint();
                 return Ok(());
             }
-            // A second press inside the hint window shuts down unconditionally —
-            // no turn wait, no abort wait.
-            if self.ctrl_c_hint_visible() && !interrupt {
-                self.exit_reason = "ctrl_c_twice";
-                *running = false;
+            // A selection makes the press a copy (Claude Code's rule): it neither
+            // interrupts nor arms the exit. The transcript selection first, then
+            // the editor's.
+            if !interrupt && view.has_selection() {
+                if let Some(text) = view.end_active_selection() {
+                    self.copy_selection(&text, view);
+                }
+                self.dirty = true;
                 return Ok(());
             }
+            if !interrupt && view.editor.has_selection() {
+                if let Some(text) = view.editor.copy_selection() {
+                    self.copy_selection(&text, view);
+                }
+                self.dirty = true;
+                return Ok(());
+            }
+            // A press with work to interrupt only interrupts (Claude Code's rule):
+            // stopping a turn never arms the exit, so pressing twice to stop a
+            // stubborn turn cannot quit mid-abort.
+            let busy = self.has_interruptible_work(view);
+            if !busy {
+                // A second press inside the hint window exits.
+                if self.ctrl_c_hint_visible() && !interrupt {
+                    self.exit_reason = "ctrl_c_twice";
+                    *running = false;
+                    return Ok(());
+                }
+                // A queue browse ends first, its stashed draft restored: the
+                // press acts on the user's own draft.
+                if self.queue_selection.has_draft() || self.queue_selection.is_browsing() {
+                    let draft = self.queue_selection.reset();
+                    view.editor.set_text(&draft);
+                    self.sync_queue_selection(view);
+                }
+                // The first press clears the editor into a slot Up restores.
+                let draft = view.editor.get_text();
+                if !draft.is_empty() {
+                    self.cleared_draft = Some(draft);
+                    view.editor.set_text("");
+                }
+                if !interrupt {
+                    self.show_ctrl_c_hint("app.clear");
+                }
+                self.dirty = true;
+                return Ok(());
+            }
+            self.clear_ctrl_c_hint();
             // A running side question aborts first; the pane stays mounted and renders the
             // cancelled turn when the terminal event streams back.
             if let Some(side_question_id) = self.active_side_question_id.clone() {
@@ -650,7 +744,6 @@ impl SessionUi {
                 });
             }
             self.interrupt_running_work(view);
-            self.show_ctrl_c_hint();
             self.dirty = true;
             return Ok(());
         }
@@ -811,6 +904,52 @@ impl SessionUi {
                 self.dirty = true;
                 return Ok(());
             }
+        }
+        {
+            let kb = view.editor.keybindings();
+            let step = if kb.matches(&id, "app.search.older") {
+                Some(super::search::SearchStep::Older)
+            } else if kb.matches(&id, "app.search.newer") {
+                Some(super::search::SearchStep::Newer)
+            } else {
+                None
+            };
+            if let Some(step) = step {
+                self.step_search(Some(step), view);
+                return Ok(());
+            }
+        }
+        if view
+            .editor
+            .keybindings()
+            .matches(&id, "app.message.sendNow")
+        {
+            view.editor.cancel_autocomplete();
+            self.send_now(view).await?;
+            return Ok(());
+        }
+        if view
+            .editor
+            .keybindings()
+            .matches(&id, "app.message.clearQueue")
+        {
+            self.clear_queue(view).await?;
+            return Ok(());
+        }
+        // Up on an empty editor: the draft the last Ctrl+C cleared comes back,
+        // else the human-typed queued messages come out of the queue into the
+        // editor (history browses only when neither exists).
+        if view
+            .editor
+            .keybindings()
+            .matches(&id, "tui.editor.cursorUp")
+            && view.editor.get_text().is_empty()
+            && !view.editor.is_showing_autocomplete()
+            && !view.editor.is_history_navigation_active()
+            && !self.queue_selection.is_browsing()
+            && (self.restore_cleared_draft(view) || self.pull_queue_into_editor(view).await?)
+        {
+            return Ok(());
         }
         {
             let (older, newer, earlier, later) = {
@@ -1026,6 +1165,10 @@ pub(crate) fn opening_echo_key_claimed(
         || kb.matches(id, "app.prompt.stash")
         || kb.matches(id, "app.session.new")
         || kb.matches(id, "app.session.resume")
+        || kb.matches(id, "app.message.sendNow")
+        || kb.matches(id, "app.search.older")
+        || kb.matches(id, "app.search.newer")
+        || kb.matches(id, "app.message.clearQueue")
         || kb.matches(id, "app.message.navigateOlder")
         || kb.matches(id, "app.message.navigateNewer")
         || kb.matches(id, "app.message.moveEarlier")
@@ -1188,6 +1331,8 @@ mod opening_echo_claim_tests {
             "alt+up",
             "alt+down",
             "alt+enter",
+            "ctrl+enter",
+            "ctrl+alt+x",
         ] {
             assert!(
                 opening_echo_key_claimed(&kb, id, &editor),

@@ -18,6 +18,7 @@ mod notes;
 mod panels;
 mod prompt;
 mod queue;
+mod search;
 mod sessions_fork;
 mod settings;
 mod share;
@@ -368,6 +369,17 @@ pub(crate) struct SessionUi {
     /// The Ctrl+C exit hint: a second press inside the window terminates
     /// the client, regardless of turn state.
     ctrl_c_hint_until: Option<Instant>,
+    /// The action whose key armed the exit hint (`app.clear` / `app.exit`).
+    ctrl_c_hint_action: &'static str,
+    /// The draft the last idle Ctrl+C cleared; Up on an empty editor restores it.
+    cleared_draft: Option<String>,
+    /// The active `/search` query (see [`search`]).
+    search_query: Option<String>,
+    /// The mouse wheel's acceleration ramp.
+    wheel_acceleration: crate::mouse::WheelAcceleration,
+    /// A send-now submit (by its expected turn end) whose admission
+    /// interrupts the running turn.
+    send_now_after: Option<u64>,
     pub(crate) goal_view: GoalView,
     notes: mpsc::UnboundedSender<String>,
     compaction_abort_notes: mpsc::UnboundedSender<CompactionAbortNote>,

@@ -198,6 +198,123 @@ impl SessionUi {
     }
 }
 
+impl SessionUi {
+    /// Up on an empty editor (Claude Code's "press up to edit queued
+    /// messages"): every human-typed parked message leaves the queue and lands
+    /// in the editor, oldest first, one per line, so it can be reworked or
+    /// dropped before it is sent. Each leaves through a `delete` checked
+    /// against its text: one delivered meanwhile stays out of the editor.
+    /// `false` when nothing human-typed is parked.
+    pub(crate) async fn pull_queue_into_editor(&mut self, view: &mut AgentView) -> Result<bool> {
+        let items: Vec<_> = crate::queued::flatten(&view.queued)
+            .into_iter()
+            .filter(|item| !item.internal)
+            .collect();
+        if items.is_empty() {
+            return Ok(false);
+        }
+        // Newest first, so each delete leaves the earlier indices in place.
+        let mut pulled = Vec::new();
+        let mut missed = 0;
+        for item in items.iter().rev() {
+            match self
+                .queue_mutation(
+                    item.lane,
+                    item.index,
+                    &item.text,
+                    serde_json::json!({ "type": "delete" }),
+                )
+                .await
+            {
+                Ok(Some(status)) if status == "applied" => pulled.push(item.text.clone()),
+                Ok(_) | Err(_) => missed += 1,
+            }
+        }
+        pulled.reverse();
+        if !pulled.is_empty() {
+            self.emit_queue_edit("pull");
+            view.editor.set_text(&pulled.join("\n"));
+        }
+        if missed > 0 {
+            self.note(
+                &format!(
+                    "{missed} queued message{} had already been sent",
+                    if missed == 1 { "" } else { "s" }
+                ),
+                view,
+            );
+        }
+        self.dirty = true;
+        Ok(true)
+    }
+
+    /// The send-now key: the editor's text, when any, joins the steering lane,
+    /// and a running turn is interrupted so the queue goes out at once (the
+    /// abort delivers the parked steering messages as the next turn). A new
+    /// message is sent first and the interrupt waits for the daemon to admit
+    /// it (see [`Self::apply_prompt_outcome`]), so it rides the abort.
+    pub(crate) async fn send_now(&mut self, view: &mut AgentView) -> Result<()> {
+        if self.queue_selection.is_browsing() {
+            // A browsed message is applied first, then sent with the rest.
+            let text = view.editor.get_text();
+            self.apply_queue_selection(&text, QueueLane::Steering, view)
+                .await?;
+        } else {
+            let text = view.editor.get_text();
+            if !text.trim().is_empty() {
+                view.editor.set_text("");
+                view.editor.add_to_history(&text);
+                let in_flight = self.prompt_in_flight;
+                self.submit_prompt(&text, super::SubmitBehavior::Steer, view)
+                    .await?;
+                if self.turn_active && self.prompt_in_flight > in_flight {
+                    self.send_now_after = Some(self.last_prompt_turn_end);
+                    self.dirty = true;
+                    return Ok(());
+                }
+            }
+        }
+        if self.turn_active {
+            self.interrupt_running_work(view);
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// The clear-queue key: drop every parked message (the running turn keeps
+    /// going).
+    pub(crate) async fn clear_queue(&mut self, view: &mut AgentView) -> Result<()> {
+        if view.queued.is_empty() {
+            self.note("The queue is empty", view);
+            return Ok(());
+        }
+        if self.queue_selection.is_browsing() {
+            let draft = self.queue_selection.reset();
+            view.editor.set_text(&draft);
+            self.sync_queue_selection(view);
+        }
+        let result = self
+            .bounded_request(
+                Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
+                DaemonCommand::ClearQueue {
+                    id: None,
+                    active_session_id: self.active_session_id.clone(),
+                    rest: Map::default(),
+                },
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                self.emit_queue_edit("clear");
+                self.note("Queue cleared", view);
+            }
+            Err(error) => self.note(&format!("{error:#}"), view),
+        }
+        self.dirty = true;
+        Ok(())
+    }
+}
+
 /// The mutation status vocabulary (`applied`, `rejected`, `invalid`,
 /// `unsupported`) maps to the status rows; `is_edit` picks the edit phrasing.
 fn queue_mutation_status_note(status: &str, is_edit: bool) -> String {

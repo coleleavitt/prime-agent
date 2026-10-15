@@ -905,6 +905,7 @@ impl SessionUi {
         if streaming {
             if starts_message {
                 self.working_tokens.start_message();
+                view.note_new_message();
             }
             let content_chars: u64 = blocks
                 .iter()

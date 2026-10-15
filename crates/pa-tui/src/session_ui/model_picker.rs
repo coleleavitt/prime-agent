@@ -106,8 +106,16 @@ impl SessionUi {
     /// while the agent streams with a draft.
     pub(crate) fn tray_override(&self, view: &AgentView) -> Option<String> {
         if self.ctrl_c_hint_visible() {
-            let key = self.keybindings.first_key("app.clear").map_or_else(
-                || "Ctrl+C".to_string(),
+            let action = self.ctrl_c_hint_action();
+            let key = self.keybindings.first_key(action).map_or_else(
+                || {
+                    if action == "app.exit" {
+                        "Ctrl+D"
+                    } else {
+                        "Ctrl+C"
+                    }
+                    .to_string()
+                },
                 |key| crate::keybindings::format_key_text(&key),
             );
             return Some(format!("Press {key} again to exit"));

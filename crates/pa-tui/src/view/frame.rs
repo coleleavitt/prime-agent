@@ -194,7 +194,8 @@ impl AgentView {
         self.window_rows = window_height;
         // The selection restyle diff: only the rows the selection change
         // touched re-style.
-        let window_rows = self.selection_styled_window(window_rows, start);
+        let mut window_rows = self.selection_styled_window(window_rows, start);
+        self.paint_search_highlight(&mut window_rows, start);
         let mut frame: Vec<Line> = Vec::with_capacity(height);
         frame.push(pad_row(top, width));
         for line in window_rows {
@@ -233,6 +234,9 @@ impl AgentView {
         }
         // A paused viewport carries the follow hint over the last window row — only when
         // following would actually scroll (operator directive 2026-09-26).
+        if self.following {
+            self.unseen_messages = 0;
+        }
         if !self.following && !self.window_shows_tail {
             if let Some(row) = frame.get_mut(window_height) {
                 let key = self
@@ -240,7 +244,7 @@ impl AgentView {
                     .keybindings()
                     .first_key("tui.viewport.follow")
                     .unwrap_or_else(|| "ctrl+shift+down".to_string());
-                let label = format!(" {key} to follow ");
+                let label = follow_hint_label(self.unseen_messages, &key);
                 *row = composite_follow_hint(row, &label, width);
                 // The hint's row never reads as the content beneath it.
                 self.click.mask_rows(window_height, window_height + 1);
@@ -384,4 +388,33 @@ pub(super) fn composite_follow_hint(row: &Line, label: &str, width: usize) -> Li
         true,
     ));
     out
+}
+
+/// The paused viewport's follow hint: Claude Code's "N new messages" when
+/// assistant messages arrived while paused, else the plain follow key.
+fn follow_hint_label(unseen: usize, key: &str) -> String {
+    match unseen {
+        0 => format!(" {key} to follow "),
+        1 => format!(" 1 new message \u{2193} {key} "),
+        n => format!(" {n} new messages \u{2193} {key} "),
+    }
+}
+
+#[cfg(test)]
+mod follow_hint_tests {
+    #[test]
+    fn the_hint_counts_new_messages() {
+        assert_eq!(
+            super::follow_hint_label(0, "ctrl+shift+down"),
+            " ctrl+shift+down to follow "
+        );
+        assert_eq!(
+            super::follow_hint_label(1, "k"),
+            " 1 new message \u{2193} k "
+        );
+        assert_eq!(
+            super::follow_hint_label(3, "k"),
+            " 3 new messages \u{2193} k "
+        );
+    }
 }

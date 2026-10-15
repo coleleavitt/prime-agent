@@ -487,6 +487,35 @@ fn follow_hint_shows_when_paused_and_hides_when_following() {
     assert!(top_frame.iter().any(|l| row_text(l).contains("to follow")));
 }
 
+/// Assistant messages that start while paused are counted on the follow
+/// hint; following clears the count.
+#[test]
+fn the_follow_hint_counts_messages_that_arrived_while_paused() {
+    let mut v = filled(view(), 30);
+    v.note_new_message();
+    v.render_frame(80, 24);
+    v.scroll_by(-(v.page_size() as isize));
+    v.note_new_message();
+    v.note_new_message();
+    let paused: Vec<String> = v.render_frame(80, 24).iter().map(row_text).collect();
+    assert!(
+        paused
+            .iter()
+            .any(|l| l.contains("2 new messages \u{2193} ctrl+shift+down")),
+        "{paused:?}"
+    );
+    v.scroll_to_bottom();
+    v.render_frame(80, 24);
+    v.scroll_by(-(v.page_size() as isize));
+    let again: Vec<String> = v.render_frame(80, 24).iter().map(row_text).collect();
+    assert!(
+        again
+            .iter()
+            .any(|l| l.contains("ctrl+shift+down to follow")),
+        "{again:?}"
+    );
+}
+
 /// A transcript with thinking blocks: long in `all`/`details`, short in `overview` (thinking
 /// hidden).
 fn thinking_filled(v: AgentView, turns: usize) -> AgentView {

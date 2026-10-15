@@ -499,7 +499,7 @@ pub fn mirror_lane_move(queue: &mut QueuedMessages, lane: QueueLane, index: usiz
     }
 }
 
-fn flatten(queue: &QueuedMessages) -> Vec<QueueSelectionItem> {
+pub(crate) fn flatten(queue: &QueuedMessages) -> Vec<QueueSelectionItem> {
     let item = |lane: QueueLane, index: usize, text: &str| QueueSelectionItem {
         lane,
         index,

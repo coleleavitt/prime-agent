@@ -93,6 +93,53 @@ pub(crate) fn wheel_scroll_delta(event: &MouseEvent) -> Option<isize> {
 /// configurable), which jumps on terminals and trackpads that send several reports per notch.
 const WHEEL_SCROLL_LINES: isize = 1;
 
+/// Wheel reports closer together than this continue one scroll gesture.
+const WHEEL_GESTURE_GAP: std::time::Duration = std::time::Duration::from_millis(60);
+/// Reports in one gesture before the step grows by a row.
+const WHEEL_RAMP_REPORTS: u32 = 4;
+/// The largest step acceleration reaches (rows per report, before the speed).
+const WHEEL_MAX_STEP: isize = 6;
+/// The scroll-speed multiplier's environment knob (1 to 20, default 1; Claude
+/// Code's `CLAUDE_CODE_SCROLL_SPEED`).
+pub(crate) const SCROLL_SPEED_ENV: &str = "PRIME_AGENT_SCROLL_SPEED";
+
+/// Wheel acceleration (Claude Code's ramp): a slow turn moves one row per
+/// report, as upstream #887 settled, while a fast continuous spin in one
+/// direction grows the step, so long transcripts are quick to cross.
+#[derive(Debug)]
+pub(crate) struct WheelAcceleration {
+    last: Option<(std::time::Instant, isize)>,
+    streak: u32,
+    speed: isize,
+}
+
+impl Default for WheelAcceleration {
+    fn default() -> Self {
+        let speed = std::env::var(SCROLL_SPEED_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<isize>().ok())
+            .map_or(1, |speed| speed.clamp(1, 20));
+        Self {
+            last: None,
+            streak: 0,
+            speed,
+        }
+    }
+}
+
+impl WheelAcceleration {
+    /// The rows one wheel report at `now` scrolls, signed like `direction`.
+    pub(crate) fn step(&mut self, direction: isize, now: std::time::Instant) -> isize {
+        let continues = self.last.is_some_and(|(at, last_direction)| {
+            last_direction == direction && now.saturating_duration_since(at) <= WHEEL_GESTURE_GAP
+        });
+        self.streak = if continues { self.streak + 1 } else { 0 };
+        self.last = Some((now, direction));
+        let step = (1 + (self.streak / WHEEL_RAMP_REPORTS) as isize).min(WHEEL_MAX_STEP);
+        direction * step * self.speed
+    }
+}
+
 /// The multi-click window: a press within this long of the previous one, on the same row and
 /// within [`MULTI_CLICK_SLOP_COLS`], continues the click run (the common desktop double-click
 /// default).
@@ -247,6 +294,23 @@ mod tests {
         assert_eq!(event.button, WHEEL_DOWN);
         assert!(is_wheel_down(&event));
         assert_eq!(wheel_scroll_delta(&event), Some(WHEEL_SCROLL_LINES));
+        // A slow turn stays at one row per report; a fast spin ramps up, capped,
+        // and a pause or a reversal starts over.
+        let mut wheel = WheelAcceleration {
+            last: None,
+            streak: 0,
+            speed: 1,
+        };
+        let start = std::time::Instant::now();
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        assert_eq!(wheel.step(1, at(0)), 1);
+        assert_eq!(wheel.step(1, at(500)), 1);
+        let fast: Vec<isize> = (0..40).map(|n| wheel.step(1, at(1000 + n * 10))).collect();
+        assert_eq!(fast[..5], [1, 1, 1, 1, 2]);
+        assert_eq!(*fast.last().unwrap(), WHEEL_MAX_STEP);
+        assert_eq!(wheel.step(-1, at(1400)), -1);
+        wheel.speed = 3;
+        assert_eq!(wheel.step(-1, at(2000)), -3);
     }
 
     #[test]

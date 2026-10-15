@@ -22,6 +22,7 @@ pub(crate) mod lazy;
 mod panels;
 mod restyle;
 mod rows;
+mod search;
 
 use layout::EntryLayout;
 
@@ -124,6 +125,9 @@ pub struct AgentView {
     pub splash_suppressed: bool,
     pub(crate) scroll_top: usize,
     following: bool,
+    /// Assistant messages that started while the viewport was paused above
+    /// the tail; the follow hint counts them, and following clears them.
+    unseen_messages: usize,
     /// The transcript-tail offset of the last composed frame: scroll
     /// deltas page from here, not from zero.
     pub(crate) last_max_scroll: usize,
@@ -146,6 +150,8 @@ pub struct AgentView {
     entry_layout: Vec<[Option<EntryLayout>; 3]>,
     entry_heights: Vec<[Option<(bool, usize)>; 3]>,
     sparse_window: Option<lazy::SparseWindow>,
+    /// The `/search` match shown on screen.
+    search_highlight: Option<search::SearchHighlight>,
     sparse_enabled: bool,
     /// The height of the entry an in-place mutation is about to change:
     /// consumed by `mark_entry_stale` for the sparse tail bookkeeping.
@@ -332,6 +338,7 @@ impl AgentView {
             splash_suppressed: false,
             scroll_top: 0,
             following: true,
+            unseen_messages: 0,
             last_max_scroll: 0,
             terminal_rows: 24,
             dock_cursor: None,
@@ -343,6 +350,7 @@ impl AgentView {
             entry_layout: Vec::new(),
             entry_heights: Vec::new(),
             sparse_window: None,
+            search_highlight: None,
             sparse_enabled: true,
             sparse_entries: std::collections::BTreeSet::new(),
             toggled_cards: std::collections::BTreeSet::new(),
@@ -653,6 +661,14 @@ impl AgentView {
 
     pub fn is_following(&self) -> bool {
         self.following
+    }
+
+    /// A new assistant message started: counted when the viewport is paused
+    /// above the tail (the follow hint's "N new messages").
+    pub fn note_new_message(&mut self) {
+        if !self.following {
+            self.unseen_messages += 1;
+        }
     }
 
     pub fn scroll_info(&mut self) -> ScrollInfo {

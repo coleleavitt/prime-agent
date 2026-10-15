@@ -250,11 +250,14 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "tui.viewport.pageUp",
-        def!(&["pageUp"], "Scroll transcript up a page (fullscreen)"),
+        def!(&["pageUp"], "Scroll transcript up half a page (fullscreen)"),
     ),
     (
         "tui.viewport.pageDown",
-        def!(&["pageDown"], "Scroll transcript down a page (fullscreen)"),
+        def!(
+            &["pageDown"],
+            "Scroll transcript down half a page (fullscreen)"
+        ),
     ),
     (
         "tui.viewport.top",
@@ -345,6 +348,22 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     (
         "app.message.followUp",
         def!(&["alt+enter"], "Queue follow-up message"),
+    ),
+    (
+        "app.search.older",
+        def!(&["f3"], "Jump to the older /search match"),
+    ),
+    (
+        "app.search.newer",
+        def!(&["shift+f3"], "Jump to the newer /search match"),
+    ),
+    (
+        "app.message.sendNow",
+        def!(&["ctrl+enter"], "Send the draft or queued messages now"),
+    ),
+    (
+        "app.message.clearQueue",
+        def!(&["ctrl+alt+x"], "Clear queued messages"),
     ),
     (
         "app.message.navigateOlder",

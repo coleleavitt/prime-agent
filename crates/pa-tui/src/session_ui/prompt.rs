@@ -925,6 +925,14 @@ impl SessionUi {
             }
             return Ok(());
         }
+        // A send-now submit was admitted (or failed): the interrupt it waited
+        // for goes out now, so the message rides the abort.
+        if self.send_now_after == Some(note.expected_turn_end) {
+            self.send_now_after = None;
+            if note.result.is_ok() && self.turn_active {
+                self.interrupt_running_work(view);
+            }
+        }
         match note.result {
             Ok(()) => {
                 // `agent input stage`: the observed dispatch outcome at the submit seam; the turn's
