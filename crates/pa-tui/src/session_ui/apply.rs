@@ -766,6 +766,8 @@ impl SessionUi {
             TurnUpdate::Idle => {
                 if !self.turn_active {
                     view.working = None;
+                    // The agent went idle: the client's turn span closes.
+                    self.client_turn_span = None;
                 }
             }
             TurnUpdate::GoalUpdate(goal) => {

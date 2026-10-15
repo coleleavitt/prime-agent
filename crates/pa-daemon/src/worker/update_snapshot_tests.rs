@@ -50,6 +50,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
         core.steering.push_back(QueuedItem {
             priority: QueuePriority::Human,
@@ -64,6 +65,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            traceparent: None,
         });
     }
     let response = worker.dispatch("update_snapshot", &json!({})).await;
@@ -159,6 +161,7 @@ fn queued_user_item(message: &str) -> QueuedItem {
         queue_visible: true,
         policy: TurnPolicy::Queued,
         forced_batch: false,
+        traceparent: None,
     }
 }
 
@@ -440,6 +443,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            traceparent: None,
         });
         // The engine-minted continuation: injected and queue-invisible.
         core.follow_up.push_back(QueuedItem {
@@ -455,6 +459,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
         // A visible injected row (the busy agent message shape) folds
         // by its TS label — the injected rider never flags it.
@@ -471,6 +476,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
     }
     let snapshot = {
@@ -503,6 +509,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
     }
     let snapshot = {
@@ -540,6 +547,7 @@ async fn injected_continuations_still_project_their_lane_text() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
     }
     let snapshot = {

@@ -426,6 +426,8 @@ impl TurnRunner {
         // agent message). Computed before the batched borrow ends and the
         // items are consumed.
         let ingestion_turn = first.agent_message.is_some();
+        let turn_traceparent = first.traceparent.clone();
+        let items_done_count = items.len();
         let items_done: Vec<oneshot::Sender<TurnSettle>> =
             items.into_iter().filter_map(|item| item.done).collect();
         let turn_outcome = Arc::new(std::sync::Mutex::new(None::<TurnSettle>));
@@ -458,7 +460,18 @@ impl TurnRunner {
         // post-join flag read raced `handle_abort`).
         let abort_gate_armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let abort_gate_armed_seen = Arc::clone(&abort_gate_armed);
+        // `agent.prompt`: the delivered turn, a child of the submitting
+        // client's span when the prompt carried its `traceparent`; the
+        // engine's turn, request and tool spans nest under it.
+        let prompt_span = tracing::info_span!(
+            target: "pa_daemon::turn",
+            "agent.prompt",
+            session.id = review_session_id.as_str(),
+            prompt.batch = items_done_count,
+            traceparent = turn_traceparent.as_deref(),
+        );
         let turn = tokio::task::spawn_blocking(move || {
+            let _prompt_span = prompt_span.enter();
             // The engine's own terminal `turn_end` frame keeps the
             // trailing `Done` fallback silent.
             let mut engine_turn_ended = false;

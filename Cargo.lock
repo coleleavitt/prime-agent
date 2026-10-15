@@ -2474,6 +2474,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -2576,6 +2577,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -2863,6 +2865,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
  "unicode-properties",
  "unicode-segmentation",
  "unicode-width 0.2.0",

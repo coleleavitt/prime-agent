@@ -1626,14 +1626,14 @@ impl Agent {
         let inner = Arc::clone(&self.inner);
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (failed_tx, failed_rx) = tokio::sync::oneshot::channel::<anyhow::Error>();
-        tokio::spawn(async move {
+        tokio::spawn(tracing::Instrument::in_current_span(async move {
             let result = inner
                 .run_prompt_messages_with_start_signal(messages, false, Some(started_tx))
                 .await;
             if let Err(error) = result {
                 let _ = failed_tx.send(error);
             }
-        });
+        }));
         // A dropped start signal means the run refused to start before its
         // executor ran; the failure channel carries the refusal.
         if started_rx.await.is_ok() {

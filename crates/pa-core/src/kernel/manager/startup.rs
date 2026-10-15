@@ -101,6 +101,20 @@ impl Inner {
             g.unexpected_exit = Some(unexpected.clone());
             unexpected
         };
+        // The structured record `prime-agent health` reports as a kernel
+        // incident (TS's unexpected-kernel-exit line); the stderr tail stays
+        // out of the log.
+        let error = format!(
+            "kernel exited unexpectedly (code {}, signal {})",
+            unexpected
+                .exit_code
+                .map_or("none".to_string(), |code| code.to_string()),
+            unexpected
+                .signal
+                .map_or("none".to_string(), |signal| signal.to_string()),
+        );
+        let request_id = unexpected.request_id.as_deref().unwrap_or_default();
+        tracing::warn!(target: "pa_core::kernel", error, request_id, "kernel_exit");
         self.reject_active_execution_with(anyhow::Error::new(
             crate::kernel::shared::KernelExitedError { exit: unexpected },
         ));

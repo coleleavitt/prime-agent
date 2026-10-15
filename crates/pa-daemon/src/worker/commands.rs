@@ -24,7 +24,34 @@ use super::{
 use crate::protocol::DaemonResponse;
 
 impl Worker {
+    /// Serve one command. A state-changing command runs in a
+    /// `daemon.command` span, the submitting client's child when the
+    /// command carries its `traceparent`; read-only polling records none.
     pub(crate) async fn dispatch(&self, command_type: &str, payload: &Value) -> DaemonResponse {
+        if !pa_types::daemon::is_daemon_mutating_command(command_type) {
+            return self.dispatch_command(command_type, payload).await;
+        }
+        let traceparent = payload
+            .get(pa_types::trace_context::TRACEPARENT_FIELD)
+            .and_then(Value::as_str)
+            .filter(|value| pa_types::trace_context::TraceContext::parse(value).is_some());
+        let span = tracing::info_span!(
+            target: "pa_daemon::command",
+            "daemon.command",
+            command.type = command_type,
+            command.success = tracing::field::Empty,
+            traceparent = traceparent,
+        );
+        let response = tracing::Instrument::instrument(
+            self.dispatch_command(command_type, payload),
+            span.clone(),
+        )
+        .await;
+        span.record("command.success", response.success);
+        response
+    }
+
+    async fn dispatch_command(&self, command_type: &str, payload: &Value) -> DaemonResponse {
         if self.recovery_quarantined() {
             return response_failure(
                 None,

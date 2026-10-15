@@ -74,6 +74,17 @@ Native crates:
 | `kernel.execute` | `kernel.request_id`, `kernel.request_type`, `kernel.status`, `error` | `crates/pa-core/src/kernel/manager/requests.rs` (`execute_inner`; the request frame's `traceparent` names this span, so the runtime's `kernel.cell` nests under it) |
 | `session.load` | `session.path`, `session.entries` | `crates/pa-core/src/session/manager/lifecycle.rs` (`open`) |
 | `session.compact` | `llm.provider`, `llm.model`, `compact.skipped` | `crates/pa-core/src/session_engine/compaction_arms.rs` (`compact`) |
+| `client.turn` | `session.id` | `crates/pa-tui/src/session_ui.rs` (`order_prompt_request`: opened by the prompt that starts a turn, closed when the session goes idle; a root, or the child of the TUI process's `TRACEPARENT`) |
+| `client.prompt` | `prompt.behavior` (`prompt`, `steer`, `follow_up`) | `crates/pa-tui/src/session_ui.rs` (one per submitted prompt, under the open `client.turn`; its context is the `traceparent` the prompt command carries) |
+| `daemon.command` | `command.type`, `command.success` | `crates/pa-daemon/src/worker/commands.rs` (`dispatch`, state-changing commands only: `pa_types::daemon::is_daemon_mutating_command`; parented on the command's `traceparent`) |
+| `agent.prompt` | `session.id`, `prompt.batch` | `crates/pa-daemon/src/worker/turn.rs` (`run_turn`, one per agent run; parented on the first queued item's `traceparent`, so a turn started by a client prompt nests under its `client.prompt`) |
+| `agent.retry` | `retry.attempt`, `retry.delay_ms`, `retry.error`, `retry.cancelled` | `crates/pa-core/src/session_engine/auto_retry.rs` (the backoff wait before a retried run) |
+| `host.request` | `host_request.type`, `host_request.rid` | `crates/pa-core/src/kernel/manager/events.rs` (`start_host_request`, parented on the frame's `traceparent`, i.e. the runtime's `kernel.host_request`; not opened for `bash.*`, which `pa-bash` carries itself, nor for `model.info` and `telemetry.emit`) |
+| `rlm.child.run` | `rlm.child_id`, `rlm.name` | `crates/pa-core/src/session_engine/rlm_in_process/spawn.rs` (one per in-process child agent; the child's `agent.turn`s nest under it) |
+| `refine.plan` | `refine.rollback`, `refine.global`, `llm.model`, `error` | `crates/pa-core/src/refinement/executor.rs` |
+| `refine.apply` | `refine.global` | `crates/pa-core/src/refinement/executor.rs` |
+| `cron.job` | `cron.id`, `session.id`, `error` | `crates/pa-daemon/src/scheduled_jobs.rs` (`run_job`, a root per scheduled run) |
+| `update.check` / `update.self` | none | `crates/pa-cli/src/public_command.rs` (`run_update`: `prime-agent update --check` and `prime-agent update`) |
 
 Feature crates (each present only when its feature is built in):
 
@@ -141,9 +152,11 @@ is how `pa-ledger` stamps `failure.fingerprint` on the failed `tool.execute`
 | async continuation in one process | the `tracing` span stack (Rust) / `contextvars` (Python) |
 | host -> Python kernel | request frame field `traceparent` (`TRACEPARENT_FIELD`), set from the `kernel.execute` span in `crates/pa-core/src/kernel/manager/requests.rs` |
 | kernel process spawn | env `TRACEPARENT`, set from the `kernel.start` span in `crates/pa-core/src/kernel/manager/startup.rs` |
-| Python -> host `host_request` | event frame field `traceparent` (the runtime's `kernel.host_request` span); read only by `bash.run`, see below |
+| Python -> host `host_request` | event frame field `traceparent` (the runtime's `kernel.host_request` span): the parent of the host's `host.request` span, and of the `bash.command` process for `bash.run` |
 | `bash()` command -> its process | the `bash.run` host request's `traceparent` (the `bash.command` span); `pa-bash` puts it in the child's env as `TRACEPARENT` (`crates/pa-bash/src/shell.rs`) |
 | kernel runtime -> host log | `{"event":"trace", ...}` frames (kernel protocol 4 and later) |
+| TUI -> daemon worker | the `traceparent` field of a `prompt`/`steer`/`follow_up` command (the `client.prompt` span), kept on the queued item (`QueuedItem::traceparent`) until the run that delivers it opens `agent.prompt`; any state-changing command's `traceparent` parents its `daemon.command` |
+| a spawned task in one process | `tracing::Instrument::in_current_span` on the agent's run tasks (`crates/pa-agent/src/admission.rs`, `agent.rs`) and the `rlm.child.run` task |
 | external caller -> `prime-agent` | env `TRACEPARENT`, read once at startup by `RecorderConfig::from_env` |
 | a span with a remote parent | a span field named `traceparent` (`REMOTE_PARENT_FIELD`) |
 
@@ -170,7 +183,9 @@ Span completion is itself a line (`component: "trace"`):
 * `span_start` is written only for long-running operations, so a crash or a
   hang stays visible without doubling the traffic. The list is
   `ACTIVE_OPERATION_SPANS` in `crates/pa-trace/src/layer.rs`; of its names,
-  the Rust host opens `kernel.start`, `session.compact` and `ravo.run`. The
+  the Rust host opens `client.turn`, `agent.prompt`, `kernel.start`,
+  `session.compact`, `cron.job`, `ravo.run`, `update.self` and
+  `rlm.child.run`. The
   others are kept so the readers treat lines the TS binary writes into the
   same file the same way.
 * Kernel runtime records arrive as `Event::Trace` frames
@@ -178,6 +193,16 @@ Span completion is itself a line (`component: "trace"`):
   `pa_types::trace_context::FORWARDED_RECORD_TARGET`, and are written
   verbatim when they carry their own ids, with `attrs.error` hoisted. A build
   without `pa-trace` drops them.
+* Session JSONL entries appended inside a span carry that span's `traceId`
+  and `spanId` (`pa_types::session::FileEntry::stamp_trace_context`, called
+  by `append_entry` in `crates/pa-core/src/session/manager/append.rs`; TS
+  `stampTraceContext`). The session header and entries written outside any
+  span carry neither, and an entry that already has ids keeps them.
+* A panic writes `fatal_crash` (main thread; the log is flushed first) or
+  `thread_panic` under `pa_cli::crash` before the default report
+  (`install_crash_record` in `crates/pa-cli/src/features.rs`). A kernel that
+  exits outside a shutdown writes `kernel_exit` (WARN, `pa_core::kernel`,
+  `crates/pa-core/src/kernel/manager/startup.rs`). `health` counts both.
 * `pa-core`'s request-timing writer
   (`crates/pa-core/src/session_engine/request_timing.rs`) appends to the same
   file without the rotation lock.
@@ -354,15 +379,19 @@ prime-agent trace 0af7651916cd43dd8448eb211c80319c
 ```
 
 `RecorderConfig::from_env` reads the variable once; a malformed value is
-ignored. The context does not cross the daemon socket (see below), so this
-covers the process it was given to.
+ignored. Given to the TUI, it parents every `client.turn`, and through the
+prompt command's `traceparent` the daemon's `agent.prompt` and everything
+under it. Given to the daemon itself it parents only that process's roots
+(`cron.job`, and runs with no client context).
 
 ## Optional OTLP export and derived metrics
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to turn it on (`crates/pa-trace/src/otlp.rs`);
 `OTEL_EXPORTER_OTLP_HEADERS` optionally provides comma-separated
 `key=value` request headers (`parse_otlp_headers`). Unset, there is no
-worker, queue or network call.
+worker, queue or network call. `OTEL_TRACES_EXPORTER=none` turns export off
+with the endpoint set; `OTEL_METRICS_EXPORTER=none` posts spans only, for a
+trace-only collector such as Jaeger, which answers `/v1/metrics` with 404.
 
 Finished spans and per-name delta metrics (`prime_agent.span.count`,
 `prime_agent.span.error_count`, `prime_agent.span.duration_ms`, at most 256
@@ -372,6 +401,28 @@ dropped, counted in `OtlpStats`), a flush every 5 s, a 10 s request timeout.
 Credential-looking attribute keys are dropped. Recording only queues; one
 background worker owns delivery, so a hanging collector never delays traced
 code. An orderly exit drains for at most one second (`SHUTDOWN_DRAIN`).
+
+Every finished span is also handed to the registered in-process sinks
+(`pa_trace::add_span_sink` / `remove_span_sink`, a `SpanRecord` per span),
+called on the closing thread; a sink must only queue.
+
+### Viewing traces in Jaeger
+
+Each process exports on its own, so the TUI and the daemon both need the
+variables; the daemon reads them when it starts, so restart it after
+setting them:
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_METRICS_EXPORTER=none
+```
+
+Jaeger 2 (`jaeger` with its default all-in-one config, or the
+`jaegertracing/jaeger` image) receives OTLP/HTTP on 4318 and serves the UI
+on 16686. Search service `prime-agent`; a turn appears as one trace from
+`client.turn` down through `agent.prompt`, `agent.turn`, `llm.request`,
+`tool.execute`, `kernel.execute`, `kernel.cell`, `host.request` and
+`bash.command`. The same trace id works with `prime-agent trace <id>` on
+the local log.
 
 ## Local log safety and retention
 
@@ -400,37 +451,30 @@ These are things the TS implementation did that the Rust host does not, kept
 here so the history of why stays readable. "Not ported" means the code does
 not exist in this tree.
 
-* **Not ported: spans with no Rust equivalent.** `client.prompt`,
-  `client.turn`, `daemon.command`, `agent.prompt`, `agent.retry`,
+* **Not ported: spans with no Rust equivalent.**
   `tool.prepare`, `extension.hooks`, `extensions.load`, `rlm.child`,
-  `rlm.child.run`, `rlm.run_agent`, `cron.job`, `oauth.refresh`,
+  `rlm.run_agent`, `oauth.refresh`,
   `trace.upload`, `package.install`, `package.remove`, `package.update`,
-  `package.check_updates`, `package.command`, `update.check`, `update.self`,
+  `package.check_updates`, `package.command`,
   `tools.download`, `tools.release_lookup`, and the bridged
   `context.transform`, `historian.run` and `auth.refresh` family of spans
   from Magic Context and the anthropic-auth plugin. `pa-anthropic-auth` emits no
   spans. The `health` reader still recognises these names, because the TS
   binary may write into the same log.
-* **Not ported: the refine spans.** `refine.plan`, `refine.apply`,
-  `ravo.referee`, `ravo.replay_case` and `ravo.replay_verify` do not exist:
-  the refine path in `pa-core` opens no span, and the referee and replay
-  self-checks run unspanned. Their attributes (`refine.*`, `referee.*`,
-  `refine.trust_window_opened`) are gone with them, and
-  `toolforge.gate` has no `ravo.replay_case` children.
+* **Not ported: the referee and replay spans.** `ravo.referee`,
+  `ravo.replay_case` and `ravo.replay_verify` do not exist: the referee and
+  replay self-checks run unspanned, so `referee.*` and
+  `refine.trust_window_opened` are gone with them, and `toolforge.gate` has
+  no `ravo.replay_case` children. `refine.plan` and `refine.apply` exist with
+  fewer attributes than TS (see the span table).
 * **Not ported: `trigger.trace_id` on most detached roots.** Only the
   in-session `dream.experiment` and `dream.run` carry it. `recall.mark` and
   `harness.trust.adjudicate` (which runs on the ledger's worker thread,
   outside the turn) do not.
-* **Not ported: cross-process carriers beyond the kernel.** No
-  `traceparent` on daemon command envelopes or worker-protocol frames, and
-  no `TRACEPARENT` for an RLM child session; a trace stops at the daemon
-  socket. A `host_request` frame's `traceparent` is read only by `bash.run`;
-  other handlers do not parent on it.
-* **Not ported: session record stamping.** Session JSONL entries carry no
-  `traceId`/`spanId` (TS `stampTraceContext`).
-* **Not ported: crash and exit records.** The structured fatal-crash and
-  unexpected-kernel-exit lines the TS host wrote are not written; `health`
-  only reads them.
+* **Changed: the daemon carrier.** Only the commands' payload field
+  carries the context (prompt intake and `daemon.command`); the
+  supervisor's routing and the daemon's event frames carry none. RLM
+  children run in-process, so they need no `TRACEPARENT`.
 * **Not ported: refinement history files and the stale-evidence re-plan.**
   No `refinement.history_append_failed` / `refinement.history_unreadable`
   lines, no `<agentDir>/harness/refinements.jsonl` or
@@ -446,8 +490,9 @@ not exist in this tree.
   snake_case (`proposal_id`, `fingerprint_id`) and `fingerprints` is a
   comma-joined string; TS wrote `proposalId`, `fingerprintId` and an array.
 * **Changed: OTLP wiring.** TS exposed a programmable
-  `createOtlpSpanExporter` / `addSpanSink` adapter with configurable bounds;
-  the Rust exporter is configured only by the two environment variables.
+  `createOtlpSpanExporter` with configurable bounds; the Rust exporter is
+  configured only by the environment variables, and `add_span_sink` is the
+  in-process hook.
 
 ## Non-goals
 

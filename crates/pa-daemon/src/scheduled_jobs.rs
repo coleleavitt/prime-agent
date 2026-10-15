@@ -108,6 +108,16 @@ impl QueueHooks {
 }
 
 impl AgentCronSchedulerHooks for QueueHooks {
+    /// One cron or heartbeat fire as a `cron.job` span (a trace root: no
+    /// client turn started it).
+    #[tracing::instrument(
+        level = "info",
+        name = "cron.job",
+        target = "pa_daemon::cron",
+        skip_all,
+        fields(cron.id = job.id.as_str(), session.id = job.session_id.as_str()),
+        err
+    )]
     async fn run_job(&self, job: &AgentCronJob) -> anyhow::Result<Option<&'static str>> {
         // A persisted job whose target is no longer live (killed — `archived` — or deleted)
         // cancels the session's jobs and skips: a fire can never revive a stopped session.
@@ -219,6 +229,7 @@ impl AgentCronSchedulerHooks for QueueHooks {
                     queue_visible: true,
                     policy: crate::worker::TurnPolicy::Injected,
                     forced_batch: false,
+                    traceparent: None,
                 },
             );
         }

@@ -19,7 +19,12 @@ use crate::kernel::shared::{HostHandlerFuture, with_host_request_cancellation};
 impl Inner {
     /// Dispatch one typed request from kernel code to the registered handler
     /// and reply over the protocol. Unhandled requests answer with an error.
-    pub(crate) fn start_host_request(self: &Arc<Self>, request_id: &str, data: &Value) {
+    pub(crate) fn start_host_request(
+        self: &Arc<Self>,
+        request_id: &str,
+        data: &Value,
+        traceparent: Option<&str>,
+    ) {
         let cancellation = tokio_util::sync::CancellationToken::new();
         {
             let mut g = lock(&self.guarded);
@@ -39,10 +44,27 @@ impl Inner {
             g.host_request_cancellations
                 .insert(request_id.to_string(), cancellation.clone());
         }
-        let mut request: HostHandlerFuture = Box::pin(with_host_request_cancellation(
-            cancellation,
-            self.host_request_future(data),
-        ));
+        let handling = with_host_request_cancellation(cancellation, self.host_request_future(data));
+        // The handling span (`host.request`) is the runtime's
+        // `kernel.host_request` span's child, so the work a handler starts
+        // (a child agent, a plugin call, an MCP call) stays in the cell's
+        // trace. The kernel's job reads and bookkeeping open none (`bash.run`
+        // carries its own `bash.command` span).
+        let request_type = data.get("type").and_then(Value::as_str).unwrap_or_default();
+        let mut request: HostHandlerFuture = if request_type.starts_with("bash.")
+            || matches!(request_type, "model.info" | "telemetry.emit" | "")
+        {
+            Box::pin(handling)
+        } else {
+            let span = tracing::info_span!(
+                target: "pa_core::kernel",
+                "host.request",
+                host_request.type = request_type,
+                host_request.rid = request_id,
+                traceparent = traceparent,
+            );
+            Box::pin(tracing::Instrument::instrument(handling, span))
+        };
         // Run the handler's synchronous prefix in line, before the reader
         // takes the next frame (TS `repl-manager.ts` dispatches through an
         // async IIFE, whose body runs up to its first await immediately).
@@ -273,6 +295,7 @@ mod tests {
         manager.inner.handle_event(Event::HostRequest {
             id: "consumed-1".to_string(),
             data: json!({ "type": "bash.consumed", "pid": 42, "command": "ls" }),
+            traceparent: None,
         });
 
         assert!(withdrawn.load(Ordering::SeqCst));

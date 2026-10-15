@@ -6,6 +6,7 @@ license.workspace = true
 description = "Session supervisor, worker processes, and wire protocol."
 
 [dependencies]
+tracing.workspace = true
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }
 pa-agent = { path = "../pa-agent" }

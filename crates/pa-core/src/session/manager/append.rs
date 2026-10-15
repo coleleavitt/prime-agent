@@ -14,7 +14,9 @@ use super::{
 };
 
 impl SessionManager {
-    pub(crate) fn append_entry(&mut self, entry: FileEntry) -> std::io::Result<()> {
+    pub(crate) fn append_entry(&mut self, mut entry: FileEntry) -> std::io::Result<()> {
+        // The record leads to the trace it was written in.
+        entry.stamp_trace_context(pa_types::trace_context::current());
         let was_assistant = self.has_assistant_entry;
         let was_flushed = self.flushed;
         if matches!(

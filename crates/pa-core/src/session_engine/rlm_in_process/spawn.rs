@@ -78,9 +78,21 @@ pub(super) fn spawn(
         let run_host = host.clone();
         let run_record = Arc::clone(&record);
         let prompt = request.prompt.clone();
-        tokio::spawn(async move {
-            run_child_task(run_host, run_record, prompt).await;
-        });
+        // `rlm.child.run`: the child's whole run, a child of the spawning
+        // request's span (the parent cell's trace), so the child's own turns
+        // nest under it.
+        let run_span = tracing::info_span!(
+            target: "pa_core::rlm",
+            "rlm.child.run",
+            rlm.child_id = child_id.as_str(),
+            rlm.name = name.as_str(),
+        );
+        tokio::spawn(tracing::Instrument::instrument(
+            async move {
+                run_child_task(run_host, run_record, prompt).await;
+            },
+            run_span,
+        ));
         Ok(RlmSpawnHandle {
             rlm_child_id: child_id,
             name,

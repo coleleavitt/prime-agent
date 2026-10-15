@@ -177,6 +177,10 @@ pub(crate) struct QueuedItem {
     /// Membership of the one-shot forced steering batch: armed items co-deliver as
     /// one batched turn even under "one-at-a-time". Never journaled.
     pub(crate) forced_batch: bool,
+    /// The submitting client's trace context (W3C `traceparent`, the
+    /// command's `traceparent` field): the turn this item starts is its
+    /// child. Never journaled.
+    pub(crate) traceparent: Option<String>,
 }
 
 /// Parse the wire `images` array: entries without payload data or a
@@ -449,6 +453,7 @@ pub(crate) fn restore_queue_snapshot(
                     queue_visible: record.queue_visible,
                     policy,
                     forced_batch: false,
+                    traceparent: None,
                 }
             })
             .collect()
@@ -488,6 +493,7 @@ pub(crate) fn admit_autonomous_follow_up(
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
     }
     // The admission checkpoint: a continuation admitted while idle is undelivered
@@ -544,6 +550,7 @@ pub(crate) fn admit_goal_follow_up(
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         };
         match lane {
             Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -619,6 +626,7 @@ pub(crate) fn admit_bash_completion_notice(
             queue_visible,
             policy,
             forced_batch: false,
+            traceparent: None,
         });
     }
     // The checkpoint re-locks the core (documented order: recovery lock

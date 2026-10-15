@@ -562,6 +562,48 @@ impl<'de> Deserialize<'de> for FileEntry {
 }
 
 impl FileEntry {
+    /// The common entry fields, mutable; `None` for the header and an
+    /// unknown entry.
+    pub fn base_mut(&mut self) -> Option<&mut EntryBase> {
+        match self {
+            FileEntry::Header { .. } | FileEntry::Unknown { .. } => None,
+            FileEntry::Message { base, .. }
+            | FileEntry::ThinkingLevelChange { base, .. }
+            | FileEntry::ServiceTierChange { base, .. }
+            | FileEntry::ModelChange { base, .. }
+            | FileEntry::Compaction { base, .. }
+            | FileEntry::BranchSummary { base, .. }
+            | FileEntry::Custom { base, .. }
+            | FileEntry::ChildUsageAttributed { base, .. }
+            | FileEntry::Label { base, .. }
+            | FileEntry::SessionInfo { base, .. }
+            | FileEntry::SessionState { base, .. }
+            | FileEntry::GitState { base, .. }
+            | FileEntry::CustomMessage { base, .. } => Some(base),
+        }
+    }
+
+    /// Stamp the entry with the trace it was written in (TS
+    /// `stampTraceContext`): `traceId` and `spanId`, so a session record
+    /// leads to its trace. Nothing is added outside a recorded span, or
+    /// when the entry already carries a trace.
+    pub fn stamp_trace_context(&mut self, context: Option<crate::trace_context::TraceContext>) {
+        let (Some(context), Some(base)) = (context, self.base_mut()) else {
+            return;
+        };
+        if base.rest.contains_key("traceId") {
+            return;
+        }
+        base.rest.insert(
+            "traceId".to_string(),
+            serde_json::Value::from(context.trace_id_hex()),
+        );
+        base.rest.insert(
+            "spanId".to_string(),
+            serde_json::Value::from(context.span_id_hex()),
+        );
+    }
+
     #[must_use]
     pub fn id(&self) -> Option<&str> {
         let base = match self {
@@ -661,6 +703,40 @@ mod tests {
 
     fn entry(json: &str) -> FileEntry {
         serde_json::from_str(json).expect("deserialize entry")
+    }
+
+    /// A record written inside a trace carries its ids (TS
+    /// `stampTraceContext`); outside one, or for the header, nothing is
+    /// added, and an existing stamp is kept.
+    #[test]
+    fn entries_are_stamped_with_the_trace_they_were_written_in() {
+        let context = crate::trace_context::TraceContext::parse(
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        );
+        let mut message = entry(
+            r#"{"type":"label","id":"e1","parentId":null,"timestamp":"2026-01-01T00:00:00Z","targetId":"t","label":"x"}"#,
+        );
+        let unstamped = message.clone();
+        message.stamp_trace_context(None);
+        assert_eq!(message, unstamped);
+        message.stamp_trace_context(context);
+        let json = serde_json::to_value(&message).unwrap();
+        assert_eq!(json["traceId"], "0af7651916cd43dd8448eb211c80319c");
+        assert_eq!(json["spanId"], "b7ad6b7169203331");
+        let other = crate::trace_context::TraceContext::parse(
+            "00-11111111111111111111111111111111-2222222222222222-01",
+        );
+        message.stamp_trace_context(other);
+        assert_eq!(
+            serde_json::to_value(&message).unwrap()["traceId"],
+            "0af7651916cd43dd8448eb211c80319c"
+        );
+        let mut header = entry(
+            r#"{"type":"session","version":3,"id":"s","timestamp":"2026-01-01T00:00:00Z","cwd":"/w"}"#,
+        );
+        let before = header.clone();
+        header.stamp_trace_context(context);
+        assert_eq!(header, before);
     }
 
     fn assert_roundtrips(json: &str) {

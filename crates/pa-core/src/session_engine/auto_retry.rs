@@ -230,7 +230,23 @@ where
             reason: RetryStartReason::Quick,
         })
         .await?;
-        if !wait(std::time::Duration::from_millis(delay_ms)).await {
+        // `agent.retry`: the wait before one retried attempt.
+        let retry_span = tracing::info_span!(
+            target: "pa_core::retry",
+            "agent.retry",
+            retry.attempt = retries_performed,
+            retry.delay_ms = delay_ms,
+            retry.error = %final_error_of(&message),
+            retry.cancelled = tracing::field::Empty,
+        );
+        let waited = tracing::Instrument::instrument(
+            wait(std::time::Duration::from_millis(delay_ms)),
+            retry_span.clone(),
+        )
+        .await;
+        retry_span.record("retry.cancelled", !waited);
+        drop(retry_span);
+        if !waited {
             emit(AutoRetryEvent::End {
                 success: false,
                 attempt: retries_performed,

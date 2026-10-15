@@ -129,16 +129,44 @@ pub fn install_enabled_features() -> InstalledFeatures {
         pa_core::session::catalog_cache::install(Box::new(index.clone()));
         index
     };
+    #[cfg(feature = "trace")]
+    let trace = pa_trace::install(pa_trace::RecorderConfig::from_env(
+        trace_log_path(),
+        crate::config::VERSION,
+    ))
+    .ok();
+    #[cfg(feature = "trace")]
+    install_crash_record(trace.clone());
     InstalledFeatures {
+        #[cfg(feature = "trace")]
+        trace,
         #[cfg(feature = "session-index")]
         session_index,
-        #[cfg(feature = "trace")]
-        trace: pa_trace::install(pa_trace::RecorderConfig::from_env(
-            trace_log_path(),
-            crate::config::VERSION,
-        ))
-        .ok(),
     }
+}
+
+/// Record a panic in the shared log before the default report: on the main
+/// thread it ends the process, so it is the `fatal_crash` line `prime-agent
+/// health` reports (TS's fatal-crash record) and the log is flushed first;
+/// on another thread it is a `thread_panic` line. The previous hook still
+/// prints the panic.
+#[cfg(feature = "trace")]
+fn install_crash_record(trace: Option<pa_trace::RecorderHandle>) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unnamed");
+        let error = info.to_string();
+        if thread_name == "main" {
+            tracing::error!(target: "pa_cli::crash", error, thread = thread_name, "fatal_crash");
+            if let Some(trace) = &trace {
+                let _ = trace.flush(Duration::from_millis(500));
+            }
+        } else {
+            tracing::error!(target: "pa_cli::crash", error, thread = thread_name, "thread_panic");
+        }
+        previous(info);
+    }));
 }
 
 /// Gate what the enabled features load from a project and run behind

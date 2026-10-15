@@ -373,6 +373,9 @@ pub(crate) struct SessionUi {
     ctrl_c_hint_action: &'static str,
     /// The draft the last idle Ctrl+C cleared; Up on an empty editor restores it.
     cleared_draft: Option<String>,
+    /// The running turn's `client.turn` span (see `prompt`): open from the
+    /// submit that started the turn until the agent goes idle.
+    client_turn_span: Option<tracing::Span>,
     /// The active `/search` query (see [`search`]).
     search_query: Option<String>,
     /// The mouse wheel's acceleration ramp.

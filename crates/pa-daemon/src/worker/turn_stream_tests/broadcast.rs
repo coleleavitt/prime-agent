@@ -83,6 +83,7 @@ async fn turn_session_events_with_custom_message(
                 queue_visible: true,
                 policy: TurnPolicy::Injected,
                 forced_batch: false,
+                traceparent: None,
             }],
         )
         .await;

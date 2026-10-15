@@ -37,6 +37,16 @@ pub(crate) enum SubmitBehavior {
     FollowUp,
 }
 
+impl SubmitBehavior {
+    /// The trace attribute value.
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            SubmitBehavior::Steer => "steer",
+            SubmitBehavior::FollowUp => "follow_up",
+        }
+    }
+}
+
 /// The ask-agent choice's meta-instruction (text-only; the parked image
 /// draft returns to the editor for the resubmit once the setting lands):
 /// the daemon-side refusal's guidance, turned into the agent task that
@@ -101,6 +111,10 @@ pub(crate) struct PromptOrder {
     /// A fresh uuid per submitted prompt (`agent input stage`), pairing the stage observations.
     pub(crate) input_id: String,
     pub(crate) submitted_at: std::time::Instant,
+    /// The submit's trace span (`client.turn`, or a `client.prompt` child
+    /// of the running one): the request carries its `traceparent`, so the
+    /// daemon's turn joins the client's trace.
+    pub(crate) trace_span: tracing::Span,
 }
 
 // A refused request is definitive even when its message quotes a transport failure.
@@ -795,6 +809,26 @@ impl SessionUi {
         // The turn state at submit time gates the telemetry; an earlier submit
         // still in flight counts as active here.
         let turn_was_active = self.turn_active || self.prompt_in_flight > 0;
+        // The client's trace: a prompt that starts a turn opens
+        // `client.turn` (closed when the agent goes idle); one sent while a
+        // turn runs is a `client.prompt` inside it.
+        let trace_span = match &self.client_turn_span {
+            Some(turn) if turn_was_active => tracing::info_span!(
+                target: "pa_tui",
+                parent: turn,
+                "client.prompt",
+                prompt.behavior = behavior.wire_name(),
+            ),
+            _ => {
+                let turn = tracing::info_span!(
+                    target: "pa_tui",
+                    "client.turn",
+                    session.id = self.session_id.as_str(),
+                );
+                self.client_turn_span = Some(turn.clone());
+                turn
+            }
+        };
         let expected_turn_end = self.last_prompt_turn_end.max(self.turn_ends_seen) + 1;
         self.last_prompt_turn_end = expected_turn_end;
         self.prompt_in_flight += 1;
@@ -813,6 +847,7 @@ impl SessionUi {
             rebind_available,
             input_id: uuid::Uuid::new_v4().to_string(),
             submitted_at: std::time::Instant::now(),
+            trace_span,
         });
     }
 
@@ -823,6 +858,17 @@ impl SessionUi {
         notes: mpsc::UnboundedSender<PromptSubmitNote>,
     ) {
         while let Some(order) = orders.recv().await {
+            // The request carries the submit's trace context.
+            let mut rest = Map::default();
+            if let Some(traceparent) = order
+                .trace_span
+                .in_scope(pa_types::trace_context::current_traceparent)
+            {
+                rest.insert(
+                    pa_types::trace_context::TRACEPARENT_FIELD.to_string(),
+                    Value::String(traceparent),
+                );
+            }
             let command = DaemonCommand::Prompt {
                 id: None,
                 active_session_id: order.active_session_id.clone(),
@@ -844,7 +890,7 @@ impl SessionUi {
                     admission_id: None,
                     rlm_notice_nonce: None,
                 },
-                rest: Map::default(),
+                rest,
             };
             let result = tokio::time::timeout(
                 Duration::from_millis(UI_REQUEST_TIMEOUT_MS),

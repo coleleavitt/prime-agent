@@ -204,6 +204,7 @@ impl SessionUi {
             cleared_draft: None,
             send_now_after: None,
             search_query: None,
+            client_turn_span: None,
             wheel_acceleration: crate::mouse::WheelAcceleration::default(),
             goal_view: GoalView::new(),
             notes,

@@ -183,6 +183,7 @@ mod tests {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            traceparent: None,
         }
     }
 

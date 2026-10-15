@@ -729,7 +729,18 @@ fn check_invocation(args: &[String]) -> Option<crate::installer_update::UpdateOp
     })
 }
 
+/// `prime-agent update` as an `update.check` (`--check`) or `update.self`
+/// span.
 fn run_update(args: &[String]) -> PublicCommandResult {
+    let span = if check_invocation(args).is_some() {
+        tracing::info_span!(target: "pa_cli::update", "update.check")
+    } else {
+        tracing::info_span!(target: "pa_cli::update", "update.self")
+    };
+    span.in_scope(|| run_update_command(args))
+}
+
+fn run_update_command(args: &[String]) -> PublicCommandResult {
     // `--check` (alias `--version`) reports without installing, optionally
     // for one channel flag; mixed with anything else the parse below
     // rejects it.

@@ -266,6 +266,18 @@ fn conversation_text(messages: &[AgentMessage], cap: usize) -> String {
 /// # Errors
 ///
 /// Error on an unknown rollback id, a failed request build or LLM call, or an unparseable reply.
+#[tracing::instrument(
+    level = "info",
+    name = "refine.plan",
+    target = "pa_core::refine",
+    skip_all,
+    fields(
+        refine.rollback = options.rollback_id.is_some(),
+        refine.global = options.global,
+        llm.model = model.id.as_str(),
+    ),
+    err
+)]
 pub async fn plan_refinement(
     messages: &[AgentMessage],
     state: &HarnessState,
@@ -361,6 +373,13 @@ fn assistant_text(reply: &AssistantMessage) -> String {
 /// pre-request snapshot: while it is off, factory create/update edits
 /// refuse with the one disabled message, the same gate the kernel-side
 /// factory writers raise.
+#[tracing::instrument(
+    level = "info",
+    name = "refine.apply",
+    target = "pa_core::refine",
+    skip_all,
+    fields(refine.global = options.global)
+)]
 pub fn apply_refinement_plan(
     state: &mut HarnessState,
     plan: RefinementPlan,

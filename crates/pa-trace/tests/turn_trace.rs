@@ -351,3 +351,127 @@ fn a_connection_failure_records_its_transport_cause_on_the_request_span() {
         )
     );
 }
+
+/// The client-to-daemon carrier: a `client.turn` span's `traceparent`
+/// reaches the daemon's `agent.prompt` span as a remote parent (the prompt
+/// command's field), and the agent's run (spawned in the caller's span)
+/// keeps every turn in that one trace.
+#[test]
+fn a_client_turn_parents_the_daemon_turn_and_every_agent_turn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let log_path = dir.path().join("logs").join("agent.jsonl");
+    let (layer, handle) = pa_trace::recorder(RecorderConfig {
+        log_path: log_path.clone(),
+        inbound: None,
+        otlp: None,
+    });
+    pa_trace::install_context_source();
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+        // The client process: the turn span and the traceparent its prompt
+        // command carries.
+        let client = tracing::info_span!(target: "pa_tui", "client.turn");
+        let traceparent = client
+            .in_scope(pa_types::trace_context::current_traceparent)
+            .expect("the client span has a context");
+        drop(client);
+        // The daemon process: the delivered turn, parented on the command's
+        // traceparent only.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let provider = Arc::new(ScriptedProvider::new(model()));
+            provider.push_tool_call_turn(None, vec![("call-1", "noop", serde_json::json!({}))]);
+            provider.push_text_turn("done");
+            let agent = Agent::new(AgentOptions {
+                initial_state: AgentInitialState {
+                    tools: Some(vec![Arc::new(NoopTool)]),
+                    ..Default::default()
+                },
+                stream_fn: Some(provider.stream_fn()),
+                ..Default::default()
+            });
+            agent.set_model(model()).await;
+            let prompt = tracing::info_span!(
+                target: "pa_daemon::turn",
+                "agent.prompt",
+                traceparent = traceparent.as_str(),
+            );
+            tracing::Instrument::instrument(
+                async {
+                    agent.prompt("run it").await.expect("prompt");
+                    agent.wait_for_idle().await;
+                },
+                prompt,
+            )
+            .await;
+        });
+    });
+    assert!(handle.flush(Duration::from_secs(30)));
+    let client_trace = pa_types::trace_context::TraceContext::parse(
+        &entries(&log_path)
+            .iter()
+            .find(|entry| entry["name"] == "client.turn")
+            .map(|entry| {
+                format!(
+                    "00-{}-{}-01",
+                    entry["traceId"].as_str().unwrap(),
+                    entry["spanId"].as_str().unwrap()
+                )
+            })
+            .expect("client.turn recorded"),
+    )
+    .expect("client context")
+    .trace_id_hex();
+    let spans: Vec<(String, String)> = entries(&log_path)
+        .iter()
+        .filter(|entry| entry["msg"] == "span_end")
+        .map(|entry| {
+            (
+                entry["name"].as_str().unwrap().to_string(),
+                entry["traceId"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let names: Vec<&str> = spans.iter().map(|(name, _)| name.as_str()).collect();
+    for name in ["agent.prompt", "agent.turn", "llm.request", "tool.execute"] {
+        assert!(names.contains(&name), "{name} recorded: {names:?}");
+    }
+    assert_eq!(
+        names.iter().filter(|name| **name == "agent.turn").count(),
+        2
+    );
+    assert!(
+        spans.iter().all(|(_, trace)| *trace == client_trace),
+        "every span is in the client's trace: {spans:?}"
+    );
+}
+
+/// A tool that answers at once (the carrier test needs no kernel).
+struct NoopTool;
+
+impl AgentTool for NoopTool {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+
+    fn description(&self) -> &'static str {
+        "Does nothing."
+    }
+
+    fn parameters(&self) -> &Value {
+        static SCHEMA: OnceLock<Value> = OnceLock::new();
+        SCHEMA.get_or_init(|| serde_json::json!({ "type": "object", "properties": {} }))
+    }
+
+    fn execute(
+        self: Arc<Self>,
+        _tool_call_id: String,
+        _params: Value,
+        _signal: AbortSignal,
+        _on_update: AgentToolUpdateCallback,
+    ) -> pa_agent::BoxFut<'static, anyhow::Result<AgentToolResult>> {
+        Box::pin(async { Ok(AgentToolResult::text("ok")) })
+    }
+}

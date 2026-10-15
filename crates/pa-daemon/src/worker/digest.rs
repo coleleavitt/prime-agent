@@ -1065,6 +1065,7 @@ impl AgentMessageDigest {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            traceparent: None,
         });
         drop(inbox);
         drop(core);
@@ -1258,6 +1259,7 @@ impl AgentMessageDigest {
             queue_visible,
             policy,
             forced_batch: false,
+            traceparent: None,
         });
         drop(core);
         super::checkpoint_queue_recovery(

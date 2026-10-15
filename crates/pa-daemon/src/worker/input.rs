@@ -174,6 +174,7 @@ impl Worker {
                     TurnPolicy::Direct
                 },
                 forced_batch: false,
+                traceparent: traceparent_of(payload),
             };
             match lane {
                 Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -255,6 +256,7 @@ impl Worker {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            traceparent: traceparent_of(payload),
         };
         match lane {
             Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -708,6 +710,7 @@ impl Worker {
                 queue_visible: true,
                 policy: TurnPolicy::Injected,
                 forced_batch: false,
+                traceparent: None,
             };
             match lane {
                 Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -761,5 +764,36 @@ impl Worker {
         let _ = self.emit_action_update(&admission.snapshot);
         self.work_notify.notify_one();
         response_success(None, "worker_deliver_message", Some(admission.receipt))
+    }
+}
+
+/// The submitting client's trace context a prompt command carries
+/// (`traceparent`, a valid W3C value only).
+fn traceparent_of(payload: &Value) -> Option<String> {
+    payload
+        .get(pa_types::trace_context::TRACEPARENT_FIELD)
+        .and_then(Value::as_str)
+        .filter(|value| pa_types::trace_context::TraceContext::parse(value).is_some())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use serde_json::json;
+
+    use super::traceparent_of;
+
+    /// A prompt's traceparent rides its queued item only when it parses; a
+    /// malformed or non-string value is dropped rather than propagated.
+    #[test]
+    fn only_a_valid_traceparent_rides_the_queued_item() {
+        let valid = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        assert_eq!(
+            traceparent_of(&json!({ "message": "x", "traceparent": valid })),
+            Some(valid.to_string())
+        );
+        assert_eq!(traceparent_of(&json!({ "message": "x" })), None);
+        assert_eq!(traceparent_of(&json!({ "traceparent": "garbage" })), None);
+        assert_eq!(traceparent_of(&json!({ "traceparent": 7 })), None);
     }
 }

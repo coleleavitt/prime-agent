@@ -132,13 +132,13 @@ impl Agent {
                     AgentMessageBatch::Batch(messages) => messages,
                 };
                 let inner = Arc::clone(&self.inner);
-                tokio::spawn(async move {
+                tokio::spawn(tracing::Instrument::in_current_span(async move {
                     // Admission already returned; this run's failures
                     // settle through the events.
                     let _ = inner
                         .execute_prompt_claim(claim, run_override, messages, false)
                         .await;
-                });
+                }));
                 AdmitStatus::Admitted
             }
         }
@@ -172,7 +172,7 @@ impl Agent {
                 // steering at the turn's start, like continue()'s drain.
                 let skip_initial_steering_poll = !drained_follow_ups;
                 let inner = Arc::clone(&self.inner);
-                tokio::spawn(async move {
+                tokio::spawn(tracing::Instrument::in_current_span(async move {
                     // Admission already returned; this run's failures
                     // settle through the events.
                     let _ = inner
@@ -183,7 +183,7 @@ impl Agent {
                             skip_initial_steering_poll,
                         )
                         .await;
-                });
+                }));
                 QueuedAdmission::Admitted
             }
         }
@@ -220,14 +220,14 @@ impl Agent {
         };
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         let inner = Arc::clone(&self.inner);
-        tokio::spawn(async move {
+        tokio::spawn(tracing::Instrument::in_current_span(async move {
             // The run is self-driving: it settles through the events even
             // if the caller dropped the handle before settling.
             let result = inner
                 .execute_prompt_claim(claim, run_override, messages, false)
                 .await;
             let _ = result_tx.send(result);
-        });
+        }));
         Ok(AdmittedTurn { result: result_rx })
     }
 

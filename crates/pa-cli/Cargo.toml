@@ -65,6 +65,7 @@ trace = ["dep:pa-trace"]
 workflow = ["dep:pa-workflow"]
 
 [dependencies]
+tracing.workspace = true
 pa-types = { path = "../pa-types" }
 pa-core = { path = "../pa-core" }
 pa-bash = { path = "../pa-bash" }

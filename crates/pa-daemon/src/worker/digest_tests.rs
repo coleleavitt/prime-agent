@@ -394,6 +394,7 @@ async fn accepted_push_pressure_flips_an_auto_session_rejections_never_pin_it() 
                 queue_visible: true,
                 policy: TurnPolicy::Injected,
                 forced_batch: false,
+                traceparent: None,
             });
         }
     }

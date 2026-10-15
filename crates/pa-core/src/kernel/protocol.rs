@@ -144,6 +144,9 @@ pub enum Event {
     HostRequest {
         id: String,
         data: Value,
+        /// The runtime's `kernel.host_request` span: the host's handling
+        /// span is its child.
+        traceparent: Option<String>,
     },
     Error {
         id: Option<String>,
@@ -266,7 +269,11 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
         "host_request" => {
             let rid =
                 id("id").ok_or_else(|| format!("host_request frame without id: {}", clip(line)))?;
-            Ok(Event::HostRequest { id: rid, data })
+            Ok(Event::HostRequest {
+                id: rid,
+                data,
+                traceparent: id(pa_types::trace_context::TRACEPARENT_FIELD),
+            })
         }
         "error" => Ok(Event::Error {
             id: id("id"),
@@ -540,17 +547,21 @@ mod tests {
             parse_event(r#"{"event":"host_request","id":"hr1"}"#).unwrap(),
             Event::HostRequest {
                 id: "hr1".into(),
-                data: Value::Null
+                data: Value::Null,
+                traceparent: None,
             }
         );
         assert_eq!(
             parse_event(
-                r#"{"event":"host_request","id":"hr1","data":{"reason":"agent_message.send"}}"#
+                r#"{"event":"host_request","id":"hr1","data":{"reason":"agent_message.send"},"traceparent":"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}"#
             )
             .unwrap(),
             Event::HostRequest {
                 id: "hr1".into(),
                 data: json!({"reason": "agent_message.send"}),
+                traceparent: Some(
+                    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string()
+                ),
             }
         );
     }

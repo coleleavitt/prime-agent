@@ -73,7 +73,11 @@ impl Inner {
                     let _ = tx.send(Ok(protocol));
                 }
             }
-            Event::HostRequest { id, data } => self.start_host_request(&id, &data),
+            Event::HostRequest {
+                id,
+                data,
+                traceparent,
+            } => self.start_host_request(&id, &data, traceparent.as_deref()),
             Event::Trace { fields } => {
                 // A runtime span or diagnostic in the trace log shape, forwarded verbatim to
                 // whatever trace subscriber the binary installed (none in the native build).
