@@ -93,11 +93,14 @@ formats are byte-compatible with the TS fork, proven by node-generated goldens i
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
 Fork-only (no TS counterpart; upstream removed its TypeScript extension API in #3189): `pa-hooks` (Claude
-Code-compatible command hooks from the `hooks` settings key; the kernel's `bash()` is the `Bash` tool) and
-`pa-plugins` (WebAssembly components on wasmtime: policy on tool calls and kernel host requests, prompt context,
-status panels under the editor, the `wasm-plugins` skill). Both plug into generic `pa-core` seams
-(`review_tool_call`, `review_host_request`, `prompt_context`, `register_gated_project_dir`); contract in
-`docs/hooks-and-plugins.md`.
+Code-compatible command hooks from the `hooks` settings key; the kernel's `bash()` is the `Bash` tool, `PostToolUse`
+included) and `pa-plugins` (WebAssembly components on wasmtime, contract `wit/plugin.wit` 0.2.0: policy on tool calls
+and kernel host requests, after-run notes, prompt context, status panels under the editor, model tools called through
+the `wasm-plugins` skill, `/wasm` commands; Rust example `examples/plugins/command-guard`). Both plug into generic
+`pa-core` seams (`features/`: `review_tool_call`, `review_host_request`, `after_host_request`, `prompt_context`,
+`register_gated_project_dir`). An `Ask` verdict goes to the user through `features::confirm`: the `confirmation`
+feature status, the TUI's yes/no panel, and the `answer_feature_confirmation` daemon command (capability
+`feature_confirmation`); print mode refuses. Contract in `docs/hooks-and-plugins.md`.
 
 Open:
 - Workflow V2's durable controller: new work, not a port (the TS fork stopped after slices 2-4, which exist here
@@ -131,21 +134,25 @@ Open:
 ## Validation
 
 ```sh
-S=/tmp/pa-gate; mkdir -p $S/home $S/clippy && touch $S/rustfmt.toml   # any scratch dir
+S=/tmp/pa-gate; mkdir -p $S/home $S/clippy   # any scratch dir
 export HOME=$S/home PATH=/home/cole/.cargo/bin:$PATH CARGO_HOME=/home/cole/.cargo RUSTUP_HOME=/home/cole/.rustup \
        CLIPPY_CONF_DIR=$S/clippy UV_CACHE_DIR=/home/cole/.cache/uv UV_PYTHON_INSTALL_DIR=/home/cole/.local/share/uv/python
 unset PA_TS_BINARY PRIME_AGENT_KERNEL_VENV PRIME_AGENT_KERNEL_PYTHON PA_CORE_KERNEL_PYTHON PA_E2E_KERNEL_PYTHON
 
-cargo +1.98.1 fmt --all -- --check --config-path $S/rustfmt.toml      # rustfmt finds ~/.rustfmt.toml via parents
+cargo +nightly fmt --all -- --check --config-path /home/cole/.rustfmt.toml   # HEAD's style (HOME is the sandbox here)
 cargo +1.98.1 clippy --workspace --all-targets --locked -- -D warnings
 cargo +1.98.1 clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 T=$(cargo +1.98.1 metadata --format-version 1 --no-deps | jq -r .target_directory)   # not always ./target
 cargo +1.98.1 build --locked --workspace --bins && $T/debug/prime-agent --prime-agent-bootstrap   # kernel venv
 cargo +1.98.1 test --workspace --locked --no-fail-fast
 cargo +1.98.1 deny --all-features --workspace check advisories licenses
-(cd prime-agent-runtime && PRIME_AGENT_EXECUTABLE=$T/debug/prime-agent uv run python -m unittest discover -s test && uv run ruff check src test)
+(cd prime-agent-runtime && uv run python -m unittest discover -s test && uv run ruff check src test)
 (cd skills/computer-use && PYTHONPATH=src:tests ../../prime-agent-runtime/.venv/bin/python -m unittest discover -s tests)
 ```
+
+Formatting: HEAD is formatted with nightly rustfmt and the user's `~/.rustfmt.toml` (vertical import lists). Format a
+touched file through stdin, so its `mod` declarations are not followed into untouched files:
+`rustfmt +nightly --edition 2021 --config-path /home/cole/.rustfmt.toml < f > f.tmp && mv f.tmp f`.
 
 `make check` is upstream's mirror of these gates (it assumes a default environment). The toolchain is pinned to
 1.98.1 (CI); the machine default is a nightly. A kernel-backed test run needs the sandbox HOME's venv bootstrapped by
@@ -154,8 +161,10 @@ cargo +1.98.1 deny --all-features --workspace check advisories licenses
 On this machine every checkout under `forks/` shares one build directory (`forks/.cargo/config.toml`, outside the
 repo: `forks/target`; keep the name `target`: dev-build detection keys on it), so worktrees also share `debug/prime-agent` and the last build wins. Superseded test
 binaries are never deleted by cargo and reached 634 GB on 2026-10-15: check its size before a full test run and
-prune with `cargo sweep --maxsize 150GB`. The runtime tests otherwise look for the bash host at `<checkout>/target/debug`,
-hence `PRIME_AGENT_EXECUTABLE` above.
+prune with `cargo sweep --maxsize 150GB`. The runtime finds the checkout's binary in cargo's build directory
+(`CARGO_TARGET_DIR`, else the nearest `build.target-dir` in a `.cargo/config.toml`; `rlm._host.cargo_target_dir`).
+The example plugin has its own gate, `examples/plugins/command-guard/check.sh` (needs the `wasm32-wasip2` target,
+installed for 1.98.1 here).
 
 ## Project Claude Layout
 
