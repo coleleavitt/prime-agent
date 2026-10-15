@@ -495,20 +495,35 @@ pub fn is_punctuation_char(c: char) -> bool {
 
 /// Normalize text for terminal output without changing logical content: Thai/Lao AM vowels
 /// decompose to compatibility forms (same width, no stale cells); tabs expand to three spaces.
+/// Control characters and embedded escape sequences are dropped: layout already measures
+/// them at zero width, and a raw one reaches the terminal as a command (a backspace from a
+/// binary's string table moves the cursor back, shifting the rest of the row and leaving
+/// stale cells the differential paint never revisits).
 #[must_use]
 pub fn normalize_terminal_output(s: &str) -> String {
-    let has_thai_lao_am = s.contains('\u{0e33}') || s.contains('\u{0eb3}');
-    if !has_thai_lao_am && !s.contains('\t') {
+    let needs_work = s
+        .chars()
+        .any(|c| matches!(c, '\u{0e33}' | '\u{0eb3}') || c.is_control());
+    if !needs_work {
         return s.to_string();
     }
     let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        if c == '\x1b' {
+            if let Some(len) = escape_len(rest) {
+                rest = &rest[len..];
+                continue;
+            }
+        }
         match c {
             '\u{0e33}' => out.push_str("\u{0e4d}\u{0e32}"),
             '\u{0eb3}' => out.push_str("\u{0ecd}\u{0eb2}"),
             '\t' => out.push_str("   "),
+            c if c.is_control() => {}
             c => out.push(c),
         }
+        rest = &rest[c.len_utf8()..];
     }
     out
 }
@@ -797,6 +812,31 @@ fn normalize_terminal_output_matches_ts_goldens() {
         );
     }
     assert_eq!(normalize_terminal_output("plain ascii"), "plain ascii");
+}
+
+/// A tool's raw output can carry C0/C1 controls and escape sequences (IDA's
+/// string table prefixes each string with its length byte, `\x07`, `\x08`):
+/// none of them reaches the terminal, and dropping them keeps the measured
+/// width.
+#[test]
+fn normalize_terminal_output_drops_controls_and_escapes() {
+    for (input, expected) in [
+        ("\x07FaceBoxBottom", "FaceBoxBottom"),
+        ("\x08AntiSpoofing\r", "AntiSpoofing"),
+        ("a\u{0}b\u{7f}c\u{85}d", "abcd"),
+        ("red \x1b[31mtext\x1b[0m", "red text"),
+        ("title\x1b]0;pwned\x07!", "title!"),
+        ("lone \x1b escape", "lone  escape"),
+        ("tab\there", "tab   here"),
+    ] {
+        let normalized = normalize_terminal_output(input);
+        assert_eq!(normalized, expected, "for {input:?}");
+        assert_eq!(
+            str_width(&normalized),
+            str_width(input),
+            "width of {input:?}"
+        );
+    }
 }
 
 /// `slice_line_by_column` goldens (TS `sliceByColumn` semantics): whole

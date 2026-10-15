@@ -1932,3 +1932,22 @@ fn an_escaped_bang_before_a_link_is_not_an_image() {
     let joined: String = spans.iter().map(|s| s.content.as_str()).collect();
     assert_eq!(joined, "\\alt");
 }
+
+/// A painted line never hands the terminal a control byte: ratatui glues a
+/// zero-width `\x08` onto the previous cell and writes it verbatim, which
+/// moved the cursor back and left stale cells across the row.
+#[test]
+fn painted_cells_carry_no_control_bytes() {
+    let line: Line = vec![Span::raw(
+        "\x07FaceBoxBottom \x08Anti\x1b[31mred".to_string(),
+    )];
+    let painted = to_ratatui_line(&line);
+    let area = ratatui::layout::Rect::new(0, 0, 40, 1);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    ratatui::widgets::Widget::render(painted, area, &mut buffer);
+    let row: String = (0..40)
+        .map(|x| buffer[(x, 0)].symbol().to_string())
+        .collect();
+    assert!(!row.chars().any(char::is_control), "{row:?}");
+    assert_eq!(row.trim_end(), "FaceBoxBottom Antired");
+}
