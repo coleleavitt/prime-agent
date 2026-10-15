@@ -92,6 +92,13 @@ The fork's TS-only features are ported as removable feature crates (`docs/fork-f
 formats are byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. Static bug
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
+Fork-only (no TS counterpart; upstream removed its TypeScript extension API in #3189): `pa-hooks` (Claude
+Code-compatible command hooks from the `hooks` settings key; the kernel's `bash()` is the `Bash` tool) and
+`pa-plugins` (WebAssembly components on wasmtime: policy on tool calls and kernel host requests, prompt context,
+status panels under the editor, the `wasm-plugins` skill). Both plug into generic `pa-core` seams
+(`review_tool_call`, `review_host_request`, `prompt_context`, `register_gated_project_dir`); contract in
+`docs/hooks-and-plugins.md`.
+
 Open:
 - Workflow V2's durable controller: new work, not a port (the TS fork stopped after slices 2-4, which exist here
   dormant: the SQLite store, reducer, capture/settlement, dispatch guard). Remaining are `WORKFLOW-V2.md` slices
