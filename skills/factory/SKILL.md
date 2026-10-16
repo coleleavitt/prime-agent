@@ -20,6 +20,14 @@ as interrupted; `rlm.factory.resume(run_id)` continues it). Use
 it when a workflow needs shape: fan-out, bounded loops (review/fix until a
 verdict approves), joins, or one child per list item.
 
+You are notified when a run needs you, so do not poll it: a run that
+completes, fails, pauses, is interrupted by a host restart, or is stopped
+by the user sends the session one `<task-notification>` (task type
+`factory_run`, the run id as the task id, the status, and a short result:
+the detail, a completed run's final answers, or the resume call). An idle
+session wakes into it; a busy one reads it after the current turn.
+`rlm.factory.status`/`watch` remain for inspecting a run in between.
+
 **For the full authoring reference and API guide — states, ports, guards,
 joins, foreach, residents, budgets and policies, and the `rlm.factory`
 run/status/stop/resume/graph/watch calls with worked examples — call

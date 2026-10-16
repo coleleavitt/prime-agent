@@ -1226,10 +1226,17 @@ watched = await rlm.factory.watch(result["run_id"], 30)
 - `run` re-validates the spec and resolves every subagent reference first,
   reporting all failures in one `ValueError` and starting nothing on any
   failure; `name=` labels the run in status and the TUI.
-- Pause and failure notices (escalate, budget, max_transitions,
-  max_children, failed, finished) arrive as quiet notices in the
-  conversation once per kind per run, the pause notices with the resume
-  call spelled out — a paused run does not need polling to be noticed.
+- You are notified; do not poll. When a run completes, fails, pauses
+  (escalate, budget, max_transitions, max_children), is interrupted by
+  a host restart, or is stopped by the user, the session receives one
+  `<task-notification>` (`<task-type>factory_run</task-type>`, the run
+  id as `<task-id>`, `<status>` completed | failed | paused |
+  interrupted | cancelled, a `<result>` with the detail, a completed
+  run's final answers, and the resume call for a pause) — an idle
+  session wakes into it, a busy one reads it after the current turn.
+  Each milestone notifies once per run (an interruption once per
+  restart); a notice still queued when you read that state yourself
+  with `status`, `watch` or `stop` is withdrawn.
 - `stop(run_id)` cancels every running child of the run (idempotent);
   `resume(run_id)` continues a paused run and raises on a non-paused one.
 - The activity lane the daemon and TUI speak is camelCase on the wire
