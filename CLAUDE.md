@@ -69,6 +69,13 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   the features' prompt review), `pa-daemon::worker::steer_fold` takes the lane's plain user steers and settles their
   waiters with the run; session commands, image prompts, injected rows and a refused steer keep the stop-and-restart
   delivery.
+- Background work follows Claude Code's model: host notices on the steering lane (`[bash-done]` with the output's
+  tail, watch events, `rlm.monitor` line batches, a moved cell's `[cell-done]`, a feature's `feature_notice`) join
+  a running turn at its next boundary as their own rows (`steer_fold::FOLDABLE_NOTICE_TYPES`; the engine bridge
+  persists and broadcasts them) or wake an idle session. `rlm.monitor` follows a command's output lines (pa-bash
+  `bash.output` `sinceBytes`). Send-now (Ctrl+Enter) moves the running cell to the background (`detach`, protocol 6,
+  daemon `detach_running_cell`) and interrupts only what cannot move. Factory runs notify on the follow-up lane
+  (`task_notification` rows); the bundled `tasks` skill is the model's task list.
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
 - The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the
