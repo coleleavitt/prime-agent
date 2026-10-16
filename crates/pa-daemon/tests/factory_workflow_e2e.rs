@@ -1050,10 +1050,9 @@ fn factory_loop_machine_creates_runs_and_re_binds_over_the_real_bridge() {
     assert_eq!(blocked[0]["from"], "reviewing");
     assert_eq!(blocked[0]["to"], "fixing");
 
-    // The finished milestone lands in the ledger but never as a shown notice:
-    // the notice-injection lane is deliberately unported (the dead-bridge
-    // path the factory core port tested), so the parent's turns above ended
-    // on their own scripted text, not on a factory-progress wake.
+    // The finished milestone reaches the parent session once as a
+    // `<task-notification>` row through the worker's notice lane: the
+    // ledger marks it `shown`.
     let milestones: Vec<&Value> = status["events"]
         .as_array()
         .expect("events")
@@ -1061,9 +1060,9 @@ fn factory_loop_machine_creates_runs_and_re_binds_over_the_real_bridge() {
         .filter(|event| event["kind"] == "milestone" && event["milestone"] == "finished")
         .collect();
     assert_eq!(milestones.len(), 1, "one finished milestone per run");
-    assert_ne!(
+    assert_eq!(
         milestones[0]["stage"], "shown",
-        "the notice lane is unported; the milestone stays ledger-only"
+        "the worker's notice lane admitted the completion notice"
     );
 
     // The optional fix_report input re-binds on every re-entry through the
@@ -1560,9 +1559,9 @@ fn factory_run_is_nonblocking_and_completes_in_the_background() {
         .filter(|event| event["kind"] == "milestone" && event["milestone"] == "finished")
         .collect();
     assert_eq!(milestones.len(), 1);
-    assert_ne!(
+    assert_eq!(
         milestones[0]["stage"], "shown",
-        "the finished milestone stays in the ledger (the notice lane is unported)"
+        "the finished milestone reached the session as a notice"
     );
 }
 
