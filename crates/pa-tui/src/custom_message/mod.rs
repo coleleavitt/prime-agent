@@ -55,6 +55,8 @@ pub const PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE: &str = "python_skills_unavailab
 pub const RLM_CHILD_FAILURE_CUSTOM_TYPE: &str = "rlm_child_failure";
 pub const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE: &str = "rlm_child_terminal_notice";
 pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
+/// Wire twin of `pa_core::session_engine::messages::FACTORY_RUN_NOTICE_CUSTOM_TYPE`.
+pub const FACTORY_RUN_NOTICE_CUSTOM_TYPE: &str = "factory_run_notice";
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 /// The durable single-line outcome of one provider-retry episode (SANCTIONED DIVERGENCE,
@@ -210,6 +212,19 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
                 },
             }]
         }
+        // A factory run's milestone: the model reads the full
+        // `<task-notification>`; the transcript shows its one-line summary.
+        FACTORY_RUN_NOTICE_CUSTOM_TYPE => vec![ChatEntry::Status {
+            text: details
+                .get("summary")
+                .and_then(Value::as_str)
+                .map_or(content, str::to_string),
+            kind: match details.get("status").and_then(Value::as_str) {
+                Some("completed") => crate::chat::StatusKind::Info,
+                Some("failed") => crate::chat::StatusKind::Error,
+                _ => crate::chat::StatusKind::Warning,
+            },
+        }],
         MODEL_PROMPT_ERROR_CUSTOM_TYPE => vec![ChatEntry::Status {
             text: content,
             kind: crate::chat::StatusKind::Warning,
@@ -885,6 +900,33 @@ mod tests {
             [ChatEntry::ShellCompletion(row)]
                 if row.pid.is_none() && row.exit_code.is_none()
         ));
+    }
+
+    #[test]
+    fn factory_run_notice_renders_its_summary_line() {
+        let row = |status: &str| {
+            json!({
+                "role": "custom",
+                "customType": FACTORY_RUN_NOTICE_CUSTOM_TYPE,
+                "content": "<task-notification>\n<task-id>r1</task-id>\n</task-notification>",
+                "display": true,
+                "details": { "taskId": "r1", "status": status, "summary": "Factory run \"x\" ended" },
+            })
+        };
+        for (status, kind) in [
+            ("completed", StatusKind::Info),
+            ("failed", StatusKind::Error),
+            ("paused", StatusKind::Warning),
+        ] {
+            assert_eq!(
+                decoded(&row(status)),
+                vec![ChatEntry::Status {
+                    text: "Factory run \"x\" ended".to_string(),
+                    kind,
+                }],
+                "{status}"
+            );
+        }
     }
 
     #[test]

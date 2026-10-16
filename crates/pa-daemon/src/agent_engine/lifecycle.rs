@@ -222,6 +222,7 @@ impl AgentSessionEngine {
             compaction_summary_sink: std::sync::Mutex::new(None),
             progress_notes: std::sync::Mutex::new(None),
             progress_note_emit: std::sync::Mutex::new(None),
+            factory_notices: std::sync::Mutex::new(None),
             model_refusal_telemetry,
             semantic_identity: std::sync::Mutex::new(None),
             presented_artifact_sink: std::sync::Mutex::new(None),
@@ -991,6 +992,7 @@ impl AgentSessionEngine {
         let queued_goal_context_purge = self.goal_queue_purge.lock_or_recover().clone();
         let rlm_usage_store = self.rlm_usage_store.lock_or_recover().clone();
         let progress_note_emit = self.progress_note_emit.lock_or_recover().clone();
+        let factory_notices = self.factory_notices.lock_or_recover().clone();
         // The kernel's last live background `bash()` handle settling
         // (or a mid-run teardown) retries the owed continuations. No
         // registered arc wires nothing.
@@ -1042,6 +1044,7 @@ impl AgentSessionEngine {
             }),
             rlm_usage_store,
             progress_note_emit,
+            factory_notices,
             rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),
             // The worker session runs under the daemon scheduler and its wake-ups.
             daemonless: false,

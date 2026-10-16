@@ -808,6 +808,112 @@ fn set_monitor_row(item: &mut QueuedItem, event: &pa_core::session_engine::messa
     item.custom_message = Some(crate::session_commands::custom_message_value(&row));
 }
 
+/// Admit one factory run notice (a run's completion, failure, pause,
+/// interruption or user stop): the row queues on the follow-up lane, so a
+/// busy session reads it after its current run (a visible queued row) and
+/// an idle session wakes into it as an injected turn; a crash before the
+/// delivery revives with the row replaying. Answers `false` when the
+/// session is closed (nothing queued).
+pub(crate) fn admit_factory_run_notice(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    work_notify: &Arc<Notify>,
+    row: &pa_types::session::CustomMessage,
+    session_is_closed: impl Fn() -> bool,
+) -> bool {
+    let content = match &row.content {
+        pa_types::ai::UserContent::Text(text) => text.clone(),
+        pa_types::ai::UserContent::Blocks(_) => String::new(),
+    };
+    let summary = row
+        .details
+        .as_ref()
+        .and_then(|details| details.get("summary"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    // The busy sample and the push share ONE critical section (the bash
+    // notice's discipline): a turn starting between them would park an
+    // invisible row behind a busy session.
+    let mut core_guard = core.lock_or_recover();
+    if session_is_closed() {
+        return false;
+    }
+    let (policy, queue_visible) = if core_guard.busy {
+        (TurnPolicy::Queued, true)
+    } else {
+        (TurnPolicy::Injected, false)
+    };
+    core_guard.follow_up.push_back(QueuedItem {
+        priority: QueuePriority::Background,
+        preview: Some(format!(
+            "{}: {summary}",
+            pa_core::session_engine::messages::FACTORY_RUN_NOTICE_PREVIEW_LABEL
+        )),
+        message: content,
+        custom_message: Some(crate::session_commands::custom_message_value(row)),
+        agent_message: None,
+        queue_key: None,
+        admission_id: None,
+        images: Vec::new(),
+        done: None,
+        queue_visible,
+        policy,
+        forced_batch: false,
+        traceparent: None,
+    });
+    drop(core_guard);
+    checkpoint_queue_recovery(
+        recovery,
+        core,
+        QueueCheckpoint::Admitted {
+            operation: "follow_up_queued",
+        },
+        None,
+    );
+    work_notify.notify_one();
+    true
+}
+
+/// Withdraw the queued factory run notices for `run_id` in `run_state`:
+/// the model read that state itself (`factory.status`/`watch`/`stop`)
+/// before the notice delivered. A delivered notice is not in the lanes.
+pub(crate) fn withdraw_factory_run_notice(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    run_id: &str,
+    run_state: &str,
+    engine: Option<&dyn crate::engine::SessionEngine>,
+) -> bool {
+    let stale = |item: &QueuedItem| {
+        item.custom_message.as_ref().is_some_and(|row| {
+            pa_core::factory::executor::notice::is_notice_for(row, run_id, run_state)
+        })
+    };
+    let removed = {
+        let mut core_guard = core.lock_or_recover();
+        let before = core_guard.steering.len() + core_guard.follow_up.len();
+        core_guard.steering.retain(|item| !stale(item));
+        core_guard.follow_up.retain(|item| !stale(item));
+        let removed = before != core_guard.steering.len() + core_guard.follow_up.len();
+        if let (true, Some(engine)) = (removed, engine) {
+            clear_withdrawn_progress_note(&core_guard, engine);
+        }
+        removed
+    };
+    if removed {
+        checkpoint_queue_recovery(
+            recovery,
+            core,
+            QueueCheckpoint::Settle {
+                operation: "queue_purged",
+            },
+            None,
+        );
+    }
+    removed
+}
+
 /// Withdraw one queued bash completion notice: the kernel read the result
 /// before the notice delivered (pids are reused, so the command disambiguates).
 pub(crate) fn withdraw_bash_completion_notice(

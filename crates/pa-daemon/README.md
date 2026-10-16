@@ -127,6 +127,13 @@ folds — and the daemon's own notice injection rides the follow-up route
 with a one-shot capability minted in the worker process (the wire's
 optional `rlmNoticeNonce`), so the queue's classification only ever sees
 daemon-authentic rows.
+Factory run notices (`factory_notices.rs`): the worker implements pa-core's
+`FactoryNotices` port over its own queue — each run milestone the session's
+factory executor announces queues one `factory_run_notice` row (a
+`<task-notification>`) on the follow-up lane, injected and invisible on an
+idle session (it wakes the runner) and a visible queued row on a busy one,
+journaled like any admission; a kernel `factory.status`/`watch`/`stop` that
+read the run's state withdraws the still-queued row for that state.
 Prompt attachments: the `prompt`/`steer`/`follow_up` wire `images` array
 (base64 payload + mime type) rides the queue item into the session engine
 as multimodal user content (images on a queued prompt do not survive a

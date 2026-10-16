@@ -42,6 +42,7 @@ pub(crate) use queue::{
     TurnSettle,
     admit_autonomous_follow_up,
     admit_bash_completion_notice,
+    admit_factory_run_notice,
     admit_goal_follow_up,
     admit_monitor_event,
     admit_notice_row,
@@ -56,6 +57,7 @@ pub(crate) use queue::{
     restore_queue_snapshot,
     restored_turn_policy,
     withdraw_bash_completion_notice,
+    withdraw_factory_run_notice,
 };
 pub use queue::{Lane, QueuePriority};
 
@@ -796,6 +798,47 @@ impl Worker {
                     });
                 });
                 concrete.set_notice_row_sink(row_sink);
+                // The factory run notice lane: the session's executor
+                // announces each run milestone into the follow-up lane,
+                // and the kernel's own read of the run withdraws it.
+                let factory_engine = std::sync::Arc::downgrade(concrete);
+                let factory_core = Arc::clone(&core);
+                let factory_notify = Arc::clone(&work_notify);
+                let factory_recovery = Arc::clone(&recovery);
+                let factory_admit: crate::factory_notices::FactoryNoticeAdmit =
+                    Arc::new(move |row| {
+                        let Some(engine) = factory_engine.upgrade() else {
+                            return false;
+                        };
+                        !engine.session_is_closed()
+                            && admit_factory_run_notice(
+                                &factory_recovery,
+                                &factory_core,
+                                &factory_notify,
+                                row,
+                                || engine.session_is_closed(),
+                            )
+                    });
+                let withdraw_factory_core = Arc::clone(&core);
+                let withdraw_factory_recovery = Arc::clone(&recovery);
+                let withdraw_factory_engine = Arc::downgrade(concrete);
+                let factory_withdraw: crate::factory_notices::FactoryNoticeWithdraw =
+                    Arc::new(move |run_id, run_state| {
+                        let engine = withdraw_factory_engine.upgrade();
+                        withdraw_factory_run_notice(
+                            &withdraw_factory_recovery,
+                            &withdraw_factory_core,
+                            run_id,
+                            run_state,
+                            engine.as_deref().map(|engine| engine as &dyn SessionEngine),
+                        );
+                    });
+                concrete.set_factory_notices(Arc::new(
+                    crate::factory_notices::WorkerFactoryNotices::new(
+                        factory_admit,
+                        factory_withdraw,
+                    ),
+                ));
                 // The accepted note frames as a session event on the pump.
                 let note_core = Arc::clone(&core);
                 let note_events = events.clone();
@@ -1352,6 +1395,8 @@ mod prompt_image_tests;
 
 #[cfg(test)]
 mod compaction_admission_tests;
+#[cfg(test)]
+mod factory_notice_tests;
 #[cfg(test)]
 mod recovery_verdict_tests;
 #[cfg(test)]

@@ -181,6 +181,11 @@ pub struct AgentSessionEngine {
     /// The prebuilt notice-row seam (`cell.completed`); `None` outside a
     /// daemon worker.
     pub(crate) notice_row_sink: std::sync::Mutex<Option<crate::engine::NoticeRowSink>>,
+    /// The factory run notice lane (the worker's follow-up queue), threaded
+    /// into every session build; `None` outside a daemon worker.
+    pub(crate) factory_notices: std::sync::Mutex<
+        Option<std::sync::Arc<dyn pa_core::factory::executor::ports::FactoryNotices>>,
+    >,
     /// The worker-installed digest inbox seams (swarm PR C): the inbox
     /// reads and the pin live on the receiving worker; the kernel host
     /// handlers call through these. Set by the worker at construction;
