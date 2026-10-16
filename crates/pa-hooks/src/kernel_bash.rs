@@ -3,6 +3,9 @@
 //! of a later `bash.follow` reply for the same job, so the session tracks
 //! each running job's command from its `bash.run` until its result arrives,
 //! then presents the pair as Claude Code's `Bash` tool call and response.
+//! The jobs still running are the session's background tasks (`Stop`'s
+//! `background_tasks`); a job also ends when the kernel reports its
+//! detached completion (`bash.completed`) or kills it.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -23,10 +26,18 @@ pub struct FinishedCommand {
     pub response: Value,
 }
 
+/// One running kernel command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningJob {
+    pub id: String,
+    pub pid: Option<u64>,
+    pub command: String,
+}
+
 /// One session's running kernel commands, by job id, in start order.
 #[derive(Debug, Default)]
 pub struct KernelJobs {
-    running: Mutex<Vec<(String, String)>>,
+    running: Mutex<Vec<RunningJob>>,
 }
 
 /// The `finished` event of a `bash.*` reply, when it carries one.
@@ -70,6 +81,37 @@ fn response(reply: &Value, event: &Value) -> Value {
 }
 
 impl KernelJobs {
+    /// The commands still running, oldest first.
+    #[must_use]
+    pub fn running(&self) -> Vec<RunningJob> {
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Forget the jobs a request ended without a result reaching the host:
+    /// a detached completion (`bash.completed`, by pid, whatever the host
+    /// answered), a kill (`bash.kill`, by job id) or every job
+    /// (`bash.killAll`).
+    pub fn forget_ended(&self, request_type: &str, data: &Value) {
+        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        match request_type {
+            "bash.completed" => {
+                if let Some(pid) = data.get("pid").and_then(Value::as_u64) {
+                    running.retain(|job| job.pid != Some(pid));
+                }
+            }
+            "bash.kill" => {
+                if let Some(id) = data.get("id").and_then(Value::as_str) {
+                    running.retain(|job| job.id != id);
+                }
+            }
+            "bash.killAll" => running.clear(),
+            _ => {}
+        }
+    }
+
     /// Read one `bash.*` request's reply: `Some` when it carries a tracked
     /// (or just started) command's result.
     pub fn observe(
@@ -88,22 +130,24 @@ impl KernelJobs {
                 if finished_event(reply).is_some() {
                     command
                 } else {
-                    let job = reply
-                        .get("job")
-                        .and_then(|job| job.get("id"))
-                        .and_then(Value::as_str)?;
+                    let job = reply.get("job")?;
+                    let id = job.get("id").and_then(Value::as_str)?;
                     if running.len() >= MAX_TRACKED_JOBS {
                         running.remove(0);
                     }
-                    running.push((job.to_string(), command));
+                    running.push(RunningJob {
+                        id: id.to_string(),
+                        pid: job.get("pid").and_then(Value::as_u64),
+                        command,
+                    });
                     return None;
                 }
             }
             "bash.follow" => {
                 let job = data.get("id").and_then(Value::as_str)?;
                 finished_event(reply)?;
-                let index = running.iter().position(|(id, _)| id == job)?;
-                running.remove(index).1
+                let index = running.iter().position(|running| running.id == job)?;
+                running.remove(index).command
             }
             _ => return None,
         };
@@ -205,6 +249,53 @@ mod tests {
             "{}",
             output_of(&missing)
         );
+    }
+
+    #[test]
+    fn running_jobs_end_on_a_detached_completion_or_a_kill() {
+        let jobs = KernelJobs::default();
+        for (n, pid) in [(1, 11), (2, 12), (3, 13)] {
+            jobs.observe(
+                "bash.run",
+                &json!({ "command": format!("sleep {n}") }),
+                &json!({ "status": "ok", "job": { "id": format!("j{n}"), "pid": pid }, "events": [] }),
+            );
+        }
+        assert_eq!(
+            jobs.running(),
+            vec![
+                RunningJob {
+                    id: "j1".to_string(),
+                    pid: Some(11),
+                    command: "sleep 1".to_string()
+                },
+                RunningJob {
+                    id: "j2".to_string(),
+                    pid: Some(12),
+                    command: "sleep 2".to_string()
+                },
+                RunningJob {
+                    id: "j3".to_string(),
+                    pid: Some(13),
+                    command: "sleep 3".to_string()
+                },
+            ]
+        );
+        jobs.forget_ended(
+            "bash.completed",
+            &json!({ "pid": 12, "command": "sleep 2", "exitCode": 0 }),
+        );
+        jobs.forget_ended("bash.kill", &json!({ "id": "j1", "signal": 15 }));
+        jobs.forget_ended("bash.output", &json!({ "id": "j3" }));
+        assert_eq!(
+            jobs.running()
+                .into_iter()
+                .map(|job| job.id)
+                .collect::<Vec<_>>(),
+            vec!["j3".to_string()]
+        );
+        jobs.forget_ended("bash.killAll", &json!({}));
+        assert!(jobs.running().is_empty());
     }
 
     #[test]

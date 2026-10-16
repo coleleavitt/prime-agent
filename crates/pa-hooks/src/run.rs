@@ -3,8 +3,11 @@
 //! - exit 0: stdout may be a JSON object (`decision`, `reason`, `continue`,
 //!   `stopReason`, `hookSpecificOutput.{permissionDecision,
 //!   permissionDecisionReason, additionalContext}`); plain stdout is context
-//!   for `SessionStart` / `UserPromptSubmit`;
-//! - exit 2: blocks, with stderr as the reason;
+//!   for `SessionStart` / `UserPromptSubmit` (for `PreCompact`, added
+//!   summary instructions); a `Stop` hook's `continue: false` lets the
+//!   agent stop (it was stopping);
+//! - exit 2: blocks, with stderr as the reason (for `Stop`: keeps the agent
+//!   going, with stderr as the reason it reads);
 //! - any other exit, a spawn failure or a timeout: a non-blocking error,
 //!   reported and ignored.
 
@@ -166,14 +169,25 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
         .ok()
         .filter(Value::is_object);
     let Some(json) = json else {
-        // Plain stdout is context for the events that inject it.
-        let context = matches!(event, HookEvent::SessionStart | HookEvent::UserPromptSubmit)
-            .then(|| stdout.to_string())
-            .filter(|text| !text.is_empty());
+        // Plain stdout is context for the events that inject it (for
+        // `PreCompact`, Claude Code's added summary instructions).
+        let context = matches!(
+            event,
+            HookEvent::SessionStart | HookEvent::UserPromptSubmit | HookEvent::PreCompact
+        )
+        .then(|| stdout.to_string())
+        .filter(|text| !text.is_empty());
         return HookAnswer::Pass { context };
     };
     let specific = json.get("hookSpecificOutput").unwrap_or(&Value::Null);
     let context = text(specific, "additionalContext");
+    // A stop hook's `continue: false` stops the agent, which is stopping
+    // anyway: only a `block` keeps it going.
+    if matches!(event, HookEvent::Stop | HookEvent::SubagentStop)
+        && json.get("continue") == Some(&Value::Bool(false))
+    {
+        return HookAnswer::Pass { context };
+    }
     if json.get("continue") == Some(&Value::Bool(false)) {
         return HookAnswer::Block(
             text(&json, "stopReason").unwrap_or_else(|| "stopped by a hook".to_string()),
@@ -220,6 +234,7 @@ mod tests {
         HookCommand {
             command: command.to_string(),
             timeout: Duration::from_secs(5),
+            mode: crate::config::HookMode::Blocking,
         }
     }
 
@@ -321,6 +336,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stop_compaction_and_batch_answers_follow_claude_codes_contract() {
+        let cases = [
+            // A Stop block keeps the agent going; its `continue: false`
+            // (stop now) does not.
+            (
+                HookEvent::Stop,
+                outcome(0, r#"{"decision":"block","reason":"tests fail"}"#, ""),
+                HookAnswer::Block("tests fail".to_string()),
+            ),
+            (
+                HookEvent::Stop,
+                outcome(2, "", "lint first"),
+                HookAnswer::Block("lint first".to_string()),
+            ),
+            (
+                HookEvent::Stop,
+                outcome(0, r#"{"continue":false,"stopReason":"enough"}"#, ""),
+                HookAnswer::Pass { context: None },
+            ),
+            (
+                HookEvent::Stop,
+                outcome(0, r#"{"decision":"approve"}"#, ""),
+                HookAnswer::Allow { context: None },
+            ),
+            // PreCompact's plain stdout is added summary instructions.
+            (
+                HookEvent::PreCompact,
+                outcome(0, "keep the API notes\n", ""),
+                HookAnswer::Pass {
+                    context: Some("keep the API notes".to_string()),
+                },
+            ),
+            (
+                HookEvent::PostToolBatch,
+                outcome(
+                    0,
+                    r#"{"hookSpecificOutput":{"hookEventName":"PostToolBatch","additionalContext":"batch ctx"}}"#,
+                    "",
+                ),
+                HookAnswer::Pass {
+                    context: Some("batch ctx".to_string()),
+                },
+            ),
+        ];
+        for (event, outcome, expected) in cases {
+            assert_eq!(answer(event, &hook("h"), &outcome), expected, "{outcome:?}");
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn a_command_reads_its_input_and_a_slow_one_times_out() {
@@ -340,6 +405,7 @@ mod tests {
             &HookCommand {
                 command: "sleep 30".to_string(),
                 timeout: Duration::from_millis(200),
+                mode: crate::config::HookMode::Blocking,
             },
             dir.path(),
             "s1",

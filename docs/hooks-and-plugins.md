@@ -23,7 +23,13 @@ Cargo features, built on `pa_core::features::SessionFeature`. `--no-default-feat
 | prompt context | `prompt_context` -> `PromptDecision` | `Context(text)` adds a hidden row ahead of the user's prompt; `Block(reason)` refuses the prompt |
 | status panel | `publish_feature_status` (existing) | `status.panel` (an array of strings) renders under the chat editor; `line` stays the agents-view summary |
 | confirmation | `features::confirm` | puts an `Ask` to the user (below) |
-| agent stop | `on_agent_stop` | the agent finished: a run a queued steer ended (the agent goes on with the steer at once) does not count; `on_agent_end` still sees every run end. Hooks' `Stop` and plugins' `on-agent-end` use it |
+| agent stop | `on_agent_stop` | the agent finished: a run a queued steer ended (the agent goes on with the steer at once) does not count; `on_agent_end` still sees every run end. Plugins' `on-agent-end` uses it |
+| stop decision | `before_agent_stop` -> continuation | at the turn boundary after the model's final turn (no tool calls, `stop` finish, no queued steer or follow-up): text keeps the agent going as a hidden `feature_continuation` row in the same run; `continued` says a continuation already ran in this run, and at most `MAX_FEATURE_CONTINUATIONS_PER_RUN` (8) run. Hooks' `Stop` uses it |
+| tool batch | `after_tool_batch` -> context | after a tool batch, before the next model request: text rides that request as a hidden `feature_context` row (steered into the run, like a folded steer). Hooks' `PostToolBatch` |
+| compaction | `before_compaction` -> instructions, `after_compaction` | around `AgentSession::compact_with_trigger` (`manual` for `/compact` and the client's compact command, `auto` for threshold, overflow and model-requested compactions): text is appended to the summary instructions; the committed summary is observed. Hooks' `PreCompact`/`PostCompact` |
+| session end | `on_session_end` | once per session engine: the host ends the session (`SessionEngine::dispose_kernel`) or the engine drops; may run outside an async runtime. Hooks' `SessionEnd` |
+| messages | `on_message_end` (existing) | every finalized row, including the background completion notices (`async_bash_completion`, `rlm_child_terminal_notice`, `rlm_child_failure`) when they reach the model. Hooks' `Notification` and `SubagentStop` |
+| feature notice | `deliver_feature_notice` | a feature's text reaches the model as a visible `feature_notice` row that starts a turn on an idle session or steers into a running one (below). Hooks' `asyncRewake` |
 | slash commands | `slash_commands` / `execute_slash_command` (existing) | `/wasm` |
 
 Verdicts compose in install order: the first `Block` wins, then any `Ask` asks the user (one question carrying every
@@ -40,6 +46,13 @@ same action (not reviewed or asked again) and hides the `EnvUnknown` reply from 
 Notes from `after_host_request` wait in the session's `FeatureNotes`: the after hook of the tool call whose cell sent
 the request appends them to its result; notes from a request outside any tool call ride the next admitted prompt's
 hidden context row.
+
+A feature notice goes to the session's notice sink, registered per session (`register_feature_notice_sink`, held
+weakly). The engine registers its own for every session when any feature is installed: the agent's admit-or-steer
+(an idle agent starts a run on the row, a busy one takes it as steering). The daemon worker replaces it at every
+engine build (`SessionEngine::set_feature_notice_sink`) with its queue lanes, the same admission as a detached bash
+completion (`admit_feature_notice`: an invisible injected turn on an idle session, a visible steer row behind a busy
+one, journaled as live work), so the woken turn runs where clients see it.
 
 ## Asking the user
 
@@ -72,13 +85,47 @@ Settings key `hooks`, Claude Code's shape:
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/bin/memory-recall" }] }],
     "PreToolUse":       [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/bin/guard", "timeout": 10 }] }],
     "PostToolUse":      [{ "matcher": "python_repl|Bash", "hooks": [{ "type": "command", "command": "~/bin/audit" }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/bin/notify" }] }]
+    "PostToolBatch":    [{ "hooks": [{ "type": "command", "command": "~/bin/batch-context" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "~/bin/tests-must-pass" }] }],
+    "SubagentStop":     [{ "matcher": "review.*", "hooks": [{ "type": "command", "command": "~/bin/log-review" }] }],
+    "PreCompact":       [{ "matcher": "auto", "hooks": [{ "type": "command", "command": "echo 'keep the TODO list'" }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "~/bin/desktop-notify" }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "~/bin/archive" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/bin/slow-lint", "asyncRewake": true }] }]
 } }
 ```
 
-- **Events:** `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`. The JSON on stdin is
-  Claude Code's: `hook_event_name`, `session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input`,
-  `tool_response`, `prompt`.
+- **Events and their input** (every event also gets `session_id`, `transcript_path` (empty: the log is the
+  daemon's), `cwd`, `hook_event_name`, `permission_mode` (`default`)):
+
+  | event | fires | input fields | answer |
+  |---|---|---|---|
+  | `SessionStart` | session engine built | `source` (`startup`/`resume`) | context rides the first admitted prompt |
+  | `UserPromptSubmit` | prompt admitted | `prompt` | context, or refuse the prompt |
+  | `PreToolUse` | tool call / kernel host request about to run | `tool_name`, `tool_input` | deny, ask, allow |
+  | `PostToolUse` | tool ran / `bash()` result arrived | `tool_name`, `tool_input`, `tool_response` | note on the result |
+  | `PostToolBatch` | after a tool batch, before the next model request | `tool_calls: [{tool_name, tool_use_id}]` | context rides that request |
+  | `Stop` | model's final turn, nothing queued continues the run | `stop_hook_active`, `last_assistant_message`, `background_tasks` | `block` / exit 2 keeps the agent going |
+  | `SubagentStart` | `rlm.run` spawned a child | `agent_id`, `agent_type` | none |
+  | `SubagentStop` | a child settled (collect, roster, terminal notice), once | `agent_id`, `agent_type`, `stop_hook_active`, `last_assistant_message`?, `agent_session_dir`? | none |
+  | `PreCompact` | before a compaction | `trigger` (`manual`/`auto`), `custom_instructions` | stdout adds summary instructions |
+  | `PostCompact` | after a compaction committed | `trigger`, `compact_summary` | none |
+  | `Notification` | completion notice reaches the model; a hook asks the user | `message`, `title`, `notification_type` | none |
+  | `SessionEnd` | host ends the session, or its engine drops | `reason` (`other`) | none |
+
+  `background_tasks` is `[{id, type, status, description, command?}]`: the kernel's `bash()` commands still running
+  (`type: "bash"`, with `command`) and the child agents still running (`type: "subagent"`, `description` is the
+  child's name). `agent_type` is the child's session name (children have names, not roles).
+- **Stop continuations:** every blocking `Stop` hook's reason reaches the model as one hidden row
+  (`Stop hook feedback:\n<reasons>`) and the same run makes another model call. The next `Stop` input carries
+  `stop_hook_active: true`, and a hook should let the agent stop then; the session also stops honoring
+  continuations after 8 in one run. `continue: false` from a `Stop` hook lets the agent stop (it was stopping).
+  `Stop` fires only on a natural end: a run cut off at the output limit, ended in error, aborted, or continued by a
+  queued steer or follow-up fires none.
+- **Background hooks:** `"async": true` on a command runs it without waiting; its decisions are not applied and its
+  `additionalContext` rides the next admitted prompt. `"asyncRewake": true` (implies `async`): an exit code 2
+  delivers `Async <Event> hook reported:\n\n<stderr>` as a feature notice that wakes an idle session (a turn starts on
+  it) or steers into the running one.
 - **Tool names:** the kernel's `bash()` calls are presented as `Bash` with `tool_input.command`, and its MCP calls
   as `mcp__<server>__<tool>`, so existing Claude Code guard scripts work unmodified. The model's own tool calls keep
   their names (`python_repl`, ...).
@@ -93,10 +140,23 @@ Settings key `hooks`, Claude Code's shape:
   - `hookSpecificOutput.permissionDecision` of `deny` blocks; `allow` passes; `ask` asks the user, with
     `permissionDecisionReason` (see Asking the user).
   - `hookSpecificOutput.additionalContext`, or plain stdout from `SessionStart`/`UserPromptSubmit`, becomes
-    hidden context.
-- **Matchers** are regular expressions over the tool name, and an empty matcher matches every tool.
+    hidden context (for `PreCompact`, summary instructions).
+- **Matchers** are anchored regular expressions over the event's subject: the tool name (`PreToolUse`,
+  `PostToolUse`), `source` (`SessionStart`), `agent_type` (`SubagentStart`/`SubagentStop`), `trigger`
+  (`PreCompact`/`PostCompact`), `notification_type` (`Notification`), `reason` (`SessionEnd`). An empty or `*`
+  matcher matches everything; `UserPromptSubmit`, `PostToolBatch` and `Stop` ignore matchers.
 - **Defaults:** `timeout` is in seconds (default 60). A timeout or spawn failure is reported and treated as
   "no decision".
+- **Not wired** (and why):
+  - `SubagentStop`/`SubagentStart` decisions and context: the child runs in its own session, so the parent cannot
+    keep it going or hand it context. Both fire and forget.
+  - `SubagentStop` for a child that replied (`agent_message`) and is never collected or listed: a reply does not end
+    a child.
+  - `agent_transcript_path` (the child's log is its own session's; `agent_session_dir` is given when known),
+    `transcript_path` (the daemon's), `systemMessage` and `suppressOutput` (no user-facing hook output surface).
+  - `SessionEnd` reasons other than `other` (the engine does not know why its host ended it), `Notification`'s
+    `idle_prompt` (no idle timer), and Claude Code's `prompt`/`agent` hooks and events without a counterpart
+    (`PermissionRequest`, `StopFailure`, ...: reported as unsupported and skipped).
 - **Scope:** user `~/.prime/agent/settings.json`, and project `.prime/agent/settings.json` only in a trusted
   workspace (`hooks` is a gated settings key). Project hooks run after user hooks.
 

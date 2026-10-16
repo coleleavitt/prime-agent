@@ -6,6 +6,11 @@
 //! ] } }
 //! ```
 //!
+//! A command may run in the background (`"async": true`): the session does
+//! not wait for it, and its context rides the next prompt. With
+//! `"asyncRewake": true` (implies `async`) an exit code 2 delivers its
+//! stderr to the model as a notice that wakes an idle session.
+//!
 //! User hooks (`<agent dir>/settings.json`) come first, then a trusted
 //! project's (`.prime/agent/settings.json`; `hooks` is a gated key, so an
 //! untrusted project contributes none).
@@ -27,16 +32,30 @@ pub enum HookEvent {
     UserPromptSubmit,
     PreToolUse,
     PostToolUse,
+    PostToolBatch,
     Stop,
+    SubagentStart,
+    SubagentStop,
+    PreCompact,
+    PostCompact,
+    Notification,
+    SessionEnd,
 }
 
 impl HookEvent {
-    pub const ALL: [HookEvent; 5] = [
+    pub const ALL: [HookEvent; 12] = [
         HookEvent::SessionStart,
         HookEvent::UserPromptSubmit,
         HookEvent::PreToolUse,
         HookEvent::PostToolUse,
+        HookEvent::PostToolBatch,
         HookEvent::Stop,
+        HookEvent::SubagentStart,
+        HookEvent::SubagentStop,
+        HookEvent::PreCompact,
+        HookEvent::PostCompact,
+        HookEvent::Notification,
+        HookEvent::SessionEnd,
     ];
 
     /// The settings key and the `hook_event_name` hooks receive.
@@ -47,14 +66,51 @@ impl HookEvent {
             HookEvent::UserPromptSubmit => "UserPromptSubmit",
             HookEvent::PreToolUse => "PreToolUse",
             HookEvent::PostToolUse => "PostToolUse",
+            HookEvent::PostToolBatch => "PostToolBatch",
             HookEvent::Stop => "Stop",
+            HookEvent::SubagentStart => "SubagentStart",
+            HookEvent::SubagentStop => "SubagentStop",
+            HookEvent::PreCompact => "PreCompact",
+            HookEvent::PostCompact => "PostCompact",
+            HookEvent::Notification => "Notification",
+            HookEvent::SessionEnd => "SessionEnd",
         }
     }
 
-    /// Whether the event's matchers filter on a tool name.
-    fn matches_tools(self) -> bool {
-        matches!(self, HookEvent::PreToolUse | HookEvent::PostToolUse)
+    /// Whether the event's matchers filter on a subject (Claude Code's): the
+    /// tool name for `PreToolUse`/`PostToolUse`, the `source` for
+    /// `SessionStart`, the `agent_type` for `SubagentStart`/`SubagentStop`,
+    /// the `trigger` for `PreCompact`/`PostCompact`, the `notification_type`
+    /// for `Notification`, the `reason` for `SessionEnd`. The other events
+    /// ignore matchers.
+    fn has_matcher(self) -> bool {
+        match self {
+            HookEvent::PreToolUse
+            | HookEvent::PostToolUse
+            | HookEvent::SessionStart
+            | HookEvent::SubagentStart
+            | HookEvent::SubagentStop
+            | HookEvent::PreCompact
+            | HookEvent::PostCompact
+            | HookEvent::Notification
+            | HookEvent::SessionEnd => true,
+            HookEvent::UserPromptSubmit | HookEvent::PostToolBatch | HookEvent::Stop => false,
+        }
     }
+}
+
+/// How the session waits for a hook command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookMode {
+    /// The event waits for the command's answer (the default).
+    Blocking,
+    /// `"async": true`: runs in the background; its context rides the next
+    /// prompt, and its decisions are not applied.
+    Async,
+    /// `"asyncRewake": true`: [`HookMode::Async`], and an exit code 2
+    /// delivers its stderr to the model as a notice that wakes an idle
+    /// session.
+    AsyncRewake,
 }
 
 /// One hook command.
@@ -62,13 +118,14 @@ impl HookEvent {
 pub struct HookCommand {
     pub command: String,
     pub timeout: Duration,
+    pub mode: HookMode,
 }
 
-/// A matcher group: the tool names it applies to and its commands.
+/// A matcher group: the subjects it applies to and its commands.
 #[derive(Debug, Clone)]
 struct Group {
-    /// `None` matches every tool (an empty or `*` matcher, or an event
-    /// without tool names).
+    /// `None` matches every subject (an empty or `*` matcher, or an event
+    /// without matchers).
     matcher: Option<Regex>,
     commands: Vec<HookCommand>,
 }
@@ -90,6 +147,10 @@ struct RawCommand {
     /// Seconds.
     #[serde(default)]
     timeout: Option<f64>,
+    #[serde(rename = "async", default)]
+    run_async: bool,
+    #[serde(rename = "asyncRewake", default)]
+    async_rewake: bool,
 }
 
 /// Every configured hook, by event.
@@ -146,7 +207,7 @@ impl HooksConfig {
             for group in groups {
                 let matcher = match group.matcher.as_deref().map(str::trim) {
                     None | Some("" | "*") => None,
-                    Some(_) if !event.matches_tools() => None,
+                    Some(_) if !event.has_matcher() => None,
                     // Anchored: `Bash` matches the tool `Bash`, not `BashOutput`
                     // (Claude Code matches the whole name).
                     Some(pattern) => match Regex::new(&format!("^(?:{pattern})$")) {
@@ -177,9 +238,17 @@ impl HooksConfig {
                             .timeout
                             .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
                             .map_or(DEFAULT_TIMEOUT, Duration::from_secs_f64);
+                        let mode = if command.async_rewake {
+                            HookMode::AsyncRewake
+                        } else if command.run_async {
+                            HookMode::Async
+                        } else {
+                            HookMode::Blocking
+                        };
                         Some(HookCommand {
                             command: text,
                             timeout,
+                            mode,
                         })
                     })
                     .collect();
@@ -196,18 +265,19 @@ impl HooksConfig {
             .any(|(listening, group)| *listening == event && !group.commands.is_empty())
     }
 
-    /// The commands `event` runs for `tool` (`None` for events without a
-    /// tool), in configuration order, each command once.
+    /// The commands `event` runs for `subject` (the tool name, the source,
+    /// the agent type, ...; `None` for events without one), in
+    /// configuration order, each command once.
     #[must_use]
-    pub fn commands(&self, event: HookEvent, tool: Option<&str>) -> Vec<HookCommand> {
+    pub fn commands(&self, event: HookEvent, subject: Option<&str>) -> Vec<HookCommand> {
         let mut commands: Vec<HookCommand> = Vec::new();
         for (listening, group) in &self.groups {
             if *listening != event {
                 continue;
             }
-            let applies = match (&group.matcher, tool) {
+            let applies = match (&group.matcher, subject) {
                 (None, _) => true,
-                (Some(matcher), Some(tool)) => matcher.is_match(tool),
+                (Some(matcher), Some(subject)) => matcher.is_match(subject),
                 (Some(_), None) => false,
             };
             if !applies {
@@ -236,6 +306,7 @@ mod tests {
         HookCommand {
             command: text.to_string(),
             timeout: Duration::from_secs(seconds),
+            mode: HookMode::Blocking,
         }
     }
 
@@ -275,9 +346,87 @@ mod tests {
     }
 
     #[test]
+    fn every_claude_code_event_parses_and_matchers_select_their_subject() {
+        let config = HooksConfig::from_value(&json!({
+            "SessionStart": [{ "matcher": "resume", "hooks": [{ "type": "command", "command": "on-resume" }] }],
+            "SubagentStart": [{ "matcher": "review.*", "hooks": [{ "type": "command", "command": "sub" }] }],
+            "SubagentStop": [{ "hooks": [{ "type": "command", "command": "sub-stop" }] }],
+            "PreCompact": [{ "matcher": "manual", "hooks": [{ "type": "command", "command": "pre" }] }],
+            "PostCompact": [{ "hooks": [{ "type": "command", "command": "post" }] }],
+            "Notification": [{ "matcher": "background_task_completed", "hooks": [{ "type": "command", "command": "note" }] }],
+            "SessionEnd": [{ "hooks": [{ "type": "command", "command": "end" }] }],
+            "PostToolBatch": [{ "matcher": "ignored", "hooks": [{ "type": "command", "command": "batch" }] }],
+            "Stop": [{ "matcher": "ignored", "hooks": [
+                { "type": "command", "command": "bg", "async": true },
+                { "type": "command", "command": "wake", "asyncRewake": true, "timeout": 2 },
+            ] }],
+        }));
+        assert!(config.problems.is_empty(), "{:?}", config.problems);
+        assert_eq!(
+            config.commands(HookEvent::SessionStart, Some("resume")),
+            vec![command("on-resume", 60)]
+        );
+        assert!(
+            config
+                .commands(HookEvent::SessionStart, Some("startup"))
+                .is_empty()
+        );
+        assert_eq!(
+            config.commands(HookEvent::SubagentStart, Some("reviewer")),
+            vec![command("sub", 60)]
+        );
+        assert!(
+            config
+                .commands(HookEvent::SubagentStart, Some("worker"))
+                .is_empty()
+        );
+        assert!(
+            config
+                .commands(HookEvent::PreCompact, Some("auto"))
+                .is_empty()
+        );
+        assert_eq!(
+            config.commands(HookEvent::PreCompact, Some("manual")),
+            vec![command("pre", 60)]
+        );
+        assert_eq!(
+            config.commands(HookEvent::Notification, Some("background_task_completed")),
+            vec![command("note", 60)]
+        );
+        // Events without matchers ignore them.
+        assert_eq!(
+            config.commands(HookEvent::PostToolBatch, None),
+            vec![command("batch", 60)]
+        );
+        assert_eq!(
+            config.commands(HookEvent::Stop, None),
+            vec![
+                HookCommand {
+                    mode: HookMode::Async,
+                    ..command("bg", 60)
+                },
+                HookCommand {
+                    mode: HookMode::AsyncRewake,
+                    ..command("wake", 2)
+                },
+            ]
+        );
+        for event in HookEvent::ALL {
+            assert_eq!(
+                config.has(event),
+                !matches!(
+                    event,
+                    HookEvent::UserPromptSubmit | HookEvent::PreToolUse | HookEvent::PostToolUse
+                ),
+                "{event:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unsupported_entries_are_reported_and_skipped() {
         let config = HooksConfig::from_value(&json!({
-            "Notification": [{ "hooks": [{ "type": "command", "command": "x" }] }],
+            "TeammateIdle": [{ "hooks": [{ "type": "command", "command": "x" }] }],
             "PreToolUse": [
                 { "matcher": "(", "hooks": [{ "type": "command", "command": "x" }] },
                 { "hooks": [{ "type": "prompt", "prompt": "judge it" }, { "type": "command", "command": "kept" }] },

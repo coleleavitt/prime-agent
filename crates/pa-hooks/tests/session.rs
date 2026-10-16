@@ -415,3 +415,241 @@ async fn bash_hooks_deny_ask_about_and_follow_the_kernels_commands() {
         "{out}"
     );
 }
+
+/// An agent dir whose settings are `hooks` (Claude Code's shape).
+fn agent_dir_with(root: &Path, hooks: &serde_json::Value) -> std::path::PathBuf {
+    let agent_dir = root.join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({ "hooks": hooks }).to_string(),
+    )
+    .unwrap();
+    agent_dir
+}
+
+/// The custom rows of `messages` with `custom_type`, as their text.
+fn custom_rows(messages: &[AgentMessage], custom_type: &str) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Custom(row) if row.payload["customType"] == custom_type => Some(
+                row.payload["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+fn assistant_texts(messages: &[AgentMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Standard(Message::Assistant(assistant)) => Some(
+                assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        pa_agent::types::AssistantContent::Text(text) => Some(text.text.clone()),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+/// A `Stop` hook that blocks keeps the agent going in the same run, with
+/// its reason as a hidden row the model reads; the next stop carries
+/// `stop_hook_active` and the hook lets it end. A `PostToolBatch` hook's
+/// context rides the request after the tool batch.
+#[tokio::test]
+async fn a_blocking_stop_hook_continues_the_run_once() {
+    install();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("hooks");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stops = tmp.path().join("stops.jsonl");
+    let stop = script(
+        &bin,
+        "stop.sh",
+        &format!(
+            "input=$(cat)\nprintf '%s\\n' \"$input\" >> {stops:?}\ncase \"$input\" in *'\"stop_hook_active\":true'*) exit 0;; esac\necho 'run the tests before stopping' >&2\nexit 2",
+            stops = stops.display().to_string()
+        ),
+    );
+    let batch = script(
+        &bin,
+        "batch.sh",
+        "cat >/dev/null\nprintf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolBatch\",\"additionalContext\":\"batch context\"}}'",
+    );
+    let agent_dir = agent_dir_with(
+        tmp.path(),
+        &json!({
+            "Stop": [{ "hooks": [{ "type": "command", "command": stop }] }],
+            "PostToolBatch": [{ "hooks": [{ "type": "command", "command": batch }] }],
+        }),
+    );
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let model = model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    provider.push_tool_call_turn(None, vec![("call-1", "echo", json!({}))]);
+    provider.push_text_turn("first answer");
+    provider.push_text_turn("tests pass");
+    let echo_runs = Arc::new(AtomicUsize::new(0));
+    let engine = Box::pin(create_session(SessionEngineConfig {
+        cwd,
+        agent_dir,
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        tools: vec![bridge_tool(tool("echo", Arc::clone(&echo_runs)))],
+        ..SessionEngineConfig::default()
+    }))
+    .await
+    .unwrap();
+    engine
+        .prompt("do the work", PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+    let state = engine.session.agent().state().await;
+    assert_eq!(
+        custom_rows(&state.messages, "feature_context"),
+        vec!["batch context".to_string()]
+    );
+    assert_eq!(
+        custom_rows(
+            &state.messages,
+            pa_core::session_engine::FEATURE_CONTINUATION_CUSTOM_TYPE
+        ),
+        vec!["Stop hook feedback:\nrun the tests before stopping".to_string()]
+    );
+    assert_eq!(
+        assistant_texts(&state.messages),
+        vec!["first answer".to_string(), "tests pass".to_string()]
+    );
+    // Three model requests: the batch's context rides the second, the
+    // hook's reason the third.
+    let calls = provider.calls();
+    assert_eq!(calls.len(), 3);
+    assert!(
+        serde_json::to_string(&calls[1].messages)
+            .unwrap()
+            .contains("batch context")
+    );
+    assert!(
+        serde_json::to_string(&calls[2].messages)
+            .unwrap()
+            .contains("run the tests before stopping")
+    );
+    let inputs: Vec<serde_json::Value> = std::fs::read_to_string(&stops)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        inputs
+            .iter()
+            .map(|input| (
+                input["stop_hook_active"].clone(),
+                input["last_assistant_message"].clone()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (json!(false), json!("first answer")),
+            (json!(true), json!("tests pass")),
+        ]
+    );
+}
+
+/// An `asyncRewake` hook does not hold the prompt; its exit code 2 wakes
+/// the idle session with its stderr, and a turn runs on it. Ending the
+/// session runs `SessionEnd`.
+#[tokio::test]
+async fn an_async_rewake_hook_wakes_the_idle_session() {
+    install();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("hooks");
+    std::fs::create_dir_all(&bin).unwrap();
+    let released = tmp.path().join("released");
+    let ended = tmp.path().join("ended.json");
+    // Waits for the test to see the first run settle, then asks to wake.
+    let rewake = script(
+        &bin,
+        "rewake.sh",
+        &format!(
+            "cat >/dev/null\nwhile [ ! -e {released:?} ]; do sleep 0.05; done\necho 'lint found 2 errors' >&2\nexit 2",
+            released = released.display().to_string()
+        ),
+    );
+    let end = script(
+        &bin,
+        "end.sh",
+        &format!("cat > {ended:?}", ended = ended.display().to_string()),
+    );
+    let agent_dir = agent_dir_with(
+        tmp.path(),
+        &json!({
+            "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": rewake, "asyncRewake": true }] }],
+            "SessionEnd": [{ "hooks": [{ "type": "command", "command": end }] }],
+        }),
+    );
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let model = model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    provider.push_text_turn("first");
+    provider.push_text_turn("fixing the lint");
+    let engine = Box::pin(create_session(SessionEngineConfig {
+        cwd,
+        agent_dir,
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        ..SessionEngineConfig::default()
+    }))
+    .await
+    .unwrap();
+    engine.prompt("hi", PromptOptions::default()).await.unwrap();
+    engine.session.agent().wait_for_idle().await;
+    assert_eq!(
+        assistant_texts(&engine.session.agent().state().await.messages),
+        vec!["first".to_string()]
+    );
+    std::fs::write(&released, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let messages = loop {
+        let state = engine.session.agent().state().await;
+        if !state.is_streaming && assistant_texts(&state.messages).len() == 2 {
+            break state.messages;
+        }
+        assert!(Instant::now() < deadline, "the session never woke");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(
+        custom_rows(&messages, pa_core::features::FEATURE_NOTICE_CUSTOM_TYPE),
+        vec!["Async UserPromptSubmit hook reported:\n\nlint found 2 errors".to_string()]
+    );
+    assert_eq!(
+        assistant_texts(&messages),
+        vec!["first".to_string(), "fixing the lint".to_string()]
+    );
+    let session_id = engine.session.session_id().await;
+    engine.dispose_kernel().await;
+    pa_core::features::flush_installed(Duration::from_secs(10));
+    let ended: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ended).unwrap()).unwrap();
+    assert_eq!(
+        (
+            &ended["hook_event_name"],
+            &ended["reason"],
+            &ended["session_id"]
+        ),
+        (&json!("SessionEnd"), &json!("other"), &json!(session_id))
+    );
+}

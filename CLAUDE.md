@@ -105,6 +105,7 @@ included) and `pa-plugins` (WebAssembly components on wasmtime, contract `wit/pl
 and kernel host requests, after-run notes, prompt context, status panels under the editor, model tools called through
 the `wasm-plugins` skill, `/wasm` commands; Rust example `examples/plugins/command-guard`). Both plug into generic
 `pa-core` seams (`features/`: `review_tool_call`, `review_host_request`, `after_host_request`, `prompt_context`,
+`before_agent_stop`, `after_tool_batch`, `before`/`after_compaction`, `on_session_end`, `deliver_feature_notice`,
 `register_gated_project_dir`). An `Ask` verdict goes to the user through `features::confirm`: the `confirmation`
 feature status, the TUI's yes/no panel, and the `answer_feature_confirmation` daemon command (capability
 `feature_confirmation`); print mode refuses. Contract in `docs/hooks-and-plugins.md`.
