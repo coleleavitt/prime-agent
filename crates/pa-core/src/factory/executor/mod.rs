@@ -10,6 +10,11 @@
 //! through `rlm.factory`. A host restart reloads the records and pauses
 //! the runs that were in flight as interrupted (see [`store`]).
 //!
+//! Notices: every completion, failure, pause, interruption and user stop
+//! reaches the owning session once as a `<task-notification>` row through
+//! the [`ports::FactoryNotices`] lane (see [`notice`]), so the model never
+//! has to poll a run to learn it ended.
+//!
 //! Machine semantics: admission enters every entry state; each settle is
 //! queued and its outgoing transitions evaluated once — every passing
 //! guard fires (fan-out is legal), a fire enters the target unless it is
@@ -20,6 +25,7 @@
 pub mod binding;
 pub(crate) mod engine;
 pub mod model;
+pub mod notice;
 pub mod ports;
 pub mod snapshot;
 pub mod store;
@@ -144,6 +150,56 @@ impl Inner {
             .into_iter()
             .find(|cell| cell.lock().run_id == run_id)
     }
+
+    /// Notify the session once per run a host restart interrupted: the
+    /// dedupe key is the restart's own `run_interrupted` ledger event, so
+    /// a later restart (the run already paused) never notifies again, and
+    /// the next interruption after a resume does. Delivered off the
+    /// constructor (the lane is async); a host without a runtime keeps the
+    /// interruption in the ledger only.
+    fn announce_interrupted(self: &Arc<Self>, interrupted: Vec<(Arc<RunCell>, (u64, String))>) {
+        if interrupted.is_empty() {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                target: "pa_core::factory",
+                runs = interrupted.len(),
+                "no async runtime: interrupted factory runs were not announced"
+            );
+            return;
+        };
+        let inner = Arc::clone(self);
+        runtime.spawn(async move {
+            for (cell, (seq, detail)) in interrupted {
+                inner
+                    .milestone_once(
+                        &cell,
+                        engine::MilestoneCall {
+                            kind: notice::INTERRUPTED_MILESTONE,
+                            detail,
+                            node: None,
+                        },
+                        Some(format!("{}#{seq}", notice::INTERRUPTED_MILESTONE)),
+                    )
+                    .await;
+            }
+        });
+    }
+}
+
+/// The `(seq, detail)` of the `run_interrupted` event a restart just
+/// recorded on `run`.
+fn interruption_notice(run: &FactoryRun) -> Option<(u64, String)> {
+    let event = run
+        .events
+        .iter()
+        .rev()
+        .find(|event| event["kind"] == model::kind::RUN_INTERRUPTED)?;
+    Some((
+        event["seq"].as_u64()?,
+        event["detail"].as_str().unwrap_or_default().to_string(),
+    ))
 }
 
 /// The executor's seams and its record directory.
@@ -302,6 +358,7 @@ impl FactoryExecutor {
             store: store.clone(),
             runs: Mutex::new(Vec::new()),
         });
+        let mut interrupted = Vec::new();
         if let Some(store) = &store {
             let mut recovered = Vec::new();
             for mut run in store.load() {
@@ -310,6 +367,9 @@ impl FactoryExecutor {
                 let state_before = run.state;
                 store::recover_after_restart(&mut run);
                 let changed = run.revision != before;
+                let notice = (state_before == RunState::Running && run.state == RunState::Paused)
+                    .then(|| interruption_notice(&run))
+                    .flatten();
                 if changed {
                     tracing::info!(
                         target: "pa_core::factory",
@@ -324,6 +384,9 @@ impl FactoryExecutor {
                 if changed {
                     store.mark_dirty(&cell);
                 }
+                if let Some(notice) = notice {
+                    interrupted.push((Arc::clone(&cell), notice));
+                }
                 recovered.push(cell);
             }
             *inner
@@ -331,6 +394,7 @@ impl FactoryExecutor {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = recovered;
         }
+        inner.announce_interrupted(interrupted);
         Self { inner }
     }
 
@@ -448,7 +512,33 @@ impl FactoryExecutor {
     /// An unknown run id.
     pub async fn stop(&self, run_id: &str) -> Result<Value, FactoryRefusal> {
         let cell = self.require_run(run_id)?;
-        Ok(self.inner.stop(&cell).await)
+        Ok(self.inner.stop(&cell, /*announce*/ false).await)
+    }
+
+    /// [`Self::stop`] on the user's behalf (the client's `/factory` lane):
+    /// the model did not issue it, so the session is notified once, as
+    /// `cancelled`.
+    ///
+    /// # Errors
+    ///
+    /// An unknown run id.
+    pub async fn stop_by_user(&self, run_id: &str) -> Result<Value, FactoryRefusal> {
+        let cell = self.require_run(run_id)?;
+        Ok(self.inner.stop(&cell, /*announce*/ true).await)
+    }
+
+    /// The model just read `run_id` (a kernel `factory.status`, `watch`, or
+    /// `stop` answered): a notice still queued for the state it read is
+    /// stale, so the lane withdraws it. A notice already delivered, or one
+    /// for a later state, stays.
+    pub fn observed(&self, run_id: &str) {
+        let Some(cell) = self.inner.find(run_id) else {
+            return;
+        };
+        let state = cell.with(|run| run.state);
+        if !matches!(state, RunState::Running | RunState::Stopping) {
+            self.inner.notices.withdraw(run_id, state.as_str());
+        }
     }
 
     /// Resume a paused run.

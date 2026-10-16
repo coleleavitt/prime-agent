@@ -9,6 +9,7 @@
 pub(crate) mod fake;
 mod graph;
 mod machine;
+mod notices;
 mod persist;
 mod policies;
 mod recovery;

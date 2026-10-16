@@ -144,7 +144,7 @@ async fn handle(
     if !factory_enabled_in(agent_dir) {
         return Ok(Err(FactoryRefusal(FACTORY_DISABLED_MESSAGE.to_string())));
     }
-    Ok(match request_type {
+    let reply = match request_type {
         "factory.run" => executor.run(run_request(data)?).await,
         "factory.status" => executor.status(string_field(data, "run_id", request_type)?),
         "factory.stop" => {
@@ -163,7 +163,18 @@ async fn handle(
             executor.watch(run_id, timeout, compact_view(data)).await
         }
         _ => graph(executor, data),
-    })
+    };
+    // The model now holds the run's state it just read: a notice for that
+    // state still queued in the session would only repeat it.
+    if reply.is_ok()
+        && matches!(
+            request_type,
+            "factory.status" | "factory.watch" | "factory.stop"
+        )
+    {
+        executor.observed(string_field(data, "run_id", request_type)?);
+    }
+    Ok(reply)
 }
 
 /// The `compact` flag a graph or watch request asks for (the kernel API's

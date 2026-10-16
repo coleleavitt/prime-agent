@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+pub use super::notice::FactoryNotice;
 use crate::session_engine::rlm_host::{RlmChildResult, RlmHostBridge};
 
 /// One pending seam call.
@@ -45,12 +46,21 @@ pub trait FactoryChildren: Send + Sync {
     fn delete(&self, child_id: String) -> PortFuture<Result<(), String>>;
 }
 
-/// The parent-notice lane: one quiet notice per milestone kind per run.
+/// The parent-notice lane: one notice per milestone per run (per kind,
+/// and per restart for an interruption), queued into the session that owns
+/// the executor so the model learns of a completion without polling.
 ///
 /// An implementation that cannot deliver answers an error; the milestone
 /// stays in the ledger (stage `recorded`) and `status()` still surfaces it.
 pub trait FactoryNotices: Send + Sync {
-    fn notify(&self, payload: Value) -> PortFuture<Result<(), String>>;
+    fn notify(&self, notice: FactoryNotice) -> PortFuture<Result<(), String>>;
+
+    /// The model read the run in `run_state` itself (`factory.status`,
+    /// `watch`, or `stop` through the kernel): a still-queued notice for
+    /// that run and state is stale. A lane without a queue keeps nothing.
+    fn withdraw(&self, run_id: &str, run_state: &str) {
+        let _ = (run_id, run_state);
+    }
 }
 
 /// The executor's clock: seconds on one monotonic-enough axis, and a sleep
@@ -142,15 +152,14 @@ impl FactoryChildren for SessionChildren {
     }
 }
 
-/// No parent-notice lane: the daemon's factory notice injection is not
-/// ported yet (the TS-era `factory.progress` lane), so milestones stay in
-/// the ledger exactly as they did when the kernel's notice request found
-/// no host handler.
+/// No parent-notice lane: an embedding without a session queue (print
+/// mode, in-process children) keeps milestones in the ledger only, where
+/// `status()`/`watch()` surface them.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoNoticeLane;
 
 impl FactoryNotices for NoNoticeLane {
-    fn notify(&self, _payload: Value) -> PortFuture<Result<(), String>> {
+    fn notify(&self, _notice: FactoryNotice) -> PortFuture<Result<(), String>> {
         Box::pin(async { Err("the factory notice lane is not available".to_string()) })
     }
 }

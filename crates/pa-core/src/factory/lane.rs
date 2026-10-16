@@ -163,7 +163,7 @@ pub async fn activity(
                 })
                 .await?
         }
-        "stop" => executor.stop(require_run(action)?).await?,
+        "stop" => executor.stop_by_user(require_run(action)?).await?,
         _ => executor.resume(require_run(action)?).await?,
     };
     Ok(wire_payload(&result))

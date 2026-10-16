@@ -36,7 +36,7 @@ use super::model::{
     Status,
     kind,
 };
-use super::ports::FactorySpawn;
+use super::ports::{FactoryNotice, FactorySpawn};
 use super::{Inner, RunCell};
 use crate::factory::labels::spawn_label;
 use crate::factory::pyvalue::py_str_repr;
@@ -485,10 +485,23 @@ fn json_truthy(value: &Value) -> bool {
 }
 
 /// A milestone queued inside a run lock, delivered after it is released.
-struct MilestoneCall {
-    kind: &'static str,
-    detail: String,
-    node: Option<String>,
+pub(super) struct MilestoneCall {
+    pub(super) kind: &'static str,
+    pub(super) detail: String,
+    pub(super) node: Option<String>,
+}
+
+/// `(state id, captured answer)` of every final state (no outgoing
+/// transition) whose latest settle captured one, in declared order.
+fn final_answers(run: &FactoryRun) -> Vec<(String, String)> {
+    run.states
+        .iter()
+        .filter(|state| !run.transitions_from.contains_key(&state.state_id))
+        .filter_map(|state| {
+            let answer = state.latest_settle()?.answer.as_ref()?;
+            Some((state.state_id.clone(), answer.clone()))
+        })
+        .collect()
 }
 
 impl Inner {
@@ -496,6 +509,18 @@ impl Inner {
     /// Every milestone lands in the ledger, repeats included; only the
     /// parent-visible notice is deduped per kind.
     async fn milestone(&self, cell: &Arc<RunCell>, announce: MilestoneCall) {
+        self.milestone_once(cell, announce, None).await;
+    }
+
+    /// [`Self::milestone`] with an explicit dedupe key (`None`: the kind).
+    /// An interruption keys on its own ledger event, so each host restart
+    /// that interrupts the run notifies once.
+    pub(super) async fn milestone_once(
+        &self,
+        cell: &Arc<RunCell>,
+        announce: MilestoneCall,
+        dedupe: Option<String>,
+    ) {
         let notice = cell.with(|run| {
             let seq = run.record(
                 kind::MILESTONE,
@@ -507,22 +532,32 @@ impl Inner {
                 },
                 vec![("milestone", Value::from(announce.kind))],
             );
-            if !run.milestones.insert(announce.kind.to_string()) {
+            let key = dedupe.unwrap_or_else(|| announce.kind.to_string());
+            if !run.milestones.insert(key) {
                 return None;
             }
-            let mut payload = Map::new();
-            payload.insert("run_id".into(), Value::from(run.run_id.clone()));
-            payload.insert("kind".into(), Value::from(announce.kind));
-            payload.insert("detail".into(), Value::from(announce.detail.clone()));
-            if let Some(node) = &announce.node {
-                payload.insert("node".into(), Value::from(node.clone()));
-            }
-            Some((seq, Value::Object(payload)))
+            let answers = if announce.kind == "finished" {
+                final_answers(run)
+            } else {
+                Vec::new()
+            };
+            Some((
+                seq,
+                FactoryNotice {
+                    run_id: run.run_id.clone(),
+                    kind: announce.kind.to_string(),
+                    detail: announce.detail.clone(),
+                    node: announce.node.clone(),
+                    label: run.name.clone().unwrap_or_else(|| run.spec_id.clone()),
+                    run_state: run.state.as_str().to_string(),
+                    answers,
+                },
+            ))
         });
-        let Some((seq, payload)) = notice else {
+        let Some((seq, notice)) = notice else {
             return;
         };
-        if self.notices.notify(payload).await.is_ok() {
+        if self.notices.notify(notice).await.is_ok() {
             cell.with(|run| {
                 if let Some(event) = run.events.get_mut(seq as usize - 1) {
                     event["stage"] = Value::from("shown");
@@ -591,7 +626,9 @@ impl Inner {
     /// Cancel every running child and mark the run stopped. The
     /// transitional `stopping` state is set before the first await, so the
     /// control loop cannot admit or finalize meanwhile; idempotent.
-    pub(super) async fn stop(&self, cell: &Arc<RunCell>) -> Value {
+    /// `announce` (a stop the model did not issue: the client's lane)
+    /// notifies the session once, as `cancelled`.
+    pub(super) async fn stop(&self, cell: &Arc<RunCell>, announce: bool) -> Value {
         let already = cell.with(|run| {
             if matches!(run.state, RunState::Stopping | RunState::Stopped) {
                 return Some(serde_json::json!({
@@ -608,7 +645,7 @@ impl Inner {
             return result;
         }
         let stopped = self.halt_nonterminal(cell, "run stopped").await;
-        cell.with(|run| {
+        let (result, detail) = cell.with(|run| {
             run.state = RunState::Stopped;
             let detail = format!("stopped; {} state(s) cancelled", stopped.len());
             run.record(
@@ -619,8 +656,23 @@ impl Inner {
                 },
                 Vec::new(),
             );
-            serde_json::json!({ "run_id": run.run_id, "state": "stopped", "cancelled": stopped })
-        })
+            (
+                serde_json::json!({ "run_id": run.run_id, "state": "stopped", "cancelled": stopped }),
+                detail,
+            )
+        });
+        if announce {
+            self.milestone(
+                cell,
+                MilestoneCall {
+                    kind: super::notice::CANCELLED_MILESTONE,
+                    detail: format!("{detail} by the user"),
+                    node: None,
+                },
+            )
+            .await;
+        }
+        result
     }
 
     /// Resume a paused run (escalate, budget, `max_transitions`,

@@ -61,6 +61,95 @@ pub const ASYNC_BASH_COMPLETION_PREVIEW_LABEL: &str = "Background command finish
 /// The queue-strip preview label for a parked heartbeat fire; the queued row reads
 /// `Heartbeat prompt: <content>` instead of the lane-labeled preview.
 pub const HEARTBEAT_PROMPT_PREVIEW_LABEL: &str = "Heartbeat prompt";
+/// The durable row a factory run's milestone (completion, failure, pause,
+/// interruption, cancellation) admits into its session: a
+/// `<task-notification>` the model reads on its next turn.
+pub const FACTORY_RUN_NOTICE_CUSTOM_TYPE: &str = "factory_run_notice";
+/// The `<task-type>` of a factory run's notification.
+pub const FACTORY_RUN_TASK_TYPE: &str = "factory_run";
+/// The queue-strip preview label of a parked factory run notice.
+pub const FACTORY_RUN_NOTICE_PREVIEW_LABEL: &str = "Factory run";
+/// The bound on a `<task-notification>`'s `<result>` body, in UTF-8 bytes.
+pub const TASK_NOTIFICATION_RESULT_MAX_BYTES: usize = 2048;
+
+/// One background-task completion, in Claude Code's single notification
+/// shape: every background lane (factory runs here; detached bash next)
+/// renders through [`task_notification`], so the model reads one format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskNotification<'a> {
+    pub task_id: &'a str,
+    pub task_type: &'a str,
+    /// `completed | failed | interrupted | cancelled` (a lane may add its
+    /// own non-terminal status, e.g. a factory run's `paused`).
+    pub status: &'a str,
+    /// One line, e.g. `Factory run "build" completed`.
+    pub summary: &'a str,
+    pub tool_use_id: Option<&'a str>,
+    pub output_file: Option<&'a str>,
+    /// A short result or error; trimmed and bounded to
+    /// [`TASK_NOTIFICATION_RESULT_MAX_BYTES`].
+    pub result: Option<&'a str>,
+}
+
+/// Render one [`TaskNotification`]:
+///
+/// ```text
+/// <task-notification>
+/// <task-id>…</task-id>
+/// [<tool-use-id>…</tool-use-id>]
+/// <task-type>…</task-type>
+/// [<output-file>…</output-file>]
+/// <status>…</status>
+/// <summary>…</summary>
+/// [<result>…</result>]
+/// </task-notification>
+/// ```
+///
+/// Values are trimmed, never escaped; an empty optional field is omitted.
+#[must_use]
+pub fn task_notification(notice: &TaskNotification<'_>) -> String {
+    let mut text = String::from("<task-notification>\n");
+    let mut field = |tag: &str, value: &str| {
+        let _ = writeln!(text, "<{tag}>{value}</{tag}>");
+    };
+    field("task-id", notice.task_id.trim());
+    if let Some(tool_use_id) = notice
+        .tool_use_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        field("tool-use-id", tool_use_id);
+    }
+    field("task-type", notice.task_type.trim());
+    if let Some(path) = notice
+        .output_file
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        field("output-file", path);
+    }
+    field("status", notice.status.trim());
+    field("summary", notice.summary.trim());
+    if let Some(result) = notice.result.map(str::trim).filter(|body| !body.is_empty()) {
+        field("result", &bounded_result(result));
+    }
+    text.push_str("</task-notification>");
+    text
+}
+
+/// Cut a result body at [`TASK_NOTIFICATION_RESULT_MAX_BYTES`] on a char
+/// boundary, marking the cut.
+fn bounded_result(result: &str) -> String {
+    const MARKER: &str = "\n[truncated]";
+    if result.len() <= TASK_NOTIFICATION_RESULT_MAX_BYTES {
+        return result.to_string();
+    }
+    let mut end = TASK_NOTIFICATION_RESULT_MAX_BYTES - MARKER.len();
+    while !result.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{MARKER}", result[..end].trim_end())
+}
 
 /// Why an unsuccessful compaction ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1115,6 +1204,71 @@ state
         });
         assert!(long.len() < 4_200, "{}", long.len());
         assert!(long.contains("\n... xxx"));
+    }
+
+    #[test]
+    fn task_notification_renders_every_field_in_order() {
+        let text = task_notification(&TaskNotification {
+            task_id: " run1 ",
+            task_type: "factory_run",
+            status: "failed",
+            summary: "Factory run \"x\" failed\n",
+            tool_use_id: Some("toolu_1"),
+            output_file: Some("/tmp/out.log"),
+            result: Some("  boom  "),
+        });
+        assert_eq!(
+            text,
+            "<task-notification>\n\
+             <task-id>run1</task-id>\n\
+             <tool-use-id>toolu_1</tool-use-id>\n\
+             <task-type>factory_run</task-type>\n\
+             <output-file>/tmp/out.log</output-file>\n\
+             <status>failed</status>\n\
+             <summary>Factory run \"x\" failed</summary>\n\
+             <result>boom</result>\n\
+             </task-notification>"
+        );
+        let bare = task_notification(&TaskNotification {
+            task_id: "t",
+            task_type: "local_bash",
+            status: "completed",
+            summary: "done",
+            tool_use_id: Some(""),
+            output_file: None,
+            result: Some("   "),
+        });
+        assert_eq!(
+            bare,
+            "<task-notification>\n<task-id>t</task-id>\n<task-type>local_bash</task-type>\n\
+             <status>completed</status>\n<summary>done</summary>\n</task-notification>"
+        );
+    }
+
+    #[test]
+    fn task_notification_bounds_the_result_on_a_char_boundary() {
+        let long = "é".repeat(TASK_NOTIFICATION_RESULT_MAX_BYTES);
+        let text = task_notification(&TaskNotification {
+            task_id: "t",
+            task_type: "factory_run",
+            status: "completed",
+            summary: "s",
+            tool_use_id: None,
+            output_file: None,
+            result: Some(&long),
+        });
+        let body = text
+            .split("<result>")
+            .nth(1)
+            .and_then(|rest| rest.split("</result>").next())
+            .unwrap();
+        assert!(
+            body.len() <= TASK_NOTIFICATION_RESULT_MAX_BYTES,
+            "{}",
+            body.len()
+        );
+        assert!(body.ends_with("\n[truncated]"));
+        assert!(body.starts_with("éé"));
     }
 
     #[test]

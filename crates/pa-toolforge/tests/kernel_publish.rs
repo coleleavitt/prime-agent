@@ -148,6 +148,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         should_stop_after_turn: None,
         rlm_usage_store: None,
         progress_note_emit: None,
+        factory_notices: None,
         daemonless: true,
         rlm_token_allowance: None,
     })

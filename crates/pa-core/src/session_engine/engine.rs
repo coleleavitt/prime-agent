@@ -53,6 +53,9 @@ pub struct SessionEngineConfig {
     /// Announces every accepted `rlm.progress.note`; `None` keeps the store
     /// the only surface.
     pub progress_note_emit: Option<super::rlm_host::RlmProgressNoteEmit>,
+    /// The session queue factory run notices land in (the daemon worker's
+    /// follow-up lane); `None` keeps milestones in the run ledger only.
+    pub factory_notices: Option<Arc<dyn crate::factory::executor::ports::FactoryNotices>>,
     /// The session's depth in the RLM recursion tree (0 for top-level
     /// sessions); gates the `refine.*` host requests.
     pub rlm_depth: Option<u32>,
@@ -292,6 +295,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             subagent_host: config.rlm_subagent_host.clone(),
             usage_store: config.rlm_usage_store.clone(),
             progress_note_emit: config.progress_note_emit.clone(),
+            factory_notices: config.factory_notices.clone(),
         },
         config.queued_goal_context_purge.clone(),
         config.cron_store.clone(),

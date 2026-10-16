@@ -195,6 +195,7 @@ async fn the_runtime_round_trips_run_agent_through_the_rust_host() {
         should_stop_after_turn: None,
         rlm_usage_store: None,
         progress_note_emit: None,
+        factory_notices: None,
         daemonless: true,
         rlm_token_allowance: None,
     })

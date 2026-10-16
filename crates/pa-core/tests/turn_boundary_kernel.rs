@@ -186,6 +186,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         rlm_subagent_host: None,
         rlm_usage_store: None,
         progress_note_emit: None,
+        factory_notices: None,
         rlm_depth: None,
         daemonless: true,
         telemetry: None,

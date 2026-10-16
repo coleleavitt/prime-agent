@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::factory::executor::ports::{
     FactoryChildren,
     FactoryClock,
+    FactoryNotice,
     FactoryNotices,
     FactorySpawn,
     PortFuture,
@@ -192,6 +193,10 @@ fn is_disambiguation(part: &str) -> bool {
 pub struct HostState {
     pub calls: Vec<(String, Value)>,
     pub notices: Vec<Value>,
+    /// The typed notices the lane admitted, in order.
+    pub factory_notices: Vec<FactoryNotice>,
+    /// `(run_id, run_state)` of every withdrawal the executor asked for.
+    pub withdrawals: Vec<(String, String)>,
     pub children: HashMap<String, (String, String)>,
     pub counter: u64,
     pub collects: u64,
@@ -515,9 +520,10 @@ impl FactoryChildren for FakePorts {
 }
 
 impl FactoryNotices for FakePorts {
-    fn notify(&self, payload: Value) -> PortFuture<Result<(), String>> {
+    fn notify(&self, notice: FactoryNotice) -> PortFuture<Result<(), String>> {
         let host = Arc::clone(&self.0);
         Box::pin(async move {
+            let payload = notice.payload();
             if host.with(|state| state.dead_notices) {
                 host.with(|state| state.calls.push(("factory.progress".into(), payload)));
                 return Err("bridge dead".to_string());
@@ -528,9 +534,18 @@ impl FactoryNotices for FakePorts {
                     .calls
                     .push(("factory.progress".into(), payload.clone()));
                 state.notices.push(payload);
+                state.factory_notices.push(notice);
             });
             Ok(())
         })
+    }
+
+    fn withdraw(&self, run_id: &str, run_state: &str) {
+        self.0.with(|state| {
+            state
+                .withdrawals
+                .push((run_id.to_string(), run_state.to_string()));
+        });
     }
 }
 

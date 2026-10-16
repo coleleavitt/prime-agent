@@ -43,6 +43,9 @@ pub struct RlmWiring {
     /// Announces every accepted `rlm.progress.note`; `None` keeps the store
     /// the only surface.
     pub progress_note_emit: Option<super::rlm_host::RlmProgressNoteEmit>,
+    /// The session queue factory run notices land in (the daemon worker's
+    /// follow-up lane); `None` keeps milestones in the run ledger only.
+    pub factory_notices: Option<Arc<dyn crate::factory::executor::ports::FactoryNotices>>,
 }
 
 /// The embedding's cron wiring for the kernel's `rlm_heartbeat.*` host
@@ -198,6 +201,7 @@ pub fn wire_session_runtime(
     let subagent_host = rlm
         .subagent_host
         .unwrap_or_else(|| Arc::new(super::rlm_host::NoRlmChildren::new(session.clone())));
+    let factory_notices = rlm.factory_notices;
     let rlm_bridge = Arc::new(RlmHostBridge::new(
         model_registry,
         subagent_host,
@@ -215,7 +219,8 @@ pub fn wire_session_runtime(
     let factory = Arc::new(crate::factory::executor::FactoryExecutor::new(
         crate::factory::executor::FactoryExecutorConfig {
             children: factory_children,
-            notices: Arc::new(crate::factory::executor::ports::NoNoticeLane),
+            notices: factory_notices
+                .unwrap_or_else(|| Arc::new(crate::factory::executor::ports::NoNoticeLane)),
             clock: Arc::new(crate::factory::executor::ports::SystemClock),
             store_dir: factory_store,
         },
