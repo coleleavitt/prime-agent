@@ -32,6 +32,7 @@ pub use wire::{
     GoalAdmissionSink,
     GoalContinuation,
     GoalTurnEndWork,
+    MonitorEventSink,
     PromptBatchRow,
     PromptRequest,
     RlmSessionIdentity,

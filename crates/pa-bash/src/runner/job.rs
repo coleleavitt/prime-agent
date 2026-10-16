@@ -616,6 +616,12 @@ impl Job {
         }
     }
 
+    /// The output after stream offset `offset`, at most `max` bytes (a line
+    /// follower's next read; see [`super::buffer::OutputBuffer::since`]).
+    pub(crate) fn output_since(&self, offset: u64, max: usize) -> super::buffer::OutputSince {
+        self.lock().buffer.since(offset, max)
+    }
+
     /// The stream byte count only.
     pub(crate) fn output_bytes(&self) -> u64 {
         self.lock().buffer.total()

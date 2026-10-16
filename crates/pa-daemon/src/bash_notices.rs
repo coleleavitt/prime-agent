@@ -23,6 +23,30 @@ impl AgentSessionEngine {
         *self.bash_consumed_sink.lock_or_recover() = Some(consumed);
     }
 
+    /// Wire the worker's monitor-event queue seam (called once at
+    /// construction, before the first session build reads it).
+    pub fn set_monitor_event_sink(&self, sink: crate::engine::MonitorEventSink) {
+        *self.monitor_event_sink.lock_or_recover() = Some(sink);
+    }
+
+    /// The `monitor.event` kernel host handler (`rlm.monitor`'s batches):
+    /// registered only when the worker wired its queue seam.
+    pub(crate) fn register_monitor_host_handler(&self, handlers: &mut HostRequestHandlers) {
+        let Some(sink) = self.monitor_event_sink.lock_or_recover().clone() else {
+            return;
+        };
+        handlers.register(
+            "monitor.event",
+            host_handler(move |payload| {
+                let sink = sink.clone();
+                Box::pin(async move {
+                    sink(validate_monitor_event(&payload.data)?);
+                    Ok(serde_json::json!({}))
+                })
+            }),
+        );
+    }
+
     /// Wire the worker's presented-artifact row sink (`artifact.present`):
     /// called once at construction, before the first session build.
     pub fn set_presented_artifact_sink(
@@ -100,6 +124,52 @@ fn validate_completion(data: &Value) -> anyhow::Result<BashCompletionNotice> {
     })
 }
 
+/// The most characters of one monitor line the host keeps (the kernel cuts
+/// at 500; this bounds a runtime that does not).
+const MONITOR_LINE_MAX_CHARS: usize = 1_000;
+
+/// `monitor.event` validation: a non-empty monitor id, string lines (cut to
+/// [`MONITOR_LINE_MAX_CHARS`]), an optional dropped count and end object.
+fn validate_monitor_event(
+    data: &Value,
+) -> anyhow::Result<pa_core::session_engine::messages::MonitorEvent> {
+    let monitor_id = data
+        .get("monitorId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("monitor.event monitorId must be a non-empty string"))?;
+    let lines = data
+        .get("lines")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("monitor.event lines must be an array"))?
+        .iter()
+        .map(|line| {
+            line.as_str()
+                .map(|line| line.chars().take(MONITOR_LINE_MAX_CHARS).collect())
+                .ok_or_else(|| anyhow::anyhow!("monitor.event lines must be strings"))
+        })
+        .collect::<anyhow::Result<Vec<String>>>()?;
+    let mut event = pa_core::session_engine::messages::MonitorEvent {
+        monitor_id: monitor_id.to_string(),
+        description: data
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect(),
+        lines: Vec::new(),
+        dropped: data.get("dropped").and_then(Value::as_u64).unwrap_or(0),
+        end: data.get("end").filter(|end| end.is_object()).cloned(),
+    };
+    // Through the merge: one oversized batch keeps the row's line cap too.
+    event.merge(pa_core::session_engine::messages::MonitorEvent {
+        lines,
+        ..Default::default()
+    });
+    Ok(event)
+}
+
 /// TS `createAsyncBashConsumedHostHandler` validation: a positive integer pid and a
 /// non-empty command (pids are reused across handles, so the command disambiguates).
 fn validate_consumed(data: &Value) -> anyhow::Result<BashConsumedNotice> {
@@ -155,6 +225,28 @@ mod tests {
                 "exitCode": "0",
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn monitor_event_validation_bounds_the_batch() {
+        let event = validate_monitor_event(&serde_json::json!({
+            "monitorId": "m1",
+            "description": "tests",
+            "lines": ["a", "x".repeat(5_000)],
+            "dropped": 3,
+            "end": {"reason": "exited", "exitCode": 0},
+        }))
+        .unwrap();
+        assert_eq!(event.monitor_id, "m1");
+        assert_eq!(event.lines[1].chars().count(), MONITOR_LINE_MAX_CHARS);
+        assert_eq!(event.dropped, 3);
+        assert_eq!(event.end.unwrap()["reason"], "exited");
+        assert!(
+            validate_monitor_event(&serde_json::json!({"monitorId": "", "lines": []})).is_err()
+        );
+        assert!(
+            validate_monitor_event(&serde_json::json!({"monitorId": "m1", "lines": [1]})).is_err()
         );
     }
 }

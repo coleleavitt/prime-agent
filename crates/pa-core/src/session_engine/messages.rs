@@ -41,6 +41,12 @@ pub const HEARTBEAT_PROMPT_CUSTOM_TYPE: &str = "heartbeat_prompt";
 /// The durable row a detached kernel bash completion admits as the
 /// woken turn's injected prompt.
 pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
+/// The row a monitor's batch of output lines (`rlm.monitor`) admits: it joins
+/// a running turn or starts one on an idle session.
+pub const MONITOR_EVENT_CUSTOM_TYPE: &str = "monitor_event";
+/// The most lines one undelivered monitor row holds; older ones are counted
+/// as dropped when later batches merge into it.
+pub const MONITOR_EVENT_MAX_LINES: usize = 200;
 /// TS `SESSION_RENAMED_CUSTOM_TYPE` (#2529): the displayed notice a
 /// rename that changed an existing name leaves in the renamed session's
 /// transcript.
@@ -290,6 +296,115 @@ pub fn create_async_bash_completion_message_with_output(
         })),
         timestamp,
         rest: serde_json::Map::default(),
+    }
+}
+
+/// One monitor notice: its batch of output lines (merged across batches the
+/// session had not taken yet), the lines dropped for flooding, and the end.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MonitorEvent {
+    pub monitor_id: String,
+    pub description: String,
+    pub lines: Vec<String>,
+    /// Lines left out: dropped by the rate limit, or past a row's line cap.
+    pub dropped: u64,
+    /// The monitor's last event: why it ended (`exited`, `expired`,
+    /// `stopped`, `flooded`, `failed`), the exit code, the totals.
+    pub end: Option<serde_json::Value>,
+}
+
+impl MonitorEvent {
+    /// A later batch of the same monitor merged in (its row was still queued).
+    pub fn merge(&mut self, later: MonitorEvent) {
+        self.lines.extend(later.lines);
+        self.dropped += later.dropped;
+        if later.end.is_some() {
+            self.end = later.end;
+        }
+        let over = self.lines.len().saturating_sub(MONITOR_EVENT_MAX_LINES);
+        if over > 0 {
+            self.lines.drain(..over);
+            self.dropped += over as u64;
+        }
+    }
+}
+
+/// The custom row a monitor event is delivered as:
+/// `[monitor m1 "cargo test"] 3 new lines` and the lines fenced, or the end.
+#[must_use]
+pub fn create_monitor_event_message(
+    event: &MonitorEvent,
+    timestamp: u64,
+) -> pa_types::session::CustomMessage {
+    use std::fmt::Write as _;
+
+    let label = serde_json::to_string(&event.description).unwrap_or_default();
+    let mut content = format!("[monitor {} {label}]", event.monitor_id);
+    let count = event.lines.len();
+    if count > 0 {
+        let noun = if count == 1 { "line" } else { "lines" };
+        let _ = write!(content, " {count} new {noun}");
+    }
+    if let Some(end) = &event.end {
+        content.push_str(&monitor_end_text(end));
+    }
+    if event.dropped > 0 {
+        let _ = write!(
+            content,
+            " ({} lines dropped: too many events)",
+            event.dropped
+        );
+    }
+    if count > 0 {
+        let body = event.lines.join("\n");
+        let fence = "`".repeat(longest_backtick_run(&body).max(2) + 1);
+        let _ = write!(content, "\n{fence}\n{body}\n{fence}");
+    }
+    pa_types::session::CustomMessage {
+        custom_type: MONITOR_EVENT_CUSTOM_TYPE.to_string(),
+        content: UserContent::Text(content),
+        display: true,
+        details: Some(serde_json::json!({
+            "monitorId": event.monitor_id,
+            "description": event.description,
+            "lines": event.lines,
+            "dropped": event.dropped,
+            "end": event.end,
+        })),
+        timestamp,
+        rest: serde_json::Map::default(),
+    }
+}
+
+/// `; ended: the command exited (code 0); 4 events, 12 lines`.
+fn monitor_end_text(end: &serde_json::Value) -> String {
+    let reason = end
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("ended");
+    let why = match reason {
+        "exited" => match end.get("exitCode").and_then(serde_json::Value::as_i64) {
+            Some(code) => format!("the command exited (code {code})"),
+            None => "the command exited".to_string(),
+        },
+        "expired" => "its timeout passed".to_string(),
+        "stopped" => "it was stopped".to_string(),
+        "flooded" => "too many lines for too long".to_string(),
+        "failed" => format!(
+            "it failed: {}",
+            end.get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error")
+        ),
+        other => other.to_string(),
+    };
+    let events = end.get("events").and_then(serde_json::Value::as_u64);
+    let lines = end.get("lines").and_then(serde_json::Value::as_u64);
+    match (events, lines) {
+        (Some(events), Some(lines)) => {
+            format!(" ended: {why}; {events} events, {lines} lines delivered")
+        }
+        _ => format!(" ended: {why}"),
     }
 }
 
@@ -825,6 +940,49 @@ state
             if text.starts_with("[bash-done pid:11 exit:2]\n\nCommand: \"echo \\\"done\\\" && exit 2\"")));
         let details = message.details.unwrap();
         assert_eq!(details["exitCode"], 2);
+    }
+
+    #[test]
+    fn a_monitor_row_names_its_lines_and_its_end() {
+        let text = |event: &MonitorEvent| match create_monitor_event_message(event, 0).content {
+            UserContent::Text(text) => text,
+            UserContent::Blocks(_) => unreachable!("a text row"),
+        };
+        let mut event = MonitorEvent {
+            monitor_id: "m1".to_string(),
+            description: "cargo test".to_string(),
+            lines: vec!["test a ... ok".to_string()],
+            dropped: 0,
+            end: None,
+        };
+        assert_eq!(
+            text(&event),
+            "[monitor m1 \"cargo test\"] 1 new line\n```\ntest a ... ok\n```"
+        );
+        event.merge(MonitorEvent {
+            lines: vec!["test b ... FAILED".to_string()],
+            dropped: 2,
+            end: Some(serde_json::json!({
+                "reason": "exited", "exitCode": 101, "events": 3, "lines": 4,
+            })),
+            ..MonitorEvent::default()
+        });
+        assert_eq!(
+            text(&event),
+            "[monitor m1 \"cargo test\"] 2 new lines ended: the command exited (code 101); 3 \
+             events, 4 lines delivered (2 lines dropped: too many events)\n```\ntest a ... \
+             ok\ntest b ... FAILED\n```"
+        );
+        // A row holds at most MONITOR_EVENT_MAX_LINES: older lines count as dropped.
+        let mut flood = MonitorEvent::default();
+        flood.merge(MonitorEvent {
+            lines: vec!["x".to_string(); MONITOR_EVENT_MAX_LINES + 5],
+            ..MonitorEvent::default()
+        });
+        assert_eq!(
+            (flood.lines.len(), flood.dropped),
+            (MONITOR_EVENT_MAX_LINES, 5)
+        );
     }
 
     /// The notice carries the end of the output, so the model can act on a

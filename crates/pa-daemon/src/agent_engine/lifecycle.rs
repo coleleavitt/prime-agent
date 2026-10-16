@@ -161,6 +161,7 @@ impl AgentSessionEngine {
                 crate::agent_inbox_host::AgentWatchHostState::default(),
             ),
             bash_consumed_sink: std::sync::Mutex::new(None),
+            monitor_event_sink: std::sync::Mutex::new(None),
             goal_queue_purge: std::sync::Mutex::new(None),
             goal_backoff_wake_job_id: std::sync::Mutex::new(None),
             stale_goal_terminal_pending: std::sync::Mutex::new(None),
@@ -824,6 +825,7 @@ impl AgentSessionEngine {
         register_agent_message_host_handlers(sender, &mut handlers);
         register_agent_observe_host_handlers(observer, &mut handlers);
         self.register_bash_notice_host_handlers(&mut handlers);
+        self.register_monitor_host_handler(&mut handlers);
         // The swarm digest lanes (PRs C/D/E): the inbox reads and the
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);

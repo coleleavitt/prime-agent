@@ -404,6 +404,13 @@ whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
   owner-only file there and the `finished` event carries `outputFile`
   instead of `output`; the client reads and removes it (and falls back to
   `bash.output` if it cannot). `bash.run` events follow the same rule.
+- `bash.output {id, sinceBytes?, maxBytes?}` with `sinceBytes`: a line
+  follower's next read (`rlm.monitor`). It answers `{output, from, to,
+  skipped, bytes}`: at most `maxBytes` (64 KiB at most) of the output after
+  stream offset `sinceBytes`, ending on a complete UTF-8 character; `to` is
+  the next read's offset, and `skipped` counts bytes the buffer no longer
+  held (the dropped middle). A host without the option answers the plain
+  form, which has no `to`; the follower refuses it.
 - `bash.output {id, bytesOnly?}`, `bash.kill {id, signal, graceMs}`,
   `bash.confirmExit {id, termGraceMs, killWaitMs}` (the cancelled one-shot's
   bounded teardown), `bash.groupAlive {id}`, `bash.killAll {}`,
@@ -414,6 +421,25 @@ whose `result` carries `status`: `ok`, `refused` (`error`: the refusal class,
 The host answers the `list_kernel_bash`/`tail_kernel_bash`/`kill_kernel_bash`
 commands from the same job table; the `bash_activity` frame remains for a
 runtime run by another host (the runtime forwards it to its sidecar).
+
+### Background notice requests
+
+Ordinary async host requests (`host_request`) that hand the session a notice
+for the model. The host queues each as a custom row on the steering lane: a
+running turn takes it at its next boundary, an idle session starts a turn.
+
+- `bash.completed {pid, command, exitCode, outputTail?, outputBytes?}`: a
+  detached `bash()` command finished and nothing read its result. The tail
+  is the output's last 20 lines (at most 2,000 characters), read without
+  consuming the result; `outputBytes` counts every byte the command wrote.
+  The row is `[bash-done pid:N exit:M]`. `bash.consumed {pid, command}`
+  withdraws a row not yet delivered.
+- `monitor.event {monitorId, description, lines, dropped, end?}`: one batch
+  of an `rlm.monitor` (lines cut at 500 characters, a batch at 3,000;
+  `dropped` counts lines the rate limit left out). `end` marks the last
+  event: `{reason: exited|expired|stopped|flooded|failed, exitCode?, error?,
+  events, lines}`. Batches of a monitor whose row is still queued merge into
+  it. The row is `[monitor <id> "<description>"] N new lines`.
 
 ### Computer-use requests
 

@@ -29,6 +29,36 @@ use crate::script::Script;
 use crate::shell::{ShellError, child_env, resolve_shell};
 use crate::verdict::{GuardKind, Refusal};
 
+/// The most one `bash.output` follower read (`sinceBytes`) returns.
+const SINCE_MAX_BYTES: usize = 64 * 1024;
+
+/// `bash.output`: the whole rendered output, its byte count alone
+/// (`bytesOnly`), or a line follower's next read after `sinceBytes`.
+fn output_reply(job: &Job, request: &Value) -> Value {
+    if request.get("bytesOnly").and_then(Value::as_bool) == Some(true) {
+        return ok(json!({"bytes": job.output_bytes()}));
+    }
+    // A line follower (`rlm.monitor`): only what came after its cursor.
+    if let Some(offset) = request.get("sinceBytes").and_then(Value::as_u64) {
+        let max = request
+            .get("maxBytes")
+            .and_then(Value::as_u64)
+            .and_then(|max| usize::try_from(max).ok())
+            .unwrap_or(SINCE_MAX_BYTES)
+            .clamp(1, SINCE_MAX_BYTES);
+        let read = job.output_since(offset, max);
+        return ok(json!({
+            "output": String::from_utf8_lossy(&read.bytes),
+            "from": read.from,
+            "to": read.to,
+            "skipped": read.skipped,
+            "bytes": job.output_bytes(),
+        }));
+    }
+    let (output, bytes) = job.output();
+    ok(json!({"output": output, "bytes": bytes}))
+}
+
 /// The request types [`handle`] serves (the host registers exactly these).
 pub const REQUEST_TYPES: [&str; 13] = [
     "bash.check",
@@ -102,13 +132,7 @@ pub fn handle_cancellable(table: &JobTable, request: &Value, cancel: &RunCancel)
             let events = events_json(&events, spill_dir(request));
             ok(json!({"events": events, "cursor": cursor, "done": done}))
         }),
-        "bash.output" => with_job(table, request, |job| {
-            if request.get("bytesOnly").and_then(Value::as_bool) == Some(true) {
-                return ok(json!({"bytes": job.output_bytes()}));
-            }
-            let (output, bytes) = job.output();
-            ok(json!({"output": output, "bytes": bytes}))
-        }),
+        "bash.output" => with_job(table, request, |job| output_reply(job, request)),
         "bash.kill" => with_job(table, request, |job| {
             let signal = request
                 .get("signal")

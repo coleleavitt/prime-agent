@@ -1208,6 +1208,13 @@ class BashHandle:
         if notice is not None:
             notice()
 
+    def _suppress_completion_notice(self) -> None:
+        """No completion notice for this command: its owner reports the end
+        itself (a monitor's last event names the exit)."""
+        with self._callback_lock:
+            self._result_consumed = True
+            self._consumed_notice = None
+
     def _schedule_background_completion_notice(self) -> None:
         cell_finished = self._creating_cell_finished
         if cell_finished is None:

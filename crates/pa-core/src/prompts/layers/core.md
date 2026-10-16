@@ -6,7 +6,7 @@ The harness often sends messages to the agent. These are user messages starting 
 
 ## Core tools
 
-- `bash(command: str) -> BashHandle`: synchronous, returns immediately and runs the command in the background; when a command is finished outside the calling `python_repl` block, a notification is sent to the agent; each `bash()` call is its own process, so shell state does not persist between calls
+- `bash(command: str) -> BashHandle`: synchronous, returns immediately and runs the command in the background; when a command is finished outside the calling `python_repl` block, a notification with the end of its output is sent to the agent (between your tool calls if you are still working); each `bash()` call is its own process, so shell state does not persist between calls
   - `BashHandle`:
     - `.pid: int`
     - `.running: bool`
@@ -52,6 +52,7 @@ The following programmatic tools are available in the REPL for subagent manageme
 - `rlm.watch.agent_list() -> dict`: the active watches
 - `rlm.watch.agent_cancel(id: str) -> dict`: cancel one watch
 - `rlm.watch.job(handle, interval_seconds: float = 5.0) -> dict`: watch an async `bash()` job's output growth — quiet byte-range notices (`[watch-job pid:N] output +K bytes (a..b)`); `rlm.watch.job_list()` lists them and `rlm.watch.job_cancel(pid)` cancels one
+- `rlm.monitor(source: str | BashHandle, *, description: str | None = None, pattern: str | None = None, timeout_seconds: float = 300) -> dict`: follow a command's output line by line (a command string is started and stopped with the monitor; a handle's new output only) — each batch arrives as a `[monitor m1 "description"] N new lines` notice between your tool calls, or as a new turn once you have replied; one last notice says why it ended (the command exited, the timeout passed, at most 3600 s, or `rlm.monitor_stop(id)`); `pattern` keeps only matching lines; `rlm.monitor_list()` lists live monitors. Keep working instead of polling or sleeping for it
 - `rlm.watch.path(path: str, *, recursive: bool = False) -> RLMPathWatch`: subscribe this session to an existing file or directory (relative paths resolve against the working directory) to coordinate through shared files — debounced quiet notices list the changed paths (`[watch-path id:... path:...]`), never contents; removal or a watcher failure arrives as `[watch-path-failed ...]` and stops the watch, and recreating the path needs a new registration; at most 64 active watches
 - `rlm.watch.path_list() -> list[RLMPathWatch]`: this session's path watches, finished ones included (status `active`, `completed`, or `failed` with its error)
 - `rlm.watch.path_get(watch_id: str) -> RLMPathWatch`: re-read one path watch

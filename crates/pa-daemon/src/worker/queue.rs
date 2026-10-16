@@ -651,6 +651,113 @@ pub(crate) fn admit_bash_completion_notice(
     work_notify.notify_one();
 }
 
+/// Admit one monitor event (`rlm.monitor`): like a completion notice, the row
+/// queues on the steering lane (a busy session's run takes it at its next
+/// boundary, an idle session wakes into it). A batch whose monitor still has
+/// an undelivered row merges into that row instead of queueing another.
+pub(crate) fn admit_monitor_event(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    work_notify: &Arc<Notify>,
+    event: pa_core::session_engine::messages::MonitorEvent,
+    session_is_closed: impl Fn() -> bool,
+) {
+    let mut core_guard = core.lock_or_recover();
+    if session_is_closed() {
+        return;
+    }
+    let pending = core_guard.steering.iter_mut().find(|item| {
+        monitor_event_of(item).is_some_and(|queued| queued.monitor_id == event.monitor_id)
+    });
+    if let Some(item) = pending {
+        let mut merged = monitor_event_of(item).unwrap_or_default();
+        merged.merge(event);
+        set_monitor_row(item, &merged);
+        drop(core_guard);
+        work_notify.notify_one();
+        return;
+    }
+    let (policy, queue_visible) = if core_guard.busy {
+        (TurnPolicy::Queued, true)
+    } else {
+        (TurnPolicy::Injected, false)
+    };
+    let mut item = QueuedItem {
+        priority: QueuePriority::Background,
+        preview: None,
+        message: String::new(),
+        custom_message: None,
+        agent_message: None,
+        queue_key: None,
+        admission_id: None,
+        images: Vec::new(),
+        done: None,
+        queue_visible,
+        policy,
+        forced_batch: false,
+        traceparent: None,
+    };
+    set_monitor_row(&mut item, &event);
+    core_guard.steering.push_back(item);
+    drop(core_guard);
+    checkpoint_queue_recovery(
+        recovery,
+        core,
+        QueueCheckpoint::Admitted {
+            operation: "steer_queued",
+        },
+        None,
+    );
+    work_notify.notify_one();
+}
+
+/// The monitor event a queued item carries, from its row's details.
+fn monitor_event_of(item: &QueuedItem) -> Option<pa_core::session_engine::messages::MonitorEvent> {
+    let row = item.custom_message.as_ref()?;
+    if row.get("customType").and_then(Value::as_str)
+        != Some(pa_core::session_engine::messages::MONITOR_EVENT_CUSTOM_TYPE)
+    {
+        return None;
+    }
+    let details = row.get("details")?;
+    Some(pa_core::session_engine::messages::MonitorEvent {
+        monitor_id: details.get("monitorId")?.as_str()?.to_string(),
+        description: details
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        lines: details
+            .get("lines")
+            .and_then(Value::as_array)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        dropped: details.get("dropped").and_then(Value::as_u64).unwrap_or(0),
+        end: details.get("end").filter(|end| end.is_object()).cloned(),
+    })
+}
+
+/// Write `event` into the item: its row, message text and queue preview.
+fn set_monitor_row(item: &mut QueuedItem, event: &pa_core::session_engine::messages::MonitorEvent) {
+    let row = pa_core::session_engine::messages::create_monitor_event_message(
+        event,
+        crate::util::now_ms(),
+    );
+    let content = match &row.content {
+        pa_types::ai::UserContent::Text(text) => text.clone(),
+        pa_types::ai::UserContent::Blocks(_) => String::new(),
+    };
+    item.preview = Some(content.lines().next().unwrap_or_default().to_string());
+    item.message = content;
+    item.custom_message = Some(crate::session_commands::custom_message_value(&row));
+}
+
 /// Withdraw one queued bash completion notice: the kernel read the result
 /// before the notice delivered (pids are reused, so the command disambiguates).
 pub(crate) fn withdraw_bash_completion_notice(

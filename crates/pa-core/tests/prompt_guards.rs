@@ -171,6 +171,7 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "telemetry.emit",
     "bash.completed",
     "bash.progress",
+    "monitor.event",
     "vision.read",
     "harness.load",
     "harness.save",

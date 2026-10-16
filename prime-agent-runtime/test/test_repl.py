@@ -1226,6 +1226,52 @@ class ReplTest(unittest.TestCase):
         inspected = self.repl.execute("bash-inspect", "handle.poll().output")
         self.assertIn("detached", one(inspected, "result")["text"])
 
+    def _monitor_events(self, events: list[dict]) -> list[dict]:
+        """Answer the monitor's host requests until its end event; any other
+        request (a completion notice) is recorded and answered too."""
+        seen: list[dict] = []
+        pending = [e for e in events if e.get("event") == "host_request"]
+        while True:
+            request = pending.pop(0) if pending else wait_for_host_request(self.repl, [])
+            reply_ok(self.repl, request)
+            seen.append(request["data"])
+            if request["data"].get("type") == "monitor.event" and "end" in request["data"]:
+                return seen
+
+    def test_monitor_delivers_new_lines_then_its_end(self):
+        started = self.repl.execute(
+            "monitor",
+            "from rlm import rlm\n"
+            "m = await rlm.monitor(\"printf 'alpha\\nbeta\\n'; sleep 0.4; printf 'gamma\\n'\", description='demo')\n"
+            "m['id']",
+        )
+        self.assertEqual(one(started, "result")["text"], "'m1'")
+        seen = self._monitor_events(started)
+        events = [data for data in seen if data["type"] == "monitor.event"]
+        lines = [line for data in events for line in data["lines"]]
+        self.assertEqual(lines, ["alpha", "beta", "gamma"])
+        self.assertTrue(all(data["monitorId"] == "m1" and data["description"] == "demo" for data in events))
+        end = events[-1]["end"]
+        self.assertEqual((end["reason"], end["exitCode"], end["lines"]), ("exited", 0, 3))
+        # The monitor reports the exit; the command's own completion notice stays quiet.
+        self.assertNotIn("bash.completed", [data["type"] for data in seen])
+
+    def test_monitor_filters_a_handles_new_lines(self):
+        started = self.repl.execute(
+            "monitor-handle",
+            "from rlm import bash, rlm\n"
+            "import asyncio\n"
+            "h = bash(\"printf 'old\\n'; sleep 0.3; printf 'keep 1\\nskip\\nkeep 2\\n'\")\n"
+            "await asyncio.sleep(0.15)\n"
+            "(await rlm.monitor(h, pattern='^keep'))['id']",
+        )
+        seen = self._monitor_events(started)
+        events = [data for data in seen if data["type"] == "monitor.event"]
+        lines = [line for data in events for line in data["lines"]]
+        # Only output after the monitor started, only matching lines.
+        self.assertEqual(lines, ["keep 1", "keep 2"])
+        self.assertEqual(events[-1]["end"]["reason"], "exited")
+
     def test_completion_notice_tail_keeps_the_last_lines_within_the_cap(self):
         import importlib
 

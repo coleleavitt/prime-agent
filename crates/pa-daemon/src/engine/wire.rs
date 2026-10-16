@@ -253,6 +253,11 @@ pub struct BashCompletionNotice {
 /// steering lane + runner wake + recovery busy-evidence).
 pub type BashCompletionSink = std::sync::Arc<dyn Fn(BashCompletionNotice) + Send + Sync>;
 
+/// The queue-admission seam for one monitor event (`monitor.event`): the
+/// worker's steering lane, merged into the monitor's undelivered row.
+pub type MonitorEventSink =
+    std::sync::Arc<dyn Fn(pa_core::session_engine::messages::MonitorEvent) + Send + Sync>;
+
 /// The kernel read a finished command's result before its notice
 /// delivered (the `bash.consumed` host request): the queued notice is stale.
 #[derive(Debug, Clone)]

@@ -51,10 +51,11 @@ pub(crate) struct FoldState {
 }
 
 /// The host notice rows that join a running turn: a finished background
-/// command and a watch event.
-pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 2] = [
+/// command, a watch event, a monitor's lines.
+pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 3] = [
     pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE,
     crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
+    pa_core::session_engine::messages::MONITOR_EVENT_CUSTOM_TYPE,
 ];
 
 /// Whether `item` can join a running turn.
@@ -229,6 +230,50 @@ mod tests {
         let mut agent = item("x");
         agent.agent_message = Some("x".to_string());
         assert!(!joinable(&agent));
+    }
+
+    /// A monitor's batches queue as one notice row per monitor until the
+    /// session takes it: a later batch merges its lines in, the end too.
+    #[test]
+    fn monitor_batches_merge_into_their_undelivered_row_and_fold() {
+        use pa_core::session_engine::messages::MonitorEvent;
+        let core = Arc::new(Mutex::new(SessionCore::test_core(None, "/tmp".to_string())));
+        let recovery = Mutex::new(None);
+        let notify = Arc::new(tokio::sync::Notify::new());
+        core.lock().unwrap().busy = true;
+        let batch = |id: &str, line: &str, end: Option<serde_json::Value>| MonitorEvent {
+            monitor_id: id.to_string(),
+            description: "tests".to_string(),
+            lines: vec![line.to_string()],
+            dropped: 0,
+            end,
+        };
+        let admit = |event| {
+            super::super::queue::admit_monitor_event(&recovery, &core, &notify, event, || false);
+        };
+        admit(batch("m1", "first", None));
+        admit(batch("m2", "other", None));
+        admit(batch(
+            "m1",
+            "second",
+            Some(serde_json::json!({"reason": "exited", "exitCode": 0})),
+        ));
+        {
+            let core = core.lock().unwrap();
+            assert_eq!(core.steering.len(), 2, "one row per monitor");
+            let row = core.steering[0].custom_message.as_ref().unwrap();
+            assert_eq!(
+                row["details"]["lines"],
+                serde_json::json!(["first", "second"])
+            );
+            assert_eq!(row["details"]["end"]["reason"], "exited");
+            assert!(
+                core.steering[0]
+                    .message
+                    .contains("ended: the command exited (code 0)")
+            );
+            assert!(joinable(&core.steering[0]));
+        }
     }
 
     /// A finished background command's notice and a watch event join the

@@ -43,6 +43,7 @@ pub(crate) use queue::{
     admit_autonomous_follow_up,
     admit_bash_completion_notice,
     admit_goal_follow_up,
+    admit_monitor_event,
     checkpoint_queue_recovery,
     clear_withdrawn_progress_note,
     enqueue_priority,
@@ -755,6 +756,28 @@ impl Worker {
                     );
                 });
                 concrete.set_bash_notice_sinks(completion, consumed);
+                // The monitor-event seam (`rlm.monitor` batches), admitted like
+                // a completion notice.
+                let monitor_engine = std::sync::Arc::downgrade(concrete);
+                let monitor_core = Arc::clone(&core);
+                let monitor_notify = Arc::clone(&work_notify);
+                let monitor_recovery = Arc::clone(&recovery);
+                let monitor_sink: crate::engine::MonitorEventSink = Arc::new(move |event| {
+                    let Some(engine) = monitor_engine.upgrade() else {
+                        return;
+                    };
+                    if engine.session_is_closed() {
+                        return;
+                    }
+                    admit_monitor_event(
+                        &monitor_recovery,
+                        &monitor_core,
+                        &monitor_notify,
+                        event,
+                        || engine.session_is_closed(),
+                    );
+                });
+                concrete.set_monitor_event_sink(monitor_sink);
                 // The accepted note frames as a session event on the pump.
                 let note_core = Arc::clone(&core);
                 let note_events = events.clone();

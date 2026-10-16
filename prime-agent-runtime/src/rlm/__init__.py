@@ -25,6 +25,7 @@ from .factory import (
     watch_factory,
 )
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
+from .monitor import monitor, monitor_list, monitor_stop
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -1078,6 +1079,22 @@ class _RLMNamespace:
     def watch(self) -> _RLMWatch:
         return _RLMWatch()
 
+    async def monitor(
+        self,
+        source: str | BashHandle,
+        *,
+        description: str | None = None,
+        pattern: str | None = None,
+        timeout_seconds: float = 300.0,
+    ) -> dict[str, Any]:
+        return await monitor(source, description=description, pattern=pattern, timeout_seconds=timeout_seconds)
+
+    def monitor_list(self) -> list[dict[str, Any]]:
+        return monitor_list()
+
+    def monitor_stop(self, monitor_id: str) -> bool:
+        return monitor_stop(monitor_id)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1136,6 +1153,9 @@ __all__ = [
     "interrupt_subagent",
     "list_subagents",
     "messaging_stats",
+    "monitor",
+    "monitor_list",
+    "monitor_stop",
     "progress_note",
     "rename",
     "rlm",

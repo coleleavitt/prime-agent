@@ -79,6 +79,73 @@ impl OutputBuffer {
     }
 }
 
+/// The output after a stream offset (a line follower's next read).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OutputSince {
+    /// The resident bytes from `from`, ending on a character boundary.
+    pub(crate) bytes: Vec<u8>,
+    /// The stream offset the bytes start at (past any dropped middle).
+    pub(crate) from: u64,
+    /// The offset after the last returned byte: the next read's cursor.
+    pub(crate) to: u64,
+    /// Bytes between the requested offset and `from` the buffer no longer
+    /// holds (the dropped middle, or a tail trimmed past the reader).
+    pub(crate) skipped: u64,
+}
+
+impl OutputBuffer {
+    /// At most `max` resident bytes after stream offset `offset`, in order:
+    /// a reader that fell behind the retained bytes skips to the oldest it
+    /// still has (counted in `skipped`). The end is cut back to a complete
+    /// UTF-8 character, so the next read resumes on the rest of it.
+    pub(crate) fn since(&self, offset: u64, max: usize) -> OutputSince {
+        let head_end = self.head.len() as u64;
+        let tail_start = head_end + self.dropped;
+        let (front, back) = self.tail.as_slices();
+        let tail: Vec<u8> = [front, back].concat();
+        let segments: [(u64, &[u8]); 2] = [(0, &self.head), (tail_start, &tail)];
+        let mut bytes = Vec::new();
+        let mut cursor = offset;
+        let mut from = None;
+        let mut skipped = 0;
+        for (start, segment) in segments {
+            let end = start + segment.len() as u64;
+            if cursor >= end || bytes.len() >= max {
+                continue;
+            }
+            if cursor < start {
+                if from.is_none() {
+                    skipped += start - cursor;
+                } else {
+                    // A gap inside the read: stop before it; the next read
+                    // reports the skip.
+                    break;
+                }
+                cursor = start;
+            }
+            let at = usize::try_from(cursor - start).unwrap_or(usize::MAX);
+            let take = (segment.len() - at).min(max - bytes.len());
+            from.get_or_insert(cursor);
+            bytes.extend_from_slice(&segment[at..at + take]);
+            cursor += take as u64;
+        }
+        let complete = match std::str::from_utf8(&bytes) {
+            // An incomplete character at the end waits for its rest; an
+            // invalid byte inside stays (the reader replaces it).
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Ok(_) | Err(_) => bytes.len(),
+        };
+        bytes.truncate(complete);
+        let from = from.unwrap_or(cursor.min(self.total()));
+        OutputSince {
+            to: from + bytes.len() as u64,
+            bytes,
+            from,
+            skipped,
+        }
+    }
+}
+
 /// `bytes` as text, invalid UTF-8 replaced (validated in one pass first: the
 /// common, valid case keeps the allocation).
 fn lossy(bytes: Vec<u8>) -> String {
@@ -114,6 +181,42 @@ mod tests {
         assert!(buffer.size() < total);
         buffer.write(&[b'y'; 5_000]);
         assert_eq!(buffer.total(), (total + 5_000) as u64);
+    }
+
+    /// A line follower reads the stream in order from its cursor, resumes
+    /// a split character on the next read, and skips (counting) what the
+    /// buffer dropped.
+    #[test]
+    fn since_follows_the_stream_from_a_cursor() {
+        let mut buffer = OutputBuffer::default();
+        buffer.write(b"one\ntwo\n");
+        let read = buffer.since(0, 1024);
+        assert_eq!(
+            (read.bytes.as_slice(), read.from, read.to, read.skipped),
+            (&b"one\ntwo\n"[..], 0, 8, 0)
+        );
+        assert_eq!(buffer.since(8, 1024).bytes, b"");
+        // A split character waits for its last byte.
+        buffer.write(b"\xc3");
+        let read = buffer.since(8, 1024);
+        assert_eq!((read.bytes.len(), read.to), (0, 8));
+        buffer.write(b"\xa9!");
+        assert_eq!(buffer.since(8, 1024).bytes, "\u{e9}!".as_bytes());
+        // The cap bounds one read; the next continues.
+        let read = buffer.since(0, 4);
+        assert_eq!((read.bytes.as_slice(), read.to), (&b"one\n"[..], 4));
+
+        // Past the caps, a reader behind the tail skips the dropped middle.
+        let mut big = OutputBuffer::default();
+        big.write(&vec![b'h'; HEAD_CAP]);
+        big.write(&vec![b'm'; TAIL_CAP + 10]);
+        big.write(b"end\n");
+        let behind = (HEAD_CAP + 2) as u64;
+        let read = big.since(behind, 1024);
+        assert_eq!(read.from, big.total() - TAIL_CAP as u64);
+        assert_eq!(read.skipped, read.from - behind);
+        let last = big.since(big.total() - 4, 1024);
+        assert_eq!(last.bytes, b"end\n");
     }
 
     #[test]
