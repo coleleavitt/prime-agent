@@ -51,12 +51,14 @@ pub(crate) struct FoldState {
 }
 
 /// The host notice rows that join a running turn: a finished background
-/// command, a watch event, a monitor's lines, a background cell's end.
-pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 4] = [
+/// command, a watch event, a monitor's lines, a background cell's end, an
+/// installed feature's notice (an async hook asking to wake the agent).
+pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 5] = [
     pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE,
     crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
     pa_core::session_engine::messages::MONITOR_EVENT_CUSTOM_TYPE,
     pa_core::session_engine::messages::BACKGROUND_CELL_CUSTOM_TYPE,
+    pa_core::features::FEATURE_NOTICE_CUSTOM_TYPE,
 ];
 
 /// Whether `item` can join a running turn.
@@ -295,6 +297,9 @@ mod tests {
         };
         assert!(joinable(&notice("async_bash_completion")));
         assert!(joinable(&notice("agent_watch_notice")));
+        assert!(joinable(&notice("monitor_event")));
+        assert!(joinable(&notice("background_cell_completed")));
+        assert!(joinable(&notice("feature_notice")));
         assert!(!joinable(&notice("heartbeat_prompt")));
         // An idle session's notice is injected, not queued: the runner takes it.
         let mut injected = notice("async_bash_completion");
