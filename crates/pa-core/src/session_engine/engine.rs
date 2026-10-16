@@ -180,6 +180,13 @@ pub struct SessionEngine {
     /// Registered with the status sink: the features may ask the user
     /// while the engine lives.
     confirmation_surface: std::sync::Mutex<Option<crate::features::ConfirmationSurface>>,
+    /// Where the features' notices for this session go (held for the
+    /// engine's life; the registry holds it weakly): the engine's own
+    /// admit-or-steer until the embedding installs its queue's.
+    feature_notice_sink: std::sync::Mutex<Option<crate::features::FeatureNoticeSink>>,
+    /// Tells the installed features the session ended: when the host ends
+    /// it ([`Self::dispose_kernel`]) or when the engine drops.
+    session_end: crate::features::SessionEndNotice,
     /// Where the process's auth notices for this session go (held for the
     /// engine's life; the registry holds it weakly).
     auth_notice_sink: std::sync::Mutex<Option<crate::auth::AuthNoticeSink>>,
@@ -1037,10 +1044,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     if exhausted || steering.as_ref().is_some_and(|probe| probe()) {
                         return Ok(true);
                     }
-                    match boundary {
-                        Some(hook) => hook(context).await,
-                        None => Ok(false),
+                    // The installed features see the boundary only when the
+                    // run goes on past it (the copy is made only for them).
+                    let feature_turn =
+                        (!crate::features::installed().is_empty()).then(|| context.clone());
+                    let stop = match boundary {
+                        Some(hook) => hook(context).await?,
+                        None => false,
+                    };
+                    if let (false, Some(turn)) = (stop, feature_turn) {
+                        super::feature_boundary::after_turn(&fold_slot, &turn).await;
                     }
+                    Ok(stop)
                 })
             }))
         },
@@ -1289,6 +1304,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             session_model: factory_session_model,
             allowed_models: factory_allowed_models,
         });
+    let session_end =
+        crate::features::SessionEndNotice::new(crate::features::installed(), &feature_context);
     let engine = SessionEngine {
         session,
         skills: resources.skills,
@@ -1310,6 +1327,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         feature_context,
         feature_status_sink: std::sync::Mutex::new(None),
         confirmation_surface: std::sync::Mutex::new(None),
+        feature_notice_sink: std::sync::Mutex::new(None),
+        session_end,
         auth_notice_sink: std::sync::Mutex::new(None),
         plan_mode,
         plan_mode_fallback: plan.fallback_reason().map(str::to_string),
@@ -1320,7 +1339,30 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");
     }
+    if !crate::features::installed().is_empty() {
+        engine.set_feature_notice_sink(admit_notice_sink(engine.session.agent()));
+    }
     Ok(engine)
+}
+
+/// The engine's own feature-notice delivery: the row starts a turn on an
+/// idle agent or steers into the running one (the agent's admit-or-steer).
+fn admit_notice_sink(agent: &Arc<Agent>) -> crate::features::FeatureNoticeSink {
+    let agent = Arc::downgrade(agent);
+    Arc::new(move |row| {
+        let Some(agent) = agent.upgrade() else {
+            return;
+        };
+        let Some(message) =
+            super::session_message_to_loop(&super::SessionAgentMessage::Custom(row))
+        else {
+            return;
+        };
+        // An idle admission spawns the run: it needs the async runtime.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let _ = agent.admit_or_enqueue(message);
+        }
+    })
 }
 
 impl SessionEngine {
@@ -1343,6 +1385,20 @@ impl SessionEngine {
             );
         }
         *slot = Some(sink);
+    }
+
+    /// Deliver the installed features' notices for this session
+    /// ([`crate::features::deliver_feature_notice`]) to `sink` for as long
+    /// as the engine lives, replacing the engine's own delivery: an
+    /// embedding that owns the session's queue (the daemon worker) admits
+    /// them through its lanes, so the turn a notice wakes runs where its
+    /// clients see it.
+    pub fn set_feature_notice_sink(&self, sink: crate::features::FeatureNoticeSink) {
+        crate::features::register_feature_notice_sink(&self.feature_context.session_id, &sink);
+        *self
+            .feature_notice_sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
     }
 
     /// Route the process's non-fatal auth notices ([`crate::auth::AuthNotice`])
@@ -1500,6 +1556,7 @@ impl SessionEngine {
     /// Tear the kernel down now with a final namespace snapshot, for a host that
     /// ends the session but keeps the engine alive; dropping the engine tears the kernel down too.
     pub async fn dispose_kernel(&self) {
+        self.session_end.fire("other");
         self.provisioner.dispose(None).await;
         self.mcp_sessions.close_all().await;
     }

@@ -697,7 +697,13 @@ impl SessionEngine {
         self.turn_boundary.clear_refine_previews();
         let compact = async {
             self.session
-                .compact(pending.instructions.as_deref(), model, api_key, abort)
+                .compact_with_trigger(
+                    crate::features::CompactionTrigger::Auto,
+                    pending.instructions.as_deref(),
+                    model,
+                    api_key,
+                    abort,
+                )
                 .await
         };
         Some(match abort {

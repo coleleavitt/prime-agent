@@ -160,11 +160,72 @@ impl AgentSession {
 
     /// Execute `/compact`: summarize the pre-cut prefix, persist the entry,
     /// and rebuild the loop context summary-first; a skip leaves the session
-    /// untouched, an aborted run never commits.
+    /// untouched, an aborted run never commits. The installed features see
+    /// it as a manual compaction (see [`Self::compact_with_trigger`]).
     ///
     /// # Errors
     ///
     /// Returns the abort error, or the summarizer/persist failure; a skip is a normal `Ok` outcome.
+    pub async fn compact(
+        &self,
+        custom_instructions: Option<&str>,
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+        abort: Option<&pa_agent::abort::AbortSignal>,
+    ) -> anyhow::Result<CompactOutcome> {
+        self.compact_with_trigger(
+            crate::features::CompactionTrigger::Manual,
+            custom_instructions,
+            model,
+            api_key,
+            abort,
+        )
+        .await
+    }
+
+    /// [`Self::compact`], started by `trigger`: the installed features add
+    /// to the summary instructions before it runs
+    /// ([`crate::features::SessionFeature::before_compaction`]) and see the
+    /// committed summary after
+    /// ([`crate::features::SessionFeature::after_compaction`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns the abort error, or the summarizer/persist failure; a skip is a normal `Ok` outcome.
+    pub async fn compact_with_trigger(
+        &self,
+        trigger: crate::features::CompactionTrigger,
+        custom_instructions: Option<&str>,
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+        abort: Option<&pa_agent::abort::AbortSignal>,
+    ) -> anyhow::Result<CompactOutcome> {
+        let Some((context, _)) = self.feature_context.as_ref() else {
+            return self
+                .compact_now(custom_instructions, model, api_key, abort)
+                .await;
+        };
+        let features = crate::features::installed();
+        let observation = crate::features::CompactionObservation {
+            trigger,
+            custom_instructions: custom_instructions.map(str::to_string),
+        };
+        let instructions =
+            crate::features::compaction_instructions(features, context, &observation).await;
+        let outcome = self
+            .compact_now(instructions.as_deref(), model, api_key, abort)
+            .await?;
+        if let CompactOutcome::Ran(run) = &outcome {
+            crate::features::observe_compaction(
+                features,
+                context,
+                &observation,
+                &run.result.summary,
+            );
+        }
+        Ok(outcome)
+    }
+
     #[tracing::instrument(
         level = "info",
         name = "session.compact",
@@ -176,7 +237,7 @@ impl AgentSession {
             compact.skipped = tracing::field::Empty,
         )
     )]
-    pub async fn compact(
+    async fn compact_now(
         &self,
         custom_instructions: Option<&str>,
         model: &pa_types::ai::Model,

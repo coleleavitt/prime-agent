@@ -13,9 +13,14 @@
 //! Submodules: [`policy`] routes a session's tool calls, kernel host
 //! requests and prompts through the features' reviews; [`confirm`] asks the
 //! user when a review answers `Ask`; [`status`] carries the statuses
-//! features publish to the session-event surface.
+//! features publish to the session-event surface; [`lifecycle`] composes
+//! the features' answers at the agent's stop, after a tool batch, around a
+//! compaction and at the session's end; [`notice`] delivers a feature's
+//! notice to the model, waking an idle session.
 
 mod confirm;
+mod lifecycle;
+mod notice;
 mod policy;
 mod status;
 
@@ -35,6 +40,21 @@ pub use confirm::{
     confirm,
     pending_confirmations,
     register_confirmation_surface,
+};
+pub(crate) use lifecycle::{
+    SessionEndNotice,
+    compaction_instructions,
+    observe_compaction,
+    review_agent_stop,
+    review_tool_batch,
+};
+pub use notice::{
+    FEATURE_NOTICE_CUSTOM_TYPE,
+    FeatureNotice,
+    FeatureNoticeSink,
+    deliver_feature_notice,
+    feature_notice_row,
+    register_feature_notice_sink,
 };
 use pa_agent::types::{AgentMessage, ToolResultContent};
 use pa_telemetry::{Properties, TelemetryClient, base_properties, lookup};
@@ -139,6 +159,65 @@ pub enum FeatureVerdict {
     /// Refuse it: the model sees the reason as the call's error (a tool
     /// call's error result; the kernel's raised error for a host request).
     Block(String),
+}
+
+/// The most feature continuations one run takes
+/// ([`SessionFeature::before_agent_stop`]); a feature that keeps asking past
+/// it is ignored for the rest of the run, so a misbehaving stop policy
+/// cannot loop the agent forever.
+pub const MAX_FEATURE_CONTINUATIONS_PER_RUN: usize = 8;
+
+/// The agent is about to stop ([`SessionFeature::before_agent_stop`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentStopObservation {
+    /// The text of the turn's final assistant message.
+    pub last_assistant_message: String,
+    /// Whether a feature continuation already ran in this run.
+    pub continued: bool,
+}
+
+/// One call of a finished tool batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolBatchCall {
+    pub tool_call_id: String,
+    pub tool_name: String,
+}
+
+/// A finished tool batch ([`SessionFeature::after_tool_batch`]), in call
+/// order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolBatchObservation {
+    pub tool_calls: Vec<ToolBatchCall>,
+}
+
+/// What started a compaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionTrigger {
+    /// The user asked (`/compact`, the client's compact command).
+    Manual,
+    /// The session decided (a context threshold, an overflow, or a
+    /// model-requested compaction).
+    Auto,
+}
+
+impl CompactionTrigger {
+    /// Claude Code's spelling (`manual` | `auto`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CompactionTrigger::Manual => "manual",
+            CompactionTrigger::Auto => "auto",
+        }
+    }
+}
+
+/// A compaction ([`SessionFeature::before_compaction`],
+/// [`SessionFeature::after_compaction`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionObservation {
+    pub trigger: CompactionTrigger,
+    /// The user's own summary instructions (`/compact <instructions>`).
+    pub custom_instructions: Option<String>,
 }
 
 /// A feature's answer for a submitted prompt.
@@ -357,6 +436,70 @@ pub trait SessionFeature: Send + Sync {
     /// block.
     fn on_agent_stop(&self, context: &Arc<SessionFeatureContext>) {
         let _ = context;
+    }
+
+    /// The model finished a turn without tool calls and the run is about to
+    /// end (no queued steer or follow-up continues it): Claude Code's `Stop`
+    /// decision point. Text returned here keeps the agent going: it reaches
+    /// the model as a hidden row and the same run makes another model call.
+    /// `stop.continued` is true once a feature continuation already ran in
+    /// this run, so a feature can avoid looping; the session caps
+    /// continuations per run at [`MAX_FEATURE_CONTINUATIONS_PER_RUN`].
+    /// Awaited on the turn boundary, so it must stay bounded.
+    fn before_agent_stop(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        stop: &AgentStopObservation,
+    ) -> FeatureFuture<Option<String>> {
+        let _ = (context, stop);
+        Box::pin(async { None })
+    }
+
+    /// A tool batch finished and the run is about to make its next model
+    /// request. Text returned here rides that request as a hidden row (the
+    /// contexts of every feature join in installation order). Awaited on the
+    /// turn boundary, so it must stay bounded and return a ready future when
+    /// it has nothing to do.
+    fn after_tool_batch(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        batch: &ToolBatchObservation,
+    ) -> FeatureFuture<Option<String>> {
+        let _ = (context, batch);
+        Box::pin(async { None })
+    }
+
+    /// The session is about to compact. Text returned here is appended to
+    /// the compaction's summary instructions (after the user's own `/compact`
+    /// instructions). Awaited before the summarizer runs, so it must stay
+    /// bounded.
+    fn before_compaction(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        compaction: &CompactionObservation,
+    ) -> FeatureFuture<Option<String>> {
+        let _ = (context, compaction);
+        Box::pin(async { None })
+    }
+
+    /// A compaction committed with `summary`. Called on the compaction path:
+    /// it must not block.
+    fn after_compaction(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        compaction: &CompactionObservation,
+        summary: &str,
+    ) {
+        let _ = (context, compaction, summary);
+    }
+
+    /// The session ended: its engine was torn down (closed, released, or
+    /// dropped), with `reason` (`other` unless the host knows better).
+    /// Called at most once per session engine, possibly outside any async
+    /// runtime: it must not block, and work that must finish before the
+    /// process exits is awaited by [`Self::flush`].
+    fn on_session_end(&self, context: &Arc<SessionFeatureContext>, reason: &str) {
+        let _ = (context, reason);
     }
 
     /// The session's agent run ended (every run, including one a queued
