@@ -148,6 +148,7 @@ impl AgentSessionEngine {
             published_goal: std::sync::Mutex::new(None),
             late_agent_message_sink: std::sync::Mutex::new(None),
             feature_status_sink: std::sync::Mutex::new(None),
+            feature_notice_sink: std::sync::Mutex::new(None),
             auth_notice_sink: std::sync::Mutex::new(None),
             goal_runtime: std::sync::Mutex::new(None),
             pending_goal_continuation: std::sync::Mutex::new(None),
@@ -1159,6 +1160,9 @@ impl AgentSessionEngine {
                 .clone()
             {
                 engine.set_feature_status_sink(sink);
+            }
+            if let Some(sink) = self.feature_notice_sink.lock_or_recover().clone() {
+                engine.set_feature_notice_sink(sink);
             }
             if let Some(sink) = self
                 .auth_notice_sink

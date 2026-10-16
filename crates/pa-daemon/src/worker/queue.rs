@@ -592,6 +592,50 @@ pub(crate) fn admit_bash_completion_notice(
         notice.output.as_ref(),
         crate::util::now_ms(),
     );
+    admit_injected_notice_row(
+        recovery,
+        core,
+        work_notify,
+        &row,
+        pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_PREVIEW_LABEL,
+        session_is_closed,
+    );
+}
+
+/// The queue-strip label of a feature notice
+/// ([`pa_core::features::deliver_feature_notice`]).
+pub(crate) const FEATURE_NOTICE_PREVIEW_LABEL: &str = "Feature notice";
+
+/// Admit an installed feature's notice row the way a bash completion notice
+/// is admitted: a busy session queues it on the steering lane, an idle one
+/// wakes on it as an injected turn.
+pub(crate) fn admit_feature_notice(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    work_notify: &Arc<Notify>,
+    row: &pa_types::session::CustomMessage,
+    session_is_closed: impl Fn() -> bool,
+) {
+    admit_injected_notice_row(
+        recovery,
+        core,
+        work_notify,
+        row,
+        FEATURE_NOTICE_PREVIEW_LABEL,
+        session_is_closed,
+    );
+}
+
+/// Queue one injected notice row on the steering lane: visible behind a
+/// busy session's run, an invisible injected turn that wakes an idle one.
+fn admit_injected_notice_row(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    work_notify: &Arc<Notify>,
+    row: &pa_types::session::CustomMessage,
+    preview_label: &str,
+    session_is_closed: impl Fn() -> bool,
+) {
     let content = match &row.content {
         pa_types::ai::UserContent::Text(text) => text.clone(),
         pa_types::ai::UserContent::Blocks(_) => String::new(),
@@ -618,12 +662,9 @@ pub(crate) fn admit_bash_completion_notice(
         core_guard.steering.push_back(QueuedItem {
             priority: QueuePriority::Background,
             // The queue strip's labeled preview (TS `previewLabel`).
-            preview: Some(format!(
-                "{}: {preview_text}",
-                pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_PREVIEW_LABEL
-            )),
+            preview: Some(format!("{preview_label}: {preview_text}")),
             message: content,
-            custom_message: Some(crate::session_commands::custom_message_value(&row)),
+            custom_message: Some(crate::session_commands::custom_message_value(row)),
             agent_message: None,
             queue_key: None,
             admission_id: None,

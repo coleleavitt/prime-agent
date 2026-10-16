@@ -139,6 +139,9 @@ pub struct AgentSessionEngine {
     /// Where installed features' status for this session goes (re-applied
     /// to every engine build).
     pub(crate) feature_status_sink: std::sync::Mutex<Option<pa_core::features::FeatureStatusSink>>,
+    /// Where installed features' notices for this session go: the worker's
+    /// queue lanes (re-applied to every engine build).
+    pub(crate) feature_notice_sink: std::sync::Mutex<Option<pa_core::features::FeatureNoticeSink>>,
     /// Where the process's auth notices for this session go (re-applied to
     /// every engine build).
     pub(crate) auth_notice_sink: std::sync::Mutex<Option<pa_core::auth::AuthNoticeSink>>,

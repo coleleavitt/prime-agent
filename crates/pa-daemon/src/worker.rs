@@ -43,6 +43,7 @@ pub(crate) use queue::{
     admit_autonomous_follow_up,
     admit_bash_completion_notice,
     admit_factory_run_notice,
+    admit_feature_notice,
     admit_goal_follow_up,
     admit_monitor_event,
     admit_notice_row,
@@ -839,6 +840,27 @@ impl Worker {
                         factory_withdraw,
                     ),
                 ));
+                // Installed features' notices (an async hook that asks to
+                // wake the agent) ride the same lanes as a bash completion.
+                let feature_engine = std::sync::Arc::downgrade(concrete);
+                let feature_core = Arc::clone(&core);
+                let feature_notify = Arc::clone(&work_notify);
+                let feature_recovery = Arc::clone(&recovery);
+                concrete.set_feature_notice_sink(Arc::new(move |row| {
+                    let Some(engine) = feature_engine.upgrade() else {
+                        return;
+                    };
+                    if engine.session_is_closed() {
+                        return;
+                    }
+                    admit_feature_notice(
+                        &feature_recovery,
+                        &feature_core,
+                        &feature_notify,
+                        &row,
+                        || engine.session_is_closed(),
+                    );
+                }));
                 // The accepted note frames as a session event on the pump.
                 let note_core = Arc::clone(&core);
                 let note_events = events.clone();

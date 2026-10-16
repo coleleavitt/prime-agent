@@ -276,7 +276,8 @@ impl AgentSessionEngine {
             let compact = async {
                 engine
                     .session
-                    .compact(
+                    .compact_with_trigger(
+                        pa_core::features::CompactionTrigger::Auto,
                         custom_instructions.as_deref(),
                         &model,
                         api_key,

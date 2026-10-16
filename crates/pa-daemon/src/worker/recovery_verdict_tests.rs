@@ -143,6 +143,64 @@ async fn a_bash_completion_notice_admits_the_steering_lane_with_busy_evidence() 
     let _ = std::fs::remove_dir_all(worker.config.socket_path.parent().unwrap());
 }
 
+/// An installed feature's notice wakes an idle session through the same
+/// lane as a bash completion: an invisible injected turn on the notice row,
+/// journaled as live work; a busy session keeps it as a visible steer row.
+#[tokio::test]
+async fn a_feature_notice_wakes_the_idle_session_through_the_steering_lane() {
+    let worker = created_worker_with_journal().await;
+    worker.dispatch("clear_queue", &json!({})).await;
+    let notify = Arc::new(Notify::new());
+    let row = pa_core::features::feature_notice_row(&pa_core::features::FeatureNotice {
+        feature: "hooks".to_string(),
+        text: "Async Stop hook reported:\n\nlint failed".to_string(),
+    });
+    admit_feature_notice(&worker.recovery, &worker.core, &notify, &row, || false);
+    {
+        let core = worker.core.lock().unwrap();
+        let item = core
+            .steering
+            .front()
+            .expect("the notice queues on the steering lane");
+        let queued = item.custom_message.as_ref().expect("the injected row");
+        assert_eq!(
+            queued.get("customType").and_then(Value::as_str),
+            Some("feature_notice"),
+            "{queued}"
+        );
+        assert_eq!(queued["details"], json!({ "feature": "hooks" }));
+        assert_eq!(item.message, "Async Stop hook reported:\n\nlint failed");
+        assert_eq!(
+            item.preview.as_deref(),
+            Some("Feature notice: Async Stop hook reported:\n\nlint failed")
+        );
+        assert!(!item.queue_visible, "the idle wake stays invisible");
+    }
+    assert!(
+        WorkerRecoveryJournal::read_interrupted(&worker.config.recovery_journal_path),
+        "the notice admission is live work"
+    );
+    worker.dispatch("clear_queue", &json!({})).await;
+    worker.core.lock().unwrap().busy = true;
+    admit_feature_notice(&worker.recovery, &worker.core, &notify, &row, || false);
+    assert!(
+        worker
+            .core
+            .lock()
+            .unwrap()
+            .steering
+            .front()
+            .is_some_and(|item| item.queue_visible),
+        "a busy session keeps a visible steer row"
+    );
+    // A closed session admits nothing.
+    worker.dispatch("clear_queue", &json!({})).await;
+    worker.core.lock().unwrap().busy = false;
+    admit_feature_notice(&worker.recovery, &worker.core, &notify, &row, || true);
+    assert!(worker.core.lock().unwrap().steering.is_empty());
+    let _ = std::fs::remove_dir_all(worker.config.socket_path.parent().unwrap());
+}
+
 /// A busy session queues the notice as a visible steer row (TS `queueIfBusy`).
 #[tokio::test]
 async fn a_bash_completion_notice_on_a_busy_session_queues_a_visible_steer_row() {
