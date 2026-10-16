@@ -559,6 +559,7 @@ fn known_command_types_match_the_ts_list() {
                     | "list_kernel_bash"
                     | "tail_kernel_bash"
                     | "kill_kernel_bash"
+                    | "detach_running_cell"
                     | "mark_anthropic_warning_shown"
             ),
             "unexpected non-TS command type: {extra}"
