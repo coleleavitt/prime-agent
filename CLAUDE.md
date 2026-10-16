@@ -37,7 +37,7 @@ API. Precedence when they disagree: explicit user instruction â†’ `AGENTS.md` â†
 | client / TUI | `pa-cli` + `pa-tui` | speaks the daemon wire (`pa-types::daemon`, protocol 7) |
 | supervisor | `pa-daemon::supervisor` | owns the socket lease, routing, roster, worker lifecycle; optional TCP listener (#3203) |
 | session worker | `pa-daemon::worker` + `pa-core::session_engine` | one per active session; journals to `~/.prime/agent/sessions` |
-| Python kernel | `prime-agent-runtime/src/rlm/repl.py` | JSONL protocol **5** with `pa-core::kernel` (`REPL_PROTOCOL_VERSION`) |
+| Python kernel | `prime-agent-runtime/src/rlm/repl.py` | JSONL protocol **6** with `pa-core::kernel` (`REPL_PROTOCOL_VERSION`) |
 
 **Other trees:** `prime-agent-runtime/` (the `rlm` package the kernel imports), `skills/` (bundled skills, e.g.
 `computer-use`, `factory`, `system-router`; both are embedded in the binary by `pa-core/build.rs` and extracted to
@@ -60,6 +60,8 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 
 - Kernel protocol 4: the runtime's `host_cancel` and `trace` events (the host parses them; `trace` is logged at debug).
   Protocol 5: the runtime needs a host that serves `bash.*` and `computer_use.*`; the handshake refuses a skewed pair.
+  Protocol 6: the out-of-band `detach` request (send-now moves the running cell to the background; `cell.completed`
+  reports its end).
 - Runtime: kernel span tracing, workflow v1/v2, bash activity rows (`bashCommands`, `bash.consumed`), the fd-2 stderr
   tee, the pidfd owner watchdog with a raw-syscall fallback.
 - Queued steers join the running turn at its next boundary (Claude Code's mid-turn delivery) instead of ending the

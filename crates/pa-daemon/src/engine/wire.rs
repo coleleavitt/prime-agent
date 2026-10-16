@@ -253,6 +253,10 @@ pub struct BashCompletionNotice {
 /// steering lane + runner wake + recovery busy-evidence).
 pub type BashCompletionSink = std::sync::Arc<dyn Fn(BashCompletionNotice) + Send + Sync>;
 
+/// The queue-admission seam for one prebuilt host notice row (a finished
+/// background cell's `cell.completed`): the worker's steering lane.
+pub type NoticeRowSink = std::sync::Arc<dyn Fn(pa_types::session::CustomMessage) + Send + Sync>;
+
 /// The queue-admission seam for one monitor event (`monitor.event`): the
 /// worker's steering lane, merged into the monitor's undelivered row.
 pub type MonitorEventSink =

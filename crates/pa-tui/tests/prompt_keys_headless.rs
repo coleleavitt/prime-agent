@@ -48,6 +48,8 @@ struct MockSupervisor {
     steering: Vec<&'static str>,
     /// The abort after which the running turn ends (`agent_end`).
     aborts_before_end: usize,
+    /// Advertise `cell_detach` and answer `detach_running_cell` as moved.
+    cell_detach: bool,
 }
 
 impl MockSupervisor {
@@ -60,7 +62,11 @@ impl MockSupervisor {
             &json!({
                 "type": "daemon_hello",
                 "protocol": { "name": "prime-agent.daemon", "version": 7 },
-                "serverCapabilities": ["abort_and_send_queued", "queue_message_mutation"],
+                "serverCapabilities": if self.cell_detach {
+                    json!(["abort_and_send_queued", "queue_message_mutation", "cell_detach"])
+                } else {
+                    json!(["abort_and_send_queued", "queue_message_mutation"])
+                },
                 "clientId": "mock",
             }),
         );
@@ -146,6 +152,15 @@ impl MockSupervisor {
                     queue.push(command["message"].as_str().unwrap_or_default().to_string());
                     write_json(&mut writer, &response(json!({})));
                     write_json(&mut writer, &queue_update(&queue));
+                }
+                "detach_running_cell" => {
+                    write_json(&mut writer, &response(json!({ "detached": true })));
+                    // The run goes on: it takes the queue at its next boundary
+                    // and ends on its own.
+                    queue.clear();
+                    write_json(&mut writer, &queue_update(&queue));
+                    write_json(&mut writer, &session_event(&json!({ "type": "turn_end" })));
+                    write_json(&mut writer, &session_event(&json!({ "type": "agent_end" })));
                 }
                 "acquire_session_input_pause" => {
                     write_json(&mut writer, &response(json!({ "pauseId": "pause-1" })));
@@ -288,6 +303,16 @@ fn run(
     aborts_before_end: usize,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>, Vec<String>) {
+    run_with(streaming, steering, aborts_before_end, false, steps)
+}
+
+fn run_with(
+    streaming: bool,
+    steering: Vec<&'static str>,
+    aborts_before_end: usize,
+    cell_detach: bool,
+    steps: Vec<HeadlessStep>,
+) -> (Vec<String>, Vec<Value>, Vec<String>) {
     std::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
@@ -298,6 +323,7 @@ fn run(
         streaming,
         steering,
         aborts_before_end,
+        cell_detach,
     };
     let handle = std::thread::spawn(move || supervisor.serve());
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -328,7 +354,12 @@ fn types(commands: &[Value]) -> Vec<String> {
             kind.starts_with("abort")
                 || matches!(
                     *kind,
-                    "prompt" | "steer" | "follow_up" | "mutate_queued_message" | "clear_queue"
+                    "prompt"
+                        | "steer"
+                        | "follow_up"
+                        | "mutate_queued_message"
+                        | "clear_queue"
+                        | "detach_running_cell"
                 )
         })
         .map(str::to_string)
@@ -476,6 +507,39 @@ fn browsing_the_queue_holds_it_until_the_browse_ends() {
             ("acquire", json!("tui-queue-edit")),
             ("release", json!("pause-1"))
         ]
+    );
+}
+
+/// With a daemon that can move the running cell to the background, send-now
+/// keeps the work running (Claude Code's send-now): the draft is steered and
+/// the cell detached, and nothing is aborted.
+#[test]
+fn ctrl_enter_moves_the_running_cell_instead_of_interrupting() {
+    let (_frames, commands, _copies) = run_with(
+        true,
+        vec!["parked"],
+        1,
+        true,
+        vec![
+            wait_for("parked"),
+            HeadlessStep::Type("right now".to_string()),
+            key(KeyCode::Enter, KeyModifiers::CONTROL),
+            HeadlessStep::WaitMs(300),
+        ],
+    );
+    let kinds = types(&commands);
+    let steer = kinds
+        .iter()
+        .position(|kind| kind == "prompt")
+        .expect("the draft was steered");
+    let detach = kinds
+        .iter()
+        .position(|kind| kind == "detach_running_cell")
+        .expect("the running cell was moved");
+    assert!(steer < detach, "{kinds:?}");
+    assert!(
+        !kinds.iter().any(|kind| kind.starts_with("abort")),
+        "nothing was interrupted: {kinds:?}"
     );
 }
 

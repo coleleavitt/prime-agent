@@ -178,6 +178,9 @@ pub struct AgentSessionEngine {
     /// The monitor-event queue seam (`monitor.event`); `None` outside a
     /// daemon worker.
     pub(crate) monitor_event_sink: std::sync::Mutex<Option<crate::engine::MonitorEventSink>>,
+    /// The prebuilt notice-row seam (`cell.completed`); `None` outside a
+    /// daemon worker.
+    pub(crate) notice_row_sink: std::sync::Mutex<Option<crate::engine::NoticeRowSink>>,
     /// The worker-installed digest inbox seams (swarm PR C): the inbox
     /// reads and the pin live on the receiving worker; the kernel host
     /// handlers call through these. Set by the worker at construction;

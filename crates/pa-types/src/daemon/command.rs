@@ -536,6 +536,16 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Move the session's running kernel cell to the background (send-now
+    /// without interrupting): answers `{detached}`. Rust-native extension,
+    /// advertised by the `cell_detach` capability.
+    DetachRunningCell {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     /// The `/factory` view's bridge lane over the session kernel's factory
     /// executor (`graph`/`status`/`watch`/`run`/`stop`/`resume`).
     /// Rust-native extension, advertised by the `factory_activity` capability.

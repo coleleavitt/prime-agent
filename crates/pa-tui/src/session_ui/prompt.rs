@@ -976,7 +976,7 @@ impl SessionUi {
         if self.send_now_after == Some(note.expected_turn_end) {
             self.send_now_after = None;
             if note.result.is_ok() && self.turn_active {
-                self.interrupt_running_work(view);
+                self.send_now_deliver(view).await;
             }
         }
         match note.result {

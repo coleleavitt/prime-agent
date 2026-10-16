@@ -44,6 +44,7 @@ pub(crate) use queue::{
     admit_bash_completion_notice,
     admit_goal_follow_up,
     admit_monitor_event,
+    admit_notice_row,
     checkpoint_queue_recovery,
     clear_withdrawn_progress_note,
     enqueue_priority,
@@ -778,6 +779,23 @@ impl Worker {
                     );
                 });
                 concrete.set_monitor_event_sink(monitor_sink);
+                // The prebuilt notice-row seam (`cell.completed`).
+                let row_engine = std::sync::Arc::downgrade(concrete);
+                let row_core = Arc::clone(&core);
+                let row_notify = Arc::clone(&work_notify);
+                let row_recovery = Arc::clone(&recovery);
+                let row_sink: crate::engine::NoticeRowSink = Arc::new(move |row| {
+                    let Some(engine) = row_engine.upgrade() else {
+                        return;
+                    };
+                    if engine.session_is_closed() {
+                        return;
+                    }
+                    admit_notice_row(&row_recovery, &row_core, &row_notify, &row, || {
+                        engine.session_is_closed()
+                    });
+                });
+                concrete.set_notice_row_sink(row_sink);
                 // The accepted note frames as a session event on the pump.
                 let note_core = Arc::clone(&core);
                 let note_events = events.clone();

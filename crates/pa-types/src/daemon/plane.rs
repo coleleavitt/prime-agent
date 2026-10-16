@@ -38,6 +38,7 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "list_kernel_bash"
         | "tail_kernel_bash"
         | "kill_kernel_bash"
+        | "detach_running_cell"
         | "cancel_rlm_child"
         | "delete_rlm_subagent"
         | "wait_for_idle"

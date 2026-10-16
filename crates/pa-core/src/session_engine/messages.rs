@@ -41,6 +41,9 @@ pub const HEARTBEAT_PROMPT_CUSTOM_TYPE: &str = "heartbeat_prompt";
 /// The durable row a detached kernel bash completion admits as the
 /// woken turn's injected prompt.
 pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
+/// The row a cell moved to the background (`detach`) admits when it ends: it
+/// joins a running turn or starts one on an idle session.
+pub const BACKGROUND_CELL_CUSTOM_TYPE: &str = "background_cell_completed";
 /// The row a monitor's batch of output lines (`rlm.monitor`) admits: it joins
 /// a running turn or starts one on an idle session.
 pub const MONITOR_EVENT_CUSTOM_TYPE: &str = "monitor_event";
@@ -293,6 +296,64 @@ pub fn create_async_bash_completion_message_with_output(
             "pid": pid,
             "command": command,
             "exitCode": exit_code,
+        })),
+        timestamp,
+        rest: serde_json::Map::default(),
+    }
+}
+
+/// How a cell moved to the background ended (`cell.completed`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BackgroundCellCompletion {
+    pub cell_id: String,
+    /// `ok` or `error`.
+    pub status: String,
+    /// The cell's trailing expression, as its result would have shown it.
+    pub result: Option<String>,
+    /// The failure (the traceback, or `cancelled`).
+    pub error: Option<String>,
+    /// What the cell printed after it was moved (its last characters).
+    pub output: String,
+    pub duration_ms: u64,
+}
+
+/// The row a finished background cell is delivered as: `[cell-done <id> ok]`
+/// with the duration, then the result or error and the output, fenced.
+#[must_use]
+pub fn create_background_cell_message(
+    completion: &BackgroundCellCompletion,
+    timestamp: u64,
+) -> pa_types::session::CustomMessage {
+    use std::fmt::Write as _;
+
+    let seconds = completion.duration_ms as f64 / 1000.0;
+    let mut content = format!(
+        "[cell-done {} {}] the background cell finished after {seconds:.1}s",
+        completion.cell_id, completion.status
+    );
+    let mut section = |label: &str, text: &str| {
+        let text = text.trim_end();
+        if text.is_empty() {
+            return;
+        }
+        let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+        let _ = write!(content, "\n\n{label}:\n{fence}\n{text}\n{fence}");
+    };
+    if let Some(result) = &completion.result {
+        section("Result", result);
+    }
+    if let Some(error) = &completion.error {
+        section("Error", error);
+    }
+    section("Output", &completion.output);
+    pa_types::session::CustomMessage {
+        custom_type: BACKGROUND_CELL_CUSTOM_TYPE.to_string(),
+        content: UserContent::Text(content),
+        display: true,
+        details: Some(serde_json::json!({
+            "cellId": completion.cell_id,
+            "status": completion.status,
+            "durationMs": completion.duration_ms,
         })),
         timestamp,
         rest: serde_json::Map::default(),
@@ -940,6 +1001,29 @@ state
             if text.starts_with("[bash-done pid:11 exit:2]\n\nCommand: \"echo \\\"done\\\" && exit 2\"")));
         let details = message.details.unwrap();
         assert_eq!(details["exitCode"], 2);
+    }
+
+    #[test]
+    fn a_background_cell_row_carries_its_result_and_output() {
+        let row = create_background_cell_message(
+            &BackgroundCellCompletion {
+                cell_id: "c7".to_string(),
+                status: "ok".to_string(),
+                result: Some("42".to_string()),
+                error: None,
+                output: "built\n".to_string(),
+                duration_ms: 12_340,
+            },
+            0,
+        );
+        assert_eq!(row.custom_type, BACKGROUND_CELL_CUSTOM_TYPE);
+        assert_eq!(
+            row.content,
+            UserContent::Text(
+                "[cell-done c7 ok] the background cell finished after 12.3s\n\nResult:\n```\n42\n```\n\nOutput:\n```\nbuilt\n```"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

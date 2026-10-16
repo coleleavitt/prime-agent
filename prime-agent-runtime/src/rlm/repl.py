@@ -39,7 +39,7 @@ from typing import Any
 from . import plan_guard, trace
 from .bash import _kill_live_handles
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES = 16 * 1024 * 1024
@@ -185,7 +185,18 @@ _current_cell_execution: contextvars.ContextVar[_CellExecution | None] = context
     "_current_cell_execution", default=None
 )
 # "state": the active request is a snapshot/restore, whose interrupt never leaves its own task.
-_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False, "state": False}
+_active: dict[str, Any] = {"task": None, "rid": None, "interrupted": False, "state": False, "detach": None}
+# A detach frame older than this is stale (the loop was blocked past it): the
+# host has already fallen back to an interrupt, so it must not move the cell.
+_DETACH_FRESH_SECONDS = 2.0
+# Cells moved to the background, by id: their later output is held for the
+# completion notice (bounded to the last characters) instead of streaming.
+_DETACHED_OUTPUT_CHARS = 4000
+_detached_output: dict[str, list[str]] = {}
+_detached_tasks: dict[str, "asyncio.Task[None]"] = {}
+# The body tasks of cells moved to the background, by id: code running in one
+# still belongs to its own cell (bash() attribution, result reads).
+_detached_bodies: dict[str, "asyncio.Task[Any]"] = {}
 _cell_counter = 0
 _pending_host: dict[str, "asyncio.Future[dict[str, Any]]"] = {}
 # host_request_blocking waiters: resolved on the reader thread itself, since
@@ -278,6 +289,11 @@ def current_cell_bash_recorder() -> Callable[[dict[str, Any]], None] | None:
 def active_cell_task() -> asyncio.Task[Any] | None:
     """The cell body task executing right now, or None between cells (global
     state, not the cell contextvar — detached tasks keep stale context copies)."""
+    cell = _current_cell.get()
+    detached = _detached_bodies.get(cell) if cell is not None else None
+    if detached is not None and not detached.done():
+        # Code of a cell moved to the background: that cell is its owner.
+        return detached
     with _interrupt_lock:
         task = _active["task"]
     return task if isinstance(task, asyncio.Task) and not task.done() else None
@@ -766,6 +782,14 @@ class _TaggedWriter(io.TextIOBase):
             raise TypeError(f"write() argument must be str, not {type(text).__name__}")
         if text:
             cell_id = _current_cell.get()
+            held = _detached_output.get(cell_id) if cell_id is not None else None
+            if held is not None:
+                # A cell moved to the background: its output rides its notice.
+                held.append(text)
+                if sum(map(len, held)) > 2 * _DETACHED_OUTPUT_CHARS:
+                    joined = "".join(held)[-_DETACHED_OUTPUT_CHARS:]
+                    held[:] = [joined]
+                return len(text)
             with self._frame_lock:
                 for start in range(0, len(text), _STREAM_FRAME_TEXT_CAP):
                     _send(
@@ -1043,16 +1067,23 @@ async def _run_guarded(
 ) -> tuple[str, Any, dict[str, Any] | None]:
     """Await a request task; returns (status, value, error event or None). `state` marks a
     snapshot/restore request (see `_sigint_handler`)."""
+    detach: asyncio.Future[None] | None = None if state else asyncio.get_running_loop().create_future()
     with _interrupt_lock:
         _active["interrupted"] = False
         _active["rid"] = rid
         _active["task"] = task
         _active["state"] = state
+        _active["detach"] = detach
         if _consume_pending_interrupt(rid):
             # Interrupt parked before activation: cancel before the first step.
             _active["interrupted"] = True
             task.cancel()
     try:
+        if detach is not None:
+            await asyncio.wait({task, detach}, return_when=asyncio.FIRST_COMPLETED)
+            if not task.done():
+                # Moved to the background: the cell keeps running, unawaited here.
+                return "detached", task, None
         value = await task
         return "ok", value, None
     except asyncio.CancelledError as exc:
@@ -1072,6 +1103,9 @@ async def _run_guarded(
             _active["task"] = None
             _active["rid"] = None
             _active["state"] = False
+            _active["detach"] = None
+        if detach is not None and not detach.done():
+            detach.cancel()
 
 
 async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
@@ -1094,6 +1128,14 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             status, value, error = await _run_guarded(task, cell_id)
             bash_commands = execution.close_bash_commands()
             result_text: str | None = None
+            if status == "detached":
+                status, value = "ok", None
+                result_text = _DETACHED_RESULT.format(cell_id=cell_id)
+                _detached_output[cell_id] = []
+                _detached_bodies[cell_id] = task
+                _detached_tasks[cell_id] = _loop.create_task(
+                    _finish_detached(cell_id, task, has_trailing, time.monotonic())
+                )
             try:
                 if _consume_handoff_interrupt() and status == "ok":
                     # SIGINT landed between the task's completion and the finishing
@@ -1130,6 +1172,65 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
         execution.finished.set()
         _current_cell_execution.reset(execution_token)
         _current_cell.reset(cell_token)
+
+
+_DETACHED_RESULT = (
+    "[Still running. This cell was moved to the background (cell {cell_id}) so that a message "
+    "that arrived while it ran can reach you; it was not interrupted. Its result, and the output "
+    "it prints from now on, will be delivered to you as a [cell-done {cell_id}] notice when it "
+    "finishes. Do not repeat it, and do not wait, sleep or poll for it.]"
+)
+
+
+async def _finish_detached(cell_id: str, task: asyncio.Task[Any], has_trailing: bool, since: float) -> None:
+    """Await a cell moved to the background and hand its outcome to the host."""
+    status, result_text, error_text = "ok", None, None
+    try:
+        value = await task
+        if has_trailing and value is not None:
+            try:
+                result_text = _cap_text(repr(value))
+            except BaseException as exc:  # noqa: BLE001 - a broken __repr__ is the cell's error
+                status, error_text = "error", f"{type(exc).__name__}: {_safe_str(exc)}"
+    except asyncio.CancelledError:
+        status, error_text = "error", "cancelled"
+    except BaseException as exc:  # noqa: BLE001 - every cell failure is reported
+        event = _error_event(cell_id, exc)
+        status = "error"
+        error_text = _cap_text("".join(event.get("traceback") or []) or f"{event.get('ename')}: {event.get('evalue')}")
+    finally:
+        held = _detached_output.pop(cell_id, [])
+        _detached_tasks.pop(cell_id, None)
+        _detached_bodies.pop(cell_id, None)
+    payload: dict[str, Any] = {
+        "type": "cell.completed",
+        "cellId": cell_id,
+        "status": status,
+        "durationMs": int((time.monotonic() - since) * 1000),
+        "output": "".join(held)[-_DETACHED_OUTPUT_CHARS:],
+    }
+    if result_text is not None:
+        payload["result"] = result_text
+    if error_text is not None:
+        payload["error"] = error_text
+    try:
+        await host_request(payload)
+    except Exception:  # noqa: BLE001 - a host without the handler (or gone) has no one to tell
+        pass
+
+
+def _request_detach(target: str | None, sent_at: float) -> None:
+    """Move the running cell to the background (loop thread; see the `detach` frame)."""
+    if time.monotonic() - sent_at > _DETACH_FRESH_SECONDS:
+        return
+    with _interrupt_lock:
+        detach = _active["detach"]
+        rid = _active["rid"]
+        if detach is None or detach.done() or rid is None or (target is not None and target != rid):
+            return
+        if _active["interrupted"]:
+            return
+        detach.set_result(None)
 
 
 def _drain_output() -> None:
@@ -2119,6 +2220,14 @@ def _handle_request_line(
             _protocol_error("interrupt request id must be a string")
             return
         _request_interrupt(req.get("id"))
+        return
+    if rtype == "detach":
+        if "id" in req and not isinstance(req["id"], str):
+            _protocol_error("detach request id must be a string")
+            return
+        # Like interrupt, outside the cell FIFO; applied on the loop thread, so
+        # a cell that blocks the loop cannot be moved (the frame goes stale).
+        _loop.call_soon_threadsafe(_request_detach, req.get("id"), time.monotonic())
         return
     if rtype == "host_reply":
         # Bypass the FIFO queue: the awaiting cell IS the in-flight

@@ -162,6 +162,7 @@ impl AgentSessionEngine {
             ),
             bash_consumed_sink: std::sync::Mutex::new(None),
             monitor_event_sink: std::sync::Mutex::new(None),
+            notice_row_sink: std::sync::Mutex::new(None),
             goal_queue_purge: std::sync::Mutex::new(None),
             goal_backoff_wake_job_id: std::sync::Mutex::new(None),
             stale_goal_terminal_pending: std::sync::Mutex::new(None),
@@ -714,6 +715,20 @@ impl AgentSessionEngine {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Move the session's running cell to the background (send-now): `true`
+    /// when the kernel moved it within `wait`; never builds a session/kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request cannot be written to the kernel.
+    pub async fn detach_running_cell(&self, wait: std::time::Duration) -> anyhow::Result<bool> {
+        let engine = self.session.lock().await.clone();
+        match engine {
+            Some(engine) => engine.detach_running_cell(wait).await,
+            None => Ok(false),
+        }
+    }
+
     /// Session-scoped kernel shell activity; never builds a new session/kernel.
     ///
     /// # Errors
@@ -826,6 +841,7 @@ impl AgentSessionEngine {
         register_agent_observe_host_handlers(observer, &mut handlers);
         self.register_bash_notice_host_handlers(&mut handlers);
         self.register_monitor_host_handler(&mut handlers);
+        self.register_cell_completed_host_handler(&mut handlers);
         // The swarm digest lanes (PRs C/D/E): the inbox reads and the
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);

@@ -51,11 +51,12 @@ pub(crate) struct FoldState {
 }
 
 /// The host notice rows that join a running turn: a finished background
-/// command, a watch event, a monitor's lines.
-pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 3] = [
+/// command, a watch event, a monitor's lines, a background cell's end.
+pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 4] = [
     pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE,
     crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
     pa_core::session_engine::messages::MONITOR_EVENT_CUSTOM_TYPE,
+    pa_core::session_engine::messages::BACKGROUND_CELL_CUSTOM_TYPE,
 ];
 
 /// Whether `item` can join a running turn.

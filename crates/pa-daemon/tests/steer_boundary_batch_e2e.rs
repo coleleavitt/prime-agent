@@ -539,6 +539,143 @@ fn a_background_completion_notice_joins_the_running_turn() {
     drop(supervisor);
 }
 
+/// The send-now script: the first cell runs long (asynchronously, so it can
+/// be moved); the reply after it addresses the steer that joined the run; a
+/// later reply addresses the moved cell's completion notice.
+fn detach_script(dir: &Path) -> PathBuf {
+    let path = dir.join("detach-script.json");
+    std::fs::write(
+        &path,
+        json!({
+            "engine": "faux",
+            "modelId": "faux-1",
+            "modelName": "Faux Model",
+            "reasoning": false,
+            "contextWindow": 128_000,
+            "tokensPerSecond": 30,
+            "responses": [
+                {"content": [
+                    {"type": "text", "text": "Running the long cell."},
+                    {"type": "toolCall", "name": "python_repl", "id": "toolu_long01",
+                     "arguments": {"code":
+                        "import asyncio, os, time\nopen('long-started','w').close()\ndeadline = time.time() + 120\nwhile not os.path.exists('release-long') and time.time() < deadline:\n    await asyncio.sleep(0.02)\nprint('late output')\n'cell value'"}}
+                ]},
+                {"content": [{"type": "text", "text": "saw the steer"}]},
+                {"content": [{"type": "text", "text": "saw the cell result"}]},
+                {"content": [{"type": "text", "text": "spare reply"}]}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write faux script");
+    path
+}
+
+/// Send-now without interrupting (Claude Code's backgrounding): with a cell
+/// running, a steer plus `detach_running_cell` moves the cell to the
+/// background: its tool call answers "moved", the run goes on to the steer,
+/// and when the cell ends its result and late output arrive as a
+/// `[cell-done ...]` notice the model answers.
+#[test]
+fn send_now_moves_a_running_cell_to_the_background() {
+    let Some(_kernel) = kernel_python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let cwd = dir.path().join("work");
+    std::fs::create_dir_all(&cwd).expect("work dir");
+    let script = detach_script(dir.path());
+    let socket = dir.path().join("detach.sock");
+    let supervisor = spawn_supervisor(&socket, &agent_dir, &script);
+    let mut client = Client::connect(&socket);
+    let created = client.send(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": { "cwd": cwd.to_string_lossy(), "model": "faux-1" },
+        }),
+    );
+    assert_eq!(created["success"], true, "create failed");
+    let session_id = created["data"]["id"]
+        .as_str()
+        .or_else(|| created["data"]["sessionId"].as_str())
+        .expect("session id")
+        .to_string();
+    let attached = client.send(
+        "a1",
+        &json!({ "type": "attach", "activeSessionId": session_id }),
+    );
+    assert_eq!(attached["success"], true, "attach failed");
+    let started = client.send(
+        "p1",
+        &json!({ "type": "prompt", "activeSessionId": session_id, "message": "go" }),
+    );
+    assert_eq!(started["success"], true, "prompt failed");
+    let marker = cwd.join("long-started");
+    let deadline = Instant::now() + Duration::from_mins(3);
+    while !marker.exists() && Instant::now() < deadline {
+        client.drain_events(Duration::from_millis(100));
+    }
+    assert!(marker.exists(), "the long cell never started");
+
+    let steered = client.send(
+        "s1",
+        &json!({ "type": "steer", "activeSessionId": session_id, "message": "steer during the cell" }),
+    );
+    assert_eq!(steered["success"], true, "steer failed");
+    let detached = client.send(
+        "d1",
+        &json!({ "type": "detach_running_cell", "activeSessionId": session_id }),
+    );
+    assert_eq!(detached["success"], true, "detach failed");
+    assert_eq!(detached["data"]["detached"], true, "the cell was moved");
+    // The run went on to the steer while the cell still runs.
+    let deadline = Instant::now() + Duration::from_mins(3);
+    while !event_texts(&client.events)
+        .iter()
+        .any(|text| text == "saw the steer")
+    {
+        assert!(Instant::now() < deadline, "the run never reached the steer");
+        client.drain_events(Duration::from_millis(100));
+    }
+    std::fs::write(cwd.join("release-long"), "1").expect("release the cell");
+    let deadline = Instant::now() + Duration::from_mins(3);
+    while !event_texts(&client.events)
+        .iter()
+        .any(|text| text == "saw the cell result")
+    {
+        assert!(Instant::now() < deadline, "the cell's notice never landed");
+        client.drain_events(Duration::from_millis(100));
+    }
+
+    let rows = event_rows(&client.events);
+    let moved = rows
+        .iter()
+        .find(|(role, _)| role == "toolResult")
+        .expect("the cell's tool call answered");
+    assert!(
+        moved.1.contains("moved to the background"),
+        "the tool call answered as moved: {moved:?}"
+    );
+    let notice = rows
+        .iter()
+        .find(|(role, text)| role == "custom" && text.starts_with("[cell-done "))
+        .unwrap_or_else(|| panic!("the cell-done notice reached the client: {rows:?}"));
+    assert!(
+        notice.1.contains("'cell value'") && notice.1.contains("late output"),
+        "the notice carries the result and the late output: {:?}",
+        notice.1
+    );
+    assert!(
+        !event_types(&client.events)
+            .iter()
+            .any(|kind| kind.contains("abort")),
+        "nothing was interrupted"
+    );
+    drop(supervisor);
+}
+
 fn event_types(events: &[Value]) -> Vec<String> {
     events
         .iter()

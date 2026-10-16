@@ -1,4 +1,4 @@
-//! Wire types of the REPL runtime protocol (version 5).
+//! Wire types of the REPL runtime protocol (version 6).
 //!
 //! Requests are newline-delimited JSON objects written to the kernel's stdin; events
 //! arrive as newline-delimited JSON objects on the runtime's private protocol dup of
@@ -14,8 +14,10 @@ use crate::kernel::shared::{KernelSentAgentMessage, parse_sent_agent_message};
 /// runtime that needs its host to serve `bash.*` and `computer_use.*` (with
 /// `harness.*`, `mcp.session.*`, `factory.*`): `bash()` and computer use are
 /// thin clients of the host, so a host and runtime on either side of it
-/// cannot work together and the handshake refuses the pair.
-pub const REPL_PROTOCOL_VERSION: u64 = 5;
+/// cannot work together and the handshake refuses the pair. Version 6 adds the
+/// `detach` request (see `Request::Detach`): an older runtime would answer it
+/// with a protocol error, so the pair must agree.
+pub const REPL_PROTOCOL_VERSION: u64 = 6;
 
 /// One request frame.
 #[derive(Debug, Clone)]
@@ -24,6 +26,12 @@ pub enum Request {
         code: String,
     },
     Interrupt,
+    /// Move the running cell to the background: the runtime answers its
+    /// execute at once with a "moved, not interrupted" result and keeps the
+    /// cell running; a `cell.completed` host request reports its outcome.
+    /// Applied on the runtime's loop thread and only while fresh, so a cell
+    /// that blocks the loop stays put (the host then interrupts instead).
+    Detach,
     HostReply {
         data: Value,
     },
@@ -59,6 +67,7 @@ impl Request {
         match self {
             Request::Execute { .. } => "execute",
             Request::Interrupt => "interrupt",
+            Request::Detach => "detach",
             Request::HostReply { .. } => "host_reply",
             Request::Snapshot { .. } => "snapshot",
             Request::Restore { .. } => "restore",
@@ -73,6 +82,7 @@ impl Request {
         match self {
             Request::Execute { code } => json!({ "type": "execute", "code": code }),
             Request::Interrupt => json!({ "type": "interrupt" }),
+            Request::Detach => json!({ "type": "detach" }),
             Request::HostReply { data } => json!({ "type": "host_reply", "data": data }),
             Request::Snapshot {
                 path,

@@ -172,6 +172,7 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.completed",
     "bash.progress",
     "monitor.event",
+    "cell.completed",
     "vision.read",
     "harness.load",
     "harness.save",

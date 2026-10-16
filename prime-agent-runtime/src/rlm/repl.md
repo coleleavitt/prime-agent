@@ -3,9 +3,10 @@
 `python -m rlm.repl` starts a CPython REPL runtime that executes code cells in
 one persistent `__main__` namespace on a single asyncio event loop. The wire
 format is newline-delimited JSON: one object per line, UTF-8, no other framing.
-The current protocol version is `5`; the runtime announces it in the `ready`
+The current protocol version is `6`; the runtime announces it in the `ready`
 event, and the host refuses a runtime that announces any other version.
-Version 5 changed no frame shape: it marks the runtime whose `bash()` and
+Version 6 adds the out-of-band `detach` request (see Detach below); an older
+runtime would answer it with the unknown-type protocol error. Version 5 changed no frame shape: it marks the runtime whose `bash()` and
 computer use are thin clients of the host, so the host must serve the
 `bash.*` and `computer_use.*` host requests (with `harness.*`,
 `mcp.session.*` and `factory.*`). A version-4 host cannot run a version-5
@@ -57,6 +58,7 @@ unknown-type protocol error.
 |---|---|
 | `execute` | `{"type":"execute","id":str,"code":str}` |
 | `interrupt` | `{"type":"interrupt","id"?:str}` — no reply |
+| `detach` | `{"type":"detach","id"?:str}` — no reply; moves the running cell to the background (see Detach) |
 | `host_reply` | `{"type":"host_reply","id":str,"data":{"status":"ok","result":{...}}}` or an error envelope — no reply |
 | `snapshot` | `{"type":"snapshot","id":str,"path":str,"manifest_path":str,"max_bytes"?:int,"max_variable_bytes"?:int,"prune_oversized"?:bool,"budget_ms"?:int}` |
 | `restore` | `{"type":"restore","id":str,"path":str}` |
@@ -66,14 +68,14 @@ unknown-type protocol error.
 | `plan_guard` | `{"type":"plan_guard","id":str,"token":str,"enabled":bool,"writable_roots"?:[str,...],"protected_roots"?:[str,...]}` — host-only switch of plan mode's no-OS-sandbox fallback guard, out-of-band even during a running cell; see Plan guard below |
 | `shutdown` | `{"type":"shutdown","id"?:str}` |
 
-Requests other than `interrupt`, `host_reply`, `bash_activity`, and
+Requests other than `interrupt`, `detach`, `host_reply`, `bash_activity`, and
 `plan_guard` run strictly in order, one at a time. A malformed line
 produces `{"event":"error","id":null,"ename":"ProtocolError",...}` and the
 runtime keeps serving. Closing stdin is equivalent to `shutdown`.
 
 ## Events
 
-- `{"event":"ready","protocol":5,"python":"3.13.11"}` — sent once at startup;
+- `{"event":"ready","protocol":6,"python":"3.13.11"}` — sent once at startup;
   the handshake. No banner precedes it.
 - `{"event":"stdout"|"stderr","id":str|null,"text":str}` — captured output.
   `id` is the cell whose Python execution context performed the write; asyncio
@@ -245,6 +247,27 @@ blocked in synchronous code cannot be broken (best-effort parity):
 Both paths end with an `error` event (`ename` `KeyboardInterrupt`) and
 `done` with `status:"error"`; the runtime keeps serving. When nothing is
 running or queued, SIGINT and interrupt requests are ignored.
+
+## Detach
+
+`{"type":"detach","id"?:str}` moves the running `execute` (the one named by
+`id`, or the running one) to the background, the way Claude Code's send-now
+keeps work it can move: the request is answered at once with a `result`
+saying the cell was moved, not interrupted (`[Still running. This cell was
+moved to the background (cell <id>) ...]`) and `done` with `status:"ok"`, and
+the next request runs while the cell keeps running on the loop. What the
+moved cell prints from then on is held (its last 4,000 characters) instead of
+streaming; when it ends, a `cell.completed` host request reports `{cellId,
+status: "ok"|"error", result?, error?, output, durationMs}` (see Background
+notice requests). Code of the moved cell stays attributed to it: a `bash()` it
+starts and awaits is its own, so no separate completion notice follows.
+
+The frame is applied on the loop thread, and only within 2 s of its arrival:
+a cell that blocks the loop in synchronous code cannot be moved, and by the
+time the loop is free the frame is stale and ignored, so the host falls back
+to an interrupt. A snapshot or restore is never moved, nor a request already
+being interrupted. A moved cell is no longer interrupt-targetable; a kernel
+restart or shutdown ends it.
 
 ## Display bridge
 
@@ -434,6 +457,10 @@ running turn takes it at its next boundary, an idle session starts a turn.
   consuming the result; `outputBytes` counts every byte the command wrote.
   The row is `[bash-done pid:N exit:M]`. `bash.consumed {pid, command}`
   withdraws a row not yet delivered.
+- `cell.completed {cellId, status, result?, error?, output, durationMs}`: a
+  cell moved to the background (`detach`) ended. The row is `[cell-done <id>
+  ok|error] the background cell finished after Ns` with the result or error
+  and the output fenced.
 - `monitor.event {monitorId, description, lines, dropped, end?}`: one batch
   of an `rlm.monitor` (lines cut at 500 characters, a batch at 3,000;
   `dropped` counts lines the rate limit left out). `end` marks the last

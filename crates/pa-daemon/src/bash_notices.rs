@@ -47,6 +47,36 @@ impl AgentSessionEngine {
         );
     }
 
+    /// Wire the worker's prebuilt notice-row seam (called once at
+    /// construction, before the first session build reads it).
+    pub fn set_notice_row_sink(&self, sink: crate::engine::NoticeRowSink) {
+        *self.notice_row_sink.lock_or_recover() = Some(sink);
+    }
+
+    /// The `cell.completed` kernel host handler: a cell moved to the
+    /// background ended; its row joins a running turn or wakes the session.
+    pub(crate) fn register_cell_completed_host_handler(&self, handlers: &mut HostRequestHandlers) {
+        let Some(sink) = self.notice_row_sink.lock_or_recover().clone() else {
+            return;
+        };
+        handlers.register(
+            "cell.completed",
+            host_handler(move |payload| {
+                let sink = sink.clone();
+                Box::pin(async move {
+                    let completion = validate_cell_completed(&payload.data)?;
+                    sink(
+                        pa_core::session_engine::messages::create_background_cell_message(
+                            &completion,
+                            crate::util::now_ms(),
+                        ),
+                    );
+                    Ok(serde_json::json!({}))
+                })
+            }),
+        );
+    }
+
     /// Wire the worker's presented-artifact row sink (`artifact.present`):
     /// called once at construction, before the first session build.
     pub fn set_presented_artifact_sink(
@@ -122,6 +152,46 @@ fn validate_completion(data: &Value) -> anyhow::Result<BashCompletionNotice> {
         exit_code,
         output,
     })
+}
+
+/// The most characters of a finished background cell's result, error or
+/// output the host keeps (the kernel bounds them first).
+const CELL_COMPLETED_MAX_CHARS: usize = 8_000;
+
+/// `cell.completed` validation: a non-empty cell id and an `ok`/`error`
+/// status; the texts are optional and bounded.
+fn validate_cell_completed(
+    data: &Value,
+) -> anyhow::Result<pa_core::session_engine::messages::BackgroundCellCompletion> {
+    let cell_id = data
+        .get("cellId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("cell.completed cellId must be a non-empty string"))?;
+    let status = data
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "ok" | "error"))
+        .ok_or_else(|| anyhow::anyhow!("cell.completed status must be \"ok\" or \"error\""))?;
+    let text = |key: &str| {
+        data.get(key).and_then(Value::as_str).map(|text| {
+            let skip = text
+                .chars()
+                .count()
+                .saturating_sub(CELL_COMPLETED_MAX_CHARS);
+            text.chars().skip(skip).collect::<String>()
+        })
+    };
+    Ok(
+        pa_core::session_engine::messages::BackgroundCellCompletion {
+            cell_id: cell_id.to_string(),
+            status: status.to_string(),
+            result: text("result"),
+            error: text("error"),
+            output: text("output").unwrap_or_default(),
+            duration_ms: data.get("durationMs").and_then(Value::as_u64).unwrap_or(0),
+        },
+    )
 }
 
 /// The most characters of one monitor line the host keeps (the kernel cuts
@@ -248,5 +318,26 @@ mod tests {
         assert!(
             validate_monitor_event(&serde_json::json!({"monitorId": "m1", "lines": [1]})).is_err()
         );
+    }
+
+    #[test]
+    fn cell_completed_validation_keeps_the_end_of_long_texts() {
+        let completion = validate_cell_completed(&serde_json::json!({
+            "cellId": "c1",
+            "status": "error",
+            "error": "Traceback ...\nValueError: bad",
+            "output": format!("{}tail", "x".repeat(20_000)),
+            "durationMs": 1500,
+        }))
+        .unwrap();
+        assert_eq!(completion.status, "error");
+        assert_eq!(completion.output.chars().count(), CELL_COMPLETED_MAX_CHARS);
+        assert!(completion.output.ends_with("tail"));
+        assert_eq!(completion.duration_ms, 1500);
+        assert!(
+            validate_cell_completed(&serde_json::json!({"cellId": "c1", "status": "done"}))
+                .is_err()
+        );
+        assert!(validate_cell_completed(&serde_json::json!({"status": "ok"})).is_err());
     }
 }

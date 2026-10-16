@@ -16,6 +16,12 @@ use super::{
     anyhow,
 };
 
+/// The daemon capability that lets send-now move a running cell to the
+/// background (`detach_running_cell`).
+const CELL_DETACH: &str = "cell_detach";
+/// The send-now detach's bound: the daemon waits up to 1.5 s for the kernel.
+const SEND_NOW_DETACH_TIMEOUT_MS: u64 = 3_000;
+
 /// The lease key of the queue-edit hold: one per client and session, so a
 /// repeated acquire answers the same pause.
 const QUEUE_EDIT_LEASE: &str = "tui-queue-edit";
@@ -328,10 +334,49 @@ impl SessionUi {
             }
         }
         if self.turn_active {
-            self.interrupt_running_work(view);
+            self.send_now_deliver(view).await;
         }
         self.dirty = true;
         Ok(())
+    }
+
+    /// Send-now's delivery once the queue holds the message (Claude Code's
+    /// send-now keeps work it can move): the running kernel cell moves to the
+    /// background, so the run goes on and takes the message at its next
+    /// boundary while the cell keeps running. Without a movable cell (the
+    /// model is mid-reply, the cell blocks its loop, an older daemon) the
+    /// running work is interrupted instead.
+    pub(crate) async fn send_now_deliver(&mut self, view: &mut AgentView) {
+        let can_detach = view.compaction.is_none()
+            && self
+                .client
+                .hello()
+                .get("serverCapabilities")
+                .and_then(Value::as_array)
+                .is_some_and(|caps| caps.iter().any(|cap| cap.as_str() == Some(CELL_DETACH)));
+        if can_detach {
+            let detached = self
+                .bounded_request(
+                    Duration::from_millis(SEND_NOW_DETACH_TIMEOUT_MS),
+                    DaemonCommand::DetachRunningCell {
+                        id: None,
+                        active_session_id: self.active_session_id.clone(),
+                        rest: Map::default(),
+                    },
+                )
+                .await
+                .ok()
+                .and_then(|data| data.get("detached").and_then(Value::as_bool))
+                .unwrap_or(false);
+            if detached {
+                self.note(
+                    "Moved the running cell to the background; your message joins the turn",
+                    view,
+                );
+                return;
+            }
+        }
+        self.interrupt_running_work(view);
     }
 
     /// The clear-queue key: drop every parked message (the running turn keeps

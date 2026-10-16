@@ -652,6 +652,46 @@ impl ReplKernelManager {
         lock(&self.inner.guarded).unexpected_exit.clone()
     }
 
+    /// Move the running cell to the background (Claude Code's send-now that
+    /// keeps work running): sends the `detach` request for the active execute
+    /// and waits up to `wait` for that execute to settle. `true` when it did
+    /// (the cell's tool call answered "moved to the background", the cell
+    /// still running); `false` when no execute is running or the cell could
+    /// not be moved in time (it blocks the runtime's loop), so the caller
+    /// falls back to an interrupt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request cannot be written to the kernel.
+    pub async fn detach_running_cell(&self, wait: Duration) -> anyhow::Result<bool> {
+        let request_id = {
+            let guarded = lock(&self.inner.guarded);
+            match guarded.active_execution.as_ref() {
+                Some(active) if active.request_type == "execute" => active.request_id.clone(),
+                _ => return Ok(false),
+            }
+        };
+        let mut frame = crate::kernel::protocol::Request::Detach.to_json();
+        frame["id"] = json!(request_id);
+        self.inner.write_line(&frame).await?;
+        let deadline = Instant::now() + wait;
+        loop {
+            let notified = self.inner.busy_notify.notified();
+            let settled = !matches!(
+                lock(&self.inner.guarded).active_execution.as_ref(),
+                Some(active) if active.request_id == request_id
+            );
+            if settled {
+                return Ok(true);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(false);
+            }
+            let _ = tokio::time::timeout(deadline - now, notified).await;
+        }
+    }
+
     /// Diagnostics tail (kernel stderr, at most the last 8 KiB).
     #[must_use]
     pub fn kernel_stderr(&self) -> String {

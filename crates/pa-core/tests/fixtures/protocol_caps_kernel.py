@@ -3,7 +3,7 @@ import json
 import sys
 import time
 
-print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 6, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)

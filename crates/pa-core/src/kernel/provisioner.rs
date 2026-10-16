@@ -2092,7 +2092,7 @@ mod tests {
         let python = dir.path().join("ready-but-not-reading");
         std::fs::write(
             &python,
-            "#!/usr/bin/env python3\nimport json, time\nprint(json.dumps({'event': 'ready', 'protocol': 5, 'python': '3.13.0'}), flush=True)\ntime.sleep(30)\n",
+            "#!/usr/bin/env python3\nimport json, time\nprint(json.dumps({'event': 'ready', 'protocol': 6, 'python': '3.13.0'}), flush=True)\ntime.sleep(30)\n",
         )
         .expect("write fake kernel");
         std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
@@ -2142,7 +2142,7 @@ import sys
 base = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(base, "starts"), "a") as f:
     f.write("x")
-print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 6, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)

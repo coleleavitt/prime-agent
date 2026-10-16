@@ -1581,6 +1581,20 @@ impl SessionEngine {
         crate::factory::lane::capped_reply(reply).map_err(anyhow::Error::msg)
     }
 
+    /// Move this session's running cell to the background (the send-now
+    /// path): `true` when the kernel moved it within `wait`; see
+    /// [`crate::kernel::ReplKernelManager::detach_running_cell`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request cannot be written to the kernel.
+    pub async fn detach_running_cell(&self, wait: std::time::Duration) -> anyhow::Result<bool> {
+        match self.provisioner.manager() {
+            Some(manager) => manager.detach_running_cell(wait).await,
+            None => Ok(false),
+        }
+    }
+
     /// Out-of-band kernel bash activity, scoped to this session's live kernel.
     ///
     /// # Errors

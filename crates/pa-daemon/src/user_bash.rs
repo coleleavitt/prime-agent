@@ -186,6 +186,27 @@ impl Worker {
         }
     }
 
+    /// `detach_running_cell` (send-now): move the running kernel cell to the
+    /// background so a queued message can join the run without interrupting
+    /// it. Answers `{detached}`; `false` when no cell runs or it could not be
+    /// moved in time (it blocks the runtime's loop), and the client then
+    /// interrupts instead.
+    pub(crate) async fn handle_detach_running_cell(&self) -> DaemonResponse {
+        const COMMAND: &str = "detach_running_cell";
+        /// How long the kernel gets to answer the cell's execute.
+        const DETACH_WAIT: std::time::Duration = std::time::Duration::from_millis(1_500);
+        if let Err(response) = self.require_created(COMMAND) {
+            return response;
+        }
+        let Some(engine) = &self.agent_engine else {
+            return response_success(None, COMMAND, Some(json!({ "detached": false })));
+        };
+        match engine.detach_running_cell(DETACH_WAIT).await {
+            Ok(detached) => response_success(None, COMMAND, Some(json!({ "detached": detached }))),
+            Err(error) => response_failure(None, COMMAND, &error.to_string(), None),
+        }
+    }
+
     /// `execute_bash { command, excludeFromContext?, transient?, runId? }`
     /// (TS `runUserBash`): the running guard rejects a second command;
     /// the response goes out before completion, output streams as

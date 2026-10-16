@@ -179,6 +179,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "list_kernel_bash",
     "tail_kernel_bash",
     "kill_kernel_bash",
+    "detach_running_cell",
     "worker_register",
     "worker_roster_delta",
     "get_worker_peer_transport",
@@ -359,6 +360,9 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "side_question_transcript",
                 "transient_bash",
                 "kernel_bash_activity",
+                // `detach_running_cell`: send-now moves the running cell to
+                // the background instead of interrupting it.
+                "cell_detach",
                 "factory_activity",
                 // `answer_feature_confirmation`: a hook's or plugin's `ask`
                 // is put to the user.
@@ -699,6 +703,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::ListKernelBash {
             active_session_id, ..
         }
+        | DaemonCommand::DetachRunningCell {
+            active_session_id, ..
+        }
         | DaemonCommand::TailKernelBash {
             active_session_id, ..
         }
@@ -1013,6 +1020,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::ListKernelBash { .. } => "list_kernel_bash",
         DaemonCommand::TailKernelBash { .. } => "tail_kernel_bash",
         DaemonCommand::KillKernelBash { .. } => "kill_kernel_bash",
+        DaemonCommand::DetachRunningCell { .. } => "detach_running_cell",
         DaemonCommand::CancelRlmChild { .. } => "cancel_rlm_child",
         DaemonCommand::FactoryActivity { .. } => "factory_activity",
         DaemonCommand::AnswerFeatureConfirmation { .. } => "answer_feature_confirmation",

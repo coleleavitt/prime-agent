@@ -651,6 +651,56 @@ pub(crate) fn admit_bash_completion_notice(
     work_notify.notify_one();
 }
 
+/// Admit one prebuilt host notice row (a finished background cell): like a
+/// completion notice, it queues on the steering lane, joining a busy
+/// session's run at its next boundary or waking an idle one.
+pub(crate) fn admit_notice_row(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    work_notify: &Arc<Notify>,
+    row: &pa_types::session::CustomMessage,
+    session_is_closed: impl Fn() -> bool,
+) {
+    let content = match &row.content {
+        pa_types::ai::UserContent::Text(text) => text.clone(),
+        pa_types::ai::UserContent::Blocks(_) => String::new(),
+    };
+    let mut core_guard = core.lock_or_recover();
+    if session_is_closed() {
+        return;
+    }
+    let (policy, queue_visible) = if core_guard.busy {
+        (TurnPolicy::Queued, true)
+    } else {
+        (TurnPolicy::Injected, false)
+    };
+    core_guard.steering.push_back(QueuedItem {
+        priority: QueuePriority::Background,
+        preview: Some(content.lines().next().unwrap_or_default().to_string()),
+        message: content,
+        custom_message: Some(crate::session_commands::custom_message_value(row)),
+        agent_message: None,
+        queue_key: None,
+        admission_id: None,
+        images: Vec::new(),
+        done: None,
+        queue_visible,
+        policy,
+        forced_batch: false,
+        traceparent: None,
+    });
+    drop(core_guard);
+    checkpoint_queue_recovery(
+        recovery,
+        core,
+        QueueCheckpoint::Admitted {
+            operation: "steer_queued",
+        },
+        None,
+    );
+    work_notify.notify_one();
+}
+
 /// Admit one monitor event (`rlm.monitor`): like a completion notice, the row
 /// queues on the steering lane (a busy session's run takes it at its next
 /// boundary, an idle session wakes into it). A batch whose monitor still has

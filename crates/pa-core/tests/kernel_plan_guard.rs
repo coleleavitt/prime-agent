@@ -46,7 +46,7 @@ def send(frame):
     sys.stdout.write(json.dumps(frame) + "\n")
     sys.stdout.flush()
 
-send({"event": "ready", "protocol": 5, "python": "3.13.0"})
+send({"event": "ready", "protocol": 6, "python": "3.13.0"})
 for line in sys.stdin:
     try:
         frame = json.loads(line)

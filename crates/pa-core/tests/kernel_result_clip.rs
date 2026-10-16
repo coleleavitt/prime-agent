@@ -20,7 +20,7 @@ const FAKE_RUNTIME: &str = r#"#!/usr/bin/env python3
 import json
 import sys
 
-print(json.dumps({"event": "ready", "protocol": 5, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 6, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     req = json.loads(line)
     if req.get("type") == "execute":

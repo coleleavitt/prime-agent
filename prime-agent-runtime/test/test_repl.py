@@ -196,7 +196,7 @@ class ReplTest(unittest.TestCase):
 
     def test_ready_handshake_and_startup_time(self):
         self.assertEqual(self.ready_event["event"], "ready")
-        self.assertEqual(self.ready_event["protocol"], 5)
+        self.assertEqual(self.ready_event["protocol"], 6)
         major, minor = sys.version_info[:2]
         self.assertTrue(self.ready_event["python"].startswith(f"{major}.{minor}."))
         # The bound is on the CPU the runtime spent getting ready, not wall time: a loaded box
@@ -1225,6 +1225,54 @@ class ReplTest(unittest.TestCase):
         reply_ok(self.repl, request)
         inspected = self.repl.execute("bash-inspect", "handle.poll().output")
         self.assertIn("detached", one(inspected, "result")["text"])
+
+    def test_detach_moves_a_running_cell_to_the_background(self):
+        marker = os.path.join(tempfile.mkdtemp(), "detach-started")
+        self.repl.send(
+            {
+                "type": "execute",
+                "id": "long",
+                "code": f"import asyncio\nfrom rlm import bash\nopen({marker!r}, 'w').close()\n"
+                "await asyncio.sleep(0.6)\nprint('after the move')\nr = await bash('printf built')\nr.output",
+            }
+        )
+        deadline = time.monotonic() + 20
+        while not os.path.exists(marker) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.repl.send({"type": "detach", "id": "long"})
+        events = self.repl.until_done("long")
+        # Answered at once, not interrupted: the result says it was moved.
+        self.assertIn("moved to the background (cell long)", one(events, "result")["text"])
+        self.assertEqual(one(events, "done")["status"], "ok")
+        # The next cell runs while the moved one is still working.
+        quick = self.repl.execute("quick", "1 + 1")
+        self.assertEqual(one(quick, "result")["text"], "2")
+        request = wait_for_host_request(self.repl, quick)
+        reply_ok(self.repl, request)
+        data = request["data"]
+        self.assertEqual((data["type"], data["cellId"], data["status"]), ("cell.completed", "long", "ok"))
+        self.assertEqual(data["result"], "'built'")
+        # Output printed after the move rides the notice, not the next cell.
+        self.assertIn("after the move", data["output"])
+        self.assertNotIn("after the move", json.dumps(quick))
+
+    def test_a_stale_detach_leaves_a_blocking_cell_alone(self):
+        marker = os.path.join(tempfile.mkdtemp(), "blocking-started")
+        self.repl.send(
+            {
+                "type": "execute",
+                "id": "blocking",
+                "code": f"import time\nopen({marker!r}, 'w').close()\ntime.sleep(2.5)\n'finished'",
+            }
+        )
+        deadline = time.monotonic() + 20
+        while not os.path.exists(marker) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # The loop is blocked: the frame is applied only after 2.5 s, stale by then.
+        self.repl.send({"type": "detach", "id": "blocking"})
+        events = self.repl.until_done("blocking")
+        self.assertEqual(one(events, "result")["text"], "'finished'")
+        self.assertIsNone(one(events, "host_request"))
 
     def _monitor_events(self, events: list[dict]) -> list[dict]:
         """Answer the monitor's host requests until its end event; any other
