@@ -27,6 +27,7 @@ from .factory import (
 from .agents import RLMAgent, list_agents, send_message
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
+from .skill_loader import load_skill
 from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
@@ -1137,6 +1138,9 @@ class _RLMNamespace:
     async def web_fetch(self, url: str, prompt: str | None = None, *, offset: int = 0) -> WebFetchResult:
         return await web_fetch(url, prompt, offset=offset)
 
+    async def load_skill(self, name: str, args: str = "") -> str:
+        return await load_skill(name, args)
+
     async def enter_worktree(self, name: str | None = None, *, path: str | None = None) -> dict[str, Any]:
         return await enter_worktree(name, path=path)
 
@@ -1207,6 +1211,7 @@ __all__ = [
     "interrupt_subagent",
     "list_agents",
     "list_subagents",
+    "load_skill",
     "messaging_stats",
     "monitor",
     "monitor_list",

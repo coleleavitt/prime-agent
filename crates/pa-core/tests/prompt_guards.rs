@@ -319,6 +319,8 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             // `rlm.enter_worktree` / `rlm.exit_worktree` (pa-daemon's worktree host).
             "worktree.enter" => "rlm.enter_worktree",
             "worktree.exit" => "rlm.exit_worktree",
+            // `rlm.load_skill` (Claude Code's Skill tool).
+            "skill.load" => "rlm.load_skill",
             other => other,
         }
         .to_string(),
