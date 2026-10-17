@@ -551,6 +551,35 @@ async def progress_note(message: str) -> RLMProgressNoteResult:
     return RLMProgressNoteResult(accepted=accepted, retry_after_ms=retry_after_ms)
 
 
+async def send_user_message(
+    message: str,
+    attachments: list[str] | None = None,
+    *,
+    status: str = "normal",
+) -> dict[str, Any]:
+    """Send a message the user reads (brief mode's visible output channel).
+
+    ``message`` supports markdown. ``attachments`` are file paths (absolute or
+    relative to the working directory) shown alongside it. ``status`` is
+    ``"normal"`` when replying to the user and ``"proactive"`` when initiating.
+    Raises outside brief mode (the user turns it on with ``/brief``).
+    """
+    if not isinstance(message, str):
+        raise TypeError(f"message must be str, got {type(message).__name__}")
+    if not message.strip():
+        raise ValueError("message must not be empty")
+    if attachments is not None:
+        if isinstance(attachments, (str, bytes)) or not all(isinstance(path, str) for path in attachments):
+            raise TypeError("attachments must be a list of path strings")
+        attachments = [str(path) for path in attachments]
+    if status not in ("normal", "proactive"):
+        raise ValueError('status must be "normal" or "proactive"')
+    payload: dict[str, Any] = {"message": message, "status": status}
+    if attachments:
+        payload["attachments"] = attachments
+    return await host_request("user_message.send", payload)
+
+
 def _subagent_selector(target: Any) -> str:
     """Normalize a direct-child selector for interrupt/delete: spawn handle, subagent row, or id/name string."""
     if isinstance(target, (RLMSpawnHandle, RLMSubagent)):
@@ -1082,6 +1111,15 @@ class _RLMNamespace:
     async def progress_note(self, message: str) -> RLMProgressNoteResult:
         return await progress_note(message)
 
+    async def send_user_message(
+        self,
+        message: str,
+        attachments: list[str] | None = None,
+        *,
+        status: str = "normal",
+    ) -> dict[str, Any]:
+        return await send_user_message(message, attachments, status=status)
+
     async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
         return await interrupt_subagent(target)
 
@@ -1215,6 +1253,7 @@ __all__ = [
     "rename",
     "rlm",
     "send_message",
+    "send_user_message",
     "spawn",
     "toolforge",
     "trace",

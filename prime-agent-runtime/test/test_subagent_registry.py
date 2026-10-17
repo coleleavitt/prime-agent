@@ -438,6 +438,40 @@ class RlmSubagentRegistryTest(unittest.TestCase):
                 asyncio.run(rlm_module.list_subagents())
 
 
+class RlmSendUserMessageTest(unittest.TestCase):
+    def test_send_user_message_sends_the_message_attachments_and_status(self) -> None:
+        host_request = AsyncMock(return_value={"delivered": True, "attachments": 1})
+
+        with patch.object(rlm_module, "host_request", host_request):
+            result = asyncio.run(
+                rlm_module.rlm.send_user_message("Fixed in a.py:3", ["a.diff"], status="proactive")
+            )
+            asyncio.run(rlm_module.send_user_message("hi"))
+
+        self.assertEqual(result, {"delivered": True, "attachments": 1})
+        self.assertEqual(
+            host_request.await_args_list[0].args,
+            (
+                "user_message.send",
+                {"message": "Fixed in a.py:3", "status": "proactive", "attachments": ["a.diff"]},
+            ),
+        )
+        self.assertEqual(
+            host_request.await_args_list[1].args,
+            ("user_message.send", {"message": "hi", "status": "normal"}),
+        )
+
+    def test_send_user_message_validates_before_the_call(self) -> None:
+        with self.assertRaisesRegex(TypeError, "message must be str"):
+            asyncio.run(rlm_module.send_user_message(3))
+        with self.assertRaisesRegex(ValueError, "empty"):
+            asyncio.run(rlm_module.send_user_message(" "))
+        with self.assertRaisesRegex(TypeError, "attachments"):
+            asyncio.run(rlm_module.send_user_message("m", "a.png"))
+        with self.assertRaisesRegex(ValueError, "status"):
+            asyncio.run(rlm_module.send_user_message("m", status="urgent"))
+
+
 class RlmProgressNoteTest(unittest.TestCase):
     def test_progress_note_round_trips_an_accepted_note(self) -> None:
         host_request = AsyncMock(return_value={"accepted": True})

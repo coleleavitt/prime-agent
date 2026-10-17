@@ -194,6 +194,16 @@ impl SessionManager {
         )
     }
 
+    /// The newest brief-mode change among the active branch's loaded
+    /// entries (`None` when they never changed it: the `briefMode` setting
+    /// decides).
+    #[must_use]
+    pub fn brief_mode(&self) -> Option<bool> {
+        crate::session_engine::brief_mode::brief_mode_in_entries(
+            self.active_branch_entries().into_iter(),
+        )
+    }
+
     /// Whether the active branch still grows through `prefix_leaf` — the
     /// leaf a compaction prepared against — with no compaction row between
     /// the two. The compaction commit's structural-prefix check: a plain

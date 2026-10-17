@@ -13,7 +13,11 @@
 //!   "idleCompaction": true, "idleCompactionMinutes": 54, "idleCompactionMinTokens": 200000,
 //!   "idleCompactionAfterMs": 3240000,
 //!   "observer": true, "observerModel": "provider/model-id", "observerInstructions": "...",
-//!   "advisorModel": "provider/model-id"
+//!   "advisorModel": "provider/model-id",
+//!   "coordinatorMode": true, "coordinatorExtraTools": ["Bash"],
+//!   "coordinatorForceWorkerInheritModel": true, "coordinatorPropagateNestedMemory": true,
+//!   "coordinatorSkillGuidance": true,
+//!   "briefMode": true
 //! }
 //! ```
 //!
@@ -47,6 +51,27 @@ pub const IDLE_COMPACTION_MIN_TOKENS_ENV: &str = "PRIME_AGENT_IDLE_COMPACT_MIN_T
 pub const OBSERVER_ENV: &str = "PRIME_AGENT_EXPERIMENTAL_OBSERVER_AGENTS";
 /// Names the advisor model (`provider/model-id`), enabling `rlm.advisor`.
 pub const ADVISOR_MODEL_ENV: &str = "PRIME_AGENT_ADVISOR_MODEL";
+/// Turns coordinator mode on or off (Claude Code's
+/// `CLAUDE_CODE_COORDINATOR_MODE`).
+pub const COORDINATOR_MODE_ENV: &str = "PRIME_AGENT_COORDINATOR_MODE";
+/// Comma-separated tools (Claude Code names like `Bash`, `mcp__<server>`, or
+/// host-request types) a coordinator may still use (Claude Code's
+/// `CLAUDE_CODE_COORDINATOR_EXTRA_TOOLS`).
+pub const COORDINATOR_EXTRA_TOOLS_ENV: &str = "PRIME_AGENT_COORDINATOR_EXTRA_TOOLS";
+/// Ignores a coordinator's `model=` on `rlm.spawn` so workers inherit the
+/// session model (Claude Code's
+/// `CLAUDE_CODE_COORDINATOR_FORCE_WORKER_INHERIT_MODEL`).
+pub const COORDINATOR_FORCE_WORKER_INHERIT_MODEL_ENV: &str =
+    "PRIME_AGENT_COORDINATOR_FORCE_WORKER_INHERIT_MODEL";
+/// Delivers the nested instruction files a worker loaded to its
+/// coordinator (Claude Code's `CLAUDE_CODE_COORDINATOR_PROPAGATE_NESTED_MEMORY`).
+pub const COORDINATOR_PROPAGATE_NESTED_MEMORY_ENV: &str =
+    "PRIME_AGENT_COORDINATOR_PROPAGATE_NESTED_MEMORY";
+/// Adds the skill-briefing guidance to the coordinator prompt (Claude Code's
+/// `CLAUDE_CODE_COORDINATOR_SKILL_GUIDANCE`).
+pub const COORDINATOR_SKILL_GUIDANCE_ENV: &str = "PRIME_AGENT_COORDINATOR_SKILL_GUIDANCE";
+/// Starts sessions in brief mode (Claude Code's `CLAUDE_CODE_BRIEF`).
+pub const BRIEF_MODE_ENV: &str = "PRIME_AGENT_BRIEF";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -88,6 +113,18 @@ pub struct ExperimentalSettings {
     pub observer_instructions: Option<String>,
     /// `provider/model-id` of the advisor; `None` leaves `rlm.advisor` off.
     pub advisor_model: Option<String>,
+    /// The root session only coordinates workers (Claude Code's coordinator
+    /// mode): orchestration requests only, and the coordinator prompt.
+    pub coordinator_mode: bool,
+    /// What a coordinator may use beyond orchestration
+    /// (`coordinatorExtraTools`).
+    pub coordinator_extra_tools: Vec<String>,
+    pub coordinator_force_worker_inherit_model: bool,
+    pub coordinator_propagate_nested_memory: bool,
+    pub coordinator_skill_guidance: bool,
+    /// Sessions start in brief mode: replies go through
+    /// `rlm.send_user_message` (`/brief` toggles it per session).
+    pub brief_mode: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -105,6 +142,12 @@ impl Default for ExperimentalSettings {
             observer_model: None,
             observer_instructions: None,
             advisor_model: None,
+            coordinator_mode: false,
+            coordinator_extra_tools: Vec::new(),
+            coordinator_force_worker_inherit_model: false,
+            coordinator_propagate_nested_memory: false,
+            coordinator_skill_guidance: false,
+            brief_mode: false,
         }
     }
 }
@@ -117,6 +160,28 @@ pub fn env_flag(value: Option<&str>) -> Option<bool> {
         Some("1" | "true" | "on" | "yes") => Some(true),
         Some("0" | "false" | "off" | "no") => Some(false),
         _ => None,
+    }
+}
+
+/// A comma-separated list (`" a, ,b "` is `["a", "b"]`).
+fn comma_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A settings list: an array of strings or one comma-separated string.
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(raw)) => comma_list(raw),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .flat_map(comma_list)
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -177,6 +242,24 @@ impl ExperimentalSettings {
                 .map(|raw| raw.trim().to_string())
                 .filter(|raw| !raw.is_empty())
                 .or_else(|| non_empty(get("advisorModel"))),
+            coordinator_mode: flag("coordinatorMode", COORDINATOR_MODE_ENV),
+            coordinator_extra_tools: env(COORDINATOR_EXTRA_TOOLS_ENV).map_or_else(
+                || string_list(get("coordinatorExtraTools")),
+                |raw| comma_list(&raw),
+            ),
+            coordinator_force_worker_inherit_model: flag(
+                "coordinatorForceWorkerInheritModel",
+                COORDINATOR_FORCE_WORKER_INHERIT_MODEL_ENV,
+            ),
+            coordinator_propagate_nested_memory: flag(
+                "coordinatorPropagateNestedMemory",
+                COORDINATOR_PROPAGATE_NESTED_MEMORY_ENV,
+            ),
+            coordinator_skill_guidance: flag(
+                "coordinatorSkillGuidance",
+                COORDINATOR_SKILL_GUIDANCE_ENV,
+            ),
+            brief_mode: flag("briefMode", BRIEF_MODE_ENV),
         }
     }
 }
@@ -280,6 +363,12 @@ mod tests {
             "observerModel": "",
             "observerInstructions": "watch the tests",
             "advisorModel": "anthropic/claude-opus",
+            "coordinatorMode": true,
+            "coordinatorExtraTools": ["Bash", "mcp__slack, WebFetch"],
+            "coordinatorForceWorkerInheritModel": true,
+            "coordinatorPropagateNestedMemory": true,
+            "coordinatorSkillGuidance": true,
+            "briefMode": true,
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -296,6 +385,40 @@ mod tests {
                 observer_model: None,
                 observer_instructions: Some("watch the tests".to_string()),
                 advisor_model: Some("anthropic/claude-opus".to_string()),
+                coordinator_mode: true,
+                coordinator_extra_tools: vec![
+                    "Bash".to_string(),
+                    "mcp__slack".to_string(),
+                    "WebFetch".to_string(),
+                ],
+                coordinator_force_worker_inherit_model: true,
+                coordinator_propagate_nested_memory: true,
+                coordinator_skill_guidance: true,
+                brief_mode: true,
+            }
+        );
+    }
+
+    #[test]
+    fn the_mode_flags_read_their_environment_variables() {
+        let object =
+            serde_json::json!({ "coordinatorMode": true, "coordinatorExtraTools": "Bash" });
+        let resolved = ExperimentalSettings::resolve(
+            Some(&object),
+            &env_of(&[
+                (COORDINATOR_MODE_ENV, "off"),
+                (COORDINATOR_EXTRA_TOOLS_ENV, "WebSearch, web.fetch"),
+                (COORDINATOR_FORCE_WORKER_INHERIT_MODEL_ENV, "1"),
+                (BRIEF_MODE_ENV, "true"),
+            ]),
+        );
+        assert_eq!(
+            resolved,
+            ExperimentalSettings {
+                coordinator_extra_tools: vec!["WebSearch".to_string(), "web.fetch".to_string()],
+                coordinator_force_worker_inherit_model: true,
+                brief_mode: true,
+                ..ExperimentalSettings::default()
             }
         );
     }
