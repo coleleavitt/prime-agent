@@ -203,7 +203,10 @@ impl ClaudeCodeFiles {
     /// Locate the files the way Claude Code does; `None` without a home.
     #[must_use]
     pub fn locate() -> Option<Self> {
-        let user_dir = crate::skills::claude_commands::user_claude_dir()?;
+        // Claude Code's user directory as the shared settings reader finds it
+        // (`$CLAUDE_CONFIG_DIR`, else `~/.claude`).
+        let user_dir =
+            crate::settings::claude_code::ClaudePaths::resolve(Path::new(".")).claude_dir?;
         let legacy = user_dir.join(".config.json");
         let global_config = if legacy.is_file() {
             legacy
@@ -225,17 +228,11 @@ impl ClaudeCodeFiles {
 /// permission rules read).
 #[must_use]
 pub fn claude_code_opt_in(settings: &SettingsManager) -> bool {
-    // Through the serialized document: the key counts whether the settings
-    // type knows `permissions` or carries it as an extra.
+    // Through the serialized document (the key counts whether the settings
+    // type knows `permissions` or carries it as an extra) and the one
+    // Claude Code settings reader's opt-in rule.
     serde_json::to_value(settings.global_settings())
-        .ok()
-        .and_then(|document| {
-            document
-                .get("permissions")?
-                .get("claudeCodeSettings")?
-                .as_bool()
-        })
-        .unwrap_or(false)
+        .is_ok_and(|document| crate::settings::claude_code::opted_in_document(&document))
 }
 
 /// What [`DeclaredServers::load_with`] reads.

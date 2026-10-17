@@ -284,10 +284,8 @@ impl Approvals {
     }
 
     fn add_file(&mut self, path: &Path) {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            return;
-        };
-        if let Ok(Value::Object(document)) = serde_json::from_str::<Value>(&content) {
+        // The shared Claude Code settings reader (`settings::claude_code`).
+        if let Ok(Some(document)) = crate::settings::claude_code::read_document(path) {
             self.add_document(&document);
         }
     }
@@ -315,8 +313,13 @@ impl Approvals {
                 .workspace_trust()
                 .is_some_and(|status| status.state == crate::workspace_trust::TrustState::Trusted);
             if explicitly_trusted {
-                approvals.add_file(&cwd.join(".claude").join("settings.json"));
-                approvals.add_file(&cwd.join(".claude").join("settings.local.json"));
+                use crate::settings::claude_code::{ClaudePaths, ClaudeScope};
+                let paths = ClaudePaths::resolve(cwd);
+                for scope in [ClaudeScope::Project, ClaudeScope::Local] {
+                    if let Some(file) = paths.file(scope) {
+                        approvals.add_file(&file);
+                    }
+                }
             }
         }
         approvals
