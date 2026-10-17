@@ -2497,6 +2497,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-cc-import"
+version = "0.10.0"
+dependencies = [
+ "pa-core",
+ "pa-types",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pa-cli"
 version = "0.10.0"
 dependencies = [
@@ -2512,6 +2524,7 @@ dependencies = [
  "pa-ai",
  "pa-anthropic-auth",
  "pa-bash",
+ "pa-cc-import",
  "pa-core",
  "pa-daemon",
  "pa-dream",

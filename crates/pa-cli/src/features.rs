@@ -144,6 +144,7 @@ pub fn install_enabled_features() -> InstalledFeatures {
     pa_hooks::worktree::install();
     install_credential_sources();
     install_tui_features();
+    install_session_sources();
     #[cfg(feature = "session-index")]
     let session_index = {
         let index = pa_session_index::SessionIndex::new();
@@ -207,6 +208,14 @@ pub fn install_trust_gates() {
 pub fn install_credential_sources() {
     #[cfg(feature = "anthropic-auth")]
     pa_anthropic_auth::install();
+}
+
+/// Install the enabled features' external session sources: (feature
+/// `cc-import`) Claude Code's transcripts, listed by the daemon and the
+/// resume selector. Idempotent; no I/O (a listing reads the transcripts).
+pub fn install_session_sources() {
+    #[cfg(feature = "cc-import")]
+    pa_cc_import::install();
 }
 
 /// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)

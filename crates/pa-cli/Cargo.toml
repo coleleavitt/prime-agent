@@ -11,6 +11,7 @@ description = "The prime-agent binary."
 default = [
     "advisor",
     "anthropic-auth",
+    "cc-import",
     "dream",
     "hooks",
     "learning",
@@ -36,6 +37,11 @@ advisor = ["dep:pa-advisor"]
 # (~/.anthropic-accounts, the store the opencode and pi plugins use): the
 # `anthropic` provider's credential source (crates/pa-anthropic-auth).
 anthropic-auth = ["dep:pa-anthropic-auth"]
+# Claude Code sessions (crates/pa-cc-import): the agents view lists
+# ~/.claude/projects transcripts in their own section and `--resume <id>`
+# finds them; opening one imports it into a new session file (the transcript
+# is never written).
+cc-import = ["dep:pa-cc-import"]
 # Dream-RSI (pa-dream): `prime-agent dream`, the standalone zero-token runner,
 # and the in-session `dream.*` host requests, `/dream` and the `dream` skill.
 dream = ["dep:pa-dream"]
@@ -113,6 +119,7 @@ pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-observer = { path = "../pa-observer", optional = true }
 pa-advisor = { path = "../pa-advisor", optional = true }
+pa-cc-import = { path = "../pa-cc-import", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 pa-web = { path = "../pa-web", optional = true }
