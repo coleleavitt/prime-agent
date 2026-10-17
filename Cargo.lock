@@ -2347,6 +2347,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-advisor"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pa-agent"
 version = "0.10.0"
 dependencies = [
@@ -2444,6 +2456,7 @@ dependencies = [
  "futures",
  "libc",
  "nix 0.29.0",
+ "pa-advisor",
  "pa-agent",
  "pa-ai",
  "pa-anthropic-auth",

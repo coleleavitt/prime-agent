@@ -9,6 +9,7 @@ description = "The prime-agent binary."
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
 default = [
+    "advisor",
     "anthropic-auth",
     "dream",
     "hooks",
@@ -24,6 +25,11 @@ default = [
     "trace",
     "workflow",
 ]
+# Advisor escalation (crates/pa-advisor): the `advisor` skill's
+# `advisor.ask(question)` asks a stronger model with the conversation as
+# context. Inert unless the `experimental.advisorModel` setting (or
+# PRIME_AGENT_ADVISOR_MODEL) names the model.
+advisor = ["dep:pa-advisor"]
 # Anthropic subscription auth through the shared account store
 # (~/.anthropic-accounts, the store the opencode and pi plugins use): the
 # `anthropic` provider's credential source (crates/pa-anthropic-auth).
@@ -95,6 +101,7 @@ pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-observer = { path = "../pa-observer", optional = true }
+pa-advisor = { path = "../pa-advisor", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }

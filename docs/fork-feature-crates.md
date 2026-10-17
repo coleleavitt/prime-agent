@@ -135,5 +135,6 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 3 | `pa-ledger` (failure ledger, resolution index) → `pa-ravo` (gate, referee, trust, run service) | `pa-trace`, `pa-ledger` |
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
 | 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
+| 6 | Claude Code's flag-gated features: `pa-observer` (observer agents), `pa-advisor` (`advisor.ask`); both inert unless the `experimental` settings turn them on | `pa-core` (`session_engine::side_model`) |
 
 The inventory behind this table (sizes, TS paths, key commits) is kept with the porting work.

@@ -48,6 +48,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // turn's digest of the sessions whose settings turn it on.
     #[cfg(feature = "observer")]
     features.push(Arc::new(pa_observer::ObserverFeature::new()));
+    // Advisor escalation (experimental): `advisor.ask` and the bundled
+    // `advisor` skill where an advisor model is configured.
+    #[cfg(feature = "advisor")]
+    features.push(Arc::new(pa_advisor::AdvisorFeature::new()));
     features
 }
 
