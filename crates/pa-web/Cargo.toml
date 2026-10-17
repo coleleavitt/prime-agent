@@ -1,0 +1,32 @@
+[package]
+name = "pa-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web search and web fetch for the kernel: rlm.web_search over pluggable backends (Anthropic's server-side web_search first, Brave, Exa) and rlm.web_fetch (HTTP fetch, HTML to Markdown, an optional answer from the small model)."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-types = { workspace = true }
+pa-ai = { workspace = true }
+pa-telemetry = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+# The fetch client and the key-based search backends: the reqwest 0.12 +
+# rustls build pa-core already links (no new TLS stack).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
+url = "2"
+# HTML to Markdown for fetched pages (turndown.js-inspired, html5ever-based,
+# Apache-2.0). Pinned below 0.5.6, which is younger than the 7-day minimum
+# release age.
+htmd = "=0.5.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
