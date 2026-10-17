@@ -87,6 +87,7 @@ pub mod registration;
 pub(crate) mod registry;
 pub(crate) mod remote_mesh;
 mod revival_gate;
+mod rewind;
 pub mod rlm_child_model;
 pub mod rlm_child_usage;
 pub mod rlm_children;

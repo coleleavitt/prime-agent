@@ -41,8 +41,12 @@ async def run(path: str, old_str: str, new_str: str) -> str:
         )
     match_index = content.index(old_str)
     start_line = content.count("\n", 0, match_index) + 1
-    filepath.write_text(content.replace(old_str, new_str, 1), encoding="utf-8")
     resolved_path = str(filepath.resolve())
+    # The host backs the prior bytes up for /rewind before the write and
+    # records the result after it; the write itself stays here.
+    await _report_write("file_history.before_write", resolved_path)
+    filepath.write_text(content.replace(old_str, new_str, 1), encoding="utf-8")
+    await _report_write("file_history.after_write", resolved_path)
     _emit_diff(resolved_path, old_str, new_str, start_line)
     return f"Edited {resolved_path}"
 
@@ -72,6 +76,22 @@ async def _check_edit_permission(path: str) -> None:
         if UNSERVED_HOST_REQUEST in str(error):
             return
         raise PermissionError(str(error)) from error
+
+
+async def _report_write(request_type: str, path: str) -> None:
+    """Report one side of a write to the host's file history (best effort).
+
+    Outside the kernel, in a session without checkpoints, or on any host
+    error the edit proceeds unrecorded.
+    """
+    try:
+        from rlm import host_request
+    except ImportError:
+        return
+    try:
+        await host_request(request_type, {"path": path})
+    except Exception:  # noqa: BLE001 - bookkeeping must never fail the edit
+        pass
 
 
 # Keep in sync with DIFF_DISPLAY_MIME in src/core/kernel/index.ts.

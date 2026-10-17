@@ -238,6 +238,10 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "computer_use.permissions_status",
     "computer_use.get_app",
     "computer_use.app",
+    // The bundled edit skill's write reports (`/rewind` file checkpoints):
+    // bookkeeping around `edit.run`, never called by the model.
+    "file_history.before_write",
+    "file_history.after_write",
 ];
 
 /// Map one registered host-request type to the prompt token that documents

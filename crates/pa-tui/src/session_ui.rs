@@ -19,6 +19,7 @@ mod panels;
 mod permission_cycle;
 mod prompt;
 mod queue;
+mod rewind;
 mod search;
 mod sessions_fork;
 mod settings;

@@ -323,6 +323,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         takes_argument: false,
     },
     BuiltinSlashCommand {
+        name: "rewind",
+        description: "Restore the code and/or conversation to a previous point",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &["checkpoint", "undo"],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
         name: "login",
         description: "Configure provider authentication",
         execution: SlashCommandExecution::Client,

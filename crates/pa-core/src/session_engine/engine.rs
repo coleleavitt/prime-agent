@@ -313,6 +313,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Captured before `settings` moves into the resource loader: the
     // compaction budget and the auto-refine gates.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
+    let file_checkpointing_setting = settings.settings().file_checkpointing_enabled;
     let layer_cap = |layer: &crate::settings::Settings| {
         layer
             .compaction
@@ -528,6 +529,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the next tool result or admitted prompt.
     let feature_notes = crate::features::FeatureNotes::default();
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
+    // File checkpoints for `/rewind` (Claude Code's file history): the
+    // kernel's edit helpers report their writes into the session's artifact
+    // tree. Top-level sessions only: a child's writes are its own.
+    if config.rlm_depth.unwrap_or(0) == 0
+        && crate::file_history::checkpointing_enabled(file_checkpointing_setting)
+    {
+        if let Some(dir) = session_artifact_dir.as_deref() {
+            crate::file_history::register_host_handlers(
+                &mut handlers,
+                &crate::file_history::FileHistory::for_artifact_dir(dir),
+            );
+        }
+    }
     // Installed features review every kernel host request (the kernel's
     // `bash()` included) before it is dispatched; later registrations keep
     // the gate.

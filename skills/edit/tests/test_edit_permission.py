@@ -52,7 +52,17 @@ class EditPermissionTest(unittest.TestCase):
 
     def test_an_allowed_edit_asks_first_and_writes(self):
         result, calls = self.run_edit(lambda _type: {"allowed": True})
-        self.assertEqual(calls, [("file.edit", {"path": str(self.path.resolve())})])
+        payload = {"path": str(self.path.resolve())}
+        # The permission check comes first; the /rewind checkpoint reports
+        # bracket the write that follows it.
+        self.assertEqual(
+            calls,
+            [
+                ("file.edit", payload),
+                ("file_history.before_write", payload),
+                ("file_history.after_write", payload),
+            ],
+        )
         self.assertTrue(result.startswith("Edited "))
         self.assertEqual(self.path.read_text(encoding="utf-8"), "hello there\n")
 
@@ -60,9 +70,12 @@ class EditPermissionTest(unittest.TestCase):
         def refuse(request_type):
             raise RuntimeError(f"{request_type} refused: Cannot edit while in plan mode")
 
-        with self.assertRaises(PermissionError) as raised:
-            self.run_edit(refuse)
+        modules, calls = _fake_rlm(refuse)
+        with mock.patch.dict(sys.modules, modules), self.assertRaises(PermissionError) as raised:
+            asyncio.run(edit.run(str(self.path), "world", "there"))
         self.assertIn("refused", str(raised.exception))
+        # Refused before the checkpoint: nothing was backed up or written.
+        self.assertEqual([request for request, _ in calls], ["file.edit"])
         self.assertEqual(self.path.read_text(encoding="utf-8"), "hello world\n")
 
     def test_a_host_that_does_not_gate_edits_lets_it_through(self):

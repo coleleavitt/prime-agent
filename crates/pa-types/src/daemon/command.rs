@@ -1047,6 +1047,41 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// `/rewind`'s picker (capability `rewind`): the user prompts on the
+    /// active branch, oldest first, each with what restoring the code to
+    /// before it would change: `{ codeRestore, checkpoints: [{ entryId, text,
+    /// timestamp, code? }] }` (see `pa-daemon`'s `rewind` module).
+    GetRewindCheckpoints {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// `/rewind` (capability `rewind`): restore the code and/or the
+    /// conversation to the point before user prompt `entry_id`. The code goes
+    /// first (the session's file checkpoints; a file changed outside the
+    /// agent since is skipped unless `force`), then the conversation moves
+    /// like `navigate_tree` onto the prompt, summarizing the abandoned
+    /// branch when `summarize` ("Summarize from here").
+    Rewind {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        entry_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restore_code: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restore_conversation: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summarize: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        custom_instructions: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        force: Option<bool>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     NavigateTree {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -1308,6 +1343,15 @@ pub enum ForkPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewind_family_roundtrip() {
+        rt::<DaemonCommand>(r#"{"type":"get_rewind_checkpoints","activeSessionId":"s1"}"#);
+        rt::<DaemonCommand>(
+            r#"{"type":"rewind","activeSessionId":"s1","entryId":"e1","restoreCode":true,"restoreConversation":false,"summarize":false,"customInstructions":"focus","force":true}"#,
+        );
+        rt::<DaemonCommand>(r#"{"type":"rewind","activeSessionId":"s1","entryId":"e1"}"#);
+    }
 
     #[test]
     fn prompt_family_roundtrip() {

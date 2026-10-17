@@ -400,6 +400,10 @@ pub struct Settings {
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
     pub enable_skill_commands: Option<bool>,
+    /// `fileCheckpointingEnabled` (Claude Code's key): back up the files the
+    /// kernel's edit helpers write so `/rewind` can restore code (on when
+    /// unset; see `file_history`).
+    pub file_checkpointing_enabled: Option<bool>,
     pub bundled_skills: Option<BundledSkillsSettings>,
     pub enable_builtin_skills: Option<bool>,
     pub terminal: Option<TerminalSettings>,

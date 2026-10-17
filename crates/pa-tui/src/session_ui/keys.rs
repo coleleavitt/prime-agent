@@ -146,6 +146,7 @@ impl SessionUi {
             || view.info_panel.is_some()
             || view.tree_selector.is_some()
             || view.fork_selector.is_some()
+            || view.rewind_selector.is_some()
             || view.share_loader.is_some()
             || view.mcp_view.is_some()
             || view.factory_view.is_some()
@@ -471,6 +472,9 @@ impl SessionUi {
         if view.fork_selector.is_some() {
             return self.handle_fork_selector_key(key, view).await;
         }
+        if view.rewind_selector.is_some() {
+            return self.handle_rewind_selector_key(key, view).await;
+        }
         if view.confirm.is_some() {
             return self.handle_confirm_key(key, view).await;
         }
@@ -627,13 +631,14 @@ impl SessionUi {
                 self.dirty = true;
                 return Ok(());
             }
-            // Double-Escape: the second press within the window opens the tree when the session is
-            // idle or the editor empty, and clears the input otherwise. The repeat's tree action is
-            // one shot per input chain (the operator's 2026-09-29 Esc-overflow ruling).
+            // Double-Escape: the second press within the window opens `/rewind` (Claude Code's
+            // message selector; the tree on a daemon without it) when the session is idle or the
+            // editor empty, and clears the input otherwise. The repeat's tree action is one shot per
+            // input chain (the operator's 2026-09-29 Esc-overflow ruling).
             if let Some(action) = self.take_escape_repeat_action() {
                 if action == "tree" {
                     self.escape_tree_shortcut_spent = true;
-                    self.open_tree_selector(view, None).await?;
+                    self.open_rewind_or_tree(view).await?;
                 } else {
                     view.editor.set_text("");
                 }
