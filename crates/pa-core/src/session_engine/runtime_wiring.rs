@@ -61,6 +61,9 @@ pub struct KernelCronWiring {
     /// The post-mutation seam for kernel `rlm_heartbeat.*` requests;
     /// `None` leaves mutations unannounced (the embedded default).
     pub mutation_hook: Option<super::host_requests::RlmHeartbeatMutationHook>,
+    /// The session's Claude Code task book (`rlm.cron.*`, `rlm.schedule_wakeup`,
+    /// `/loop`); `None` when the embedding runs no scheduler.
+    pub session_tasks: Option<std::sync::Arc<crate::cron::tasks::SessionTasks>>,
 }
 
 /// The live/durable session identity for kernel-created rlm heartbeats.
@@ -153,6 +156,9 @@ pub fn wire_session_runtime(
     let mutation_hook = cron_store
         .as_ref()
         .and_then(|wiring| wiring.mutation_hook.clone());
+    let session_tasks = cron_store
+        .as_ref()
+        .and_then(|wiring| wiring.session_tasks.clone());
     let cron_store = cron_store.map_or_else(
         || Arc::new(AgentCronJobStore::new(agent_dir.join("cron-jobs.json"))),
         |wiring| wiring.store,
@@ -183,6 +189,9 @@ pub fn wire_session_runtime(
     let session = Arc::new(tokio::sync::Mutex::new(session));
     let mut handlers = HostRequestHandlers::default();
     runtime.register_host_handlers(session.clone(), &mut handlers);
+    if let Some(tasks) = &session_tasks {
+        crate::cron::tasks::host::register_host_handlers(&mut handlers, tasks);
+    }
     let model_registry = rlm.model_registry.unwrap_or_else(|| {
         let auth = crate::auth::AuthStorage::create(agent_dir);
         let mut registry =
