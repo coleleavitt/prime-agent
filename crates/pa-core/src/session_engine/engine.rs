@@ -1849,13 +1849,6 @@ impl SessionEngine {
         self.session.expand_user_skill_command(text).await.0
     }
 
-    /// Whether `text` invokes one of this session's skills
-    /// ([`crate::skills::resolve_skill_command`]).
-    #[must_use]
-    pub fn is_skill_command(&self, text: &str) -> bool {
-        crate::skills::resolve_skill_command(text, &self.session.command_skills()).is_some()
-    }
-
     /// Withdraw the queued goal-context turns: a minted continuation waiting
     /// in the embedding's queue never runs behind a paused/cleared/replaced goal.
     pub fn purge_queued_goal_contexts(&self) {

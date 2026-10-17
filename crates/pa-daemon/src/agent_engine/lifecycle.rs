@@ -280,9 +280,10 @@ impl AgentSessionEngine {
     pub(crate) fn expand_skill_submission(&self, text: &str) -> String {
         // The floor keys on the ORIGINAL invocation's shape, not the
         // expanded parse: a skill body can contain a close tag plus a
-        // `\n\n` tail that parses as a trailing user message.
+        // `\n\n` tail that parses as a trailing user message. A Claude
+        // Code skill's own `/<name>` runs without arguments, as there.
         let bare_invocation = pa_types::slash_commands::parse_slash_command(text)
-            .is_some_and(|(_, args)| args.trim().is_empty());
+            .is_some_and(|(name, args)| name.starts_with("skill:") && args.trim().is_empty());
         let Ok(model) = self.resolve_model() else {
             return text.to_string();
         };
