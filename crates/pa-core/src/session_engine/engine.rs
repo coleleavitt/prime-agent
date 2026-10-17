@@ -391,6 +391,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
     })?;
+    // The model writes its memory files from the kernel: a `workspace-write`
+    // sandbox keeps the auto-memory directory writable.
+    let sandbox = match (sandbox, &resources.auto_memory) {
+        (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
+        (sandbox, _) => sandbox,
+    };
 
     let model = config
         .model
