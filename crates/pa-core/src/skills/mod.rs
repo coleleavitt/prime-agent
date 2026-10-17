@@ -267,7 +267,12 @@ pub fn expand_skill_command<'a>(text: &str, skills: &'a [Skill]) -> (String, Opt
     let Some((name, args)) = parse_slash_command(text) else {
         return (text.to_string(), None);
     };
-    let Some(skill_name) = name.strip_prefix("skill:") else {
+    // `/skill:<name>`, or a builtin command that runs a bundled skill
+    // (`/code-review`, `/review`).
+    let Some(skill_name) = name
+        .strip_prefix("skill:")
+        .or_else(|| pa_types::slash_commands::skill_slash_command(&name))
+    else {
         return (text.to_string(), None);
     };
     let Some(skill) = skills.iter().find(|skill| skill.name == skill_name) else {
@@ -366,6 +371,25 @@ mod tests {
             Some("find rust tuis"),
             "args follow the block after a blank line"
         );
+    }
+
+    /// `/code-review` and `/review` expand exactly like `/skill:code-review`;
+    /// without the skill loaded they pass through for the model.
+    #[test]
+    fn skill_commands_expand_to_their_bundled_skill() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let skills = [temp_skill("code-review", dir.path())];
+        let (via_skill, _) = expand_skill_command("/skill:code-review high --fix", &skills);
+        for text in ["/code-review high --fix", "/review high --fix"] {
+            let (expanded, used) = expand_skill_command(text, &skills);
+            assert_eq!(used.map(|skill| skill.name.as_str()), Some("code-review"));
+            assert_eq!(expanded, via_skill);
+        }
+        let parsed = pa_types::skill_blocks::parse_skill_block(&via_skill).expect("parses");
+        assert_eq!(parsed.user_message.as_deref(), Some("high --fix"));
+        let (unchanged, used) = expand_skill_command("/review", &[]);
+        assert_eq!((unchanged.as_str(), used.is_none()), ("/review", true));
+        assert!(expand_skill_command("/model", &skills).1.is_none());
     }
 
     #[test]

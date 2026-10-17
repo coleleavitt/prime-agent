@@ -704,6 +704,8 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                         // The user-facing record of a plan-mode change; the
                         // model learns the mode from the per-turn rows.
                         | super::plan_mode::PLAN_MODE_CHANGE_CUSTOM_TYPE
+                        // Likewise for ultracode: the reminder rows tell the model.
+                        | super::ultracode::ULTRACODE_CHANGE_CUSTOM_TYPE
                         // A presented artifact is the user's to see; the
                         // model never receives its preview.
                         | super::presented_artifact::PRESENTED_ARTIFACT_CUSTOM_TYPE

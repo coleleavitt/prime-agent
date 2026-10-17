@@ -92,6 +92,19 @@ The following programmatic tools are available in the REPL for a2a communication
 - `agent_observe.get_agent(target: str) -> dict`: one agent's status detail
 - `agent_observe.recent_messages(target: str, limit: int = 8, max_chars: int = 800) -> dict`: transcript preview; `limit` errors outside [1-50], `max_chars` outside [80-2000]
 
+## Workflows
+
+`rlm.workflow` runs a deterministic multi-agent script: `async def main(wf)` calls `wf.agent(prompt, *, label=None, phase=None, schema=None, model=None, effort=None, isolation=None)` (one subagent; awaits its final text, or the object a JSON Schema validates; `None` when it fails), `await wf.pipeline(items, *stages)` (each item through every stage, no barrier; a raising stage drops that item to `None`), `await wf.parallel(thunks)` (a barrier that never raises), `wf.phase(title)`, `wf.log(message)`, `wf.args` and `wf.budget`. Run one only when the user opted into multi-agent orchestration: the keyword "ultracode" or ultracode on (a system reminder confirms either), their own words asking for a workflow, or a command or skill that says to (such as `/code-review`); otherwise describe the workflow and its rough cost and ask. Load the `workflow-authoring` skill before writing a script.
+
+- `rlm.workflow.run(script, *, args=None, name=None, resume_from: str | None = None, budget: int | None = None) -> WorkflowResult`: run in the foreground; every agent is journaled under the session directory, and `resume_from=<run id>` replays the longest unchanged prefix of `agent()` calls and runs the rest live
+- `rlm.workflow.start(script, ...) -> WorkflowHandle`: run in the background; a `[monitor wf_... "workflow <name>"]` notice reports its end, and `await rlm.workflow.result(run_id)` reads it
+
+`/code-review` (alias `/review`) runs the bundled code-review skill, a workflow of finder and verifier subagents over the diff:
+
+- `code_review.review(args: str = "", *, cwd: str | None = None, resume_from: str | None = None) -> Review`: pass the command's arguments verbatim; the repr is the findings table to show the user
+- `code_review.report_outcomes(outcomes: dict[int, str], *, review_id: str | None = None) -> Review`: synchronous; after fixing, each finding's outcome by its `#` (`fixed`, `no_change_needed`, `skipped`)
+- `code_review.load_review(review_id: str | None = None) -> Review`: synchronous; a saved review, the latest by default
+
 ## Continual Harness
 
 prime-agent is a continual harness. During a session, persistent memories can be written and read. These stay available even after multiple compactions.

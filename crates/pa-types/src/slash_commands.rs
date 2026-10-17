@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 9] = [
     "compact",
     "refine",
     "goal",
@@ -14,7 +14,30 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
     "plan",
     "harness",
     "rlm-token-budget",
+    "ultracode",
 ];
+
+/// Builtin commands that run the bundled skill of the same name: the
+/// submission expands like `/skill:<name> <args>` (Claude Code's
+/// `/code-review`, alias `/review`), so the model receives the skill's
+/// instructions with the typed arguments.
+pub const SKILL_SLASH_COMMAND_NAMES: [&str; 1] = ["code-review"];
+
+/// The bundled skill a typed command name (or alias) runs, if it is one of
+/// [`SKILL_SLASH_COMMAND_NAMES`].
+#[must_use]
+pub fn skill_slash_command(name: &str) -> Option<&'static str> {
+    // The builtin table only (no registry cache): this runs on prompt
+    // admission, possibly before the composition root registers features.
+    let canonical = CANONICAL_BUILTIN_SLASH_COMMANDS
+        .iter()
+        .find(|command| command.name == name || command.aliases.contains(&name))?
+        .name;
+    SKILL_SLASH_COMMAND_NAMES
+        .iter()
+        .copied()
+        .find(|skill| *skill == canonical)
+}
 
 /// Durable row custom types (TS `messages.ts`): the command echo and its
 /// result, persisted in sessions and rendered by every surface.
@@ -421,6 +444,24 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         takes_argument: true,
     },
     BuiltinSlashCommand {
+        name: "ultracode",
+        description: "Standing multi-agent orchestration: every substantive task runs as an rlm.workflow (also /effort ultracode)",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[on|off|status]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "code-review",
+        description: "Review the current diff or a PR for bugs and cleanups",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some(
+            "[low|medium|high|xhigh|max|ultra] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]",
+        ),
+        aliases: &["review"],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
         name: "rlm-max-depth",
         description: "Set/view the per-chat persistent RLM max depth immediately; never interrupts or queues the running turn",
         execution: SlashCommandExecution::Client,
@@ -746,6 +787,21 @@ mod tests {
                 SlashCommandExecution::Session
             );
         }
+    }
+
+    /// `/code-review` and its `/review` alias run the bundled skill; other
+    /// commands, `/skill:` forms and unknown names do not.
+    #[test]
+    fn skill_commands_resolve_through_aliases() {
+        assert_eq!(skill_slash_command("code-review"), Some("code-review"));
+        assert_eq!(skill_slash_command("review"), Some("code-review"));
+        assert_eq!(skill_slash_command("model"), None);
+        assert_eq!(skill_slash_command("skill:code-review"), None);
+        assert_eq!(skill_slash_command("nope"), None);
+        // A skill command is not a session-engine command: it reaches the
+        // model as the expanded skill.
+        assert!(!is_session_slash_command_name("code-review"));
+        assert!(is_session_slash_command_name("ultracode"));
     }
 
     #[test]

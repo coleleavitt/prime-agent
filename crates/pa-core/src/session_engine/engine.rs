@@ -1112,6 +1112,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await;
 
     let agent = Arc::new(agent);
+    let ultracode = Arc::new(super::ultracode::UltracodeState::new(Some(
+        config.agent_dir.clone(),
+    )));
     let _ = fold_admission.set(super::steering_fold::FoldAdmission {
         agent: Arc::downgrade(&agent),
         skills: resources.skills.clone(),
@@ -1119,6 +1122,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         features: crate::features::installed().to_vec(),
         feature_context: Arc::clone(&feature_context),
         feature_notes: feature_notes.clone(),
+        ultracode: Arc::clone(&ultracode),
     });
     // TS `_startRlmChildRun`'s spawn anchor: the `rlm.spawn` host handler
     // names the parent's in-flight turn through this weak seam (the
@@ -1144,6 +1148,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_plan_mode_switch(plan_mode.clone());
+    session.set_ultracode_state(ultracode);
     if !crate::features::installed().is_empty() {
         session.set_feature_context(Arc::clone(&feature_context), feature_notes);
     }

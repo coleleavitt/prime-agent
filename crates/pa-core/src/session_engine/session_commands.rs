@@ -249,6 +249,7 @@ pub async fn execute_session_command(
         "autonomous" => execute_autonomous(params, command, &mut execution),
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
+        "ultracode" => execute_ultracode(engine, command, &mut execution).await,
         "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
@@ -749,6 +750,48 @@ async fn execute_plan(
         execution.push_message(slash_command_result(
             command,
             format!("Plan mode is already {state}."),
+            true,
+            "info",
+            None,
+            true,
+        ));
+    }
+    Ok(())
+}
+
+/// `/ultracode [on|off|status]` (and `/effort ultracode`): switch the
+/// standing opt-in to multi-agent orchestration. A change records the
+/// durable `ultracode_change` row (what a resume restores); the model hears
+/// about it from the next turn's reminder row.
+async fn execute_ultracode(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    let state = engine.session.ultracode().await;
+    let target = match super::ultracode::parse_ultracode_command(&command.args)? {
+        super::ultracode::UltracodeCommand::On => true,
+        super::ultracode::UltracodeCommand::Off => false,
+        super::ultracode::UltracodeCommand::Status => {
+            let status = if state.is_on() { "on" } else { "off" };
+            execution.push_message(slash_command_result(
+                command,
+                format!("Ultracode is {status}."),
+                true,
+                "info",
+                None,
+                true,
+            ));
+            return Ok(());
+        }
+    };
+    if state.set(target) {
+        execution.push_message(super::ultracode::ultracode_change_row(target));
+    } else {
+        let status = if target { "on" } else { "off" };
+        execution.push_message(slash_command_result(
+            command,
+            format!("Ultracode is already {status}."),
             true,
             "info",
             None,

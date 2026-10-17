@@ -198,11 +198,16 @@ impl AgentSession {
         // a refusal never reaches the model, and their context rides ahead
         // of it.
         let feature_row = self.feature_prompt_row(&normalized).await?;
+        let ultracode_rows = self.ultracode_rows(text).await;
         if busy {
             let message = user_prompt_message(&normalized, &images);
-            let message: pa_agent::agent::AgentMessageBatch = match feature_row {
-                Some(row) => vec![row, message].into(),
-                None => message.into(),
+            let mut rows: Vec<_> = feature_row.into_iter().collect();
+            rows.extend(ultracode_rows);
+            let message: pa_agent::agent::AgentMessageBatch = if rows.is_empty() {
+                message.into()
+            } else {
+                rows.push(message);
+                rows.into()
             };
             match options.streaming_behavior {
                 Some(StreamingBehavior::Steer) => self.agent.steer(message),
@@ -226,6 +231,7 @@ impl AgentSession {
             prompt_messages.extend(self.take_next_turn_rows().await);
             prompt_messages.extend(self.plan_mode_context_row());
             prompt_messages.extend(feature_row);
+            prompt_messages.extend(ultracode_rows);
             prompt_messages.push(user_prompt_message(&normalized, &images));
             // Each batched action contributes its user row after the
             // primary, through the same admission normalization (TS
@@ -291,6 +297,33 @@ impl AgentSession {
     /// Install the session's plan-mode switch (the engine wiring).
     pub fn set_plan_mode_switch(&mut self, mode: super::plan_mode::PlanModeSwitch) {
         self.plan_mode = Some(mode);
+    }
+
+    /// Install the session's ultracode state (the engine wiring shares it
+    /// with the steering fold).
+    pub fn set_ultracode_state(&mut self, state: std::sync::Arc<super::ultracode::UltracodeState>) {
+        self.ultracode = state;
+    }
+
+    /// The session's ultracode state, restored from the branch's newest
+    /// `ultracode_change` row on first use.
+    pub async fn ultracode(&self) -> &std::sync::Arc<super::ultracode::UltracodeState> {
+        if self.ultracode.needs_restore() {
+            let recorded = self.session.lock().await.ultracode_mode();
+            self.ultracode.restore(recorded);
+        }
+        &self.ultracode
+    }
+
+    /// The ultracode reminder rows one admitted user turn carries (the
+    /// keyword is detected on the text as typed, before expansion).
+    async fn ultracode_rows(&self, typed: &str) -> Vec<pa_agent::types::AgentMessage> {
+        self.ultracode()
+            .await
+            .turn_rows(typed)
+            .into_iter()
+            .filter_map(|row| session_message_to_loop(&SessionAgentMessage::Custom(row)))
+            .collect()
     }
 
     /// Route admitted prompts through the installed features (the engine

@@ -722,6 +722,12 @@ const NET_NEW_BUNDLED_SKILLS: &[&str] = &[
     // TaskList, which replaced TodoWrite; the TS product has no counterpart):
     // a pure-Python skill persisting `tasks.json` under `RLM_SESSION_DIR`.
     "tasks",
+    // Claude Code's `/code-review` (the TS product has none): the review
+    // recipes as an `rlm.workflow` fan-out, run by `/code-review` (`/review`).
+    "code-review",
+    // Claude Code's workflow-authoring reference for the `rlm.workflow`
+    // script API (markdown only).
+    "workflow-authoring",
 ];
 
 #[test]

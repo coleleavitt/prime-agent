@@ -108,6 +108,14 @@ impl SessionUi {
             self.track_command_used(resolved.name);
             return self.open_harness_selector(behavior, view);
         }
+        // `/effort ultracode [on|off]` switches the session's standing
+        // ultracode mode (the `/ultracode` session command), not a level.
+        if resolved.name == "effort" {
+            if let Some(forwarded) = effort_picker::ultracode_session_command(&resolved.args) {
+                self.track_command_used(resolved.name);
+                return self.send_prompt(&forwarded, behavior, view);
+            }
+        }
         let command = registry
             .get(resolved.name)
             .expect("resolved name is builtin");

@@ -53,6 +53,9 @@ pub(super) struct FoldAdmission {
     pub(super) features: Vec<Arc<dyn crate::features::SessionFeature>>,
     pub(super) feature_context: Arc<crate::features::SessionFeatureContext>,
     pub(super) feature_notes: crate::features::FeatureNotes,
+    /// The session's ultracode state: a folded steer with the keyword
+    /// carries its reminder row.
+    pub(super) ultracode: Arc<super::ultracode::UltracodeState>,
 }
 
 /// The admission slot the boundary hook reads (set after the agent is
@@ -98,6 +101,12 @@ impl FoldAdmission {
                 crate::features::PromptDecision::Continue { context: None } => {}
             }
         }
+        rows.extend(
+            self.ultracode
+                .steer_rows(text)
+                .into_iter()
+                .filter_map(|row| session_message_to_loop(&SessionAgentMessage::Custom(row))),
+        );
         rows.push(user_prompt_message(&normalized, &[]));
         Ok(if rows.len() == 1 {
             rows.remove(0).into()
