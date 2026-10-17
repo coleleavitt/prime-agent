@@ -109,6 +109,18 @@ the composition root asks (`record`, `list`). A corrupt store trusts nothing
 and is never overwritten. A run from the home directory, whose project config
 dir is the agent dir, needs no decision.
 
+Instruction files and auto memory (`resources::instructions`,
+`resources::auto_memory`; contract in `docs/instruction-files.md`): one
+loader for the AGENTS.md and CLAUDE.md families with Claude Code's rules
+(`@path` imports, `*.local.md`, `.claude/rules` and `.prime/agent/rules`
+with `paths:`-scoped rules, the opt-in `~/.claude` user scope), the
+`NestedInstructions` tracker that delivers a subdirectory's files and the
+matching scoped rules as a hidden `nested_instructions` row
+(`session_engine::instruction_boundary`) once a cell opens a file there,
+and the per-project auto-memory directory whose `MEMORY.md` index rides
+the `auto-memory` prompt segment. `/memory` lists both
+(`session_engine::memory_command`).
+
 OS sandbox (`os_sandbox`, enforcement in `pa-os-sandbox`): `SessionSandbox::resolve` reads
 the `sandbox` setting (off by default; a project scope only tightens it, so the key is
 untrusted-safe) and the `--sandbox` override (`SessionEngineConfig::sandbox_mode`) once per
