@@ -62,6 +62,7 @@ mod admission;
 mod compaction_arms;
 mod feature_boundary;
 mod instruction_boundary;
+pub mod memory_command;
 mod terminal_inbox;
 mod wiring;
 

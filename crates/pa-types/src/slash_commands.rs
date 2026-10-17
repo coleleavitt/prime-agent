@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 9] = [
     "compact",
     "refine",
     "goal",
@@ -14,6 +14,7 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
     "plan",
     "harness",
     "rlm-token-budget",
+    "memory",
 ];
 
 /// Durable row custom types (TS `messages.ts`): the command echo and its
@@ -419,6 +420,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         argument_hint: Some("[<int> [--global]]"),
         aliases: &[],
         takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "memory",
+        description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
     },
     BuiltinSlashCommand {
         name: "rlm-token-budget",

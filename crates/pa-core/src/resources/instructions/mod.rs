@@ -127,6 +127,8 @@ struct LoadState {
     /// Directories whose instruction files were looked at.
     visited_dirs: HashSet<PathBuf>,
     deferred: Vec<DeferredRule>,
+    /// Files delivered after session start, in delivery order.
+    delivered: Vec<PathBuf>,
 }
 
 /// How a file came to load: its kind, the directory its imports must stay
@@ -479,7 +481,23 @@ impl NestedInstructions {
         for path in paths {
             out.extend(loader.touch(path.as_ref()));
         }
+        loader
+            .state
+            .delivered
+            .extend(out.iter().map(|file| file.path.clone()));
         out
+    }
+
+    /// The files delivered after session start (a resumed session's
+    /// earlier deliveries first), in order (for `/memory`).
+    #[must_use]
+    pub fn delivered(&self) -> Vec<PathBuf> {
+        self.loader
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .state
+            .delivered
+            .clone()
     }
 
     /// Record files an earlier run of this session already delivered (a
@@ -496,6 +514,10 @@ impl NestedInstructions {
                 .state
                 .deferred
                 .retain(|rule| canonical(&rule.path) != key);
+            let path = path.as_ref().to_path_buf();
+            if !loader.state.delivered.contains(&path) {
+                loader.state.delivered.push(path);
+            }
         }
     }
 

@@ -131,6 +131,8 @@ pub struct SessionEngine {
     pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub agents_files: Vec<crate::resources::ContextFile>,
+    /// The instruction files and auto memory `/memory` reports.
+    pub instructions: super::memory_command::SessionInstructions,
     pub system_prompt: String,
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
@@ -1338,6 +1340,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,
         agents_files: resources.agents_files,
+        instructions: super::memory_command::SessionInstructions {
+            files: resources.instruction_files,
+            nested: resources.nested_instructions,
+            auto_memory: resources.auto_memory,
+        },
         system_prompt,
         goal_driver,
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),
