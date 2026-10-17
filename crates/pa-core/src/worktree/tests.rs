@@ -429,3 +429,48 @@ fn an_existing_linked_worktree_opens_by_path_but_the_main_checkout_does_not() {
         Err(WorktreeError::NotAWorktree { .. })
     ));
 }
+
+/// An isolated child's worktree (`rlm.spawn(isolation="worktree")`): the
+/// child works in the directory matching the request's place in the
+/// repository, and its worktree goes only when it holds no work.
+#[test]
+fn a_child_worktree_matches_the_cwd_and_is_removed_only_when_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = fixture_repo(&temp);
+    std::fs::create_dir_all(repo.join("sub")).unwrap();
+    std::fs::write(repo.join("sub/file.txt"), "one\n").unwrap();
+    run_fixture_git(&repo, &["add", "sub"]);
+    run_fixture_git(&repo, &["commit", "-q", "-m", "sub"]);
+
+    let clean = create(&request(&repo.join("sub"), "agent-x1")).unwrap();
+    assert_eq!(
+        (
+            matching_cwd(&clean, &repo.join("sub")),
+            matching_cwd(&clean, &repo.join("missing")),
+            matching_cwd(&clean, &repo),
+        ),
+        (
+            clean.path.join("sub"),
+            clean.path.clone(),
+            clean.path.clone()
+        )
+    );
+    assert!(remove_if_unchanged(&clean).unwrap());
+    assert!(!clean.path.exists());
+    assert_eq!(
+        run_fixture_git(&repo, &["branch", "--list", "worktree-agent-x1"]),
+        ""
+    );
+
+    let dirty = create(&request(&repo, "agent-x2")).unwrap();
+    std::fs::write(dirty.path.join("new.txt"), "work\n").unwrap();
+    assert!(!remove_if_unchanged(&dirty).unwrap());
+    assert!(dirty.path.join("new.txt").is_file());
+
+    let committed = create(&request(&repo, "agent-x3")).unwrap();
+    std::fs::write(committed.path.join("c.txt"), "work\n").unwrap();
+    run_fixture_git(&committed.path, &["add", "c.txt"]);
+    run_fixture_git(&committed.path, &["commit", "-q", "-m", "work"]);
+    assert!(!remove_if_unchanged(&committed).unwrap());
+    assert!(committed.path.is_dir());
+}

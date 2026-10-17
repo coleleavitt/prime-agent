@@ -233,7 +233,7 @@ pub struct RlmSpawnRequest {
     /// The worktree the child runs in (`isolation="worktree"`): created at
     /// admission, owned by the host's child record afterwards (removed
     /// with the child when unchanged).
-    pub worktree: Option<crate::git_worktree::GitWorktree>,
+    pub worktree: Option<crate::worktree::Worktree>,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -838,9 +838,7 @@ impl RlmHostBridge {
             Ok(handle) => handle,
             Err(error) => {
                 if let Some(worktree) = worktree {
-                    if let Err(cleanup) =
-                        crate::git_worktree::remove_worktree_if_unchanged(&worktree)
-                    {
+                    if let Err(cleanup) = crate::worktree::remove_if_unchanged(&worktree) {
                         tracing::warn!(error = %cleanup, "rlm.spawn: the failed child's worktree stays");
                     }
                 }

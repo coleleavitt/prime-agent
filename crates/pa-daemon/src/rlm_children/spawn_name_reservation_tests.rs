@@ -557,7 +557,13 @@ async fn an_agent_spawn_carries_its_definition_and_its_worktree_goes_with_the_de
     std::fs::write(repo.path().join("f.txt"), "x\n").unwrap();
     pa_core::git_env::run_fixture_git(repo.path(), &["add", "."]);
     pa_core::git_env::run_fixture_git(repo.path(), &["commit", "-q", "-m", "init"]);
-    let worktree = pa_core::git_worktree::create_worktree(repo.path(), "agent-t1").unwrap();
+    let worktree = pa_core::worktree::create(&pa_core::worktree::CreateRequest {
+        name: Some("agent-t1".to_string()),
+        from: repo.path().to_path_buf(),
+        base: pa_core::worktree::BaseRef::Head,
+        hooks: None,
+    })
+    .unwrap();
     let definition = pa_core::agents::parse_agent_definition(
         "---\nname: reviewer\ndescription: Reviews\ntools: Read\n---\nReview it.",
         std::path::Path::new("reviewer.md"),

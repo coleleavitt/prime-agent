@@ -146,10 +146,18 @@ pub(crate) fn prepare_worktree(
         (None, None) => bail!("rlm.spawn isolation=\"worktree\" needs the session's directory"),
     };
     let slug = format!("agent-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
-    let worktree = crate::git_worktree::create_worktree(&cwd, &slug)
-        .map_err(|error| anyhow!("rlm.spawn isolation=\"worktree\": {error:#}"))?;
+    // The managed-worktree helper every isolation path shares (`--worktree`,
+    // `rlm.enter_worktree`): cut from the requesting directory's `HEAD`; a
+    // child's worktree never runs the WorktreeCreate hooks.
+    let worktree = crate::worktree::create(&crate::worktree::CreateRequest {
+        name: Some(slug),
+        from: cwd.clone(),
+        base: crate::worktree::BaseRef::Head,
+        hooks: None,
+    })
+    .map_err(|error| anyhow!("rlm.spawn isolation=\"worktree\": {error}"))?;
     request.cwd = Some(
-        crate::git_worktree::worktree_cwd(&worktree, Path::new(&cwd))
+        crate::worktree::matching_cwd(&worktree, Path::new(&cwd))
             .to_string_lossy()
             .to_string(),
     );
@@ -281,11 +289,16 @@ mod tests {
         let mut placed = request();
         prepare_worktree(&mut placed, Some(&context(root.path()))).unwrap();
         let worktree = placed.worktree.clone().unwrap();
-        assert!(worktree.branch.starts_with("worktree-agent-"));
+        assert!(
+            worktree
+                .branch
+                .as_deref()
+                .is_some_and(|branch| branch.starts_with("worktree-agent-"))
+        );
         assert_eq!(
             placed.cwd.as_deref().map(Path::new),
             Some(worktree.path.as_path())
         );
-        assert!(crate::git_worktree::remove_worktree_if_unchanged(&worktree).unwrap());
+        assert!(crate::worktree::remove_if_unchanged(&worktree).unwrap());
     }
 }

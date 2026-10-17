@@ -617,6 +617,48 @@ pub fn remove(
     Ok(RemoveOutcome::Removed { branch_deleted })
 }
 
+/// Remove a git worktree only when it holds no work: `true` when it is gone,
+/// `false` when it has uncommitted files or new commits and stays (an
+/// isolated child's worktree after the child ends). Never discards and never
+/// consults the hooks. Blocking: runs git.
+///
+/// # Errors
+///
+/// As [`remove`] without `discard`.
+pub fn remove_if_unchanged(worktree: &Worktree) -> Result<bool, WorktreeError> {
+    match remove(worktree, false, None)? {
+        RemoveOutcome::Removed { .. } => Ok(true),
+        RemoveOutcome::Kept(_) => Ok(false),
+    }
+}
+
+/// The directory inside `worktree` matching `cwd`'s place in the main
+/// repository: a request made from `<repo>/crates/x` works in
+/// `<worktree>/crates/x` when that directory exists there, else the
+/// worktree root.
+#[must_use]
+pub fn matching_cwd(worktree: &Worktree, cwd: &Path) -> PathBuf {
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let relative = worktree.repo_root.as_deref().and_then(|root| {
+        canonical(cwd)
+            .strip_prefix(canonical(root))
+            .map(Path::to_path_buf)
+            .ok()
+    });
+    match relative {
+        Some(relative) if !relative.as_os_str().is_empty() => {
+            let candidate = worktree.path.join(relative);
+            if candidate.is_dir() {
+                candidate
+            } else {
+                worktree.path.clone()
+            }
+        }
+        _ => worktree.path.clone(),
+    }
+}
+
 /// Whether a ref other than `branch` contains `tip` (deleting the branch then
 /// loses no commit).
 fn reachable_elsewhere(repo_root: &Path, branch: &str, tip: &str) -> bool {

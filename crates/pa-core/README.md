@@ -42,9 +42,9 @@ the listing a spawning session reads at the end of its system prompt; the
 instructions and the host-request gate (`bash.run`, `rlm.run`,
 `agent_message.send`) a session running as one agent gets
 (`SessionEngineConfig::agent_definition`). `rlm.spawn(agent=, isolation=,
-cwd=)` resolves through `session_engine::rlm_spawn_agent`; `git_worktree`
-owns the harness's git worktrees (`<repo>/.prime/worktrees/<slug>` on
-`worktree-<slug>`, removed only when unchanged). Child lifecycle notices
+cwd=)` resolves through `session_engine::rlm_spawn_agent`; an isolated
+child's worktree is a managed `worktree` (`agent-<id>` cut from `HEAD`,
+removed with the child only when unchanged). Child lifecycle notices
 (`session_engine::rlm_notices`) render Claude Code's agent
 `<task-notification>`.
 The in-process RLM host admits each child terminal notice through the parent

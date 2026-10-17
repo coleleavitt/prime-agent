@@ -46,7 +46,6 @@ import math
 import os
 import re
 import secrets
-import subprocess
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -246,6 +245,9 @@ class AgentRequest:
     model: str | None = None
     effort: str | None = None
     cwd: str | None = None
+    # ``"worktree"``: the child runs in its own git worktree, which the host
+    # cuts and removes (``rlm.spawn(isolation="worktree")``).
+    isolation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -263,7 +265,13 @@ class AgentBackend(Protocol):
 
 
 class RlmBackend:
-    """Runs each agent as an ``rlm.spawn`` child and waits on ``rlm.collect``."""
+    """Runs each agent as an ``rlm.spawn`` child and waits on ``rlm.collect``.
+
+    An isolated agent (``isolation="worktree"``) runs in the managed worktree
+    the host cuts for it (``agent-<id>`` from ``HEAD``); once it settles the
+    child is deleted, which removes that worktree when it holds no work. A
+    changed worktree stays, named in the child's task notification.
+    """
 
     async def run(self, request: AgentRequest) -> AgentOutcome:
         from . import collect, spawn
@@ -273,6 +281,8 @@ class RlmBackend:
             kwargs["model"] = request.model
         if request.cwd is not None:
             kwargs["cwd"] = request.cwd
+        if request.isolation is not None:
+            kwargs["isolation"] = request.isolation
         if request.effort is not None:
             kwargs["thinking"] = request.effort
         try:
@@ -283,17 +293,31 @@ class RlmBackend:
             # A level the child's model does not support: run at its default.
             del kwargs["thinking"]
             handle = await spawn(request.prompt, **kwargs)
-        while True:
-            results = await collect(handle, timeout_ms=_COLLECT_WAIT_MS)
-            row = results[0] if results else None
-            if row is not None and row.settled:
-                break
+        try:
+            while True:
+                results = await collect(handle, timeout_ms=_COLLECT_WAIT_MS)
+                row = results[0] if results else None
+                if row is not None and row.settled:
+                    break
+        finally:
+            if request.isolation is not None:
+                await _release_isolated_child(handle)
         if row.status == "done":
             return AgentOutcome(
                 text=row.answer_text if row.answer_text is not None else row.answer_preview or "",
                 agent_id=handle.rlm_child_id,
             )
         return AgentOutcome(text=None, agent_id=handle.rlm_child_id, error=row.error or row.status)
+
+
+async def _release_isolated_child(handle: Any) -> None:
+    """Delete a settled (or abandoned) isolated child so the host removes its unchanged worktree."""
+    from . import delete_subagent
+
+    try:
+        await delete_subagent(handle)
+    except Exception:  # noqa: BLE001 - the worktree merely stays; the run goes on
+        pass
 
 
 # --- budget ---------------------------------------------------------------
@@ -510,15 +534,6 @@ async def _resolved(value: Any) -> Any:
     return value
 
 
-def _git(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-c", "core.hooksPath=/dev/null", "-C", cwd, *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
 class WorkflowContext:
     """What a script sees: ``agent``, ``pipeline``, ``parallel``, ``phase``, ``log``, ``args``, ``budget``, ``workflow``."""
 
@@ -625,7 +640,6 @@ class WorkflowContext:
             label_slug = _slug(record.label, 30)
             if label_slug:
                 name = f"{name}-{label_slug}"
-            worktree = None
             run.journal.append(
                 {
                     "type": "started",
@@ -636,15 +650,13 @@ class WorkflowContext:
                 }
             )
             try:
-                if isolation == "worktree":
-                    worktree = await asyncio.to_thread(self._make_worktree, record.index)
                 outcome = await run.backend.run(
                     AgentRequest(
                         prompt=_child_prompt(prompt, schema),
                         name=name,
                         model=model,
                         effort=effort,
-                        cwd=worktree,
+                        isolation=isolation,
                     )
                 )
                 record.agent_id = outcome.agent_id
@@ -673,9 +685,6 @@ class WorkflowContext:
                 record.error = f"{type(error).__name__}: {error}"
                 run.journal.append({"type": "failed", "key": record.key, "agentId": record.agent_id})
                 raise
-            finally:
-                if worktree is not None:
-                    await asyncio.to_thread(self._drop_worktree_if_unchanged, worktree)
 
     async def _structured(
         self, record: AgentRecord, name: str, text: str, schema: dict[str, Any], model: str | None
@@ -709,24 +718,6 @@ class WorkflowContext:
                 return None
             answer = outcome.text
         return None
-
-    def _make_worktree(self, index: int) -> str:
-        top = _git(os.getcwd(), "rev-parse", "--show-toplevel")
-        if top.returncode != 0:
-            raise WorkflowError("isolation='worktree' needs a git checkout as the working directory")
-        path = _run_dir(self._run.run_id) / "worktrees" / f"agent-{index}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        added = _git(top.stdout.strip(), "worktree", "add", "--detach", str(path), "HEAD")
-        if added.returncode != 0:
-            raise WorkflowError(f"git worktree add failed: {added.stderr.strip()}")
-        return str(path)
-
-    def _drop_worktree_if_unchanged(self, path: str) -> None:
-        changed = _git(path, "status", "--porcelain")
-        if changed.returncode == 0 and not changed.stdout.strip():
-            _git(path, "worktree", "remove", "--force", path)
-        else:
-            self._run.note(f"kept the changed worktree {path}")
 
     async def pipeline(self, items: Iterable[Any], *stages: Callable[..., Any]) -> list[Any]:
         """Run each item through every stage, no barrier between stages; a stage that

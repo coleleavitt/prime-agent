@@ -632,13 +632,13 @@ impl RlmSubagentHost for SupervisorChildSessions {
             if let Some(worktree) = worktree {
                 let path = worktree.path.clone();
                 match tokio::task::spawn_blocking(move || {
-                    pa_core::git_worktree::remove_worktree_if_unchanged(&worktree)
+                    pa_core::worktree::remove_if_unchanged(&worktree)
                 })
                 .await
                 {
                     Ok(Ok(_removed_or_kept)) => {}
                     Ok(Err(error)) => eprintln!(
-                        "pa-daemon: the deleted child's worktree {} stays: {error:#}",
+                        "pa-daemon: the deleted child's worktree {} stays: {error}",
                         path.display()
                     ),
                     Err(error) => eprintln!(

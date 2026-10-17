@@ -226,7 +226,7 @@ struct ChildRecord {
     rename_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The git worktree the child runs in (`isolation="worktree"`): its
     /// notices name it, and the delete removes it when it holds no work.
-    worktree: Option<pa_core::git_worktree::GitWorktree>,
+    worktree: Option<pa_core::worktree::Worktree>,
 }
 
 impl ChildRecord {

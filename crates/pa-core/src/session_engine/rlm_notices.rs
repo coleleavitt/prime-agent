@@ -69,7 +69,7 @@ pub struct RlmChildNoticeExtras {
     /// The run's wall time.
     pub duration_ms: Option<u64>,
     /// The worktree the child ran in, when it was isolated in one.
-    pub worktree: Option<crate::git_worktree::GitWorktree>,
+    pub worktree: Option<crate::worktree::Worktree>,
 }
 
 impl RlmChildNoticeExtras {
@@ -83,11 +83,16 @@ impl RlmChildNoticeExtras {
             );
         }
         if let Some(worktree) = &self.worktree {
+            // A hook-made worktree has no branch: its element is left out.
+            let branch = worktree
+                .branch
+                .as_deref()
+                .map(|branch| format!("<worktreeBranch>{branch}</worktreeBranch>"))
+                .unwrap_or_default();
             let _ = writeln!(
                 lines,
-                "<worktree><worktreePath>{}</worktreePath><worktreeBranch>{}</worktreeBranch></worktree>",
+                "<worktree><worktreePath>{}</worktreePath>{branch}</worktree>",
                 worktree.path.display(),
-                worktree.branch
             );
         }
         lines
@@ -100,7 +105,9 @@ impl RlmChildNoticeExtras {
         }
         if let Some(worktree) = &self.worktree {
             details["worktreePath"] = json!(worktree.path.display().to_string());
-            details["worktreeBranch"] = json!(worktree.branch);
+            if let Some(branch) = &worktree.branch {
+                details["worktreeBranch"] = json!(branch);
+            }
         }
     }
 }
@@ -330,11 +337,15 @@ mod tests {
     fn extras_render_usage_and_the_worktree() {
         let extras = RlmChildNoticeExtras {
             duration_ms: Some(1_500),
-            worktree: Some(crate::git_worktree::GitWorktree {
+            worktree: Some(crate::worktree::Worktree {
+                name: "agent-1".to_string(),
                 path: PathBuf::from("/r/.prime/worktrees/agent-1"),
-                branch: "worktree-agent-1".to_string(),
-                repo_root: PathBuf::from("/r"),
-                base_commit: "abc".to_string(),
+                branch: Some("worktree-agent-1".to_string()),
+                repo_root: Some(PathBuf::from("/r")),
+                base_commit: Some("abc".to_string()),
+                existed: false,
+                hook_based: false,
+                copied: Vec::new(),
             }),
         };
         let message =

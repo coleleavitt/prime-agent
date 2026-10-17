@@ -420,6 +420,47 @@ class BackgroundTests(WorkflowTestCase):
         self.assertEqual(len(warnings), 1)
 
 
+class RlmBackendIsolationTests(unittest.IsolatedAsyncioTestCase):
+    """An isolated agent is a host-cut worktree child, deleted once it settles."""
+
+    async def run_backend(self, isolation):
+        import rlm
+
+        calls: list[tuple[str, object]] = []
+        handle = mock.Mock(rlm_child_id="c1")
+
+        async def spawn(prompt, **kwargs):
+            calls.append(("spawn", kwargs))
+            return handle
+
+        async def collect(target, timeout_ms=None):
+            calls.append(("collect", target is handle))
+            return [mock.Mock(settled=True, status="done", answer_text="ok", rlm_child_id="c1")]
+
+        async def delete_subagent(target):
+            calls.append(("delete", target is handle))
+
+        with (
+            mock.patch.object(rlm, "spawn", spawn),
+            mock.patch.object(rlm, "collect", collect),
+            mock.patch.object(rlm, "delete_subagent", delete_subagent),
+        ):
+            outcome = await ws.RlmBackend().run(ws.AgentRequest(prompt="p", name="wf-1", isolation=isolation))
+        return outcome, calls
+
+    async def test_an_isolated_agent_spawns_in_a_worktree_and_is_released(self):
+        outcome, calls = await self.run_backend("worktree")
+        self.assertEqual(outcome.text, "ok")
+        self.assertEqual(
+            calls,
+            [("spawn", {"name": "wf-1", "isolation": "worktree"}), ("collect", True), ("delete", True)],
+        )
+
+    async def test_a_plain_agent_is_not_deleted(self):
+        _, calls = await self.run_backend(None)
+        self.assertEqual(calls, [("spawn", {"name": "wf-1"}), ("collect", True)])
+
+
 class SchemaSubsetTests(unittest.TestCase):
     def test_validation_and_extraction(self) -> None:
         from rlm import workflow_schema as schema
