@@ -851,6 +851,29 @@ impl SessionUi {
                 }
                 self.handle_reload_command(view)?;
             }
+            // `/vim`: toggle the editor's vim mode and persist `editorMode`.
+            "vim" => {
+                let enabled = !view.editor.vim_enabled();
+                view.editor.set_vim_enabled(enabled);
+                let mode = if enabled {
+                    crate::client_settings::EditorMode::Vim
+                } else {
+                    crate::client_settings::EditorMode::Normal
+                };
+                if let Some(settings) = &self.client_settings {
+                    if let Err(error) = settings.set_editor_mode(mode) {
+                        self.error_row(&format!("{error:#}"), view);
+                    }
+                }
+                self.note(
+                    if enabled {
+                        "Editor mode set to vim. Press Escape for NORMAL mode, i to insert."
+                    } else {
+                        "Editor mode set to normal."
+                    },
+                    view,
+                );
+            }
             "heartbeats" => {
                 if !resolved.args.is_empty() {
                     view.editor

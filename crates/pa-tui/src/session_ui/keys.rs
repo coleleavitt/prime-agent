@@ -578,6 +578,13 @@ impl SessionUi {
             self.subagents_focused = false;
             self.update_subagent_summary(view);
         }
+        // Vim mode owns NORMAL mode's printable keys and INSERT mode's Escape before any app
+        // binding; everything it declines (Enter, chords, a bare NORMAL-mode Escape) falls through.
+        if view.editor.handle_vim_key(&id) {
+            self.clear_ctrl_c_hint();
+            self.dirty = true;
+            return Ok(());
+        }
         // The editor's own ctrl+v is otherwise unbound, so the exact match is
         // safe before any editor motion.
         if view

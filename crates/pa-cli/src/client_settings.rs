@@ -319,6 +319,13 @@ impl ClientSettings for CliClientSettings {
             .and_then(pa_tui::client_settings::StatusLineSettings::from_value)
     }
 
+    fn output_style(&self) -> String {
+        self.manager()
+            .get_output_style()
+            .unwrap_or("default")
+            .to_string()
+    }
+
     fn editor_mode(&self) -> pa_tui::client_settings::EditorMode {
         match self.manager().get_editor_mode() {
             "vim" => pa_tui::client_settings::EditorMode::Vim,

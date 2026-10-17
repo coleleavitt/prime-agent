@@ -238,6 +238,12 @@ pub trait ClientSettings: Send + Sync {
     fn status_line(&self) -> Option<StatusLineSettings> {
         None
     }
+    /// `outputStyle` (for the status line payload): the style's name,
+    /// `default` when unset.
+    #[must_use]
+    fn output_style(&self) -> String {
+        "default".to_string()
+    }
     /// `editorMode`: the prompt editor's key mode.
     #[must_use]
     fn editor_mode(&self) -> EditorMode {
