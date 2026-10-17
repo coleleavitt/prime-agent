@@ -65,7 +65,7 @@ runtime records the files a cell opens (an audit hook on `open`; reads and write
 (additive, kernel protocol unchanged). The `python_repl` result keeps those under the working directory in
 `details.accessedPaths`. At the turn boundary the session delivers the files of every directory between the
 working directory and each touched file, plus the conditional rules it matches, as one hidden
-`nested_instructions` row (`Contents of <path> (<kind>):` blocks) that the next model request carries. Each file
+`nested_instructions` row (a `[nested-instructions]` line, then `Contents of <path> (<kind>):` blocks) that the next model request carries. Each file
 is delivered once per session; a resumed session reads the delivered paths back from the rows, and a file whose
 row a compaction summarized away is delivered again on its next touch.
 

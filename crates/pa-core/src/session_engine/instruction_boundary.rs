@@ -21,6 +21,9 @@ use crate::resources::instructions::{NestedInstructions, render_delivered};
 /// The custom type of the hidden row carrying nested instruction files.
 pub const NESTED_INSTRUCTIONS_CUSTOM_TYPE: &str = "nested_instructions";
 
+/// The row text's first line: a harness message, not the user.
+const NESTED_INSTRUCTIONS_HEADER: &str = "[nested-instructions]";
+
 /// The project files a finished tool batch touched, in call order.
 #[must_use]
 pub(super) fn touched_paths(tool_results: &[ToolResultMessage]) -> Vec<PathBuf> {
@@ -46,8 +49,9 @@ pub(super) fn nested_row(
     if files.is_empty() {
         return None;
     }
-    let mut row =
-        super::plan_mode::hidden_row(NESTED_INSTRUCTIONS_CUSTOM_TYPE, &render_delivered(&files));
+    // The harness-message form the core prompt describes (`[<kind>]` first).
+    let text = format!("{NESTED_INSTRUCTIONS_HEADER}\n{}", render_delivered(&files));
+    let mut row = super::plan_mode::hidden_row(NESTED_INSTRUCTIONS_CUSTOM_TYPE, &text);
     row.details = Some(serde_json::json!({
         "paths": files
             .iter()
@@ -168,7 +172,8 @@ mod tests {
         assert_eq!(
             row.content,
             pa_types::ai::UserContent::Text(format!(
-                "Contents of {} (project instructions, checked into the codebase):\n\npkg rules",
+                "[nested-instructions]\nContents of {} (project instructions, checked into the \
+                 codebase):\n\npkg rules",
                 pkg_agents.display()
             ))
         );
