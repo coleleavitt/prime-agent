@@ -45,6 +45,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "prompts",
     "themes",
     "enableSkillCommands",
+    "fileCheckpointingEnabled",
     "bundledSkills",
     "enableBuiltinSkills",
     "terminal",
