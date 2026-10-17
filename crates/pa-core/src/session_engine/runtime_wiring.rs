@@ -519,6 +519,7 @@ fn convert_execute_result(
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
         executed_bash_commands: result.executed_bash_commands,
+        accessed_paths: result.accessed_paths,
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
     }

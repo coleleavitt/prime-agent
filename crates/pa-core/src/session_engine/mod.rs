@@ -61,12 +61,14 @@ pub mod turn_boundary;
 mod admission;
 mod compaction_arms;
 mod feature_boundary;
+mod instruction_boundary;
 mod terminal_inbox;
 mod wiring;
 
 use std::sync::Arc;
 
 pub use feature_boundary::FEATURE_CONTINUATION_CUSTOM_TYPE;
+pub use instruction_boundary::NESTED_INSTRUCTIONS_CUSTOM_TYPE;
 use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, ThinkingLevel};
 use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};

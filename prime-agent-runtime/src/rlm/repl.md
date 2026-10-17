@@ -125,7 +125,7 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   `kill_kernel_bash` returns `{id,killed}`. Neither action accepts a PID.
   Restoring a missing file reports `status:"ok"` with empty
   `restored`/`failed` lists and `reason:"snapshot not found"`. An `execute`
-  `done` may add `bashCommands` (see below).
+  `done` may add `bashCommands` and `accessedPaths` (see below).
 
 `bashCommands` is optional and additive, so the protocol version stays `4` and
 a host that predates it ignores it. It is present only on an `execute` `done`,
@@ -141,6 +141,19 @@ host (`parseKernelBashCommands` in `core/kernel/repl-manager.ts`) keeps the
 well-formed entries and exposes `command`, `exitCode` and `commandTruncated` on
 the `ipython` tool result's `details.bashCommands`, where Workspace Recall reads
 build claims from them.
+
+`accessedPaths` is optional and additive in the same way (no protocol bump).
+It lists, once each in first-seen order and at most 256, the absolute paths
+of the files code in the cell's context opened (a `sys.addaudithook` `open`
+hook, reads and writes alike, `edit` included), minus the interpreter and
+venv trees and the runtime package; it is never sent empty. The host keeps
+the ones under the session's working directory (at most 64) as
+`details.accessedPaths` on the `python_repl` result, where nested
+instruction discovery (`pa-core` `session_engine::instruction_boundary`)
+reads them: the AGENTS.md/CLAUDE.md files of directories below the working
+directory and the path-scoped rules those files match join the run as a
+hidden `nested_instructions` row. Files opened by `bash()` subprocesses are
+not observed.
 
 Before a cell's `done`, the runtime drains both channels: tagged Python-level
 writes ship synchronously from the writing thread, and the fd pipes are fenced

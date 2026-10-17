@@ -990,6 +990,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
         initial_messages.as_deref().unwrap_or_default(),
     );
+    // Nested instruction files a resumed conversation already carries are
+    // not delivered again.
+    let nested_instructions = resources.nested_instructions.clone();
+    if let Some(nested) = &nested_instructions {
+        nested.mark_delivered(&super::instruction_boundary::delivered_paths(
+            initial_messages.as_deref().unwrap_or_default(),
+        ));
+    }
     // Whether a queued steer is waiting: a run that ends with one continues
     // on it at once, so the features hear no agent stop.
     let steering_probe = config.queued_steering_probe.clone();
@@ -1025,9 +1033,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             // A funded subagent that spent its grant stops at this
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
+            let nested = nested_instructions.clone();
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
+                let nested = nested.clone();
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
@@ -1055,10 +1065,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // run goes on past it (the copy is made only for them).
                     let feature_turn =
                         (!crate::features::installed().is_empty()).then(|| context.clone());
+                    // The files this batch touched (nested instruction discovery).
+                    let touched = if nested.is_some() {
+                        super::instruction_boundary::touched_paths(&context.tool_results)
+                    } else {
+                        Vec::new()
+                    };
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
+                    if let (false, Some(nested)) = (stop, &nested) {
+                        super::instruction_boundary::after_turn(&fold_slot, nested, &touched);
+                    }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
                     }

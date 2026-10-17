@@ -67,6 +67,9 @@ pub struct ExecuteResult {
     /// The `bash()` commands that finished while the cell ran, with exit
     /// codes; reported to observers as the `bashCommands` host fact.
     pub executed_bash_commands: Vec<crate::kernel::shared::KernelExecutedBashCommand>,
+    /// The files the cell opened (absolute); the tool keeps the ones under
+    /// the working directory as `accessedPaths` on the result details.
+    pub accessed_paths: Vec<String>,
     /// The per-cell execution timeout fired and interrupted the cell.
     pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
@@ -600,6 +603,9 @@ pub async fn execute_ipython(
     if let Some(background) = &r.background_output {
         details["backgroundOutput"] = json!(background);
     }
+    if !r.accessed_paths.is_empty() {
+        details["accessedPaths"] = json!(r.accessed_paths);
+    }
     if let Some(error) = &r.error {
         details["error"] = json!({
             "ename": error.ename,
@@ -669,12 +675,22 @@ fn kernel_crash_result(
 
 /// The `python_repl` tool definition: exact name, schema, and description.
 #[must_use]
-pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -> ToolDefinition {
+pub fn create_ipython_tool_definition(cwd: &str, options: IpythonToolOptions) -> ToolDefinition {
     let options = Arc::new(options);
+    // The kernel reports resolved paths: compare against the resolved
+    // working directory too.
+    let roots: Arc<Vec<std::path::PathBuf>> = Arc::new({
+        let cwd = std::path::PathBuf::from(cwd);
+        let resolved = std::fs::canonicalize(&cwd)
+            .ok()
+            .filter(|resolved| *resolved != cwd);
+        std::iter::once(cwd).chain(resolved).collect()
+    });
     let execute: crate::tools::tool_definition::ExecuteFn = {
         let options = options;
         Arc::new(move |tool_call_id, params, signal, on_update| {
             let options = options.clone();
+            let roots = Arc::clone(&roots);
             let on_late_sent_agent_message =
                 options.on_late_sent_agent_message.as_ref().map(|handler| {
                     let handler = std::sync::Arc::clone(handler);
@@ -688,14 +704,18 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
                     .and_then(serde_json::Value::as_str)
                     .ok_or_else(|| anyhow::anyhow!("python_repl tool requires a code string"))?
                     .to_string();
-                execute_ipython(
+                let mut result = execute_ipython(
                     &options,
                     &code,
                     signal,
                     on_update,
                     on_late_sent_agent_message,
                 )
-                .await
+                .await?;
+                if let Some(details) = result.details.as_mut() {
+                    keep_project_accessed_paths(details, &roots);
+                }
+                Ok(result)
             })
         })
     };
@@ -714,9 +734,68 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
     }
 }
 
+/// The most `accessedPaths` one result records.
+pub const MAX_RECORDED_ACCESSED_PATHS: usize = 64;
+
+/// Narrow the details' `accessedPaths` to the files under the working
+/// directory (`roots`: as given and resolved; the ones
+/// nested instruction discovery reads), capped; drop the field when none
+/// remain, so the transcript records only project files.
+fn keep_project_accessed_paths(details: &mut serde_json::Value, roots: &[std::path::PathBuf]) {
+    let Some(object) = details.as_object_mut() else {
+        return;
+    };
+    let kept: Vec<serde_json::Value> = object
+        .get("accessedPaths")
+        .and_then(serde_json::Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter(|path| {
+                    path.as_str().is_some_and(|path| {
+                        roots
+                            .iter()
+                            .any(|root| std::path::Path::new(path).starts_with(root))
+                    })
+                })
+                .take(MAX_RECORDED_ACCESSED_PATHS)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if kept.is_empty() {
+        object.remove("accessedPaths");
+    } else {
+        object.insert("accessedPaths".to_string(), serde_json::Value::Array(kept));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accessed_paths_keep_only_project_files_capped() {
+        let mut details = json!({
+            "status": "ok",
+            "accessedPaths": ["/repo/a.rs", "/elsewhere/b.rs", "/repo/sub/c.md", "/repository/d"],
+        });
+        keep_project_accessed_paths(&mut details, &[std::path::PathBuf::from("/repo")]);
+        assert_eq!(
+            details,
+            json!({ "status": "ok", "accessedPaths": ["/repo/a.rs", "/repo/sub/c.md"] })
+        );
+        let mut outside = json!({ "status": "ok", "accessedPaths": ["/elsewhere/b.rs"] });
+        keep_project_accessed_paths(&mut outside, &[std::path::PathBuf::from("/repo")]);
+        assert_eq!(outside, json!({ "status": "ok" }));
+        let many: Vec<String> = (0..100).map(|i| format!("/repo/{i}")).collect();
+        let mut capped = json!({ "accessedPaths": many });
+        keep_project_accessed_paths(&mut capped, &[std::path::PathBuf::from("/repo")]);
+        assert_eq!(
+            capped["accessedPaths"].as_array().map(Vec::len),
+            Some(MAX_RECORDED_ACCESSED_PATHS)
+        );
+    }
 
     #[test]
     fn sent_agent_message_json_matches_ts_wire_shape() {
