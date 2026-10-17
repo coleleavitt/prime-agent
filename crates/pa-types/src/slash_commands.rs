@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 11] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 12] = [
     "compact",
     "refine",
     "goal",
@@ -17,6 +17,7 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 11] = [
     "ultracode",
     "output-style",
     "add-dir",
+    "memory",
 ];
 
 /// Builtin commands that run the bundled skill of the same name: the
@@ -494,6 +495,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         argument_hint: Some("[<int> [--global]]"),
         aliases: &[],
         takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "memory",
+        description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
     },
     BuiltinSlashCommand {
         name: "rlm-token-budget",

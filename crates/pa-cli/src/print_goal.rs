@@ -1307,6 +1307,9 @@ mod tests {
                     "keepRecentTokens": 10,
                 },
                 "autoRefine": { "enabled": false },
+                // The threshold arithmetic is pinned to the prompt without
+                // the auto-memory section.
+                "autoMemoryEnabled": false,
             }),
         )
         .await;

@@ -205,6 +205,7 @@ fn children(socket: &Path, agent_dir: &Path, script: &Path, depth: u32) -> Super
     );
     sessions.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: depth,
         rlm_max_depth: 2,
         // Off-catalog on purpose: scripted children do not resolve models.

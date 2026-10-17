@@ -257,6 +257,10 @@ impl Inner {
                     .as_ref()
                     .map(crate::kernel::shared::KernelExecutedBashCommand::parse_done_frame)
                     .unwrap_or_default(),
+                accessed_paths: done_fields
+                    .as_ref()
+                    .map(crate::kernel::shared::parse_accessed_paths)
+                    .unwrap_or_default(),
                 background_output: (!background_output.is_empty()).then_some(background_output),
                 status,
                 error: buffers.error.take(),

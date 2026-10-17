@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/rlm-token-budget`,
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/memory`, `/rlm-token-budget`,
 //! `/output-style` and `/add-dir`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
@@ -254,6 +254,7 @@ pub async fn execute_session_command(
         "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
         "output-style" => execute_output_style(engine, command, &mut execution),
         "add-dir" => execute_add_dir(engine, command, &mut execution).await,
+        "memory" => execute_memory(engine, command, &mut execution),
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -362,6 +363,23 @@ async fn execute_context_limit(
 /// budget's pool, this session's spend, what is left to grant, and the
 /// grant each spawned subagent drew. The budget is configured by the
 /// global `rlmTokenBudget` setting; the command only reports.
+/// `/memory`: the session's instruction files and auto memory
+/// ([`super::memory_command`]); display-only.
+fn execute_memory(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err("Usage: /memory".to_string());
+    }
+    let text = super::memory_command::memory_report(&engine.instructions);
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
 fn execute_rlm_token_budget(
     engine: &SessionEngine,
     command: &SessionSlashCommand,

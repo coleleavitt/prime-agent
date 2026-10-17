@@ -139,6 +139,8 @@ pub struct SessionEngine {
     pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub agents_files: Vec<crate::resources::ContextFile>,
+    /// The instruction files and auto memory `/memory` reports.
+    pub instructions: super::memory_command::SessionInstructions,
     pub system_prompt: String,
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
@@ -418,10 +420,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         no_skills: config.resource_exclusions.no_skills,
         no_prompt_templates: config.resource_exclusions.no_prompt_templates,
         no_context_files: config.resource_exclusions.no_context_files,
+        // Auto memory is a top-level session's (a subagent's prompt stays
+        // task-focused, as in Claude Code).
+        auto_memory: config.rlm_depth.unwrap_or(0) == 0,
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
     })?;
+    // The model writes its memory files from the kernel: a `workspace-write`
+    // sandbox keeps the auto-memory directory writable.
+    let sandbox = match (sandbox, &resources.auto_memory) {
+        (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
+        (sandbox, _) => sandbox,
+    };
 
     let model = config
         .model
@@ -928,6 +939,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .iter()
                 .map(|file| (file.path.display().to_string(), file.content.clone()))
                 .collect(),
+            auto_memory: resources
+                .auto_memory
+                .as_ref()
+                .map(crate::resources::auto_memory::memory_prompt_section),
             skills: visible_skills.clone(),
             selected_tools: Some(
                 active_tool_names
@@ -1130,6 +1145,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
         initial_messages.as_deref().unwrap_or_default(),
     );
+    // Nested instruction files a resumed conversation already carries are
+    // not delivered again.
+    let nested_instructions = resources.nested_instructions.clone();
+    if let Some(nested) = &nested_instructions {
+        nested.mark_delivered(&super::instruction_boundary::delivered_paths(
+            initial_messages.as_deref().unwrap_or_default(),
+        ));
+    }
     // Whether a queued steer is waiting: a run that ends with one continues
     // on it at once, so the features hear no agent stop.
     let steering_probe = config.queued_steering_probe.clone();
@@ -1167,9 +1190,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             let budget = rlm_token_budget.clone();
             let usage_limit = usage_limit.clone();
             let goal_evaluator = goal_evaluator.clone();
+            let nested = nested_instructions.clone();
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
+                let nested = nested.clone();
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
@@ -1203,6 +1228,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // boundary only when the run goes on past it, like the features.
                     let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
                         .then(|| context.clone());
+                    // The files this batch touched (nested instruction discovery).
+                    let touched = if nested.is_some() {
+                        super::instruction_boundary::touched_paths(&context.tool_results)
+                    } else {
+                        Vec::new()
+                    };
+                    // The nested files the conversation still carries (a
+                    // compaction may have summarized some away).
+                    let live = if touched.is_empty() {
+                        Vec::new()
+                    } else {
+                        super::instruction_boundary::delivered_paths(&context.context.messages)
+                    };
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
@@ -1214,6 +1252,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                         if let Some(evaluator) = &goal_evaluator {
                             super::goal_evaluator::after_turn(evaluator, &fold_slot, &turn).await;
                         }
+                    }
+                    if let (false, Some(nested)) = (stop, &nested) {
+                        super::instruction_boundary::after_turn(
+                            &fold_slot, nested, &touched, &live,
+                        );
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
@@ -1474,6 +1517,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,
         agents_files: resources.agents_files,
+        instructions: super::memory_command::SessionInstructions {
+            files: resources.instruction_files,
+            nested: resources.nested_instructions,
+            auto_memory: resources.auto_memory,
+        },
         system_prompt,
         goal_driver,
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),

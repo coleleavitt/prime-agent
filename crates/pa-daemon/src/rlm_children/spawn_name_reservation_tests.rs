@@ -603,3 +603,54 @@ async fn an_agent_spawn_carries_its_definition_and_its_worktree_goes_with_the_de
         "the unchanged worktree is removed with the child"
     );
 }
+
+/// A parent run under `--no-context-files` (and the other resource
+/// exclusions) creates every child with the same exclusions: before, a
+/// child loaded the AGENTS.md/CLAUDE.md files the parent was told to skip.
+#[tokio::test]
+async fn a_child_create_inherits_the_parents_resource_exclusions() {
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions =
+        sessions_with_gated_supervisor(create_seen_tx, verdict_rx, rename_seen_tx, None).await;
+    let mut seen = Vec::new();
+    for (name, exclusions) in [
+        (
+            "plain",
+            pa_types::daemon::SessionResourceExclusions::default(),
+        ),
+        (
+            "bare",
+            pa_types::daemon::SessionResourceExclusions {
+                no_skills: false,
+                no_prompt_templates: true,
+                no_context_files: true,
+            },
+        ),
+    ] {
+        sessions.set_identity(ParentIdentity {
+            model: Some("mock/mock-1".to_string()),
+            cwd: Some(std::env::temp_dir().to_string_lossy().to_string()),
+            resource_exclusions: exclusions,
+            ..ParentIdentity::with_default_depth()
+        });
+        let spawned = tokio::spawn(sessions.spawn(spawn_request(name, "work")));
+        let create = create_seen_rx.recv().await.expect("the child create");
+        let config = &create["config"];
+        seen.push((
+            config["noSkills"].clone(),
+            config["noPromptTemplates"].clone(),
+            config["noContextFiles"].clone(),
+        ));
+        verdict_tx.send(false).expect("refuse the create");
+        let _ = spawned.await.expect("spawn task");
+    }
+    assert_eq!(
+        seen,
+        vec![
+            (Value::Null, Value::Null, Value::Null),
+            (Value::Null, json!(true), json!(true)),
+        ]
+    );
+}

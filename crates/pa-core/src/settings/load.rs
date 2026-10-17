@@ -66,6 +66,8 @@ const KNOWN_FIELDS: &[&str] = &[
     "repetitionGuard",
     "rlmTokenBudget",
     "fallbackModels",
+    "autoMemoryEnabled",
+    "claudeCodeUserInstructions",
     "sandbox",
     "outputStyle",
     "editorMode",

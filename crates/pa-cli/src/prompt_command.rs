@@ -102,6 +102,8 @@ fn assemble_breakdown(
     let resources = load_resources(ResourceLoaderOptions {
         extra_builtin_skill_overrides: skill_overrides,
         system_prompt: None,
+        // The dump shows a top-level session's prompt.
+        auto_memory: true,
         ..ResourceLoaderOptions::new(cwd.to_path_buf(), agent_dir)
     })?;
     let breakdown = pa_core::prompts::system_prompt::system_prompt_breakdown(
@@ -115,6 +117,10 @@ fn assemble_breakdown(
                 .iter()
                 .map(|file| (file.path.display().to_string(), file.content.clone()))
                 .collect(),
+            auto_memory: resources
+                .auto_memory
+                .as_ref()
+                .map(pa_core::resources::auto_memory::memory_prompt_section),
             skills: resources.skills.clone(),
             // The shipped model-tool surface: `python_repl` only; bash/edit are kernel-resident
             // programmatic tools.

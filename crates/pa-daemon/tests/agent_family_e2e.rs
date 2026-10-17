@@ -420,6 +420,7 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
     );
     children.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 0,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),
@@ -750,6 +751,7 @@ async fn family_edges_never_cross_families_end_to_end() {
         );
         children.set_identity(ParentIdentity {
             sandbox: None,
+            resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
             rlm_depth: 0,
             rlm_max_depth: 2,
             model: Some("faux/faux-1".to_string()),
@@ -896,6 +898,7 @@ async fn family_edges_never_cross_families_end_to_end() {
     );
     kid_children.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 1,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),
@@ -1173,6 +1176,7 @@ async fn parent_renames_a_child_end_to_end() {
     );
     children.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 0,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),

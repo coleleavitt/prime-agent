@@ -78,6 +78,9 @@ pub struct BuildSystemPromptOptions<'a> {
     pub messages_path: Option<String>,
     /// Pre-loaded context files (path, content).
     pub context_files: Vec<(String, String)>,
+    /// The auto-memory section (its `MEMORY.md` index included), when the
+    /// session carries auto memory.
+    pub auto_memory: Option<String>,
     pub skills: Vec<Skill>,
     /// Whether to include the subagent surface in this session.
     pub allow_recursion: Option<bool>,
@@ -174,9 +177,9 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         .sum::<usize>()
         + 2 * segments.len().saturating_sub(1);
 
-    // The dynamic tail, in fixed order: packages -> project context ->
-    // skills inventory -> MCP servers -> environment -> session role ->
-    // agent types -> appended prompt.
+    // The dynamic tail, in fixed order: output style -> packages -> project
+    // context -> auto memory -> skills inventory -> MCP servers -> environment
+    // -> session role -> agent types -> appended prompt.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
@@ -204,6 +207,18 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
             "project-context",
             "AGENTS.md discovery",
             context,
+        ));
+    }
+
+    if let Some(memory) = options
+        .auto_memory
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        segments.push(PromptSegment::dynamic_segment(
+            "auto-memory",
+            "auto-memory directory",
+            memory.to_string(),
         ));
     }
 
