@@ -349,6 +349,17 @@ fn substitute_template<'a>(
     Some((template, expanded))
 }
 
+/// Whether `text` invokes a Claude Code custom command (`.claude/commands`)
+/// among `templates` (the `custom_command_use_count` telemetry counter).
+#[must_use]
+pub fn is_claude_command(text: &str, templates: &[PromptTemplate]) -> bool {
+    parse_slash_command(text).is_some_and(|(name, _)| {
+        templates.iter().any(|template| {
+            template.name == name && matches!(template.arguments, TemplateArguments::ClaudeCode(_))
+        })
+    })
+}
+
 /// Expand `/name args...` into the matching template, else return the text.
 /// Shell blocks in a Claude Code command stay unexpanded (classification
 /// never runs commands); admission uses [`expand_prompt_template_with_shell`].
@@ -439,6 +450,32 @@ mod tests {
         assert_eq!(
             expand_prompt_template("/unknown x", std::slice::from_ref(&template)),
             "/unknown x"
+        );
+    }
+
+    #[test]
+    fn only_a_claude_code_command_counts_as_one() {
+        let template = |name: &str, arguments| PromptTemplate {
+            name: name.to_string(),
+            description: String::new(),
+            argument_hint: None,
+            content: "body".to_string(),
+            source_info: create_synthetic_source_info("/p", "local", SourceScope::User, None),
+            file_path: format!("/p/{name}.md"),
+            arguments,
+        };
+        let templates = [
+            template("own", TemplateArguments::Positional),
+            template(
+                "cc",
+                TemplateArguments::ClaudeCode(
+                    super::super::claude_commands::ClaudeCommandOptions::default(),
+                ),
+            ),
+        ];
+        assert_eq!(
+            ["/cc x", "/own x", "/missing", "cc"].map(|text| is_claude_command(text, &templates)),
+            [true, false, false, false]
         );
     }
 

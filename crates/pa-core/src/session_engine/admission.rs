@@ -171,6 +171,11 @@ impl AgentSession {
         }
         // A Claude Code command's shell blocks run only now, once the text is
         // known to be a prompt (classification above never runs them).
+        if expand && crate::skills::is_claude_command(&skill_expanded, &self.prompt_templates) {
+            if let Some(telemetry) = &self.skill_telemetry {
+                telemetry.note_custom_command_used();
+            }
+        }
         let normalized = if expand {
             let cwd = self.session.lock().await.get_cwd().to_path_buf();
             crate::skills::expand_prompt_template_with_shell(

@@ -8,6 +8,7 @@ description = "Observer agents: a background model reads a digest of each turn a
 [dependencies]
 pa-core = { path = "../pa-core" }
 pa-agent = { workspace = true }
+pa-telemetry = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

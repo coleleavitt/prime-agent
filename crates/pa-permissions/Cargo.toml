@@ -8,6 +8,7 @@ description = "Claude Code-compatible permission rules and modes: allow/ask/deny
 [dependencies]
 pa-core = { path = "../pa-core" }
 pa-agent = { path = "../pa-agent" }
+pa-telemetry = { workspace = true }
 pa-types = { path = "../pa-types" }
 serde_json.workspace = true
 tracing.workspace = true

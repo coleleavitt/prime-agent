@@ -26,6 +26,7 @@ pub use prompt_templates::{
     TemplateArguments,
     expand_prompt_template,
     expand_prompt_template_with_shell,
+    is_claude_command,
     load_prompt_templates,
     parse_command_args,
     substitute_args,

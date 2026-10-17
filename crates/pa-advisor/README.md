@@ -26,7 +26,7 @@ its "# Advisor Tool" guidance), `5bcjy17x` (`/advisor`); flag `CLAUDE_CODE_ENABL
 - Not Anthropic's server-side advisor beta: the call is host-side, so any configured provider can advise, and the
   advisor reads a rendered transcript rather than the raw request.
 - No `/advisor` picker and no capability ranking of advisor versus base model.
-- No adoption telemetry yet (a new event bumps the `pa-telemetry` schema; left to the merge).
+- Telemetry: `advisor_ask` (schema v5) per consultation: outcome (`ok`/`error`/`invalid`) and duration only.
 
 ## Public API
 

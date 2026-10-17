@@ -67,6 +67,30 @@ pub fn resolve_sources(context: &SessionFeatureContext) -> (SourcePaths, bool) {
 pub struct PermissionsFeature {
     resolver: SourceResolver,
     sessions: Mutex<HashMap<String, Arc<Mutex<SessionState>>>>,
+    /// Each session's decision counts (the `permissions_session` event).
+    tallies: Arc<Mutex<HashMap<String, Tally>>>,
+}
+
+/// The adoption event a governed session sends when it ends.
+pub const PERMISSIONS_SESSION_EVENT: &str = "permissions_session";
+
+/// One session's decision counts.
+#[derive(Debug, Default, Clone, Copy)]
+struct Tally {
+    allowed: u64,
+    asked: u64,
+    denied: u64,
+    remembered: u64,
+}
+
+fn count(tallies: &Mutex<HashMap<String, Tally>>, session_id: &str, update: fn(&mut Tally)) {
+    update(
+        tallies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(session_id.to_string())
+            .or_default(),
+    );
 }
 
 impl Default for PermissionsFeature {
@@ -88,6 +112,7 @@ impl PermissionsFeature {
         PermissionsFeature {
             resolver,
             sessions: Mutex::default(),
+            tallies: Arc::default(),
         }
     }
 
@@ -132,17 +157,29 @@ impl PermissionsFeature {
             }
             state.policy().decide(&action)
         };
+        let session_id = context.session_id.as_str();
         match decision {
-            Decision::Allow => Box::pin(async { FeatureVerdict::Allow }),
-            Decision::Deny { reason } => Box::pin(async move { FeatureVerdict::Block(reason) }),
+            Decision::Allow => {
+                count(&self.tallies, session_id, |tally| tally.allowed += 1);
+                Box::pin(async { FeatureVerdict::Allow })
+            }
+            Decision::Deny { reason } => {
+                count(&self.tallies, session_id, |tally| tally.denied += 1);
+                Box::pin(async move { FeatureVerdict::Block(reason) })
+            }
             Decision::Ask {
                 reason,
                 remember: None,
-            } => Box::pin(async move { FeatureVerdict::Ask(reason) }),
+            } => {
+                count(&self.tallies, session_id, |tally| tally.asked += 1);
+                Box::pin(async move { FeatureVerdict::Ask(reason) })
+            }
             Decision::Ask {
                 reason,
                 remember: Some(rule),
             } => {
+                count(&self.tallies, session_id, |tally| tally.asked += 1);
+                let tallies = Arc::clone(&self.tallies);
                 let context = Arc::clone(context);
                 Box::pin(async move {
                     let described = actions::describe(&action, &context.cwd);
@@ -157,6 +194,7 @@ impl PermissionsFeature {
                     match answer {
                         ConfirmationAnswer::Allowed => FeatureVerdict::Allow,
                         ConfirmationAnswer::AllowedAlways => {
+                            count(&tallies, &context.session_id, |tally| tally.remembered += 1);
                             let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
                             let saved = state.add_rule(RuleBehavior::Allow, &rule);
                             tracing::info!(target: "pa_permissions", ?saved, rule, "always allow");
@@ -178,6 +216,41 @@ impl PermissionsFeature {
             }
         }
     }
+}
+
+/// The `permissions_session` properties, or `None` for a session the
+/// feature never governed (no rules, the default mode, nothing asked or
+/// refused).
+fn session_properties(state: &SessionState, tally: Tally) -> Option<pa_telemetry::Properties> {
+    let mut rules = [0u64; 3];
+    for rule in state.settings.rules.iter().chain(&state.session_rules) {
+        let slot = match rule.behavior {
+            RuleBehavior::Allow => 0,
+            RuleBehavior::Ask => 1,
+            RuleBehavior::Deny => 2,
+        };
+        rules[slot] += 1;
+    }
+    let governed = rules.iter().any(|count| *count > 0)
+        || state.mode() != mode::PermissionMode::Default
+        || tally.asked + tally.denied + tally.remembered > 0;
+    if !governed {
+        return None;
+    }
+    let mut properties = pa_telemetry::Properties::new();
+    properties.set("mode", state.mode().as_str().into());
+    for (key, value) in [
+        ("allow_rules", rules[0]),
+        ("ask_rules", rules[1]),
+        ("deny_rules", rules[2]),
+        ("allowed_count", tally.allowed),
+        ("asked_count", tally.asked),
+        ("denied_count", tally.denied),
+        ("remembered_count", tally.remembered),
+    ] {
+        properties.set(key, value.into());
+    }
+    Some(properties)
 }
 
 impl SessionFeature for PermissionsFeature {
@@ -213,10 +286,23 @@ impl SessionFeature for PermissionsFeature {
     }
 
     fn on_session_end(&self, context: &Arc<SessionFeatureContext>, _reason: &str) {
-        self.sessions
+        let session = self
+            .sessions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&context.session_id);
+        let tally = self
+            .tallies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&context.session_id)
+            .unwrap_or_default();
+        if let (Some(session), Some(telemetry)) = (session, &context.telemetry) {
+            let state = session.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(properties) = session_properties(&state, tally) {
+                telemetry.track(PERMISSIONS_SESSION_EVENT, &properties);
+            }
+        }
     }
 
     fn review_tool_call(

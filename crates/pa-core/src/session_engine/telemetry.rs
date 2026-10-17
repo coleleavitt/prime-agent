@@ -394,6 +394,7 @@ pub struct SessionCounters {
 #[derive(Default)]
 struct CounterValues {
     skill_use_count: u64,
+    custom_command_use_count: u64,
     mcp_connector_use_count: u64,
     kernel_bootstrap_count: u64,
     kernel_bootstrap_cold_count: u64,
@@ -522,6 +523,7 @@ impl SessionCounters {
         self.with(|values| {
             for (key, value) in [
                 ("skill_use_count", values.skill_use_count),
+                ("custom_command_use_count", values.custom_command_use_count),
                 ("mcp_connector_use_count", values.mcp_connector_use_count),
                 ("kernel_bootstrap_count", values.kernel_bootstrap_count),
                 (
@@ -912,6 +914,14 @@ impl SessionTelemetry {
     /// uploads.
     pub fn note_skill_used(&self) {
         self.counters.with(|values| values.skill_use_count += 1);
+    }
+
+    /// An admitted prompt a Claude Code custom command (`.claude/commands`)
+    /// expanded, counted as `custom_command_use_count` on `agent session
+    /// ended`; the command's name and text never upload.
+    pub fn note_custom_command_used(&self) {
+        self.counters
+            .with(|values| values.custom_command_use_count += 1);
     }
 
     /// One durable child-usage attribution row landed in the parent

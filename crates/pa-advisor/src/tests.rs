@@ -113,3 +113,41 @@ async fn the_advisor_reads_the_conversation_and_answers() {
         "advisor.ask question must be a non-empty string"
     );
 }
+
+/// Each consultation sends `advisor_ask` with its outcome only.
+#[tokio::test]
+async fn each_consultation_reports_its_outcome() {
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let telemetry = {
+        let recorded = Arc::clone(&recorded);
+        pa_core::features::FeatureTelemetry::new(move |name, properties| {
+            recorded.lock().unwrap().push((
+                name.to_string(),
+                properties.get("outcome").cloned(),
+                properties.get("duration_ms").is_some(),
+            ));
+        })
+    };
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    provider.push_text_turn("Fine.");
+    let advisor = feature(&provider, Some("anthropic/strong"));
+    let mut context = (*context("advisor-telemetry")).clone();
+    context.telemetry = Some(telemetry);
+    let context = Arc::new(context);
+    let mut handlers = HostRequestHandlers::default();
+    advisor.register_host_handlers(&context, &mut handlers);
+    let handler = handlers.get(ADVISOR_REQUEST).unwrap().clone();
+    for question in ["ok?", ""] {
+        let _ = handler(HostRequestPayload {
+            data: json!({ "type": ADVISOR_REQUEST, "question": question }),
+        })
+        .await;
+    }
+    assert_eq!(
+        *recorded.lock().unwrap(),
+        vec![
+            (ADVISOR_ASK_EVENT.to_string(), Some(json!("ok")), true),
+            (ADVISOR_ASK_EVENT.to_string(), Some(json!("invalid")), true),
+        ]
+    );
+}

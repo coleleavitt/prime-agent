@@ -23,6 +23,7 @@
 mod digest;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 pub use digest::{
@@ -87,7 +88,20 @@ struct ObservedSession {
     pending: Mutex<Vec<ActivityItem>>,
     /// The observer's conversation: (digest, reply) pairs, oldest first.
     history: tokio::sync::Mutex<Vec<(String, String)>>,
+    /// The session's adoption counts (`observer_session`).
+    tally: Tally,
 }
+
+/// What the observer did for one session (counts only).
+#[derive(Default)]
+struct Tally {
+    digests: AtomicU64,
+    reports: AtomicU64,
+    failed: AtomicU64,
+}
+
+/// The adoption event a watched session sends when it ends.
+pub const OBSERVER_SESSION_EVENT: &str = "observer_session";
 
 /// The feature.
 pub struct ObserverFeature {
@@ -220,6 +234,7 @@ async fn deliver(session_id: String, observed: Arc<ObservedSession>, digest: Str
     {
         Ok(reply) => reply,
         Err(error) => {
+            observed.tally.failed.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(target: "pa_observer", "observer call failed: {error:#}");
             return;
         }
@@ -229,6 +244,7 @@ async fn deliver(session_id: String, observed: Arc<ObservedSession>, digest: Str
     history.drain(..excess);
     drop(history);
     if let Some(report) = report_of(&reply) {
+        observed.tally.reports.fetch_add(1, Ordering::Relaxed);
         let delivered = deliver_feature_notice(
             &session_id,
             &FeatureNotice {
@@ -265,6 +281,7 @@ impl SessionFeature for ObserverFeature {
                     model,
                     pending: Mutex::new(Vec::new()),
                     history: tokio::sync::Mutex::new(Vec::new()),
+                    tally: Tally::default(),
                 }),
             );
     }
@@ -304,14 +321,27 @@ impl SessionFeature for ObserverFeature {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        observed.tally.digests.fetch_add(1, Ordering::Relaxed);
         runtime.spawn(deliver(context.session_id.clone(), observed, digest));
     }
 
     fn on_session_end(&self, context: &Arc<SessionFeatureContext>, _reason: &str) {
-        self.sessions
+        let observed = self
+            .sessions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&context.session_id);
+        if let (Some(observed), Some(telemetry)) = (observed, &context.telemetry) {
+            let mut properties = pa_telemetry::Properties::new();
+            for (key, count) in [
+                ("digest_count", &observed.tally.digests),
+                ("report_count", &observed.tally.reports),
+                ("failed_count", &observed.tally.failed),
+            ] {
+                properties.set(key, count.load(Ordering::Relaxed).into());
+            }
+            telemetry.track(OBSERVER_SESSION_EVENT, &properties);
+        }
     }
 }
 

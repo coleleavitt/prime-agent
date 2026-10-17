@@ -8,6 +8,7 @@ description = "Advisor escalation: the agent asks a stronger configured model fo
 [dependencies]
 pa-core = { path = "../pa-core" }
 pa-agent = { workspace = true }
+pa-telemetry = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

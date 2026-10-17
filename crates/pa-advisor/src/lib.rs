@@ -111,6 +111,27 @@ fn validated_question(payload: &Value) -> anyhow::Result<String> {
     Ok(question.to_string())
 }
 
+/// The adoption event (`advisor_ask`): outcome and duration only.
+fn track_ask(
+    telemetry: Option<&pa_core::features::FeatureTelemetry>,
+    outcome: &'static str,
+    started: std::time::Instant,
+) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    let mut properties = pa_telemetry::Properties::new();
+    properties.set("outcome", Value::from(outcome));
+    properties.set(
+        "duration_ms",
+        Value::from(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+    );
+    telemetry.track(ADVISOR_ASK_EVENT, &properties);
+}
+
+/// The adoption event one consultation sends.
+pub const ADVISOR_ASK_EVENT: &str = "advisor_ask";
+
 impl SessionFeature for AdvisorFeature {
     fn name(&self) -> &'static str {
         "advisor"
@@ -127,6 +148,7 @@ impl SessionFeature for AdvisorFeature {
         let model = (self.model_factory)(context, &selector);
         let transcripts = Arc::clone(&self.transcripts);
         let session_id = context.session_id.clone();
+        let telemetry = context.telemetry.clone();
         handlers.register(
             ADVISOR_REQUEST,
             host_handler(move |payload| {
@@ -134,8 +156,16 @@ impl SessionFeature for AdvisorFeature {
                 let transcripts = Arc::clone(&transcripts);
                 let session_id = session_id.clone();
                 let selector = selector.clone();
+                let telemetry = telemetry.clone();
                 Box::pin(async move {
-                    let question = validated_question(&payload.data)?;
+                    let started = std::time::Instant::now();
+                    let question = match validated_question(&payload.data) {
+                        Ok(question) => question,
+                        Err(error) => {
+                            track_ask(telemetry.as_ref(), "invalid", started);
+                            return Err(error);
+                        }
+                    };
                     let transcript = {
                         let transcripts =
                             transcripts.lock().unwrap_or_else(PoisonError::into_inner);
@@ -152,8 +182,13 @@ impl SessionFeature for AdvisorFeature {
                         .await
                         .map_err(|error| {
                             anyhow::anyhow!("the advisor ({selector}) failed: {error:#}")
-                        })?;
-                    Ok(json!({ "advice": advice, "model": selector }))
+                        });
+                    track_ask(
+                        telemetry.as_ref(),
+                        if advice.is_ok() { "ok" } else { "error" },
+                        started,
+                    );
+                    Ok(json!({ "advice": advice?, "model": selector }))
                 })
             }),
         );

@@ -130,7 +130,18 @@ async fn silence_delivers_nothing_and_a_report_reaches_the_observed_session() {
     };
     pa_core::features::register_feature_notice_sink(session_id, &sink);
     let observer = feature(&provider, true);
-    let context = context(session_id, 0);
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let mut context = (*context(session_id, 0)).clone();
+    context.telemetry = Some({
+        let recorded = Arc::clone(&recorded);
+        pa_core::features::FeatureTelemetry::new(move |name, properties| {
+            recorded
+                .lock()
+                .unwrap()
+                .push((name.to_string(), properties));
+        })
+    });
+    let context = Arc::new(context);
     observer.on_session_start(&context, &[]);
 
     observer.on_message_end(&context, &user("render the docs"));
@@ -184,4 +195,18 @@ async fn silence_delivers_nothing_and_a_report_reaches_the_observed_session() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(provider.calls().len(), 2);
     drop(sink);
+    // The session's end reports its counts (`observer_session`).
+    observer.on_session_end(&context, "quit");
+    let mut expected = pa_telemetry::Properties::new();
+    for (key, count) in [
+        ("digest_count", 2u64),
+        ("report_count", 1),
+        ("failed_count", 0),
+    ] {
+        expected.set(key, count.into());
+    }
+    assert_eq!(
+        *recorded.lock().unwrap(),
+        vec![(OBSERVER_SESSION_EVENT.to_string(), expected)]
+    );
 }

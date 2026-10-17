@@ -35,7 +35,7 @@ All under the `experimental` settings object (`pa_core::settings::experimental`)
   the observer only reads digests and replies.
 - No per-agent-definition pairing (`observer:` in an agent definition) and no coordinator routing: one observer per
   observed session, configured by settings.
-- No adoption telemetry yet (a new event bumps the `pa-telemetry` schema; left to the merge).
+- Telemetry: `observer_session` (schema v5) when an observed session ends: digest, report and failure counts only.
 
 ## Public API
 

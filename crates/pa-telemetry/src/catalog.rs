@@ -13,7 +13,11 @@
 //! adds the separately built features' adoption events (`anthropic_shared_auth`, `dream_run`,
 //! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
 //! publish`, `workflow_run_agent`, `workflow_durable_request`, `workspace_trust_decision`,
-//! `cli command used`, `acp session load`): new-event
+//! `cli command used`, `acp session load`); schema version 5 adds the
+//! Claude Code parity features' adoption events (`permissions_session`,
+//! `observer_session`, `advisor_ask`) and their additive counters
+//! (`custom_command_use_count` on `agent session ended`, `tui_vim_mode` and
+//! `tui_status_line` on `tui exit`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -33,9 +37,11 @@ use crate::properties::Properties;
 /// the #2117 tracking vocabulary landed and to 3 when the kernel
 /// telemetry bridge's skill-event vocabulary (`computer_use_*`) landed, and
 /// to 4 when the feature crates' adoption events (`dream_run`,
-/// `toolforge publish`, `workflow_run_agent`) landed — new-event vocabulary bumps the version (the #2117 precedent);
+/// `toolforge publish`, `workflow_run_agent`) landed, and to 5 when the Claude
+/// Code parity features' events (`permissions_session`, `observer_session`,
+/// `advisor_ask`) landed — new-event vocabulary bumps the version (the #2117 precedent);
 /// additive property changes alone do not.
-pub const SCHEMA_VERSION: u64 = 4;
+pub const SCHEMA_VERSION: u64 = 5;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -758,6 +764,10 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("feature_model_canceled_count", optional(count())),
         ("feature_model_unavailable_count", optional(count())),
         ("feature_login_initiated_count", optional(count())),
+        // Claude Code custom commands (`.claude/commands`, schema v5,
+        // additive): admitted prompts a custom command expanded. Never the
+        // command's name or text.
+        ("custom_command_use_count", optional(count())),
         ("feature_login_completed_count", optional(count())),
         ("feature_login_failed_count", optional(count())),
         ("feature_login_canceled_count", optional(count())),
@@ -1398,6 +1408,65 @@ const WEB_FETCH: EventRule = EventRule {
     ],
 };
 
+/// `permissions_session` (v5): one session the `pa-permissions` feature
+/// governed with rules or a non-default mode, sent when the session ends.
+/// The mode at the end, the rule counts by behavior, and the decision counts
+/// — never a rule, a command, a path or a tool name.
+const PERMISSIONS_SESSION: EventRule = EventRule {
+    name: "permissions_session",
+    since: 5,
+    properties: &[
+        (
+            "mode",
+            required(enum_rule(
+                &[
+                    "default",
+                    "acceptEdits",
+                    "plan",
+                    "bypassPermissions",
+                    "dontAsk",
+                ],
+                "default",
+            )),
+        ),
+        ("allow_rules", optional(count())),
+        ("ask_rules", optional(count())),
+        ("deny_rules", optional(count())),
+        ("allowed_count", optional(count())),
+        ("asked_count", optional(count())),
+        ("denied_count", optional(count())),
+        ("remembered_count", optional(count())),
+    ],
+};
+
+/// `observer_session` (v5): one session the experimental observer
+/// (`pa-observer`) watched, sent when the session ends. Digest, report and
+/// failure counts only — never a digest, a report or the observer model.
+const OBSERVER_SESSION: EventRule = EventRule {
+    name: "observer_session",
+    since: 5,
+    properties: &[
+        ("digest_count", optional(count())),
+        ("report_count", optional(count())),
+        ("failed_count", optional(count())),
+    ],
+};
+
+/// `advisor_ask` (v5): one experimental `advisor.ask` consultation
+/// (`pa-advisor`). The outcome and duration only — never the question, the
+/// transcript, the advice or the advisor model.
+const ADVISOR_ASK: EventRule = EventRule {
+    name: "advisor_ask",
+    since: 5,
+    properties: &[
+        (
+            "outcome",
+            required(enum_rule(&["ok", "error", "invalid"], "error")),
+        ),
+        ("duration_ms", optional(duration())),
+    ],
+};
+
 /// `workflow_run_agent` (v4): one Workflow V1 `workflow.run_agent` kernel
 /// host request settled by the host (the fork's `pa-workflow` feature).
 /// Terminal classification, timing, and token totals only — never the
@@ -1825,6 +1894,11 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_clone_replace_count", optional(count())),
         ("tui_plan_key_count", optional(count())),
         ("tui_plan_flag_count", optional(count())),
+        // Claude Code editor settings (schema v5, additive): the run's
+        // `editorMode` is `vim`, and a `statusLine` command is configured.
+        // Flags only, never the command.
+        ("tui_vim_mode", optional(boolean())),
+        ("tui_status_line", optional(boolean())),
         // Inline-image adoption (added in schema v4, additive): the terminal's image
         // protocol and the presented-artifact previews the run placed as real images,
         // each counted once (never per repaint). Counts only, never image content.
@@ -2073,6 +2147,9 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &TOOLFORGE_PUBLISH,
         &WEB_SEARCH,
         &WEB_FETCH,
+        &PERMISSIONS_SESSION,
+        &OBSERVER_SESSION,
+        &ADVISOR_ASK,
         &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
@@ -2206,8 +2283,12 @@ mod tests {
     fn the_catalog_is_the_low_frequency_set() {
         // New-event vocabulary bumps the schema version: the #2117
         // vocabulary landed at v2, the kernel telemetry bridge's skill
-        // events at v3, the feature crates' adoption events at v4.
-        assert_eq!(SCHEMA_VERSION, 4);
+        // events at v3, the feature crates' adoption events at v4, the
+        // Claude Code parity features' events at v5.
+        assert_eq!(SCHEMA_VERSION, 5);
+        for name in ["permissions_session", "observer_session", "advisor_ask"] {
+            assert_eq!(lookup(name).map(|rule| rule.since), Some(5), "{name}");
+        }
         assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("web search").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("web fetch").map(|rule| rule.since), Some(4));
@@ -2639,6 +2720,8 @@ mod tests {
         ] {
             properties.set(key, json!(1u64));
         }
+        properties.set("tui_vim_mode", json!(true));
+        properties.set("tui_status_line", json!(false));
         let expected = properties.clone();
         assert_eq!(sanitize("tui exit", &mut properties), 0);
         assert_eq!(properties, expected);

@@ -124,5 +124,6 @@ source files, and problems (skipped rules and keys). `mode [<mode>]`, `allow|ask
 
 Reads the settings files above; writes `.prime/agent/settings.local.json`. Seams: `review_host_request`,
 `review_tool_call`, `register_host_handlers` (`file.edit`, `file.read`), `on_session_start` (status),
-`slash_commands` / `execute_slash_command` (`/permissions`), `publish_feature_status`, `confirm_offering`. No
-telemetry events.
+`slash_commands` / `execute_slash_command` (`/permissions`), `publish_feature_status`, `confirm_offering`,
+`on_session_end`. Telemetry: `permissions_session` (schema v5) when a governed session ends (rules, a non-default
+mode, or an ask/refusal): the mode, rule counts by behavior and decision counts, never a rule or a command.

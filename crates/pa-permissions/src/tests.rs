@@ -713,3 +713,63 @@ async fn the_command_runs_through_the_feature() {
         FeatureVerdict::Block(_)
     ));
 }
+
+/// A governed session reports its mode, rule counts and decision counts
+/// when it ends (`permissions_session`); an ungoverned one sends nothing.
+#[tokio::test]
+async fn a_governed_session_reports_its_counts_when_it_ends() {
+    let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let telemetry = {
+        let recorded = Arc::clone(&recorded);
+        pa_core::features::FeatureTelemetry::new(move |name, properties| {
+            recorded
+                .lock()
+                .unwrap()
+                .push((name.to_string(), properties));
+        })
+    };
+    let with_telemetry = |context: Arc<SessionFeatureContext>| {
+        let mut context = (*context).clone();
+        context.telemetry = Some(telemetry.clone());
+        Arc::new(context)
+    };
+
+    let plain = Tree::new();
+    let (plain_feature, context) = feature(&plain, "permissions-plain");
+    let context = with_telemetry(context);
+    let request = host("bash.run", json!({ "command": "ls" }));
+    assert_eq!(
+        plain_feature.review_host_request(&context, &request).await,
+        FeatureVerdict::Allow
+    );
+    plain_feature.on_session_end(&context, "quit");
+    assert!(recorded.lock().unwrap().is_empty());
+
+    let tree = Tree::new();
+    tree.user(&json!({ "allow": ["Bash(ls:*)"], "deny": ["Bash(rm:*)"] }));
+    let (feature, context) = feature(&tree, "permissions-governed");
+    let context = with_telemetry(context);
+    for command in ["ls", "rm x"] {
+        let request = host("bash.run", json!({ "command": command }));
+        let _ = feature.review_host_request(&context, &request).await;
+    }
+    feature.on_session_end(&context, "quit");
+    let recorded = recorded.lock().unwrap();
+    let mut expected = pa_telemetry::Properties::new();
+    for (key, value) in [
+        ("mode", json!("default")),
+        ("allow_rules", json!(1)),
+        ("ask_rules", json!(0)),
+        ("deny_rules", json!(1)),
+        ("allowed_count", json!(1)),
+        ("asked_count", json!(0)),
+        ("denied_count", json!(1)),
+        ("remembered_count", json!(0)),
+    ] {
+        expected.set(key, value);
+    }
+    assert_eq!(
+        *recorded,
+        vec![(PERMISSIONS_SESSION_EVENT.to_string(), expected)]
+    );
+}
