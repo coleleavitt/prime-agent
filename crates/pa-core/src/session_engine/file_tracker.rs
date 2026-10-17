@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(
             notes.changed,
             vec![ChangedFile {
-                path: path.clone(),
+                path,
                 snippet: Some("     1\tone\n     2\ttwo\n     3\tTHREE\n     4\tfour".to_string()),
             }]
         );
@@ -406,7 +406,7 @@ mod tests {
             change_snippet("a\n", "").as_deref(),
             Some("(the file is now empty)")
         );
-        let long: String = (0..100).map(|line| format!("{line}\n")).collect();
+        let long = "line\n".repeat(100);
         assert_eq!(change_snippet("", &long), None);
     }
 }

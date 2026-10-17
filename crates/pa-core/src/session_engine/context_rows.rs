@@ -136,6 +136,8 @@ pub struct SessionContextRows {
     today: Arc<dyn Fn() -> String + Send + Sync>,
     /// The cwd the source reads, when it reads a movable one.
     cwd: Option<Arc<std::sync::Mutex<std::path::PathBuf>>>,
+    /// The model facts the source reads, when it reads switchable ones.
+    model: Option<Arc<std::sync::Mutex<super::context_source::ModelFacts>>>,
 }
 
 fn to_loop(row: CustomMessage) -> Option<AgentMessage> {
@@ -150,6 +152,29 @@ impl SessionContextRows {
             reminders,
             today: Arc::new(crate::prompts::session_context::today_utc),
             cwd: None,
+            model: None,
+        }
+    }
+
+    /// Share the model facts the source reads, so [`Self::set_model`] can
+    /// switch them.
+    #[must_use]
+    pub fn with_model(
+        mut self,
+        model: Arc<std::sync::Mutex<super::context_source::ModelFacts>>,
+    ) -> Self {
+        self.model = Some(model);
+        self
+    }
+
+    /// The session switched models: the next turn's environment update names
+    /// it (and its image input), and the token countdown follows its window.
+    pub fn set_model(&self, facts: super::context_source::ModelFacts) {
+        self.reminders.set_context_window(facts.context_window);
+        if let Some(slot) = &self.model {
+            *slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = facts;
         }
     }
 

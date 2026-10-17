@@ -50,6 +50,10 @@ pub const SILENT_TURN_TEXT: &str = "The user hasn't heard from you in a while. A
 
 /// The `reminders` settings, resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one independent on/off setting per reminder kind, mirroring `reminders.*`"
+)]
 pub struct ReminderToggles {
     pub changed_files: bool,
     pub read_dedup: bool,
@@ -123,7 +127,7 @@ pub struct Reminders {
     /// Whether the `tasks` skill is available to the model at all.
     has_tasks: bool,
     /// The context window the countdown counts down from (0: unknown, off).
-    context_window: u64,
+    context_window: std::sync::atomic::AtomicU64,
 }
 
 /// One rendered reminder row and what it holds.
@@ -376,8 +380,14 @@ impl Reminders {
             files,
             tasks_file,
             has_tasks,
-            context_window,
+            context_window: std::sync::atomic::AtomicU64::new(context_window),
         }
+    }
+
+    /// Count down from another window (a model switch).
+    pub fn set_context_window(&self, window: u64) {
+        self.context_window
+            .store(window, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[must_use]
@@ -449,9 +459,12 @@ impl Reminders {
                 kinds.push(ReminderKind::ElapsedTime);
             }
         }
-        if self.toggles.tokens_left && self.context_window > 0 {
+        let window = self
+            .context_window
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if self.toggles.tokens_left && window > 0 {
             if let Some(used) = context_tokens(messages) {
-                parts.push(tokens_left_text(self.context_window.saturating_sub(used)));
+                parts.push(tokens_left_text(window.saturating_sub(used)));
                 kinds.push(ReminderKind::TokensLeft);
             }
         }

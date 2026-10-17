@@ -66,6 +66,9 @@ pub struct EnvironmentFields {
     pub shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
+    /// The model the session runs (`provider/id`); a switch is an update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The conversation log path; `None` is "not persisted".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_log: Option<String>,
@@ -118,8 +121,14 @@ pub struct ContextFingerprint {
 }
 
 fn sha256_hex(text: &str) -> String {
+    use std::fmt::Write as _;
     let digest = Sha256::digest(text.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    digest
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// The inventory entries of the skills the model may invoke.
@@ -296,6 +305,9 @@ pub fn render_environment(fields: &EnvironmentFields) -> String {
     if let Some(os_version) = &fields.os_version {
         lines.push(format!("OS version: {os_version}"));
     }
+    if let Some(model) = &fields.model {
+        lines.push(format!("Model: {model}"));
+    }
     lines.push(conversation_log_line(fields.conversation_log.as_deref()));
     lines.extend(vision_line(fields.vision_capable));
     lines.extend(fields.sandbox.clone());
@@ -339,6 +351,14 @@ pub fn render_environment_update(previous: &EnvironmentFields, next: &Environmen
     if next.os_version != previous.os_version {
         if let Some(os_version) = &next.os_version {
             lines.push(format!("OS version: {os_version}"));
+        }
+    }
+    if next.model != previous.model {
+        if let Some(model) = &next.model {
+            lines.push(match &previous.model {
+                Some(was) => format!("Model: {model} (was {was})"),
+                None => format!("Model: {model}"),
+            });
         }
     }
     if next.conversation_log != previous.conversation_log {

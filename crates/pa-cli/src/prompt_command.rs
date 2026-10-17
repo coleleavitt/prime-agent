@@ -120,14 +120,14 @@ fn assemble_breakdown(
     // The first turn's session context row, as a session in `cwd` would send it.
     let source = pa_core::session_engine::context_source::ContextSourceConfig {
         cwd: std::sync::Arc::new(std::sync::Mutex::new(cwd.to_path_buf())),
-        agent_dir: agent_dir.clone(),
+        agent_dir,
         load_instruction_files: true,
-        skills: resources.skills.clone(),
+        skills: resources.skills,
         tools: vec![pa_types::ai::PYTHON_TOOL_NAME.to_string()],
         mcp_servers: generic_servers,
         // A dump has no session file; the row states the value it uses.
         conversation_log: None,
-        vision_capable: None,
+        model: std::sync::Arc::default(),
         // The `sandbox` setting's environment line, as a session would state it.
         sandbox: pa_core::os_sandbox::SessionSandbox::resolve(&settings, None, cwd)
             .as_ref()

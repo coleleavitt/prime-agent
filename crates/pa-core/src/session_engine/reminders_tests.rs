@@ -12,7 +12,7 @@ fn user(text: &str) -> AgentMessage {
     message(serde_json::json!({ "role": "user", "content": text, "timestamp": 1 }))
 }
 
-fn assistant(content: serde_json::Value, input_tokens: u64) -> AgentMessage {
+fn assistant(content: &serde_json::Value, input_tokens: u64) -> AgentMessage {
     message(serde_json::json!({
         "role": "assistant",
         "content": content,
@@ -24,7 +24,7 @@ fn assistant(content: serde_json::Value, input_tokens: u64) -> AgentMessage {
 
 fn tool_turn(code: &str) -> AgentMessage {
     assistant(
-        serde_json::json!([{
+        &serde_json::json!([{
             "type": "toolCall", "id": "c", "name": "python_repl", "arguments": { "code": code },
         }]),
         100,
@@ -32,7 +32,7 @@ fn tool_turn(code: &str) -> AgentMessage {
 }
 
 fn text_turn(text: &str) -> AgentMessage {
-    assistant(serde_json::json!([{ "type": "text", "text": text }]), 100)
+    assistant(&serde_json::json!([{ "type": "text", "text": text }]), 100)
 }
 
 fn reminder_row(kinds: &[ReminderKind]) -> AgentMessage {
@@ -175,7 +175,7 @@ fn silent_turns_nudge_after_five_and_at_most_three_times() {
 #[test]
 fn tokens_left_counts_down_from_the_window() {
     let countdown = reminders(only(|toggles| toggles.tokens_left = true), None);
-    let messages = vec![user("go"), assistant(serde_json::json!([]), 400)];
+    let messages = vec![user("go"), assistant(&serde_json::json!([]), 400)];
     let row = countdown.row(&messages, ReminderPoint::Boundary).unwrap();
     // 1000 window - (400 input + 10 output).
     assert_eq!(

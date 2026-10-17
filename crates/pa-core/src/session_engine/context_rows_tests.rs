@@ -97,9 +97,8 @@ fn a_conversation_without_the_full_row_gets_it_again() {
     let rows = rows_over(Arc::clone(&current));
     let full = to_messages(rows.turn_start_rows(&[]));
     *current.lock().unwrap() = context("/w2", "Rule one.", "2026-10-17");
-    let update = to_messages(rows.turn_start_rows(&full));
     // A compaction kept the delta but summarized the full row away.
-    let after_compaction = update.clone();
+    let after_compaction = to_messages(rows.turn_start_rows(&full));
     let again = rows.turn_start_rows(&after_compaction);
     assert_eq!(again.len(), 1);
     assert_eq!(again[0].custom_type, SESSION_CONTEXT_CUSTOM_TYPE);
@@ -152,6 +151,40 @@ fn a_lost_full_row_returns_at_the_boundary() {
     let at_boundary = rows.boundary_rows(&[]);
     assert_eq!(at_boundary.len(), 1);
     assert_eq!(at_boundary[0].custom_type, SESSION_CONTEXT_CUSTOM_TYPE);
+}
+
+#[test]
+fn a_model_switch_is_an_environment_update() {
+    use crate::session_engine::context_source::ModelFacts;
+    let facts = Arc::new(Mutex::new(ModelFacts {
+        label: Some("a/one".to_string()),
+        vision_capable: Some(true),
+        context_window: 1_000,
+    }));
+    let seen = Arc::clone(&facts);
+    let rows = SessionContextRows::new(
+        Arc::new(move || {
+            let facts = seen.lock().unwrap().clone();
+            let mut current = context("/w", "r", "2026-10-17");
+            current.environment.model = facts.label;
+            current.environment.vision_capable = facts.vision_capable;
+            current
+        }),
+        quiet_reminders(),
+    )
+    .with_model(facts);
+    let conversation = to_messages(rows.turn_start_rows(&[]));
+    rows.set_model(ModelFacts {
+        label: Some("b/two".to_string()),
+        vision_capable: Some(true),
+        context_window: 2_000,
+    });
+    let update = rows.turn_start_rows(&conversation);
+    let pa_types::ai::UserContent::Text(text) = &update[0].content else {
+        panic!("text row");
+    };
+    assert!(text.contains("# Environment update\nModel: b/two (was a/one)"));
+    assert!(!text.contains("Image input"), "unchanged: {text}");
 }
 
 #[test]

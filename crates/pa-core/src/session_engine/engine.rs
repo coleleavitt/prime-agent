@@ -858,16 +858,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             tools: active_tool_names.clone(),
             mcp_servers: generic_mcp_servers,
             conversation_log: conversation_log.clone(),
-            vision_capable: prompt_vision_capable,
+            model: super::context_source::ModelFacts {
+                label: Some(prompt_model_selector.clone()),
+                vision_capable: prompt_vision_capable,
+                context_window: compaction_settings
+                    .max_context_tokens
+                    .map_or(model_context_window, |cap| cap.min(model_context_window)),
+            },
             sandbox: sandbox
                 .as_ref()
                 .map(crate::os_sandbox::SessionSandbox::prompt_line),
             shell: context_shell,
             reminders: reminder_toggles,
             tasks_file,
-            context_window: compaction_settings
-                .max_context_tokens
-                .map_or(model_context_window, |cap| cap.min(model_context_window)),
         });
     provisioner.set_file_access_sink(context_rows.reminders().files().sink());
 
@@ -1542,6 +1545,9 @@ impl SessionEngine {
             },
             (model.context_window > 0).then_some(model.context_window),
         );
+        if let Some(rows) = self.session.context_rows() {
+            rows.set_model(super::context_source::ModelFacts::of(model));
+        }
     }
 
     /// A weak reference for lock-free kernel liveness probes without

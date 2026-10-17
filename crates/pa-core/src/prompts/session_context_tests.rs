@@ -24,6 +24,7 @@ fn environment(cwd: &str) -> EnvironmentFields {
         platform: "linux".to_string(),
         shell: Some("/bin/bash".to_string()),
         os_version: Some("Linux 6.9".to_string()),
+        model: Some("anthropic/claude".to_string()),
         conversation_log: Some("/log.jsonl".to_string()),
         vision_capable: Some(true),
         sandbox: None,
@@ -69,7 +70,7 @@ fn the_full_row_carries_every_section_in_the_old_tail_order() {
         "<available_skills>",
         "<name>alpha</name>",
         "Enabled generic MCP servers: `github`, `slack`.",
-        "# Environment\nWorking directory: /w\nIs a git repository: true\nGit branch: main\nPlatform: linux\nShell: /bin/bash\nOS version: Linux 6.9\nConversation log: /log.jsonl\nImage input: this model can see images",
+        "# Environment\nWorking directory: /w\nIs a git repository: true\nGit branch: main\nPlatform: linux\nShell: /bin/bash\nOS version: Linux 6.9\nModel: anthropic/claude\nConversation log: /log.jsonl\nImage input: this model can see images",
         "Today's date is 2026-10-17.",
     ];
     let mut at = 0;
@@ -177,6 +178,7 @@ fn environment_update_covers_each_field_and_scratch_seam() {
     let mut next = previous.clone();
     next.is_git_repo = Some(false);
     next.git_branch = None;
+    next.model = Some("openai/gpt".to_string());
     next.vision_capable = Some(false);
     next.sandbox = Some("OS sandbox: `read-only`.".to_string());
     next.scratch_directory = Some("/tmp/scratch".to_string());
@@ -186,6 +188,7 @@ fn environment_update_covers_each_field_and_scratch_seam() {
         "# Environment update\n\
          Is a git repository: false\n\
          Git branch: none (was main)\n\
+         Model: openai/gpt (was anthropic/claude)\n\
          Image input: this model cannot see images; `attach_image` has the configured vision-capable `imageModel` read them and returns its text description (it errors when no such image model is configured).\n\
          OS sandbox: `read-only`.\n\
          Scratch directory: /tmp/scratch (use it for temporary files instead of the working directory)"

@@ -86,6 +86,7 @@ fn fixture(sandbox: Option<&str>) -> (String, String, usize) {
             platform: "linux".to_string(),
             shell: Some("/bin/bash".to_string()),
             os_version: Some("Linux 6.0.0".to_string()),
+            model: Some("provider/fixture-model".to_string()),
             conversation_log: Some("/w/sessions/fixture-session.jsonl".to_string()),
             vision_capable: None,
             sandbox: sandbox.map(str::to_string),

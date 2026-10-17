@@ -34,13 +34,38 @@ pub struct ContextSourceConfig {
     pub tools: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub conversation_log: Option<String>,
-    pub vision_capable: Option<bool>,
+    /// The session model; a live switch moves it
+    /// ([`super::context_rows::SessionContextRows::set_model`]).
+    pub model: Arc<Mutex<ModelFacts>>,
     /// The OS sandbox's environment line.
     pub sandbox: Option<String>,
     /// The shell `bash()` runs commands with.
     pub shell: Option<String>,
     /// A per-session scratch directory, when the embedding provides one.
     pub scratch_directory: Option<String>,
+}
+
+/// What the environment states about the session model.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelFacts {
+    /// `provider/id`.
+    pub label: Option<String>,
+    /// Whether the model accepts image input, when known.
+    pub vision_capable: Option<bool>,
+    /// The context window the token countdown counts down from (0: unknown).
+    pub context_window: u64,
+}
+
+impl ModelFacts {
+    /// The facts of a resolved model.
+    #[must_use]
+    pub fn of(model: &pa_types::ai::Model) -> Self {
+        Self {
+            label: Some(format!("{}/{}", model.provider, model.id)),
+            vision_capable: Some(model.input.contains(&pa_types::ai::ModelInput::Image)),
+            context_window: model.context_window,
+        }
+    }
 }
 
 /// The instruction files for a working directory (the global agent-dir file
@@ -85,6 +110,11 @@ fn forward_slashes(path: &Path) -> String {
 #[must_use]
 pub fn probe_environment(cwd: &Path, config: &ContextSourceConfig) -> EnvironmentFields {
     let git = crate::session::manager::capture_git_context(cwd);
+    let model = config
+        .model
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     EnvironmentFields {
         working_directory: forward_slashes(cwd),
         is_git_repo: Some(git.is_some()),
@@ -92,11 +122,12 @@ pub fn probe_environment(cwd: &Path, config: &ContextSourceConfig) -> Environmen
         platform: platform_name().to_string(),
         shell: config.shell.clone(),
         os_version: os_version(),
+        model: model.label,
         conversation_log: config
             .conversation_log
             .as_deref()
             .map(|log| log.replace('\\', "/")),
-        vision_capable: config.vision_capable,
+        vision_capable: model.vision_capable,
         sandbox: config.sandbox.clone(),
         scratch_directory: config.scratch_directory.clone(),
     }
@@ -111,14 +142,13 @@ pub struct ContextRowsWiring {
     pub tools: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub conversation_log: Option<String>,
-    pub vision_capable: Option<bool>,
+    /// The session model at start (its window bounded by any context cap).
+    pub model: ModelFacts,
     pub sandbox: Option<String>,
     pub shell: Option<String>,
     pub reminders: super::reminders::ReminderToggles,
     /// The `tasks` skill's store, when the session keeps a directory.
     pub tasks_file: Option<PathBuf>,
-    /// The context window the token countdown counts down from.
-    pub context_window: u64,
 }
 
 /// The session's context rows: the live source over a movable cwd, and the
@@ -136,6 +166,8 @@ pub fn session_context_rows(
             .iter()
             .any(|skill| skill.name == TASKS_SKILL_NAME && !skill.disable_model_invocation);
     let cwd = Arc::new(Mutex::new(wiring.cwd));
+    let context_window = wiring.model.context_window;
+    let model = Arc::new(Mutex::new(wiring.model));
     let source = context_source(ContextSourceConfig {
         cwd: Arc::clone(&cwd),
         agent_dir: wiring.agent_dir,
@@ -144,7 +176,7 @@ pub fn session_context_rows(
         tools: wiring.tools,
         mcp_servers: wiring.mcp_servers,
         conversation_log: wiring.conversation_log,
-        vision_capable: wiring.vision_capable,
+        model: Arc::clone(&model),
         sandbox: wiring.sandbox,
         shell: wiring.shell,
         scratch_directory: None,
@@ -154,9 +186,13 @@ pub fn session_context_rows(
         Arc::new(super::file_tracker::FileReadTracker::new()),
         has_tasks,
         wiring.tasks_file,
-        wiring.context_window,
+        context_window,
     );
-    Arc::new(super::context_rows::SessionContextRows::new(source, reminders).with_cwd(cwd))
+    Arc::new(
+        super::context_rows::SessionContextRows::new(source, reminders)
+            .with_cwd(cwd)
+            .with_model(model),
+    )
 }
 
 /// The bundled skill whose store the task-list reminder reads.
