@@ -36,7 +36,7 @@ impl WorktreeHooks for WorktreeHookRunner {
             .commands(HookEvent::WorktreeCreate, None)
             .into_iter()
             .next()?;
-        let input = input(context, HookEvent::WorktreeCreate, "name", json!(name));
+        let input = input(context, HookEvent::WorktreeCreate, "name", &json!(name));
         let outcome = run_blocking(vec![hook.clone()], context, input)
             .into_iter()
             .next()?;
@@ -53,7 +53,7 @@ impl WorktreeHooks for WorktreeHookRunner {
             context,
             HookEvent::WorktreeRemove,
             "worktree_path",
-            json!(path),
+            &json!(path),
         );
         let failures: Vec<String> = hooks
             .iter()
@@ -70,7 +70,7 @@ impl WorktreeHooks for WorktreeHookRunner {
 }
 
 /// Claude Code's base input plus the event's one field.
-fn input(context: &WorktreeHookContext, event: HookEvent, key: &str, value: Value) -> Value {
+fn input(context: &WorktreeHookContext, event: HookEvent, key: &str, value: &Value) -> Value {
     json!({
         "session_id": context.session_id.clone().unwrap_or_default(),
         "transcript_path": "",

@@ -551,7 +551,7 @@ fn a_registered_project_dir_is_gated_and_fingerprinted() {
 fn trust_carries_to_an_identical_checkout_only() {
     let fixture = Fixture::new();
     fixture.write_settings(&serde_json::json!({ "shellPath": "/bin/sh" }));
-    let copy = fixture._tmp.path().join("copy");
+    let copy = fixture.cwd.parent().unwrap().join("copy");
     fs::create_dir_all(copy.join(".prime").join("agent")).unwrap();
     fs::create_dir_all(copy.join(".git")).unwrap();
     fs::copy(
@@ -559,7 +559,7 @@ fn trust_carries_to_an_identical_checkout_only() {
         copy.join(".prime/agent/settings.json"),
     )
     .unwrap();
-    let different = fixture._tmp.path().join("different");
+    let different = fixture.cwd.parent().unwrap().join("different");
     fs::create_dir_all(different.join(".prime").join("agent")).unwrap();
     fs::create_dir_all(different.join(".git")).unwrap();
     fs::write(

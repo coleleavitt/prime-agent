@@ -586,9 +586,9 @@ pub fn remove(
     if worktree.path.exists() {
         match changes(&worktree.path, worktree.base_commit.as_deref()) {
             Ok(found) if !found.is_clean() && !discard => return Ok(RemoveOutcome::Kept(found)),
-            Ok(_) => {}
             Err(error) if !discard => return Err(error),
-            Err(_) => {}
+            // Clean, or the caller discards whatever is there.
+            Ok(_) | Err(_) => {}
         }
     }
     let tip = worktree
