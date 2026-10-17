@@ -65,7 +65,9 @@ fn five_minute_steps_fire_inside_the_cache_window() {
 fn one_shots_on_round_minutes_fire_up_to_90_seconds_early() {
     let zone = utc_zone();
     let t0 = ms("2026-10-17T10:02:00Z");
-    let mut book = new_book(&["80000000", "80000000", "ffffffff"]);
+    // Distinct ids: the book re-mints a colliding id, and a repeated pinned
+    // id would hand the last create a random one (and a random jitter).
+    let mut book = new_book(&["80000000", "40000000", "ffffffff"]);
     let created = book
         .create(&cron("30 14 17 10 *", false), t0, &zone)
         .unwrap();
@@ -81,6 +83,14 @@ fn one_shots_on_round_minutes_fire_up_to_90_seconds_early() {
         .create(&cron("30 14 17 10 *", false), close, &zone)
         .unwrap();
     assert_eq!(created.next_fire_at, Some(close));
+    // Every pinned id was used: nothing fell back to a random id.
+    assert_eq!(
+        book.list(&zone)
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["80000000", "40000000", "ffffffff"]
+    );
 }
 
 #[test]
