@@ -30,6 +30,7 @@
 //! notices still drive their turn (the daemon's `followUp` notice action is
 //! unchanged); only the transcript row's class moves.
 
+pub mod brief_message;
 pub(crate) mod geometry;
 pub(crate) use geometry::agent_message_body_count;
 pub(crate) mod injected_prompt;
@@ -37,6 +38,7 @@ pub(crate) mod refinement;
 pub(crate) mod render;
 pub mod skill_invocation;
 
+pub use brief_message::{BriefAttachment, BriefMessageRow, USER_MESSAGE_CUSTOM_TYPE};
 use injected_prompt::injected_prompt_row;
 pub use injected_prompt::{InjectedPromptKind, InjectedPromptRow};
 use serde_json::Value;
@@ -231,6 +233,10 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         }],
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
         PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
+        // `rlm.send_user_message`: the agent's message to the user.
+        USER_MESSAGE_CUSTOM_TYPE => vec![ChatEntry::BriefMessage(Box::new(
+            brief_message::brief_message_row(&content, details),
+        ))],
         AGENT_MESSAGE_CUSTOM_TYPE => agent_message_entry(details).map_or_else(
             || vec![generic_panel_entry(custom_type, message)],
             |entry| vec![entry],

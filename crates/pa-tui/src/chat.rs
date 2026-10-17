@@ -118,6 +118,8 @@ pub enum ChatEntry {
     RefinementOutcome(Box<crate::custom_message::RefinementOutcomeRow>),
     /// One generic custom row.
     CustomPanel(Box<crate::custom_message::CustomPanelRow>),
+    /// One message the agent sent the user (`rlm.send_user_message`).
+    BriefMessage(Box<crate::custom_message::BriefMessageRow>),
 }
 
 // The card types live in `tool_card`; re-exported here because the

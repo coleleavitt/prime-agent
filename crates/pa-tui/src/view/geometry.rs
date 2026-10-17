@@ -30,6 +30,8 @@ impl AgentView {
                     )
             }
             ChatEntry::Assistant(message) => {
+                let layout = self.assistant_layout(index, message, detail);
+                let message = &*layout;
                 // Settled blocks replay from the entry's render cache.
                 let caches = self.md_caches.borrow();
                 let empty = crate::markdown::MarkdownBlockCache::default();
@@ -69,6 +71,13 @@ impl AgentView {
                 width,
                 self.mermaid_mode,
             ),
+            ChatEntry::BriefMessage(row) => {
+                crate::custom_message::brief_message::brief_message_row_count(
+                    row,
+                    &self.theme,
+                    width,
+                )
+            }
             ChatEntry::Tool(card) => {
                 usize::from(spacing)
                     + crate::tool_card::count_tool_card(

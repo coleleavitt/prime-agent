@@ -33,7 +33,8 @@ impl AgentView {
             idx -= 1;
             match &self.chat[idx] {
                 ChatEntry::Assistant(message) => {
-                    match self.assistant_spacing_content(message) {
+                    let message = self.assistant_layout(idx, message, self.entry_detail(idx));
+                    match self.assistant_spacing_content(&message) {
                         SpacingContent::Hidden => {}
                         SpacingContent::ToolOnly => {
                             tool_separator = true;
@@ -170,6 +171,9 @@ impl AgentView {
                 rows
             }
             ChatEntry::Assistant(message) => {
+                // Brief mode may collapse the text (`view/brief.rs`).
+                let layout = self.assistant_layout(index, message, detail);
+                let message = &*layout;
                 let mut md = crate::markdown::MarkdownStyle::from_theme(&self.theme);
                 md.code_block_indent.clone_from(&self.code_block_indent);
                 md.link_base_url = url::Url::from_directory_path(&self.chrome.cwd).ok();
@@ -293,6 +297,9 @@ impl AgentView {
                 width,
                 self.mermaid_mode,
             ),
+            ChatEntry::BriefMessage(row) => {
+                crate::custom_message::brief_message::render_brief_message(row, &self.theme, width)
+            }
         }
     }
 }
