@@ -57,6 +57,7 @@ pub mod telemetry;
 pub mod tool_bridge;
 pub mod tool_intent_recovery;
 pub mod turn_boundary;
+pub mod ultracode;
 
 mod admission;
 mod compaction_arms;
@@ -165,6 +166,10 @@ pub struct AgentSession {
     /// The session's plan mode: while on, every admitted turn carries the
     /// plan-mode context row. `None` until the engine wiring installs it.
     plan_mode: Option<plan_mode::PlanModeSwitch>,
+    /// The ultracode opt-in (the keyword and the standing mode): admitted
+    /// user turns carry its hidden reminder rows. Shared with the steering
+    /// fold; the engine wiring replaces the settings-less default.
+    ultracode: Arc<ultracode::UltracodeState>,
     /// The installed features' view of this session: an admitted prompt is
     /// reviewed through them ([`crate::features::SessionFeature::prompt_context`]).
     /// `None` until the engine wiring installs it, and when no feature is
@@ -319,6 +324,7 @@ impl AgentSession {
             compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             plan_mode: None,
+            ultracode: Arc::new(ultracode::UltracodeState::new(None)),
             feature_context: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
