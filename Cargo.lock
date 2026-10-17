@@ -2456,6 +2456,7 @@ dependencies = [
  "pa-ledger",
  "pa-mermaid",
  "pa-os-sandbox",
+ "pa-permissions",
  "pa-plugins",
  "pa-ravo",
  "pa-recall",
@@ -2704,6 +2705,22 @@ dependencies = [
  "seccompiler",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "pa-permissions"
+version = "0.10.0"
+dependencies = [
+ "ignore",
+ "pa-agent",
+ "pa-core",
+ "pa-types",
+ "regex",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

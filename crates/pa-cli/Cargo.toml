@@ -15,6 +15,7 @@ default = [
     "learning",
     "ledger",
     "mermaid",
+    "permissions",
     "plugins",
     "ravo",
     "recall",
@@ -44,6 +45,11 @@ ledger = ["dep:pa-ledger"]
 # flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
 # in agent/custom messages and /btw (crates/pa-mermaid).
 mermaid = ["dep:pa-mermaid"]
+# Claude Code's permission rules and modes (crates/pa-permissions): the
+# `permissions` settings key's allow/ask/deny rules over the kernel's bash(),
+# file edits, web and MCP requests, `/permissions`, and the shift+tab mode
+# cycle. Without rules nothing changes.
+permissions = ["dep:pa-permissions"]
 # WebAssembly plugins (crates/pa-plugins): sandboxed components from
 # `<agent dir>/plugins/` (and a trusted project's) that review tool calls and
 # kernel host requests, add prompt context, show status, and answer the
@@ -90,6 +96,7 @@ pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
+pa-permissions = { path = "../pa-permissions", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
