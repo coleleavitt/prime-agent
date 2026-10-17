@@ -1324,3 +1324,88 @@ async fn agent_types_are_listed_and_an_agents_instructions_close_its_prompt() {
     );
     assert!(!child.contains("Available agent types"), "{child}");
 }
+
+/// An agent whose definition declares `memory` gets its memory directory,
+/// the index in its system prompt under Claude Code's instructions, and
+/// the directory writable under the OS sandbox.
+#[tokio::test]
+async fn an_agent_with_memory_gets_its_directory_index_and_sandbox_root() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+        max_tokens_explicit: false,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    let agent_dir = tmp.path().join("agent");
+    std::fs::create_dir_all(cwd.join(".git")).unwrap();
+    let memory_dir = cwd.join(".prime/agent-memory/reviewer");
+    std::fs::create_dir_all(&memory_dir).unwrap();
+    std::fs::write(
+        memory_dir.join("MEMORY.md"),
+        "- [Style](style.md) - prefer early returns\n",
+    )
+    .unwrap();
+    let reviewer = crate::agents::parse_agent_definition(
+        "---\nname: reviewer\ndescription: Reviews\nmemory: project\n---\nReview it.",
+        std::path::Path::new("reviewer.md"),
+        crate::agents::AgentSource::Project,
+    )
+    .unwrap();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    let host_session = Arc::new(tokio::sync::Mutex::new(
+        crate::session::manager::SessionManager::in_memory(&cwd),
+    ));
+    let engine = create_session(SessionEngineConfig {
+        cwd: cwd.clone(),
+        agent_dir: agent_dir.clone(),
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        daemonless: true,
+        // A spawned child: no auto memory of its own.
+        rlm_depth: Some(1),
+        sandbox_mode: Some(crate::os_sandbox::SandboxMode::WorkspaceWrite),
+        rlm_subagent_host: Some(Arc::new(super::super::rlm_host::NoRlmChildren::new(
+            host_session,
+        ))),
+        agent_definition: Some(reviewer),
+        ..SessionEngineConfig::default()
+    })
+    .await
+    .unwrap();
+    let prompt = &engine.system_prompt;
+    assert!(!prompt.contains("# auto memory"), "{prompt}");
+    assert!(
+        prompt.contains(&format!(
+            "# Persistent Agent Memory\n\nYou have a persistent, file-based memory system at `{}`.",
+            memory_dir.display()
+        )),
+        "{prompt}"
+    );
+    assert!(
+        prompt.ends_with(
+            "- Since this memory is project-scope and shared with your team via version control, \
+             tailor your memories to this project\n\n## MEMORY.md\n\n- [Style](style.md) - prefer \
+             early returns"
+        ),
+        "{prompt}"
+    );
+    let settings = crate::settings::SettingsManager::create(&cwd, &agent_dir);
+    let expected = crate::os_sandbox::SessionSandbox::resolve(
+        &settings,
+        Some(crate::os_sandbox::SandboxMode::WorkspaceWrite),
+        &cwd,
+    )
+    .map(|sandbox| sandbox.with_writable_root(memory_dir.clone()));
+    match (engine.sandbox.as_ref(), expected.as_ref()) {
+        (Some(actual), Some(expected)) => assert!(actual.same_policy(expected)),
+        (actual, expected) => assert_eq!(actual.is_some(), expected.is_some()),
+    }
+}

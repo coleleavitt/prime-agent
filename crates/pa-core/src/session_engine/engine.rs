@@ -434,6 +434,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // Auto memory is a top-level session's (a subagent's prompt stays
         // task-focused, as in Claude Code).
         auto_memory: config.rlm_depth.unwrap_or(0) == 0,
+        // An agent definition's `memory` scope: its persistent memory.
+        agent_memory: config
+            .agent_definition
+            .as_ref()
+            .and_then(crate::agents::memory_request),
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
@@ -442,6 +447,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // sandbox keeps the auto-memory directory writable.
     let sandbox = match (sandbox, &resources.auto_memory) {
         (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
+        (sandbox, _) => sandbox,
+    };
+    // So is the agent's persistent memory (unless it is read-only).
+    let sandbox = match (sandbox, &resources.agent_memory) {
+        (Some(sandbox), Some(memory)) if !memory.read_only => {
+            Some(sandbox.with_writable_root(memory.dir.clone()))
+        }
         (sandbox, _) => sandbox,
     };
 
@@ -967,12 +979,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     .append_system_prompt
                     .iter()
                     .cloned()
-                    .chain(
-                        config
-                            .agent_definition
-                            .as_ref()
-                            .map(crate::agents::agent_instructions),
-                    )
+                    .chain(config.agent_definition.as_ref().map(|definition| {
+                        crate::agents::agent_prompt(definition, resources.agent_memory.as_ref())
+                    }))
                     .collect::<Vec<_>>()
                     .join("\n\n"),
             ),

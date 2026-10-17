@@ -72,7 +72,7 @@ pub struct AgentDefinition {
     pub color: Option<String>,
     pub isolation: Option<AgentIsolation>,
     /// Claude Code's persistent agent memory scope (`user`, `project`,
-    /// `local`); carried, not acted on.
+    /// `local`; see [`super::AgentMemory`]).
     pub memory: Option<String>,
     /// Skills the agent loads before its task.
     pub skills: Vec<String>,
