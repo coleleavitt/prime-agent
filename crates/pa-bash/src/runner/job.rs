@@ -19,6 +19,7 @@ use super::buffer::OutputBuffer;
 use super::clock::iso_utc;
 use super::fence::MarkerScanner;
 use super::journal::Journal;
+use super::output_file::OutputFile;
 use crate::platform::{self, ControlChannel, Process, Signal};
 
 /// Output read per pump iteration.
@@ -168,6 +169,8 @@ struct State {
     finished: Option<(i32, Duration)>,
     reaped: bool,
     events: Vec<Recorded>,
+    /// The persisted copy of the output (the table's output directory).
+    output_file: Option<OutputFile>,
 }
 
 /// One spawned command.
@@ -178,6 +181,8 @@ pub(crate) struct Job {
     pub(crate) pid: u32,
     pub(crate) started: Instant,
     pub(crate) started_at: SystemTime,
+    /// Where the output is persisted, when the table has an output directory.
+    pub(crate) output_path: Option<std::path::PathBuf>,
     journal: Journal,
     state: Mutex<State>,
     changed: Condvar,
@@ -197,6 +202,8 @@ pub(crate) struct Launch {
     pub token: String,
     pub journal: Journal,
     pub no_output_warn: Option<Duration>,
+    /// The output file opened for this job (`None`: not persisted).
+    pub output_file: Option<(std::path::PathBuf, OutputFile)>,
 }
 
 impl Job {
@@ -211,12 +218,16 @@ impl Job {
         } = spawned;
         let now = Instant::now();
         let control = spawned_control;
+        let (output_path, output_file) = launch
+            .output_file
+            .map_or((None, None), |(path, file)| (Some(path), Some(file)));
         let job = Arc::new(Job {
             id: launch.id,
             command: launch.command,
             pid: process.id(),
             started: now,
             started_at: SystemTime::now(),
+            output_path,
             journal: launch.journal,
             state: Mutex::new(State {
                 buffer: OutputBuffer::default(),
@@ -233,6 +244,7 @@ impl Job {
                 finished: None,
                 reaped: false,
                 events: Vec::new(),
+                output_file,
             }),
             changed: Condvar::new(),
             kill_lock: Mutex::new(()),
@@ -334,6 +346,9 @@ impl Job {
             state.result = ResultText::Frozen(state.buffer.text().into());
         }
         state.buffer.write(chunk);
+        if let Some(file) = &mut state.output_file {
+            file.write(chunk);
+        }
         let now = Instant::now();
         state.last_output = now;
         state.last_output_at = Some(SystemTime::now());

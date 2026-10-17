@@ -265,7 +265,9 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
 /// leak its own paths into the kernel (#109). A persistent session's artifact dir is
 /// likewise propagated (`RLM_SESSION_DIR` + `RLM_HARNESS_STATE_DIR`), so kernel-side
-/// harness writes land in the session-local store. `cwd` is the SESSION's working directory.
+/// harness writes land in the session-local store. The session's scratch directories ride
+/// `PRIME_AGENT_SCRATCHPAD` and `PRIME_AGENT_TASKS_DIR` (see [`super::scratch`]). `cwd` is the
+/// SESSION's working directory.
 /// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
 /// `create_session`, not the kernel boot.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
@@ -280,6 +282,7 @@ pub fn kernel_provisioner(
     command_prefix: Option<String>,
     serper_api_key: Option<String>,
     session_artifact_dir: Option<std::path::PathBuf>,
+    scratch: &super::scratch::SessionScratch,
     on_restore: Option<crate::kernel::provisioner::RestoreCallback>,
     on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
@@ -293,6 +296,9 @@ pub fn kernel_provisioner(
         agent_dir,
         session_artifact_dir.as_deref(),
     ));
+    // The scratchpad the model writes temporary files to, and the tasks
+    // directory the host's job table persists `bash()` output in.
+    env.extend(scratch.kernel_env());
     if let Some(serper_api_key) = serper_api_key {
         env.insert("SERPER_API_KEY".to_string(), serper_api_key);
     }

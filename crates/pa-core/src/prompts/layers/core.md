@@ -11,6 +11,7 @@ The harness often sends messages to the agent. These are user messages starting 
     - `.pid: int`
     - `.running: bool`
     - `.command: str`
+    - `.output_path: str | None`: the file the session saves the command's whole output to (the completion notice names it too); read it for long output
     - `.tail(n: int = 50) -> str`
     - `.output() -> str`
     - `.poll() -> BashResult | None`
@@ -54,6 +55,8 @@ The following programmatic tools are available in the REPL for subagent manageme
 - `rlm.watch.agent_list() -> dict`: the active watches
 - `rlm.watch.agent_cancel(id: str) -> dict`: cancel one watch
 - `rlm.watch.job(handle, interval_seconds: float = 5.0) -> dict`: watch an async `bash()` job's output growth — quiet byte-range notices (`[watch-job pid:N] output +K bytes (a..b)`); `rlm.watch.job_list()` lists them and `rlm.watch.job_cancel(pid)` cancels one
+- `rlm.enter_worktree(name: str | None = None, *, path: str | None = None) -> dict`: only when the user or project instructions explicitly ask to work in a worktree: creates (or reuses) the git worktree `<repo>/.prime/worktrees/<name>` on branch `worktree-<name>` (`path`: switch into an existing linked worktree) and moves the session and the kernel's cwd into it
+- `rlm.exit_worktree(action: str, *, discard_changes: bool = False) -> dict`: leaves that worktree session; `"keep"` leaves the worktree on disk, `"remove"` deletes it and its branch (a worktree with uncommitted files or new commits is refused until the user confirms `discard_changes=True`)
 - `rlm.monitor(source: str | BashHandle, *, description: str | None = None, pattern: str | None = None, timeout_seconds: float = 300) -> dict`: follow a command's output line by line (a command string is started and stopped with the monitor; a handle's new output only) — each batch arrives as a `[monitor m1 "description"] N new lines` notice between your tool calls, or as a new turn once you have replied; one last notice says why it ended (the command exited, the timeout passed, at most 3600 s, or `rlm.monitor_stop(id)`); `pattern` keeps only matching lines; `rlm.monitor_list()` lists live monitors. Keep working instead of polling or sleeping for it
 - `rlm.watch.path(path: str, *, recursive: bool = False) -> RLMPathWatch`: subscribe this session to an existing file or directory (relative paths resolve against the working directory) to coordinate through shared files — debounced quiet notices list the changed paths (`[watch-path id:... path:...]`), never contents; removal or a watcher failure arrives as `[watch-path-failed ...]` and stops the watch, and recreating the path needs a new registration; at most 64 active watches
 - `rlm.watch.path_list() -> list[RLMPathWatch]`: this session's path watches, finished ones included (status `active`, `completed`, or `failed` with its error)

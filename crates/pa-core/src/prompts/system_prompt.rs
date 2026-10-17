@@ -105,6 +105,10 @@ pub struct BuildSystemPromptOptions<'a> {
     /// `/add-dir`, `permissions.additionalDirectories`), listed in the
     /// environment section.
     pub additional_directories: Vec<String>,
+    /// The session's scratchpad line
+    /// ([`crate::session_engine::scratch::SessionScratch::prompt_line`];
+    /// `None`: no scratchpad, no line).
+    pub scratchpad: Option<String>,
 }
 
 /// Build the system prompt (assembled text only).
@@ -328,6 +332,9 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
     if let Some(sandbox) = &options.sandbox {
         lines.push(sandbox.clone());
     }
+    if let Some(scratchpad) = &options.scratchpad {
+        lines.push(scratchpad.clone());
+    }
     lines.join("\n")
 }
 
@@ -497,6 +504,22 @@ mod tests {
         assert!(tail.contains("<available_skills>"));
         assert!(tail.contains("Recursive agent depth: 0 (root)"));
         assert!(tail.contains("Pre-installed Python packages: requests, httpx,"));
+    }
+
+    #[test]
+    fn the_scratchpad_line_rides_the_environment_section_only_when_set() {
+        let without = build_system_prompt(&base_options());
+        assert!(!without.contains("Scratchpad directory:"));
+        let with = system_prompt_breakdown(&BuildSystemPromptOptions {
+            scratchpad: Some("Scratchpad directory: /s/scratchpad".to_string()),
+            ..base_options()
+        });
+        let tail = &with.assembled[with.cached_prefix_len..];
+        let environment = tail
+            .find("Working directory: /w")
+            .expect("the environment section");
+        let scratchpad = tail.find("Scratchpad directory: /s/scratchpad").unwrap();
+        assert!(scratchpad > environment);
     }
 
     #[test]

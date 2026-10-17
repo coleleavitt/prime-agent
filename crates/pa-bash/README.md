@@ -36,7 +36,11 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   the current branch) in the kernel's shell and environment, own process
   group, bounded wait and output read.
 - `runner/`: spawning a checked command (`job`), the completion fence and the
-  status channel (`fence`), the head+tail output buffer (`buffer`), progress
+  status channel (`fence`), the head+tail output buffer (`buffer`), the
+  persisted output file (`output_file`: with an output directory set on the
+  table, each command's whole output also goes to `<dir>/<job id>.output`,
+  0600 in a 0700 directory, capped at 64 MiB; `bash.run`'s `job` and the
+  activity rows name it as `outputPath`), progress
   events (`command_progress`, `cargo_lock_wait`, `command_no_output`), the
   orphan-process journal (`journal`), and the activity view (list/tail/kill
   with the kernel's 16 KiB frame caps).
@@ -69,8 +73,8 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
 
 - `check(&Script, &Allowances, &GuardContext) -> Result<(), Refusal>`;
   `Script`, `Allowances`, `GuardContext`, `GuardKind`, `Refusal`
-- `JobTable` (`new`, `set_sandbox`, `sandbox`, `kill_all`, `activity`,
-  `inventory`), `JobSandbox`, `SpawnRequest`,
+- `JobTable` (`new`, `set_sandbox`, `sandbox`, `set_output_dir`,
+  `output_dir`, `kill_all`, `activity`, `inventory`), `JobSandbox`, `SpawnRequest`,
   `SpawnError`, `ActivityError`
 - `handle(&JobTable, &Value) -> Value`, `handle_cancellable(.., &RunCancel)`,
   `RunCancel`, `REQUEST_TYPES`, `serve_stdio(JobSandbox)`

@@ -282,6 +282,12 @@ impl Inner {
         // reap them if the runtime dies without running its shutdown hook.
         let env = kernel_spawn_env(&self.options.env, self.options.environment);
         let cwd = self.start_cwd();
+        // The session's tasks directory: every `bash()` command's output is
+        // persisted there (`<job id>.output`) for the model to read by path.
+        self.bash_jobs.set_output_dir(
+            env.get(crate::session_engine::scratch::TASKS_ENV)
+                .map(std::path::PathBuf::from),
+        );
         // Under the OS sandbox the kernel process itself is confined, so
         // every `bash()`, `subprocess` and cell child inherits the policy.
         // Its own scratch stays writable in every mode: the temp directory,
@@ -300,6 +306,11 @@ impl Inner {
                 let _ = std::fs::create_dir_all(dir);
             }
             scratch.extend(kernel_sandbox.state_dirs.iter().cloned());
+            // The session's scratchpad stays writable (it exists: the
+            // session created it before the kernel's first start).
+            if let Some(scratchpad) = env.get(crate::session_engine::scratch::SCRATCHPAD_ENV) {
+                scratch.push(std::path::PathBuf::from(scratchpad));
+            }
             if let Some(journal) = env.get(orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV) {
                 scratch.extend(
                     std::path::Path::new(journal)

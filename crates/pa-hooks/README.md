@@ -25,6 +25,12 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
   | `PostCompact` | after a compaction committed | `trigger`, `compact_summary` | none |
   | `Notification` | a background completion notice reaches the model (`[bash-done ...]`, a child's terminal notice); a `PreToolUse` hook asks the user | `message`, `title`, `notification_type` (`background_task_completed`, `permission_prompt`) | none |
   | `SessionEnd` | the host ends the session (`dispose_kernel`) or its engine drops | `reason` (`other`) | none |
+  | `WorktreeCreate` | a managed worktree is made (`--worktree`, `rlm.enter_worktree`, child isolation); replaces git, so it also works outside a repository | `name` | exit 0 and the created directory as the last stdout line; anything else fails the creation. The first command runs |
+  | `WorktreeRemove` | a worktree a `WorktreeCreate` hook made is removed | `worktree_path` | any non-zero exit fails the removal (the worktree is kept). Every command runs |
+
+  `WorktreeCreate`/`WorktreeRemove` are not session events: `pa_hooks::worktree::install` registers them with
+  `pa_core::worktree` (the composition root does), and they read the `hooks` settings of the directory the worktree
+  is made from. `session_id` is empty for the `--worktree` launch (no session exists yet).
 
   `background_tasks` lists the kernel's `bash()` commands still running (tracked from `bash.run` until their result,
   a detached `bash.completed`, a `bash.kill` or `bash.killAll`) and the child agents still running.

@@ -472,6 +472,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    // The session's private scratchpad and tasks directories (Claude Code's
+    // per-session scratchpad): in the artifact partition, so the session's
+    // delete removes them. A directory that cannot be made is left out of
+    // the prompt (the kernel still names it; the first write reports why).
+    let scratch =
+        super::scratch::SessionScratch::for_session(session_artifact_dir.as_deref(), &session_id);
+    let scratchpad_line = match scratch.ensure() {
+        Ok(()) => Some(scratch.prompt_line()),
+        Err(error) => {
+            tracing::warn!(
+                target: "pa_core::session",
+                %error,
+                path = %scratch.scratchpad.display(),
+                "the session scratchpad could not be created"
+            );
+            None
+        }
+    };
     // The delegation budget (upstream #1192): a root takes its pool from
     // the global `rlmTokenBudget` setting; a funded child enforces the grant
     // its parent drew even if the setting changed since, and a resumed
@@ -802,6 +820,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_command_prefix,
         serper_api_key,
         session_artifact_dir,
+        &scratch,
         on_restore,
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
@@ -908,6 +927,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .iter()
                 .map(|dir| dir.display().to_string())
                 .collect(),
+            scratchpad: scratchpad_line,
             ..Default::default()
         },
     );
@@ -1676,6 +1696,14 @@ impl SessionEngine {
         self.provisioner.set_cwd(cwd).await?;
         self.mcp_sessions.set_cwd(cwd);
         Ok(())
+    }
+
+    /// Follow a working-directory move the kernel made itself
+    /// (`rlm.enter_worktree`): later kernel starts and MCP stdio servers use
+    /// `cwd`; the running kernel already changed directory.
+    pub fn follow_kernel_cwd(&self, cwd: &std::path::Path) {
+        self.provisioner.set_start_cwd(cwd);
+        self.mcp_sessions.set_cwd(cwd);
     }
 
     /// Release the kernel with a final namespace snapshot, revivable: the next

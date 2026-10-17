@@ -554,6 +554,9 @@ pub struct InteractiveOutcome {
     /// The view's per-entry transcript work over the run (`AgentView::entry_work`): the
     /// session-size-independence verifiers compare it across runs instead of timing them.
     pub transcript_entry_work: u64,
+    /// The agent was still running when the client left (the daemon keeps
+    /// it running): the composition root must not remove what it works in.
+    pub turn_active_at_exit: bool,
 }
 
 /// Inputs consumed by the UI loop. Terminal keys arrive one event at a time; headless steps

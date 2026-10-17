@@ -150,6 +150,9 @@ pub struct RunOptions {
     pub offline: bool,
     pub agents_view_requested: bool,
     pub attach_agent: Option<String>,
+    /// The managed worktree `--worktree` launched into (the interactive exit
+    /// offers to remove it when clean).
+    pub worktree: Option<pa_core::worktree::Worktree>,
 }
 
 /// A missing runtime subsystem, reported as a typed error instead of faked

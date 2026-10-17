@@ -487,6 +487,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "List this directory's saved sessions and exit",
             ),
             (
+                "-w, --worktree [name]",
+                "Run in a git worktree under .prime/worktrees/ (created or reused)",
+            ),
+            (
                 "--delete-session <id|name>",
                 "Delete a saved session and exit",
             ),

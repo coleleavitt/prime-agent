@@ -46,6 +46,7 @@ pub mod rlm_token_budget;
 pub mod rlm_usage;
 pub mod runtime;
 pub mod runtime_wiring;
+pub mod scratch;
 pub mod semantic_edges;
 pub mod session_commands;
 pub mod session_events;

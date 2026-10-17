@@ -275,6 +275,31 @@ pub fn record(
     Ok(evaluate(cwd, agent_dir))
 }
 
+/// Carry a trust decision to a new checkout of the same project (a managed
+/// worktree): `to` becomes trusted only when `from` is explicitly trusted
+/// and `to`'s gated content is byte-identical to `from`'s, so trust never
+/// extends to configuration the user has not seen. True when recorded.
+///
+/// # Errors
+///
+/// Returns an error when the store cannot be locked, parsed, or written.
+pub fn carry_trust(from: &Path, to: &Path, agent_dir: &Path) -> Result<bool> {
+    if evaluate(from, agent_dir).state != TrustState::Trusted {
+        return Ok(false);
+    }
+    let target = evaluate(to, agent_dir);
+    if target.state == TrustState::NotRequired || target.state == TrustState::Trusted {
+        return Ok(false);
+    }
+    let same_content = fingerprint::TrustInputs::collect(from, agent_dir).digest()
+        == fingerprint::TrustInputs::collect(to, agent_dir).digest();
+    if !same_content {
+        return Ok(false);
+    }
+    record(to, agent_dir, TrustDecision::Trusted)?;
+    Ok(true)
+}
+
 /// Re-pin a trusted workspace's record to its current content: the
 /// product's own writes to gated project settings (package installs,
 /// resource toggles) must not revoke the trust the user gave. A workspace

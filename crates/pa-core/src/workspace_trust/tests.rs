@@ -585,3 +585,39 @@ fn a_registered_project_dir_is_gated_and_fingerprinted() {
         status(&fixture.cwd, TrustState::Changed, vec![gated])
     );
 }
+
+#[test]
+fn trust_carries_to_an_identical_checkout_only() {
+    let fixture = Fixture::new();
+    fixture.write_settings(&serde_json::json!({ "shellPath": "/bin/sh" }));
+    let copy = fixture.cwd.parent().unwrap().join("copy");
+    fs::create_dir_all(copy.join(".prime").join("agent")).unwrap();
+    fs::create_dir_all(copy.join(".git")).unwrap();
+    fs::copy(
+        fixture.project_file("settings.json"),
+        copy.join(".prime/agent/settings.json"),
+    )
+    .unwrap();
+    let different = fixture.cwd.parent().unwrap().join("different");
+    fs::create_dir_all(different.join(".prime").join("agent")).unwrap();
+    fs::create_dir_all(different.join(".git")).unwrap();
+    fs::write(
+        different.join(".prime/agent/settings.json"),
+        r#"{"shellPath": "/bin/zsh"}"#,
+    )
+    .unwrap();
+
+    // An untrusted origin carries nothing.
+    assert!(!carry_trust(&fixture.cwd, &copy, &fixture.agent_dir).unwrap());
+    fixture.trust();
+    assert!(!carry_trust(&fixture.cwd, &different, &fixture.agent_dir).unwrap());
+    assert_eq!(
+        evaluate(&different, &fixture.agent_dir).state,
+        TrustState::Unknown
+    );
+    assert!(carry_trust(&fixture.cwd, &copy, &fixture.agent_dir).unwrap());
+    assert_eq!(
+        evaluate(&copy, &fixture.agent_dir).state,
+        TrustState::Trusted
+    );
+}

@@ -26,6 +26,7 @@ from .factory import (
 )
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
+from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
 
@@ -1107,6 +1108,12 @@ class _RLMNamespace:
     async def web_fetch(self, url: str, prompt: str | None = None, *, offset: int = 0) -> WebFetchResult:
         return await web_fetch(url, prompt, offset=offset)
 
+    async def enter_worktree(self, name: str | None = None, *, path: str | None = None) -> dict[str, Any]:
+        return await enter_worktree(name, path=path)
+
+    async def exit_worktree(self, action: str, *, discard_changes: bool = False) -> dict[str, Any]:
+        return await exit_worktree(action, discard_changes=discard_changes)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1158,6 +1165,8 @@ __all__ = [
     "bash",
     "delete_subagent",
     "emit",
+    "enter_worktree",
+    "exit_worktree",
     "find_models",
     "get_harness_state",
     "harness",

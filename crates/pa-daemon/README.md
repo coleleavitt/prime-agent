@@ -264,6 +264,17 @@ broadcast owns its surface here too (the worker's cron-store
 — TS daemon-mode's `broadcastGlobal` — and the supervisor re-broadcasts it
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
+Mid-session worktree isolation (`worktree_host`, Claude Code's
+`EnterWorktree`/`ExitWorktree`): the kernel's `rlm.enter_worktree` /
+`rlm.exit_worktree` send `worktree.enter` / `worktree.exit`; the engine
+creates, opens or removes the worktree through `pa_core::worktree`, and the
+worker's `WorktreeSession` seam (`worker/worktree_seam.rs`) records the move
+on the branch (the `/cwd` `session_cwd_state` entry plus a
+`worktree_session_state` entry), moves the session's and engine's cwd and
+emits `cwd_changed`; later kernel starts follow, and the kernel changes its
+own directory from the reply. Removal refuses work (uncommitted files, new
+commits) unless `discardChanges`, and never removes a worktree entered by
+path.
 
 `/rewind` (`rewind` module, capability `rewind`): `get_rewind_checkpoints`
 lists the active branch's user prompts with each one's code-restore summary

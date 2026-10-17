@@ -580,6 +580,12 @@ impl ReplKernelManager {
         Ok(())
     }
 
+    /// Set the directory a restart or respawn starts in, without touching
+    /// the running kernel's (see [`Self::set_cwd`] for the move that does).
+    pub fn set_start_cwd(&self, cwd: &std::path::Path) {
+        *lock(&self.inner.cwd_override) = Some(cwd.to_path_buf());
+    }
+
     #[must_use]
     pub fn owner_session_id(&self) -> Option<&str> {
         self.inner.options.session_id.as_deref()

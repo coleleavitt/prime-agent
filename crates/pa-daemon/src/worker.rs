@@ -83,6 +83,7 @@ use turn::TurnRunner;
 
 mod commands;
 mod session_cwd;
+mod worktree_seam;
 
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`).
@@ -801,6 +802,13 @@ impl Worker {
                     });
                 });
                 concrete.set_notice_row_sink(row_sink);
+                // The worktree seam (`rlm.enter_worktree` / `rlm.exit_worktree`):
+                // a kernel-made move recorded on the branch like `/cwd`.
+                concrete.set_worktree_session(Arc::new(worktree_seam::WorkerWorktreeSeam::new(
+                    Arc::clone(&core),
+                    Arc::clone(&events),
+                    Arc::downgrade(concrete),
+                )));
                 // The factory run notice lane: the session's executor
                 // announces each run milestone into the follow-up lane,
                 // and the kernel's own read of the run withdraws it.

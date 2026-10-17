@@ -140,6 +140,7 @@ pub(crate) mod user_bash;
 pub mod util;
 pub mod worker;
 pub(crate) mod worker_stderr;
+pub mod worktree_host;
 
 #[cfg(test)]
 pub(crate) mod test_support;
