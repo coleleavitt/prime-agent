@@ -417,13 +417,17 @@ fn run(table: &JobTable, request: &Value, cancel: &RunCancel) -> Value {
         .unwrap_or(Duration::ZERO)
         .min(MAX_FOLLOW_WAIT);
     let followed = crate::run::follow_window(&job, window, cancel);
+    let mut job_json = json!({
+        "id": job.id,
+        "pid": job.pid,
+        "pgid": job.pid,
+        "startedAt": iso_utc(job.started_at),
+    });
+    if let Some(path) = &job.output_path {
+        job_json["outputPath"] = path.to_string_lossy().into();
+    }
     let mut reply = json!({
-        "job": {
-            "id": job.id,
-            "pid": job.pid,
-            "pgid": job.pid,
-            "startedAt": iso_utc(job.started_at),
-        },
+        "job": job_json,
         "events": events_json(&followed.events, spill_dir(request)),
         "cursor": followed.cursor,
         "done": followed.done,

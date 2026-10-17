@@ -14,6 +14,7 @@ mod clock;
 mod fence;
 mod job;
 mod journal;
+mod output_file;
 mod pyjson;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -119,6 +120,9 @@ pub struct JobTable {
     /// The kernel environment last sent with a key: later requests name the
     /// key instead of resending an unchanged environment.
     env: Mutex<Option<(String, BTreeMap<String, String>)>>,
+    /// Where each command's output is persisted (`<id>.output`); `None`
+    /// keeps output in memory only.
+    output_dir: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl JobTable {
@@ -144,6 +148,24 @@ impl JobTable {
             .sandbox
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = sandbox;
+    }
+
+    /// Persist every later command's output to `<dir>/<job id>.output`
+    /// (the session's tasks directory); `None` stops persisting.
+    pub fn set_output_dir(&self, dir: Option<std::path::PathBuf>) {
+        *self
+            .output_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = dir;
+    }
+
+    /// The directory command output is persisted to, if any.
+    #[must_use]
+    pub fn output_dir(&self) -> Option<std::path::PathBuf> {
+        self.output_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// The sandbox commands start under now.
@@ -219,13 +241,18 @@ impl JobTable {
         // Journal first, then open the gate: the child does not run the
         // command until this byte arrives.
         spawned.channel.open_gate();
+        let id = random_hex(16);
+        let output_file = self
+            .output_dir()
+            .and_then(|dir| output_file::OutputFile::create(&dir, &id));
         let job = Job::start(
             job::Launch {
-                id: random_hex(16),
+                id,
                 command: request.script.command.to_string(),
                 token,
                 journal,
                 no_output_warn: no_output_warn(context),
+                output_file,
             },
             spawned,
         );
@@ -326,7 +353,7 @@ impl JobTable {
                 let finished = job.finished();
                 let duration =
                     finished.map_or_else(|| job.started.elapsed(), |(_, duration)| duration);
-                json!({
+                let mut row = json!({
                     "id": job.id,
                     "command": job.command.chars().take(ACTIVITY_COMMAND_CAP).collect::<String>(),
                     "pid": job.pid,
@@ -334,7 +361,11 @@ impl JobTable {
                     "durationMs": u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
                     "status": if job.is_reaped() { "finished" } else { "running" },
                     "exitCode": finished.map(|(code, _)| code),
-                })
+                });
+                if let Some(path) = &job.output_path {
+                    row["outputPath"] = path.to_string_lossy().into();
+                }
+                row
             })
             .collect();
         // Long commands are truncated per row first, then rows drop until the
