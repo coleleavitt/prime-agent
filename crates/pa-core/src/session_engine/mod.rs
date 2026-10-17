@@ -2,6 +2,7 @@
 //! (prompt normalization, busy-admission rules, `SessionManager`
 //! persistence); the Agent owns the loop, this layer decides admission.
 
+pub mod additional_dirs;
 pub mod agent_messaging;
 pub mod auto_refine_trigger;
 pub mod auto_retry;

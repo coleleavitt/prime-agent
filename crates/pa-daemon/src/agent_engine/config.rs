@@ -109,6 +109,10 @@ pub(crate) struct CreateSessionResources {
     /// `--sandbox <mode>` (wire name): the OS sandbox mode for this session
     /// over the `sandbox` setting. Validated at create.
     pub(crate) sandbox: Option<String>,
+    /// `--add-dir`: the client's extra working directories (absolute).
+    /// A client that sends none leaves the setting and the session's own
+    /// `/add-dir` additions in charge.
+    pub(crate) additional_directories: Vec<String>,
 }
 
 impl CreateSessionResources {
@@ -198,6 +202,13 @@ mod tests {
                 None
             ]
         );
+    }
+
+    #[test]
+    fn create_resources_read_the_additional_directories() {
+        let payload = serde_json::json!({ "cwd": "/tmp", "additionalDirectories": ["/a", "/b"] });
+        let resources = CreateSessionResources::deserialize(&payload).unwrap();
+        assert_eq!(resources.additional_directories, ["/a", "/b"]);
     }
 
     #[test]

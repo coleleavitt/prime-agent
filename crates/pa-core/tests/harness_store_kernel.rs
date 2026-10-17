@@ -152,6 +152,7 @@ async fn the_kernel_harness_api_is_served_by_the_host_store() {
 
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,

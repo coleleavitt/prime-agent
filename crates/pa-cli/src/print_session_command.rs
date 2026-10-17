@@ -327,6 +327,7 @@ mod tests {
             pa_core::session_engine::engine::create_session(
                 pa_core::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
+                    additional_directories: Vec::new(),
                     plan_mode: None,
                     on_late_sent_agent_message: None,
                     semantic_edges: None,

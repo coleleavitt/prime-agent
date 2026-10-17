@@ -20,11 +20,13 @@ mod paste_tests;
 mod selection;
 mod text_ops;
 mod text_utils;
+mod vim;
 mod wrap;
 
 pub use kill_ring::KillRing;
 pub(crate) use text_utils::decode_printable;
 pub use text_utils::normalize_text;
+pub use vim::VimMode;
 pub use wrap::{LayoutLine, Segment, TextChunk, VisualLine, is_atomic_marker, word_wrap_line};
 
 pub const MAX_HISTORY: usize = 100;
@@ -126,6 +128,8 @@ pub struct Editor {
     /// result that lands after the lines or cursor moved is dropped.
     autocomplete_search: Option<AutocompleteSearch>,
     events: Vec<EditorEvent>,
+    /// Vim editing mode (`editorMode: "vim"`); `None` keeps the default keys.
+    vim: Option<vim::VimState>,
 }
 
 #[derive(Debug)]
@@ -182,6 +186,7 @@ impl Editor {
             pending_autocomplete: None,
             autocomplete_search: None,
             events: Vec::new(),
+            vim: None,
         }
     }
 

@@ -381,6 +381,20 @@ impl SessionUi {
         Ok(())
     }
 
+    /// The session facts the status line payload reads (client state only).
+    pub(crate) fn status_line_facts<'a>(
+        &'a self,
+        view: &'a AgentView,
+    ) -> crate::status_line::PayloadFacts<'a> {
+        crate::status_line::PayloadFacts {
+            session_id: &self.session_id,
+            transcript_path: self.session_file.as_deref(),
+            cwd: &self.cwd,
+            chrome: &view.chrome,
+            vim_mode: view.editor.vim_mode(),
+        }
+    }
+
     /// The activity dock follows the scoped heartbeat catalog (the tray no
     /// longer carries a heartbeat count beside the model name).
     pub(crate) fn sync_activity_dock(&mut self, view: &mut AgentView) {

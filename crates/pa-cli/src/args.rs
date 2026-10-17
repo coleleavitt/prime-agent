@@ -188,6 +188,9 @@ pub struct Args {
     /// `--sandbox <mode>`: the OS sandbox for this run (`off` | `read-only` |
     /// `workspace-write`), over the `sandbox` setting.
     pub sandbox: Option<pa_core::os_sandbox::SandboxMode>,
+    /// `--add-dir <directory>` (repeatable): extra working directories for
+    /// the session (Claude Code's flag).
+    pub add_dirs: Vec<String>,
     pub verbose: bool,
     pub messages: Vec<String>,
     #[allow(clippy::struct_field_names)]
@@ -493,6 +496,10 @@ pub fn parse_args(args: &[String]) -> Args {
             "--verbose" => result.verbose = true,
             "--offline" => result.offline = true,
             "--plan" => result.plan = true,
+            "--add-dir" => {
+                let value = require_value!(arg);
+                result.add_dirs.push(value);
+            }
             "--sandbox" => {
                 let value = require_value!(arg);
                 if let Some(mode) = pa_core::os_sandbox::SandboxMode::from_wire(&value) {
@@ -643,6 +650,30 @@ mod tests {
         );
         assert!(config.plan_mode);
         assert!(!parse(&["hello"]).plan);
+    }
+
+    /// `--add-dir` repeats, resolves against the working directory, and reaches the config.
+    #[test]
+    fn add_dir_flags_reach_the_config_resolved() {
+        let parsed = parse(&["--add-dir", "../lib", "--add-dir", "/abs", "hi"]);
+        let config = crate::mode::runtime_config_from_args(
+            &parsed,
+            std::path::PathBuf::from("/work"),
+            std::path::PathBuf::from("/agent"),
+            None,
+            crate::mode::AppMode::Print,
+            /*telemetry_disabled*/ true,
+        );
+        assert_eq!(
+            (config.additional_directories, parsed.messages),
+            (
+                vec![
+                    std::path::PathBuf::from("/work/../lib"),
+                    std::path::PathBuf::from("/abs")
+                ],
+                vec!["hi".to_string()]
+            )
+        );
     }
 
     /// `--sandbox <mode>` takes one of the three modes, reaches the session config, and

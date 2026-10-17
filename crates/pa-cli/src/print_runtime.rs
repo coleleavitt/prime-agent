@@ -792,6 +792,7 @@ pub(crate) async fn build_headless_engine_with(
         pa_core::session_engine::engine::SessionEngineConfig {
             // `--sandbox`; without it the `sandbox` setting decides.
             sandbox_mode: config.sandbox_mode,
+            additional_directories: config.additional_directories.clone(),
             // `--plan`; without it the session restores its own mode. A
             // spawned child starts in its parent's mode.
             plan_mode: match embedding {

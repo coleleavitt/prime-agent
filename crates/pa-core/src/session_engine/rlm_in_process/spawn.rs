@@ -211,6 +211,8 @@ async fn admission(
                 .map(crate::os_sandbox::SessionSandbox::mode),
             // The grant the parent's spawn drew funds the child.
             rlm_token_allowance: request.token_budget,
+            // A child sees its parent's additional working directories.
+            additional_directories: parent_engine.additional_directories.list(),
             ..Default::default()
         })
         .await?,

@@ -155,19 +155,33 @@ impl AgentSession {
         let expand = options.expand_prompt_templates.unwrap_or(true);
         // TS `_finishSubmissionNormalization` order: skill commands expand first, prompt templates
         // second; both are gated by the same policy flag.
-        let (normalized, used_skill) = if expand {
-            let (skill_expanded, used_skill) =
-                crate::skills::expand_skill_command(text, &self.skills);
-            let normalized =
-                crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
-            (normalized, used_skill)
+        let (skill_expanded, used_skill) = if expand {
+            crate::skills::expand_skill_command(text, &self.skills)
         } else {
             (text.to_string(), None)
+        };
+        let normalized = if expand {
+            crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
+        } else {
+            skill_expanded.clone()
         };
 
         if let Some(command) = parse_session_command(&self.slash_commands, &normalized) {
             return Ok(PromptOutcome::SessionCommand(command));
         }
+        // A Claude Code command's shell blocks run only now, once the text is
+        // known to be a prompt (classification above never runs them).
+        let normalized = if expand {
+            let cwd = self.session.lock().await.get_cwd().to_path_buf();
+            crate::skills::expand_prompt_template_with_shell(
+                &skill_expanded,
+                &self.prompt_templates,
+                &cwd,
+            )
+            .await
+        } else {
+            normalized
+        };
 
         let admission = self.terminal_admission.lock().await;
         let state = self.agent.state().await;
@@ -241,7 +255,13 @@ impl AgentSession {
                 let row_text = if expand {
                     let (skill_expanded, _) =
                         crate::skills::expand_skill_command(&row.text, &self.skills);
-                    crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
+                    let cwd = self.session.lock().await.get_cwd().to_path_buf();
+                    crate::skills::expand_prompt_template_with_shell(
+                        &skill_expanded,
+                        &self.prompt_templates,
+                        &cwd,
+                    )
+                    .await
                 } else {
                     row.text.clone()
                 };

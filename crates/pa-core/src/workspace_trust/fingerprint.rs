@@ -192,6 +192,48 @@ impl TrustInputs {
                 ));
             }
         }
+        // The project's output styles rewrite the system prompt.
+        let styles = project_dir.join(crate::prompts::output_style::OUTPUT_STYLES_DIR);
+        if dir_has_entries(&styles) {
+            trees.push((
+                GatedItem::ProjectDir {
+                    dir: crate::prompts::output_style::OUTPUT_STYLES_DIR.to_string(),
+                    label: "output styles".to_string(),
+                },
+                GatedTree {
+                    label: "output-styles".to_string(),
+                    root: styles,
+                },
+            ));
+        }
+        // Claude Code's project directories this harness reads: custom
+        // commands (their shell blocks run at expansion) and output styles.
+        for (dir, label) in [
+            (
+                crate::skills::claude_commands::CLAUDE_COMMANDS_DIR,
+                "custom commands",
+            ),
+            (
+                crate::prompts::output_style::OUTPUT_STYLES_DIR,
+                "output styles",
+            ),
+        ] {
+            let root = cwd
+                .join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+                .join(dir);
+            if dir_has_entries(&root) {
+                trees.push((
+                    GatedItem::ClaudeDir {
+                        dir: dir.to_string(),
+                        label: label.to_string(),
+                    },
+                    GatedTree {
+                        label: format!("claude:{dir}"),
+                        root,
+                    },
+                ));
+            }
+        }
         TrustInputs {
             settings,
             system_prompt: file("SYSTEM.md"),

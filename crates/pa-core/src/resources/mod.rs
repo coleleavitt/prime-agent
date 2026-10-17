@@ -70,6 +70,14 @@ pub fn load_project_context_files(cwd: &Path, agent_dir: &Path) -> Vec<ContextFi
     context_files
 }
 
+/// Claude Code's opt-in for the additional directories' own context files
+/// (`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`); off by default, as
+/// there.
+fn additional_directory_context_enabled() -> bool {
+    let value = std::env::var("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD").ok();
+    pa_bash::is_truthy_env_value(value.as_deref())
+}
+
 // Session resource resolution (package-manager `resolve()`) feeds the loader below.
 pub(crate) mod resolution;
 
@@ -111,6 +119,11 @@ pub struct ResourceLoaderOptions {
     pub no_context_files: bool,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
+    /// The session's additional working directories (`--add-dir`,
+    /// `/add-dir`, `permissions.additionalDirectories`): their
+    /// `.claude/commands` load, and their context files when
+    /// `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` is set.
+    pub additional_directories: Vec<PathBuf>,
 }
 
 impl ResourceLoaderOptions {
@@ -141,6 +154,11 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     let project_cwd = settings
         .project_scope_trusted()
         .then_some(options.cwd.as_path());
+    let command_shell = if settings.get_disable_skill_shell_execution() {
+        crate::skills::claude_commands::ShellExpansion::Disabled
+    } else {
+        crate::skills::claude_commands::ShellExpansion::Enabled
+    };
     let resolution = resolution::resolve_session_resources(&options, settings)?;
 
     let mut resources = LoadedResources::default();
@@ -193,7 +211,7 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     }
 
     // Prompt templates: CLI paths + resolved paths, then additional paths.
-    let all_prompts = if options.no_prompt_templates && resolution.prompt_paths.is_empty() {
+    let mut all_prompts = if options.no_prompt_templates && resolution.prompt_paths.is_empty() {
         Vec::new()
     } else {
         load_prompt_templates(&LoadPromptTemplatesOptions {
@@ -203,6 +221,24 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
             include_defaults: false,
         })
     };
+    // Claude Code custom commands follow the Prime Agent templates (a
+    // template of the same name wins). The working directory's commands
+    // load only in a trusted workspace (they can run shell blocks); the
+    // additional directories are the user's own choice.
+    if !options.no_prompt_templates {
+        let project_roots = project_cwd
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(options.additional_directories.iter().cloned())
+            .collect();
+        all_prompts.extend(crate::skills::claude_commands::load_claude_commands(
+            &crate::skills::claude_commands::ClaudeCommandRoots {
+                project_roots,
+                user_dir: crate::skills::claude_commands::user_claude_dir(),
+                shell: command_shell,
+            },
+        ));
+    }
     resources.prompts = dedupe_prompts(all_prompts)
         .into_iter()
         .map(|mut prompt| {
@@ -226,6 +262,19 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     // Agents files (project context).
     if !options.no_context_files {
         resources.agents_files = load_project_context_files(&options.cwd, &options.agent_dir);
+        if additional_directory_context_enabled() {
+            for dir in &options.additional_directories {
+                if let Some(found) = load_context_file_from_dir(dir) {
+                    if !resources
+                        .agents_files
+                        .iter()
+                        .any(|file| file.path == found.path)
+                    {
+                        resources.agents_files.push(found);
+                    }
+                }
+            }
+        }
     }
 
     // System prompt: explicit source or discovered file content.

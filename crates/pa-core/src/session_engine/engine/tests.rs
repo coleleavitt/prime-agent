@@ -57,6 +57,7 @@ async fn engine_runs_tool_loop_and_persists() {
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -168,6 +169,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -247,6 +249,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     ) -> SessionEngineConfig {
         SessionEngineConfig {
             sandbox_mode: None,
+            additional_directories: Vec::new(),
             plan_mode: None,
             on_late_sent_agent_message: None,
             semantic_edges: None,
@@ -1167,6 +1170,7 @@ async fn create_session_appends_missing_resume_settings_rows() {
         steering_mode: None,
         follow_up_mode: None,
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_token_allowance: None,

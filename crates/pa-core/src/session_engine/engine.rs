@@ -121,6 +121,10 @@ pub struct SessionEngineConfig {
     /// `--sandbox <mode>`: replaces the `sandbox` setting's mode for this run (`off` included).
     /// `None` keeps the setting.
     pub sandbox_mode: Option<crate::os_sandbox::SandboxMode>,
+    /// `--add-dir`: extra working directories for this run, joined with
+    /// the `permissions.additionalDirectories` setting and the session's
+    /// own `/add-dir` additions.
+    pub additional_directories: Vec<PathBuf>,
 }
 
 pub struct SessionEngine {
@@ -205,6 +209,9 @@ pub struct SessionEngine {
     /// The session's MCP client connections (behind the kernel's `rlm.mcp`
     /// calls): they outlive kernel restarts and close with the session.
     pub mcp_sessions: crate::mcp::McpSessions,
+    /// The session's additional working directories (`--add-dir`, the
+    /// setting, `/add-dir`): the extra roots other layers may read.
+    pub additional_directories: Arc<super::additional_dirs::AdditionalDirectories>,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -294,6 +301,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(traces) = traces {
         session_manager.on_persist(Box::new(move |path| traces.persisted(path)));
     }
+    // A resumed session keeps the directories its `/add-dir` added.
+    let persisted_directories =
+        super::additional_dirs::persisted_directories(session_manager.get_branch(None).into_iter());
     let wiring = super::runtime_wiring::wire_session_runtime(
         session_manager,
         &config.agent_dir,
@@ -374,9 +384,29 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             generic_mcp_servers.push(server);
         }
     }
+    // The additional working directories and the output style, read
+    // before `settings` moves into the resource loader.
+    let mut launch_directories = config.additional_directories.clone();
+    launch_directories.extend(settings.get_additional_directories(&cwd));
+    let additional_directories = Arc::new(super::additional_dirs::AdditionalDirectories::resolve(
+        &cwd,
+        &launch_directories,
+        &persisted_directories,
+    ));
+    let output_style = settings.get_output_style().and_then(|name| {
+        let styles = crate::prompts::output_style::load_output_styles(
+            &crate::prompts::output_style::output_style_dirs(
+                &cwd,
+                &config.agent_dir,
+                settings.project_scope_trusted(),
+            ),
+        );
+        crate::prompts::output_style::find_output_style(&styles, name).cloned()
+    });
     let resources = load_resources(ResourceLoaderOptions {
         cwd: cwd.clone(),
         agent_dir: config.agent_dir.clone(),
+        additional_directories: additional_directories.list(),
         settings: Some(settings),
         extra_builtin_skill_overrides,
         additional_skill_paths: config.additional_skill_paths.clone(),
@@ -872,6 +902,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             sandbox: sandbox
                 .as_ref()
                 .map(crate::os_sandbox::SessionSandbox::prompt_line),
+            output_style,
+            additional_directories: additional_directories
+                .list()
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect(),
             ..Default::default()
         },
     );
@@ -1166,6 +1202,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent: Arc::downgrade(&agent),
         skills: resources.skills.clone(),
         prompt_templates: resources.prompts.clone(),
+        cwd: cwd.clone(),
         features: crate::features::installed().to_vec(),
         feature_context: Arc::clone(&feature_context),
         feature_notes: feature_notes.clone(),
@@ -1401,6 +1438,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         presented_artifacts,
         sandbox,
         mcp_sessions,
+        additional_directories,
     };
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");

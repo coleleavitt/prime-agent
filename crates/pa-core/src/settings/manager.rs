@@ -1100,6 +1100,96 @@ impl SettingsManager {
         })
     }
 
+    /// `outputStyle`: the configured output style's name; `None` (unset,
+    /// blank, or `default`) is the default style.
+    #[must_use]
+    pub fn get_output_style(&self) -> Option<&str> {
+        self.merged
+            .output_style
+            .as_deref()
+            .map(str::trim)
+            .filter(|style| !style.is_empty() && *style != "default")
+    }
+
+    /// Persist `outputStyle` globally; `None` clears it (the default style).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global settings file cannot be written.
+    pub fn set_output_style(&mut self, style: Option<String>) -> Result<()> {
+        self.global.output_style = style;
+        self.save_global(&["outputStyle"])
+    }
+
+    /// `editorMode`: `"vim"` or `"normal"` (the default for unset or any
+    /// other value).
+    #[must_use]
+    pub fn get_editor_mode(&self) -> &'static str {
+        match self.merged.editor_mode.as_deref() {
+            Some("vim") => "vim",
+            _ => "normal",
+        }
+    }
+
+    /// Persist `editorMode` globally.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global settings file cannot be written.
+    pub fn set_editor_mode(&mut self, mode: &str) -> Result<()> {
+        self.global.editor_mode = Some(mode.to_string());
+        self.save_global(&["editorMode"])
+    }
+
+    /// `statusLine` as configured (the client validates its shape). An
+    /// untrusted workspace's project value never reaches here: the key is
+    /// outside the untrusted-safe list.
+    #[must_use]
+    pub fn get_status_line(&self) -> Option<&serde_json::Value> {
+        self.merged.status_line.as_ref()
+    }
+
+    /// `disableSkillShellExecution`: whether custom commands' inline shell
+    /// blocks stay unexpanded (default false: they run).
+    #[must_use]
+    pub fn get_disable_skill_shell_execution(&self) -> bool {
+        self.merged.disable_skill_shell_execution.unwrap_or(false)
+    }
+
+    /// `permissions.additionalDirectories` (Claude Code's key): extra
+    /// working directories, `~` expanded and relative entries resolved
+    /// against `cwd`. Read through the raw document so it holds whether the
+    /// `permissions` object is a typed field or an unknown key.
+    #[must_use]
+    pub fn get_additional_directories(&self, cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let Ok(document) = serde_json::to_value(&self.merged) else {
+            return Vec::new();
+        };
+        let Some(entries) = document
+            .get("permissions")
+            .and_then(|permissions| permissions.get("additionalDirectories"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Vec::new();
+        };
+        let home = pa_types::platform::home_dir;
+        entries
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                if entry == "~" {
+                    home().unwrap_or_default()
+                } else if let Some(rest) = entry.strip_prefix("~/") {
+                    home().unwrap_or_default().join(rest)
+                } else {
+                    cwd.join(entry)
+                }
+            })
+            .collect()
+    }
+
     // -- persistence ---------------------------------------------------------
 
     /// Write the global scope back (project scope is host-written, not

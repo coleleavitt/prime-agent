@@ -145,6 +145,7 @@ pub(crate) async fn build_faux_engine_with(
         pa_core::session_engine::engine::SessionEngineConfig {
             // `--sandbox`; without it the `sandbox` setting decides.
             sandbox_mode: config.sandbox_mode,
+            additional_directories: config.additional_directories.clone(),
             // `--plan`; without it the session restores its own mode.
             plan_mode: config.plan_mode.then_some(true),
             on_late_sent_agent_message: None,

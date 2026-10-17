@@ -100,7 +100,10 @@ turn-behaviour keys; everything else, unknown keys included, waits for trust),
 and `load_resources` skips its `SYSTEM.md`/`APPEND_SYSTEM.md`, project
 prompt templates, and project skills (`.prime/agent/skills/`, ancestor
 `.agents/skills/`, settings `skills` paths), so an untrusted Python skill is
-never editable-installed into the kernel venv or imported. The hash covers
+never editable-installed into the kernel venv or imported; Claude Code's
+`.claude/commands/` (custom commands, whose `` !`cmd` `` blocks run at
+admission) and `.claude/output-styles/` (plus `.prime/agent/output-styles/`)
+are gated the same way. The hash covers
 every file of those skill trees except tool caches. A change to the gated content reads as `Changed` (asks again);
 a theme edit does not. Project-scope writes from an untrusted workspace are
 refused; the product's own project writes in a trusted one re-pin the record.
