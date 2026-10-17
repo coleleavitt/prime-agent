@@ -197,6 +197,7 @@ pub fn stream_once(
             // hook may replace the wire payload, the response hook observes headers.
             on_payload: options.on_payload.map(agent_payload_hook_to_ai),
             on_response: options.on_response.map(agent_response_hook_to_ai),
+            on_event: None,
             // StreamOptions carries a plain map; the target's ordered
             // (BTreeMap) resolution converts here, with the request's own
             // headers (the semantic request id) merged over it — TS
