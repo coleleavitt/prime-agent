@@ -1139,11 +1139,23 @@ async fn select_model(
         // The lookup is scoped like TS findInitialModel's saved default: the
         // flag, when given, has already matched the saved provider above.
         let scope = flag_provider.or(saved_provider);
-        return available.iter().find(|model| {
+        let found = available.iter().find(|model| {
             scope.is_none_or(|provider| model.provider.eq_ignore_ascii_case(provider))
                 && (model.id.eq_ignore_ascii_case(saved_model)
                     || format!("{}/{}", model.provider, model.id).eq_ignore_ascii_case(saved_model))
-        }).cloned().ok_or_else(|| format!("Configured default model \"{saved_model}\" is unavailable. Check settings.json, models.json, and provider authentication."));
+        });
+        match found {
+            Some(model) => return Ok(model.clone()),
+            // Claude Code's `model` (claudeCodeSettings) is a preference,
+            // not this agent's configuration: unavailable, the usual
+            // default applies.
+            None if settings.default_model_from_claude_code() => {}
+            None => {
+                return Err(format!(
+                    "Configured default model \"{saved_model}\" is unavailable. Check settings.json, models.json, and provider authentication."
+                ));
+            }
+        }
     }
     // A settings defaultProvider without a defaultModel does not scope the
     // no-flag choice (TS reads the two keys together); only the flag does.

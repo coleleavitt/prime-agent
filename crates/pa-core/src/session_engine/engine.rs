@@ -367,6 +367,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the session's artifact dir (its durable ledger's home) is known.
     let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
+    // Claude Code's settings files (behind `claudeCodeSettings`): their
+    // `env` reaches the kernel and its commands; what was not taken is
+    // logged, so a PATH override is never silent.
+    let claude_code_env = settings.get_claude_code_env();
+    for problem in settings.claude_code_problems() {
+        tracing::warn!(target: "pa_core::claude_code_settings", "{problem}");
+    }
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
     // pin), like the request-timing snapshot above; and the
@@ -863,6 +870,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_environment,
         plan.clone(),
         sandbox.clone(),
+        claude_code_env,
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {

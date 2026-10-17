@@ -428,4 +428,42 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&content).expect("parse");
         assert_eq!(value["factory"]["enabled"], false);
     }
+
+    /// With `claudeCodeSettings`, a trusted project's Claude Code status
+    /// line and output style reach the TUI when this agent sets neither.
+    #[test]
+    fn the_tui_reads_claude_codes_status_line_and_output_style() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let cwd = dir.path().join("repo");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".claude")).expect("claude dir");
+        std::fs::create_dir_all(&agent_dir).expect("agent dir");
+        std::fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"claudeCodeSettings": true}"#,
+        )
+        .expect("user settings");
+        std::fs::write(
+            cwd.join(".claude").join("settings.local.json"),
+            serde_json::json!({
+                "statusLine": { "type": "command", "command": "echo cc", "padding": 2 },
+                "outputStyle": "Explanatory",
+            })
+            .to_string(),
+        )
+        .expect("claude settings");
+        let settings = CliClientSettings::new(cwd.clone(), agent_dir.clone(), Vec::new());
+        // Untrusted, the project's keys wait.
+        assert_eq!(settings.status_line(), None);
+        assert_eq!(settings.output_style(), "default");
+        pa_core::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            pa_core::workspace_trust::TrustDecision::Trusted,
+        )
+        .expect("trust");
+        let line = settings.status_line().expect("status line");
+        assert_eq!((line.command.as_str(), line.padding), ("echo cc", 2));
+        assert_eq!(settings.output_style(), "Explanatory");
+    }
 }

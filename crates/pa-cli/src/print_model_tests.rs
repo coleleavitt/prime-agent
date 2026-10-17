@@ -234,3 +234,43 @@ async fn print_model_provider_only_settings_default_does_not_scope() {
         ("my-gateway", "my-group/my-model")
     );
 }
+
+/// Claude Code's `model` (with `claudeCodeSettings`) is a preference: when
+/// it is unavailable, print mode falls back like an unset default instead
+/// of failing as a configured `defaultModel` does.
+#[tokio::test]
+async fn print_model_falls_back_from_an_unavailable_claude_code_model() {
+    let (_dir, config, mut registry) = fixture(&json!({ "claudeCodeSettings": true }));
+    let unauthenticated_model = registry
+        .get_all()
+        .iter()
+        .find(|model| model.provider == "anthropic" && model.id.starts_with("claude-"))
+        .unwrap()
+        .clone();
+    let claude = config.cwd.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(
+        claude.join("settings.local.json"),
+        json!({ "model": unauthenticated_model.id }).to_string(),
+    )
+    .unwrap();
+    pa_core::workspace_trust::record(
+        &config.cwd,
+        &config.agent_dir,
+        pa_core::workspace_trust::TrustDecision::Trusted,
+    )
+    .unwrap();
+    let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
+    assert_eq!(
+        (
+            settings.get_default_model(),
+            settings.default_model_from_claude_code()
+        ),
+        (Some(unauthenticated_model.id.as_str()), true)
+    );
+    let selected = select_model(&mut registry, &config, None).await.unwrap();
+    assert_eq!(
+        (selected.provider.as_str(), selected.id.as_str()),
+        ("my-gateway", "my-group/my-model")
+    );
+}
