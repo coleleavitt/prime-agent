@@ -232,4 +232,139 @@ pub trait ClientSettings: Send + Sync {
     fn set_telemetry_notice_shown(&self) -> Result<()> {
         Ok(())
     }
+    /// Claude Code's `statusLine` setting, validated; `None` is off.
+    /// Read once per run (and on `/reload`), never on the paint path.
+    #[must_use]
+    fn status_line(&self) -> Option<StatusLineSettings> {
+        None
+    }
+    /// `editorMode`: the prompt editor's key mode.
+    #[must_use]
+    fn editor_mode(&self) -> EditorMode {
+        EditorMode::Normal
+    }
+    /// Persists `editorMode` to the global scope (`/vim`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the settings store fails or is unavailable.
+    fn set_editor_mode(&self, _mode: EditorMode) -> Result<()> {
+        anyhow::bail!("Editor mode settings are unavailable")
+    }
+    /// The launch's `--add-dir` directories (absolute), carried on every
+    /// create so the session engine joins them to its own list.
+    #[must_use]
+    fn launch_additional_directories(&self) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
+}
+
+/// The prompt editor's key mode (`editorMode`, Claude Code's values).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EditorMode {
+    #[default]
+    Normal,
+    Vim,
+}
+
+impl EditorMode {
+    /// The settings value.
+    #[must_use]
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            EditorMode::Normal => "normal",
+            EditorMode::Vim => "vim",
+        }
+    }
+}
+
+/// Claude Code's `statusLine` setting: `{ "type": "command", "command",
+/// "padding", "refreshInterval", "hideVimModeIndicator" }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusLineSettings {
+    pub command: String,
+    /// Columns of left padding before each status row.
+    pub padding: usize,
+    /// Re-run every N seconds besides the event-driven runs (min 1s).
+    pub refresh_interval: Option<std::time::Duration>,
+    /// Hide the built-in vim mode indicator (the command renders it).
+    pub hide_vim_mode_indicator: bool,
+}
+
+impl StatusLineSettings {
+    /// Validate the raw setting: a `command` type with a non-blank
+    /// command; anything else is off.
+    #[must_use]
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("command") {
+            return None;
+        }
+        let command = value
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .filter(|command| !command.trim().is_empty())?
+            .to_string();
+        let padding = value
+            .get("padding")
+            .and_then(serde_json::Value::as_u64)
+            .map_or(0, |padding| usize::try_from(padding.min(40)).unwrap_or(0));
+        let refresh_interval = value
+            .get("refreshInterval")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds >= 1.0)
+            .map(std::time::Duration::from_secs_f64);
+        Some(Self {
+            command,
+            padding,
+            refresh_interval,
+            hide_vim_mode_indicator: value
+                .get("hideVimModeIndicator")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_line_settings_validate_the_claude_code_shape() {
+        let parse = |value: serde_json::Value| StatusLineSettings::from_value(&value);
+        assert_eq!(
+            parse(serde_json::json!({
+                "type": "command",
+                "command": "~/.claude/statusline.sh",
+                "padding": 2,
+                "refreshInterval": 5,
+                "hideVimModeIndicator": true
+            })),
+            Some(StatusLineSettings {
+                command: "~/.claude/statusline.sh".to_string(),
+                padding: 2,
+                refresh_interval: Some(std::time::Duration::from_secs(5)),
+                hide_vim_mode_indicator: true,
+            })
+        );
+        assert_eq!(
+            parse(
+                serde_json::json!({ "type": "command", "command": "echo hi", "refreshInterval": 0 })
+            ),
+            Some(StatusLineSettings {
+                command: "echo hi".to_string(),
+                padding: 0,
+                refresh_interval: None,
+                hide_vim_mode_indicator: false,
+            })
+        );
+        assert_eq!(
+            parse(serde_json::json!({ "type": "static", "command": "x" })),
+            None
+        );
+        assert_eq!(
+            parse(serde_json::json!({ "type": "command", "command": " " })),
+            None
+        );
+    }
 }

@@ -1039,6 +1039,11 @@ impl AgentSessionEngine {
             additional_skill_paths: create_resources.skills,
             additional_prompt_paths: create_resources.prompt_templates,
             resource_exclusions: create_resources.resource_exclusions,
+            additional_directories: create_resources
+                .additional_directories
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: self.children.clone().map(|children| {
                 children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>

@@ -499,6 +499,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "OS sandbox for the kernel and its commands this run: off, read-only, workspace-write",
             ),
             (
+                "--add-dir <directory>",
+                "Additional working directory for this session (repeatable)",
+            ),
+            (
                 "--goal <objective>",
                 "Seed a persistent goal for a new root session",
             ),

@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 /// Global flags that consume the next argument as their value.
-pub const GLOBAL_VALUE_FLAGS: [&str; 23] = [
+pub const GLOBAL_VALUE_FLAGS: [&str; 24] = [
     "--mode",
     "--daemon-socket",
     "--provider",
@@ -28,6 +28,7 @@ pub const GLOBAL_VALUE_FLAGS: [&str; 23] = [
     "--autonomous-max-tokens",
     "--autonomous-timeout-ms",
     "--sandbox",
+    "--add-dir",
 ];
 
 const FREEFORM_VALUE_FLAGS: [&str; 2] = ["--goal", "--autonomous-gate"];

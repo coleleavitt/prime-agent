@@ -577,6 +577,7 @@ fn build_tui_options(
         client_settings: Some(crate::client_settings::CliClientSettings::new(
             config.cwd.clone(),
             config.agent_dir.clone(),
+            config.additional_directories.clone(),
         )),
         version: crate::config::version().to_string(),
         onboarding,
