@@ -78,9 +78,10 @@ async fn session(root: &std::path::Path, depth: u32, log: Option<PathBuf>) -> Se
     .unwrap()
 }
 
-fn listed(engine: &SessionEngine, name: &str) -> bool {
+async fn listed(engine: &SessionEngine, name: &str) -> bool {
     engine
-        .system_prompt
+        .session_context_text()
+        .await
         .contains(&format!("<name>{name}</name>"))
 }
 
@@ -97,13 +98,13 @@ async fn a_feature_hides_a_skill_from_the_sessions_it_gates() {
     let child = session(tmp.path(), 1, Some(log)).await;
     let storeless = session(tmp.path(), 0, None).await;
 
-    assert!(listed(&top, GATED));
-    assert!(!listed(&child, GATED));
-    assert!(!listed(&storeless, GATED));
+    assert!(listed(&top, GATED).await);
+    assert!(!listed(&child, GATED).await);
+    assert!(!listed(&storeless, GATED).await);
     // Other skills stay listed, and `/skill:` expansion keeps the full
     // inventory (TS reads the resource loader there).
     for engine in [&child, &storeless] {
-        assert!(listed(engine, "goal"));
+        assert!(listed(engine, "goal").await);
         assert!(engine.skills.iter().any(|skill| skill.name == GATED));
     }
 

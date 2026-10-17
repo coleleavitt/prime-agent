@@ -17,6 +17,12 @@ use std::path::Path;
 
 use pa_core::prompts::layers::{CORE_LAYER, OPINIONATED_LAYER, USAGE_LAYER};
 use pa_core::prompts::model_prompts::MODEL_PROMPTS_TOML;
+use pa_core::prompts::session_context::{
+    EnvironmentFields,
+    InstructionFile,
+    SessionContext,
+    SessionContextInputs,
+};
 use pa_core::prompts::system_prompt::{
     BuildSystemPromptOptions,
     SegmentKind,
@@ -52,6 +58,7 @@ const DYNAMIC_ONLY_MARKERS: &[&str] = &[
     "Conversation log:",
     "Recursive agent depth:",
     "Current date:",
+    "Today's date is",
     "<available_skills>",
     "Enabled generic MCP servers:",
     "# Project Context",
@@ -77,24 +84,80 @@ fn static_layers_contain_no_dynamic_content() {
     }
 }
 
+/// A session context for the cache-safety checks: everything that used to
+/// vary the prompt's tail now varies this row instead.
+fn session_context(cwd: &str, mcp: &[String], files: Vec<InstructionFile>) -> SessionContext {
+    let skills = sorted_bundled_skills();
+    SessionContext::build(SessionContextInputs {
+        agent_types: None,
+        instruction_files: files,
+        skills: &skills,
+        selected_tools: Some(&["python_repl"]),
+        mcp_servers: mcp,
+        environment: EnvironmentFields {
+            working_directory: cwd.to_string(),
+            additional_directories: Vec::new(),
+            platform: "linux".to_string(),
+            ..Default::default()
+        },
+        date: "2026-10-17".to_string(),
+    })
+}
+
+/// Cache safety: nothing that changes per directory, per day, per project or per
+/// connection reaches the system prompt; it all rides the session context row.
+#[test]
+fn the_system_prompt_ignores_volatile_context() {
+    let options = BuildSystemPromptOptions {
+        model_prompt_extras: Some("model guidance."),
+        selected_tools: Some(vec!["python_repl"]),
+        ..Default::default()
+    };
+    let prompt = system_prompt_breakdown(&options).assembled;
+    for marker in [
+        "Working directory:",
+        "Conversation log:",
+        "Current date:",
+        "Today's date is",
+        "<available_skills>",
+        "Enabled generic MCP servers:",
+        "# Project Context",
+        "# Environment",
+    ] {
+        assert!(
+            !prompt.contains(marker),
+            "{marker:?}: the session context's markers stay out of the prompt"
+        );
+    }
+    let first = session_context("/first/cwd", &[], Vec::new()).render_full();
+    let second = session_context(
+        "/completely/different",
+        &["slack".into(), "github".into()],
+        vec![InstructionFile {
+            path: "AGENTS.md".into(),
+            content: "Never commit main.".into(),
+        }],
+    )
+    .render_full();
+    assert!(first.contains("Working directory: /first/cwd"));
+    assert!(first.contains("Today's date is 2026-10-17."));
+    assert!(first.contains("<available_skills>"));
+    assert!(second.contains("Working directory: /completely/different"));
+    assert!(second.contains("Enabled generic MCP servers: `github`, `slack`."));
+    assert!(second.contains("# Project Context"));
+}
+
 #[test]
 fn cached_prefix_is_stable_across_sessions() {
     let mut options = BuildSystemPromptOptions {
-        cwd: "/first/cwd".to_string(),
-        messages_path: Some("/first/session.jsonl".to_string()),
         model_prompt_extras: Some("model guidance."),
-        skills: sorted_bundled_skills(),
         selected_tools: Some(vec!["python_repl"]),
         ..Default::default()
     };
     let first = system_prompt_breakdown(&options);
 
-    options.cwd = "/completely/different".into();
-    options.messages_path = None;
     options.rlm_depth = Some(3);
     options.rlm_parent_agent = Some("orchestrator");
-    options.generic_mcp_servers = vec!["slack".into(), "github".into()];
-    options.context_files = vec![("AGENTS.md".into(), "Never commit main.".into())];
     options.append_system_prompt = Some("And one more thing.".into());
     let second = system_prompt_breakdown(&options);
 
@@ -114,17 +177,11 @@ fn cached_prefix_is_stable_across_sessions() {
     );
 
     let first_tail = &first.assembled[first.cached_prefix_len..];
-    assert!(first_tail.contains("Current date: "));
-    assert!(first_tail.contains("Working directory: /first/cwd"));
     assert!(first_tail.contains("Recursive agent depth: 0 (root)"));
-    assert!(first_tail.contains("<available_skills>"));
     assert!(first_tail.contains("Pre-installed Python packages:"));
     let second_tail = &second.assembled[second.cached_prefix_len..];
-    assert!(second_tail.contains("/completely/different"));
-    assert!(second_tail.contains("Enabled generic MCP servers: `github`, `slack`."));
     assert!(second_tail.contains("Recursive agent depth: 3 (not root)"));
     assert!(second_tail.contains("You are a child agent spawned by orchestrator."));
-    assert!(second_tail.contains("# Project Context"));
     assert!(second_tail.ends_with("And one more thing."));
 
     for segment in &first.segments {
@@ -770,23 +827,10 @@ fn bundled_skills_match_the_ts_packaged_set() {
 /// location]`-style XML the TS `formatSkillsForPrompt` emits, without a `python_import` line.
 #[test]
 fn generic_mcp_skill_renders_in_the_prompt_inventory() {
-    let mut options = BuildSystemPromptOptions {
-        cwd: "/w".to_string(),
-        messages_path: Some("/log.jsonl".to_string()),
-        skills: sorted_bundled_skills(),
-        selected_tools: Some(vec!["python_repl"]),
-        ..Default::default()
-    };
-    let breakdown = system_prompt_breakdown(&options);
-    let inventory = breakdown
-        .segments
-        .iter()
-        .find(|segment| {
-            matches!(segment.kind, SegmentKind::Dynamic)
-                && segment.text.contains("<available_skills>")
-        })
-        .map(|segment| segment.text.clone())
-        .expect("the skills inventory segment renders");
+    let inventory = pa_core::prompts::session_context::render_skills(
+        &session_context("/w", &[], Vec::new()).skills,
+    );
+    assert!(inventory.contains("<available_skills>"));
     assert!(inventory.contains("<name>mcp</name>"));
     assert!(inventory.contains("<type>markdown</type>"));
     let mcp_block_start = inventory
@@ -800,13 +844,8 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
         !mcp_block.contains("python_import"),
         "a markdown skill never carries a python_import line"
     );
-    options.generic_mcp_servers = vec!["notion".into()];
-    let second = system_prompt_breakdown(&options);
-    assert!(
-        second
-            .assembled
-            .contains("await mcp.list_tools(\"notion\")")
-    );
+    let second = session_context("/w", &["notion".into()], Vec::new()).render_full();
+    assert!(second.contains("await mcp.list_tools(\"notion\")"));
 }
 
 // Image input
@@ -842,12 +881,13 @@ fn attach_image_texts_describe_the_image_model_path() {
         skill.description
     );
 
-    let mut options = BuildSystemPromptOptions {
-        cwd: "/w".to_string(),
+    let mut environment = EnvironmentFields {
+        working_directory: "/w".to_string(),
+        additional_directories: Vec::new(),
         vision_capable: Some(false),
         ..Default::default()
     };
-    let text_only = system_prompt_breakdown(&options).assembled;
+    let text_only = pa_core::prompts::session_context::render_environment(&environment);
     assert!(
         text_only.contains(
             "Image input: this model cannot see images; `attach_image` has the configured \
@@ -856,10 +896,12 @@ fn attach_image_texts_describe_the_image_model_path() {
         ),
         "text-only environment line: {text_only}"
     );
-    options.vision_capable = Some(true);
-    assert!(system_prompt_breakdown(&options).assembled.contains(
-        "Image input: this model can see images; `attach_image` loads them into context."
-    ));
+    environment.vision_capable = Some(true);
+    assert!(
+        pa_core::prompts::session_context::render_environment(&environment).contains(
+            "Image input: this model can see images; `attach_image` loads them into context."
+        )
+    );
 }
 
 /// The host serves every kernel `bash()` request natively; each one is

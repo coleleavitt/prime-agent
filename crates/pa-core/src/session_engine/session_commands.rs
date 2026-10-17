@@ -487,11 +487,7 @@ async fn execute_add_dir(
     command: &SessionSlashCommand,
     execution: &mut SessionCommandExecution,
 ) -> Result<(), String> {
-    use super::additional_dirs::{
-        ADDITIONAL_DIRECTORIES_CHANGE_CUSTOM_TYPE,
-        ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE,
-        directories_added_text,
-    };
+    use super::additional_dirs::ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE;
     if command.args.trim().is_empty() {
         return Err("Usage: /add-dir <path>".to_string());
     }
@@ -513,12 +509,8 @@ async fn execute_add_dir(
             Some(serde_json::json!({ "directories": directories })),
         )
         .map_err(|error| error.to_string())?;
-    engine
-        .session
-        .queue_next_turn_row(super::plan_mode::hidden_row(
-            ADDITIONAL_DIRECTORIES_CHANGE_CUSTOM_TYPE,
-            &directories_added_text(&added),
-        ));
+    // The model learns of it from the session context's environment update
+    // on the next turn (`prompts::session_context`), like a `/cwd` move.
     execution.push_message(slash_command_result(
         command,
         format!("Added {} as a working directory.", added.display()),

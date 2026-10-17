@@ -315,21 +315,26 @@ fn settled_turn_emits_the_run_agent_end_payload() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the run's message set (the deferred harness digest rides first)"
+        ["custom", "custom", "user", "assistant"],
+        "the run's message set (the session context row, then the deferred harness digest)"
     );
     assert_eq!(
         messages[0]["customType"],
-        json!("harness_digest"),
-        "the deferred digest row is the run's first message"
+        json!("session_context"),
+        "the session context row is the run's first message"
     );
     assert_eq!(
-        messages[1]["content"],
+        messages[1]["customType"],
+        json!("harness_digest"),
+        "the deferred digest row follows it"
+    );
+    assert_eq!(
+        messages[2]["content"],
         json!([{ "type": "text", "text": "plain turn" }]),
         "the accepted user row rides the payload"
     );
     assert_eq!(
-        messages[2]["content"],
+        messages[3]["content"],
         json!([{ "type": "text", "text": "settled reply" }]),
         "the settled assistant row rides the payload"
     );
@@ -407,11 +412,11 @@ fn retried_run_restarts_with_its_own_agent_frames() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the failed run's message set (the digest row rides first)"
+        ["custom", "custom", "user", "assistant"],
+        "the failed run's message set (the session context and digest rows ride first)"
     );
     assert_eq!(
-        first[2]["stopReason"],
+        first[3]["stopReason"],
         json!("error"),
         "the failed run ends on the error row"
     );

@@ -1214,12 +1214,14 @@ class ReplTest(unittest.TestCase):
             events = self.repl.execute("accessed-paths", code)
             done = one(events, "done")
             self.assertEqual(done["status"], "ok")
-            # First-seen order, once each; interpreter and venv files
-            # (the reloaded stdlib module) are not reported.
-            self.assertEqual(done["accessedPaths"], [read_path, write_path])
+            # First-seen order, once each, split by intent; interpreter and
+            # venv files (the reloaded stdlib module) are not reported. The
+            # host derives nested instruction discovery's `accessedPaths`
+            # from these lists.
+            self.assertEqual(done["fileAccess"], {"reads": [read_path], "writes": [write_path]})
 
         plain = self.repl.execute("accessed-paths-none", "1 + 1")
-        self.assertNotIn("accessedPaths", one(plain, "done"))
+        self.assertNotIn("fileAccess", one(plain, "done"))
 
     def test_async_bash_completion_notifies_only_after_an_unawaited_creating_cell(self):
         direct = self.repl.execute(

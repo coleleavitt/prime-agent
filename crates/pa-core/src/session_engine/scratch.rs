@@ -74,19 +74,6 @@ impl SessionScratch {
             ),
         ]
     }
-
-    /// The environment section's line (Claude Code's wording).
-    #[must_use]
-    pub fn prompt_line(&self) -> String {
-        format!(
-            "Scratchpad directory: {} \u{2014} always use it for temporary files (intermediate \
-             results, scripts, outputs that don't belong in the project) instead of `/tmp` or \
-             other system temp directories; it is session-specific, isolated from the project, \
-             and private to you (`os.environ[\"{SCRATCHPAD_ENV}\"]` in the kernel). Only use \
-             `/tmp` if the user explicitly asks.",
-            self.scratchpad.display().to_string().replace('\\', "/")
-        )
-    }
 }
 
 /// `<temp>/prime-agent-scratch-<uid>` (the user id keeps two accounts'
@@ -180,6 +167,5 @@ mod tests {
         let scratch = SessionScratch::for_session(None, "a/b c");
         assert!(scratch.scratchpad.starts_with(std::env::temp_dir()));
         assert!(scratch.scratchpad.ends_with("a_b_c/scratchpad"));
-        assert!(scratch.prompt_line().starts_with("Scratchpad directory: "));
     }
 }

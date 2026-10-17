@@ -267,6 +267,26 @@ pub struct WarningSettings {
     pub anthropic_extra_usage: Option<bool>,
 }
 
+/// `reminders`: the per-turn `<system-reminder>` notes, each switchable.
+/// Unset keys keep the defaults (`changedFiles`, `taskList` and `tokensLeft`
+/// on, the rest off; see `session_engine::reminders`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderSettings {
+    /// A file the model read changed on disk since.
+    pub changed_files: Option<bool>,
+    /// A cell re-read a file that had not changed since its last read.
+    pub read_dedup: Option<bool>,
+    /// The `tasks` skill has not been used for a while.
+    pub task_list: Option<bool>,
+    /// Several assistant turns in a row said nothing to the user.
+    pub silent_turns: Option<bool>,
+    /// Time elapsed since the session started.
+    pub elapsed_time: Option<bool>,
+    /// Tokens left in the context window (`<total_tokens>`).
+    pub tokens_left: Option<bool>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTracesSettings {
@@ -451,6 +471,8 @@ pub struct Settings {
     /// (or `true`) guards reply text too, `"off"` (or `false`) disables it.
     /// Raw JSON validated at access time.
     pub repetition_guard: Option<serde_json::Value>,
+    /// `reminders`: which per-turn reminders the model receives.
+    pub reminders: Option<ReminderSettings>,
     /// `rlmTokenBudget` (global scope only): the host-enforced delegation
     /// budget, a token count or `{ "total": n, "perDepth": [n, ...] }`
     /// (upstream #1192). Unset is OFF (TS v0.9.8 had no budget). Raw JSON

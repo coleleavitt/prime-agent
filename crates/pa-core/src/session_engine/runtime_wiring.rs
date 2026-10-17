@@ -425,7 +425,10 @@ impl IpythonKernelProvisioner for KernelProvisioner {
             // wraps it in its own abort signal.
             let signal = signal.map(crate::kernel::cancellation::AbortSignal::from_token);
             let manager = this.ensure(on_progress, signal).await?;
-            Ok(Box::new(KernelManagerExecutor { manager }) as Box<dyn KernelExecutor>)
+            Ok(Box::new(KernelManagerExecutor {
+                manager,
+                file_access: this.file_access_sink(),
+            }) as Box<dyn KernelExecutor>)
         })
     }
 
@@ -444,6 +447,8 @@ impl IpythonKernelProvisioner for KernelProvisioner {
 /// Adapts the kernel manager to the ipython tool's executor contract.
 struct KernelManagerExecutor {
     manager: crate::kernel::manager::ReplKernelManager,
+    /// Told about the files each finished cell opened.
+    file_access: Option<crate::kernel::shared::FileAccessSink>,
 }
 
 impl KernelExecutor for KernelManagerExecutor {
@@ -462,6 +467,7 @@ impl KernelExecutor for KernelManagerExecutor {
         let signal = options.signal;
         let timeout_ms = options.timeout_ms;
         let on_late_sent_agent_message = options.on_late_sent_agent_message;
+        let file_access = self.file_access.clone();
         Box::pin(async move {
             let result = manager
                 .execute_bounded(
@@ -476,6 +482,9 @@ impl KernelExecutor for KernelManagerExecutor {
                 )
                 .await
                 .map_err(classify_execute_error)?;
+            if let Some(sink) = file_access.filter(|_| !result.file_access.is_empty()) {
+                sink(&result.file_access);
+            }
             Ok(convert_execute_result(result))
         })
     }
@@ -535,7 +544,9 @@ fn convert_execute_result(
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
         executed_bash_commands: result.executed_bash_commands,
-        accessed_paths: result.accessed_paths,
+        // The one `fileAccess` report feeds both the changed-file reminders
+        // (the provisioner's sink) and nested instruction discovery.
+        accessed_paths: result.file_access.paths(),
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
     }

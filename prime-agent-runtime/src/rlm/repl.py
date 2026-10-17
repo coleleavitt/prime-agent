@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
-from . import plan_guard, trace
+from . import file_access, plan_guard, trace
 from .bash import _kill_live_handles
 
 PROTOCOL_VERSION = 6
@@ -148,8 +148,6 @@ _serve_task: asyncio.Task[Any] | None = None
 
 
 _CELL_BASH_COMMAND_LIMIT = 32
-# The most distinct file paths one cell reports as accessed (`accessedPaths`).
-_CELL_ACCESSED_PATH_LIMIT = 256
 
 
 class _CellExecution:
@@ -159,8 +157,6 @@ class _CellExecution:
         # bash() finalizes on watcher threads; None once the cell body has ended.
         self._bash_lock = threading.Lock()
         self._bash_commands: list[dict[str, Any]] | None = []
-        # Files the cell opened (audit-hook "open" events), first-seen order.
-        self._paths: dict[str, None] | None = {}
 
     def record_bash_command(self, record: dict[str, Any]) -> None:
         """Keep a command that finished while the cell body still ran; later ones are dropped."""
@@ -175,55 +171,6 @@ class _CellExecution:
         with self._bash_lock:
             records, self._bash_commands = self._bash_commands or [], None
         return records
-
-    def record_path(self, path: str) -> None:
-        """Keep a file the cell opened; paths past the cap are dropped."""
-        paths = self._paths
-        if paths is None or path in paths or len(paths) >= _CELL_ACCESSED_PATH_LIMIT:
-            return
-        paths[path] = None
-
-    def close_paths(self) -> list[str]:
-        paths, self._paths = self._paths or {}, None
-        return list(paths)
-
-
-def _runtime_prefixes() -> tuple[str, ...]:
-    """Interpreter and venv trees: opens there are imports, never project files."""
-    roots = {sys.prefix, sys.base_prefix, sys.exec_prefix, os.path.dirname(os.path.abspath(__file__))}
-    return tuple(os.path.join(os.path.abspath(root), "") for root in roots if root)
-
-
-_RUNTIME_PREFIXES: tuple[str, ...] = ()
-
-
-def _audit_open(event: str, args: tuple[Any, ...]) -> None:
-    """Record the files a cell opens (read or write) for the host's
-    instruction-file discovery; never raises, never blocks the open."""
-    if event != "open":
-        return
-    try:
-        execution = _current_cell_execution.get()
-        if execution is None or not args:
-            return
-        target = args[0]
-        if isinstance(target, bytes):
-            target = os.fsdecode(target)
-        if not isinstance(target, str) or not target:
-            return
-        path = os.path.abspath(target)
-        if path.startswith(_RUNTIME_PREFIXES):
-            return
-        execution.record_path(path)
-    except Exception:  # noqa: BLE001 - an audit hook must never break the open it observes
-        return
-
-
-def _install_access_audit() -> None:
-    """Install the (irremovable) open audit hook once per kernel."""
-    global _RUNTIME_PREFIXES
-    _RUNTIME_PREFIXES = _runtime_prefixes()
-    sys.addaudithook(_audit_open)
 
 
 # Asyncio tasks copy cell context at creation, so detached tasks retain their
@@ -1169,6 +1116,8 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
     execution = _CellExecution()
     cell_token = _current_cell.set(cell_id)
     execution_token = _current_cell_execution.set(execution)
+    # Set before the body task is created, so the body and the tasks it spawns record into it.
+    files, files_token = file_access.begin_cell()
     try:
         # The span ends (and its trace event ships) before this request's
         # result/error/done frames, keeping done the last event of the id.
@@ -1180,7 +1129,7 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             execution.owner = task
             status, value, error = await _run_guarded(task, cell_id)
             bash_commands = execution.close_bash_commands()
-            accessed_paths = execution.close_paths()
+            opened_files = files.close()
             result_text: str | None = None
             if status == "detached":
                 status, value = "ok", None
@@ -1219,13 +1168,14 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
         if bash_commands:
             # Optional: hosts that predate the field ignore it.
             done["bashCommands"] = bash_commands
-        if accessed_paths:
-            # Optional and additive, like bashCommands.
-            done["accessedPaths"] = accessed_paths
+        if opened_files:
+            # Optional, like bashCommands: the files the cell opened (paths only).
+            done["fileAccess"] = opened_files
         _send(done)
     finally:
+        files.close()
+        file_access.reset_cell(files_token)
         execution.close_bash_commands()
-        execution.close_paths()
         execution.owner = None
         execution.finished.set()
         _current_cell_execution.reset(execution_token)
@@ -2566,6 +2516,9 @@ def main() -> None:
     user_module = types.ModuleType("__main__")
     user_module.__dict__["__builtins__"] = __builtins__
     sys.modules["__main__"] = user_module
+    # After the runtime's own imports: cells' file opens feed the host's
+    # changed-file reminders (`fileAccess` on the done frame).
+    file_access.install()
 
     # Trace context: an external TRACEPARENT seeds the root the serve task
     # copies at creation; finished spans ship as trace events on the stream.
@@ -2581,7 +2534,6 @@ def main() -> None:
     # Claimed before any cell can run: the one plan-mode controller lives only
     # in the reader thread, which answers the host's `plan_guard` frames.
     plan_guard_controller = plan_guard.claim_host_controller()
-    _install_access_audit()
     threading.Thread(
         target=_read_requests, args=(stdin_fd, queue, plan_guard_controller), daemon=True
     ).start()

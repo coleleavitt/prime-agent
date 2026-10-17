@@ -177,21 +177,6 @@ pub struct KernelExecutedBashCommand {
     pub command_truncated: bool,
 }
 
-/// The `done` frame's `accessedPaths`: the files a cell opened (absent
-/// from older runtimes; non-string entries are skipped).
-#[must_use]
-pub fn parse_accessed_paths(done: &Value) -> Vec<String> {
-    done.get("accessedPaths")
-        .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(|path| path.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 impl KernelExecutedBashCommand {
     /// The `done` frame's `bashCommands` records; malformed records are
     /// skipped, and a frame without the field yields none.
@@ -229,6 +214,65 @@ impl KernelExecutedBashCommand {
         value
     }
 }
+
+/// The files one cell opened through Python, as the runtime reports them in
+/// the `fileAccess` field of the cell's `done` frame (absolute paths; absent
+/// from older runtimes). The host's changed-file reminders track them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KernelFileAccess {
+    pub reads: Vec<std::path::PathBuf>,
+    pub writes: Vec<std::path::PathBuf>,
+}
+
+impl KernelFileAccess {
+    /// The `done` frame's `fileAccess`; non-string entries are skipped, and a
+    /// frame without the field yields an empty record.
+    #[must_use]
+    pub fn parse_done_frame(done: &Value) -> Self {
+        let Some(field) = done.get("fileAccess") else {
+            return Self::default();
+        };
+        let paths = |key: &str| -> Vec<std::path::PathBuf> {
+            field
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(std::path::PathBuf::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Self {
+            reads: paths("reads"),
+            writes: paths("writes"),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.reads.is_empty() && self.writes.is_empty()
+    }
+
+    /// Every path the cell opened, reads then writes, once each (nested
+    /// instruction discovery reads them as `accessedPaths`).
+    #[must_use]
+    pub fn paths(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.reads
+            .iter()
+            .chain(&self.writes)
+            .map(|path| path.display().to_string())
+            .filter(|path| seen.insert(path.clone()))
+            .collect()
+    }
+}
+
+/// Told about the files each finished cell opened (the session's
+/// changed-file tracker).
+pub type FileAccessSink = std::sync::Arc<dyn Fn(&KernelFileAccess) + Send + Sync>;
 
 /// A kernel error reported by a failed cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,9 +358,9 @@ pub struct ExecuteResult {
     /// The `bash()` commands that finished while the cell body ran, with
     /// their exit codes (the `done` frame's `bashCommands`).
     pub executed_bash_commands: Vec<KernelExecutedBashCommand>,
-    /// The files the cell opened, absolute, first-seen order (the `done`
-    /// frame's `accessedPaths`; empty from older runtimes).
-    pub accessed_paths: Vec<String>,
+    /// The files the cell opened through Python (the `done` frame's
+    /// `fileAccess`).
+    pub file_access: KernelFileAccess,
     /// Output that arrived without this cell's id (user threads, other cells' leftovers, raw fd writes).
     pub background_output: Option<String>,
     pub status: ExecuteStatus,

@@ -209,7 +209,9 @@ async fn an_installed_feature_observes_tool_calls_and_run_ends() {
                         .join("s1")
                 ),
             },
-            // A custom (non-LLM) row the engine adds before the prompt.
+            // The hidden session context row, then a custom (non-LLM) row
+            // the engine adds before the prompt.
+            Seen::MessageEnd("custom".to_string()),
             Seen::MessageEnd("custom".to_string()),
             Seen::MessageEnd("user".to_string()),
             Seen::MessageEnd("assistant".to_string()),

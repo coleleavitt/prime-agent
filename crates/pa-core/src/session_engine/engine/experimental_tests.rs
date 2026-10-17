@@ -119,7 +119,9 @@ async fn run_tool_loop(settings: &str) -> Vec<pa_agent::stream::LlmContext> {
 async fn the_usage_limit_wrap_up_rides_the_request_after_a_tool_batch() {
     let calls = run_tool_loop(r#"{"experimental": {"usageLimitWrapUp": true}}"#).await;
     assert_eq!(calls.len(), 2);
-    let wrap_up = crate::session_engine::usage_limit::NEAR_LIMIT_WRAP_UP_TEXT.to_string();
+    let wrap_up = crate::prompts::session_context::system_reminder(
+        crate::session_engine::usage_limit::NEAR_LIMIT_WRAP_UP_TEXT,
+    );
     assert!(!user_texts(&calls[0]).contains(&wrap_up));
     assert!(
         user_texts(&calls[1]).contains(&wrap_up),
@@ -178,9 +180,11 @@ async fn the_goal_evaluator_keeps_the_run_going_until_the_goal_is_met() {
     assert_eq!(calls[1].system_prompt.as_deref(), Some(evaluator_prompt));
     assert_eq!(calls[3].system_prompt.as_deref(), Some(evaluator_prompt));
     assert_ne!(calls[2].system_prompt.as_deref(), Some(evaluator_prompt));
-    let not_met = crate::session_engine::goal_evaluator::not_met_text(
-        "the tests pass",
-        "the tests were never run",
+    let not_met = crate::prompts::session_context::system_reminder(
+        &crate::session_engine::goal_evaluator::not_met_text(
+            "the tests pass",
+            "the tests were never run",
+        ),
     );
     assert_eq!(user_texts(&calls[2]).last(), Some(&not_met));
     assert_eq!(

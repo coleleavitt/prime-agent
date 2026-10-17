@@ -14,8 +14,6 @@ use pa_types::session::FileEntry;
 
 /// The custom entry recording the directories `/add-dir` added.
 pub const ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE: &str = "additional_directories_state";
-/// The hidden row telling the model about a mid-session addition.
-pub const ADDITIONAL_DIRECTORIES_CHANGE_CUSTOM_TYPE: &str = "additional_directories_change";
 
 /// Why a path cannot be added (Claude Code's `/add-dir` refusals).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,16 +226,6 @@ impl AdditionalDirectories {
         state.session_added.push(dir.clone());
         Ok((dir, state.session_added.clone()))
     }
-}
-
-/// The hidden row a mid-session addition delivers (Claude Code's
-/// environment delta wording).
-#[must_use]
-pub fn directories_added_text(added: &Path) -> String {
-    format!(
-        "Additional working directories added:\n - {}",
-        added.display().to_string().replace('\\', "/")
-    )
 }
 
 #[cfg(test)]

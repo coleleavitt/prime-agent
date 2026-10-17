@@ -351,14 +351,32 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+    assert!(
+        !first_turn_context(&engine)
+            .await
+            .contains("# Generic MCP Connections")
+    );
 
     write_credential("https://fixture.example/mcp");
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(engine.system_prompt.contains("# Generic MCP Connections"));
-    assert!(engine.system_prompt.contains("`fixture-oauth`"));
+    let context = first_turn_context(&engine).await;
+    assert!(context.contains("# Generic MCP Connections"));
+    assert!(context.contains("`fixture-oauth`"));
+    // The guidance is the first turn's row, never prompt text.
+    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+}
+
+/// The session context row a fresh session's first turn would carry.
+async fn first_turn_context(engine: &SessionEngine) -> String {
+    let rows = engine
+        .session
+        .context_rows()
+        .expect("the engine installs context rows")
+        .turn_start_messages(Vec::new())
+        .await;
+    serde_json::to_string(&rows).unwrap()
 }
 
 #[tokio::test]
@@ -1281,18 +1299,21 @@ async fn agent_types_are_listed_and_an_agents_instructions_close_its_prompt() {
             })
             .await
             .unwrap()
-            .system_prompt
         }
     };
+    // The listing rides the session context row (the prompt stays
+    // byte-stable); an agent's own instructions close its prompt.
     let root = prompt(None).await;
+    let root_context = root.session.context_rows().unwrap().full_context_text();
+    assert!(!root.system_prompt.contains("Available agent types"));
     assert!(
-        root.contains(
+        root_context.contains(
             "Available agent types for `rlm.spawn(agent=...)`:\n\
              - explore: Searches the code (Tools: Read, Grep)"
         ),
-        "{root}"
+        "{root_context}"
     );
-    let child = prompt(Some(reviewer)).await;
+    let child = prompt(Some(reviewer)).await.system_prompt;
     assert!(
         child.ends_with(
             "# Agent: reviewer\n\nReview it.\n\nTool scope (Claude Code tool names): Read. \

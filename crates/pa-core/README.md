@@ -155,9 +155,23 @@ untrusted-safe) and the `--sandbox` override (`SessionEngineConfig::sandbox_mode
 session. The kernel spawns under it (`KernelManagerOptions::sandbox`: the workspace plus the
 temp dir, the session artifacts, the harness stores and the orphan journal's directory stay
 writable), so every `bash()`/`subprocess` child inherits it; the host's stdio MCP servers
-(`McpSessionOptions::sandbox`) and the daemon's `!` lane spawn through `SessionSandbox::command`; the system prompt's environment section gets
+(`McpSessionOptions::sandbox`) and the daemon's `!` lane spawn through `SessionSandbox::command`; the session context's environment section gets
 `prompt_line` (no line when off); `agent started` reports `sandbox_mode`. An enabled sandbox
 the machine cannot enforce refuses to spawn. See `docs/os-sandbox.md`.
+
+Session context and reminders (Claude Code's context attachments): the system prompt holds
+only the static layers and the session-fixed tail (packages, session role, appended prompt), so
+it is byte-stable for the provider cache. `prompts::session_context` renders the volatile
+context (instruction files, skills inventory, generic MCP servers, `EnvironmentFields`, date)
+as one hidden `session_context` row ahead of the first turn and `session_context_update` deltas
+after; each row persists a `ContextFingerprint` (paths and hashes), and
+`session_engine::context_rows` computes the next row against the live conversation, so resume
+and compaction need no other state. `session_engine::context_source` reads the live context
+(`instruction_files` is the one loader; `ContextRowsWiring` the engine's seam);
+`session_engine::reminders` adds the per-turn `<system-reminder>` row (changed files from
+`file_tracker`, fed by the kernel's `fileAccess`; the task-list nag; silent turns; elapsed
+time; `<total_tokens>`; re-reads), each switchable under the `reminders` setting.
+`SessionEngine::session_context_text` returns the first-turn row's text.
 
 The factory (`factory`): state-machine workflows of spawned child agents,
 host-side. `factory::spec` is the single write-time validator, dag compiler,

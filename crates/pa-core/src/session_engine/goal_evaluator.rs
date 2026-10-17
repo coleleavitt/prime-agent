@@ -233,7 +233,11 @@ pub(super) async fn after_turn(
         return;
     }
     if let EvaluatorOutcome::Continued(text) = evaluator.evaluate_turn(turn).await {
-        super::feature_boundary::steer_hidden_row(&agent, GOAL_EVALUATOR_CUSTOM_TYPE, &text);
+        super::feature_boundary::steer_hidden_row(
+            &agent,
+            GOAL_EVALUATOR_CUSTOM_TYPE,
+            &crate::prompts::session_context::system_reminder(&text),
+        );
     }
 }
 

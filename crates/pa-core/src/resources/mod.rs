@@ -49,7 +49,7 @@ fn context_file(file: instructions::InstructionFile) -> ContextFile {
 /// Claude Code's opt-in for the additional directories' own context files
 /// (`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`); off by default, as
 /// there.
-fn additional_directory_context_enabled() -> bool {
+pub(crate) fn additional_directory_context_enabled() -> bool {
     let value = std::env::var("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD").ok();
     pa_bash::is_truthy_env_value(value.as_deref())
 }

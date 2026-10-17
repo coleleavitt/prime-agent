@@ -1961,9 +1961,11 @@ fn acp_daemon_attached_forwards_cli_session_options() {
         system_prompt.contains("ACP_ARGV_MARKER"),
         "--append-system-prompt reaches the worker"
     );
+    // The skills inventory is the first turn's session context row.
+    let session_context = reply["data"]["sessionContext"].as_str().unwrap_or_default();
     assert!(
-        system_prompt.contains("<name>acp-argv-probe</name>"),
-        "--skill reaches the worker"
+        session_context.contains("<name>acp-argv-probe</name>"),
+        "--skill reaches the worker: {reply}"
     );
     let turn = client.request(
         "session/prompt",

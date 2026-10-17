@@ -361,6 +361,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let output_limit_recovery = settings.get_output_limit_recovery();
     let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
+    let reminder_toggles = settings.get_reminders();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
     // the session's artifact dir (its durable ledger's home) is known.
@@ -392,6 +393,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     }
     // The additional working directories and the output style, read
     // before `settings` moves into the resource loader.
+    // Claude Code's user-scope instruction files (the session context row
+    // reads them each turn through the canonical loader).
+    let claude_user_instructions = settings.get_claude_code_user_instructions();
     let mut launch_directories = config.additional_directories.clone();
     launch_directories.extend(settings.get_additional_directories(&cwd));
     let additional_directories = Arc::new(super::additional_dirs::AdditionalDirectories::resolve(
@@ -493,8 +497,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the prompt (the kernel still names it; the first write reports why).
     let scratch =
         super::scratch::SessionScratch::for_session(session_artifact_dir.as_deref(), &session_id);
-    let scratchpad_line = match scratch.ensure() {
-        Ok(()) => Some(scratch.prompt_line()),
+    let scratch_directory_text = match scratch.ensure() {
+        Ok(()) => Some(scratch.scratchpad.display().to_string().replace('\\', "/")),
         Err(error) => {
             tracing::warn!(
                 target: "pa_core::session",
@@ -833,6 +837,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .await
         .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
     };
+    // Captured before the provisioner takes them: the environment's shell
+    // line and the `tasks` skill's store for the task-list reminder.
+    let context_shell = kernel_shell_path
+        .as_ref()
+        .map(|path| path.display().to_string());
+    let tasks_file = session_artifact_dir
+        .as_ref()
+        .map(|dir| dir.join("tasks.json"));
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -914,36 +926,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &model_prompts.errors,
             ));
     }
-    // The agent types a spawn can run: listed only where spawning works
-    // (a host is wired and the session's own scope allows it).
-    let agent_listing = (config.rlm_subagent_host.is_some()
+    // The agent types a spawn can run: listed (in the session context row)
+    // only where spawning works (a host is wired and the session's own scope
+    // allows it).
+    let list_agent_types = config.rlm_subagent_host.is_some()
         && config.allow_recursion != Some(false)
         && config.agent_definition.as_ref().is_none_or(|definition| {
             crate::agents::allows(definition, crate::agents::GatedTool::Agent)
-        }))
-    .then(|| {
-        crate::agents::agent_listing(&crate::agents::discover_agents(
-            &crate::agents::AgentSearch::for_session(&cwd, &config.agent_dir),
-        ))
-    })
-    .flatten();
+        });
     let system_prompt = crate::prompts::system_prompt::build_system_prompt(
         &crate::prompts::system_prompt::BuildSystemPromptOptions {
             custom_prompt: resources.system_prompt.clone(),
             model_prompt_extras: model_prompts.extras.as_deref(),
-            vision_capable: prompt_vision_capable,
-            cwd: cwd.display().to_string(),
-            messages_path: conversation_log.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
             auto_memory: resources
                 .auto_memory
                 .as_ref()
                 .map(crate::resources::auto_memory::memory_prompt_section),
-            skills: visible_skills.clone(),
             selected_tools: Some(
                 active_tool_names
                     .iter()
@@ -956,7 +954,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             rlm_depth: config.rlm_depth,
             daemonless: config.daemonless,
             can_spawn: config.rlm_subagent_host.is_some(),
-            generic_mcp_servers,
             append_system_prompt: Some(
                 resources
                     .append_system_prompt
@@ -971,20 +968,50 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     .collect::<Vec<_>>()
                     .join("\n\n"),
             ),
-            agent_listing,
-            sandbox: sandbox
-                .as_ref()
-                .map(crate::os_sandbox::SessionSandbox::prompt_line),
             output_style,
-            additional_directories: additional_directories
-                .list()
-                .iter()
-                .map(|dir| dir.display().to_string())
-                .collect(),
-            scratchpad: scratchpad_line,
             ..Default::default()
         },
     );
+    // The volatile context the prompt no longer carries: hidden rows on the
+    // first turn, deltas later, and the per-turn reminders.
+    let context_rows =
+        super::context_source::session_context_rows(super::context_source::ContextRowsWiring {
+            cwd: cwd.clone(),
+            agent_dir: config.agent_dir.clone(),
+            load_instruction_files: !config.resource_exclusions.no_context_files,
+            skills: visible_skills.clone(),
+            tools: active_tool_names.clone(),
+            mcp_servers: generic_mcp_servers,
+            conversation_log: conversation_log.clone(),
+            model: super::context_source::ModelFacts {
+                label: Some(prompt_model_selector.clone()),
+                vision_capable: prompt_vision_capable,
+                context_window: compaction_settings
+                    .max_context_tokens
+                    .map_or(model_context_window, |cap| cap.min(model_context_window)),
+            },
+            sandbox: sandbox
+                .as_ref()
+                .map(crate::os_sandbox::SessionSandbox::prompt_line),
+            shell: context_shell,
+            reminders: reminder_toggles,
+            tasks_file,
+            scratch_directory: scratch_directory_text,
+            instruction_options: crate::resources::instructions::InstructionOptions {
+                cwd: cwd.clone(),
+                agent_dir: config.agent_dir.clone(),
+                home_dir: pa_types::platform::home_dir(),
+                claude_user_files: claude_user_instructions,
+                additional_dirs: if crate::resources::additional_directory_context_enabled() {
+                    additional_directories.list()
+                } else {
+                    Vec::new()
+                },
+            },
+            additional_directories: Some(Arc::clone(&additional_directories)),
+            list_agent_types,
+        });
+    provisioner.set_file_access_sink(context_rows.reminders().files().sink());
 
     // Captured before the digest context moves the local harness dir and
     // the loop wiring moves the session model: the factory host bridge's
@@ -1191,6 +1218,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             let usage_limit = usage_limit.clone();
             let goal_evaluator = goal_evaluator.clone();
             let nested = nested_instructions.clone();
+            let context_rows = std::sync::Arc::clone(&context_rows);
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
@@ -1200,6 +1228,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 let budget = budget.clone();
                 let usage_limit = usage_limit.clone();
                 let goal_evaluator = goal_evaluator.clone();
+                let context_rows = std::sync::Arc::clone(&context_rows);
                 Box::pin(async move {
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
@@ -1241,6 +1270,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     } else {
                         super::instruction_boundary::delivered_paths(&context.context.messages)
                     };
+                    // The context and reminder rows ride a run that goes on
+                    // past a tool batch.
+                    let reminder_turn = (!context.tool_results.is_empty()).then(|| context.clone());
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
@@ -1260,6 +1292,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
+                    }
+                    if let (false, Some(turn)) = (stop, reminder_turn) {
+                        let agent = fold_slot
+                            .get()
+                            .and_then(|admission| admission.agent.upgrade());
+                        if let Some(agent) = agent {
+                            super::context_rows::after_turn(&context_rows, &agent, &turn).await;
+                        }
                     }
                     Ok(stop)
                 })
@@ -1335,6 +1375,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_plan_mode_switch(plan_mode.clone());
     session.set_ultracode_state(ultracode);
+    session.set_context_rows(context_rows);
     if !crate::features::installed().is_empty() {
         session.set_feature_context(Arc::clone(&feature_context), feature_notes);
     }
@@ -1722,6 +1763,9 @@ impl SessionEngine {
             },
             (model.context_window > 0).then_some(model.context_window),
         );
+        if let Some(rows) = self.session.context_rows() {
+            rows.set_model(super::context_source::ModelFacts::of(model));
+        }
     }
 
     /// A weak reference for lock-free kernel liveness probes without
@@ -1772,6 +1816,18 @@ impl SessionEngine {
         self.mcp_sessions.close_all().await;
     }
 
+    /// The session context a fresh conversation's first turn carries as its
+    /// hidden `session_context` row (instruction files, skills inventory,
+    /// MCP servers, environment, date), read now.
+    pub async fn session_context_text(&self) -> String {
+        let Some(rows) = self.session.context_rows().cloned() else {
+            return String::new();
+        };
+        tokio::task::spawn_blocking(move || rows.full_context_text())
+            .await
+            .unwrap_or_default()
+    }
+
     /// Retarget the session kernel's working directory (`/cwd`, upstream
     /// #2528): a running kernel changes directory now, the next start uses
     /// `cwd`.
@@ -1782,6 +1838,9 @@ impl SessionEngine {
     pub async fn set_kernel_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
         self.provisioner.set_cwd(cwd).await?;
         self.mcp_sessions.set_cwd(cwd);
+        if let Some(rows) = self.session.context_rows() {
+            rows.set_cwd(cwd);
+        }
         Ok(())
     }
 
@@ -1903,3 +1962,6 @@ mod append_system_tests;
 
 #[cfg(test)]
 mod experimental_tests;
+
+#[cfg(test)]
+mod context_rows_tests;

@@ -211,7 +211,7 @@ pub(super) fn after_turn(
     super::feature_boundary::steer_hidden_row(
         &agent,
         USAGE_LIMIT_WRAP_UP_CUSTOM_TYPE,
-        NEAR_LIMIT_WRAP_UP_TEXT,
+        &crate::prompts::session_context::system_reminder(NEAR_LIMIT_WRAP_UP_TEXT),
     );
 }
 

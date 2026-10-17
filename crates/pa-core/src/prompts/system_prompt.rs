@@ -1,8 +1,14 @@
 //! Layered system-prompt assembly: static layer files first (cacheable),
-//! every session-specific value last. See the parent module docs.
+//! then the few session facts that stay fixed for the session's life. See
+//! the parent module docs.
+//!
+//! Volatile context (instruction files, the skills inventory, MCP servers,
+//! the environment, the date) is not here: it reaches the model as
+//! conversation rows ([`super::session_context`]), so the system prompt is
+//! byte-stable for the whole session and across sessions that share these
+//! inputs, whatever their working directory, date or project.
 
 use super::layers;
-use crate::skills::{Skill, format_skills_for_prompt};
 
 /// The bundled skill the refinement trigger guidance keys on.
 pub const REFINE_SKILL_NAME: &str = "refine";
@@ -20,7 +26,7 @@ pub enum SegmentKind {
 /// One named slice of the assembled prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptSegment {
-    /// Stable segment name (`core`, `usage`, `packages`, `environment`, ...).
+    /// Stable segment name (`core`, `usage`, `packages`, `session-role`, ...).
     pub name: &'static str,
     pub kind: SegmentKind,
     /// Provenance: the layer file, or what generated the segment.
@@ -60,28 +66,17 @@ pub struct SystemPromptBreakdown {
 }
 
 /// Inputs for one session's prompt. Static inputs (`custom_prompt`,
-/// `model_prompt_extras`) select the cached prefix; everything else feeds
-/// the dynamic tail.
+/// `model_prompt_extras`) select the cached prefix; the rest are session
+/// facts fixed for the session's life.
 #[derive(Debug, Default)]
 pub struct BuildSystemPromptOptions<'a> {
-    /// Replaces the layered static prefix with user text. The dynamic tail
-    /// still applies.
+    /// Replaces the layered static prefix with user text. The tail still
+    /// applies.
     pub custom_prompt: Option<String>,
     pub model_prompt_extras: Option<&'a str>,
-    /// Whether the resolved model accepts image input, when known.
-    pub vision_capable: Option<bool>,
     /// Active tools. Tool schemas carry tool descriptions outside the prompt.
     pub selected_tools: Option<Vec<&'a str>>,
     pub append_system_prompt: Option<String>,
-    pub cwd: String,
-    /// Conversation log path.
-    pub messages_path: Option<String>,
-    /// Pre-loaded context files (path, content).
-    pub context_files: Vec<(String, String)>,
-    /// The auto-memory section (its `MEMORY.md` index included), when the
-    /// session carries auto memory.
-    pub auto_memory: Option<String>,
-    pub skills: Vec<Skill>,
     /// Whether to include the subagent surface in this session.
     pub allow_recursion: Option<bool>,
     /// Fixed recursive-agent depth for this session.
@@ -96,25 +91,16 @@ pub struct BuildSystemPromptOptions<'a> {
     /// daemonless print host or a daemon worker); a daemonless session
     /// without one cannot spawn at all.
     pub can_spawn: bool,
-    /// Enabled user-configured generic MCP servers.
-    pub generic_mcp_servers: Vec<String>,
-    /// The OS sandbox's one environment line (`None`: sandbox off, no line).
-    pub sandbox: Option<String>,
-    /// The selected output style (`None`: the default style). Its block is
+    /// The selected output style (`None`: the default style), fixed for
+    /// the session (a mid-session switch rides a hidden row). Its block is
     /// the first tail segment; a style that does not keep the coding
     /// instructions drops the opinionated layer.
     pub output_style: Option<super::output_style::OutputStyle>,
-    /// The session's additional working directories (`--add-dir`,
-    /// `/add-dir`, `permissions.additionalDirectories`), listed in the
-    /// environment section.
-    pub additional_directories: Vec<String>,
-    /// The session's scratchpad line
-    /// ([`crate::session_engine::scratch::SessionScratch::prompt_line`];
-    /// `None`: no scratchpad, no line).
-    pub scratchpad: Option<String>,
-    /// The typed agent definitions `rlm.spawn(agent=...)` can run
-    /// ([`crate::agents::agent_listing`]); `None` lists none.
-    pub agent_listing: Option<String>,
+    /// The auto-memory section (its `MEMORY.md` index included), when the
+    /// session carries auto memory. Read once at session start, so it is
+    /// fixed for the session (Claude Code keeps memory in the system
+    /// prompt too); it varies by project, never by turn.
+    pub auto_memory: Option<String>,
 }
 
 /// Build the system prompt (assembled text only).
@@ -177,15 +163,14 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         .sum::<usize>()
         + 2 * segments.len().saturating_sub(1);
 
-    // The dynamic tail, in fixed order: output style -> packages -> project
-    // context -> auto memory -> skills inventory -> MCP servers -> environment
-    // -> session role -> agent types -> appended prompt.
+    // The session tail, in fixed order: output style -> packages -> auto
+    // memory -> session role -> appended prompt. Each is fixed for the
+    // session's life.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
         .unwrap_or_else(|| vec![pa_types::ai::PYTHON_TOOL_NAME]);
     let has_ipython = tools.contains(&pa_types::ai::PYTHON_TOOL_NAME);
-    let has_file_access = has_ipython || tools.contains(&"bash");
 
     if let Some(style) = &options.output_style {
         segments.push(PromptSegment::dynamic_segment(
@@ -201,15 +186,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         packages_section(),
     ));
 
-    let context = context_files_section(&options.context_files);
-    if !context.is_empty() {
-        segments.push(PromptSegment::dynamic_segment(
-            "project-context",
-            "AGENTS.md discovery",
-            context,
-        ));
-    }
-
     if let Some(memory) = options
         .auto_memory
         .as_deref()
@@ -222,37 +198,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         ));
     }
 
-    let visible_skills: Vec<&Skill> = options
-        .skills
-        .iter()
-        .filter(|skill| !skill.disable_model_invocation)
-        .collect();
-    if has_file_access && !visible_skills.is_empty() {
-        let inventory = format_skills_for_prompt(&options.skills).trim().to_string();
-        segments.push(PromptSegment::dynamic_segment(
-            "skills-inventory",
-            "skill discovery",
-            inventory,
-        ));
-    }
-
-    if has_ipython {
-        let mcp = format_generic_mcp_guidance(&options.generic_mcp_servers);
-        if !mcp.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "mcp-servers",
-                "generic MCP settings",
-                mcp,
-            ));
-        }
-    }
-
-    segments.push(PromptSegment::dynamic_segment(
-        "environment",
-        "session configuration",
-        environment_section(options),
-    ));
-
     let role = session_role_section(options, has_ipython);
     if !role.is_empty() {
         segments.push(PromptSegment::dynamic_segment(
@@ -260,16 +205,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
             "RLM recursion state",
             role,
         ));
-    }
-
-    if let Some(listing) = options.agent_listing.as_deref() {
-        if has_ipython && !listing.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "agent-types",
-                "agent definitions",
-                listing.to_string(),
-            ));
-        }
     }
 
     if let Some(extra) = options.append_system_prompt.as_deref() {
@@ -304,65 +239,6 @@ fn packages_section() -> String {
         "Install additional packages with `uv pip install <pkg>` (this is a uv-managed venv with no pip module)."
             .to_string(),
     );
-    lines.join("\n")
-}
-
-fn context_files_section(context_files: &[(String, String)]) -> String {
-    if context_files.is_empty() {
-        return String::new();
-    }
-    let mut lines = vec![
-        "# Project Context".to_string(),
-        String::new(),
-        "Project-specific instructions and guidelines:".to_string(),
-        String::new(),
-    ];
-    for (file_path, content) in context_files {
-        lines.push(format!("## {file_path}\n\n{content}"));
-    }
-    lines.join("\n")
-}
-
-fn environment_section(options: &BuildSystemPromptOptions) -> String {
-    let cwd = options.cwd.replace('\\', "/");
-    let messages_path = options
-        .messages_path
-        .clone()
-        .unwrap_or_else(|| "not persisted".to_string())
-        .replace('\\', "/");
-    let mut lines = vec![
-        format!("Current date: {}", today()),
-        format!("Working directory: {cwd}"),
-        format!("Conversation log: {messages_path}"),
-    ];
-    if !options.additional_directories.is_empty() {
-        lines.push("Additional working directories:".to_string());
-        lines.extend(
-            options
-                .additional_directories
-                .iter()
-                .map(|dir| format!(" - {}", dir.replace('\\', "/"))),
-        );
-    }
-    match options.vision_capable {
-        Some(true) => lines.push(
-            "Image input: this model can see images; `attach_image` loads them into context."
-                .to_string(),
-        ),
-        Some(false) => lines.push(
-            "Image input: this model cannot see images; `attach_image` has the configured \
-             vision-capable `imageModel` read them and returns its text description (it errors \
-             when no such image model is configured)."
-                .to_string(),
-        ),
-        None => {}
-    }
-    if let Some(sandbox) = &options.sandbox {
-        lines.push(sandbox.clone());
-    }
-    if let Some(scratchpad) = &options.scratchpad {
-        lines.push(scratchpad.clone());
-    }
     lines.join("\n")
 }
 
@@ -407,97 +283,12 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
     lines.join("\n")
 }
 
-fn today() -> String {
-    // UTC date in YYYY-MM-DD form; the prompt is date context only.
-    let days = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs() / 86_400);
-    // Civil-from-days algorithm (Howard Hinnant).
-    let z = days as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-fn format_generic_mcp_guidance(servers: &[String]) -> String {
-    let mut enabled: Vec<&String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for server in servers {
-        if seen.insert(server) {
-            enabled.push(server);
-        }
-    }
-    enabled.sort();
-    if enabled.is_empty() {
-        return String::new();
-    }
-    let mut lines = vec![
-        "# Generic MCP Connections".to_string(),
-        String::new(),
-        "Generic MCP connections are accessed through the pre-imported Python `mcp` object in the Python REPL, not as top-level native tool namespaces or installed Python skills.".to_string(),
-        format!(
-            "Enabled generic MCP servers: {}.",
-            enabled
-                .iter()
-                .map(|server| format!("`{server}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ];
-    for server in &enabled {
-        lines.push(format!(
-            "For `{server}`, first discover its tools with `await mcp.list_tools(\"{server}\")`, then call one with `await mcp.call_tool(\"{server}\", \"<tool>\", arguments)`."
-        ));
-    }
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-    use crate::skills::{SkillKind, SourceScope, create_synthetic_source_info};
-
-    fn skill(name: &str, import: Option<&str>) -> Skill {
-        Skill {
-            name: name.to_string(),
-            description: format!("Skill {name}"),
-            file_path: PathBuf::from("/skills/SKILL.md"),
-            base_dir: PathBuf::from("/skills"),
-            source_info: create_synthetic_source_info("/skills", "user", SourceScope::User, None),
-            disable_model_invocation: false,
-            kind: if import.is_some() {
-                SkillKind::Python
-            } else {
-                SkillKind::Markdown
-            },
-            python: import.map(|import_name| crate::skills::SkillPythonMetadata {
-                import_name: import_name.to_string(),
-                package_path: PathBuf::from("/skills"),
-                pyproject_path: PathBuf::from("/skills/pyproject.toml"),
-            }),
-        }
-    }
 
     fn base_options() -> BuildSystemPromptOptions<'static> {
-        BuildSystemPromptOptions {
-            cwd: "/w".to_string(),
-            messages_path: Some("/log.jsonl".to_string()),
-            skills: vec![
-                skill("web-search", Some("websearch")),
-                skill("refine", Some("refine")),
-                skill("agent-message", Some("agent_message")),
-            ],
-            ..Default::default()
-        }
+        BuildSystemPromptOptions::default()
     }
 
     #[test]
@@ -513,9 +304,9 @@ mod tests {
             .map(|segment| segment.name)
             .collect();
         assert_eq!(
-            names[..4],
-            ["core", "usage", "opinionated", "packages"],
-            "core/usage/opinionated layers, then the dynamic tail"
+            names,
+            ["core", "usage", "opinionated", "packages", "session-role"],
+            "core/usage/opinionated layers, then the session tail"
         );
         assert_eq!(
             &prompt[..breakdown.cached_prefix_len],
@@ -527,89 +318,30 @@ mod tests {
             )
         );
         let tail = &prompt[breakdown.cached_prefix_len..];
-        assert!(tail.contains("Working directory: /w"));
-        assert!(tail.contains("Conversation log: /log.jsonl"));
-        assert!(tail.contains("<available_skills>"));
         assert!(tail.contains("Recursive agent depth: 0 (root)"));
         assert!(tail.contains("Pre-installed Python packages: requests, httpx,"));
     }
 
     #[test]
-    fn the_scratchpad_line_rides_the_environment_section_only_when_set() {
-        let without = build_system_prompt(&base_options());
-        assert!(!without.contains("Scratchpad directory:"));
-        let with = system_prompt_breakdown(&BuildSystemPromptOptions {
-            scratchpad: Some("Scratchpad directory: /s/scratchpad".to_string()),
-            ..base_options()
-        });
-        let tail = &with.assembled[with.cached_prefix_len..];
-        let environment = tail
-            .find("Working directory: /w")
-            .expect("the environment section");
-        let scratchpad = tail.find("Scratchpad directory: /s/scratchpad").unwrap();
-        assert!(scratchpad > environment);
-    }
-
-    #[test]
-    fn dynamic_tail_isolates_the_cached_prefix() {
-        let mut other = base_options();
-        other.cwd = "/somewhere/else".to_string();
-        other.messages_path = None;
-        other.rlm_depth = Some(2);
-        other.rlm_parent_agent = Some("the lead");
-        other.generic_mcp_servers = vec!["slack".to_string()];
-        other.context_files = vec![("AGENTS.md".to_string(), "Rule one.".to_string())];
-        let left = system_prompt_breakdown(&base_options());
-        let right = system_prompt_breakdown(&other);
-        assert_eq!(
-            left.assembled[..left.cached_prefix_len],
-            right.assembled[..right.cached_prefix_len]
-        );
-        assert_eq!(left.cached_prefix_len, right.cached_prefix_len);
-        assert!(
-            right.assembled[right.cached_prefix_len..]
-                .contains("Enabled generic MCP servers: `slack`")
-        );
-        assert!(
-            right.assembled[right.cached_prefix_len..]
-                .contains("You are a child agent spawned by the lead.")
-        );
-    }
-
-    #[test]
-    fn custom_prompt_replaces_layers_keeps_tail() {
-        let mut options = base_options();
-        options.custom_prompt = Some("Be terse.".to_string());
-        options.model_prompt_extras = Some("Tier-2 guidance.");
-        options.context_files = vec![("AGENTS.md".to_string(), "Rule one.".to_string())];
-        let breakdown = system_prompt_breakdown(&options);
-        let prompt = &breakdown.assembled;
-        assert!(prompt.starts_with("Be terse."));
-        assert_eq!(breakdown.segments[0].name, "custom");
-        assert!(prompt.contains("## AGENTS.md\n\nRule one."));
-        assert!(prompt.contains("Working directory: /w"));
-        assert!(prompt.contains("Current date: "));
-        assert!(!prompt.contains("# prime-agent harness"));
-        assert!(!prompt.contains("Tier-2 guidance."));
-    }
-
-    #[test]
-    fn mcp_servers_are_a_tail_segment() {
-        let mut options = base_options();
-        options.generic_mcp_servers = vec!["t".to_string(), "t".to_string()];
-        let breakdown = system_prompt_breakdown(&options);
-        let names: Vec<&str> = breakdown
-            .segments
-            .iter()
-            .map(|segment| segment.name)
-            .collect();
-        assert!(names.contains(&"mcp-servers"));
-        assert!(breakdown.assembled.contains("# Generic MCP Connections"));
-        assert!(
-            breakdown
-                .assembled
-                .contains("Enabled generic MCP servers: `t`.")
-        );
+    fn the_prompt_carries_no_volatile_context() {
+        // Environment, date, instruction files, skills and MCP servers are
+        // conversation rows now: none of their markers may reach the prompt.
+        let prompt = build_system_prompt(&base_options());
+        for marker in [
+            "Working directory:",
+            "Current date:",
+            "Today's date is",
+            "Conversation log:",
+            "# Project Context",
+            "<available_skills>",
+            "# Generic MCP Connections",
+            "# Environment",
+        ] {
+            assert!(
+                !prompt.contains(marker),
+                "{marker:?} leaked into the prompt"
+            );
+        }
     }
 
     #[test]
@@ -636,11 +368,10 @@ mod tests {
             names(&options),
             ["core", "usage", "output-style", "packages"]
         );
-        assert!(
-            system_prompt_breakdown(&options)
-                .assembled
-                .contains("# Output Style: pirate\nAnswer as a pirate.")
-        );
+        assert!(system_prompt_breakdown(&options).assembled.contains(
+            "# Output Style: pirate
+Answer as a pirate."
+        ));
         options.output_style = Some(style(true));
         assert_eq!(
             names(&options),
@@ -649,12 +380,65 @@ mod tests {
     }
 
     #[test]
-    fn additional_directories_are_listed_in_the_environment() {
+    fn auto_memory_follows_the_packages_in_the_tail() {
         let mut options = base_options();
-        options.additional_directories = vec!["/a".to_string(), "/b/c".to_string()];
-        assert!(system_prompt_breakdown(&options).assembled.contains(
-            "Conversation log: /log.jsonl\nAdditional working directories:\n - /a\n - /b/c\n"
+        options.auto_memory = Some(
+            "# auto memory
+index"
+                .to_string(),
+        );
+        let breakdown = system_prompt_breakdown(&options);
+        let names: Vec<&str> = breakdown
+            .segments
+            .iter()
+            .map(|segment| segment.name)
+            .collect();
+        let packages = names.iter().position(|name| *name == "packages").unwrap();
+        assert_eq!(names[packages + 1], "auto-memory");
+        assert_eq!(breakdown.segments[packages + 1].kind, SegmentKind::Dynamic);
+        assert!(breakdown.assembled[breakdown.cached_prefix_len..].contains(
+            "# auto memory
+index"
         ));
+    }
+
+    #[test]
+    fn the_child_role_is_in_the_tail() {
+        let mut other = base_options();
+        other.rlm_depth = Some(2);
+        other.rlm_parent_agent = Some("the lead");
+        let left = system_prompt_breakdown(&base_options());
+        let right = system_prompt_breakdown(&other);
+        assert_eq!(
+            left.assembled[..left.cached_prefix_len],
+            right.assembled[..right.cached_prefix_len]
+        );
+        assert!(
+            right.assembled[right.cached_prefix_len..]
+                .contains("You are a child agent spawned by the lead.")
+        );
+    }
+
+    #[test]
+    fn custom_prompt_replaces_layers_keeps_tail() {
+        let mut options = base_options();
+        options.custom_prompt = Some("Be terse.".to_string());
+        options.model_prompt_extras = Some("Tier-2 guidance.");
+        let breakdown = system_prompt_breakdown(&options);
+        let prompt = &breakdown.assembled;
+        assert!(prompt.starts_with("Be terse."));
+        assert_eq!(breakdown.segments[0].name, "custom");
+        assert!(prompt.contains("Recursive agent depth: 0 (root)"));
+        assert!(!prompt.contains("# prime-agent harness"));
+        assert!(!prompt.contains("Tier-2 guidance."));
+    }
+
+    #[test]
+    fn the_appended_prompt_ends_the_prompt() {
+        let mut options = base_options();
+        options.append_system_prompt = Some("Always say ZULU.".to_string());
+        let prompt = build_system_prompt(&options);
+        assert!(prompt.ends_with("\n\nAlways say ZULU."));
     }
 
     #[test]
@@ -670,7 +454,7 @@ mod tests {
         assert_eq!(
             names[..5],
             ["core", "usage", "opinionated", "model-prompts", "packages"],
-            "extras are the last static segment, directly before the dynamic tail"
+            "extras are the last static segment, directly before the session tail"
         );
     }
 }

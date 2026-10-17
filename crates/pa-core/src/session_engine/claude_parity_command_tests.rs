@@ -204,7 +204,11 @@ async fn add_dir_validates_lists_persists_and_survives_resume() {
     .unwrap();
     let session = SessionManager::persisted(&fixture.cwd, &fixture.sessions);
     let engine = engine(&fixture, session, vec![launch.clone()]).await;
-    assert!(engine.system_prompt.contains(&format!(
+    // The directories ride the session context's environment (the prompt
+    // stays byte-stable).
+    let context =
+        |engine: &SessionEngine| engine.session.context_rows().unwrap().full_context_text();
+    assert!(context(&engine).contains(&format!(
         "Additional working directories:\n - {}",
         launch.display()
     )));
@@ -224,11 +228,12 @@ async fn add_dir_validates_lists_persists_and_survives_resume() {
         engine.additional_directories.list(),
         vec![launch.clone(), added.clone()]
     );
-    let rows = next_turn_texts(&engine).await;
-    assert!(
-        rows[0].contains("Additional working directories added:"),
-        "{rows:?}"
-    );
+    // The next turn's environment update names the addition.
+    assert!(context(&engine).contains(&format!(
+        "Additional working directories:\n - {}\n - {}",
+        launch.display(),
+        added.display()
+    )));
 
     // A resume restores the session's own addition (and loads its commands).
     let file = engine

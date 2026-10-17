@@ -475,6 +475,15 @@ pub trait SessionEngine: Send + Sync {
         Box::pin(async { Ok(String::new()) })
     }
 
+    /// The session context the first turn carries as a hidden row (the
+    /// volatile context the system prompt no longer holds). Engines without
+    /// one report the empty string.
+    fn session_context(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+
     /// One tool definition by name, when the engine exposes one.
     fn tool_definition(
         &self,

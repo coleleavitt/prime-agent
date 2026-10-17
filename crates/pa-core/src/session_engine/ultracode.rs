@@ -20,8 +20,8 @@
 //! The keyword reminder carries the `workflowSizeGuideline` setting's agent
 //! count (`small` 5, `medium` 10 by default, `large` 50, `unrestricted`).
 //!
-//! The reminder wrapper here is local ([`reminder_row`]); the shared
-//! system-reminder rows the context work introduces replace it.
+//! Its rows use the shared `<system-reminder>` wrapper of the session
+//! context rows ([`reminder_row`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -293,12 +293,13 @@ fn now_millis() -> u64 {
         .unwrap_or_default()
 }
 
-/// A hidden system-reminder row: the seam the shared reminder wrapper replaces.
+/// A hidden row in the shared `<system-reminder>` wrapper
+/// ([`crate::prompts::session_context::system_reminder`]).
 fn reminder_row(custom_type: &str, text: &str) -> CustomMessage {
     CustomMessage {
         custom_type: custom_type.to_string(),
-        content: pa_types::ai::UserContent::Text(format!(
-            "<system-reminder>\n{text}\n</system-reminder>"
+        content: pa_types::ai::UserContent::Text(crate::prompts::session_context::system_reminder(
+            text,
         )),
         display: false,
         details: None,
