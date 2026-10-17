@@ -326,7 +326,10 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "app.plan.toggle",
-        def!(&["shift+tab"], "Toggle plan mode (no edits)"),
+        def!(
+            &["shift+tab"],
+            "Toggle plan mode (no edits), or cycle permission modes when configured"
+        ),
     ),
     (
         "app.tools.expand",

@@ -192,6 +192,7 @@ impl SessionUi {
             feature_panels: crate::feature_panel::FeaturePanels::new(),
             feature_questions: Vec::new(),
             answered_questions: std::collections::HashSet::new(),
+            permission_cycle: Vec::new(),
             session_file: None,
             pending_selection: None,
             pending_selection_lookup: false,

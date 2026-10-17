@@ -793,10 +793,19 @@ impl SessionUi {
         }
         // Plan mode flips through the session command (durable, and the
         // kernel guard follows); the draft in the editor stays untouched.
+        // A published permission-mode cycle replaces the toggle with its
+        // commands (Claude Code's shift+tab mode cycle).
         if view.editor.keybindings().matches(&id, "app.plan.toggle") {
             self.track_client_adoption(crate::interactive::ClientAdoption::PlanKey);
-            self.submit_prompt("/plan", SubmitBehavior::Steer, view)
-                .await?;
+            let commands = if self.permission_cycle.is_empty() {
+                vec!["/plan".to_string()]
+            } else {
+                self.permission_cycle.clone()
+            };
+            for command in commands {
+                self.submit_prompt(&command, SubmitBehavior::Steer, view)
+                    .await?;
+            }
             return Ok(());
         }
         if view.editor.keybindings().matches(&id, "app.tools.expand") {

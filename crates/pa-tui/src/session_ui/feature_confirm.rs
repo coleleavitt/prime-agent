@@ -4,7 +4,9 @@
 //! defaulting to No so a keystroke meant for the editor never allows an
 //! action, and the answer goes back as `answer_feature_confirmation`. A
 //! question answered elsewhere (another client, the daemon's timeout, an
-//! aborted run) closes its panel.
+//! aborted run) closes its panel. A question that offers to remember its
+//! answer (`remember`, a permission rule) gets a third choice, "Yes, and
+//! don't ask again for <rule>", answered with `remember: true`.
 
 use serde_json::Value;
 
@@ -26,6 +28,31 @@ pub(super) struct FeatureQuestion {
     pub(super) id: String,
     pub(super) action: String,
     pub(super) reason: String,
+    /// What allowing it for good remembers; `None` offers yes or no only.
+    pub(super) remember: Option<String>,
+}
+
+/// The panel's plain allow.
+const ALLOW_CHOICE: &str = "Yes";
+
+/// The panel's refusal.
+const DENY_CHOICE: &str = "No";
+
+/// The panel's allow-and-remember choice for `rule`.
+fn remember_choice(rule: &str) -> String {
+    format!("Yes, and don't ask again for {rule}")
+}
+
+/// How a panel choice answers a question: `(allow, remember)`.
+pub(super) fn answer_of_choice(choice: &str) -> (bool, bool) {
+    match choice {
+        ALLOW_CHOICE => (true, false),
+        DENY_CHOICE => (false, false),
+        other => {
+            let remember = other.starts_with("Yes, and don't ask again");
+            (remember, remember)
+        }
+    }
 }
 
 /// The pending questions a `confirmation` status carries, oldest first.
@@ -46,6 +73,7 @@ pub(super) fn questions_of(status: &Value) -> Vec<FeatureQuestion> {
                 id: text("id").filter(|id| !id.is_empty())?,
                 action: text("action").unwrap_or_default(),
                 reason: text("reason").unwrap_or_default(),
+                remember: text("remember").filter(|rule| !rule.trim().is_empty()),
             })
         })
         .collect()
@@ -128,9 +156,15 @@ impl SessionUi {
         let Some(question) = self.feature_questions.first() else {
             return;
         };
-        view.confirm = Some(crate::confirm::ConfirmPanel::yes_no_defaulting_to_no(
+        let mut choices = vec![ALLOW_CHOICE.to_string()];
+        if let Some(rule) = &question.remember {
+            choices.push(remember_choice(rule));
+        }
+        choices.push(DENY_CHOICE.to_string());
+        view.confirm = Some(crate::confirm::ConfirmPanel::choices_defaulting_to_last(
             "Allow this action?",
             &message(question),
+            choices,
         ));
         self.pending_confirm = Some(PendingConfirm::FeatureQuestion {
             id: question.id.clone(),
@@ -142,16 +176,22 @@ impl SessionUi {
     /// confirms it left the pending list; a failed send (the connection
     /// dropped, which the chrome reports) leaves it to the daemon's
     /// timeout.
-    pub(super) fn answer_feature_question(&mut self, id: String, allow: bool) {
+    pub(super) fn answer_feature_question(&mut self, id: String, allow: bool, remember: bool) {
         self.feature_questions.retain(|question| question.id != id);
         self.answered_questions.insert(id.clone());
         let client = self.client.clone();
+        // `remember` is additive on the wire: a daemon that predates it
+        // reads a plain allow.
+        let mut rest = Map::default();
+        if allow && remember {
+            rest.insert("remember".to_string(), Value::Bool(true));
+        }
         let command = DaemonCommand::AnswerFeatureConfirmation {
             id: None,
             active_session_id: self.active_session_id.clone(),
             confirmation_id: id,
             allow,
-            rest: Map::default(),
+            rest,
         };
         tokio::spawn(async move {
             let _ = client.request_ok(command).await;
@@ -171,17 +211,26 @@ mod tests {
             { "id": "confirm-1", "action": "Run `rm -rf build`", "reason": "hook asks" },
             { "id": "", "action": "dropped: no id" },
             { "id": "confirm-2" },
+            { "id": "confirm-3", "action": "Run `npm test`", "reason": "rule asks", "remember": "Bash(npm test *)" },
         ]});
         let expected = vec![
             FeatureQuestion {
                 id: "confirm-1".to_string(),
                 action: "Run `rm -rf build`".to_string(),
                 reason: "hook asks".to_string(),
+                remember: None,
             },
             FeatureQuestion {
                 id: "confirm-2".to_string(),
                 action: String::new(),
                 reason: String::new(),
+                remember: None,
+            },
+            FeatureQuestion {
+                id: "confirm-3".to_string(),
+                action: "Run `npm test`".to_string(),
+                reason: "rule asks".to_string(),
+                remember: Some("Bash(npm test *)".to_string()),
             },
         ];
         assert_eq!(questions_of(&status), expected);
@@ -200,6 +249,7 @@ mod tests {
             id: "c".to_string(),
             action: "x".repeat(PANEL_WIDTH * 8),
             reason: "policy".to_string(),
+            remember: None,
         };
         let lines: Vec<String> = message(&question).lines().map(str::to_string).collect();
         assert_eq!(lines.len(), MAX_ACTION_LINES + 2);
@@ -211,5 +261,16 @@ mod tests {
         assert!(lines[MAX_ACTION_LINES - 1].ends_with("..."));
         assert_eq!(lines[MAX_ACTION_LINES], "");
         assert_eq!(lines[MAX_ACTION_LINES + 1], "policy");
+    }
+
+    #[test]
+    fn panel_choices_answer_allow_remember_or_deny() {
+        assert_eq!(answer_of_choice(ALLOW_CHOICE), (true, false));
+        assert_eq!(answer_of_choice(DENY_CHOICE), (false, false));
+        assert_eq!(
+            answer_of_choice(&remember_choice("Bash(npm test *)")),
+            (true, true)
+        );
+        assert_eq!(answer_of_choice("something else"), (false, false));
     }
 }

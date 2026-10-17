@@ -780,6 +780,9 @@ impl SessionUi {
                         view,
                     );
                 }
+                if feature == super::permission_cycle::PERMISSIONS_FEATURE {
+                    self.permission_cycle = super::permission_cycle::cycle_of(&status);
+                }
                 crate::feature_panel::apply_status(&mut self.feature_panels, &feature, &status);
                 view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
                 self.dirty = true;
