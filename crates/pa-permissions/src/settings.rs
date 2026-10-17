@@ -12,9 +12,12 @@
 //! | Claude Code project | `<cwd>/.claude/settings.json` | project, opt-in |
 //! | Claude Code user | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` | user, opt-in |
 //!
-//! The Claude Code files are read only when the user settings say
-//! `"permissions": { "claudeCodeSettings": true }`: their rules would
-//! otherwise start refusing or asking in sessions that never did.
+//! The Claude Code files are read only when the user settings opt in
+//! (`"claudeCodeSettings": true`, top level or inside `permissions`): their
+//! rules would otherwise start refusing or asking in sessions that never
+//! did. The opt-in and the files' locations are pa-core's shared reader
+//! ([`pa_core::settings::claude_code`]), which the hooks and the other
+//! Claude Code keys go through too.
 //!
 //! Rules from every source apply together (deny over ask over allow, not
 //! source over source); `defaultMode` and `additionalDirectories` take the
@@ -129,28 +132,13 @@ impl SourcePaths {
     /// The paths of a session at `cwd` on this machine.
     #[must_use]
     pub fn resolve(cwd: &Path, agent_dir: &Path) -> Self {
-        let home = pa_types::platform::dirs::home_dir();
-        let claude_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
-            .filter(|dir| !dir.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| home.as_ref().map(|home| home.join(".claude")));
-        let managed = if cfg!(target_os = "macos") {
-            Some(PathBuf::from(
-                "/Library/Application Support/ClaudeCode/managed-settings.json",
-            ))
-        } else if cfg!(windows) {
-            Some(PathBuf::from(
-                r"C:\Program Files\ClaudeCode\managed-settings.json",
-            ))
-        } else {
-            Some(PathBuf::from("/etc/claude-code/managed-settings.json"))
-        };
+        let claude = pa_core::settings::claude_code::ClaudePaths::resolve(cwd);
         SourcePaths {
             cwd: cwd.to_path_buf(),
             agent_dir: agent_dir.to_path_buf(),
-            home,
-            claude_dir,
-            managed,
+            home: claude.home,
+            claude_dir: claude.claude_dir,
+            managed: claude.managed,
         }
     }
 
@@ -260,16 +248,9 @@ pub fn stamp(paths: &SourcePaths) -> Stamp {
 /// The `permissions` object of a settings file; `Ok(None)` when the file or
 /// the key is absent.
 fn read_permissions(path: &Path) -> Result<Option<Map<String, Value>>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    if text.trim().is_empty() {
+    let Some(document) = pa_core::settings::claude_code::read_document(path)? else {
         return Ok(None);
-    }
-    let document: Value =
-        serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    };
     match document.get("permissions") {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Object(permissions)) => Ok(Some(permissions.clone())),
@@ -290,17 +271,10 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// Whether the user settings opt into the Claude Code files.
+/// Whether the user settings opt into the Claude Code files (pa-core's
+/// shared opt-in).
 fn claude_code_opt_in(paths: &SourcePaths) -> bool {
-    read_permissions(&paths.agent_dir.join("settings.json"))
-        .ok()
-        .flatten()
-        .and_then(|permissions| {
-            permissions
-                .get("claudeCodeSettings")
-                .and_then(Value::as_bool)
-        })
-        .unwrap_or(false)
+    pa_core::settings::claude_code::opted_in(&paths.agent_dir)
 }
 
 /// Load the permission settings of a session. `project_trusted` is the
