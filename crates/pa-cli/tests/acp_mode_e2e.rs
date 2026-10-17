@@ -2029,15 +2029,10 @@ fn acp_threshold_auto_compaction_publishes_the_compaction_meta() {
         "engine": "faux",
         "contextWindow": 128_000,
         "maxTokens": 4_096,
-        // The 10-token keep window cuts inside turn one (the session
-        // context and reminder rows between the turns are not cut points
-        // the walk counts), so the compaction summarizes the history and
-        // the split turn's prefix: two summary calls.
         "responses": [
             { "text": "turn one reply" },
             { "text": "turn two reply" },
             { "text": "the auto summary" },
-            { "text": "the turn prefix summary" },
         ]
     });
     let mut client = spawn_with_compaction_settings(

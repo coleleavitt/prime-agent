@@ -69,6 +69,17 @@ pub struct CompactOptions<'a> {
     pub semantic_edges: Option<std::sync::Arc<super::semantic_edges::SemanticEdgeRecorder>>,
 }
 
+/// Whether a custom row is ambient context the summarizer never reads.
+fn is_ambient_context_row(custom_type: &str) -> bool {
+    matches!(
+        custom_type,
+        "harness_digest"
+            | super::context_rows::SESSION_CONTEXT_CUSTOM_TYPE
+            | super::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE
+            | super::reminders::SYSTEM_REMINDER_CUSTOM_TYPE
+    )
+}
+
 /// The model-visible message produced by a session entry (summarizer input).
 fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
     match entry {
@@ -77,7 +88,10 @@ fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
             _ => Some(message.clone()),
         },
         FileEntry::CustomMessage { payload, .. } => {
-            if payload.custom_type == "harness_digest" {
+            // Ambient context is not conversation: the harness digest, and
+            // the session context and reminder rows (the context rows
+            // announce the full context again once a compaction drops it).
+            if is_ambient_context_row(&payload.custom_type) {
                 return None;
             }
             Some(AgentMessage::Custom(pa_types::session::CustomMessage {
