@@ -127,8 +127,9 @@ prompt templates, and project skills (`.prime/agent/skills/`, ancestor
 `.agents/skills/`, settings `skills` paths), so an untrusted Python skill is
 never editable-installed into the kernel venv or imported; Claude Code's
 `.claude/commands/` (custom commands, whose `` !`cmd` `` blocks run at
-admission) and `.claude/output-styles/` (plus `.prime/agent/output-styles/`)
-are gated the same way. The hash covers
+admission), `.claude/skills/` (the working directory's and its ancestors' up to
+the repository root) and `.claude/output-styles/` (plus
+`.prime/agent/output-styles/`) are gated the same way. The hash covers
 every file of those skill trees except tool caches. A change to the gated content reads as `Changed` (asks again);
 a theme edit does not. Project-scope writes from an untrusted workspace are
 refused; the product's own project writes in a trusted one re-pin the record.
@@ -136,6 +137,37 @@ refused; the product's own project writes in a trusted one re-pin the record.
 the composition root asks (`record`, `list`). A corrupt store trusts nothing
 and is never overwritten. A run from the home directory, whose project config
 dir is the agent dir, needs no decision.
+
+Claude Code skills (`skills::claude_skills`, `skills::dynamic`): instruction
+skills from `.claude/skills/<name>/SKILL.md` (Claude Code 2.1.296's loader:
+the directory names the skill; `description` with the first-line fallback,
+`when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `model`,
+`disable-model-invocation`, `user-invocable`). The project directories are the
+working directory's and its ancestors' up to the repository root (stopping
+before home), then each additional directory's; `~/.claude/skills`
+(`CLAUDE_CONFIG_DIR` aware) loads only with the `claudeCodeUserSkills` setting
+(unset is off). They follow the Prime Agent skills: a Prime Agent skill of the
+same name wins and the Claude Code copy is reported as a collision. The
+inventory lists `<description> - <when_to_use>` and the `rlm.load_skill` call;
+the user runs one as `/<name>` (unless a builtin command or a Prime Agent
+prompt template has the name) or `/skill:<name>`; `skill.load`
+(`session_engine::skill_host`, the kernel's `rlm.load_skill(name, args)`) is
+the model's Skill tool and refuses `disable-model-invocation` skills. An
+invocation's text is Claude Code's: `Base directory for this skill: <dir>`
+and the body with the arguments, `${CLAUDE_SKILL_DIR}`,
+`${CLAUDE_PROJECT_DIR}` and `${CLAUDE_SESSION_ID}` substituted and the
+`` !`cmd` `` blocks run (`disableSkillShellExecution` turns them off). In a
+trusted workspace a file a cell touches below the working directory brings in
+the `.claude/skills` directories between it and the working directory (Claude
+Code's dynamic skills), announced as a hidden `dynamic_skills` row
+(`session_engine::skill_boundary`).
+
+Saved workflows (`session_engine::workflows_command`): `/workflows` lists the
+saved workflow scripts `rlm.workflow.run(name=...)` resolves
+(`.prime/workflows/` then `.claude/workflows/` per project directory, nearest
+first, then `<agent dir>/workflows/` and `~/.claude/workflows/`; Python
+scripts only, named by file stem) and the session's recent runs (the
+`workflows/<run id>/run.json` records under the session artifact directory).
 
 Instruction files and auto memory (`resources::instructions`,
 `resources::auto_memory`; contract in `docs/instruction-files.md`): one

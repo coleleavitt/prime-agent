@@ -255,6 +255,7 @@ pub async fn execute_session_command(
         "output-style" => execute_output_style(engine, command, &mut execution),
         "add-dir" => execute_add_dir(engine, command, &mut execution).await,
         "memory" => execute_memory(engine, command, &mut execution),
+        "workflows" => execute_workflows(engine, command, &mut execution).await,
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -374,6 +375,30 @@ fn execute_memory(
         return Err("Usage: /memory".to_string());
     }
     let text = super::memory_command::memory_report(&engine.instructions);
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
+/// `/workflows`: the saved workflows and this session's recent runs
+/// ([`super::workflows_command`]); display-only.
+async fn execute_workflows(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err("Usage: /workflows".to_string());
+    }
+    let cwd = engine
+        .session
+        .shared_persistence()
+        .lock()
+        .await
+        .get_cwd()
+        .to_path_buf();
+    let text = super::workflows_command::workflows_report(&engine.workflows, &cwd);
     execution.push_message(slash_command_result(
         command, text, true, "info", None, true,
     ));

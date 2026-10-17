@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 12] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 13] = [
     "compact",
     "refine",
     "goal",
@@ -18,6 +18,7 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 12] = [
     "output-style",
     "add-dir",
     "memory",
+    "workflows",
 ];
 
 /// Builtin commands that run the bundled skill of the same name: the
@@ -499,6 +500,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         name: "memory",
         description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "workflows",
+        description: "List the saved workflows (.prime/workflows, .claude/workflows) and this session's recent workflow runs",
         execution: SlashCommandExecution::Session,
         argument_hint: None,
         aliases: &[],

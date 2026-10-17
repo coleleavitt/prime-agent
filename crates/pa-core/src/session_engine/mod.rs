@@ -76,8 +76,11 @@ mod compaction_arms;
 mod feature_boundary;
 mod instruction_boundary;
 pub mod memory_command;
+mod skill_boundary;
+pub mod skill_host;
 mod terminal_inbox;
 mod wiring;
+pub mod workflows_command;
 
 use std::sync::Arc;
 
@@ -87,6 +90,7 @@ use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, ThinkingLevel};
 use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};
 use pa_types::sync::MutexExt;
+pub use skill_boundary::DYNAMIC_SKILLS_CUSTOM_TYPE;
 use slash_commands::{SessionSlashCommand, SlashCommandRegistry};
 
 use crate::session::manager::{SessionManager, capture_git_context};
@@ -198,6 +202,9 @@ pub struct AgentSession {
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,
     /// The skill inventory `/skill:<name>` submissions expand against.
     skills: Vec<crate::skills::Skill>,
+    /// The skills discovered under touched directories (Claude Code's
+    /// dynamic skills); `None` when discovery is off.
+    dynamic_skills: Option<Arc<crate::skills::dynamic::DynamicSkills>>,
     /// The telemetry handle for the `skill_use_count` counter the prompt
     /// path owns (`None` in sessions without telemetry).
     skill_telemetry: Option<std::sync::Arc<telemetry::SessionTelemetry>>,
@@ -347,6 +354,7 @@ impl AgentSession {
             feature_context: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
+            dynamic_skills: None,
             skill_telemetry: None,
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),
