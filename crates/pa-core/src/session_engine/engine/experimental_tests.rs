@@ -131,3 +131,60 @@ async fn the_usage_limit_wrap_up_rides_the_request_after_a_tool_batch() {
     assert_eq!(calls.len(), 2);
     assert!(!user_texts(&calls[1]).contains(&wrap_up));
 }
+
+/// With `goalEvaluator`, a natural stop under an active goal asks the
+/// evaluator: not met continues the same run with the reason, met
+/// completes the goal and lets the agent stop.
+#[tokio::test]
+async fn the_goal_evaluator_keeps_the_run_going_until_the_goal_is_met() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    provider.push_text_turn("I think it is done");
+    provider.push_text_turn(r#"{"ok": false, "reason": "the tests were never run"}"#);
+    provider.push_text_turn("ran the tests: 3 passed");
+    provider.push_text_turn(r#"{"ok": true, "reason": "\"3 passed\""}"#);
+    let tmp = crate::test_support::ThreadTempDir::new();
+    let agent_dir = tmp.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        r#"{"experimental": {"goalEvaluator": true}}"#,
+    )
+    .unwrap();
+    let engine = create_session(SessionEngineConfig {
+        cwd: tmp.path().to_path_buf(),
+        agent_dir,
+        model: Some(test_model()),
+        stream_fn: Some(provider.stream_fn()),
+        tools: Vec::new(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    {
+        let persistence = engine.session.shared_persistence();
+        let mut driver = engine.goal_driver.lock().await;
+        let mut session = persistence.lock().await;
+        driver.start(&mut session, "the tests pass", None).unwrap();
+    }
+    engine
+        .session
+        .prompt("finish it", crate::session_engine::PromptOptions::default())
+        .await
+        .unwrap();
+    engine.session.agent().wait_for_idle().await;
+    let calls = provider.calls();
+    assert_eq!(calls.len(), 4);
+    let evaluator_prompt = crate::session_engine::goal_evaluator::GOAL_EVALUATOR_SYSTEM_PROMPT;
+    assert_eq!(calls[1].system_prompt.as_deref(), Some(evaluator_prompt));
+    assert_eq!(calls[3].system_prompt.as_deref(), Some(evaluator_prompt));
+    assert_ne!(calls[2].system_prompt.as_deref(), Some(evaluator_prompt));
+    let not_met = crate::session_engine::goal_evaluator::not_met_text(
+        "the tests pass",
+        "the tests were never run",
+    );
+    assert_eq!(user_texts(&calls[2]).last(), Some(&not_met));
+    assert_eq!(
+        engine.goal_driver.lock().await.state().status,
+        crate::goals::GoalStatus::Complete
+    );
+}

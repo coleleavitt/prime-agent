@@ -598,6 +598,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(telemetry) = &config.telemetry {
         telemetry.register_kernel_bridge(&mut handlers);
     }
+    // `goal.propose` (experimental `modelProposedGoals`, off by default:
+    // the request is refused): the model proposes, the user approves.
+    super::goal_proposal::register_host_handlers(
+        &mut handlers,
+        experimental.model_proposed_goals,
+        std::sync::Arc::clone(wiring.runtime.goal_driver()),
+        std::sync::Arc::clone(&wiring.session),
+        session_id.clone(),
+    );
     // The bundled computer-use skill's `computer_use.*` requests: every
     // backend runs host-side; its adoption events take the bridge's path.
     super::computer_use_host::register_host_handlers(
@@ -971,6 +980,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         stream_fn,
     );
     let side_question_stream_fn = std::sync::Arc::clone(&timing_stream_fn);
+    // The goal evaluator (experimental, off by default) judges an active
+    // goal at a natural stop, on the session's stream or its own model.
+    let goal_evaluator = experimental.goal_evaluator.then(|| {
+        std::sync::Arc::new(super::goal_evaluator::GoalEvaluator {
+            side: super::side_model::side_model_for(
+                experimental.goal_evaluator_model.as_deref(),
+                &side_question_stream_fn,
+                &model,
+                &config.agent_dir,
+                &config.cwd,
+            ),
+            driver: std::sync::Arc::clone(wiring.runtime.goal_driver()),
+            session: std::sync::Arc::clone(&wiring.session),
+        })
+    });
     let semantic_recorder = config.semantic_edges.take().map(|identity| {
         std::sync::Arc::new(super::semantic_edges::SemanticEdgeRecorder::open(identity))
     });
@@ -1033,6 +1057,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
             let usage_limit = usage_limit.clone();
+            let goal_evaluator = goal_evaluator.clone();
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
@@ -1040,6 +1065,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 let boundary = boundary.clone();
                 let budget = budget.clone();
                 let usage_limit = usage_limit.clone();
+                let goal_evaluator = goal_evaluator.clone();
                 Box::pin(async move {
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
@@ -1064,15 +1090,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // run goes on past it (the copy is made only for them).
                     let feature_turn =
                         (!crate::features::installed().is_empty()).then(|| context.clone());
-                    // The usage-limit monitor reads the boundary only when
-                    // the run goes on past it, like the features.
-                    let usage_turn = usage_limit.as_ref().map(|_| context.clone());
+                    // The usage-limit monitor and the goal evaluator read the
+                    // boundary only when the run goes on past it, like the features.
+                    let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
+                        .then(|| context.clone());
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
-                    if let (false, Some(monitor), Some(turn)) = (stop, &usage_limit, usage_turn) {
-                        super::usage_limit::after_turn(monitor, &fold_slot, &turn);
+                    if let (false, Some(turn)) = (stop, experimental_turn) {
+                        if let Some(monitor) = &usage_limit {
+                            super::usage_limit::after_turn(monitor, &fold_slot, &turn);
+                        }
+                        if let Some(evaluator) = &goal_evaluator {
+                            super::goal_evaluator::after_turn(evaluator, &fold_slot, &turn).await;
+                        }
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
