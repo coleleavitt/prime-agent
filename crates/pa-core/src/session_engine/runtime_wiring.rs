@@ -547,6 +547,12 @@ fn convert_execute_result(
         // The one `fileAccess` report feeds both the changed-file reminders
         // (the provisioner's sink) and nested instruction discovery.
         accessed_paths: result.file_access.paths(),
+        written_paths: result
+            .file_access
+            .writes
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
     }

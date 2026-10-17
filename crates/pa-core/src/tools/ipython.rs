@@ -70,6 +70,9 @@ pub struct ExecuteResult {
     /// The files the cell opened (absolute); the tool keeps the ones under
     /// the working directory as `accessedPaths` on the result details.
     pub accessed_paths: Vec<String>,
+    /// The files the cell opened for writing (absolute), reported to
+    /// observers as the `fileWrites` host fact.
+    pub written_paths: Vec<String>,
     /// The per-cell execution timeout fired and interrupted the cell.
     pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
@@ -624,18 +627,9 @@ pub async fn execute_ipython(
     }
 
     // Host facts for in-process observers (never persisted): the cell's
-    // finished `bash()` commands with exit codes, TS `bashCommands` shape.
-    let host_facts = if r.executed_bash_commands.is_empty() {
-        serde_json::Value::Null
-    } else {
-        json!({
-            "bashCommands": r
-                .executed_bash_commands
-                .iter()
-                .map(crate::kernel::shared::KernelExecutedBashCommand::to_json)
-                .collect::<Vec<_>>(),
-        })
-    };
+    // finished `bash()` commands with exit codes, TS `bashCommands` shape,
+    // and the files it opened for writing (`fileWrites`, absolute paths).
+    let host_facts = cell_host_facts(&r);
 
     Ok(ToolExecutionResult {
         content,
@@ -643,6 +637,32 @@ pub async fn execute_ipython(
         is_error: r.status == ExecuteStatus::Error || r.status == ExecuteStatus::Aborted,
         host_facts,
     })
+}
+
+/// The host facts of a finished cell: `bashCommands` (the finished
+/// `bash()` commands with exit codes) and `fileWrites` (the files it opened
+/// for writing), each only when non-empty; `Null` when neither is.
+fn cell_host_facts(r: &ExecuteResult) -> serde_json::Value {
+    let mut facts = serde_json::Map::new();
+    if !r.executed_bash_commands.is_empty() {
+        facts.insert(
+            "bashCommands".to_string(),
+            json!(
+                r.executed_bash_commands
+                    .iter()
+                    .map(crate::kernel::shared::KernelExecutedBashCommand::to_json)
+                    .collect::<Vec<_>>()
+            ),
+        );
+    }
+    if !r.written_paths.is_empty() {
+        facts.insert("fileWrites".to_string(), json!(r.written_paths));
+    }
+    if facts.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::Object(facts)
+    }
 }
 
 /// The tool result for a cell whose kernel died: the exit (code/signal,
@@ -794,6 +814,23 @@ mod tests {
         assert_eq!(
             capped["accessedPaths"].as_array().map(Vec::len),
             Some(MAX_RECORDED_ACCESSED_PATHS)
+        );
+    }
+
+    #[test]
+    fn cell_host_facts_carry_the_written_files() {
+        assert_eq!(
+            cell_host_facts(&ExecuteResult::default()),
+            serde_json::Value::Null
+        );
+        let written = ExecuteResult {
+            accessed_paths: vec!["/repo/a.rs".to_string(), "/repo/b.rs".to_string()],
+            written_paths: vec!["/repo/b.rs".to_string()],
+            ..ExecuteResult::default()
+        };
+        assert_eq!(
+            cell_host_facts(&written),
+            json!({ "fileWrites": ["/repo/b.rs"] })
         );
     }
 
