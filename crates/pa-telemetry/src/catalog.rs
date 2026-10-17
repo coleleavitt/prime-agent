@@ -18,7 +18,8 @@
 //! `observer_session`, `advisor_ask`) and their additive counters
 //! (`custom_command_use_count` and the session context row counts on
 //! `agent session ended`, `tui_vim_mode` and
-//! `tui_status_line` on `tui exit`): new-event
+//! `tui_status_line` on `tui exit`); schema version 6 adds the round-two
+//! parity features' events (`lsp_session`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -40,9 +41,10 @@ use crate::properties::Properties;
 /// to 4 when the feature crates' adoption events (`dream_run`,
 /// `toolforge publish`, `workflow_run_agent`) landed, and to 5 when the Claude
 /// Code parity features' events (`permissions_session`, `observer_session`,
-/// `advisor_ask`) landed — new-event vocabulary bumps the version (the #2117 precedent);
-/// additive property changes alone do not.
-pub const SCHEMA_VERSION: u64 = 5;
+/// `advisor_ask`) landed, and to 6 when `lsp_session` landed — new-event
+/// vocabulary bumps the version (the #2117 precedent); additive property
+/// changes alone do not.
+pub const SCHEMA_VERSION: u64 = 6;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -1474,6 +1476,24 @@ const ADVISOR_ASK: EventRule = EventRule {
     ],
 };
 
+/// `lsp_session` (v6): one session that used the `pa-lsp` feature's
+/// language servers (a server started, an `rlm.lsp` call, or a diagnostics
+/// delivery), sent when the session ends. Counts only — never a server
+/// name or command, a path, a symbol or a diagnostic.
+const LSP_SESSION: EventRule = EventRule {
+    name: "lsp_session",
+    since: 6,
+    properties: &[
+        ("servers_configured", optional(count())),
+        ("servers_started", optional(count())),
+        ("requests", optional(count())),
+        ("request_errors", optional(count())),
+        ("diagnostic_deliveries", optional(count())),
+        ("diagnostics_delivered", optional(count())),
+        ("server_failures", optional(count())),
+    ],
+};
+
 /// `workflow_run_agent` (v4): one Workflow V1 `workflow.run_agent` kernel
 /// host request settled by the host (the fork's `pa-workflow` feature).
 /// Terminal classification, timing, and token totals only — never the
@@ -2157,6 +2177,7 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &PERMISSIONS_SESSION,
         &OBSERVER_SESSION,
         &ADVISOR_ASK,
+        &LSP_SESSION,
         &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
@@ -2291,8 +2312,9 @@ mod tests {
         // New-event vocabulary bumps the schema version: the #2117
         // vocabulary landed at v2, the kernel telemetry bridge's skill
         // events at v3, the feature crates' adoption events at v4, the
-        // Claude Code parity features' events at v5.
-        assert_eq!(SCHEMA_VERSION, 5);
+        // Claude Code parity features' events at v5, the round-two ones at v6.
+        assert_eq!(SCHEMA_VERSION, 6);
+        assert_eq!(lookup("lsp_session").map(|rule| rule.since), Some(6));
         for name in ["permissions_session", "observer_session", "advisor_ask"] {
             assert_eq!(lookup(name).map(|rule| rule.since), Some(5), "{name}");
         }

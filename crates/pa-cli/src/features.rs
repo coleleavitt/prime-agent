@@ -40,6 +40,11 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // host requests (their HTTP clients start on the first request).
     #[cfg(feature = "web")]
     features.push(Arc::new(pa_web::WebFeature::new()));
+    // `rlm.lsp.*` and the `<new-diagnostics>` reminders: language servers
+    // from the `lspServers` setting or a trusted `.lsp.json`, each started
+    // on first use for a file of its language.
+    #[cfg(feature = "lsp")]
+    features.push(Arc::new(pa_lsp::LspFeature::new()));
     // Claude Code's permission rules and modes (the `permissions` settings
     // key), ahead of the hooks and plugins: a deny rule refuses before any
     // hook runs a command for the action.
@@ -191,9 +196,14 @@ fn install_crash_record(trace: Option<pa_trace::RecorderHandle>) {
 }
 
 /// Gate what the enabled features load from a project and run behind
-/// workspace trust: (feature `plugins`) `.prime/agent/plugins/`. Idempotent;
-/// no I/O.
+/// workspace trust: (feature `plugins`) `.prime/agent/plugins/`, (feature
+/// `lsp`) the project's `.lsp.json` server commands. Idempotent; no I/O.
 pub fn install_trust_gates() {
+    #[cfg(feature = "lsp")]
+    pa_core::workspace_trust::register_gated_project_file(
+        pa_lsp::config::PROJECT_CONFIG_FILE,
+        "language servers",
+    );
     #[cfg(feature = "plugins")]
     pa_core::workspace_trust::register_gated_project_dir(
         pa_plugins::PLUGINS_DIR,
@@ -330,12 +340,20 @@ mod tests {
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
+            #[cfg(feature = "web")]
+            "web",
+            #[cfg(feature = "lsp")]
+            "lsp",
             #[cfg(feature = "permissions")]
             "permissions",
             #[cfg(feature = "hooks")]
             "hooks",
             #[cfg(feature = "plugins")]
             "plugins",
+            #[cfg(feature = "observer")]
+            "observer",
+            #[cfg(feature = "advisor")]
+            "advisor",
         ];
         assert_eq!(names, expected);
     }

@@ -15,6 +15,7 @@ default = [
     "hooks",
     "learning",
     "ledger",
+    "lsp",
     "mermaid",
     "observer",
     "permissions",
@@ -49,6 +50,12 @@ hooks = ["dep:pa-hooks"]
 learning = ["ravo", "dep:pa-learning"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
+# Claude Code's LSP integration (crates/pa-lsp): language servers from the
+# `lspServers` setting or a trusted project's `.lsp.json`, started per language
+# on first use, behind `rlm.lsp.*`, and their new diagnostics delivered after
+# edits as a hidden `<new-diagnostics>` reminder. Inert without configured
+# servers.
+lsp = ["dep:pa-lsp"]
 # The fork's Mermaid diagrams in the TUI: lovely-mermaid 0.3.3, a too-wide
 # flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
 # in agent/custom messages and /btw (crates/pa-mermaid).
@@ -116,6 +123,7 @@ pa-advisor = { path = "../pa-advisor", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 pa-web = { path = "../pa-web", optional = true }
+pa-lsp = { path = "../pa-lsp", optional = true }
 pa-permissions = { path = "../pa-permissions", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
