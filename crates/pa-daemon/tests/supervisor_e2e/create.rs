@@ -317,7 +317,15 @@ fn cold_reopen_uses_saved_cwd_unless_explicitly_overridden() {
         );
         let context = client.read_response("context");
         assert_eq!(context["success"], true, "{context}");
-        let prompt = context["data"]["systemPrompt"].as_str().unwrap();
+        // Project context and the cwd are the session context row's, not
+        // the prompt's.
+        let prompt = format!(
+            "{}\n{}",
+            context["data"]["systemPrompt"].as_str().unwrap(),
+            context["data"]["sessionContext"]
+                .as_str()
+                .unwrap_or_default()
+        );
         assert!(
             prompt.contains("CWD_REGRESSION_PROJECT_CONTEXT"),
             "{context}"

@@ -1176,6 +1176,19 @@ impl SessionEngine for AgentSessionEngine {
         })
     }
 
+    fn session_context(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+    {
+        Box::pin(async move {
+            let model = self.resolve_model()?;
+            self.ensure_core_session_async(&model).await?;
+            let guard = self.session.lock().await;
+            let engine = guard.as_deref().expect("session built above");
+            Ok(engine.session_context_text().await)
+        })
+    }
+
     fn tool_definition(
         &self,
         name: &str,

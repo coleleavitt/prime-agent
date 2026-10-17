@@ -701,6 +701,18 @@ impl SessionUi {
                         let mut rows = info_commands::system_prompt_header_rows(prompt);
                         rows.push(Vec::new());
                         rows.extend(info_commands::system_prompt_body_rows(prompt));
+                        // Daemons that send the session context separately
+                        // (the prompt no longer carries it).
+                        if let Some(context) = data
+                            .get("sessionContext")
+                            .and_then(Value::as_str)
+                            .filter(|context| !context.is_empty())
+                        {
+                            rows.push(Vec::new());
+                            rows.extend(info_commands::session_context_header_rows(context));
+                            rows.push(Vec::new());
+                            rows.extend(info_commands::system_prompt_body_rows(context));
+                        }
                         self.open_info_panel(view, None, InfoContent::Rows(rows));
                         self.track_menu_opened("system-prompt", "command");
                     }
