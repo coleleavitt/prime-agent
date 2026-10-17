@@ -883,11 +883,14 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
             "compaction": { "enabled": true, "reserveTokens": 1, "keepRecentTokens": 10 }
         }),
     );
-    // A small context window: the ~8.1k seed turn stays below the 15_808
-    // ceiling (24k - 4_096 output - 4_096 headroom), and the ~12k-token
-    // crossing turn pushes past it.
+    // A small context window: the seed turn (about 14k tokens today: the
+    // system prompt, the session context row and the tool schema) stays
+    // below the 27_808 ceiling (36k - 4_096 output - 4_096 headroom), and the
+    // ~18k-token crossing turn pushes past it. Any seed between about 10k
+    // and 27.8k tokens keeps the crossing, so prompt growth of a few
+    // thousand tokens does not move it.
     let script = serde_json::json!({
-        "contextWindow": 24000,
+        "contextWindow": 36000,
         "responses": [
             {"text": "seed reply"},
             {"text": "crossing reply"},
@@ -895,7 +898,7 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
         ]
     });
     let first = "seed turn".to_string();
-    let second = format!("crossing turn {}", "x".repeat(48_000));
+    let second = format!("crossing turn {}", "x".repeat(72_000));
     let (stdout, stderr, code) = run_in_home(
         home.path(),
         &["--mode", "json", "-p", &first, &second],

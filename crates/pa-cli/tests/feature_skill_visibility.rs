@@ -2,7 +2,8 @@
 //! sessions whose `dream.*` / `ravo.*` host requests register (TS
 //! `_modelVisibleSkills` with `_autoRefineAllowedForSession`): a top-level
 //! session with a session store lists and binds both; an RLM child and a
-//! storeless session see neither, in the system prompt or the kernel. Its
+//! storeless session see neither, in the session context's skills
+//! inventory or the kernel. Its
 //! own test binary, because installation is process-global.
 #![cfg(all(feature = "dream", feature = "ravo"))]
 
@@ -67,14 +68,22 @@ async fn session(root: &std::path::Path, depth: u32, stored: bool) -> SessionEng
     .unwrap()
 }
 
-/// The feature skills `engine`'s system prompt lists.
+/// The feature skills `engine`'s skills inventory lists. The inventory
+/// rides the first-turn session context row (the system prompt stays
+/// byte-stable), so the row is where a withheld skill must be absent; the
+/// prompt never lists any.
 fn listed(engine: &SessionEngine) -> Vec<&'static str> {
+    let context = engine
+        .session
+        .context_rows()
+        .map(|rows| rows.full_context_text())
+        .unwrap_or_default();
     FEATURE_SKILLS
         .into_iter()
         .filter(|name| {
-            engine
-                .system_prompt
-                .contains(&format!("<name>{name}</name>"))
+            let entry = format!("<name>{name}</name>");
+            assert!(!engine.system_prompt.contains(&entry));
+            context.contains(&entry)
         })
         .collect()
 }
