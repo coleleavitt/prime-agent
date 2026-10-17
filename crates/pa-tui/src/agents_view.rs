@@ -56,6 +56,7 @@ use render::Renderer;
 use render::cell;
 
 mod delete;
+mod external;
 mod git_head;
 mod heartbeats;
 mod preview;
@@ -232,6 +233,16 @@ enum UiInput {
     /// The saved-catalog fetch failed; the status line reports it.
     SavedFailed {
         error: String,
+    },
+    /// The external-session listing landed: their section rebuilds from these rows.
+    ExternalLoaded {
+        sessions: Vec<Value>,
+    },
+    /// One external session's import landed: the new session file opens, or the status
+    /// line reports the failure.
+    ImportResult {
+        request: Box<external::ImportRequest>,
+        outcome: Result<PathBuf, String>,
     },
     /// One stop-or-delete dispatch landed: the status line reports the outcome in the
     /// tone the dispatch classified it with.
@@ -449,6 +460,13 @@ struct AgentsViewMode {
     /// overlaid on every rebuild until the roster or catalog carries it, plus the one write in
     /// flight for that session.
     pending_renames: std::collections::HashMap<String, rename::PendingRename>,
+    /// Other products' sessions (`list_external_sessions` rows): their own section after the
+    /// saved ones, under the same project and branch filters.
+    external: Vec<Value>,
+    /// The external row's import the run loop dispatches (an open of an external row).
+    pending_import: Option<external::ImportRequest>,
+    /// An import is running: a second open waits for it.
+    import_in_flight: bool,
 }
 
 /// The saved-catalog project filter (upstream #826): every project's saved sessions (the TS
@@ -611,6 +629,9 @@ impl AgentsViewMode {
             git_head: git_head::read_git_head(&options_cwd),
             preview: None,
             pending_renames: std::collections::HashMap::new(),
+            external: Vec::new(),
+            pending_import: None,
+            import_in_flight: false,
         }
     }
 }
@@ -855,6 +876,10 @@ async fn run_agents_view_surface(
     if catalog_request.is_none() {
         mode.end_anchor_wait();
     }
+    // Other products' sessions (Claude Code's), when the daemon serves them.
+    if client.supports_server_capability(external::EXTERNAL_SESSIONS_CAPABILITY) {
+        external::spawn_external_catalog_fetch(&client, ui_tx.clone());
+    }
     let mut pending: Vec<UiInput> = Vec::new();
     let mut last_pulse = tokio::time::Instant::now();
     // The incident-notice poll: re-read appended agent.jsonl bytes, re-rendered only on a changed
@@ -988,10 +1013,30 @@ async fn run_agents_view_surface(
                     if let Some((key, active_session_id)) = mode.pending_headline.take() {
                         spawn_headline_fetch(&client, ui_tx.clone(), key, active_session_id);
                     }
+                    if let Some(request) = mode.pending_import.take() {
+                        action_dispatches.push(external::spawn_import_dispatch(
+                            &client,
+                            ui_tx.clone(),
+                            request,
+                        ));
+                    }
                 }
                 // A plain click opens the row under it; drags and wheel turns are consumed inside.
                 UiInput::Mouse(event) => {
                     mode.handle_mouse(&event);
+                    if let Some(request) = mode.pending_import.take() {
+                        action_dispatches.push(external::spawn_import_dispatch(
+                            &client,
+                            ui_tx.clone(),
+                            request,
+                        ));
+                    }
+                }
+                UiInput::ExternalLoaded { sessions } => {
+                    mode.apply_external_loaded(sessions);
+                }
+                UiInput::ImportResult { request, outcome } => {
+                    mode.import_result(&request, outcome);
                 }
                 UiInput::Paste(text) => {
                     mode.handle_paste(&text);
@@ -1356,6 +1401,8 @@ fn is_daemon_answer(input: &UiInput) -> bool {
             | UiInput::ReplyResult { .. }
             | UiInput::KillResult { .. }
             | UiInput::HeartbeatsLoaded { .. }
+            | UiInput::ExternalLoaded { .. }
+            | UiInput::ImportResult { .. }
     )
 }
 

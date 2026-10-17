@@ -172,6 +172,10 @@ impl AgentsViewMode {
             ));
             return;
         }
+        // Another product's session opens through its import into a new session file.
+        if self.request_import(row, ancestors.clone()) {
+            return;
+        }
         let summary = &row.summary;
         if let Some(active) = summary
             .get("activeSessionId")
