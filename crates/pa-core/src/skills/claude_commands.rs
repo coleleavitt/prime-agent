@@ -56,10 +56,17 @@ pub struct ClaudeCommandOptions {
 /// The `~/.claude` directory: `CLAUDE_CONFIG_DIR` when set, else the home's.
 #[must_use]
 pub fn user_claude_dir() -> Option<PathBuf> {
+    user_claude_dir_in(pa_types::platform::home_dir().as_deref())
+}
+
+/// [`user_claude_dir`] for a given home directory: `CLAUDE_CONFIG_DIR` when
+/// set, else `<home>/.claude`.
+#[must_use]
+pub fn user_claude_dir_in(home: Option<&Path>) -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| pa_types::platform::home_dir().map(|home| home.join(CLAUDE_DIR_NAME)))
+        .or_else(|| home.map(|home| home.join(CLAUDE_DIR_NAME)))
 }
 
 /// Where commands load from, in precedence order (first name wins).
@@ -145,7 +152,7 @@ fn command_name(base: &Path, file: &Path) -> Option<String> {
 
 /// Claude Code's description fallback: the first non-empty body line, a
 /// heading's text, cut at 100 characters.
-fn first_line_description(body: &str) -> Option<String> {
+pub(super) fn first_line_description(body: &str) -> Option<String> {
     let line = body.lines().map(str::trim).find(|line| !line.is_empty())?;
     let heading = line
         .strip_prefix('#')
@@ -188,7 +195,7 @@ fn split_tool_list(text: &str) -> Vec<String> {
     items
 }
 
-fn string_list(value: Option<&serde_json::Value>) -> Vec<String> {
+pub(super) fn string_list(value: Option<&serde_json::Value>) -> Vec<String> {
     match value {
         Some(serde_json::Value::String(text)) => split_tool_list(text),
         Some(serde_json::Value::Array(items)) => items
@@ -202,7 +209,7 @@ fn string_list(value: Option<&serde_json::Value>) -> Vec<String> {
 
 /// `arguments`: a list or a space-separated string of names; numeric and
 /// empty names are dropped (they would shadow `$N`).
-fn argument_names(value: Option<&serde_json::Value>) -> Vec<String> {
+pub(super) fn argument_names(value: Option<&serde_json::Value>) -> Vec<String> {
     let valid = |name: &str| !name.trim().is_empty() && !name.chars().all(|c| c.is_ascii_digit());
     match value {
         Some(serde_json::Value::String(text)) => text
@@ -344,6 +351,29 @@ fn replace_matches(
 /// string; a body that consumed nothing gets `ARGUMENTS: <args>` appended.
 #[must_use]
 pub fn substitute_claude_arguments(content: &str, raw_args: &str, names: &[String]) -> String {
+    substitute_claude_arguments_with(content, raw_args, names, UnusedArguments::Append)
+}
+
+/// What [`substitute_claude_arguments_with`] does with arguments no
+/// placeholder consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnusedArguments {
+    /// Append them as an `ARGUMENTS: ...` line (Claude Code's rule).
+    Append,
+    /// Leave them out: the caller delivers them itself (a skill block's
+    /// trailing user message).
+    Omit,
+}
+
+/// [`substitute_claude_arguments`] with the unconsumed-arguments rule
+/// chosen by the caller.
+#[must_use]
+pub fn substitute_claude_arguments_with(
+    content: &str,
+    raw_args: &str,
+    names: &[String],
+    unused: UnusedArguments,
+) -> String {
     let words = split_arguments(raw_args);
     let mut text = content.replace([DOLLAR, FENCE], "\u{fffd}");
     let mut by_length: Vec<(usize, &String)> = names.iter().enumerate().collect();
@@ -385,7 +415,7 @@ pub fn substitute_claude_arguments(content: &str, raw_args: &str, names: &[Strin
         used = true;
         text = text.replace("$ARGUMENTS", &fence(raw_args));
     }
-    if !used && !raw_args.is_empty() {
+    if !used && !raw_args.is_empty() && unused == UnusedArguments::Append {
         text.push_str("\n\nARGUMENTS: ");
         text.push_str(&fence(raw_args));
     }

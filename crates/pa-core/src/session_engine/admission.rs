@@ -156,9 +156,9 @@ impl AgentSession {
         // TS `_finishSubmissionNormalization` order: skill commands expand first, prompt templates
         // second; both are gated by the same policy flag.
         let (skill_expanded, used_skill) = if expand {
-            crate::skills::expand_skill_command(text, &self.skills)
+            self.expand_user_skill_command(text).await
         } else {
-            (text.to_string(), None)
+            (text.to_string(), false)
         };
         let normalized = if expand {
             crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
@@ -196,9 +196,12 @@ impl AgentSession {
         // once. A pre-expanded block (the daemon emits the accepted row
         // before admission) counts here too — the block parse carries the
         // skill identity.
-        let skill_used = used_skill.is_some()
-            || pa_types::skill_blocks::parse_skill_block(&normalized)
-                .is_some_and(|block| self.skills.iter().any(|skill| skill.name == block.name));
+        let skill_used = used_skill
+            || pa_types::skill_blocks::parse_skill_block(&normalized).is_some_and(|block| {
+                self.command_skills()
+                    .iter()
+                    .any(|skill| skill.name == block.name)
+            });
         if skill_used {
             if let Some(telemetry) = &self.skill_telemetry {
                 telemetry.note_skill_used();
@@ -259,8 +262,7 @@ impl AgentSession {
             // normalizes every row at the shared admission).
             for row in &options.batch {
                 let row_text = if expand {
-                    let (skill_expanded, _) =
-                        crate::skills::expand_skill_command(&row.text, &self.skills);
+                    let (skill_expanded, _) = self.expand_user_skill_command(&row.text).await;
                     let cwd = self.session.lock().await.get_cwd().to_path_buf();
                     crate::skills::expand_prompt_template_with_shell(
                         &skill_expanded,

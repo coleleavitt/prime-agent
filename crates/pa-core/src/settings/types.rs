@@ -505,6 +505,12 @@ pub struct Settings {
     /// instruction files (`~/.claude/CLAUDE.md`, `~/.claude/rules/`). Unset
     /// is OFF, so installing Claude Code never changes this agent's prompt.
     pub claude_code_user_instructions: Option<bool>,
+    /// `claudeCodeUserSkills`: also load Claude Code's user skills
+    /// (`~/.claude/skills/<name>/SKILL.md`, `CLAUDE_CONFIG_DIR` aware) into
+    /// the skills inventory. Unset is OFF, like `claudeCodeUserInstructions`:
+    /// installing Claude Code never grows this agent's prompt. The project's
+    /// `.claude/skills` load in a trusted workspace regardless.
+    pub claude_code_user_skills: Option<bool>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

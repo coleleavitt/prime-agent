@@ -164,6 +164,7 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         auto_memory: settings.get_auto_memory_enabled(),
         claude_user_files: settings.get_claude_code_user_instructions(),
     };
+    let claude_user_skills = settings.get_claude_code_user_skills();
     let resolution = resolution::resolve_session_resources(&options, settings)?;
 
     let mut resources = LoadedResources::default();
@@ -196,6 +197,47 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         })
         .collect();
     resources.skill_diagnostics = skills_result.diagnostics;
+    // Claude Code skills follow the Prime Agent skills (a Prime Agent skill
+    // of the same name wins). The working directory's (and its ancestors')
+    // `.claude/skills` load only in a trusted workspace (their bodies can
+    // run shell blocks); the additional directories are the user's own
+    // choice; `~/.claude/skills` only with `claudeCodeUserSkills`.
+    if !options.no_skills {
+        let home = options
+            .home_dir
+            .clone()
+            .or_else(pa_types::platform::home_dir);
+        let project_dirs = project_cwd
+            .map(|cwd| {
+                crate::skills::claude_skills::project_claude_dirs(
+                    cwd,
+                    crate::skills::claude_skills::CLAUDE_SKILLS_DIR,
+                    home.as_deref(),
+                )
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .chain(options.additional_directories.iter().map(|dir| {
+                dir.join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+                    .join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR)
+            }))
+            .collect();
+        let claude = crate::skills::claude_skills::load_claude_skills(
+            &crate::skills::claude_skills::ClaudeSkillRoots {
+                user_dir: claude_user_skills
+                    .then(|| crate::skills::claude_commands::user_claude_dir_in(home.as_deref()))
+                    .flatten()
+                    .map(|dir| dir.join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR)),
+                project_dirs,
+                shell: command_shell,
+            },
+        );
+        crate::skills::claude_skills::merge_claude_skills(
+            &mut resources.skills,
+            &mut resources.skill_diagnostics,
+            claude,
+        );
+    }
     // Resolution-time warnings (e.g. missing bundled skills directory).
     resources
         .skill_diagnostics
@@ -255,6 +297,23 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
             prompt
         })
         .collect();
+    // A Claude Code skill answers to `/<name>` unless a builtin command or
+    // a Prime Agent prompt template has the name.
+    let native_template_names: Vec<&str> = resources
+        .prompts
+        .iter()
+        .filter(|prompt| {
+            !matches!(
+                prompt.arguments,
+                crate::skills::TemplateArguments::ClaudeCode(_)
+            )
+        })
+        .map(|prompt| prompt.name.as_str())
+        .collect();
+    crate::skills::claude_skills::assign_bare_commands(
+        &mut resources.skills,
+        &native_template_names,
+    );
     for path in &options.additional_prompt_paths {
         if is_local_path(path) && !Path::new(path).exists() {
             resources.skill_diagnostics.push(ResourceDiagnostic::Error {
@@ -538,6 +597,74 @@ mod tests {
             .find(|prompt| prompt.name == "fix")
             .expect("package prompt loaded");
         assert_eq!(prompt.source_info.source, "../fixture-pkg");
+    }
+
+    /// `~/.claude/skills` loads only with `claudeCodeUserSkills`; a Prime
+    /// Agent skill of the same name wins over a Claude Code one.
+    #[test]
+    fn claude_user_skills_need_the_setting_and_native_skills_win() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let agent_dir = tmp.path().join("agent");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(cwd.join(".git")).unwrap();
+        let write = |dir: &Path, name: &str, description: &str| {
+            fs::create_dir_all(dir.join(name)).unwrap();
+            fs::write(
+                dir.join(name).join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {description}\n---\nbody"),
+            )
+            .unwrap();
+        };
+        write(&agent_dir.join("skills"), "shared", "native shared");
+        let user_skills = home.join(".claude").join("skills");
+        write(&user_skills, "mine", "user claude skill");
+        write(&user_skills, "shared", "claude shared");
+        write(
+            &cwd.join(".claude").join("skills"),
+            "local",
+            "project claude skill",
+        );
+        crate::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
+        let load = |settings: &str| {
+            fs::write(agent_dir.join("settings.json"), settings).unwrap();
+            load_resources(ResourceLoaderOptions {
+                home_dir: Some(home.clone()),
+                ..ResourceLoaderOptions::new(&cwd, &agent_dir)
+            })
+            .unwrap()
+        };
+        let claude_names = |resources: &LoadedResources| {
+            resources
+                .skills
+                .iter()
+                .filter(|skill| skill.claude.is_some())
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let without = load("{}");
+        assert_eq!(claude_names(&without), vec!["local"]);
+        let with = load(r#"{"claudeCodeUserSkills": true}"#);
+        assert_eq!(claude_names(&with), vec!["mine", "local"]);
+        let shared = with
+            .skills
+            .iter()
+            .find(|skill| skill.name == "shared")
+            .unwrap();
+        assert_eq!(
+            (shared.description.as_str(), shared.claude.is_none()),
+            ("native shared", true)
+        );
+        assert!(with.skill_diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            ResourceDiagnostic::Collision { collision, .. }
+                if collision.name == "shared" && collision.loser_path.contains(".claude")
+        )));
     }
 
     #[test]

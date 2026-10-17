@@ -141,6 +141,8 @@ pub struct SessionEngine {
     pub agents_files: Vec<crate::resources::ContextFile>,
     /// The instruction files and auto memory `/memory` reports.
     pub instructions: super::memory_command::SessionInstructions,
+    /// Where `/workflows` finds the saved workflows and the run journals.
+    pub workflows: super::workflows_command::WorkflowsContext,
     pub system_prompt: String,
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
@@ -400,6 +402,17 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Claude Code's user-scope instruction files (the session context row
     // reads them each turn through the canonical loader).
     let claude_user_instructions = settings.get_claude_code_user_instructions();
+    // Claude Code's dynamic skills (`.claude/skills` below the working
+    // directory, found as the session touches files) load only in a
+    // trusted workspace, like the project's own skills.
+    let skill_discovery =
+        (settings.project_scope_trusted() && !config.resource_exclusions.no_skills).then(|| {
+            if settings.get_disable_skill_shell_execution() {
+                crate::skills::claude_commands::ShellExpansion::Disabled
+            } else {
+                crate::skills::claude_commands::ShellExpansion::Enabled
+            }
+        });
     let mut launch_directories = config.additional_directories.clone();
     launch_directories.extend(settings.get_additional_directories(&cwd));
     let additional_directories = Arc::new(super::additional_dirs::AdditionalDirectories::resolve(
@@ -440,6 +453,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
     })?;
+    let dynamic_skills = skill_discovery.map(|shell| {
+        Arc::new(crate::skills::dynamic::DynamicSkills::new(
+            cwd.clone(),
+            shell,
+        ))
+    });
     // The model writes its memory files from the kernel: a `workspace-write`
     // sandbox keeps the auto-memory directory writable.
     let sandbox = match (sandbox, &resources.auto_memory) {
@@ -519,6 +538,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    let workflows_context = super::workflows_command::WorkflowsContext {
+        agent_dir: config.agent_dir.clone(),
+        session_artifact_dir: session_artifact_dir.clone(),
+    };
     // The session's private scratchpad and tasks directories (Claude Code's
     // per-session scratchpad): in the artifact partition, so the session's
     // delete removes them. A directory that cannot be made is left out of
@@ -732,6 +755,17 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         std::sync::Arc::clone(&wiring.session),
         session_id.clone(),
     );
+    // `skill.load` (`rlm.load_skill`): the model loads a skill's
+    // instructions, Claude Code's Skill tool.
+    super::skill_host::register_host_handlers(
+        &mut handlers,
+        super::skill_host::SkillHostConfig {
+            skills: resources.skills.clone(),
+            dynamic: dynamic_skills.clone(),
+            cwd: cwd.clone(),
+            session_id: session_id.clone(),
+        },
+    );
     // The bundled computer-use skill's `computer_use.*` requests: every
     // backend runs host-side; its adoption events take the bridge's path.
     super::computer_use_host::register_host_handlers(
@@ -881,6 +915,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let tasks_file = session_artifact_dir
         .as_ref()
         .map(|dir| dir.join("tasks.json"));
+    // `${CLAUDE_SESSION_ID}` in a folded Claude Code skill command.
+    let fold_session_id = session_id.clone();
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -1255,6 +1291,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             let usage_limit = usage_limit.clone();
             let goal_evaluator = goal_evaluator.clone();
             let nested = nested_instructions.clone();
+            let dynamic_skills = dynamic_skills.clone();
+            let known_skills = Arc::new(resources.skills.clone());
             let context_rows = std::sync::Arc::clone(&context_rows);
             let modes_boundary = session_modes.boundary(wiring.rlm.child_host());
             Some(std::sync::Arc::new(move |context| {
@@ -1262,6 +1300,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
                 let nested = nested.clone();
                 let modes_boundary = modes_boundary.clone();
+                let dynamic_skills = dynamic_skills.clone();
+                let known_skills = Arc::clone(&known_skills);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
@@ -1297,7 +1337,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
                         .then(|| context.clone());
                     // The files this batch touched (nested instruction discovery).
-                    let mut touched = if nested.is_some() {
+                    let mut touched = if nested.is_some() || dynamic_skills.is_some() {
                         super::instruction_boundary::touched_paths(&context.tool_results)
                     } else {
                         Vec::new()
@@ -1335,6 +1375,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                         super::instruction_boundary::after_turn(
                             &fold_slot, nested, &touched, &live,
                         );
+                    }
+                    if let (false, Some(dynamic)) = (stop, &dynamic_skills) {
+                        super::skill_boundary::after_turn(
+                            &fold_slot,
+                            dynamic,
+                            &known_skills,
+                            touched.clone(),
+                        )
+                        .await;
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
@@ -1392,6 +1441,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let _ = fold_admission.set(super::steering_fold::FoldAdmission {
         agent: Arc::downgrade(&agent),
         skills: resources.skills.clone(),
+        dynamic_skills: dynamic_skills.clone(),
+        session_id: fold_session_id,
         prompt_templates: resources.prompts.clone(),
         cwd: cwd.clone(),
         features: crate::features::installed().to_vec(),
@@ -1490,6 +1541,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     ));
     session.set_kernel_state_probe(Some(kernel_state_probe));
     session.set_skills(resources.skills.clone());
+    if let Some(dynamic) = &dynamic_skills {
+        session.set_dynamic_skills(Arc::clone(dynamic));
+    }
     session.set_image_model_router(config.image_model_router.clone());
     // The semantic-edge handoff: the daemon's child registry and retry
     // park read the recorder; the side question keeps the pre-semantic
@@ -1619,6 +1673,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             nested: resources.nested_instructions,
             auto_memory: resources.auto_memory,
         },
+        workflows: workflows_context,
         system_prompt,
         goal_driver,
         session_tasks: config
@@ -1855,14 +1910,15 @@ impl SessionEngine {
         std::sync::Arc::downgrade(&self.provisioner)
     }
 
-    /// Expand a `/skill:<name>` submission into its `<skill>` block for
-    /// the accepted-turn row (TS `_expandSkillCommand`; the row the daemon
-    /// emits before admission must match the text the model turn
-    /// receives). Non-skill inputs pass through unchanged; the admitted
-    /// turn's own expansion is idempotent over the block. The
-    /// `skill_use_count` counter counts at the admission, not here.
-    pub fn expand_skill_submission(&self, text: &str) -> String {
-        crate::skills::expand_skill_command(text, &self.skills).0
+    /// Expand a skill command (`/skill:<name>`, or `/<name>` for a Claude
+    /// Code skill) into its `<skill>` block for the accepted-turn row (TS
+    /// `_expandSkillCommand`; the row the daemon emits before admission
+    /// must match the text the model turn receives). Non-skill inputs pass
+    /// through unchanged; the admitted turn's own expansion is idempotent
+    /// over the block. The `skill_use_count` counter counts at the
+    /// admission, not here.
+    pub async fn expand_skill_submission(&self, text: &str) -> String {
+        self.session.expand_user_skill_command(text).await.0
     }
 
     /// Withdraw the queued goal-context turns: a minted continuation waiting

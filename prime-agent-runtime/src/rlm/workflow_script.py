@@ -33,10 +33,20 @@ The semantics follow Claude Code's runtime:
 ``start()`` runs a workflow as a background task of the kernel and delivers
 a completion notice on the session's monitor lane (``[monitor wf_... ...]``),
 so the model keeps working instead of waiting.
+
+Saved workflows (Claude Code's Workflow tool ``name``, resolved from
+``.claude/workflows/``): ``run(name="x")`` / ``start(name="x")`` with no script
+run the saved script ``x.py``, found in ``.prime/workflows/`` then
+``.claude/workflows/`` of the working directory and each ancestor up to the
+repository root (the nearest wins; the walk stops before the home directory),
+then the user's ``<agent dir>/workflows/`` and ``~/.claude/workflows/``
+(``CLAUDE_CONFIG_DIR`` aware). ``list()`` lists them. Claude Code's saved
+workflows are JavaScript; only Python scripts run here.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextvars
 import hashlib
@@ -64,10 +74,13 @@ __all__ = [
     "WorkflowError",
     "WorkflowHandle",
     "WorkflowResult",
+    "SavedWorkflow",
     "agent",
+    "find_saved",
     "get_budget",
     "get_args",
     "journal_key",
+    "list_saved",
     "load_journal",
     "log",
     "parallel",
@@ -76,6 +89,7 @@ __all__ = [
     "result",
     "run",
     "runs",
+    "saved_workflow_dirs",
     "size_guideline",
     "start",
     "status",
@@ -803,6 +817,147 @@ def _repair_prompt(answer: str, schema: dict[str, Any], problems: list[str]) -> 
     )
 
 
+# --- saved workflows --------------------------------------------------------
+
+PROJECT_WORKFLOW_DIRS = (".prime/workflows", ".claude/workflows")
+_SAVED_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+@dataclass(frozen=True)
+class SavedWorkflow:
+    """A saved workflow script: ``name`` is its file stem (``run(name=...)`` takes it),
+    ``scope`` is ``project`` or ``user``, and ``description`` / ``when_to_use`` come
+    from its ``meta`` literal."""
+
+    name: str
+    path: Path
+    scope: str
+    description: str | None = None
+    when_to_use: str | None = None
+
+
+def _home_dir() -> Path | None:
+    try:
+        return Path.home()
+    except RuntimeError:
+        return None
+
+
+def _same_dir(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left == right
+
+
+def _project_ancestors(cwd: Path, home: Path | None) -> list[Path]:
+    """The working directory and its ancestors, nearest first, up to the repository root
+    (the first directory holding ``.git``), stopping before the home directory."""
+    dirs: list[Path] = []
+    for directory in (cwd, *cwd.parents):
+        if home is not None and _same_dir(directory, home):
+            break
+        dirs.append(directory)
+        if (directory / ".git").exists():
+            break
+    return dirs
+
+
+def saved_workflow_dirs(cwd: str | Path | None = None) -> list[tuple[Path, str]]:
+    """The saved-workflow directories in precedence order, each with its scope."""
+    start = Path(cwd).expanduser() if cwd is not None else Path.cwd()
+    start = start if start.is_absolute() else Path.cwd() / start
+    home = _home_dir()
+    dirs = [
+        (directory / relative, "project")
+        for directory in _project_ancestors(start, home)
+        for relative in PROJECT_WORKFLOW_DIRS
+    ]
+    agent_dir = os.environ.get("PRIME_AGENT_CODING_AGENT_DIR")
+    if agent_dir:
+        dirs.append((Path(agent_dir) / "workflows", "user"))
+    claude_dir = os.environ.get("CLAUDE_CONFIG_DIR") or (str(home / ".claude") if home else None)
+    if claude_dir:
+        dirs.append((Path(claude_dir) / "workflows", "user"))
+    return dirs
+
+
+def _read_meta(path: Path) -> dict[str, Any]:
+    """The script's top-level ``meta`` dict literal, read without running the script."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, ValueError):
+        return {}
+    for node in tree.body:
+        target = node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        if isinstance(target, ast.Name) and target.id == "meta" and node.value is not None:
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError, TypeError):
+                return {}
+            return value if isinstance(value, dict) else {}
+    return {}
+
+
+def _saved(path: Path, scope: str) -> SavedWorkflow:
+    meta = _read_meta(path)
+
+    def text(key: str) -> str | None:
+        value = meta.get(key)
+        return value if isinstance(value, str) and value.strip() else None
+
+    return SavedWorkflow(
+        name=path.stem,
+        path=path,
+        scope=scope,
+        description=text("description"),
+        when_to_use=text("whenToUse") or text("when_to_use"),
+    )
+
+
+def list_saved(cwd: str | Path | None = None) -> list[SavedWorkflow]:
+    """Every saved workflow, by name; the first directory holding a name wins."""
+    found: dict[str, SavedWorkflow] = {}
+    for directory, scope in saved_workflow_dirs(cwd):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.py")):
+            if path.stem.startswith("_") or path.stem in found or not path.is_file():
+                continue
+            found[path.stem] = _saved(path, scope)
+    return [found[name] for name in sorted(found)]
+
+
+def find_saved(name: str, cwd: str | Path | None = None) -> SavedWorkflow:
+    """The saved workflow ``name`` (its file stem), or a :class:`WorkflowError` naming the ones there are."""
+    if not isinstance(name, str) or not _SAVED_NAME.match(name):
+        raise WorkflowError(f"{name!r} is not a saved workflow name (letters, digits, '.', '_', '-')")
+    for directory, scope in saved_workflow_dirs(cwd):
+        path = directory / f"{name}.py"
+        if path.is_file():
+            return _saved(path, scope)
+    available = ", ".join(workflow.name for workflow in list_saved(cwd)) or "none"
+    raise WorkflowError(
+        f"no saved workflow {name!r} in .prime/workflows/ or .claude/workflows/ "
+        f"(project or user); saved workflows: {available}"
+    )
+
+
+def _resolve_script(script: Any, name: str | None) -> Any:
+    """A run's script: the given one, or the saved workflow ``name`` when no script is given
+    (a bare name that is no file also resolves as a saved workflow)."""
+    if script is None:
+        if name is None:
+            raise TypeError("a workflow needs a script, or name= naming a saved workflow")
+        return find_saved(name).path
+    if isinstance(script, str) and not Path(script).expanduser().exists() and _SAVED_NAME.match(script):
+        if not script.endswith(".py"):
+            return find_saved(script).path
+    return script
+
+
 def _load_script(script: Any) -> tuple[Callable[..., Any], dict[str, Any]]:
     """A script is an async callable, or the path of a ``.py`` file defining ``main``
     (and optionally a ``meta`` dict)."""
@@ -954,7 +1109,7 @@ async def _execute(
 
 
 async def run(
-    script: Any,
+    script: Any = None,
     *,
     args: Any = None,
     name: str | None = None,
@@ -965,10 +1120,12 @@ async def run(
 ) -> WorkflowResult:
     """Run a workflow script in the foreground and return its :class:`WorkflowResult`.
 
+    With no ``script``, ``name`` names a saved workflow (``list()`` lists them).
     ``resume_from`` re-runs a previous run (same run id, same journal): the
     longest unchanged prefix of its ``agent()`` calls returns the journaled
     results instantly and the first changed call onward runs live.
     """
+    script = _resolve_script(script, name)
     run_id = _resume_id(resume_from) or _new_run_id()
     return await _execute(
         script,
@@ -1045,7 +1202,7 @@ async def _notify(outcome: WorkflowResult) -> None:
 
 
 def start(
-    script: Any,
+    script: Any = None,
     *,
     args: Any = None,
     name: str | None = None,
@@ -1060,6 +1217,7 @@ def start(
     The run outlives the cell. When it ends, a ``[monitor wf_... "workflow
     <name>"]`` notice joins the running turn or wakes the idle session.
     """
+    script = _resolve_script(script, name)
     run_id = _resume_id(resume_from) or _new_run_id()
     function, meta = _load_script(script)
     run_name = str(name or meta.get("name") or getattr(function, "__name__", None) or "workflow")

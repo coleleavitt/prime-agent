@@ -69,6 +69,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "fallbackModels",
     "autoMemoryEnabled",
     "claudeCodeUserInstructions",
+    "claudeCodeUserSkills",
     "sandbox",
     "outputStyle",
     "editorMode",

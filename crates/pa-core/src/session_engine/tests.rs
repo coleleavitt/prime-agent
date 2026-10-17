@@ -84,6 +84,9 @@ async fn a_skill_command_prompt_expands_into_the_skill_block() {
         disable_model_invocation: false,
         kind: crate::skills::SkillKind::Markdown,
         python: None,
+        when_to_use: None,
+        user_invocable: true,
+        claude: None,
     }]);
     session
         .prompt("/skill:web-search find rust tuis", PromptOptions::default())

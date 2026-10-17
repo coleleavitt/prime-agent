@@ -272,13 +272,24 @@ impl AgentSessionEngine {
         sandbox
     }
 
-    /// Expand a `/skill:<name>` submission against the core session
-    /// (built here when needed); non-skill inputs and build failures
-    /// pass through unchanged.
+    /// Whether a submission may be a skill command the core session
+    /// expands: `/skill:<name>`, or `/<name>` that no session command takes
+    /// (a Claude Code skill's own command).
+    pub(crate) fn may_be_skill_submission(text: &str) -> bool {
+        text.starts_with("/skill:")
+            || (text.starts_with('/')
+                && pa_types::slash_commands::parse_slash_command(text).is_some()
+                && crate::session_commands::parse_prompt_session_command(text).is_none())
+    }
+
+    /// Expand a skill command (`/skill:<name>`, or `/<name>` for a Claude
+    /// Code skill) against the core session (built here when needed);
+    /// non-skill inputs and build failures pass through unchanged.
     pub(crate) fn expand_skill_submission(&self, text: &str) -> String {
         // The floor keys on the ORIGINAL invocation's shape, not the
         // expanded parse: a skill body can contain a close tag plus a
-        // `\n\n` tail that parses as a trailing user message.
+        // `\n\n` tail that parses as a trailing user message. A Claude
+        // Code skill's own `/<name>` runs without arguments, as there.
         let bare_invocation = pa_types::slash_commands::parse_slash_command(text)
             .is_some_and(|(name, args)| name.starts_with("skill:") && args.trim().is_empty());
         let Ok(model) = self.resolve_model() else {
@@ -291,7 +302,7 @@ impl AgentSessionEngine {
         let expanded = self.runtime.block_on(async {
             let guard = self.session.lock().await;
             match guard.as_deref() {
-                Some(engine) => engine.expand_skill_submission(text),
+                Some(engine) => engine.expand_skill_submission(text).await,
                 None => text.to_string(),
             }
         });
