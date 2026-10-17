@@ -40,7 +40,7 @@ impl AgentSession {
         &self,
         message: &pa_types::session::CustomMessage,
     ) -> anyhow::Result<Vec<pa_agent::types::AgentMessage>> {
-        let mut prompt_messages = Vec::new();
+        let mut prompt_messages = self.context_turn_rows().await;
         if let Some(digest_row) = self.pending_digest_prompt_row().await? {
             prompt_messages.push(digest_row);
         }
@@ -218,8 +218,9 @@ impl AgentSession {
                 .await?;
             // The turn's prompt messages: the deferred first-turn harness
             // digest rides first when one is due, streamed ahead of the user
-            // prompt and carried on `agent_end`.
-            let mut prompt_messages = Vec::new();
+            // prompt and carried on `agent_end`. The session context (full
+            // on the first turn, a delta after) and the due reminders lead.
+            let mut prompt_messages = self.context_turn_rows().await;
             if let Some(digest_row) = self.pending_digest_prompt_row().await? {
                 prompt_messages.push(digest_row);
             }
@@ -286,6 +287,36 @@ impl AgentSession {
             }
         }
         Ok(PromptOutcome::Prompt)
+    }
+
+    /// Install the session context and reminder rows (the engine wiring).
+    pub fn set_context_rows(
+        &mut self,
+        rows: std::sync::Arc<super::context_rows::SessionContextRows>,
+    ) {
+        self.context_rows = Some(rows);
+    }
+
+    /// The installed context rows, if any.
+    #[must_use]
+    pub fn context_rows(&self) -> Option<&std::sync::Arc<super::context_rows::SessionContextRows>> {
+        self.context_rows.as_ref()
+    }
+
+    /// The context and reminder rows an admitted turn carries first.
+    async fn context_turn_rows(&self) -> Vec<pa_agent::types::AgentMessage> {
+        let Some(rows) = self.context_rows.as_ref() else {
+            return Vec::new();
+        };
+        let messages = self.agent.state().await.messages;
+        rows.turn_start_messages(messages).await
+    }
+
+    /// Forget the files the model read (its context no longer holds them).
+    pub(super) fn forget_file_reads(&self) {
+        if let Some(rows) = self.context_rows.as_ref() {
+            rows.reminders().files().clear();
+        }
     }
 
     /// Install the session's plan-mode switch (the engine wiring).

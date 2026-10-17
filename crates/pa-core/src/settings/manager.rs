@@ -1065,6 +1065,23 @@ impl SettingsManager {
         }
     }
 
+    /// `reminders`: the per-turn reminders, each unset key at its default.
+    #[must_use]
+    pub fn get_reminders(&self) -> crate::session_engine::reminders::ReminderToggles {
+        let defaults = crate::session_engine::reminders::ReminderToggles::default();
+        let Some(settings) = self.merged.reminders.as_ref() else {
+            return defaults;
+        };
+        crate::session_engine::reminders::ReminderToggles {
+            changed_files: settings.changed_files.unwrap_or(defaults.changed_files),
+            read_dedup: settings.read_dedup.unwrap_or(defaults.read_dedup),
+            task_list: settings.task_list.unwrap_or(defaults.task_list),
+            silent_turns: settings.silent_turns.unwrap_or(defaults.silent_turns),
+            elapsed_time: settings.elapsed_time.unwrap_or(defaults.elapsed_time),
+            tokens_left: settings.tokens_left.unwrap_or(defaults.tokens_left),
+        }
+    }
+
     /// `lengthContinuations`: the bound on consecutive auto-continuations
     /// of a reply cut off at the output-token limit, clamped to
     /// [`MAX_LENGTH_CONTINUATIONS`]. 0 (the default) is off.

@@ -1342,6 +1342,15 @@ mod tests {
                         .unwrap_or_default();
                     marks.push((payload.custom_type.clone(), slot));
                 }
+                // The session context and reminder rows ride ahead of every
+                // turn; the order under test is the goal's.
+                pa_types::session::FileEntry::CustomMessage { payload, .. }
+                    if matches!(
+                        payload.custom_type.as_str(),
+                        pa_core::session_engine::context_rows::SESSION_CONTEXT_CUSTOM_TYPE
+                            | pa_core::session_engine::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE
+                            | pa_core::session_engine::reminders::SYSTEM_REMINDER_CUSTOM_TYPE
+                    ) => {}
                 pa_types::session::FileEntry::CustomMessage { payload, .. } => {
                     let slot = payload
                         .details

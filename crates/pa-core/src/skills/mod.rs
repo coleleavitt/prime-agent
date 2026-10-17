@@ -218,35 +218,50 @@ pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
     if visible.is_empty() {
         return String::new();
     }
-    let mut lines = vec![
-        "\n\nThe following skills provide specialized instructions for specific tasks.".to_string(),
+    let mut lines = skill_inventory_preamble();
+    lines[0] = format!("\n\n{}", lines[0]);
+    lines.push("<available_skills>".to_string());
+    lines.extend(visible.into_iter().map(skill_inventory_entry));
+    lines.push("</available_skills>".to_string());
+    lines.join("\n")
+}
+
+/// The lines ahead of the `<available_skills>` inventory (ending in a blank
+/// line).
+#[must_use]
+pub fn skill_inventory_preamble() -> Vec<String> {
+    vec![
+        "The following skills provide specialized instructions for specific tasks.".to_string(),
         "Use python_repl to inspect a skill's file when the task matches its description.".to_string(),
         "Skills with a python_import are prepared in the persistent Python kernel when available and can be called directly by that import name.".to_string(),
         "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.".to_string(),
         String::new(),
-        "<available_skills>".to_string(),
+    ]
+}
+
+/// One skill's `<skill>` entry in the inventory (multi-line, indented).
+#[must_use]
+pub fn skill_inventory_entry(skill: &Skill) -> String {
+    let mut lines = vec![
+        "  <skill>".to_string(),
+        format!("    <name>{}</name>", escape_xml(&skill.name)),
+        format!("    <type>{}</type>", skill.kind_label()),
     ];
-    for skill in visible {
-        lines.push("  <skill>".to_string());
-        lines.push(format!("    <name>{}</name>", escape_xml(&skill.name)));
-        lines.push(format!("    <type>{}</type>", skill.kind_label()));
-        if let Some(python) = &skill.python {
-            lines.push(format!(
-                "    <python_import>{}</python_import>",
-                escape_xml(&python.import_name)
-            ));
-        }
+    if let Some(python) = &skill.python {
         lines.push(format!(
-            "    <description>{}</description>",
-            escape_xml(&skill.description)
+            "    <python_import>{}</python_import>",
+            escape_xml(&python.import_name)
         ));
-        lines.push(format!(
-            "    <location>{}</location>",
-            escape_xml(&skill.file_path.display().to_string())
-        ));
-        lines.push("  </skill>".to_string());
     }
-    lines.push("</available_skills>".to_string());
+    lines.push(format!(
+        "    <description>{}</description>",
+        escape_xml(&skill.description)
+    ));
+    lines.push(format!(
+        "    <location>{}</location>",
+        escape_xml(&skill.file_path.display().to_string())
+    ));
+    lines.push("  </skill>".to_string());
     lines.join("\n")
 }
 

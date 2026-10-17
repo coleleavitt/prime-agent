@@ -67,10 +67,13 @@ async fn session(root: &std::path::Path, depth: u32, log: Option<PathBuf>) -> Se
     .unwrap()
 }
 
-/// (listed in the system prompt, bound in the kernel, expandable by `/skill:`).
-fn refine_surfaces(engine: &SessionEngine, bound: &[String]) -> (bool, bool, bool) {
+/// (listed in the session context, bound in the kernel, expandable by `/skill:`).
+async fn refine_surfaces(engine: &SessionEngine, bound: &[String]) -> (bool, bool, bool) {
     (
-        engine.system_prompt.contains("<name>refine</name>"),
+        engine
+            .session_context_text()
+            .await
+            .contains("<name>refine</name>"),
         bound.iter().any(|name| name == "refine"),
         engine.skills.iter().any(|skill| skill.name == "refine"),
     )
@@ -93,9 +96,9 @@ async fn refine_is_model_visible_only_where_refine_can_run() {
     assert_eq!(bound.len(), 3);
     assert_eq!(
         [
-            refine_surfaces(&top, &bound[0]),
-            refine_surfaces(&child, &bound[1]),
-            refine_surfaces(&storeless, &bound[2]),
+            refine_surfaces(&top, &bound[0]).await,
+            refine_surfaces(&child, &bound[1]).await,
+            refine_surfaces(&storeless, &bound[2]).await,
         ],
         [
             (true, true, true),

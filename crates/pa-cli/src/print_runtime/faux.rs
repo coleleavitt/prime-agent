@@ -200,9 +200,30 @@ pub(crate) async fn build_faux_engine_with(
     })
 }
 
+/// The text of the request's user messages that are harness context rows.
+fn context_reminder_rows<T: serde::Serialize>(messages: &[T]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| serde_json::to_value(message).ok())
+        .filter(|message| message["role"] == "user")
+        .flat_map(|message| {
+            let content = &message["content"];
+            match content {
+                serde_json::Value::String(text) => vec![text.clone()],
+                serde_json::Value::Array(parts) => parts
+                    .iter()
+                    .filter_map(|part| part["text"].as_str().map(str::to_string))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        })
+        .filter(|text| text.starts_with("<system-reminder>"))
+        .collect()
+}
+
 /// One scripted response entry: a plain string answers with fixed text;
-/// `{"systemPrompt": true}` answers with the request's system prompt;
-/// other objects go through the shared faux-script parser.
+/// `{"systemPrompt": true}` answers with the request's system prompt and its
+/// harness context rows; other objects go through the shared faux-script parser.
 pub(crate) fn faux_response_steps(
     entries: &[serde_json::Value],
 ) -> Result<Vec<pa_ai::faux::FauxResponseStep>, String> {
@@ -220,8 +241,16 @@ pub(crate) fn faux_response_steps(
             {
                 Ok(pa_ai::faux::FauxResponseStep::Factory(std::sync::Arc::new(
                     |context, _options, _call, _model| {
+                        // What the model is told: the system prompt, then the
+                        // harness context rows (`<system-reminder>` user
+                        // messages: instruction files, skills, environment).
+                        let mut text = context.system_prompt.clone().unwrap_or_default();
+                        for row in context_reminder_rows(&context.messages) {
+                            text.push_str("\n\n");
+                            text.push_str(&row);
+                        }
                         Ok(pa_ai::faux::faux_assistant_text_message(
-                            context.system_prompt.as_deref().unwrap_or_default(),
+                            &text,
                             pa_ai::faux::FauxAssistantMessageOptions::default(),
                         ))
                     },

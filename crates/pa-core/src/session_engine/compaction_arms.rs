@@ -288,6 +288,9 @@ impl AgentSession {
         let loop_messages: Vec<AgentMessage> = rebuilt_loop_messages(rebuilt);
         let rebuilt_message_count = loop_messages.len();
         self.agent.set_messages(loop_messages).await;
+        // The summary replaced what the model read: its file reads (and the
+        // session context row) are no longer in context.
+        self.forget_file_reads();
         compaction_trace::trace(
             "compact.rebuilt_context",
             &serde_json::json!({ "messages": rebuilt_message_count }),
@@ -457,6 +460,7 @@ impl AgentSession {
         self.agent
             .set_messages(rebuilt_loop_messages(rebuilt))
             .await;
+        self.forget_file_reads();
         // The moved branch carries its own `/context-limit` state.
         self.restore_context_limit_from_branch().await;
         Ok(())

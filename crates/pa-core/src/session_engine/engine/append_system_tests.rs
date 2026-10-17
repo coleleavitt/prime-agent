@@ -78,8 +78,12 @@ async fn assert_prompt_case(case: PromptCase) {
         } else {
             assert!(prompt.starts_with("# prime-agent harness"));
         }
+        // Instruction files are the first turn's session context row, never
+        // prompt text (the prompt stays byte-stable for the cache).
+        let first_row = serde_json::to_string(&calls[0].messages[0]).unwrap();
         for context in ["PROJECT_CONTEXT_SENTINEL", "GLOBAL_CONTEXT_SENTINEL"] {
-            assert_eq!(prompt.matches(context).count(), 1);
+            assert_eq!(prompt.matches(context).count(), 0);
+            assert_eq!(first_row.matches(context).count(), 1);
         }
         let expected = case.expected;
         assert!(

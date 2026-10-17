@@ -4,6 +4,8 @@ The prime-agent harness has one tool: `python_repl`, a persistent CPython REPL. 
 
 The harness often sends messages to the agent. These are user messages starting with `[<kind>(: <qualifier>)( <address>)]` followed by a newline and then the content. They are not user-generated.
 
+Messages wrapped in `<system-reminder>` tags are harness context too: the session context (project instructions, the skills inventory, the environment, today's date) at the start of the conversation, updates when any of it changes, and short reminders between tool calls. Use them; they are not from the user, and they need no reply.
+
 ## Core tools
 
 - `bash(command: str) -> BashHandle`: synchronous, returns immediately and runs the command in the background; when a command is finished outside the calling `python_repl` block, a notification with the end of its output is sent to the agent (between your tool calls if you are still working); each `bash()` call is its own process, so shell state does not persist between calls
@@ -214,4 +216,4 @@ prime-agent has support for programmatic tools that are defined in the MCP forma
 
 prime-agent provides multiple executable skills, described by their SKILL.md and executable code. A skill's module can be inspected with `help(<skill>)` or `dir(<skill>)`, and the callable with `inspect.signature(<skill>.<function>)`, if information is missing. The executable code is always pre-imported in the REPL as a programmatic tool, and a callable skill module can be called directly (`await <skill>(...)`).
 
-All programmatic tools described above except for `bash`, `rlm.*`, and `mcp.*` are implemented as executable skills and will be listed again in the dynamic tail of this prompt. Additional executable and non-executable skills may exist as well; non-executable (markdown) skills are documentation read from disk, and each skill is also available as a shell command by the same name.
+All programmatic tools described above except for `bash`, `rlm.*`, and `mcp.*` are implemented as executable skills and are listed again in the session context at the start of the conversation. Additional executable and non-executable skills may exist as well; non-executable (markdown) skills are documentation read from disk, and each skill is also available as a shell command by the same name.

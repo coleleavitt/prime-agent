@@ -14,9 +14,12 @@ pub mod compaction_trace;
 pub mod compaction_utils;
 pub(crate) mod computer_use_host;
 pub mod context_limit;
+pub mod context_rows;
+pub mod context_source;
 pub mod engine;
 pub mod error_classify;
 pub mod factory_host;
+pub mod file_tracker;
 pub mod goal_boundary;
 pub mod goal_driver;
 pub mod harness_digest;
@@ -34,6 +37,7 @@ pub mod provider_park;
 pub mod provider_retry;
 pub mod refine;
 mod refinement_gate;
+pub mod reminders;
 pub mod request_timing;
 pub mod rlm_host;
 pub mod rlm_in_process;
@@ -217,6 +221,10 @@ pub struct AgentSession {
     /// How this session's automatic refine reviews ask and what an
     /// approval runs; `None` is the native policy.
     auto_refine_policy: Option<std::sync::Arc<dyn crate::refinement::executor::AutoRefinePolicy>>,
+    /// The session context and reminder rows an admitted turn carries ahead
+    /// of its prompt; `None` until the engine wiring installs them (a
+    /// session built directly sends none).
+    context_rows: Option<Arc<context_rows::SessionContextRows>>,
     /// Serializes notice admissions with parent input and generation close.
     terminal_admission: tokio::sync::Mutex<TerminalAdmission>,
     /// Agent-message reply IDs pre-synced by the parent inbox. Ordinary
@@ -330,6 +338,7 @@ impl AgentSession {
             agent_dir: None,
             refinement_gate: None,
             auto_refine_policy: None,
+            context_rows: None,
             terminal_admission: tokio::sync::Mutex::new(TerminalAdmission::default()),
             pre_synced_reply_ids,
             terminal_pump_shutdown,
