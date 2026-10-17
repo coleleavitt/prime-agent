@@ -54,7 +54,7 @@ pub(crate) fn prune_dir(
         })
         .collect();
     // Newest first: the kept ones are a prefix.
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
     let (mut count, mut bytes) = (0usize, 0u64);
     for (_, len, path, is_live) in files {
         if is_live || (count < max_files && bytes.saturating_add(len) <= max_bytes) {

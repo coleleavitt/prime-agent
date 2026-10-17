@@ -220,7 +220,7 @@ async fn the_row_observer_hears_each_row_kind() {
     {
         let heard = Arc::clone(&heard);
         rows.observe_rows(Arc::new(move |kind| {
-            heard.lock().unwrap().push(kind.to_string())
+            heard.lock().unwrap().push(kind.to_string());
         }));
     }
     let conversation = rows.turn_start_messages(Vec::new()).await;

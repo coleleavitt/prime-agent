@@ -394,7 +394,7 @@ fn additional_directories_load_their_own_files_after_the_working_directory() {
     Fixture::write(&extra.join("CLAUDE.md"), "extra claude");
     Fixture::write(&extra.join(".claude/rules/r.md"), "extra rule");
     let mut options = fx.options(&fx.repo);
-    options.additional_dirs = vec![extra.clone(), fx.repo.clone()];
+    options.additional_dirs = vec![extra, fx.repo.clone()];
     let (files, _) = load_instructions(options);
     assert_eq!(
         fx.names(&files),
