@@ -24,10 +24,12 @@ async def run(path: str, old_str: str, new_str: str) -> str:
     Raises:
         FileNotFoundError: If ``path`` does not exist.
         ValueError: If ``old_str`` is absent or matches more than once.
+        PermissionError: If the session's permission rules refuse the edit.
     """
     filepath = Path(path).expanduser()
     if not filepath.exists():
         raise FileNotFoundError(f"{path} not found")
+    await _check_edit_permission(str(filepath.resolve()))
     content = filepath.read_text(encoding="utf-8")
     count = content.count(old_str)
     if count == 0:
@@ -43,6 +45,33 @@ async def run(path: str, old_str: str, new_str: str) -> str:
     resolved_path = str(filepath.resolve())
     _emit_diff(resolved_path, old_str, new_str, start_line)
     return f"Edited {resolved_path}"
+
+
+# The host request a file write asks permission with (pa-permissions'
+# `file.edit`: Claude Code's `Edit` rules and modes). A host without a
+# handler for it answers `UNSERVED_HOST_REQUEST`, and the edit goes ahead.
+_EDIT_REQUEST = "file.edit"
+
+
+async def _check_edit_permission(path: str) -> None:
+    """Ask the host whether ``path`` may be edited; raise when refused.
+
+    Outside the kernel, or on a host that does not gate edits, the edit goes
+    ahead.
+    """
+    try:
+        from rlm import host_request
+        from rlm.repl import UNSERVED_HOST_REQUEST, HostRequestUnavailable
+    except ImportError:
+        return
+    try:
+        await host_request(_EDIT_REQUEST, {"path": path})
+    except HostRequestUnavailable:
+        return
+    except RuntimeError as error:
+        if UNSERVED_HOST_REQUEST in str(error):
+            return
+        raise PermissionError(str(error)) from error
 
 
 # Keep in sync with DIFF_DISPLAY_MIME in src/core/kernel/index.ts.
