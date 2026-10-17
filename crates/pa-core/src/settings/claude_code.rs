@@ -935,11 +935,7 @@ mod tests {
         let claude = ClaudeCodeSettings::load(&tree.paths, true);
         let layer = ClaudeLayer::derive(&claude, &crate::settings::Settings::default());
         assert_eq!(
-            (
-                layer.model,
-                layer.cleanup_period_days,
-                layer.notes
-            ),
+            (layer.model, layer.cleanup_period_days, layer.notes),
             (
                 false,
                 None,
