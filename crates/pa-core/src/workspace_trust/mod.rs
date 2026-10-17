@@ -99,6 +99,9 @@ pub enum GatedItem {
     /// session (hooks, statusLine, env, ...), gated while the user settings
     /// opt into Claude Code's files.
     ClaudeSettings { file: String, keys: Vec<String> },
+    /// A project file a composition root registered as gated
+    /// ([`register_gated_project_file`]): `<path>` under the workspace root.
+    ProjectFile { path: String, label: String },
 }
 
 impl fmt::Display for GatedItem {
@@ -117,6 +120,7 @@ impl fmt::Display for GatedItem {
             GatedItem::ClaudeSettings { file, keys } => {
                 write!(f, "{file} keys: {}", keys.join(", "))
             }
+            GatedItem::ProjectFile { path, label } => write!(f, "{path} ({label})"),
         }
     }
 }
@@ -142,6 +146,33 @@ pub fn register_gated_project_dir(dir: &'static str, label: &'static str) {
 
 fn gated_project_dirs() -> Vec<(&'static str, &'static str)> {
     GATED_PROJECT_DIRS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Project files the composition root gates: `(path under the workspace
+/// root, label)`.
+static GATED_PROJECT_FILES: std::sync::Mutex<Vec<(&'static str, &'static str)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Gate the project file `<workspace>/<path>` (a configuration file a
+/// composition root loads from a project and runs, such as `.lsp.json`'s
+/// server commands): a workspace that has the file needs trust, and its
+/// bytes are part of the trusted fingerprint (a change asks again). `label`
+/// names it in the trust prompt. Idempotent; call before the first
+/// evaluation.
+pub fn register_gated_project_file(path: &'static str, label: &'static str) {
+    let mut files = GATED_PROJECT_FILES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !files.iter().any(|(known, _)| *known == path) {
+        files.push((path, label));
+    }
+}
+
+fn gated_project_files() -> Vec<(&'static str, &'static str)> {
+    GATED_PROJECT_FILES
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()

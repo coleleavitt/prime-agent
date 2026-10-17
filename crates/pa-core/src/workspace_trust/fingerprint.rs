@@ -259,6 +259,23 @@ impl TrustInputs {
                 },
             ));
         }
+        // Project files a composition root gated (each hashed as a
+        // one-file tree).
+        for (path, label) in super::gated_project_files() {
+            let root = cwd.join(path);
+            if root.is_file() {
+                trees.push((
+                    GatedItem::ProjectFile {
+                        path: path.to_string(),
+                        label: label.to_string(),
+                    },
+                    GatedTree {
+                        label: format!("project-file:{path}"),
+                        root,
+                    },
+                ));
+            }
+        }
         TrustInputs {
             settings,
             system_prompt: file("SYSTEM.md"),

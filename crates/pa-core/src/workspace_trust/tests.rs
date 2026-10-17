@@ -640,6 +640,38 @@ fn a_registered_project_dir_is_gated_and_fingerprinted() {
 }
 
 #[test]
+fn a_registered_project_file_is_gated_and_fingerprinted() {
+    register_gated_project_file(".trust-test-gated.json", "test servers");
+    let fixture = Fixture::new();
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::NotRequired, Vec::new())
+    );
+    let gated = GatedItem::ProjectFile {
+        path: ".trust-test-gated.json".to_string(),
+        label: "test servers".to_string(),
+    };
+    fs::write(fixture.cwd.join(".trust-test-gated.json"), "{}").unwrap();
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::Unknown, vec![gated.clone()])
+    );
+    assert_eq!(gated.to_string(), ".trust-test-gated.json (test servers)");
+    fixture.trust();
+    assert_eq!(fixture.evaluate().state, TrustState::Trusted);
+    // A change to the file asks again.
+    fs::write(
+        fixture.cwd.join(".trust-test-gated.json"),
+        r#"{"x":{"command":"evil"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.evaluate(),
+        status(&fixture.cwd, TrustState::Changed, vec![gated])
+    );
+}
+
+#[test]
 fn trust_carries_to_an_identical_checkout_only() {
     let fixture = Fixture::new();
     fixture.write_settings(&serde_json::json!({ "shellPath": "/bin/sh" }));

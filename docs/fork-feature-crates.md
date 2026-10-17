@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -39,7 +39,10 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      installed feature answers; the first `Block` in installation order wins.
    - workspace trust: `pa_core::workspace_trust::register_gated_project_dir(dir, label)` gates
      `.prime/agent/<dir>/` like project skills (its entries need trust and are part of the trusted fingerprint);
-     for anything a composition root loads from a project and runs.
+     for anything a composition root loads from a project and runs. `register_gated_project_file(path, label)`
+     does the same for one file under the workspace root (`.lsp.json`).
+   - files a cell wrote: the `python_repl` result's `fileWrites` host fact (absolute paths from the kernel's
+     `fileAccess` report) reaches `after_tool_call`.
    - refinement gate: `SessionFeature::refinement_gate` hands the session a `pa_core::refinement::gate::RefinementGate`
      that evaluates every planned, non-empty, non-rollback refinement (with one model call), admits or refuses its edit
      set against the store re-read at apply time, records its own keys in the saved harness state and on the

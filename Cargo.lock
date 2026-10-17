@@ -2518,6 +2518,7 @@ dependencies = [
  "pa-hooks",
  "pa-learning",
  "pa-ledger",
+ "pa-lsp",
  "pa-mermaid",
  "pa-observer",
  "pa-os-sandbox",
@@ -2731,6 +2732,23 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pa-lsp"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]

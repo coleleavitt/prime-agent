@@ -1,0 +1,34 @@
+[package]
+name = "pa-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Claude Code's LSP integration for the kernel: language servers from .lsp.json and the lspServers setting, started per language on first use, serving rlm.lsp (definition, references, hover, symbols, call hierarchy, diagnostics) and delivering new diagnostics after edits."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-types = { workspace = true }
+pa-telemetry = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+# File paths to and from `file://` URIs (percent-encoding, Windows drive
+# letters); already in the lock through pa-web and reqwest.
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+# The end-to-end suite runs a fake language server: this test binary
+# re-executes itself as the server (PA_LSP_FAKE_SERVER=1), so it has its own
+# main instead of libtest (whose stdout would corrupt the JSON-RPC stream).
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+harness = false
+
+[lints]
+workspace = true
