@@ -118,6 +118,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "ack_result",
     "list",
     "list_saved_sessions",
+    "list_external_sessions",
     "list_agent_peers",
     "get_direct_worker_transport",
     "attach",

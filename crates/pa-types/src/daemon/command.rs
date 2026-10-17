@@ -135,6 +135,37 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Sessions other agent products recorded on this machine (Claude
+    /// Code's transcripts), fork-native, capability `external_sessions`:
+    /// answers `{ sessions: [{ source, sourceLabel, id, externalId, path,
+    /// cwd, name?, firstMessage?, created, modified, gitBranch?,
+    /// messageCount }] }`, newest first; `all` lists every project's, else
+    /// `cwd`'s.
+    ListExternalSessions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        all: Option<bool>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// Convert one external session into a new session file under
+    /// `session_dir` (default: the daemon's sessions dir), leaving the
+    /// original untouched; an unchanged session reuses its earlier import.
+    /// Answers `{ sessionPath, sessionId, cwd, reused }` (capability
+    /// `external_sessions`).
+    ImportExternalSession {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        source: String,
+        external_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_dir: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     ListAgentPeers {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

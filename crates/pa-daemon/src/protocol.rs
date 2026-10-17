@@ -192,6 +192,9 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     // `/rewind` (capability `rewind`), fork-native.
     "get_rewind_checkpoints",
     "rewind",
+    // Other products' sessions (capability `external_sessions`), fork-native.
+    "list_external_sessions",
+    "import_external_session",
 ];
 
 /// Parsed client command envelope.
@@ -393,8 +396,18 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
             .iter()
             .map(std::string::ToString::to_string),
         )
+        // `list_external_sessions` + `import_external_session`: only while
+        // the composition root installed a source (`pa-cc-import`).
+        .chain(
+            pa_core::session::external_sessions::installed()
+                .then(|| EXTERNAL_SESSIONS_CAPABILITY.to_string()),
+        )
         .collect()
 }
+
+/// The server capability behind `list_external_sessions` and
+/// `import_external_session`.
+pub const EXTERNAL_SESSIONS_CAPABILITY: &str = "external_sessions";
 
 /// Parse a client command line the way the TS supervisor does: only
 /// `type: "command"` envelopes are accepted; bare commands fail with the
@@ -972,6 +985,8 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         } => active_session_id.as_deref(),
         // Control-plane commands carry no session selector.
         DaemonCommand::List { .. }
+        | DaemonCommand::ListExternalSessions { .. }
+        | DaemonCommand::ImportExternalSession { .. }
         | DaemonCommand::ListAgentPeers { .. }
         | DaemonCommand::GetWorkerPeerTransport { .. }
         | DaemonCommand::RosterSubscribe { .. }
@@ -994,6 +1009,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
     match command {
         DaemonCommand::List { .. } => "list",
         DaemonCommand::ListSavedSessions { .. } => "list_saved_sessions",
+        DaemonCommand::ListExternalSessions { .. } => "list_external_sessions",
+        DaemonCommand::ImportExternalSession { .. } => "import_external_session",
         DaemonCommand::ListAgentPeers { .. } => "list_agent_peers",
         DaemonCommand::GetDirectWorkerTransport { .. } => "get_direct_worker_transport",
         DaemonCommand::GetWorkerPeerTransport { .. } => "get_worker_peer_transport",

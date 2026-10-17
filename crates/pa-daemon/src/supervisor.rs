@@ -6,6 +6,7 @@
 mod accept_loop;
 mod adoption;
 mod clients;
+mod external_sessions;
 mod launch_budget;
 mod notes;
 mod options;

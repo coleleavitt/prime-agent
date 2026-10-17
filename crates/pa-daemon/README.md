@@ -293,6 +293,18 @@ then moves the conversation through the `navigate_tree` path onto the prompt
 (the prompt's text returns as `editorText`; `summarize` is "Summarize from
 here", the abandoned-branch summary).
 
+Other products' sessions (`supervisor/external_sessions.rs`, capability
+`external_sessions`, advertised only while the composition root installed a
+source in `pa_core::session::external_sessions`, e.g. `pa-cc-import`'s
+Claude Code transcripts): `list_external_sessions` (`cwd`, or `all`) answers
+the sources' rows, newest first (`source`, `sourceLabel`, `id` =
+`<source>:<id>`, `externalId`, `path`, `cwd`, `name`, `firstMessage`,
+`created`, `modified`, `gitBranch`, `messageCount`); `import_external_session`
+(`source`, `externalId`, optional `sessionDir`) converts one into a new
+session file (or reuses the earlier import of an unchanged session) and
+answers `{ sessionPath, sessionId, cwd, reused }`. Both are control-plane
+commands that run on the blocking pool.
+
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.
 
