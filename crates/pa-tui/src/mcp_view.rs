@@ -21,7 +21,7 @@ use crate::{Line, Span};
 
 mod rows;
 
-use rows::{McpCredentialRow, McpRow, McpServiceRow, flatten_to_single_line};
+use rows::{McpCredentialRow, McpDeclaration, McpRow, McpServiceRow, flatten_to_single_line};
 
 /// The search field's placeholder (TS `MenuSearchInput("Search MCP
 /// connections")`).
@@ -279,6 +279,35 @@ impl McpView {
         } else {
             services.into_iter().map(McpRow::Service).collect()
         };
+        // Each declared server's scope and file (and a `.mcp.json` server's
+        // approval) annotate its card; one with no card (waiting for
+        // approval, or rejected) gets its own row.
+        let declarations = data
+            .get("declaredServers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(McpDeclaration::from_value);
+        for (name, declaration) in declarations {
+            let card = rows.iter_mut().find_map(|row| match row {
+                McpRow::Service(service)
+                    if service.service_id == name && service.source != "catalog" =>
+                {
+                    Some(service)
+                }
+                McpRow::Service(_) | McpRow::Credential(_) => None,
+            });
+            match card {
+                Some(service) => service.declaration = Some(declaration),
+                None if declaration.awaits_decision() => {
+                    rows.push(McpRow::Service(McpServiceRow::from_declaration(
+                        &name,
+                        declaration,
+                    )));
+                }
+                None => {}
+            }
+        }
         rows.extend(credentials.into_iter().map(McpRow::Credential));
         let mut view = McpView {
             rows,
@@ -346,6 +375,8 @@ impl McpView {
                     id: credential.id.clone(),
                     label: credential.label.clone(),
                 },
+                // A project server waiting for approval: the confirm prompt asks.
+                Some(McpRow::Service(service)) if service.awaits_decision() => McpViewAction::None,
                 Some(McpRow::Service(service)) if service.wants_paste() => McpViewAction::Paste {
                     server: service.target().to_string(),
                     label: service.label.clone(),
@@ -469,6 +500,7 @@ impl McpView {
             .filtered
             .get(self.selected)
             .and_then(|index| self.rows.get(*index))
+            .filter(|row| row.actionable())
             .map(McpRow::action_text);
         lines.push(hint_line(theme, width, kb, action));
         lines

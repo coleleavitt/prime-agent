@@ -257,6 +257,16 @@ impl SessionEngine for AgentSessionEngine {
         Some(std::sync::Arc::clone(&self.mcp))
     }
 
+    fn ask_project_mcp_approvals(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(engine) = self.session.lock().await.as_deref() {
+                engine.ask_project_mcp_approvals();
+            }
+        })
+    }
+
     fn model_context_window(&self) -> Option<u64> {
         self.resolve_model().ok().map(|model| model.context_window)
     }

@@ -573,3 +573,97 @@ fn pinned_service_view(client: &mut Client, dir: &std::path::Path, id: &str) -> 
         .expect("pinned discovery row")
         .clone()
 }
+
+/// A `.mcp.json` server in the session's directory is listed with its
+/// scope, file and approval (`declaredServers`) but never served as a
+/// connection until approved; once the choices store approves it, the next
+/// `/mcp` read serves it.
+#[test]
+fn project_mcp_json_servers_wait_for_approval_through_the_daemon() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let _serial = DAEMON_E2E.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    std::fs::write(
+        dir.path().join(".mcp.json"),
+        json!({ "mcpServers": { "repo-tool": { "command": "repo-tool", "args": ["--serve"] } } })
+            .to_string(),
+    )
+    .expect("write .mcp.json");
+    let socket = dir.path().join("mcpjson.sock");
+    let _daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python);
+    wait_socket_ready(&socket);
+    let (mut client, _hello) = Client::connect(&socket);
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": {
+                "cwd": dir.path().to_string_lossy(),
+                "sessionDir": dir.path().join("sessions").to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(created["success"], true, "create failed: {created}");
+    let session_id = created["data"]["activeSessionId"]
+        .as_str()
+        .or_else(|| created["data"]["id"].as_str())
+        .expect("active session id")
+        .to_string();
+    let source = std::fs::canonicalize(dir.path())
+        .expect("canonical dir")
+        .join(".mcp.json")
+        .display()
+        .to_string();
+    let read = |client: &mut Client, id: &str| -> Value {
+        client.send_command(
+            id,
+            &json!({ "type": "get_mcp_connections", "activeSessionId": session_id }),
+        );
+        let roster = client.read_response(id);
+        assert_eq!(roster["success"], true, "get_mcp_connections: {roster}");
+        roster["data"].clone()
+    };
+    let served = |data: &Value| {
+        data["services"]
+            .as_array()
+            .is_some_and(|services| services.iter().any(|row| row["serviceId"] == "repo-tool"))
+    };
+
+    let pending = read(&mut client, "m1");
+    assert_eq!(
+        pending["declaredServers"],
+        json!([{
+            "name": "repo-tool",
+            "scope": "project",
+            "scopeLabel": "Project config (shared via .mcp.json)",
+            "source": source,
+            "transport": "stdio",
+            "approval": "pending",
+        }])
+    );
+    assert!(
+        !served(&pending),
+        "a pending server is not served: {pending}"
+    );
+
+    let workspace = std::fs::canonicalize(dir.path()).expect("canonical dir");
+    pa_core::mcp::record_project_choice(
+        &agent_dir,
+        &workspace,
+        "repo-tool",
+        pa_core::mcp::ProjectChoice::Approve,
+    )
+    .expect("record the approval");
+    let approved = read(&mut client, "m2");
+    assert_eq!(approved["declaredServers"][0]["approval"], "approved");
+    assert!(
+        served(&approved),
+        "the approved server is served: {approved}"
+    );
+    client.shutdown_daemon();
+}

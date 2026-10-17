@@ -44,6 +44,7 @@ pub(crate) mod learning_command;
 pub(crate) mod list_models;
 pub(crate) mod mcp_command;
 pub(crate) mod mcp_login;
+pub(crate) mod mcp_project;
 #[cfg(feature = "mermaid")]
 pub(crate) mod mermaid_diagrams;
 pub(crate) mod mode;

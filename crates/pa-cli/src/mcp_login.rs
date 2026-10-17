@@ -26,15 +26,18 @@ use pa_core::mcp::{
 use pa_tui::auth_panel::{PastePromptTone, PasteStyle};
 use pa_tui::client_auth::{AuthFuture, ClientAuthCommands};
 
-/// The CLI's live MCP manager: the shared auth store, `mcpServers`, and
-/// `mcpCatalogSources` all re-read per resolve. No interactive login: hosts with
-/// a login UI call `set_begin_login` before the session registers host handlers.
+/// The CLI's live MCP manager: the shared auth store, the declared servers
+/// (`mcpServers`, the approved `.mcp.json` servers and, opted in, Claude
+/// Code's), and `mcpCatalogSources` all re-read per resolve. No interactive
+/// login: hosts with a login UI call `set_begin_login` before the session
+/// registers host handlers.
 pub(crate) fn cli_mcp_manager(cwd: &std::path::Path, agent_dir: &std::path::Path) -> McpManager {
     let user_cwd = cwd.to_path_buf();
     let user_agent_dir = agent_dir.to_path_buf();
     let catalog_cwd = cwd.to_path_buf();
     let catalog_agent_dir = agent_dir.to_path_buf();
-    McpManager::new(McpManagerOptions {
+    let declared_cwd = cwd.to_path_buf();
+    let mut manager = McpManager::new(McpManagerOptions {
         auth_storage: AuthStorage::create_with_oauth(
             agent_dir,
             std::sync::Arc::new(pa_core::mcp::McpOAuth::new()),
@@ -69,7 +72,12 @@ pub(crate) fn cli_mcp_manager(cwd: &std::path::Path, agent_dir: &std::path::Path
         })),
         remote_source: None,
         probe_override: None,
-    })
+    });
+    manager.set_declared_servers_source(pa_core::mcp::workspace_declared_servers(
+        move || declared_cwd.clone(),
+        agent_dir.to_path_buf(),
+    ));
+    manager
 }
 
 #[derive(Clone)]

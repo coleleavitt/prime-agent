@@ -402,8 +402,8 @@ async fn malformed_configs_are_value_errors() {
             "MCP server 'svc' cwd must be a string",
         ),
         (
-            json!({ "type": "stdio", "command": "x", "env": { "A": "literal" } }),
-            "MCP stdio env values must use {\"env\": \"NAME\"} references",
+            json!({ "type": "stdio", "command": "x", "env": { "A": 5 } }),
+            "MCP stdio env values must be strings or {\"env\": \"NAME\"} references",
         ),
         (
             json!({ "type": "stdio", "command": "x", "env": { "A": { "env": "PA_TEST_SURELY_UNSET_VAR" } } }),

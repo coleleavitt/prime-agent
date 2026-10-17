@@ -130,6 +130,14 @@ impl AgentSessionEngine {
             remote_source: None,
             probe_override: None,
         });
+        // The declared servers beyond `mcpServers` (the approved `.mcp.json`
+        // servers, opted in Claude Code's), read in the live cwd.
+        let mut mcp = mcp;
+        let declared_cwd = std::sync::Arc::clone(&cwd);
+        mcp.set_declared_servers_source(pa_core::mcp::workspace_declared_servers(
+            move || declared_cwd.read_or_recover().clone(),
+            config.agent_dir.clone(),
+        ));
         // The kernel's `mcp.begin_login` host request: the worker runs the
         // OAuth login; wired before any session registers host handlers.
         let mcp = std::sync::Arc::new(std::sync::Mutex::new(mcp));
@@ -1183,6 +1191,8 @@ impl AgentSessionEngine {
                 .clone()
             {
                 engine.set_feature_status_sink(sink);
+                // The questions need the surface the sink just registered.
+                engine.ask_project_mcp_approvals();
             }
             if let Some(sink) = self.feature_notice_sink.lock_or_recover().clone() {
                 engine.set_feature_notice_sink(sink);

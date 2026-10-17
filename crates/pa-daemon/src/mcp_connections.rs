@@ -5,7 +5,10 @@
 //! the service-catalog cards and the stored-key credentials over the same
 //! fresh local state (the TS picker builds both from local reads on every
 //! open, never a kernel round-trip; connected rows carry their record-held
-//! tool count).
+//! tool count). Each declared server's scope, file and approval ride along
+//! (`declaredServers`, with the problems loading them as `configIssues`), so
+//! the view shows where a server comes from and which `.mcp.json` servers
+//! wait for approval.
 
 use pa_types::sync::MutexExt;
 use serde_json::{Value, json};
@@ -39,7 +42,7 @@ impl Worker {
             );
         };
         let roster_manager = std::sync::Arc::clone(&manager);
-        let (roster, services, credentials, diagnostics) =
+        let (roster, services, credentials, diagnostics, (declared, config_issues)) =
             match tokio::task::spawn_blocking(move || {
                 let mut manager = roster_manager.lock_or_recover();
                 // The auth store re-read comes FIRST: the interactive client
@@ -55,6 +58,7 @@ impl Worker {
                     manager.service_catalog_views(),
                     manager.api_key_credential_views(),
                     manager.service_catalog_diagnostics().to_vec(),
+                    manager.declared_server_report(),
                 )
             })
             .await
@@ -75,6 +79,12 @@ impl Worker {
             .collect();
         let services = serde_json::to_value(&services).unwrap_or(Value::Array(Vec::new()));
         let credentials = serde_json::to_value(&credentials).unwrap_or(Value::Array(Vec::new()));
+        let declared = serde_json::to_value(&declared).unwrap_or(Value::Array(Vec::new()));
+        let config_issues =
+            serde_json::to_value(&config_issues).unwrap_or(Value::Array(Vec::new()));
+        // Opening `/mcp` asks again about the project servers still waiting
+        // for approval (Claude Code: "approve it via /mcp").
+        self.engine.ask_project_mcp_approvals().await;
         response_success(
             None,
             "get_mcp_connections",
@@ -83,6 +93,8 @@ impl Worker {
                 "services": services,
                 "credentials": credentials,
                 "catalogDiagnostics": diagnostics,
+                "declaredServers": declared,
+                "configIssues": config_issues,
             })),
         )
     }

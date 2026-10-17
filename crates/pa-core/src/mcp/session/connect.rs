@@ -453,7 +453,8 @@ pub(crate) fn stdio_launch(
 }
 
 /// The configured stdio environment: `{"env": "NAME"}` references resolved
-/// against the kernel environment, or literal values for an ACP server.
+/// against the kernel environment, and literal values (an ACP server's, or a
+/// Claude Code `.mcp.json` entry's, expanded when it loaded).
 fn stdio_env(config: &Value, env: &KernelEnv) -> Result<Vec<(String, String)>, McpSessionError> {
     let raw = match config.get("env") {
         None => return Ok(Vec::new()),
@@ -468,13 +469,16 @@ fn stdio_env(config: &Value, env: &KernelEnv) -> Result<Vec<(String, String)>, M
     }
     raw.iter()
         .map(|(key, reference)| {
+            if let Value::String(literal) = reference {
+                return Ok((key.clone(), literal.clone()));
+            }
             let source = match reference {
                 Value::Object(reference) if reference.len() == 1 => reference.get("env"),
                 _ => None,
             }
             .ok_or_else(|| {
                 McpSessionError::value(
-                    "MCP stdio env values must use {\"env\": \"NAME\"} references",
+                    "MCP stdio env values must be strings or {\"env\": \"NAME\"} references",
                 )
             })?;
             source

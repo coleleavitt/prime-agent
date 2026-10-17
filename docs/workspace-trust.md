@@ -34,6 +34,10 @@ models you already configured: `theme`, `defaultProvider`, `defaultModel`,
 `quietStartup`, `requestTiming`, `enableSkillCommands`, and `sandbox` (it can only tighten
 the [OS sandbox](os-sandbox.md), never loosen it).
 
+A repository's `.mcp.json` servers are not part of the trust hash: each one
+waits for its own approval ([Project MCP servers](mcp-json.md)), and a project
+setting that approves them counts only once the workspace is trusted.
+
 Not gated: `AGENTS.md` / `CLAUDE.md` project context (the repository's own
 instructions to any coding agent), project themes, and everything under your
 own `~/.prime/agent/`. Running Prime Agent from your home directory, where the

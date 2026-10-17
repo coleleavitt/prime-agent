@@ -117,7 +117,7 @@ impl McpManager {
     pub fn service_catalog_views(&self) -> Vec<McpPluginView> {
         let credentials = self.credential_snapshot();
         let records = self.records_by_id();
-        let user_servers = (self.get_user_servers)().unwrap_or_default();
+        let user_servers = self.user_servers();
         build_plugin_views(&BuildViewsInputs {
             services: &self.service_catalog.descriptors,
             user_servers: Some(&user_servers),
@@ -155,7 +155,7 @@ impl McpManager {
     ) -> Vec<super::catalog_plugin_views::McpConnectionView> {
         let credentials = self.credential_snapshot();
         let records = self.records_by_id();
-        let user_servers = (self.get_user_servers)().unwrap_or_default();
+        let user_servers = self.user_servers();
         build_connection_views(
             &BuildViewsInputs {
                 services: &self.service_catalog.descriptors,
@@ -365,7 +365,7 @@ impl McpManager {
         }
         // User-declared servers: a legacy-builtin shadow is a dead entry; any other user entry owns
         // its id.
-        let user_servers = (self.get_user_servers)().unwrap_or_default();
+        let user_servers = self.user_servers();
         for (server, config) in user_servers {
             let reserved = self
                 .service_catalog

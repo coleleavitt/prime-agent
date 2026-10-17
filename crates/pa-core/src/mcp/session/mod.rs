@@ -251,8 +251,15 @@ impl Inner {
     /// stdio server, the sandbox mode it would start under), as the
     /// connection fingerprint.
     async fn resolve_config(&self, server: &str) -> Result<Value, McpSessionError> {
-        let config = (self.configs)(server).map_err(|_| {
-            McpSessionError::runtime(format!("Could not load MCP configuration for '{server}'"))
+        let config = (self.configs)(server).map_err(|error| {
+            // The resolver's reason, when it gives one (an unapproved
+            // project server says how to approve it).
+            let reason = error.to_string();
+            McpSessionError::runtime(if reason.is_empty() {
+                format!("Could not load MCP configuration for '{server}'")
+            } else {
+                format!("Could not load MCP configuration for '{server}': {reason}")
+            })
         })?;
         let Value::Object(mut map) = config else {
             return Err(McpSessionError::new(
