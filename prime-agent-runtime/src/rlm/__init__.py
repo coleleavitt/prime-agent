@@ -24,6 +24,7 @@ from .factory import (
     stop_factory,
     watch_factory,
 )
+from .agents import RLMAgent, list_agents, send_message
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
 from .toolforge import ToolforgeRejected, ToolforgeSkill
@@ -213,6 +214,8 @@ async def spawn(
     cwd: str | None = None,
     target: str | None = None,
     token_budget: int | None = None,
+    agent: str | None = None,
+    isolation: str | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -232,6 +235,14 @@ async def spawn(
     grant is drawn from this session's pool and must fit what is left and
     the per-depth cap; without one it funds the child alone. Omitted, a
     budgeted session grants whatever is left (up to the per-depth cap).
+    ``agent`` runs the child as a typed agent definition (``.prime/agents``
+    or ``.claude/agents`` ``<name>.md``, project then user): its instructions
+    join the child's system prompt, its model and effort fill ``model`` and
+    ``thinking`` when they are omitted, and the harness refuses the tools its
+    scope denies (``bash()``, spawning, agent messages).
+    ``isolation="worktree"`` runs the child in a fresh git worktree of the
+    parent's repository (a definition can ask for it too); the worktree is
+    removed with the child when it holds no changes.
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
@@ -252,6 +263,14 @@ async def spawn(
         kwargs["target"] = target
     if token_budget is not None:
         kwargs["token_budget"] = token_budget
+    if agent is not None:
+        if not isinstance(agent, str) or not agent.strip():
+            raise TypeError("agent must be a non-empty str")
+        kwargs["agent"] = agent.strip()
+    if isolation is not None:
+        if isolation != "worktree":
+            raise ValueError('isolation must be "worktree"')
+        kwargs["isolation"] = isolation
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -1021,6 +1040,8 @@ class _RLMNamespace:
         cwd: str | None = None,
         target: str | None = None,
         token_budget: int | None = None,
+        agent: str | None = None,
+        isolation: str | None = None,
     ) -> RLMSpawnHandle:
         return await spawn(
             prompt,
@@ -1030,6 +1051,8 @@ class _RLMNamespace:
             cwd=cwd,
             target=target,
             token_budget=token_budget,
+            agent=agent,
+            isolation=isolation,
         )
 
     async def create_session(
@@ -1047,6 +1070,12 @@ class _RLMNamespace:
 
     async def list_subagents(self) -> list[RLMSubagent]:
         return await list_subagents()
+
+    async def list_agents(self) -> list[RLMAgent]:
+        return await list_agents()
+
+    async def send_message(self, to: Any, message: str) -> dict[str, Any]:
+        return await send_message(to, message)
 
     async def progress_note(self, message: str) -> RLMProgressNoteResult:
         return await progress_note(message)
@@ -1127,6 +1156,7 @@ __all__ = [
     "McpIntegration",
     "McpToolError",
     "NotEnabled",
+    "RLMAgent",
     "RLMCreateSessionHandle",
     "RLMInterruptResult",
     "RLMModel",
@@ -1151,6 +1181,7 @@ __all__ = [
     "inbox_list",
     "inbox_read",
     "interrupt_subagent",
+    "list_agents",
     "list_subagents",
     "messaging_stats",
     "monitor",
@@ -1159,6 +1190,7 @@ __all__ = [
     "progress_note",
     "rename",
     "rlm",
+    "send_message",
     "spawn",
     "toolforge",
     "trace",

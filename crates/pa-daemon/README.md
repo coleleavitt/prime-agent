@@ -123,10 +123,19 @@ rider serializes only when a notice is parked. The reserved kinds are
 daemon provenance, never client data (`child_status_notices.rs`): the
 prompt/steer/follow-up parse and the `restore_actions` validation answer a
 caller-supplied custom row claiming one loudly — it never parks, never
-folds — and the daemon's own notice injection rides the follow-up route
+folds — and the daemon's own notice injection rides the steer route
 with a one-shot capability minted in the worker process (the wire's
 optional `rlmNoticeNonce`), so the queue's classification only ever sees
-daemon-authentic rows.
+daemon-authentic rows. The notice content is Claude Code's agent
+`<task-notification>` (`local_agent`, with `<usage>` and `<worktree>`), and
+the steering fold (`worker/steer_fold.rs`) joins it, like an agent message
+on the steering lane, into a busy parent's running turn at its next tool
+boundary; an idle parent wakes on it. A typed-agent spawn
+(`rlm.spawn(agent=...)`) carries the definition in the child create's
+`config.agentDefinition` (and `runtimeMetadata.agentType`); the child worker
+persists it as the session's `agent_definition` entry, so a revived child
+keeps running as that agent. A worktree-isolated child records its
+worktree, and `rlm.delete_subagent` removes it unless it holds work.
 Factory run notices (`factory_notices.rs`): the worker implements pa-core's
 `FactoryNotices` port over its own queue — each run milestone the session's
 factory executor announces queues one `factory_run_notice` row (a
