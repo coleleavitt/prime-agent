@@ -189,6 +189,9 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_mcp_static_token",
     "remove_mcp_connection",
     "mark_anthropic_warning_shown",
+    // `/rewind` (capability `rewind`), fork-native.
+    "get_rewind_checkpoints",
+    "rewind",
 ];
 
 /// Parsed client command envelope.
@@ -383,6 +386,9 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "session_model_selection",
                 // `fork_export` writes a fork file and leaves the live session running (#1389).
                 "fork_export",
+                // `get_rewind_checkpoints` + `rewind`: `/rewind` restores code
+                // (file checkpoints) and/or the conversation.
+                "rewind",
             ]
             .iter()
             .map(std::string::ToString::to_string),
@@ -877,6 +883,12 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::NavigateTree {
             active_session_id, ..
         }
+        | DaemonCommand::GetRewindCheckpoints {
+            active_session_id, ..
+        }
+        | DaemonCommand::Rewind {
+            active_session_id, ..
+        }
         | DaemonCommand::ImportJsonl {
             active_session_id, ..
         }
@@ -1079,6 +1091,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::Fork { .. } => "fork",
         DaemonCommand::ForkExport { .. } => "fork_export",
         DaemonCommand::NavigateTree { .. } => "navigate_tree",
+        DaemonCommand::GetRewindCheckpoints { .. } => "get_rewind_checkpoints",
+        DaemonCommand::Rewind { .. } => "rewind",
         DaemonCommand::ImportJsonl { .. } => "import_jsonl",
         DaemonCommand::ExportHtml { .. } => "export_html",
         DaemonCommand::ExportJsonl { .. } => "export_jsonl",

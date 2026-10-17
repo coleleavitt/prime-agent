@@ -108,6 +108,8 @@ pub(crate) fn client_route_timeout(command: &DaemonCommand) -> u64 {
             | DaemonCommand::Compact { .. }
             // A tree navigation may run a branch-summary model call.
             | DaemonCommand::NavigateTree { .. }
+            // So may a rewind's "Summarize from here".
+            | DaemonCommand::Rewind { .. }
     ) {
         WORKER_REQUEST_TIMEOUT_MS
     } else {

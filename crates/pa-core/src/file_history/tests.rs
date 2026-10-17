@@ -73,6 +73,25 @@ fn restore_returns_each_file_to_its_state_at_the_point() {
 }
 
 #[test]
+fn plans_for_several_points_match_their_single_plans() {
+    let f = fixture();
+    let path = f.root.join("file.txt");
+    std::fs::write(&path, "a\n").unwrap();
+    agent_write(&f.history, &path, "a\nb\n", 110);
+    agent_write(&f.history, &path, "a\nb\nc\n", 210);
+    let points = [100, 200, 300];
+    let plans = f.history.plans(&points).unwrap();
+    let singles: Vec<RestorePlan> = points
+        .iter()
+        .map(|&point| f.history.plan(point).unwrap())
+        .collect();
+    assert_eq!(plans, singles);
+    assert_eq!((plans[0].insertions(), plans[0].deletions()), (0, 2));
+    assert_eq!((plans[1].insertions(), plans[1].deletions()), (0, 1));
+    assert!(plans[2].is_empty());
+}
+
+#[test]
 fn a_file_changed_outside_the_agent_is_skipped_unless_forced() {
     let f = fixture();
     let path = f.root.join("file.txt");

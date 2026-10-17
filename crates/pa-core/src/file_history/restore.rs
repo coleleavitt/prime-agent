@@ -1,5 +1,6 @@
 //! Planning and applying a restore to a point in time.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -88,6 +89,11 @@ pub struct SkippedFile {
 }
 
 pub(super) fn plan(store: &Store, at_ms: u64) -> io::Result<RestorePlan> {
+    Ok(plans(store, &[at_ms])?.pop().unwrap_or_default())
+}
+
+/// One plan per point, in order, reading the log and each file once.
+pub(super) fn plans(store: &Store, points: &[u64]) -> io::Result<Vec<RestorePlan>> {
     let records = store.records()?;
     let mut paths: Vec<&str> = Vec::new();
     for record in &records {
@@ -95,140 +101,152 @@ pub(super) fn plan(store: &Store, at_ms: u64) -> io::Result<RestorePlan> {
             paths.push(&record.path);
         }
     }
-    let mut files = Vec::new();
-    for path in paths {
-        let of_path: Vec<&Record> = records
-            .iter()
-            .filter(|record| record.path == path)
-            .collect();
-        // The point's state: the prior content of the first write at or
-        // after it. A file the agent never wrote since is as it was.
-        let Some(target) = of_path
-            .iter()
-            .find(|record| record.op == Op::Pre && record.t >= at_ms)
-        else {
-            continue;
-        };
-        if let Some(planned) = plan_file(store, path, &target.state, of_path.last().copied())? {
-            files.push(planned);
+    let mut planner = Planner {
+        store,
+        current: HashMap::new(),
+        stats: HashMap::new(),
+    };
+    let mut plans = Vec::with_capacity(points.len());
+    for &at_ms in points {
+        let mut files = Vec::new();
+        for &path in &paths {
+            let of_path: Vec<&Record> = records
+                .iter()
+                .filter(|record| record.path == path)
+                .collect();
+            // The point's state: the prior content of the first write at or
+            // after it. A file the agent never wrote since is as it was.
+            let Some(target) = of_path
+                .iter()
+                .find(|record| record.op == Op::Pre && record.t >= at_ms)
+            else {
+                continue;
+            };
+            if let Some(planned) = planner.plan_file(path, &target.state, of_path.last().copied()) {
+                files.push(planned);
+            }
         }
+        plans.push(RestorePlan { files });
     }
-    Ok(RestorePlan { files })
+    Ok(plans)
 }
 
-fn plan_file(
-    store: &Store,
-    path: &str,
-    target: &FileState,
-    last: Option<&Record>,
-) -> io::Result<Option<PlannedFile>> {
-    let current = match read_current(Path::new(path)) {
-        Ok(current) => current,
-        Err(error) => {
-            return Ok(Some(PlannedFile {
+/// A file's present content and hash, or why it cannot be read.
+type CurrentRead = Result<(Current, Option<String>), String>;
+
+/// The shared reads of one planning pass.
+struct Planner<'a> {
+    store: &'a Store,
+    current: HashMap<String, CurrentRead>,
+    /// Line stats per (path, target backup).
+    stats: HashMap<(String, String), Result<(u64, u64), String>>,
+}
+
+impl Planner<'_> {
+    fn plan_file(
+        &mut self,
+        path: &str,
+        target: &FileState,
+        last: Option<&Record>,
+    ) -> Option<PlannedFile> {
+        let read = self.current.entry(path.to_string()).or_insert_with(|| {
+            read_current(Path::new(path))
+                .map(|current| {
+                    let sha = match &current {
+                        Current::Content(bytes) => Some(sha256_hex(bytes)),
+                        Current::Absent | Current::TooLarge(_) => None,
+                    };
+                    (current, sha)
+                })
+                .map_err(|error| error.to_string())
+        });
+        let unrestorable = |reason: String, externally_modified: bool| PlannedFile {
+            path: path.to_string(),
+            action: PlannedAction::Unrestorable { reason },
+            insertions: 0,
+            deletions: 0,
+            externally_modified,
+            target_sha256: None,
+        };
+        let (current, current_sha) = match read {
+            Ok((current, sha)) => (&*current, sha.clone()),
+            Err(error) => return Some(unrestorable(error.clone(), false)),
+        };
+        let unchanged = match (target, current) {
+            (FileState::Absent, Current::Absent) => true,
+            (FileState::Content { sha256, .. }, Current::Content(_)) => {
+                current_sha.as_deref() == Some(sha256.as_str())
+            }
+            _ => false,
+        };
+        if unchanged {
+            return None;
+        }
+        // The agent's last word on the file: a completed write's content. A
+        // write whose completion was never reported proves nothing.
+        let externally_modified = last.is_some_and(|last| {
+            last.op == Op::Post
+                && match (&last.state, current) {
+                    (FileState::Absent, Current::Absent) => false,
+                    (FileState::Content { sha256, .. }, Current::Content(_)) => {
+                        current_sha.as_deref() != Some(sha256.as_str())
+                    }
+                    (FileState::TooLarge { size }, Current::TooLarge(current)) => size != current,
+                    _ => true,
+                }
+        });
+        let current_bytes: &[u8] = match current {
+            Current::Content(bytes) => bytes,
+            Current::Absent | Current::TooLarge(_) => &[],
+        };
+        let planned = match target {
+            FileState::Absent => PlannedFile {
                 path: path.to_string(),
-                action: PlannedAction::Unrestorable {
-                    reason: error.to_string(),
-                },
+                action: PlannedAction::Delete,
                 insertions: 0,
-                deletions: 0,
-                externally_modified: false,
-                target_sha256: None,
-            }));
-        }
-    };
-    let current_sha = match &current {
-        Current::Content(bytes) => Some(sha256_hex(bytes)),
-        Current::Absent | Current::TooLarge(_) => None,
-    };
-    let unchanged = match (target, &current) {
-        (FileState::Absent, Current::Absent) => true,
-        (FileState::Content { sha256, .. }, Current::Content(_)) => {
-            current_sha.as_deref() == Some(sha256.as_str())
-        }
-        _ => false,
-    };
-    if unchanged {
-        return Ok(None);
-    }
-    // The agent's last word on the file: a completed write's content. A
-    // write whose completion was never reported proves nothing.
-    let externally_modified = last.is_some_and(|last| {
-        last.op == Op::Post
-            && match (&last.state, &current) {
-                (FileState::Absent, Current::Absent) => false,
-                (FileState::Content { sha256, .. }, Current::Content(_)) => {
-                    current_sha.as_deref() != Some(sha256.as_str())
-                }
-                (FileState::TooLarge { size }, Current::TooLarge(current)) => size != current,
-                _ => true,
-            }
-    });
-    let current_bytes: &[u8] = match &current {
-        Current::Content(bytes) => bytes,
-        Current::Absent | Current::TooLarge(_) => &[],
-    };
-    let planned = match target {
-        FileState::Absent => PlannedFile {
-            path: path.to_string(),
-            action: PlannedAction::Delete,
-            insertions: 0,
-            deletions: count_lines(current_bytes),
-            externally_modified,
-            target_sha256: None,
-        },
-        FileState::Content {
-            sha256,
-            stored: true,
-            ..
-        } => {
-            let (insertions, deletions) = match store.read_blob(sha256) {
-                Ok(target_bytes) => line_stats(current_bytes, &target_bytes),
-                Err(error) => {
-                    return Ok(Some(PlannedFile {
-                        path: path.to_string(),
-                        action: PlannedAction::Unrestorable {
-                            reason: format!("backup unreadable: {error}"),
-                        },
-                        insertions: 0,
-                        deletions: 0,
-                        externally_modified,
-                        target_sha256: None,
-                    }));
-                }
-            };
-            PlannedFile {
-                path: path.to_string(),
-                action: PlannedAction::Restore,
-                insertions,
-                deletions,
+                deletions: count_lines(current_bytes),
                 externally_modified,
-                target_sha256: Some(sha256.clone()),
+                target_sha256: None,
+            },
+            FileState::Content {
+                sha256,
+                stored: true,
+                ..
+            } => {
+                let store = self.store;
+                let stats = self
+                    .stats
+                    .entry((path.to_string(), sha256.clone()))
+                    .or_insert_with(|| {
+                        store
+                            .read_blob(sha256)
+                            .map(|target_bytes| line_stats(current_bytes, &target_bytes))
+                            .map_err(|error| format!("backup unreadable: {error}"))
+                    });
+                let (insertions, deletions) = match stats {
+                    Ok(stats) => *stats,
+                    Err(reason) => return Some(unrestorable(reason.clone(), externally_modified)),
+                };
+                PlannedFile {
+                    path: path.to_string(),
+                    action: PlannedAction::Restore,
+                    insertions,
+                    deletions,
+                    externally_modified,
+                    target_sha256: Some(sha256.clone()),
+                }
             }
-        }
-        FileState::Content { stored: false, .. } => PlannedFile {
-            path: path.to_string(),
-            action: PlannedAction::Unrestorable {
-                reason: "its backup was not kept (the session's checkpoint storage was full)"
-                    .to_string(),
-            },
-            insertions: 0,
-            deletions: 0,
-            externally_modified,
-            target_sha256: None,
-        },
-        FileState::TooLarge { .. } => PlannedFile {
-            path: path.to_string(),
-            action: PlannedAction::Unrestorable {
-                reason: "it was too large to back up".to_string(),
-            },
-            insertions: 0,
-            deletions: 0,
-            externally_modified,
-            target_sha256: None,
-        },
-    };
-    Ok(Some(planned))
+            FileState::Content { stored: false, .. } => unrestorable(
+                "its backup was not kept (the session's checkpoint storage was full)".to_string(),
+                externally_modified,
+            ),
+            FileState::TooLarge { .. } => unrestorable(
+                "it was too large to back up".to_string(),
+                externally_modified,
+            ),
+        };
+        Some(planned)
+    }
 }
 
 pub(super) fn apply(

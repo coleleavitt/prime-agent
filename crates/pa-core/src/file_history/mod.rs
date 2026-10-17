@@ -164,6 +164,23 @@ impl FileHistory {
         }
     }
 
+    /// [`Self::plan`] for each of `points`, in order, reading the log and
+    /// every recorded file once (the `/rewind` picker's rows).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the history exists but cannot be read.
+    pub fn plans(&self, points: &[u64]) -> std::io::Result<Vec<RestorePlan>> {
+        let _guard = store::lock();
+        match store::Store::open(&self.dir, /*create*/ false) {
+            Ok(store) => restore::plans(&store, points),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(vec![RestorePlan::default(); points.len()])
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Restore every recorded file to its state at `at_ms`. A file changed
     /// outside the agent since its last recorded write is skipped unless
     /// `force`; every restore is itself recorded at `now_ms`.
