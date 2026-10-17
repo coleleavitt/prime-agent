@@ -342,6 +342,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
     let output_limit_recovery = settings.get_output_limit_recovery();
+    let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
@@ -952,6 +953,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // over the timing-instrumented fn (TS `sdk.ts` instruments first, the
     // `AgentSession` constructor wraps semantic edges over it). The side
     // question keeps the pre-semantic fn, so its calls carry no id.
+    // Usage-limit wrap-up (experimental, off by default): every response's
+    // rate-limit headers reach the session's monitor.
+    let usage_limit = experimental.usage_limit_wrap_up.then(|| {
+        std::sync::Arc::new(super::usage_limit::UsageLimitMonitor::new(
+            experimental.usage_limit_wrap_up_threshold,
+        ))
+    });
+    let stream_fn = match &usage_limit {
+        Some(monitor) => {
+            super::usage_limit::observe_stream_fn(std::sync::Arc::clone(monitor), stream_fn)
+        }
+        None => stream_fn,
+    };
     let timing_stream_fn = super::request_timing::instrument_stream_fn(
         std::sync::Arc::clone(&request_timing_wiring),
         stream_fn,
@@ -1018,12 +1032,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             // A funded subagent that spent its grant stops at this
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
+            let usage_limit = usage_limit.clone();
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
+                let usage_limit = usage_limit.clone();
                 Box::pin(async move {
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
@@ -1048,10 +1064,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // run goes on past it (the copy is made only for them).
                     let feature_turn =
                         (!crate::features::installed().is_empty()).then(|| context.clone());
+                    // The usage-limit monitor reads the boundary only when
+                    // the run goes on past it, like the features.
+                    let usage_turn = usage_limit.as_ref().map(|_| context.clone());
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
+                    if let (false, Some(monitor), Some(turn)) = (stop, &usage_limit, usage_turn) {
+                        super::usage_limit::after_turn(monitor, &fold_slot, &turn);
+                    }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
                     }
@@ -1674,3 +1696,6 @@ mod tests;
 
 #[cfg(test)]
 mod append_system_tests;
+
+#[cfg(test)]
+mod experimental_tests;
