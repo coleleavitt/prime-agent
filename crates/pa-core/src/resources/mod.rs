@@ -16,8 +16,8 @@ use crate::skills::{
     load_skills,
 };
 
-/// AGENTS.md-family candidates, in priority order.
-const CONTEXT_FILE_CANDIDATES: [&str; 4] = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+pub mod auto_memory;
+pub mod instructions;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextFile {
@@ -25,49 +25,24 @@ pub struct ContextFile {
     pub content: String,
 }
 
-fn load_context_file_from_dir(dir: &Path) -> Option<ContextFile> {
-    for filename in CONTEXT_FILE_CANDIDATES {
-        let file_path = dir.join(filename);
-        if let Ok(content) = std::fs::read_to_string(&file_path) {
-            return Some(ContextFile {
-                path: file_path,
-                content,
-            });
-        }
-    }
-    None
-}
-
-/// Load the global (agentDir) context file first, then the nearest-to-root ancestor chain of cwd.
+/// The session-start instruction files of `cwd` ([`instructions`]) as
+/// context files: the user scope first, then the ancestor chain root-first.
 #[must_use]
 pub fn load_project_context_files(cwd: &Path, agent_dir: &Path) -> Vec<ContextFile> {
-    let mut context_files = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    if let Some(global) = load_context_file_from_dir(agent_dir) {
-        seen.insert(global.path.clone());
-        context_files.push(global);
-    }
+    let (files, _) = instructions::load_instructions(instructions::InstructionOptions {
+        cwd: cwd.to_path_buf(),
+        agent_dir: agent_dir.to_path_buf(),
+        home_dir: pa_types::platform::home_dir(),
+        claude_user_files: false,
+    });
+    files.into_iter().map(context_file).collect()
+}
 
-    // Walk cwd upward, collecting context files; root-most first in output.
-    let mut ancestors = Vec::new();
-    let mut current = cwd.to_path_buf();
-    loop {
-        if let Some(found) = load_context_file_from_dir(&current) {
-            if seen.insert(found.path.clone()) {
-                ancestors.push(found);
-            }
-        }
-        let Some(parent) = current.parent() else {
-            break;
-        };
-        if parent == current {
-            break;
-        }
-        current = parent.to_path_buf();
+fn context_file(file: instructions::InstructionFile) -> ContextFile {
+    ContextFile {
+        path: file.path,
+        content: file.content,
     }
-    ancestors.reverse();
-    context_files.extend(ancestors);
-    context_files
 }
 
 // Session resource resolution (package-manager `resolve()`) feeds the loader below.
@@ -84,6 +59,14 @@ pub struct LoadedResources {
     pub skill_diagnostics: Vec<ResourceDiagnostic>,
     pub prompts: Vec<PromptTemplate>,
     pub agents_files: Vec<ContextFile>,
+    /// The loaded instruction files with their kinds (`agents_files` is
+    /// their path/content view).
+    pub instruction_files: Vec<instructions::InstructionFile>,
+    /// The instruction files that load later, on first touch of a path
+    /// they cover (`None` with `no_context_files`).
+    pub nested_instructions: Option<std::sync::Arc<instructions::NestedInstructions>>,
+    /// The session's auto memory (`None` when off).
+    pub auto_memory: Option<auto_memory::AutoMemory>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
     /// Read-only continual harness overlays mounted from the resolved
@@ -95,6 +78,10 @@ pub struct LoadedResources {
 /// Resource loading options (the TS `DefaultResourceLoaderOptions` surface, minus the theme
 /// machinery).
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-session switches (CLI flags and the subagent gate)"
+)]
 pub struct ResourceLoaderOptions {
     pub cwd: PathBuf,
     pub agent_dir: PathBuf,
@@ -109,6 +96,13 @@ pub struct ResourceLoaderOptions {
     pub no_skills: bool,
     pub no_prompt_templates: bool,
     pub no_context_files: bool,
+    /// Whether this session may carry auto memory (top-level sessions);
+    /// the `autoMemoryEnabled` setting and the environment switch still
+    /// decide.
+    pub auto_memory: bool,
+    /// The home directory for `~/` imports and the `~/.claude` user scope
+    /// (default: the platform's).
+    pub home_dir: Option<PathBuf>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
 }
@@ -141,6 +135,10 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     let project_cwd = settings
         .project_scope_trusted()
         .then_some(options.cwd.as_path());
+    let instruction_settings = InstructionSettings {
+        auto_memory: settings.get_auto_memory_enabled(),
+        claude_user_files: settings.get_claude_code_user_instructions(),
+    };
     let resolution = resolution::resolve_session_resources(&options, settings)?;
 
     let mut resources = LoadedResources::default();
@@ -223,9 +221,29 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         }
     }
 
-    // Agents files (project context).
+    // Instruction files (project context) and auto memory.
     if !options.no_context_files {
-        resources.agents_files = load_project_context_files(&options.cwd, &options.agent_dir);
+        let (files, nested) = instructions::load_instructions(instructions::InstructionOptions {
+            cwd: options.cwd.clone(),
+            agent_dir: options.agent_dir.clone(),
+            home_dir: options
+                .home_dir
+                .clone()
+                .or_else(pa_types::platform::home_dir),
+            claude_user_files: instruction_settings.claude_user_files,
+        });
+        resources.agents_files = files.iter().cloned().map(context_file).collect();
+        resources.instruction_files = files;
+        resources.nested_instructions = Some(std::sync::Arc::new(nested));
+        if options.auto_memory
+            && instruction_settings.auto_memory
+            && !auto_memory::disabled_by_env()
+        {
+            resources.auto_memory = Some(auto_memory::load_auto_memory(
+                &options.agent_dir,
+                &options.cwd,
+            ));
+        }
     }
 
     // System prompt: explicit source or discovered file content.
@@ -259,6 +277,13 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         .extend(resources.package_harness.diagnostics.iter().cloned());
 
     Ok(resources)
+}
+
+/// The settings the instruction loader reads (taken before resolution
+/// consumes the settings manager).
+struct InstructionSettings {
+    auto_memory: bool,
+    claude_user_files: bool,
 }
 
 fn diagnostics_path(diagnostic: &ResourceDiagnostic) -> Option<String> {

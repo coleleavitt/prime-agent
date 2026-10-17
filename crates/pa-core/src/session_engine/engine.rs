@@ -382,6 +382,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         no_skills: config.resource_exclusions.no_skills,
         no_prompt_templates: config.resource_exclusions.no_prompt_templates,
         no_context_files: config.resource_exclusions.no_context_files,
+        // Auto memory is a top-level session's (a subagent's prompt stays
+        // task-focused, as in Claude Code).
+        auto_memory: config.rlm_depth.unwrap_or(0) == 0,
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
@@ -830,6 +833,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .iter()
                 .map(|file| (file.path.display().to_string(), file.content.clone()))
                 .collect(),
+            auto_memory: resources
+                .auto_memory
+                .as_ref()
+                .map(crate::resources::auto_memory::memory_prompt_section),
             skills: visible_skills.clone(),
             selected_tools: Some(
                 active_tool_names

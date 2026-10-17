@@ -458,6 +458,13 @@ pub struct Settings {
     /// cap), the turn continues on the next entry. Default: empty - no
     /// cross-model fallback.
     pub fallback_models: Option<Vec<String>>,
+    /// `autoMemoryEnabled` (Claude Code's key): the per-project auto-memory
+    /// directory and its `MEMORY.md` index in the prompt. Unset is ON.
+    pub auto_memory_enabled: Option<bool>,
+    /// `claudeCodeUserInstructions`: also read Claude Code's user-scope
+    /// instruction files (`~/.claude/CLAUDE.md`, `~/.claude/rules/`). Unset
+    /// is OFF, so installing Claude Code never changes this agent's prompt.
+    pub claude_code_user_instructions: Option<bool>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
