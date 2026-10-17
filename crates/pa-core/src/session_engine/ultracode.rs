@@ -508,3 +508,7 @@ fn keyword_row(typed: &str, settings: UltracodeSettings, on: bool) -> Option<Cus
 #[cfg(test)]
 #[path = "ultracode_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ultracode_engine_tests.rs"]
+mod engine_tests;
