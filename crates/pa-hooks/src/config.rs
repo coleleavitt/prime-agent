@@ -13,11 +13,23 @@
 //!
 //! User hooks (`<agent dir>/settings.json`) come first, then a trusted
 //! project's (`.prime/agent/settings.json`; `hooks` is a gated key, so an
-//! untrusted project contributes none).
+//! untrusted project contributes none). With the Claude Code opt-in
+//! (`claudeCodeSettings`, read through `pa_core::settings::claude_code`)
+//! Claude Code's files follow: `~/.claude/settings.json`, then a trusted
+//! project's `.claude/settings.json` and `.claude/settings.local.json`, then
+//! the managed settings. Every command carries its source's label
+//! ([`HookSource`]), which its warnings and messages name.
+//!
+//! `disableAllHooks: true` turns every hook off; set anywhere but in the
+//! managed settings it leaves the managed hooks running (Claude Code's
+//! rule). The managed `allowManagedHooksOnly: true` keeps only the managed
+//! hooks.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use pa_core::settings::claude_code::ClaudeScope;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
@@ -125,12 +137,42 @@ pub enum HookMode {
     AsyncRewake,
 }
 
+/// Where a hook command was configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookSource {
+    /// `<agent dir>/settings.json`.
+    User,
+    /// `.prime/agent/settings.json`.
+    Project,
+    /// One of Claude Code's settings files.
+    ClaudeCode(ClaudeScope),
+    /// A `hooks` value parsed directly ([`HooksConfig::from_value`]).
+    Inline,
+}
+
+impl HookSource {
+    /// How the source is named in warnings and messages.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            HookSource::User => "user settings",
+            HookSource::Project => "project settings",
+            HookSource::ClaudeCode(scope) => scope.label(),
+            HookSource::Inline => "settings",
+        }
+    }
+}
+
 /// One hook command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookCommand {
     pub command: String,
     pub timeout: Duration,
     pub mode: HookMode,
+    /// Where it was configured.
+    pub source: HookSource,
+    /// Variables it runs with on top of the host's (Claude Code's `env`).
+    pub env: Arc<Vec<(String, String)>>,
 }
 
 /// A matcher group: the subjects it applies to and its commands.
@@ -171,17 +213,76 @@ pub struct HooksConfig {
     groups: Vec<(HookEvent, Group)>,
     /// Entries that were skipped, for the session's diagnostics.
     pub problems: Vec<String>,
+    /// The environment every command runs with (Claude Code's `env`).
+    env: Arc<Vec<(String, String)>>,
 }
 
 impl HooksConfig {
     /// The hooks configured for a session at `cwd`.
     #[must_use]
     pub fn load(cwd: &Path, agent_dir: &Path) -> Self {
-        let settings = pa_core::settings::SettingsManager::create(cwd, agent_dir);
-        let mut config = HooksConfig::default();
-        config.add(settings.global_settings().extra.get("hooks"), "user");
+        Self::from_settings(&pa_core::settings::SettingsManager::create(cwd, agent_dir))
+    }
+
+    /// The hooks `settings` configure (see the module docs for the order
+    /// and the switches).
+    #[must_use]
+    pub fn from_settings(settings: &pa_core::settings::SettingsManager) -> Self {
+        let mut config = HooksConfig {
+            env: Arc::new(settings.get_claude_code_env()),
+            ..HooksConfig::default()
+        };
+        let claude = settings.claude_code();
+        let managed = claude
+            .and_then(|claude| claude.document(ClaudeScope::Managed))
+            .and_then(|document| document.get("hooks"));
+        let managed_source = HookSource::ClaudeCode(ClaudeScope::Managed);
+        if let Some(source) = settings.disable_all_hooks() {
+            config
+                .problems
+                .push(format!("hooks are off: disableAllHooks is set in {source}"));
+            if source != managed_source.label() {
+                config.add(managed, managed_source);
+            }
+            return config;
+        }
+        if claude
+            .is_some_and(pa_core::settings::claude_code::ClaudeCodeSettings::managed_hooks_only)
+        {
+            config.problems.push(
+                "only managed hooks run: allowManagedHooksOnly is set in Claude Code managed \
+                 settings"
+                    .to_string(),
+            );
+            config.add(managed, managed_source);
+            return config;
+        }
+        config.add(
+            settings.global_settings().extra.get("hooks"),
+            HookSource::User,
+        );
         if settings.project_scope_trusted() {
-            config.add(settings.project_settings().extra.get("hooks"), "project");
+            config.add(
+                settings.project_settings().extra.get("hooks"),
+                HookSource::Project,
+            );
+        }
+        if let Some(claude) = claude {
+            // Claude Code's order, lowest precedence first; `document`
+            // leaves out an untrusted workspace's project files.
+            for scope in [
+                ClaudeScope::User,
+                ClaudeScope::Project,
+                ClaudeScope::Local,
+                ClaudeScope::Managed,
+            ] {
+                config.add(
+                    claude
+                        .document(scope)
+                        .and_then(|document| document.get("hooks")),
+                    HookSource::ClaudeCode(scope),
+                );
+            }
         }
         config
     }
@@ -190,11 +291,12 @@ impl HooksConfig {
     #[must_use]
     pub fn from_value(value: &Value) -> Self {
         let mut config = HooksConfig::default();
-        config.add(Some(value), "settings");
+        config.add(Some(value), HookSource::Inline);
         config
     }
 
-    fn add(&mut self, value: Option<&Value>, scope: &str) {
+    fn add(&mut self, value: Option<&Value>, source: HookSource) {
+        let scope = source.label();
         let Some(value) = value else {
             return;
         };
@@ -261,6 +363,8 @@ impl HooksConfig {
                             command: text,
                             timeout,
                             mode,
+                            source,
+                            env: Arc::clone(&self.env),
                         })
                     })
                     .collect();
@@ -316,6 +420,8 @@ mod tests {
 
     fn command(text: &str, seconds: u64) -> HookCommand {
         HookCommand {
+            source: HookSource::Inline,
+            env: Arc::default(),
             command: text.to_string(),
             timeout: Duration::from_secs(seconds),
             mode: HookMode::Blocking,
@@ -454,5 +560,187 @@ mod tests {
             vec![command("kept", 60)]
         );
         assert_eq!(config.problems.len(), 4, "{:?}", config.problems);
+    }
+}
+
+/// Claude Code's settings files as hook sources: behind the opt-in, each
+/// command labelled, project files only once the workspace is trusted, and
+/// `disableAllHooks` / `allowManagedHooksOnly` as Claude Code reads them.
+#[cfg(test)]
+mod claude_code_sources {
+    use std::path::{Path, PathBuf};
+
+    use pa_core::settings::SettingsManager;
+    use pa_core::settings::claude_code::{ClaudePaths, ClaudeScope};
+    use serde_json::json;
+
+    use super::*;
+
+    struct Tree {
+        _dir: tempfile::TempDir,
+        cwd: PathBuf,
+        agent_dir: PathBuf,
+        paths: ClaudePaths,
+    }
+
+    fn stop(command: &str) -> Value {
+        json!({ "Stop": [{ "hooks": [{ "type": "command", "command": command }] }] })
+    }
+
+    fn write(path: &Path, value: &Value) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, value.to_string()).unwrap();
+    }
+
+    impl Tree {
+        fn new(opt_in: bool) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let cwd = dir.path().join("repo");
+            let agent_dir = dir.path().join("agent");
+            let home = dir.path().join("home");
+            std::fs::create_dir_all(cwd.join(".git")).unwrap();
+            let paths = ClaudePaths {
+                cwd: cwd.clone(),
+                claude_dir: Some(home.join(".claude")),
+                home: Some(home),
+                managed: Some(dir.path().join("managed-settings.json")),
+            };
+            write(
+                &agent_dir.join("settings.json"),
+                &json!({ "claudeCodeSettings": opt_in, "hooks": stop("own") }),
+            );
+            write(
+                &paths.file(ClaudeScope::User).unwrap(),
+                &json!({ "hooks": stop("cc-user"), "env": { "CC_VAR": "1" } }),
+            );
+            write(
+                &paths.file(ClaudeScope::Project).unwrap(),
+                &json!({ "hooks": stop("cc-project") }),
+            );
+            write(
+                paths.managed.as_ref().unwrap(),
+                &json!({ "hooks": stop("cc-managed") }),
+            );
+            Tree {
+                _dir: dir,
+                cwd,
+                agent_dir,
+                paths,
+            }
+        }
+
+        fn config(&self) -> HooksConfig {
+            HooksConfig::from_settings(&SettingsManager::create_with_claude_paths(
+                &self.cwd,
+                &self.agent_dir,
+                self.paths.clone(),
+            ))
+        }
+
+        fn stop_sources(&self) -> Vec<(String, &'static str)> {
+            self.config()
+                .commands(HookEvent::Stop, None)
+                .into_iter()
+                .map(|hook| (hook.command, hook.source.label()))
+                .collect()
+        }
+
+        fn trust(&self) {
+            pa_core::workspace_trust::record(
+                &self.cwd,
+                &self.agent_dir,
+                pa_core::workspace_trust::TrustDecision::Trusted,
+            )
+            .unwrap();
+        }
+    }
+
+    fn owned(pairs: &[(&str, &'static str)]) -> Vec<(String, &'static str)> {
+        pairs
+            .iter()
+            .map(|(command, label)| ((*command).to_string(), *label))
+            .collect()
+    }
+
+    #[test]
+    fn without_the_opt_in_only_the_agents_own_hooks_run() {
+        let tree = Tree::new(false);
+        assert_eq!(tree.stop_sources(), owned(&[("own", "user settings")]));
+        assert!(
+            tree.config().commands(HookEvent::Stop, None)[0]
+                .env
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn claude_code_hooks_carry_their_source_and_project_ones_wait_for_trust() {
+        let tree = Tree::new(true);
+        assert_eq!(
+            tree.stop_sources(),
+            owned(&[
+                ("own", "user settings"),
+                ("cc-user", "Claude Code user settings"),
+                ("cc-managed", "Claude Code managed settings"),
+            ])
+        );
+        tree.trust();
+        assert_eq!(
+            tree.stop_sources(),
+            owned(&[
+                ("own", "user settings"),
+                ("cc-user", "Claude Code user settings"),
+                ("cc-project", "Claude Code project settings"),
+                ("cc-managed", "Claude Code managed settings"),
+            ])
+        );
+        // Claude Code's `env` reaches every hook, its own ones too.
+        let config = tree.config();
+        for hook in config.commands(HookEvent::Stop, None) {
+            assert_eq!(*hook.env, vec![("CC_VAR".to_string(), "1".to_string())]);
+        }
+    }
+
+    #[test]
+    fn disable_all_hooks_spares_managed_hooks_unless_managed_sets_it() {
+        let tree = Tree::new(true);
+        write(
+            &tree.paths.file(ClaudeScope::User).unwrap(),
+            &json!({ "hooks": stop("cc-user"), "disableAllHooks": true }),
+        );
+        let config = tree.config();
+        assert_eq!(
+            config.problems,
+            vec!["hooks are off: disableAllHooks is set in Claude Code user settings".to_string()]
+        );
+        assert_eq!(
+            tree.stop_sources(),
+            owned(&[("cc-managed", "Claude Code managed settings")])
+        );
+        write(
+            tree.paths.managed.as_ref().unwrap(),
+            &json!({ "hooks": stop("cc-managed"), "disableAllHooks": true }),
+        );
+        assert_eq!(tree.stop_sources(), owned(&[]));
+        // The agent's own settings can turn hooks off too.
+        let tree = Tree::new(false);
+        write(
+            &tree.agent_dir.join("settings.json"),
+            &json!({ "hooks": stop("own"), "disableAllHooks": true }),
+        );
+        assert_eq!(tree.stop_sources(), owned(&[]));
+    }
+
+    #[test]
+    fn managed_hooks_only_keeps_the_managed_ones() {
+        let tree = Tree::new(true);
+        write(
+            tree.paths.managed.as_ref().unwrap(),
+            &json!({ "hooks": stop("cc-managed"), "allowManagedHooksOnly": true }),
+        );
+        assert_eq!(
+            tree.stop_sources(),
+            owned(&[("cc-managed", "Claude Code managed settings")])
+        );
     }
 }

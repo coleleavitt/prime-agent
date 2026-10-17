@@ -76,6 +76,9 @@ pub struct LoadedResources {
     pub nested_instructions: Option<std::sync::Arc<instructions::NestedInstructions>>,
     /// The session's auto memory (`None` when off).
     pub auto_memory: Option<auto_memory::AutoMemory>,
+    /// The persistent memory of the agent the session runs as (`None`
+    /// without a `memory` scope, or when auto memory is off).
+    pub agent_memory: Option<crate::agents::AgentMemory>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
     /// Read-only continual harness overlays mounted from the resolved
@@ -109,6 +112,9 @@ pub struct ResourceLoaderOptions {
     /// the `autoMemoryEnabled` setting and the environment switch still
     /// decide.
     pub auto_memory: bool,
+    /// The agent (type and memory scope) whose persistent memory the
+    /// session carries; auto memory's switches still decide.
+    pub agent_memory: Option<(String, crate::agents::AgentMemoryScope)>,
     /// The home directory for `~/` imports and the `~/.claude` user scope
     /// (default: the platform's).
     pub home_dir: Option<PathBuf>,
@@ -279,13 +285,18 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         resources.agents_files = files.iter().cloned().map(context_file).collect();
         resources.instruction_files = files;
         resources.nested_instructions = Some(std::sync::Arc::new(nested));
-        if options.auto_memory
-            && instruction_settings.auto_memory
-            && !auto_memory::disabled_by_env()
-        {
+        let memory_on = instruction_settings.auto_memory && !auto_memory::disabled_by_env();
+        if options.auto_memory && memory_on {
             resources.auto_memory = Some(auto_memory::load_auto_memory(
                 &options.agent_dir,
                 &options.cwd,
+            ));
+        }
+        if let (Some((agent, scope)), true) = (&options.agent_memory, memory_on) {
+            resources.agent_memory = Some(crate::agents::load_agent_memory(
+                &crate::agents::AgentMemoryRoots::for_session(&options.cwd, &options.agent_dir),
+                agent,
+                *scope,
             ));
         }
     }

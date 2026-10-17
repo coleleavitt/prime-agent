@@ -372,6 +372,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the session's artifact dir (its durable ledger's home) is known.
     let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
+    // Claude Code's settings files (behind `claudeCodeSettings`): their
+    // `env` reaches the kernel and its commands; what was not taken is
+    // logged, so a PATH override is never silent.
+    let claude_code_env = settings.get_claude_code_env();
+    for problem in settings.claude_code_problems() {
+        tracing::warn!(target: "pa_core::claude_code_settings", "{problem}");
+    }
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
     // pin), like the request-timing snapshot above; and the
@@ -432,6 +439,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // Auto memory is a top-level session's (a subagent's prompt stays
         // task-focused, as in Claude Code).
         auto_memory: config.rlm_depth.unwrap_or(0) == 0,
+        // An agent definition's `memory` scope: its persistent memory.
+        agent_memory: config
+            .agent_definition
+            .as_ref()
+            .and_then(crate::agents::memory_request),
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
@@ -440,6 +452,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // sandbox keeps the auto-memory directory writable.
     let sandbox = match (sandbox, &resources.auto_memory) {
         (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
+        (sandbox, _) => sandbox,
+    };
+    // So is the agent's persistent memory (unless it is read-only).
+    let sandbox = match (sandbox, &resources.agent_memory) {
+        (Some(sandbox), Some(memory)) if !memory.read_only => {
+            Some(sandbox.with_writable_root(memory.dir.clone()))
+        }
         (sandbox, _) => sandbox,
     };
 
@@ -888,6 +907,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_environment,
         plan.clone(),
         sandbox.clone(),
+        claude_code_env,
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {
@@ -984,12 +1004,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     .append_system_prompt
                     .iter()
                     .cloned()
-                    .chain(
-                        config
-                            .agent_definition
-                            .as_ref()
-                            .map(crate::agents::agent_instructions),
-                    )
+                    .chain(config.agent_definition.as_ref().map(|definition| {
+                        crate::agents::agent_prompt(definition, resources.agent_memory.as_ref())
+                    }))
                     .collect::<Vec<_>>()
                     .join("\n\n"),
             ),

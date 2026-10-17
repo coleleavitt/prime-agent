@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::FEATURE_NAME;
 use crate::children::Children;
-use crate::config::{HookCommand, HookEvent, HookMode, HooksConfig};
+use crate::config::{HookCommand, HookEvent, HookMode, HookSource, HooksConfig};
 use crate::kernel_bash::KernelJobs;
 use crate::run::{self, HookAnswer};
 
@@ -45,13 +45,18 @@ pub(crate) struct SessionHooks {
     async_contexts: Mutex<Vec<String>>,
 }
 
-/// The text a background hook's exit code 2 wakes the agent with.
-fn rewake_text(event: HookEvent, stderr: &str) -> String {
+/// The text a background hook's exit code 2 wakes the agent with; a hook
+/// from Claude Code's files says so.
+fn rewake_text(event: HookEvent, source: HookSource, stderr: &str) -> String {
     let stderr = stderr.trim();
+    let from = match source {
+        HookSource::ClaudeCode(_) => format!(" from {}", source.label()),
+        HookSource::User | HookSource::Project | HookSource::Inline => String::new(),
+    };
     if stderr.is_empty() {
-        format!("Async {} hook exited with code 2.", event.name())
+        format!("Async {} hook{from} exited with code 2.", event.name())
     } else {
-        format!("Async {} hook reported:\n\n{stderr}", event.name())
+        format!("Async {} hook{from} reported:\n\n{stderr}", event.name())
     }
 }
 
@@ -151,7 +156,7 @@ impl SessionHooks {
             if hook.mode == HookMode::AsyncRewake && outcome.code == Some(2) {
                 let notice = FeatureNotice {
                     feature: FEATURE_NAME.to_string(),
-                    text: rewake_text(event, &outcome.stderr),
+                    text: rewake_text(event, hook.source, &outcome.stderr),
                 };
                 if !deliver_feature_notice(&hooks.session_id, &notice) {
                     tracing::warn!(
@@ -267,12 +272,20 @@ mod tests {
     #[test]
     fn a_rewake_notice_carries_the_event_and_stderr() {
         assert_eq!(
-            rewake_text(HookEvent::PostToolUse, "tests failed\n"),
+            rewake_text(HookEvent::PostToolUse, HookSource::User, "tests failed\n"),
             "Async PostToolUse hook reported:\n\ntests failed"
         );
         assert_eq!(
-            rewake_text(HookEvent::Stop, "  "),
+            rewake_text(HookEvent::Stop, HookSource::User, "  "),
             "Async Stop hook exited with code 2."
+        );
+        assert_eq!(
+            rewake_text(
+                HookEvent::Stop,
+                HookSource::ClaudeCode(pa_core::settings::claude_code::ClaudeScope::User),
+                "lint failed"
+            ),
+            "Async Stop hook from Claude Code user settings reported:\n\nlint failed"
         );
     }
 

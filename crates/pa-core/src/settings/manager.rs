@@ -53,6 +53,14 @@ pub struct SettingsManager {
     trust_workspace: Option<(PathBuf, PathBuf)>,
     /// The evaluated workspace trust; `None` when nothing gates the scope.
     workspace_trust: Option<WorkspaceTrustStatus>,
+    /// Where Claude Code's settings files are (`None` for a store without
+    /// a workspace: no Claude Code layer).
+    claude_paths: Option<super::claude_code::ClaudePaths>,
+    /// Claude Code's settings files, read when the user settings opt in
+    /// (`claudeCodeSettings`).
+    claude_code: Option<super::claude_code::ClaudeCodeSettings>,
+    /// What the Claude Code layer contributed (see [`Self::rederive_merged`]).
+    claude_layer: super::claude_code::ClaudeLayer,
 }
 
 impl SettingsManager {
@@ -65,6 +73,17 @@ impl SettingsManager {
     fn load(
         storage: Arc<dyn SettingsStorage>,
         trust_workspace: Option<(PathBuf, PathBuf)>,
+    ) -> Self {
+        let claude_paths = trust_workspace
+            .as_ref()
+            .map(|(cwd, _)| super::claude_code::ClaudePaths::resolve(cwd));
+        Self::load_with(storage, trust_workspace, claude_paths)
+    }
+
+    fn load_with(
+        storage: Arc<dyn SettingsStorage>,
+        trust_workspace: Option<(PathBuf, PathBuf)>,
+        claude_paths: Option<super::claude_code::ClaudePaths>,
     ) -> Self {
         let mut manager = Self {
             storage,
@@ -79,6 +98,9 @@ impl SettingsManager {
             project_load_error: None,
             trust_workspace,
             workspace_trust: None,
+            claude_paths,
+            claude_code: None,
+            claude_layer: super::claude_code::ClaudeLayer::default(),
         };
         manager.read_scopes();
         manager
@@ -108,7 +130,118 @@ impl SettingsManager {
         self.global_load_error = global_load_error;
         self.project_load_error = project_load_error;
         self.errors = errors;
-        self.merged = deep_merge(&self.global, &self.project);
+        let trusted = self.project_scope_trusted();
+        self.claude_code = match (&self.claude_paths, &self.global_raw) {
+            (Some(paths), Some(raw)) if super::claude_code::opted_in_document(raw) => {
+                Some(super::claude_code::ClaudeCodeSettings::load(paths, trusted))
+            }
+            _ => None,
+        };
+        self.rederive_merged();
+    }
+
+    /// The effective settings: the project scope over the global one, over
+    /// the Claude Code layer (only the keys neither scope sets; see
+    /// [`super::claude_code::ClaudeLayer`]).
+    fn rederive_merged(&mut self) {
+        let own = deep_merge(&self.global, &self.project);
+        self.claude_layer = self
+            .claude_code
+            .as_ref()
+            .map(|claude| super::claude_code::ClaudeLayer::derive(claude, &own))
+            .unwrap_or_default();
+        self.merged = if self.claude_layer.is_empty() {
+            own
+        } else {
+            deep_merge(&self.claude_layer.settings, &own)
+        };
+    }
+
+    /// The settings of the workspace at `cwd` with Claude Code's files at
+    /// `claude_paths` (tests and embedders; [`Self::create`] resolves them
+    /// on this machine).
+    pub fn create_with_claude_paths(
+        cwd: impl AsRef<std::path::Path>,
+        agent_dir: impl AsRef<std::path::Path>,
+        claude_paths: super::claude_code::ClaudePaths,
+    ) -> Self {
+        let cwd = PathBuf::from(cwd.as_ref());
+        let agent_dir = PathBuf::from(agent_dir.as_ref());
+        let storage: Arc<dyn SettingsStorage> = Arc::new(super::storage::FileSettingsStorage::new(
+            cwd.clone(),
+            agent_dir.clone(),
+        ));
+        Self::load_with(storage, Some((cwd, agent_dir)), Some(claude_paths))
+    }
+
+    /// Claude Code's settings files when the user settings opt in.
+    #[must_use]
+    pub fn claude_code(&self) -> Option<&super::claude_code::ClaudeCodeSettings> {
+        self.claude_code.as_ref()
+    }
+
+    /// Where Claude Code's settings files are for this workspace.
+    #[must_use]
+    pub fn claude_paths(&self) -> Option<&super::claude_code::ClaudePaths> {
+        self.claude_paths.as_ref()
+    }
+
+    /// What reading Claude Code's files reported: unreadable files, keys
+    /// waiting for trust, values that were not applied, and `env`
+    /// overrides of `PATH`/`HOME`.
+    #[must_use]
+    pub fn claude_code_problems(&self) -> Vec<String> {
+        let Some(claude) = &self.claude_code else {
+            return Vec::new();
+        };
+        let mut problems = claude.problems();
+        problems.extend(self.claude_layer.notes.iter().cloned());
+        problems.extend(claude.env().1);
+        problems
+    }
+
+    /// Whether the default model came from Claude Code's `model` (a soft
+    /// preference: a session falls back when it is unavailable).
+    #[must_use]
+    pub fn default_model_from_claude_code(&self) -> bool {
+        self.claude_layer.model
+    }
+
+    /// The session environment Claude Code's `env` sets for the kernel
+    /// and its commands (empty without the opt-in).
+    #[must_use]
+    pub fn get_claude_code_env(&self) -> Vec<(String, String)> {
+        self.claude_code
+            .as_ref()
+            .map(|claude| {
+                claude
+                    .env()
+                    .0
+                    .into_iter()
+                    .map(|var| (var.name, var.value))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `disableAllHooks`: whether hooks (and the status line command) are
+    /// off, and which source said so. This agent's own settings and Claude
+    /// Code's files (with the opt-in) can set it.
+    #[must_use]
+    pub fn disable_all_hooks(&self) -> Option<&'static str> {
+        let own = |settings: &Settings| {
+            settings.extra.get("disableAllHooks") == Some(&serde_json::Value::Bool(true))
+        };
+        if own(&self.project) {
+            return Some("project settings");
+        }
+        if own(&self.global) {
+            return Some("user settings");
+        }
+        self.claude_code
+            .as_ref()
+            .and_then(super::claude_code::ClaudeCodeSettings::disable_all_hooks)
+            .map(super::claude_code::ClaudeScope::label)
     }
 
     /// The settings of the workspace at `cwd`, gated by its trust: an
@@ -131,7 +264,11 @@ impl SettingsManager {
     /// telemetry switch.
     #[must_use]
     pub fn reopen(&self) -> Self {
-        let mut fresh = Self::load(Arc::clone(&self.storage), self.trust_workspace.clone());
+        let mut fresh = Self::load_with(
+            Arc::clone(&self.storage),
+            self.trust_workspace.clone(),
+            self.claude_paths.clone(),
+        );
         fresh.apply_overrides(&self.runtime_overrides);
         fresh
     }
@@ -545,7 +682,7 @@ impl SettingsManager {
             "packages",
             &serde_json::Value::Array(packages),
         );
-        self.merged = deep_merge(&self.global, &self.project);
+        self.rederive_merged();
     }
 
     pub fn set_project_packages(&mut self, packages: Vec<serde_json::Value>) {
@@ -558,7 +695,7 @@ impl SettingsManager {
             "packages",
             &serde_json::Value::Array(packages),
         );
-        self.merged = deep_merge(&self.global, &self.project);
+        self.rederive_merged();
         self.refresh_workspace_trust();
     }
 
@@ -577,7 +714,7 @@ impl SettingsManager {
             field,
             &serde_json::Value::Array(array),
         );
-        self.merged = deep_merge(&self.global, &self.project);
+        self.rederive_merged();
     }
 
     /// Replace one resource-path array in the project settings file.
@@ -598,7 +735,7 @@ impl SettingsManager {
             field,
             &serde_json::Value::Array(array),
         );
-        self.merged = deep_merge(&self.global, &self.project);
+        self.rederive_merged();
         self.refresh_workspace_trust();
     }
 
@@ -965,7 +1102,12 @@ impl SettingsManager {
     /// archived when EITHER fires; `None` on a field disables that rule.
     #[must_use]
     pub fn get_session_archive_policy(&self) -> SessionArchivePolicy {
-        let max_age_days = match &self.global.session_archive_max_age_days {
+        let max_age_days = match self
+            .global
+            .session_archive_max_age_days
+            .as_ref()
+            .or(self.claude_layer.cleanup_period_days.as_ref())
+        {
             Some(serde_json::Value::String(text)) if text == "off" || text == "none" => None,
             Some(serde_json::Value::Number(number)) => Some(
                 number
@@ -1163,6 +1305,11 @@ impl SettingsManager {
     /// outside the untrusted-safe list.
     #[must_use]
     pub fn get_status_line(&self) -> Option<&serde_json::Value> {
+        // `disableAllHooks` turns the status line command off too (Claude
+        // Code's rule).
+        if self.disable_all_hooks().is_some() {
+            return None;
+        }
         self.merged.status_line.as_ref()
     }
 
@@ -1179,6 +1326,19 @@ impl SettingsManager {
     /// `permissions` object is a typed field or an unknown key.
     #[must_use]
     pub fn get_additional_directories(&self, cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut directories = self.own_additional_directories(cwd);
+        // Claude Code's lists join (its arrays merge across scopes).
+        if let (Some(claude), Some(paths)) = (&self.claude_code, &self.claude_paths) {
+            for directory in claude.additional_directories(paths) {
+                if !directories.contains(&directory) {
+                    directories.push(directory);
+                }
+            }
+        }
+        directories
+    }
+
+    fn own_additional_directories(&self, cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
         let Ok(document) = serde_json::to_value(&self.merged) else {
             return Vec::new();
         };
@@ -1212,7 +1372,7 @@ impl SettingsManager {
     /// Write the global scope back (project scope is host-written, not
     /// user-set), then re-derive the effective settings.
     fn save_global(&mut self, fields: &[&'static str]) -> Result<()> {
-        self.merged = deep_merge(&self.global, &self.project);
+        self.rederive_merged();
         self.pending_global_fields.extend(fields.iter().copied());
         if let Some(message) = &self.global_load_error {
             self.errors.push(SettingsError {

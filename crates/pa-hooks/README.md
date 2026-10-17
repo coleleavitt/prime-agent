@@ -7,7 +7,14 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 ## Scope
 
 - **Settings:** `hooks` in `<agent dir>/settings.json`, then in a trusted project's `.prime/agent/settings.json`
-  (`hooks` is a gated key, so an untrusted project contributes none). Settings are read once per session.
+  (`hooks` is a gated key, so an untrusted project contributes none). With `"claudeCodeSettings": true` in the user
+  settings, Claude Code's files follow (read through `pa_core::settings::claude_code`): `~/.claude/settings.json`,
+  a trusted project's `.claude/settings.json` and `.claude/settings.local.json`, then the managed settings. Every
+  command carries its source (`HookSource`): warnings, a refusal without a reason (`blocked by hook "x" from Claude
+  Code project settings`) and a Claude Code hook's `asyncRewake` notice name it. Settings are read once per session.
+- **Switches:** `disableAllHooks: true` (this agent's settings or Claude Code's) turns every hook off, except the
+  managed ones unless the managed settings set it; the managed `allowManagedHooksOnly: true` keeps only the managed
+  hooks. Claude Code's `env` is in every hook command's environment.
 - **Input:** every event gets Claude Code's base fields (`session_id`, `transcript_path` (empty), `cwd`,
   `hook_event_name`, `permission_mode` (`default`)) plus its own:
 

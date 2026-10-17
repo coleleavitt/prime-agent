@@ -294,17 +294,74 @@ Memory is one of several persistence mechanisms available to you as you assist t
 /// `# auto memory` section, with the index appended).
 #[must_use]
 pub fn memory_prompt_section(memory: &AutoMemory) -> String {
-    let dir = memory.dir.display().to_string().replace('\\', "/");
-    let index_body = if memory.index.is_empty() {
+    render_memory_section(&MemorySection {
+        title: "auto memory",
+        dir: &memory.dir,
+        index: &memory.index,
+        extra_guidelines: &[],
+        read_only: false,
+    })
+}
+
+/// One memory section of the system prompt (Claude Code's memory prompt
+/// builder): the auto memory and an agent's persistent memory share it.
+#[derive(Debug, Clone, Copy)]
+pub struct MemorySection<'a> {
+    /// The heading (`auto memory`, `Persistent Agent Memory`).
+    pub title: &'a str,
+    pub dir: &'a Path,
+    /// The capped index text; empty when there is none.
+    pub index: &'a str,
+    /// Lines appended after the guidance (an agent memory's scope note).
+    pub extra_guidelines: &'a [String],
+    /// The memory cannot be written this session: its index was not read
+    /// (a link or a special file, or a folder outside the working copy),
+    /// and the model is told not to write there.
+    pub read_only: bool,
+}
+
+/// Render a [`MemorySection`].
+#[must_use]
+pub fn render_memory_section(section: &MemorySection<'_>) -> String {
+    let MemorySection {
+        title,
+        dir,
+        index,
+        extra_guidelines,
+        read_only,
+    } = *section;
+    let dir = dir.display().to_string().replace('\\', "/");
+    let extras = if extra_guidelines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n\n", extra_guidelines.join("\n"))
+    };
+    if read_only {
+        return format!(
+            "# {title}\n\n\
+             You have a persistent, file-based memory system at `{dir}`. This memory is read-only \
+             this session: you cannot save new memories to it.\n\n\
+             {TYPES_SECTION}\n\n\
+             {NOT_TO_SAVE}\n\n\
+             {WHEN_TO_ACCESS}\n\n\
+             {extras}\
+             ## {MEMORY_INDEX}\n\n\
+             Your {MEMORY_INDEX} was not loaded: it or its folder is a link or a special file, or \
+             could not be verified to be inside this working copy. Treat this agent memory as \
+             read-only in this session: do not create or write {MEMORY_INDEX} or other files in \
+             its folder."
+        );
+    }
+    let index_body = if index.is_empty() {
         format!(
             "Your {MEMORY_INDEX} is currently empty. When you save new memories, they will appear \
              here."
         )
     } else {
-        memory.index.clone()
+        index.to_string()
     };
     format!(
-        "# auto memory\n\n\
+        "# {title}\n\n\
          You have a persistent, file-based memory system at `{dir}`. This directory already \
          exists: write to it directly from Python (`pathlib.Path.write_text`) or with `edit` (do \
          not run mkdir or check for its existence).\n\n\
@@ -334,6 +391,7 @@ pub fn memory_prompt_section(memory: &AutoMemory) -> String {
          - Do not write duplicate memories. First check if there is an existing memory you can \
          update before writing a new one.\n\n\
          {WHEN_TO_ACCESS}\n\n\
+         {extras}\
          ## {MEMORY_INDEX}\n\n\
          {index_body}"
     )

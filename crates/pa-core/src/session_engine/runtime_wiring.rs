@@ -279,6 +279,17 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
     )])
 }
 
+/// The settings' session environment under the kernel's own overrides: a
+/// settings file cannot point the kernel at another agent dir.
+pub(crate) fn kernel_base_env(
+    agent_dir: &std::path::Path,
+    settings_env: Vec<(String, String)>,
+) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = settings_env.into_iter().collect();
+    env.extend(kernel_env_overrides(agent_dir));
+    env
+}
+
 /// Build the kernel provisioner for a session: host handlers for the goal/heartbeat bridge
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
@@ -288,7 +299,9 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
 /// `PRIME_AGENT_SCRATCHPAD` and `PRIME_AGENT_TASKS_DIR` (see [`super::scratch`]). `cwd` is the
 /// SESSION's working directory.
 /// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
-/// `create_session`, not the kernel boot.
+/// `create_session`, not the kernel boot. `settings_env` is the session environment the
+/// settings set (Claude Code's `env`, behind its opt-in): the kernel and every command it
+/// runs get it, and the harness's own variables above win over it.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
 #[must_use]
 pub fn kernel_provisioner(
@@ -309,8 +322,9 @@ pub fn kernel_provisioner(
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanMode,
     sandbox: Option<crate::os_sandbox::SessionSandbox>,
+    settings_env: Vec<(String, String)>,
 ) -> Arc<KernelProvisioner> {
-    let mut env = kernel_env_overrides(agent_dir);
+    let mut env = kernel_base_env(agent_dir, settings_env);
     env.extend(kernel_harness_env(
         agent_dir,
         session_artifact_dir.as_deref(),
@@ -595,6 +609,33 @@ mod tests {
         assert_eq!(
             (other.is_busy_after_interrupt(), other.message()),
             (false, "Kernel has been shut down".to_string())
+        );
+    }
+
+    /// Claude Code's `env` reaches the kernel; the kernel's own agent dir
+    /// still wins.
+    #[test]
+    fn the_settings_environment_reaches_the_kernel_under_its_own_variables() {
+        let agent_dir = std::path::Path::new("/agent");
+        let env = kernel_base_env(
+            agent_dir,
+            vec![
+                ("FEATURE_FLAG".to_string(), "on".to_string()),
+                (
+                    "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+                    "/elsewhere".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(
+            env,
+            HashMap::from([
+                ("FEATURE_FLAG".to_string(), "on".to_string()),
+                (
+                    "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+                    "/agent".to_string()
+                ),
+            ])
         );
     }
 }

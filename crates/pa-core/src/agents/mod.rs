@@ -10,10 +10,12 @@
 //! out, and hands the definition to the child session. The child persists
 //! it as one durable [`AGENT_DEFINITION_ENTRY_TYPE`] custom entry, so a
 //! child revived from its session file (idle passivation, a worker
-//! restart) keeps running as the same agent.
+//! restart) keeps running as the same agent. A definition's `memory`
+//! scope gives the session a persistent agent memory ([`AgentMemory`]).
 
 mod definition;
 mod discovery;
+mod memory;
 mod policy;
 mod prompt;
 
@@ -25,6 +27,16 @@ pub use definition::{
     parse_agent_definition,
 };
 pub use discovery::{AgentCatalog, AgentSearch, PROJECT_AGENT_DIRS, discover_agents};
+pub use memory::{
+    AGENT_MEMORY_TITLE,
+    AgentMemory,
+    AgentMemoryRoots,
+    AgentMemoryScope,
+    agent_dir_name,
+    agent_prompt,
+    load_agent_memory,
+    memory_request,
+};
 pub use policy::{GatedTool, agent_tool_gate, allows, tools_summary};
 pub use prompt::{AGENT_LISTING_HEADING, agent_instructions, agent_listing, agent_listing_line};
 

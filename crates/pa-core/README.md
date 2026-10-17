@@ -46,7 +46,15 @@ cwd=)` resolves through `session_engine::rlm_spawn_agent`; an isolated
 child's worktree is a managed `worktree` (`agent-<id>` cut from `HEAD`,
 removed with the child only when unchanged). Child lifecycle notices
 (`session_engine::rlm_notices`) render Claude Code's agent
-`<task-notification>`.
+`<task-notification>`. A definition's `memory` scope (`user`, `project`,
+`local`) gives the session a persistent agent memory (`agents::memory`):
+`<agent dir>/agent-memory/<agent>/`, `<project>/.prime/agent-memory/<agent>/`
+or `<project>/.prime/agent-memory-local/<agent>/` (Claude Code's
+`~/.claude/agent-memory`, `.claude/agent-memory`, `.claude/agent-memory-local`
+directories in place when only they exist), its `MEMORY.md` index under
+Claude Code's "Persistent Agent Memory" instructions after the agent's own,
+and the directory writable under the OS sandbox; a project or local memory
+that leads out of the project is read-only. Auto memory's switches govern it.
 The in-process RLM host admits each child terminal notice through the parent
 session inbox: one fsynced JSONL row precedes live registration and child
 settlement. A child that replied settles only after its explicit reply row
@@ -160,6 +168,24 @@ matching scoped rules as a hidden `nested_instructions` row
 and the per-project auto-memory directory whose `MEMORY.md` index rides
 the `auto-memory` prompt segment. `/memory` lists both
 (`session_engine::memory_command`).
+
+Claude Code's settings files (`settings::claude_code`): one reader for the
+managed, `.claude/settings.local.json`, `.claude/settings.json` and
+`~/.claude/settings.json` files, with Claude Code's precedence and merge,
+behind the user-settings opt-in `claudeCodeSettings: true` (top level or in
+`permissions`). Project files apply only in a trusted workspace, and with
+the opt-in on their keys that run code or loosen the session (`hooks`,
+`statusLine`, `env`, `model`, `outputStyle`, `permissions.allow`,
+`defaultMode`, `additionalDirectories`) are part of the trust hash
+(`GatedItem::ClaudeSettings`). pa-permissions and pa-hooks read through it;
+`SettingsManager` layers `statusLine`, `outputStyle`, `model` (a full
+`claude-*` id as `anthropic` default, a soft preference), `cleanupPeriodDays`
+(the archive age) under this agent's own settings, joins
+`permissions.additionalDirectories`, hands `env` to the kernel (the
+harness's own variables win; a project file cannot set `HOME`/`XDG_*`; a
+`PATH`/`HOME` override is logged), and reads `disableAllHooks` (hooks and
+the status line command off). `includeCoAuthoredBy`/`attribution` have no
+counterpart: the system prompt has no git-commit section.
 
 OS sandbox (`os_sandbox`, enforcement in `pa-os-sandbox`): `SessionSandbox::resolve` reads
 the `sandbox` setting (off by default; a project scope only tightens it, so the key is

@@ -45,6 +45,9 @@ pub(super) struct TrustInputs {
     system_prompt: Option<PathBuf>,
     append_system_prompt: Option<PathBuf>,
     trees: Vec<(GatedItem, GatedTree)>,
+    /// With the Claude Code opt-in: each project `.claude/settings*.json`
+    /// file's keys that run code or loosen the session.
+    claude_settings: Vec<(String, serde_json::Map<String, Value>)>,
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -239,6 +242,7 @@ impl TrustInputs {
             system_prompt: file("SYSTEM.md"),
             append_system_prompt: file("APPEND_SYSTEM.md"),
             trees,
+            claude_settings: claude_settings(cwd, agent_dir),
         }
     }
 
@@ -247,6 +251,7 @@ impl TrustInputs {
             && self.system_prompt.is_none()
             && self.append_system_prompt.is_none()
             && self.trees.is_empty()
+            && self.claude_settings.is_empty()
     }
 
     pub(super) fn gated(&self) -> Vec<GatedItem> {
@@ -263,6 +268,14 @@ impl TrustInputs {
             gated.push(GatedItem::AppendSystemPrompt);
         }
         gated.extend(self.trees.iter().map(|(item, _)| item.clone()));
+        gated.extend(
+            self.claude_settings
+                .iter()
+                .map(|(file, keys)| GatedItem::ClaudeSettings {
+                    file: file.clone(),
+                    keys: keys.keys().cloned().collect(),
+                }),
+        );
         gated
     }
 
@@ -291,8 +304,52 @@ impl TrustInputs {
                 &tree_digest(&tree.root),
             );
         }
+        for (file, keys) in &self.claude_settings {
+            let mut keys = Value::Object(keys.clone());
+            sort_keys(&mut keys);
+            frame(
+                &mut hasher,
+                &format!("claude-settings:{file}"),
+                keys.to_string().as_bytes(),
+            );
+        }
         format!("sha256:{}", hex(&hasher.finalize()))
     }
+}
+
+/// The gated keys of the project's Claude Code settings files, when the
+/// user settings opt into them (a file that is the user's own
+/// `~/.claude/settings.json`, in a session at the home directory, is not
+/// the project's).
+fn claude_settings(cwd: &Path, agent_dir: &Path) -> Vec<(String, serde_json::Map<String, Value>)> {
+    use crate::settings::claude_code::{self, ClaudePaths, ClaudeScope};
+    if !claude_code::opted_in(agent_dir) {
+        return Vec::new();
+    }
+    let paths = ClaudePaths::resolve(cwd);
+    let user_file = paths
+        .file(ClaudeScope::User)
+        .and_then(|file| std::fs::canonicalize(file).ok());
+    let mut gated = Vec::new();
+    for (scope, shown) in [
+        (ClaudeScope::Project, ".claude/settings.json"),
+        (ClaudeScope::Local, ".claude/settings.local.json"),
+    ] {
+        let Some(path) = paths.file(scope) else {
+            continue;
+        };
+        if user_file.is_some() && std::fs::canonicalize(&path).ok() == user_file {
+            continue;
+        }
+        let Ok(Some(document)) = claude_code::read_document(&path) else {
+            continue;
+        };
+        let keys = claude_code::gated_subset(&document);
+        if !keys.is_empty() {
+            gated.push((shown.to_string(), keys));
+        }
+    }
+    gated
 }
 
 fn frame(hasher: &mut Sha256, label: &str, bytes: &[u8]) {

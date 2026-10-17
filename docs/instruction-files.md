@@ -82,6 +82,28 @@ already has (Python file writes, `edit`); there is no memory API.
 Auto memory is on for top-level sessions; subagents do not get it. Turn it off with `"autoMemoryEnabled": false`
 in settings, `PRIME_AGENT_DISABLE_AUTO_MEMORY=1`, or `--no-context-files`.
 
+## Agent memory
+
+An agent definition (`.claude/agents/*.md`, `.prime/agents/*.md`) may declare `memory: user | project | local`
+(Claude Code's frontmatter). A session running as that agent gets a persistent memory of its own, the same
+memory system as auto memory under the heading `# Persistent Agent Memory` (code: `crates/pa-core/src/agents/memory.rs`):
+
+| scope | directory | Claude Code's directory (used in place when only it exists) |
+|---|---|---|
+| `user` | `<agent dir>/agent-memory/<agent>/` | `~/.claude/agent-memory/<agent>/` |
+| `project` | `<project>/.prime/agent-memory/<agent>/` | `<project>/.claude/agent-memory/<agent>/` |
+| `local` | `<project>/.prime/agent-memory-local/<agent>/` | `<project>/.claude/agent-memory-local/<agent>/` |
+
+`<agent>` is the agent type with every character outside `A-Za-z0-9-_` replaced by `-`; `<project>` is auto
+memory's project root (a worktree's main checkout). Keep `.prime/agent-memory-local/` out of version control. The
+directory is created at session start and is writable under the OS sandbox; its `MEMORY.md` (capped like auto
+memory's) follows the agent's instructions at the end of the system prompt, with Claude Code's scope line ("keep
+learnings general" for `user`, "tailor your memories to this project" for `project`, "... and machine" for `local`).
+A restricted `tools` list gains `Read`, `Write` and `Edit`, as in Claude Code. A `project` or `local` directory that
+resolves outside the project, or whose `MEMORY.md` is a link or a special file, is read-only for the session (not
+read, not created, not opened by the sandbox, and the prompt says so). Auto memory's switches turn agent memory off
+too; it applies to subagents (a spawned agent is where definitions run).
+
 ## `/memory`
 
 Lists the files loaded at session start (kind, and the importing file for imports), the files delivered since,
