@@ -17,7 +17,15 @@ SDK `rmcp` over stdio child processes and streamable HTTP): one
 `McpSessions` per agent session behind the `mcp.session.*` /
 `mcp.integration.*` host requests the kernel's `rlm.mcp` and
 `rlm.McpIntegration` thin clients send; connections outlive kernel restarts
-and close on reload, config change, idle, and session end. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive; the kernel's `bash()` commands are checked and run host-side by `pa-bash`, served as native `bash.*` host requests from one job table per kernel manager, answered for the activity view without a kernel round trip, started under the kernel's own prepared OS sandbox, and killed with the kernel), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings), session manager (persist/resume). Autonomous mode
+and close on reload, config change, idle, and session end. Declared servers
+(`mcp/declared/`, [docs/mcp-json.md](../../docs/mcp-json.md)): Claude Code's
+`.mcp.json` files from the filesystem root down to the working directory and,
+opted in, `~/.claude.json`'s user and local servers, merged with the settings'
+`mcpServers` (settings > local > project > user), parsed with Claude Code's
+validation and `${VAR}` / `${VAR:-default}` expansion; a project server runs
+once approved (`enabledMcpjsonServers` / `disabledMcpjsonServers` /
+`enableAllProjectMcpServers`, the agent dir's `mcp-project-choices.json`), and
+`ask_pending_project_servers` asks through the confirmation surface. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive; the kernel's `bash()` commands are checked and run host-side by `pa-bash`, served as native `bash.*` host requests from one job table per kernel manager, answered for the activity view without a kernel round trip, started under the kernel's own prepared OS sandbox, and killed with the kernel), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings), session manager (persist/resume). Autonomous mode
 (`autonomous`): runtime state with limit normalization, continuation and
 gate-failure texts, shell quality gates with retry windows and git
 worktree snapshotting, and the `AutonomousDriver` policy trait a turn
