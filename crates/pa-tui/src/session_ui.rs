@@ -18,6 +18,7 @@ mod notes;
 mod panels;
 mod prompt;
 mod queue;
+mod rewind;
 mod search;
 mod sessions_fork;
 mod settings;

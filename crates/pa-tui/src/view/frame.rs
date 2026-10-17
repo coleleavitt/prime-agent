@@ -121,6 +121,7 @@ impl AgentView {
         // (TS `showSelector`): an auto-height pane over the dock's rows.
         let selector_dock: Option<Vec<Line>> = if self.tree_selector.is_some()
             || self.fork_selector.is_some()
+            || self.rewind_selector.is_some()
             || self.share_loader.is_some()
             || self.confirm.is_some()
             || self.provider_auth.is_some()
@@ -134,6 +135,8 @@ impl AgentView {
             if let Some(selector) = self.tree_selector.as_ref() {
                 dock.extend(selector.render(&self.theme, width, self.editor.keybindings()));
             } else if let Some(selector) = self.fork_selector.as_ref() {
+                dock.extend(selector.render(&self.theme, width, self.editor.keybindings()));
+            } else if let Some(selector) = self.rewind_selector.as_ref() {
                 dock.extend(selector.render(&self.theme, width, self.editor.keybindings()));
             } else if let Some(loader) = self.share_loader.as_ref() {
                 dock.extend(self.render_share_loader(loader, width));
@@ -305,6 +308,7 @@ impl AgentView {
             || self.info_panel.is_some()
             || self.tree_selector.is_some()
             || self.fork_selector.is_some()
+            || self.rewind_selector.is_some()
             || self.share_loader.is_some()
             || self.confirm.is_some()
             || self.provider_auth.is_some()

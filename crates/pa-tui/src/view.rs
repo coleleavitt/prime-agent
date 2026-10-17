@@ -89,6 +89,8 @@ pub struct AgentView {
     pub provider_auth: Option<crate::provider_auth::ProviderAuthSelector>,
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,
     pub fork_selector: Option<crate::user_message_selector::UserMessageSelector>,
+    /// The `/rewind` picker (Esc Esc on an empty editor).
+    pub rewind_selector: Option<crate::rewind_selector::RewindSelector>,
     /// The `/effort` inline picker (TS
     /// `ThinkingSelectorComponent` seam): while set, it owns the whole frame
     /// like the model picker.
@@ -283,6 +285,7 @@ impl AgentView {
             || self.goal_panel.is_some()
             || self.info_panel.is_some()
             || self.fork_selector.is_some()
+            || self.rewind_selector.is_some()
             || self.confirm.is_some()
             || self.share_loader.is_some()
             || self.reload_box.is_some()
@@ -321,6 +324,7 @@ impl AgentView {
             provider_auth: None,
             auth_panel: None,
             fork_selector: None,
+            rewind_selector: None,
             choice_picker: None,
             harness_selector: None,
             mcp_view: None,

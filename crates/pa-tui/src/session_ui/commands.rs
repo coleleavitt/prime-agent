@@ -246,6 +246,13 @@ impl SessionUi {
                     }
                 }
             }
+            "rewind" => {
+                if resolved.args.is_empty() {
+                    self.open_rewind_or_tree(view).await?;
+                } else {
+                    self.note("Usage: /rewind", view);
+                }
+            }
             "tree" => {
                 if resolved.args.is_empty() {
                     self.track_feature_outcome("tree", "initiated", None);
