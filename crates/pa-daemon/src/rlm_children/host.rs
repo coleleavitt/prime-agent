@@ -168,7 +168,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
                 let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
-                let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
+                // `cwd=` or the child's worktree, else the parent's.
+                let cwd = request
+                    .cwd
+                    .clone()
+                    .or_else(|| identity.cwd.clone())
+                    .unwrap_or_else(|| "/".to_string());
                 let mut runtime_metadata = json!({
                     "kind": "subagent",
                     "rlmChildId": child_id,
@@ -179,6 +184,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // The grant the spawn drew funds the child (upstream #1192).
                 if let Some(grant) = request.token_budget {
                     runtime_metadata["rlmTokenAllowance"] = json!(grant);
+                }
+                if let Some(definition) = &request.agent {
+                    runtime_metadata["agentType"] = json!(definition.name);
                 }
                 let created = match this
                     .create_child(
@@ -199,6 +207,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         // process, so the spawn forwards the parent
                         // worker's env (filtered) instead.
                         Some(pa_types::daemon::launch_env::collect_process_launch_env()),
+                        request.agent.as_ref(),
                     )
                     .await
                 {
@@ -241,6 +250,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                     last_emitted_status: None,
                     rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                    worktree: request.worktree.clone(),
                 };
                 let record = Arc::new(Mutex::new(record));
                 this.children.lock().await.push(Arc::clone(&record));
@@ -616,6 +626,27 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // The final observation landed: the registration drops.
             let usage_persisted = this.forget_child_usage(&record).await;
             this.finish_retirement(&record).await;
+            // The deleted child's worktree goes with it unless it holds work
+            // (uncommitted changes or commits): that one stays for the parent.
+            let worktree = record.lock().await.worktree.take();
+            if let Some(worktree) = worktree {
+                let path = worktree.path.clone();
+                match tokio::task::spawn_blocking(move || {
+                    pa_core::git_worktree::remove_worktree_if_unchanged(&worktree)
+                })
+                .await
+                {
+                    Ok(Ok(_removed_or_kept)) => {}
+                    Ok(Err(error)) => eprintln!(
+                        "pa-daemon: the deleted child's worktree {} stays: {error:#}",
+                        path.display()
+                    ),
+                    Err(error) => eprintln!(
+                        "pa-daemon: the deleted child's worktree {} stays: {error}",
+                        path.display()
+                    ),
+                }
+            }
             let entry = {
                 let record = record.lock().await;
                 SupervisorChildSessions::entry(&record)

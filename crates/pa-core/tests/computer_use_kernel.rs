@@ -208,6 +208,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         daemonless: true,
         rlm_token_allowance: None,
         sandbox_mode: None,
+        agent_definition: None,
     })
     .await
     .expect("create_session");

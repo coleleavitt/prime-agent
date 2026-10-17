@@ -101,7 +101,7 @@ async fn spawn_gated_supervisor(
                             }
                             response_success(Some(&id), command_type, None)
                         }
-                        "follow_up" => response_success(
+                        "steer" => response_success(
                             Some(&id),
                             command_type,
                             Some(json!({ "queued": true })),
@@ -171,6 +171,9 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         target: RlmSpawnTarget::Local,
         spawned_by_request_id: None,
         token_budget: None,
+        cwd: None,
+        agent: None,
+        worktree: None,
     }
 }
 
@@ -536,4 +539,61 @@ async fn a_child_create_inherits_the_parents_sandbox_override() {
         let _ = spawned.await.expect("spawn task");
     }
     assert_eq!(seen, vec![Value::Null, json!("read-only")]);
+}
+
+/// A typed-agent, worktree-isolated spawn: the create carries the agent
+/// definition (the worker appends its instructions and gates its tools)
+/// and runs the child in its worktree; the delete removes the unchanged
+/// worktree with the child.
+#[tokio::test]
+async fn an_agent_spawn_carries_its_definition_and_its_worktree_goes_with_the_delete() {
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions =
+        sessions_with_gated_supervisor(create_seen_tx, verdict_rx, rename_seen_tx, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    pa_core::git_env::run_fixture_git(repo.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.path().join("f.txt"), "x\n").unwrap();
+    pa_core::git_env::run_fixture_git(repo.path(), &["add", "."]);
+    pa_core::git_env::run_fixture_git(repo.path(), &["commit", "-q", "-m", "init"]);
+    let worktree = pa_core::git_worktree::create_worktree(repo.path(), "agent-t1").unwrap();
+    let definition = pa_core::agents::parse_agent_definition(
+        "---\nname: reviewer\ndescription: Reviews\ntools: Read\n---\nReview it.",
+        std::path::Path::new("reviewer.md"),
+        pa_core::agents::AgentSource::Project,
+    )
+    .unwrap();
+    let request = RlmSpawnRequest {
+        cwd: Some(worktree.path.to_string_lossy().to_string()),
+        agent: Some(definition.clone()),
+        worktree: Some(worktree.clone()),
+        ..spawn_request("rev", "review the diff")
+    };
+
+    let spawned = tokio::spawn(sessions.spawn(request));
+    let create = create_seen_rx.recv().await.expect("the create");
+    verdict_tx.send(true).expect("admit the create");
+    spawned.await.expect("spawn task").expect("spawn admission");
+    assert_eq!(
+        (
+            create["config"]["cwd"].clone(),
+            create["config"]["agentDefinition"].clone(),
+            create["runtimeMetadata"]["agentType"].clone(),
+        ),
+        (
+            json!(worktree.path.to_string_lossy()),
+            serde_json::to_value(&definition).unwrap(),
+            json!("reviewer"),
+        )
+    );
+
+    sessions
+        .delete_subagent("rev".to_string())
+        .await
+        .expect("delete the child");
+    assert!(
+        !worktree.path.exists(),
+        "the unchanged worktree is removed with the child"
+    );
 }

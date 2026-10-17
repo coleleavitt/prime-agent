@@ -165,6 +165,7 @@ impl SupervisorChildSessionsInner {
                 // A delegated child runs in the parent worker's env, as an
                 // `rlm.spawn` child does.
                 Some(pa_types::daemon::launch_env::collect_process_launch_env()),
+                /*agent_definition*/ None,
             )
             .await
         {
@@ -214,6 +215,7 @@ impl SupervisorChildSessionsInner {
             pending_usage_report: None,
             last_emitted_status: None,
             answer_text: None,
+            worktree: None,
         }));
         self.children.lock().await.push(Arc::clone(&record));
         self.refresh_running().await;

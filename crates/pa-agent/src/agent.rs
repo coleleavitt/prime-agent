@@ -1423,6 +1423,18 @@ impl Agent {
             .enqueue(message.into(), false);
     }
 
+    /// Queue a host-written batch (a notice, an agent message) to be
+    /// injected after the current assistant turn finishes. Unlike
+    /// [`Agent::steer`], an abort does not park it with the user's rows: it
+    /// keeps driving the session, like a batch the admission seam enqueued.
+    pub fn steer_host(&self, message: impl Into<AgentMessageBatch>) {
+        self.inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .enqueue(message.into(), true);
+    }
+
     /// Queue a message batch to run only after the agent would otherwise stop.
     pub fn follow_up(&self, message: impl Into<AgentMessageBatch>) {
         self.inner

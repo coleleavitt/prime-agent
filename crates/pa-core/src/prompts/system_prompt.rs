@@ -97,6 +97,9 @@ pub struct BuildSystemPromptOptions<'a> {
     pub generic_mcp_servers: Vec<String>,
     /// The OS sandbox's one environment line (`None`: sandbox off, no line).
     pub sandbox: Option<String>,
+    /// The typed agent definitions `rlm.spawn(agent=...)` can run
+    /// ([`crate::agents::agent_listing`]); `None` lists none.
+    pub agent_listing: Option<String>,
 }
 
 /// Build the system prompt (assembled text only).
@@ -152,7 +155,7 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
 
     // The dynamic tail, in fixed order: packages -> project context ->
     // skills inventory -> MCP servers -> environment -> session role ->
-    // additional guidance -> appended prompt.
+    // agent types -> appended prompt.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
@@ -213,6 +216,16 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
             "RLM recursion state",
             role,
         ));
+    }
+
+    if let Some(listing) = options.agent_listing.as_deref() {
+        if has_ipython && !listing.is_empty() {
+            segments.push(PromptSegment::dynamic_segment(
+                "agent-types",
+                "agent definitions",
+                listing.to_string(),
+            ));
+        }
     }
 
     if let Some(extra) = options.append_system_prompt.as_deref() {

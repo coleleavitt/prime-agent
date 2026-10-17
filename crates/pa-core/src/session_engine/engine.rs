@@ -121,6 +121,10 @@ pub struct SessionEngineConfig {
     /// `--sandbox <mode>`: replaces the `sandbox` setting's mode for this run (`off` included).
     /// `None` keeps the setting.
     pub sandbox_mode: Option<crate::os_sandbox::SandboxMode>,
+    /// The typed agent definition this session runs as (an
+    /// `rlm.spawn(agent=...)` child): its instructions end the system
+    /// prompt and its tool scope gates the kernel's host requests.
+    pub agent_definition: Option<crate::agents::AgentDefinition>,
 }
 
 pub struct SessionEngine {
@@ -531,11 +535,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Installed features review every kernel host request (the kernel's
     // `bash()` included) before it is dispatched; later registrations keep
     // the gate.
-    if let Some(gate) = crate::features::host_request_gate(
+    let feature_gate = crate::features::host_request_gate(
         crate::features::installed(),
         &feature_context,
         &feature_notes,
-    ) {
+    );
+    // An agent's tool scope refuses first, then the features review.
+    let gate = match &config.agent_definition {
+        Some(definition) => {
+            crate::agents::agent_tool_gate(definition, feature_gate.clone()).or(feature_gate)
+        }
+        None => feature_gate,
+    };
+    if let Some(gate) = gate {
         handlers.set_gate(gate);
     }
     // The `system_router.run` host handler the bundled system-router skill
@@ -818,6 +830,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &model_prompts.errors,
             ));
     }
+    // The agent types a spawn can run: listed only where spawning works
+    // (a host is wired and the session's own scope allows it).
+    let agent_listing = (config.rlm_subagent_host.is_some()
+        && config.allow_recursion != Some(false)
+        && config.agent_definition.as_ref().is_none_or(|definition| {
+            crate::agents::allows(definition, crate::agents::GatedTool::Agent)
+        }))
+    .then(|| {
+        crate::agents::agent_listing(&crate::agents::discover_agents(
+            &crate::agents::AgentSearch::for_session(&cwd, &config.agent_dir),
+        ))
+    })
+    .flatten();
     let system_prompt = crate::prompts::system_prompt::build_system_prompt(
         &crate::prompts::system_prompt::BuildSystemPromptOptions {
             custom_prompt: resources.system_prompt.clone(),
@@ -844,7 +869,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             daemonless: config.daemonless,
             can_spawn: config.rlm_subagent_host.is_some(),
             generic_mcp_servers,
-            append_system_prompt: Some(resources.append_system_prompt.join("\n\n")),
+            append_system_prompt: Some(
+                resources
+                    .append_system_prompt
+                    .iter()
+                    .cloned()
+                    .chain(
+                        config
+                            .agent_definition
+                            .as_ref()
+                            .map(crate::agents::agent_instructions),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ),
+            agent_listing,
             sandbox: sandbox
                 .as_ref()
                 .map(crate::os_sandbox::SessionSandbox::prompt_line),

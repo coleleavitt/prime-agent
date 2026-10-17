@@ -123,7 +123,14 @@ pub(super) async fn fold_queued_steers(fold: &dyn SteeringFold, slot: &FoldAdmis
         };
         match admitted {
             Ok(batch) => {
-                agent.steer(batch);
+                // A host row (a notice, an agent message) keeps driving the
+                // session if the run is aborted before it is read; a user's
+                // steer parks with the user's rows.
+                if steer.custom.is_some() {
+                    agent.steer_host(batch);
+                } else {
+                    agent.steer(batch);
+                }
                 fold.settled(steer, Ok(()));
             }
             Err(reason) => fold.settled(steer, Err(reason)),

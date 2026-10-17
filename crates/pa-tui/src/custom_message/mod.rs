@@ -449,14 +449,35 @@ fn agent_message_entry(details: &Value) -> Option<ChatEntry> {
 
 /// One RLM child status notice (`rlm_child_terminal_notice` /
 /// `rlm_child_failure`) as the subagent-mail row: the child that exited is
-/// the mail's counterpart, the notice text is the body (the full content,
-/// header included, so the outcome wording rides intact).
+/// the mail's counterpart. The body is the notice's one-line `summary` and
+/// its outcome text (the last assistant text, the cancel reason or the
+/// error) when the details carry them (the model reads the row's
+/// `<task-notification>`); an older row without a summary shows its full
+/// content, header included, so the outcome wording rides intact.
 fn rlm_child_status_row(message: &Value, details: &Value) -> AgentMessageRow {
     let content = custom_content_text(message);
+    let summary = details
+        .get("summary")
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.is_empty());
+    let body = match summary {
+        Some(summary) => {
+            let outcome = ["lastAssistantTextPreview", "reason", "error"]
+                .iter()
+                .find_map(|key| details.get(*key).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|outcome| !outcome.is_empty());
+            match outcome {
+                Some(outcome) => format!("{summary}\n\n{outcome}"),
+                None => summary.to_string(),
+            }
+        }
+        None => content.clone(),
+    };
     AgentMessageRow {
         direction: AgentMessageDirection::Received,
         counterpart: rlm_child_session_name(details, &content),
-        message: content,
+        message: body,
     }
 }
 
@@ -849,6 +870,46 @@ mod tests {
                 if row.counterpart == "legacy-worker"
                     && row.message == "[child-failed child:legacy-worker]\n\nspawn failed"
         ));
+    }
+
+    /// A child's `<task-notification>` row shows its summary and outcome,
+    /// never the notification markup the model reads.
+    #[test]
+    fn rlm_child_task_notification_rows_show_the_summary_and_outcome() {
+        let body = |custom_type: &str, details: serde_json::Value| {
+            let entries = decoded(&json!({
+                "role": "custom",
+                "customType": custom_type,
+                "content": "<task-notification>\n<task-id>sub-1</task-id>\n</task-notification>",
+                "display": true,
+                "details": details,
+            }));
+            match entries.as_slice() {
+                [ChatEntry::AgentMessage(row)] => row.message.clone(),
+                other => panic!("{custom_type} must decode to the agent-message class: {other:?}"),
+            }
+        };
+        assert_eq!(
+            [
+                body(
+                    RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" finished without replying", "lastAssistantTextPreview": "done" }),
+                ),
+                body(
+                    RLM_CHILD_FAILURE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" failed", "error": "boom" }),
+                ),
+                body(
+                    RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" was cancelled", "reason": null }),
+                ),
+            ],
+            [
+                "Agent \"kid\" finished without replying\n\ndone".to_string(),
+                "Agent \"kid\" failed\n\nboom".to_string(),
+                "Agent \"kid\" was cancelled".to_string(),
+            ]
+        );
     }
 
     /// The unavailable-skills row decodes the failed names and keeps the

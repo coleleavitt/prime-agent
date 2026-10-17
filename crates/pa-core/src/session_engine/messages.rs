@@ -86,9 +86,15 @@ pub struct TaskNotification<'a> {
     pub summary: &'a str,
     pub tool_use_id: Option<&'a str>,
     pub output_file: Option<&'a str>,
+    /// One line of guidance read before the result (Claude Code's
+    /// `<note>`).
+    pub note: Option<&'a str>,
     /// A short result or error; trimmed and bounded to
     /// [`TASK_NOTIFICATION_RESULT_MAX_BYTES`].
     pub result: Option<&'a str>,
+    /// Pre-rendered elements after the result (an agent's `<usage>` and
+    /// `<worktree>`), one per line, emitted verbatim.
+    pub trailer: Option<&'a str>,
 }
 
 /// Render one [`TaskNotification`]:
@@ -101,7 +107,9 @@ pub struct TaskNotification<'a> {
 /// [<output-file>…</output-file>]
 /// <status>…</status>
 /// <summary>…</summary>
+/// [<note>…</note>]
 /// [<result>…</result>]
+/// [trailer]
 /// </task-notification>
 /// ```
 ///
@@ -130,8 +138,19 @@ pub fn task_notification(notice: &TaskNotification<'_>) -> String {
     }
     field("status", notice.status.trim());
     field("summary", notice.summary.trim());
+    if let Some(note) = notice.note.map(str::trim).filter(|note| !note.is_empty()) {
+        field("note", note);
+    }
     if let Some(result) = notice.result.map(str::trim).filter(|body| !body.is_empty()) {
         field("result", &bounded_result(result));
+    }
+    if let Some(trailer) = notice
+        .trailer
+        .map(str::trim)
+        .filter(|lines| !lines.is_empty())
+    {
+        text.push_str(trailer);
+        text.push('\n');
     }
     text.push_str("</task-notification>");
     text
@@ -1215,7 +1234,9 @@ state
             summary: "Factory run \"x\" failed\n",
             tool_use_id: Some("toolu_1"),
             output_file: Some("/tmp/out.log"),
+            note: Some(" read it "),
             result: Some("  boom  "),
+            trailer: Some("<usage><duration_ms>5</duration_ms></usage>\n"),
         });
         assert_eq!(
             text,
@@ -1226,7 +1247,9 @@ state
              <output-file>/tmp/out.log</output-file>\n\
              <status>failed</status>\n\
              <summary>Factory run \"x\" failed</summary>\n\
+             <note>read it</note>\n\
              <result>boom</result>\n\
+             <usage><duration_ms>5</duration_ms></usage>\n\
              </task-notification>"
         );
         let bare = task_notification(&TaskNotification {
@@ -1236,7 +1259,9 @@ state
             summary: "done",
             tool_use_id: Some(""),
             output_file: None,
+            note: None,
             result: Some("   "),
+            trailer: None,
         });
         assert_eq!(
             bare,
@@ -1255,7 +1280,9 @@ state
             summary: "s",
             tool_use_id: None,
             output_file: None,
+            note: None,
             result: Some(&long),
+            trailer: None,
         });
         let body = text
             .split("<result>")

@@ -109,6 +109,10 @@ pub(crate) struct CreateSessionResources {
     /// `--sandbox <mode>` (wire name): the OS sandbox mode for this session
     /// over the `sandbox` setting. Validated at create.
     pub(crate) sandbox: Option<String>,
+    /// The typed agent definition an `rlm.spawn(agent=...)` child runs as;
+    /// the first build persists it into the session file, which a revived
+    /// worker reads it back from.
+    pub(crate) agent_definition: Option<pa_core::agents::AgentDefinition>,
 }
 
 impl CreateSessionResources {

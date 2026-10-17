@@ -186,7 +186,7 @@ mod tests {
         let catalog = discover_agents(&AgentSearch {
             cwd: cwd.clone(),
             agent_dir: agent_dir.clone(),
-            home: Some(home.clone()),
+            home: Some(home),
         });
         let found: Vec<(String, String, AgentSource)> = catalog
             .agents
@@ -241,7 +241,7 @@ mod tests {
         write(&cwd.join(".prime/agents/a.md"), "here", "d");
         write(&root.path().join(".prime/agents/b.md"), "parent", "d");
         let search = AgentSearch {
-            cwd: cwd.clone(),
+            cwd,
             agent_dir: root.path().join("agent"),
             home: None,
         };

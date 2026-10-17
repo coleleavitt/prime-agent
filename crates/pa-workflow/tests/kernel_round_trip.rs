@@ -198,6 +198,7 @@ async fn the_runtime_round_trips_run_agent_through_the_rust_host() {
         factory_notices: None,
         daemonless: true,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .unwrap();

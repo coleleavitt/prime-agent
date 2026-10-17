@@ -76,6 +76,7 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
         emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         last_emitted_status: None,
         rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        worktree: None,
     }))
 }
 
@@ -953,10 +954,7 @@ async fn cancellation_after_ack_preserves_retirement(caller: RetirementCaller) {
             {
                 let traffic = commands.lock().unwrap();
                 assert_eq!(
-                    traffic
-                        .iter()
-                        .filter(|row| row["type"] == "follow_up")
-                        .count(),
+                    traffic.iter().filter(|row| row["type"] == "steer").count(),
                     1
                 );
             }
@@ -976,7 +974,7 @@ async fn cancellation_after_ack_preserves_retirement(caller: RetirementCaller) {
                     .lock()
                     .unwrap()
                     .iter()
-                    .filter(|row| row["type"] == "follow_up")
+                    .filter(|row| row["type"] == "steer")
                     .count(),
                 0
             );
@@ -1198,7 +1196,7 @@ impl RlmChildUsageSink for FinalWatcherSink {
                         .lock()
                         .unwrap()
                         .iter()
-                        .all(|command| command["type"] != "follow_up"),
+                        .all(|command| command["type"] != "steer"),
                     "the bounded final replay must precede the parent's terminal notice"
                 );
             }
@@ -1313,7 +1311,7 @@ async fn settled_watcher_replays_only_one_failed_final_interval(failure: FinalWa
             .lock()
             .unwrap()
             .iter()
-            .filter(|command| command["type"] == "follow_up")
+            .filter(|command| command["type"] == "steer")
             .count(),
         1
     );

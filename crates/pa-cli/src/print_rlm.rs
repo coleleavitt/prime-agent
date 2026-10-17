@@ -590,6 +590,17 @@ impl RlmSubagentHost for InlineHost {
             }
             let recipe = Arc::clone(&node.recipe);
             let config = &recipe.options.config;
+            // Every inline child shares the invocation's directory: a child
+            // placed elsewhere (`cwd=`, `isolation="worktree"`) needs the
+            // daemon's per-child workers.
+            if let Some(cwd) = request.cwd.as_deref() {
+                if std::path::Path::new(cwd) != config.cwd.as_path() {
+                    anyhow::bail!(
+                        "rlm.spawn cwd= and isolation=\"worktree\" need the daemon: a print run's \
+                         subagents share the session's directory"
+                    );
+                }
+            }
             let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
             let name = request.name.clone().unwrap_or_else(|| {
                 pa_core::kernel::rlm_runtime::create_default_rlm_subagent_session_name(
@@ -749,6 +760,7 @@ impl RlmSubagentHost for InlineHost {
                 spawned_by_request_id: request.spawned_by_request_id.clone(),
                 plan_mode: request.plan_mode,
                 token_budget: request.token_budget,
+                agent_definition: request.agent.clone(),
             };
             let headless = crate::print_runtime::build_engine(
                 &recipe.options,
@@ -1264,6 +1276,9 @@ mod tests {
             target: pa_core::session_engine::rlm_host::RlmSpawnTarget::Local,
             plan_mode: false,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         });
         std::future::poll_fn(|context| {
             assert!(spawn.as_mut().poll(context).is_pending());

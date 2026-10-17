@@ -250,7 +250,7 @@ mod tests {
                 worktree.branch.as_str(),
                 worktree.path.join("sub/file.txt").is_file(),
             ),
-            (root.clone(), "worktree-agent-x1", true)
+            (root, "worktree-agent-x1", true)
         );
         assert_eq!(
             std::fs::canonicalize(worktree_cwd(&worktree, &repo.path().join("sub"))).unwrap(),

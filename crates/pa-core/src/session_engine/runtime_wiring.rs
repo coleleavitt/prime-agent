@@ -144,6 +144,9 @@ pub fn wire_session_runtime(
         ),
         None => fallback_binding(),
     };
+    // `rlm.spawn(agent=..., cwd=..., isolation=...)` resolves against the
+    // session's directory.
+    let spawn_cwd = std::path::PathBuf::from(&binding.cwd);
     // An embedding-owned store replaces the engine-private one, so
     // kernel `rlm_heartbeat.*` writes reach the daemon catalog; the
     // private file store remains the embedded/standalone default.
@@ -208,6 +211,13 @@ pub fn wire_session_runtime(
         rlm_usage.clone(),
         rlm.progress_note_emit,
     ));
+    if !spawn_cwd.as_os_str().is_empty() {
+        let _ = rlm_bridge
+            .spawn_context
+            .set(super::rlm_spawn_agent::SpawnContext {
+                search: crate::agents::AgentSearch::for_session(&spawn_cwd, agent_dir),
+            });
+    }
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
     // The kernel's `rlm.harness` store calls.
     crate::refinement::store::register_host_handlers(&mut handlers);

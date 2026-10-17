@@ -37,8 +37,8 @@ use super::{
     anyhow,
     cap_text,
     compact_rlm_text,
-    create_rlm_child_failure_message,
-    create_rlm_child_terminal_notice,
+    create_rlm_child_failure_message_with,
+    create_rlm_child_terminal_notice_with,
     json,
     now_ms,
 };
@@ -112,6 +112,9 @@ impl SupervisorChildSessionsInner {
         runtime_metadata: Option<Value>,
         identity: &ParentIdentity,
         launch_env: Option<std::collections::BTreeMap<String, String>>,
+        // The typed agent the child runs as (`rlm.spawn(agent=...)`): the
+        // worker appends its instructions and gates its tool scope.
+        agent_definition: Option<&pa_core::agents::AgentDefinition>,
     ) -> Result<CreatedChild> {
         let mut config = json!({
             "cwd": cwd,
@@ -136,6 +139,10 @@ impl SupervisorChildSessionsInner {
         }
         if let Some(sandbox) = &identity.sandbox {
             config["sandbox"] = json!(sandbox);
+        }
+        if let Some(definition) = agent_definition {
+            config["agentDefinition"] = serde_json::to_value(definition)
+                .context("serialize the child's agent definition")?;
         }
         if let Some(script) = &identity.child_script {
             config["script"] = json!(script);
@@ -219,6 +226,7 @@ impl SupervisorChildSessionsInner {
                 runtime_metadata,
                 identity,
                 launch_env,
+                /*agent_definition*/ None,
             )
             .await?;
         // A failed prompt tears the just-created session down (TS kills the
@@ -741,7 +749,7 @@ impl SupervisorChildSessionsInner {
                 session_name: record.session_name.clone(),
                 last_assistant_text_preview: record.answer_preview.clone(),
             };
-            create_rlm_child_terminal_notice(&notice, now_ms())
+            create_rlm_child_terminal_notice_with(&notice, &record.notice_extras(), now_ms())
         };
         self.deliver_terminal_notice(message).await;
         true
@@ -834,10 +842,11 @@ impl SupervisorChildSessionsInner {
                     record.answer_captured = true;
                 }
             }
-            let message = create_rlm_child_failure_message(
+            let message = create_rlm_child_failure_message_with(
                 &record.rlm_child_id,
                 &record.session_name,
                 &error,
+                &record.notice_extras(),
                 now_ms(),
             );
             record.error = Some(error);
@@ -854,9 +863,11 @@ impl SupervisorChildSessionsInner {
     }
 
     /// Deliver one terminal notice into the parent session: the notice rides
-    /// the supervisor's `follow_up` route as an injected custom turn (the
-    /// row renders in the parent transcript and the turn runs on the
-    /// notice content, the TS `followUp` notice action). The reserved
+    /// the supervisor's `steer` route as a custom row (Claude Code's
+    /// `priority: "next"` task notification): a busy parent folds it into
+    /// its running turn at the next tool boundary
+    /// (`worker::steer_fold::FOLDABLE_NOTICE_TYPES`), an idle one wakes and
+    /// runs a turn on it. The row renders in the parent transcript. The reserved
     /// custom kinds are daemon provenance, so the command carries the
     /// one-shot notice capability minted in this same worker process
     /// (`child_status_notices`): the parent's queue admission accepts a
@@ -871,7 +882,7 @@ impl SupervisorChildSessionsInner {
         let wire = serde_json::to_value(pa_types::session::AgentMessage::Custom(message))
             .unwrap_or(Value::Null);
         let nonce = crate::child_status_notices::mint();
-        let command = DaemonCommand::FollowUp {
+        let command = DaemonCommand::Steer {
             id: None,
             active_session_id: self.parent_active_session_id.clone(),
             message: content,

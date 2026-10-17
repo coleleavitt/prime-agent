@@ -271,8 +271,9 @@ impl AgentSessionEngine {
                                             let _ = tx.send(EngineEvent::UserMessage(value));
                                         }
                                     }
-                                    // A host notice folded into the run (a finished
-                                    // background command, a watch event) persists and
+                                    // A host notice or an agent message folded into
+                                    // the run (a finished background command, a watch
+                                    // event, a child's completion) persists and
                                     // reaches clients as its custom row, like the row
                                     // that starts a run.
                                     pa_agent::types::AgentMessage::Custom(row)
@@ -282,10 +283,9 @@ impl AgentSessionEngine {
                                                 .payload
                                                 .get("customType")
                                                 .and_then(Value::as_str)
-                                                .is_some_and(|kind| {
-                                                    crate::worker::steer_fold::FOLDABLE_NOTICE_TYPES
-                                                        .contains(&kind)
-                                                }) =>
+                                                .is_some_and(
+                                                    crate::worker::steer_fold::is_folded_row_type,
+                                                ) =>
                                     {
                                         if let Some(value) = session_wire_value(agent_message) {
                                             let _ = tx.send(EngineEvent::CustomMessage(value));
