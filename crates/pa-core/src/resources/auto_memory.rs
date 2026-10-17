@@ -161,23 +161,51 @@ fn worktree_main_checkout(git_file: &Path) -> Option<PathBuf> {
     Some(std::fs::canonicalize(main).unwrap_or_else(|_| main.to_path_buf()))
 }
 
-/// Claude Code's project-directory naming: every non-alphanumeric
-/// character becomes `-`; a long name keeps its head plus a hash.
+/// Claude Code's project-directory naming, exactly: every UTF-16 code unit
+/// that is not an ASCII letter or digit becomes `-` (JS `replace` over a
+/// string, so a character outside the BMP becomes two); a name longer than
+/// 200 keeps its head plus `-` and the base-36 absolute value of the path's
+/// 32-bit string hash (Java's `hashCode`), so `~/.claude/projects/<name>`
+/// is the directory Claude Code writes.
 #[must_use]
 pub fn sanitize(path: &Path) -> String {
     let text = path.to_string_lossy();
-    let sanitized: String = text
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let sanitized: String = units
+        .iter()
+        .map(|&unit| match u8::try_from(unit) {
+            Ok(byte) if byte.is_ascii_alphanumeric() => char::from(byte),
+            _ => '-',
+        })
         .collect();
     if sanitized.len() <= MAX_SANITIZED_LEN {
         return sanitized;
     }
-    // FNV-1a: stable across builds (the directory must not move).
-    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    let hash = units.iter().fold(0_i32, |hash, &unit| {
+        hash.wrapping_shl(5)
+            .wrapping_sub(hash)
+            .wrapping_add(i32::from(unit))
     });
-    format!("{}-{hash:016x}", &sanitized[..MAX_SANITIZED_LEN])
+    format!(
+        "{}-{}",
+        &sanitized[..MAX_SANITIZED_LEN],
+        base36(hash.unsigned_abs())
+    )
+}
+
+/// JS `Number.prototype.toString(36)` for a non-negative integer.
+fn base36(mut value: u32) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    loop {
+        out.push(DIGITS[(value % 36) as usize]);
+        value /= 36;
+        if value == 0 {
+            break;
+        }
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
 }
 
 const FRONTMATTER_EXAMPLE: &str = "\
@@ -466,9 +494,17 @@ mod tests {
     fn sanitizing_matches_claude_code_and_bounds_long_names() {
         assert_eq!(sanitize(Path::new("/home/u/my.repo")), "-home-u-my-repo");
         let long = PathBuf::from(format!("/{}", "a".repeat(300)));
-        let name = sanitize(&long);
-        assert_eq!(name.len(), MAX_SANITIZED_LEN + 17);
-        assert_eq!(name, sanitize(&long), "stable");
+        // Claude Code 2.1.296 `OO()` on the same paths (node-computed).
+        assert_eq!(
+            sanitize(&long),
+            format!("-{}-vtkmfl", "a".repeat(MAX_SANITIZED_LEN - 1))
+        );
+        assert_eq!(
+            sanitize(Path::new("/home/u/caf\u{e9}/\u{1F600}x")),
+            "-home-u-caf----x"
+        );
+        let nested = PathBuf::from(format!("/srv/{}", "ab/".repeat(80)));
+        assert!(sanitize(&nested).ends_with("b-ab--fgo8qh"));
     }
 
     #[test]

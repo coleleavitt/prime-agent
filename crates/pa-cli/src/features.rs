@@ -149,6 +149,7 @@ pub fn install_enabled_features() -> InstalledFeatures {
     pa_hooks::worktree::install();
     install_credential_sources();
     install_tui_features();
+    install_session_sources();
     #[cfg(feature = "session-index")]
     let session_index = {
         let index = pa_session_index::SessionIndex::new();
@@ -223,6 +224,14 @@ pub fn install_trust_gates() {
 pub fn install_credential_sources() {
     #[cfg(feature = "anthropic-auth")]
     pa_anthropic_auth::install();
+}
+
+/// Install the enabled features' external session sources: (feature
+/// `cc-import`) Claude Code's transcripts, listed by the daemon and the
+/// resume selector. Idempotent; no I/O (a listing reads the transcripts).
+pub fn install_session_sources() {
+    #[cfg(feature = "cc-import")]
+    pa_cc_import::install();
 }
 
 /// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)
@@ -362,6 +371,19 @@ mod tests {
             "advisor",
         ];
         assert_eq!(names, expected);
+        // `cc-import` is not a session feature: it installs an external
+        // session source (the agents view's and the resume selector's
+        // Claude Code sessions), and nothing else installs one.
+        install_session_sources();
+        let sources: Vec<String> = pa_core::session::external_sessions::sources()
+            .iter()
+            .map(|source| source.source().to_string())
+            .collect();
+        let expected_sources: Vec<&str> = vec![
+            #[cfg(feature = "cc-import")]
+            "claude-code",
+        ];
+        assert_eq!(sources, expected_sources);
     }
 
     /// `--no-default-features` installs no credential source, so auth.json

@@ -1243,7 +1243,26 @@ fn select_headless_session(options: &RunOptions) -> Result<HeadlessSession, Stri
             Err(error @ SessionSelectorError::NotFound { .. }) => {
                 let sessions = pa_daemon::session_store::list_sessions(&session_dir);
                 match crate::resume_selector::sessions_titled(&sessions, selector, cwd).as_slice() {
-                    [] => return Err(render_selector_error(&error)),
+                    // Another product's session (a Claude Code id or title) imports into
+                    // a new session file first.
+                    [] => {
+                        match crate::resume_selector::import_external(selector, cwd, &session_dir) {
+                            None => return Err(render_selector_error(&error)),
+                            Some(Err(notice)) => return Err(notice),
+                            Some(Ok(imported))
+                                if pa_types::platform::same_directory(
+                                    std::path::Path::new(&imported.cwd),
+                                    cwd,
+                                ) =>
+                            {
+                                ResolvedSession::Local(imported.path)
+                            }
+                            Some(Ok(imported)) => ResolvedSession::Global {
+                                path: imported.path,
+                                cwd: std::path::PathBuf::from(&imported.cwd),
+                            },
+                        }
+                    }
                     [only]
                         if pa_types::platform::same_directory(
                             std::path::Path::new(&only.cwd),

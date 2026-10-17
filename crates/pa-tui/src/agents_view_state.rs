@@ -11,12 +11,15 @@ use crate::agents_view_forest::session_title;
 use crate::agents_view_search::score_search;
 use crate::width::str_width;
 
-/// One of the three sections every unified record sorts into.
+/// One of the sections every unified record sorts into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Running,
     Idle,
     Inactive,
+    /// Another agent product's sessions (the daemon's `list_external_sessions`
+    /// rows): listed last, opened by importing them.
+    External,
 }
 
 #[must_use]
@@ -25,6 +28,8 @@ pub fn section_title(section: Section) -> &'static str {
         Section::Running => "Running",
         Section::Idle => "Idle",
         Section::Inactive => "Inactive",
+        // The rows' own `sourceLabel` names the section when they carry one.
+        Section::External => "Other agents",
     }
 }
 
@@ -33,7 +38,13 @@ pub(crate) fn section_rank(section: Section) -> u8 {
         Section::Running => 0,
         Section::Idle => 1,
         Section::Inactive => 2,
+        Section::External => 3,
     }
+}
+
+/// An external-session catalog row (it names its `source`).
+pub(crate) fn is_external_row(row: &Value) -> bool {
+    get_str(row, "source").is_some_and(|source| !source.is_empty())
 }
 
 fn section_from_status(status: AgentRosterStatus) -> Section {
@@ -321,7 +332,11 @@ pub fn reconcile_unified_sessions(roster: &[Value], saved: &[Value]) -> Vec<Unif
             status: None,
             identity,
             aliases,
-            section: Section::Inactive,
+            section: if is_external_row(row) {
+                Section::External
+            } else {
+                Section::Inactive
+            },
             search_score: None,
         };
         records.push(record);
@@ -419,6 +434,22 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
             for key in ["thinkingLevel", "gitBranch"] {
                 if object.get(key).is_some_and(Value::is_null) {
                     object.remove(key);
+                }
+            }
+            // An external row's file is another product's transcript: it is never a
+            // session file to resume, so the open imports it by its source and id.
+            if is_external_row(&saved) {
+                object.insert("sessionFile".to_string(), Value::Null);
+                for (key, field) in [
+                    ("externalSource", "source"),
+                    ("externalId", "externalId"),
+                    ("sourceLabel", "sourceLabel"),
+                    ("externalPath", "path"),
+                ] {
+                    object.insert(
+                        key.to_string(),
+                        saved.get(field).cloned().unwrap_or(Value::Null),
+                    );
                 }
             }
         }

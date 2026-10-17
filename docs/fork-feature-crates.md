@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`, `pa-cc-import`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -110,6 +110,13 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      a `tool_choice`) and `on_event` observes every parsed response event after the request hooks, including the
      content blocks the provider does not model (`server_tool_use`, `web_search_tool_result`); the
      `anthropic-messages` provider calls `on_event`, the others ignore it.
+   - external sessions: `pa_core::session::external_sessions::install(Arc<dyn ExternalSessionSource>)` (once,
+     before any listing) adds another product's sessions: `list` (one directory's or every project's rows, newest
+     first), `find` (a resume selector) and `import` (a new session file under a given sessions dir, the original
+     untouched). The daemon advertises `external_sessions` and serves `list_external_sessions` /
+     `import_external_session` only while a source is installed; the agents view lists the rows in their own
+     section and opens one through its import; `pa-cli`'s resume selector tries the sources after the saved
+     sessions.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.
@@ -143,5 +150,6 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
 | 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
 | 6 | Claude Code's flag-gated features: `pa-observer` (observer agents), `pa-advisor` (`advisor.ask`); both inert unless the `experimental` settings turn them on | `pa-core` (`session_engine::side_model`) |
+| 7 | `pa-cc-import` (Claude Code transcripts listed beside the saved sessions, imported into a new session file on open) | `pa-core` (`session::external_sessions`), `pa-daemon` (`external_sessions` capability) |
 
 The inventory behind this table (sizes, TS paths, key commits) is kept with the porting work.

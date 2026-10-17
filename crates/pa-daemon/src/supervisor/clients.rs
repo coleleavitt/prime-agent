@@ -996,6 +996,18 @@ impl Supervisor {
                     .await;
                 (lines, false)
             }
+            DaemonCommand::ListExternalSessions { .. } => {
+                let response = self
+                    .handle_list_external_sessions(command, &command_id, &type_name)
+                    .await;
+                (vec![response_line(&response)], false)
+            }
+            DaemonCommand::ImportExternalSession { .. } => {
+                let response = self
+                    .handle_import_external_session(command, &command_id, &type_name)
+                    .await;
+                (vec![response_line(&response)], false)
+            }
             DaemonCommand::RosterSubscribe { .. } => {
                 roster_subscribed.store(true, std::sync::atomic::Ordering::SeqCst);
                 let response = self.handle_roster_subscribe(&command_id, &type_name).await;

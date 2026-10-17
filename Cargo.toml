@@ -32,6 +32,7 @@ members = [
     "crates/pa-observer",
     "crates/pa-advisor",
     "crates/pa-lsp",
+    "crates/pa-cc-import",
 ]
 # Vendored path dependencies with their own manifests stay outside the workspace
 # (third-party code: not linted by the workspace gates).
