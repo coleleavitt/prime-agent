@@ -69,6 +69,10 @@ for `bash.run` the command (never its environment), clipped to 600 characters.
   An unanswered question is refused after `CONFIRMATION_TIMEOUT` (5 minutes); an aborted run stops waiting.
 - **Print mode:** there is no surface, so an `Ask` is refused at once: `<reason> (it needs the user's confirmation,
   and no client can ask for it)`. A refused `Ask` reads `<reason> (the user refused it)`.
+- **Remembering:** a feature that asks through `features::confirm_offering` offers to remember the answer (a
+  permission rule, `pa-permissions`): the question carries `remember` (the rule), the TUI adds "Yes, and don't ask
+  again for <rule>", and that choice answers with `remember: true` (additive on `answer_feature_confirmation`; an
+  older daemon reads a plain allow). The asker sees `ConfirmationAnswer::AllowedAlways`.
 
 The model-facing surface is the Python kernel: the model's tool call is nearly always `python_repl`, and the
 commands that matter run as `bash()` inside it. A policy that only sees tool calls would see one opaque cell.

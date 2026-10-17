@@ -64,6 +64,20 @@ impl ConfirmPanel {
         }
     }
 
+    /// A confirm over `choices` with the last one selected: a question
+    /// whose earlier choices run an action (the last refuses it), opened
+    /// while the user may be typing. Two choices are
+    /// [`Self::yes_no_defaulting_to_no`]'s shape.
+    #[must_use]
+    pub fn choices_defaulting_to_last(title: &str, message: &str, choices: Vec<String>) -> Self {
+        let selected = choices.len().saturating_sub(1);
+        ConfirmPanel {
+            options: choices,
+            selected,
+            ..Self::yes_no(title, message)
+        }
+    }
+
     /// The image-routing fallback's three-way choice (an image-bearing
     /// prompt on a text-only model with no configured imageModel). The
     /// submitted draft stays parked with the pending confirm until a
@@ -173,6 +187,35 @@ mod tests {
         assert_eq!(
             panel.handle_key(&kb(), "enter"),
             ConfirmAction::Select("Yes".to_string())
+        );
+    }
+
+    #[test]
+    fn a_choice_list_opens_on_its_last_choice() {
+        let mut panel = ConfirmPanel::choices_defaulting_to_last(
+            "Allow this action?",
+            "Run `npm test`",
+            vec![
+                "Yes".to_string(),
+                "Yes, and don't ask again for Bash(npm test *)".to_string(),
+                "No".to_string(),
+            ],
+        );
+        assert_eq!(
+            panel,
+            ConfirmPanel {
+                selected: 2,
+                ..panel.clone()
+            }
+        );
+        assert_eq!(
+            panel.handle_key(&kb(), "enter"),
+            ConfirmAction::Select("No".to_string())
+        );
+        panel.handle_key(&kb(), "up");
+        assert_eq!(
+            panel.handle_key(&kb(), "enter"),
+            ConfirmAction::Select("Yes, and don't ask again for Bash(npm test *)".to_string())
         );
     }
 

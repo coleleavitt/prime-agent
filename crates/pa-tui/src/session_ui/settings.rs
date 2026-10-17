@@ -101,7 +101,7 @@ impl SessionUi {
                 if let Some(PendingConfirm::FeatureQuestion { id }) = &self.pending_confirm {
                     let id = id.clone();
                     self.pending_confirm = None;
-                    self.answer_feature_question(id, false);
+                    self.answer_feature_question(id, false, false);
                 }
                 // The image fallback's parked prompt keeps its draft: the
                 // editor cleared when the submit opened the panel, and
@@ -121,7 +121,8 @@ impl SessionUi {
                         self.apply_image_prompt_choice(&option, &text, behavior, view)?;
                     }
                     Some(PendingConfirm::FeatureQuestion { id }) => {
-                        self.answer_feature_question(id, option == "Yes");
+                        let (allow, remember) = super::feature_confirm::answer_of_choice(&option);
+                        self.answer_feature_question(id, allow, remember);
                     }
                     pending => {
                         if option == "Yes" {

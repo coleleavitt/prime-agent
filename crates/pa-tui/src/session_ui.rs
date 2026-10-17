@@ -16,6 +16,7 @@ mod lifecycle;
 mod model_picker;
 mod notes;
 mod panels;
+mod permission_cycle;
 mod prompt;
 mod queue;
 mod search;
@@ -359,6 +360,10 @@ pub(crate) struct SessionUi {
     /// Questions this client answered that the daemon may still list (a
     /// roster summary can lag the answer); forgotten once it stops.
     answered_questions: std::collections::HashSet<String>,
+    /// The session commands the plan-mode key sends instead of `/plan`
+    /// while a feature publishes a permission-mode cycle (see
+    /// [`permission_cycle`]); empty keeps the plain plan toggle.
+    permission_cycle: Vec<String>,
     /// This session's persisted file path (family identity of the
     /// subagent linkage; `None` for unpersisted sessions).
     session_file: Option<String>,

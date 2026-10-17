@@ -6,6 +6,12 @@
 //! client renders as a yes/no prompt (a client attaching later sees it on
 //! the roster summary) and answers with the daemon's
 //! `answer_feature_confirmation` command ([`answer_confirmation`]).
+//!
+//! A question may offer to remember the answer ([`confirm_offering`]): the
+//! request carries the offer's label (a permission rule, say), a client
+//! shows a third choice for it, and an answer that takes it ends the
+//! question as [`ConfirmationAnswer::AllowedAlways`]; what remembering means
+//! is the asker's business.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,12 +41,20 @@ pub struct ConfirmationRequest {
     pub action: String,
     /// Why the user is asked: the asking features' reasons.
     pub reason: String,
+    /// What allowing it for good would remember (a permission rule, say);
+    /// `None` when the asker offers only yes or no.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remember: Option<String>,
 }
 
 /// How a confirmation ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmationAnswer {
     Allowed,
+    /// Allowed, and the user took the question's offer to remember it
+    /// ([`ConfirmationRequest::remember`]); only a question that offered it
+    /// ends this way.
+    AllowedAlways,
     Denied,
     /// The session has no confirmation surface (print mode), or it was
     /// withdrawn while the question was pending.
@@ -49,9 +63,17 @@ pub enum ConfirmationAnswer {
     TimedOut(Duration),
 }
 
+/// The user's answer to one question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    Deny,
+    Allow,
+    AllowAlways,
+}
+
 struct Pending {
     request: ConfirmationRequest,
-    answer: oneshot::Sender<bool>,
+    answer: oneshot::Sender<Answer>,
 }
 
 #[derive(Default)]
@@ -170,6 +192,19 @@ pub async fn confirm(
     reason: &str,
     timeout: Duration,
 ) -> ConfirmationAnswer {
+    confirm_offering(session_id, action, reason, None, timeout).await
+}
+
+/// [`confirm`], offering to remember the answer as `remember` (shown to the
+/// user as a third choice): taking it ends the question as
+/// [`ConfirmationAnswer::AllowedAlways`].
+pub async fn confirm_offering(
+    session_id: &str,
+    action: &str,
+    reason: &str,
+    remember: Option<&str>,
+    timeout: Duration,
+) -> ConfirmationAnswer {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = format!("confirm-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
     let (answer, answered) = oneshot::channel();
@@ -186,6 +221,7 @@ pub async fn confirm(
                 id: id.clone(),
                 action: action.to_string(),
                 reason: reason.to_string(),
+                remember: remember.map(str::to_string),
             },
             answer,
         });
@@ -193,8 +229,9 @@ pub async fn confirm(
     }
     let _withdraw = Withdraw { session_id, id };
     match tokio::time::timeout(timeout, answered).await {
-        Ok(Ok(true)) => ConfirmationAnswer::Allowed,
-        Ok(Ok(false)) => ConfirmationAnswer::Denied,
+        Ok(Ok(Answer::Allow)) => ConfirmationAnswer::Allowed,
+        Ok(Ok(Answer::AllowAlways)) => ConfirmationAnswer::AllowedAlways,
+        Ok(Ok(Answer::Deny)) => ConfirmationAnswer::Denied,
         Ok(Err(_)) => ConfirmationAnswer::Unavailable,
         Err(_) => ConfirmationAnswer::TimedOut(timeout),
     }
@@ -204,6 +241,19 @@ pub async fn confirm(
 /// question is pending (already answered, timed out, or withdrawn).
 #[must_use = "`false` means the question was no longer pending"]
 pub fn answer_confirmation(session_id: &str, id: &str, allow: bool) -> bool {
+    answer_confirmation_remembering(session_id, id, allow, false)
+}
+
+/// [`answer_confirmation`], taking the question's offer to remember the
+/// answer when `remember` (and `allow`) is set; a question without an offer
+/// is plainly allowed.
+#[must_use = "`false` means the question was no longer pending"]
+pub fn answer_confirmation_remembering(
+    session_id: &str,
+    id: &str,
+    allow: bool,
+    remember: bool,
+) -> bool {
     let mut sessions = lock();
     let Some(session) = sessions.get_mut(session_id) else {
         return false;
@@ -217,9 +267,14 @@ pub fn answer_confirmation(session_id: &str, id: &str, allow: bool) -> bool {
     };
     let pending = session.pending.remove(index);
     publish(session_id, Some(session));
+    let answer = match (allow, remember && pending.request.remember.is_some()) {
+        (false, _) => Answer::Deny,
+        (true, false) => Answer::Allow,
+        (true, true) => Answer::AllowAlways,
+    };
     // The asker may have stopped waiting a moment ago; the question is
     // answered either way.
-    let _ = pending.answer.send(allow);
+    let _ = pending.answer.send(answer);
     true
 }
 
@@ -348,6 +403,75 @@ mod tests {
         drop(surface);
         assert_eq!(withdrawn.await.unwrap(), ConfirmationAnswer::Unavailable);
         assert!(pending_confirmations(session).is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_offer_to_remember_is_published_and_taken_only_when_offered() {
+        let session = "confirm-remember";
+        let (seen, _sink) = record(session);
+        let _surface = register_confirmation_surface(session);
+        let next = || async {
+            loop {
+                if let Some(request) = pending_confirmations(session).pop() {
+                    break request;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        let offering = tokio::spawn(confirm_offering(
+            session,
+            "Run `npm test`",
+            "rule asks",
+            Some("Bash(npm test *)"),
+            Duration::from_secs(30),
+        ));
+        let request = next().await;
+        assert_eq!(request.remember.as_deref(), Some("Bash(npm test *)"));
+        let published = seen.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            published.status["confirmations"][0]["remember"],
+            "Bash(npm test *)"
+        );
+        assert!(answer_confirmation_remembering(
+            session,
+            &request.id,
+            true,
+            true
+        ));
+        assert_eq!(offering.await.unwrap(), ConfirmationAnswer::AllowedAlways);
+
+        // Without an offer, remembering is a plain allow; a refusal ignores it.
+        let plain = tokio::spawn(confirm(session, "a", "r", Duration::from_secs(30)));
+        let request = next().await;
+        assert_eq!(request.remember, None);
+        assert!(
+            serde_json::to_value(&request)
+                .unwrap()
+                .get("remember")
+                .is_none()
+        );
+        assert!(answer_confirmation_remembering(
+            session,
+            &request.id,
+            true,
+            true
+        ));
+        assert_eq!(plain.await.unwrap(), ConfirmationAnswer::Allowed);
+        let refused = tokio::spawn(confirm_offering(
+            session,
+            "b",
+            "r",
+            Some("Bash"),
+            Duration::from_secs(30),
+        ));
+        let request = next().await;
+        assert!(answer_confirmation_remembering(
+            session,
+            &request.id,
+            false,
+            true
+        ));
+        assert_eq!(refused.await.unwrap(), ConfirmationAnswer::Denied);
     }
 
     #[tokio::test]

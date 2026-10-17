@@ -103,6 +103,7 @@ impl SessionUi {
         // carries statuses published before this client attached.
         if let Some(summary) = crate::subagents::own_summary(&self.roster, &identity) {
             self.feature_panels = crate::feature_panel::panels_from_summary(&summary);
+            self.permission_cycle = super::permission_cycle::cycle_from_summary(&summary);
             self.apply_feature_questions(
                 super::feature_confirm::questions_from_summary(&summary),
                 view,

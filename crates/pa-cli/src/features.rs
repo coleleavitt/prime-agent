@@ -40,6 +40,11 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // host requests (their HTTP clients start on the first request).
     #[cfg(feature = "web")]
     features.push(Arc::new(pa_web::WebFeature::new()));
+    // Claude Code's permission rules and modes (the `permissions` settings
+    // key), ahead of the hooks and plugins: a deny rule refuses before any
+    // hook runs a command for the action.
+    #[cfg(feature = "permissions")]
+    features.push(Arc::new(pa_permissions::PermissionsFeature::new()));
     // The user's command hooks (Claude Code's `hooks` settings key), ahead
     // of the plugins: a refusal from either stops the action.
     #[cfg(feature = "hooks")]
@@ -313,6 +318,8 @@ mod tests {
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
+            #[cfg(feature = "permissions")]
+            "permissions",
             #[cfg(feature = "hooks")]
             "hooks",
             #[cfg(feature = "plugins")]
