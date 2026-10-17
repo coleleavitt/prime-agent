@@ -224,20 +224,12 @@ pub struct SessionEngine {
 /// plus the enabled persistent generic servers.
 async fn mcp_gating(
     settings: &crate::settings::SettingsManager,
+    cwd: &std::path::Path,
     agent_dir: std::path::PathBuf,
 ) -> anyhow::Result<(Vec<String>, Vec<String>, crate::mcp::McpManager)> {
-    let user_servers = settings
-        .settings()
-        .mcp_servers
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(server, config)| {
-            serde_json::from_value(config)
-                .ok()
-                .map(|parsed| (server, parsed))
-        })
-        .collect::<std::collections::HashMap<String, crate::mcp::McpServerConfig>>();
+    // The settings' servers, the approved `.mcp.json` servers, and (opted
+    // in) Claude Code's own.
+    let user_servers = crate::mcp::DeclaredServers::load(cwd, &agent_dir, settings).dispatchable();
     // The MCP manager snapshots auth with a blocking lock; run it off the
     // async runtime.
     tokio::task::spawn_blocking(move || mcp_gating_blocking(user_servers, &agent_dir))
@@ -378,7 +370,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let router_allowed_models = factory_allowed_models.clone();
     let router_retry_policy = settings.get_provider_retry_policy();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
-        mcp_gating(&settings, config.agent_dir.clone()).await?;
+        mcp_gating(&settings, &cwd, config.agent_dir.clone()).await?;
     let mcp_manager = config
         .mcp_manager
         .take()
@@ -1644,6 +1636,21 @@ impl SessionEngine {
             );
         }
         *slot = Some(sink);
+    }
+
+    /// Ask the user, through the confirmation surface
+    /// ([`Self::set_feature_status_sink`]), about the workspace's
+    /// `.mcp.json` servers that wait for approval (Claude Code's "New MCP
+    /// server found in this project"), in the background. A child session
+    /// never asks: its parent's user answers for the workspace.
+    pub fn ask_project_mcp_approvals(&self) {
+        if self.feature_context.rlm_depth > 0 || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        tokio::spawn(crate::mcp::ask_pending_project_servers(
+            self.feature_context.session_id.clone(),
+            std::sync::Arc::clone(&self.mcp_manager),
+        ));
     }
 
     /// Deliver the installed features' notices for this session

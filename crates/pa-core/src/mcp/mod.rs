@@ -8,6 +8,7 @@ mod catalog_schema;
 mod catalog_status_views;
 mod catalog_views;
 mod connection_store;
+mod declared;
 mod fetch_lane;
 mod local_catalog;
 mod login;
@@ -31,6 +32,30 @@ pub use catalog_views::{
     McpPasteCredential,
     mcp_credential_field_prompt_label,
     mcp_paste_credential,
+};
+pub use declared::{
+    ClaudeCodeFiles,
+    DeclaredServer,
+    DeclaredServerView,
+    DeclaredServers,
+    Expansion,
+    IssueSeverity,
+    LoadInputs,
+    MCP_CONFIG_MAX_BYTES,
+    MCP_JSON_FILE,
+    McpConfigIssue,
+    McpServerScope,
+    PROJECT_CHOICES_FILE,
+    ProjectApproval,
+    ProjectChoice,
+    ProjectChoices,
+    ask_pending_project_servers,
+    claude_code_opt_in,
+    expand_env_vars,
+    read_project_choices,
+    record_project_choice,
+    reset_project_choices,
+    same_server_name,
 };
 pub use fetch_lane::{spawn_hourly_plugins_refresh, startup_plugins_refresh};
 pub use login::{McpLoginContext, McpOAuth, wire_begin_login};
@@ -134,9 +159,11 @@ pub enum McpServerConfig {
         args: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
-        /// Environment variables resolved from the kernel environment.
+        /// Environment variables: `{"env": "NAME"}` references resolved
+        /// from the kernel environment, or literal values (a Claude Code
+        /// `.mcp.json` entry's, expanded when it loaded).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        env: Option<HashMap<String, EnvRef>>,
+        env: Option<HashMap<String, EnvValue>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         enabled: Option<bool>,
         #[serde(
@@ -189,6 +216,15 @@ impl McpServerConfig {
 pub struct EnvRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
+}
+
+/// One stdio environment value: a literal, or a reference to a variable of
+/// the kernel environment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnvValue {
+    Literal(String),
+    Ref(EnvRef),
 }
 
 /// Session-scoped server supplied by the active ACP client: literal
@@ -271,6 +307,23 @@ pub struct McpManagerOptions {
     pub probe_override: Option<probe::McpEndpointProbe>,
 }
 
+/// The live source of a workspace's declared servers (settings, `.mcp.json`
+/// files and, opted in, `~/.claude.json`), re-read per resolve.
+pub type DeclaredServersFn = Box<dyn Fn() -> DeclaredServers + Send + Sync>;
+
+/// A [`DeclaredServersFn`] over the workspace `cwd()` names at each read:
+/// the trust-gated settings of that workspace, re-read every time.
+pub fn workspace_declared_servers(
+    cwd: impl Fn() -> std::path::PathBuf + Send + Sync + 'static,
+    agent_dir: std::path::PathBuf,
+) -> DeclaredServersFn {
+    Box::new(move || {
+        let cwd = cwd();
+        let settings = crate::settings::SettingsManager::create(&cwd, &agent_dir);
+        DeclaredServers::load(&cwd, &agent_dir, &settings)
+    })
+}
+
 /// Telemetry usage reporter: called with `(action, server)` on every successful `mcp.*` host
 /// request; never tool names, arguments, or results.
 pub type McpUsageReporter = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -280,6 +333,9 @@ pub type McpUsageReporter = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
 pub struct McpManager {
     auth_storage: Arc<tokio::sync::Mutex<AuthStorage>>,
     get_user_servers: Box<dyn Fn() -> Option<HashMap<String, McpServerConfig>> + Send + Sync>,
+    /// The workspace's declared servers; when set, it replaces
+    /// `get_user_servers` (which reads the settings alone).
+    declared_source: Option<DeclaredServersFn>,
     begin_login: Option<BeginLoginFn>,
     agent_dir: Option<std::path::PathBuf>,
     get_catalog_sources: Option<Box<dyn Fn() -> Vec<String> + Send + Sync>>,
@@ -340,6 +396,14 @@ fn resolve_server_config(
     // is connected or configured mid-session.
     let integration = manager.lock_or_recover().integrations.get(server).cloned();
     let Some(integration) = integration else {
+        // A project server waiting for approval (or rejected) says so.
+        let reason = manager
+            .lock_or_recover()
+            .declared_servers()
+            .unavailable_reason(server);
+        if let Some(reason) = reason {
+            return Err(anyhow::anyhow!(reason));
+        }
         return Ok(json!({}));
     };
     if !integration.user_declared {
@@ -398,6 +462,7 @@ impl McpManager {
         let mut manager = Self {
             auth_storage: Arc::new(tokio::sync::Mutex::new(options.auth_storage)),
             get_user_servers: options.get_user_servers,
+            declared_source: None,
             begin_login: options.begin_login,
             agent_dir,
             get_catalog_sources: options.get_catalog_sources,
@@ -419,6 +484,39 @@ impl McpManager {
     /// Re-read settings and re-resolve integrations; call after a reload.
     pub fn refresh(&mut self) {
         self.resolve_integrations();
+    }
+
+    /// Read the servers from `source` from now on (the workspace's
+    /// `.mcp.json` files and Claude Code's config besides the settings),
+    /// and re-resolve.
+    pub fn set_declared_servers_source(&mut self, source: DeclaredServersFn) {
+        self.declared_source = Some(source);
+        self.resolve_integrations();
+    }
+
+    /// Every declared server with its scope and approval, freshly read.
+    #[must_use]
+    pub fn declared_servers(&self) -> DeclaredServers {
+        match &self.declared_source {
+            Some(source) => source(),
+            None => DeclaredServers::from_settings_servers(
+                (self.get_user_servers)().unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// The declared servers that may run (settings, approved project
+    /// servers, Claude Code's local and user servers), by name.
+    pub(crate) fn user_servers(&self) -> HashMap<String, McpServerConfig> {
+        self.declared_servers().dispatchable()
+    }
+
+    /// The `/mcp` view's declaration facts (each server's scope, file and
+    /// approval) and the problems found loading the declarations.
+    #[must_use]
+    pub fn declared_server_report(&self) -> (Vec<DeclaredServerView>, Vec<McpConfigIssue>) {
+        let declared = self.declared_servers();
+        (declared.views(), declared.issues().to_vec())
     }
 
     /// Reload the shared auth store (blocking lock, never on the async

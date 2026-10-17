@@ -21,6 +21,7 @@ use pa_core::kernel::shared::{
 };
 use pa_core::mcp::{
     EnvRef,
+    EnvValue,
     McpManager,
     McpManagerOptions,
     McpOAuth,
@@ -48,9 +49,9 @@ async fn fixture_env(python: &Path, environment: KernelEnvironment) -> Value {
             cwd: None,
             env: Some(HashMap::from([(
                 "FIXTURE_ENV".to_string(),
-                EnvRef {
+                EnvValue::Ref(EnvRef {
                     env: Some("OPENAI_API_KEY".to_string()),
-                },
+                }),
             )])),
             enabled: None,
             enabled_tools: None,

@@ -26,6 +26,7 @@ use pa_core::kernel::shared::{
 };
 use pa_core::mcp::{
     EnvRef,
+    EnvValue,
     McpManager,
     McpManagerOptions,
     McpOAuth,
@@ -151,10 +152,10 @@ impl Setup {
     }
 }
 
-fn env_ref(name: &str) -> EnvRef {
-    EnvRef {
+fn env_ref(name: &str) -> EnvValue {
+    EnvValue::Ref(EnvRef {
         env: Some(name.to_string()),
-    }
+    })
 }
 
 async fn run(kernel: &ReplKernelManager, code: &str) -> String {
