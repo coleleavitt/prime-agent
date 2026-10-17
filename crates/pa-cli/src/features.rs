@@ -195,10 +195,16 @@ fn install_crash_record(trace: Option<pa_trace::RecorderHandle>) {
     }));
 }
 
-/// Gate what the enabled features load from a project and run behind
-/// workspace trust: (feature `plugins`) `.prime/agent/plugins/`, (feature
-/// `lsp`) the project's `.lsp.json` server commands. Idempotent; no I/O.
+/// Gate what the product and the enabled features load from a project and
+/// run behind workspace trust: the project's `.mcp.json` server commands
+/// (always; each server also needs its own approval), (feature `plugins`)
+/// `.prime/agent/plugins/`, (feature `lsp`) the project's `.lsp.json`
+/// server commands. Idempotent; no I/O.
 pub fn install_trust_gates() {
+    pa_core::workspace_trust::register_gated_project_file(
+        pa_core::mcp::MCP_JSON_FILE,
+        "MCP servers",
+    );
     #[cfg(feature = "lsp")]
     pa_core::workspace_trust::register_gated_project_file(
         pa_lsp::config::PROJECT_CONFIG_FILE,
@@ -367,5 +373,30 @@ mod tests {
         install_credential_sources();
         assert!(pa_core::auth::credential_source("anthropic").is_none());
         assert!(pa_ai::request_hooks::request_hooks("anthropic").is_none());
+    }
+
+    /// A project's `.mcp.json` (server commands it would start) is gated
+    /// behind workspace trust in every build, like `.lsp.json`.
+    #[test]
+    fn a_project_mcp_json_needs_a_trusted_workspace() {
+        let home = tempfile::tempdir().unwrap();
+        let agent_dir = home.path().join("agent");
+        let cwd = home.path().join("repo");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        install_trust_gates();
+        std::fs::write(
+            cwd.join(pa_core::mcp::MCP_JSON_FILE),
+            r#"{"mcpServers": {"x": {"command": "x"}}}"#,
+        )
+        .unwrap();
+        assert!(!pa_core::workspace_trust::evaluate(&cwd, &agent_dir).is_trusted());
+        pa_core::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            pa_core::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
+        assert!(pa_core::workspace_trust::evaluate(&cwd, &agent_dir).is_trusted());
     }
 }
