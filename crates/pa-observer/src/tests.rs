@@ -38,7 +38,7 @@ fn feature(provider: &Arc<ScriptedProvider>, enabled: bool) -> ObserverFeature {
     let stream_fn = provider.stream_fn();
     ObserverFeature::with(
         Arc::new(move |_context| {
-            enabled.then(|| ObserverSettings {
+            enabled.then_some(ObserverSettings {
                 model: None,
                 instructions: None,
             })

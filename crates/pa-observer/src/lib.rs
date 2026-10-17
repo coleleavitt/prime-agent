@@ -4,7 +4,7 @@
 //!
 //! Claude Code 2.1.296 (`t53z3rcv:Jbn`/`j`/`U`, tool `tkdb70xb`
 //! `ObserverReport`, `7y9jhgf9:Vdo`; `CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS`
-//! + `tengu_observer_agents_enabled`) pairs an agent definition's `observer`
+//! and `tengu_observer_agents_enabled`) pairs an agent definition's `observer`
 //! agent type with a background observer that receives a nonce-tagged
 //! `<name-activity>` digest after each turn and reports through
 //! `ObserverReport`, delivered to the observed agent as a one-way advisory.
@@ -122,7 +122,9 @@ fn random_nonce() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos() & u128::from(u64::MAX)).unwrap_or_default()
+        });
     format!(
         "{:012x}",
         (nanos ^ COUNTER.fetch_add(0x9e37_79b9, Ordering::Relaxed)) & 0xffff_ffff_ffff

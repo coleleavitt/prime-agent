@@ -247,9 +247,9 @@ pub fn render_transcript(messages: &[pa_agent::types::AgentMessage], max_chars: 
                     pa_agent::types::UserContent::Text(text) => text.clone(),
                     pa_agent::types::UserContent::Parts(parts) => parts
                         .iter()
-                        .filter_map(|part| match part {
-                            pa_agent::types::UserPart::Text(text) => Some(text.text.as_str()),
-                            pa_agent::types::UserPart::Image(_) => Some("[image]"),
+                        .map(|part| match part {
+                            pa_agent::types::UserPart::Text(text) => text.text.as_str(),
+                            pa_agent::types::UserPart::Image(_) => "[image]",
                         })
                         .collect::<Vec<_>>()
                         .join("\n"),
@@ -283,9 +283,9 @@ pub fn render_transcript(messages: &[pa_agent::types::AgentMessage], max_chars: 
                 let text = result
                     .content
                     .iter()
-                    .filter_map(|block| match block {
-                        pa_agent::types::ToolResultContent::Text(text) => Some(text.text.as_str()),
-                        pa_agent::types::ToolResultContent::Image(_) => Some("[image]"),
+                    .map(|block| match block {
+                        pa_agent::types::ToolResultContent::Text(text) => text.text.as_str(),
+                        pa_agent::types::ToolResultContent::Image(_) => "[image]",
                     })
                     .collect::<Vec<_>>()
                     .join("\n");

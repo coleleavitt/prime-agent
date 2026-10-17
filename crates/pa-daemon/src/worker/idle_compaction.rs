@@ -225,7 +225,7 @@ mod tests {
     fn the_timer_arms_for_the_rest_of_the_idle_period() {
         assert_eq!(
             idle_compaction_delay(true, 60_000, state(false, 1_000, 0, 21_000)),
-            Some(std::time::Duration::from_millis(40_000))
+            Some(std::time::Duration::from_secs(40))
         );
         assert_eq!(
             idle_compaction_delay(true, 60_000, state(false, 1_000, 0, 90_000)),
@@ -251,7 +251,7 @@ mod tests {
         );
         assert_eq!(
             idle_compaction_delay(true, 60_000, state(false, 5_000, 1_000, 6_000)),
-            Some(std::time::Duration::from_millis(59_000)),
+            Some(std::time::Duration::from_secs(59)),
             "new activity opens a new period"
         );
     }

@@ -92,12 +92,28 @@ pub fn parse_usage_reading(
     })
 }
 
+/// The window the hint last armed for.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ArmedWindow {
+    #[default]
+    Never,
+    /// The window resetting at this Unix second.
+    Resetting(u64),
+    /// A window whose reset the provider did not name: arms once per
+    /// session.
+    Unnamed,
+}
+
+impl ArmedWindow {
+    fn of(resets_at: Option<u64>) -> Self {
+        resets_at.map_or(ArmedWindow::Unnamed, ArmedWindow::Resetting)
+    }
+}
+
 #[derive(Debug, Default)]
 struct MonitorState {
     pending: bool,
-    /// The window the hint last armed for (its reset; `None` when the
-    /// provider named none, which arms once per session).
-    armed_window: Option<Option<u64>>,
+    armed_window: ArmedWindow,
 }
 
 /// One session's near-limit state.
@@ -124,10 +140,10 @@ impl UsageLimitMonitor {
             return;
         };
         let mut state = self.state.lock_or_recover();
-        if let Some(Some(reset)) = state.armed_window {
+        if let ArmedWindow::Resetting(reset) = state.armed_window {
             if now_secs > reset {
                 state.pending = false;
-                state.armed_window = None;
+                state.armed_window = ArmedWindow::Never;
             }
         }
         if reading.resets_at.is_some_and(|reset| reset <= now_secs) {
@@ -138,9 +154,9 @@ impl UsageLimitMonitor {
         }
         if reading.overage_allowed {
             state.pending = false;
-        } else if state.armed_window != Some(reading.resets_at) {
+        } else if state.armed_window != ArmedWindow::of(reading.resets_at) {
             state.pending = true;
-            state.armed_window = Some(reading.resets_at);
+            state.armed_window = ArmedWindow::of(reading.resets_at);
             tracing::info!(
                 target: "pa_core::usage_limit",
                 utilization = reading.utilization,

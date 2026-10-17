@@ -61,6 +61,10 @@ pub const MIN_IDLE_COMPACTION_MIN_TOKENS: u64 = 100_000;
 
 /// The resolved `experimental` knobs.
 #[derive(Debug, Clone, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent on/off switches, one per flag-gated behavior"
+)]
 pub struct ExperimentalSettings {
     pub usage_limit_wrap_up: bool,
     /// Utilization fraction (0..=1) at which the wrap-up note arms.

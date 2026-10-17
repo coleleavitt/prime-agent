@@ -916,9 +916,9 @@ async fn a_length_truncated_reply_ends_the_run_without_the_policy() {
 fn reasoning_only_length_turn(provider: &ScriptedProvider) {
     let mut message = pa_agent::types::AssistantMessage {
         content: Vec::new(),
-        api: test_model().api.clone(),
-        provider: test_model().provider.clone(),
-        model: test_model().id.clone(),
+        api: test_model().api,
+        provider: test_model().provider,
+        model: test_model().id,
         response_model: None,
         response_id: None,
         diagnostics: None,
