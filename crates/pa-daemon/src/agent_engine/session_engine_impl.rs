@@ -916,6 +916,7 @@ impl SessionEngine for AgentSessionEngine {
                 thinking: identity.thinking.clone(),
                 child_script: identity.child_script,
                 sandbox: self.create_resources.read_or_recover().sandbox.clone(),
+                resource_exclusions: self.create_resources.read_or_recover().resource_exclusions,
             };
             children.set_identity(parent);
         }

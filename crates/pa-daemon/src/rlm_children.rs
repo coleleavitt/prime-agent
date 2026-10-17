@@ -122,6 +122,11 @@ pub struct ParentIdentity {
     /// The parent's `--sandbox` override (wire name): every child is created
     /// under it, so `rlm.spawn` cannot step outside the run's sandbox.
     pub sandbox: Option<String>,
+    /// The parent's resource exclusions (`--no-context-files`,
+    /// `--no-skills`, `--no-prompt-templates`): every child is created with
+    /// them, the way TS children inherit the parent's session config, so a
+    /// run without AGENTS.md/CLAUDE.md files never grows them in a child.
+    pub resource_exclusions: pa_types::daemon::SessionResourceExclusions,
 }
 
 impl ParentIdentity {

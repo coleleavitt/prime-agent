@@ -137,6 +137,7 @@ impl SupervisorChildSessionsInner {
         if let Some(sandbox) = &identity.sandbox {
             config["sandbox"] = json!(sandbox);
         }
+        inherit_resource_exclusions(&mut config, identity.resource_exclusions);
         if let Some(script) = &identity.child_script {
             config["script"] = json!(script);
             // The scripted engine rides the identity down the recursion (TS
@@ -949,6 +950,29 @@ pub(super) fn last_assistant_text_from_file(session_file: &str) -> Option<String
         }
     }
     None
+}
+
+/// The parent's resource exclusions on a child's create config, under the
+/// create-config names the worker reads back (`noContextFiles`, ...); an
+/// unset exclusion stays off the config.
+fn inherit_resource_exclusions(
+    config: &mut Value,
+    exclusions: pa_types::daemon::SessionResourceExclusions,
+) {
+    let pa_types::daemon::SessionResourceExclusions {
+        no_skills,
+        no_prompt_templates,
+        no_context_files,
+    } = exclusions;
+    for (key, set) in [
+        ("noSkills", no_skills),
+        ("noPromptTemplates", no_prompt_templates),
+        ("noContextFiles", no_context_files),
+    ] {
+        if set {
+            config[key] = json!(true);
+        }
+    }
 }
 
 #[cfg(test)]
