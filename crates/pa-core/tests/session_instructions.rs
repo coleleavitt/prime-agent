@@ -69,6 +69,16 @@ fn user_text(message: &Message) -> Option<String> {
     })
 }
 
+/// The session context row's text: the instruction files ride it, not the
+/// system prompt (which stays byte-stable; auto memory stays there).
+fn context_text(engine: &pa_core::session_engine::engine::SessionEngine) -> String {
+    engine
+        .session
+        .context_rows()
+        .map(|rows| rows.full_context_text())
+        .unwrap_or_default()
+}
+
 #[tokio::test]
 async fn nested_instruction_files_join_the_run_once_and_memory_rides_the_prompt() {
     let tmp = tempfile::tempdir().unwrap();
@@ -123,9 +133,9 @@ async fn nested_instruction_files_join_the_run_once_and_memory_rides_the_prompt(
     .await
     .unwrap();
 
-    assert!(engine.system_prompt.contains("TOP_LEVEL_RULES"));
-    assert!(!engine.system_prompt.contains("PKG_RULES"));
-    assert!(!engine.system_prompt.contains("RUST_RULE"));
+    assert!(context_text(&engine).contains("TOP_LEVEL_RULES"));
+    assert!(!context_text(&engine).contains("PKG_RULES"));
+    assert!(!context_text(&engine).contains("RUST_RULE"));
     assert!(engine.system_prompt.contains("# auto memory"));
     assert!(engine.system_prompt.contains("MEMORY_SENTINEL"));
 
@@ -191,7 +201,7 @@ async fn auto_memory_and_context_files_stay_out_when_excluded() {
     }))
     .await
     .unwrap();
-    assert!(child.system_prompt.contains("TOP_LEVEL_RULES"));
+    assert!(context_text(&child).contains("TOP_LEVEL_RULES"));
     assert!(!child.system_prompt.contains("# auto memory"));
 
     // `--no-context-files` drops both.
@@ -208,7 +218,7 @@ async fn auto_memory_and_context_files_stay_out_when_excluded() {
     }))
     .await
     .unwrap();
-    assert!(!bare.system_prompt.contains("TOP_LEVEL_RULES"));
+    assert!(!context_text(&bare).contains("TOP_LEVEL_RULES"));
     assert!(!bare.system_prompt.contains("# auto memory"));
 
     // The setting turns auto memory off.
@@ -227,6 +237,6 @@ async fn auto_memory_and_context_files_stay_out_when_excluded() {
     }))
     .await
     .unwrap();
-    assert!(off.system_prompt.contains("TOP_LEVEL_RULES"));
+    assert!(context_text(&off).contains("TOP_LEVEL_RULES"));
     assert!(!off.system_prompt.contains("# auto memory"));
 }
