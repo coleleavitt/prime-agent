@@ -2455,6 +2455,7 @@ dependencies = [
  "pa-learning",
  "pa-ledger",
  "pa-mermaid",
+ "pa-observer",
  "pa-os-sandbox",
  "pa-plugins",
  "pa-ravo",
@@ -2691,6 +2692,18 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "pa-observer"
+version = "0.10.0"
+dependencies = [
+ "pa-agent",
+ "pa-core",
+ "pa-types",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 

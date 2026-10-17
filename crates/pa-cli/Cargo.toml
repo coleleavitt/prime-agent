@@ -15,6 +15,7 @@ default = [
     "learning",
     "ledger",
     "mermaid",
+    "observer",
     "plugins",
     "ravo",
     "recall",
@@ -44,6 +45,11 @@ ledger = ["dep:pa-ledger"]
 # flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
 # in agent/custom messages and /btw (crates/pa-mermaid).
 mermaid = ["dep:pa-mermaid"]
+# Observer agents (crates/pa-observer): a background observer model reads a
+# digest of each turn and reports only when it has something. Inert unless the
+# `experimental.observer` setting (or PRIME_AGENT_EXPERIMENTAL_OBSERVER_AGENTS)
+# turns it on.
+observer = ["dep:pa-observer"]
 # WebAssembly plugins (crates/pa-plugins): sandboxed components from
 # `<agent dir>/plugins/` (and a trusted project's) that review tool calls and
 # kernel host requests, add prompt context, show status, and answer the
@@ -88,6 +94,7 @@ pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
+pa-observer = { path = "../pa-observer", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }

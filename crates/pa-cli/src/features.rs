@@ -44,6 +44,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // requests, prompt context, status panels, the `wasm-plugins` skill.
     #[cfg(feature = "plugins")]
     features.push(Arc::new(pa_plugins::PluginsFeature::new()));
+    // Observer agents (experimental): a background observer reads each
+    // turn's digest of the sessions whose settings turn it on.
+    #[cfg(feature = "observer")]
+    features.push(Arc::new(pa_observer::ObserverFeature::new()));
     features
 }
 
