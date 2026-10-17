@@ -375,10 +375,11 @@ fn count_lines(bytes: &[u8]) -> u64 {
     if bytes.is_empty() {
         return 0;
     }
-    let newlines = bytes.iter().filter(|&&byte| byte == b'\n').count() as u64;
+    // "a\nb" splits in two, "a\n" too (the trailing segment is empty).
+    let segments = bytes.split(|&byte| byte == b'\n').count() as u64;
     if bytes.ends_with(b"\n") {
-        newlines
+        segments - 1
     } else {
-        newlines + 1
+        segments
     }
 }
