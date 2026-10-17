@@ -62,6 +62,16 @@ pub trait SessionEngine: Send + Sync {
         None
     }
 
+    /// Ask the user again about the workspace's `.mcp.json` servers that
+    /// wait for approval (the `/mcp` view opened); the questions go through
+    /// the session's confirmation surface in the background. Engines
+    /// without a built session do nothing.
+    fn ask_project_mcp_approvals(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
+
     /// The session's current goal state as the wire `GoalState` value.
     /// Engines without thread goals report the empty state.
     fn goal_state_value(&self) -> Value {
