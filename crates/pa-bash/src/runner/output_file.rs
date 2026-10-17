@@ -3,7 +3,10 @@
 //! as the pump commits each chunk, so the model can read a long or detached
 //! command's whole output by path after the in-memory buffer dropped its
 //! middle. Private to the user (directory 0700, file 0600 on Unix) and capped:
-//! past [`OUTPUT_FILE_CAP`] bytes one marker line ends the file.
+//! past [`OUTPUT_FILE_CAP`] bytes one marker line ends the file. The directory
+//! is pruned as files are added ([`prune_dir`]): the oldest files of finished
+//! commands go once more than [`MAX_OUTPUT_FILES`] files or
+//! [`MAX_OUTPUT_DIR_BYTES`] bytes are kept.
 
 use std::fs::File;
 use std::io::Write;
@@ -11,6 +14,57 @@ use std::path::{Path, PathBuf};
 
 /// The most command output bytes one file keeps.
 pub(crate) const OUTPUT_FILE_CAP: u64 = 64 * 1024 * 1024;
+/// The most output files one directory keeps.
+pub(crate) const MAX_OUTPUT_FILES: usize = 200;
+/// The most output bytes one directory keeps.
+pub(crate) const MAX_OUTPUT_DIR_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Delete the oldest `<id>.output` files in `dir` (by modification time)
+/// until at most `max_files` files and `max_bytes` bytes remain. A file whose
+/// id is in `live` (a command still running) is never deleted, and other
+/// files in the directory are never touched. Best effort: an unreadable
+/// entry is skipped.
+pub(crate) fn prune_dir(
+    dir: &Path,
+    live: &std::collections::HashSet<String>,
+    max_files: usize,
+    max_bytes: u64,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf, bool)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let id = path
+                .file_name()?
+                .to_str()?
+                .strip_suffix(".output")?
+                .to_string();
+            let meta = entry.metadata().ok()?;
+            meta.is_file().then(|| {
+                (
+                    meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    meta.len(),
+                    path,
+                    live.contains(&id),
+                )
+            })
+        })
+        .collect();
+    // Newest first: the kept ones are a prefix.
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let (mut count, mut bytes) = (0usize, 0u64);
+    for (_, len, path, is_live) in files {
+        if is_live || (count < max_files && bytes.saturating_add(len) <= max_bytes) {
+            count += 1;
+            bytes = bytes.saturating_add(len);
+            continue;
+        }
+        let _ = std::fs::remove_file(path);
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct OutputFile {
@@ -101,6 +155,37 @@ mod tests {
             assert_eq!(mode(&dir), 0o700);
             assert_eq!(mode(&path), 0o600);
         }
+    }
+
+    #[test]
+    fn pruning_drops_the_oldest_finished_files_past_the_caps() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let base = std::time::SystemTime::now() - std::time::Duration::from_secs(100);
+        for (index, id) in ["a", "b", "c", "d"].iter().enumerate() {
+            let path = dir.join(format!("{id}.output"));
+            std::fs::write(&path, "xxxx").unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(base + std::time::Duration::from_secs(index as u64))
+                .unwrap();
+        }
+        std::fs::write(dir.join("notes.txt"), "keep").unwrap();
+        // "a" is the oldest but still running: it stays and counts toward
+        // the cap, so of the finished ones only the newest two survive
+        // (three files, one over the cap of two, never a live one).
+        let live: std::collections::HashSet<String> = ["a".to_string()].into();
+        prune_dir(dir, &live, 2, u64::MAX);
+        let mut left: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["a.output", "c.output", "d.output", "notes.txt"]);
+        // The byte cap: one 4-byte file fits in 6 bytes besides the live one.
+        prune_dir(dir, &std::collections::HashSet::new(), 10, 6);
+        assert!(dir.join("d.output").exists());
+        assert!(!dir.join("c.output").exists());
+        assert!(!dir.join("a.output").exists());
     }
 
     #[test]

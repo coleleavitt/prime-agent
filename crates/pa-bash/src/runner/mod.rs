@@ -256,9 +256,30 @@ impl JobTable {
             },
             spawned,
         );
+        let output_dir = job
+            .output_path
+            .as_ref()
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
         let mut jobs = self.lock();
         prune(&mut jobs);
         jobs.all.push(Arc::clone(&job));
+        let live: std::collections::HashSet<String> = jobs
+            .all
+            .iter()
+            .filter(|job| !job.is_reaped())
+            .map(|job| job.id.clone())
+            .collect();
+        drop(jobs);
+        // The output directory keeps the newest files of finished commands
+        // within its caps.
+        if let Some(dir) = output_dir {
+            output_file::prune_dir(
+                &dir,
+                &live,
+                output_file::MAX_OUTPUT_FILES,
+                output_file::MAX_OUTPUT_DIR_BYTES,
+            );
+        }
         Ok(job)
     }
 

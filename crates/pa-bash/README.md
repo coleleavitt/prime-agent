@@ -40,7 +40,8 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   persisted output file (`output_file`: with an output directory set on the
   table, each command's whole output also goes to `<dir>/<job id>.output`,
   0600 in a 0700 directory, capped at 64 MiB; `bash.run`'s `job` and the
-  activity rows name it as `outputPath`), progress
+  activity rows name it as `outputPath`; each new file prunes the directory
+  to its newest 200 files and 512 MiB, never a running command's file), progress
   events (`command_progress`, `cargo_lock_wait`, `command_no_output`), the
   orphan-process journal (`journal`), and the activity view (list/tail/kill
   with the kernel's 16 KiB frame caps).
