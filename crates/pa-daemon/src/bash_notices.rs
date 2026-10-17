@@ -144,6 +144,11 @@ fn validate_completion(data: &Value) -> anyhow::Result<BashCompletionNotice> {
                     .unwrap_or_default()
                     .to_string(),
                 bytes,
+                file: data
+                    .get("outputPath")
+                    .and_then(Value::as_str)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_string),
             },
         );
     Ok(BashCompletionNotice {
@@ -296,6 +301,36 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn a_completion_carries_the_persisted_output_file() {
+        let with_file = validate_completion(&serde_json::json!({
+            "pid": 4321,
+            "command": "make",
+            "exitCode": 0,
+            "outputTail": "ok",
+            "outputBytes": 2,
+            "outputPath": "/s/tasks/ab.output",
+        }))
+        .unwrap();
+        assert_eq!(
+            with_file.output,
+            Some(pa_core::session_engine::messages::BashCompletionOutput {
+                tail: "ok".to_string(),
+                bytes: 2,
+                file: Some("/s/tasks/ab.output".to_string()),
+            })
+        );
+        let without = validate_completion(&serde_json::json!({
+            "pid": 4321,
+            "command": "make",
+            "exitCode": 0,
+            "outputTail": "ok",
+            "outputBytes": 2,
+        }))
+        .unwrap();
+        assert_eq!(without.output.and_then(|output| output.file), None);
     }
 
     #[test]

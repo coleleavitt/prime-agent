@@ -931,6 +931,9 @@ class BashHandle:
         self._activity_id = ""
         self._pid = 0
         self._pgid = 0
+        # The file the host persists the whole output to (the session's tasks
+        # dir), when it does.
+        self._output_path: str | None = None
         self._started_at_text = ""
         self._started_at = datetime.now(timezone.utc)
         try:
@@ -952,6 +955,8 @@ class BashHandle:
         self._activity_id = str(job["id"])
         self._pid = int(job["pid"])
         self._pgid = int(job["pgid"])
+        output_path = job.get("outputPath")
+        self._output_path = str(output_path) if output_path else None
         self._started_at_text = str(job["startedAt"])
         self._started_at = datetime.fromisoformat(self._started_at_text)
         self._span.attrs.update(
@@ -975,6 +980,13 @@ class BashHandle:
     def pid(self) -> int:
         self._released = True
         return self._pid
+
+    @property
+    def output_path(self) -> str | None:
+        """The file holding the command's whole output (the session's tasks
+        directory), or None when the host keeps it in memory only. Reading the
+        file does not count as reading the result."""
+        return self._output_path
 
     @property
     def running(self) -> bool:
@@ -1252,16 +1264,17 @@ class BashHandle:
             command = _capped(self.command)
             # The result's text, not output()/tail(): those count as reading the
             # result and would withdraw the very notice being sent.
-            reply = await repl.host_request(
-                {
-                    "type": "bash.completed",
-                    "pid": self._pid,
-                    "command": command,
-                    "exitCode": result.exit_code,
-                    "outputTail": _notice_tail(result.output),
-                    "outputBytes": int(self._fields.get("bash.output_bytes", len(result.output.encode()))),
-                }
-            )
+            completed: dict[str, Any] = {
+                "type": "bash.completed",
+                "pid": self._pid,
+                "command": command,
+                "exitCode": result.exit_code,
+                "outputTail": _notice_tail(result.output),
+                "outputBytes": int(self._fields.get("bash.output_bytes", len(result.output.encode()))),
+            }
+            if self._output_path is not None:
+                completed["outputPath"] = self._output_path
+            reply = await repl.host_request(completed)
             if isinstance(reply, dict) and reply.get("status") == "ok":
                 # Notice accepted by the host; later reads must ask it to withdraw.
                 self._arm_consumed_notice(command)

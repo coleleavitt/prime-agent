@@ -11,6 +11,7 @@ The harness often sends messages to the agent. These are user messages starting 
     - `.pid: int`
     - `.running: bool`
     - `.command: str`
+    - `.output_path: str | None`: the file the session saves the command's whole output to (the completion notice names it too); read it for long output
     - `.tail(n: int = 50) -> str`
     - `.output() -> str`
     - `.poll() -> BashResult | None`
