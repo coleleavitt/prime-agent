@@ -33,9 +33,98 @@ pub(super) struct McpServiceRow {
     pub setup_hint: Option<String>,
     pub tool_count: Option<usize>,
     pub verified_at: Option<u64>,
+    /// Where the server is declared (the daemon's `declaredServers`);
+    /// `None` for a catalog service or a daemon that predates it.
+    pub declaration: Option<McpDeclaration>,
+}
+
+/// Where a declared server comes from, and a `.mcp.json` server's approval
+/// (one `declaredServers` entry of the `get_mcp_connections` response).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct McpDeclaration {
+    /// `settings`, `local`, `project` or `user`.
+    pub scope: String,
+    /// The scope as the user reads it.
+    pub scope_label: String,
+    /// The declaring file.
+    pub source: String,
+    /// `approved`, `pending` or `rejected` for a `.mcp.json` server.
+    pub approval: Option<String>,
+}
+
+impl McpDeclaration {
+    /// Parse one `declaredServers` entry: the server's name and its
+    /// declaration.
+    pub(super) fn from_value(value: &Value) -> Option<(String, Self)> {
+        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+        Some((
+            text("name")?,
+            McpDeclaration {
+                scope: text("scope")?,
+                scope_label: text("scopeLabel").unwrap_or_default(),
+                source: text("source").unwrap_or_default(),
+                approval: text("approval"),
+            },
+        ))
+    }
+
+    /// Pending or rejected: listed, never started.
+    pub(super) fn awaits_decision(&self) -> bool {
+        matches!(self.approval.as_deref(), Some("pending" | "rejected"))
+    }
+
+    /// The detail line's provenance copy.
+    fn provenance(&self) -> String {
+        match self.approval.as_deref() {
+            Some("pending") => format!(
+                "Waiting for your approval (the prompt opens with /mcp) \u{b7} {}",
+                self.source
+            ),
+            Some("rejected") => format!(
+                "Rejected \u{b7} run `prime-agent mcp reset-project-choices` to review it again \
+                 \u{b7} {}",
+                self.source
+            ),
+            _ if self.scope_label.is_empty() => self.source.clone(),
+            _ => format!("{}: {}", self.scope_label, self.source),
+        }
+    }
 }
 
 impl McpServiceRow {
+    /// A row for a declared server the services list does not carry (a
+    /// `.mcp.json` server waiting for approval, or rejected).
+    pub(super) fn from_declaration(name: &str, declaration: McpDeclaration) -> Self {
+        McpServiceRow {
+            service_id: name.to_string(),
+            label: name.to_string(),
+            connection_status: "not_connected".to_string(),
+            connectable: false,
+            login_pending: false,
+            uses_oauth: false,
+            source: declaration.scope.clone(),
+            connection_ids: Vec::new(),
+            paste_token: false,
+            aliases: Vec::new(),
+            description: None,
+            category: None,
+            publisher: None,
+            docs_url: None,
+            setup_hint: None,
+            tool_count: None,
+            verified_at: None,
+            declaration: Some(declaration),
+        }
+    }
+
+    /// Whether the row waits for the user's approval decision (Enter does
+    /// nothing: the confirm prompt asks).
+    pub(super) fn awaits_decision(&self) -> bool {
+        self.declaration
+            .as_ref()
+            .is_some_and(McpDeclaration::awaits_decision)
+    }
+
     /// Parse one legacy roster entry (a daemon that predates the catalog
     /// surface serves only `connections`): the row keeps the roster's
     /// honest connected state; a not-connected row stays connectable.
@@ -74,6 +163,7 @@ impl McpServiceRow {
             setup_hint: None,
             tool_count: None,
             verified_at: None,
+            declaration: None,
         })
     }
 
@@ -159,6 +249,7 @@ impl McpServiceRow {
                 .and_then(Value::as_u64)
                 .map(|c| c as usize),
             verified_at: value.get("verifiedAt").and_then(Value::as_u64),
+            declaration: None,
         })
     }
 
@@ -166,6 +257,15 @@ impl McpServiceRow {
     /// state vocabulary, with the record-carried tool count on connected
     /// rows (the picker reads local state only, like TS).
     fn status_text(&self) -> (ThemeColor, String) {
+        match self
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.approval.as_deref())
+        {
+            Some("pending") => return (ThemeColor::Warning, "Pending approval".to_string()),
+            Some("rejected") => return (ThemeColor::Muted, "Rejected".to_string()),
+            _ => {}
+        }
         if self.login_pending {
             return (ThemeColor::Warning, "Login in progress".to_string());
         }
@@ -209,11 +309,23 @@ impl McpServiceRow {
     /// the honest setup guidance for setup-required/error rows, the
     /// description otherwise.
     pub(super) fn detail_text(&self) -> Option<String> {
-        if self.connection_status == "setup_required" || self.connection_status == "error" {
-            self.setup_hint.clone().or_else(|| self.description.clone())
-        } else {
-            self.description.clone().or_else(|| self.setup_hint.clone())
-        }
+        let detail =
+            if self.connection_status == "setup_required" || self.connection_status == "error" {
+                self.setup_hint.clone().or_else(|| self.description.clone())
+            } else {
+                self.description.clone().or_else(|| self.setup_hint.clone())
+            };
+        // A declared server says where it comes from.
+        let Some(declaration) = &self.declaration else {
+            return detail;
+        };
+        let provenance = declaration.provenance();
+        Some(match detail {
+            Some(detail) if !declaration.awaits_decision() => {
+                format!("{detail} \u{b7} {provenance}")
+            }
+            _ => provenance,
+        })
     }
 
     /// The action target (the service id).
@@ -350,6 +462,15 @@ impl McpRow {
         match self {
             McpRow::Service(service) => service.detail_text(),
             McpRow::Credential(_) => None,
+        }
+    }
+
+    /// Whether Enter acts on the row (a project server waiting for the
+    /// approval prompt does not).
+    pub(super) fn actionable(&self) -> bool {
+        match self {
+            McpRow::Service(service) => !service.awaits_decision(),
+            McpRow::Credential(_) => true,
         }
     }
 
