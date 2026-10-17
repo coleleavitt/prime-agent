@@ -458,6 +458,20 @@ pub struct Settings {
     /// cap), the turn continues on the next entry. Default: empty - no
     /// cross-model fallback.
     pub fallback_models: Option<Vec<String>>,
+    /// `outputStyle` (Claude Code's key): the output style the system
+    /// prompt carries (`default`, a built-in, or a custom style's name).
+    /// Unset is the default style.
+    pub output_style: Option<String>,
+    /// `editorMode` (Claude Code's key): `"vim"` turns on the prompt
+    /// editor's vim keys; unset or `"normal"` keeps the default keys.
+    pub editor_mode: Option<String>,
+    /// `statusLine` (Claude Code's shape: `{ "type": "command", "command",
+    /// "padding", "refreshInterval" }`): a command whose output renders
+    /// under the prompt. Raw JSON validated by the client. Unset is off.
+    pub status_line: Option<serde_json::Value>,
+    /// `disableSkillShellExecution` (Claude Code's key): `true` leaves
+    /// `` !`cmd` `` blocks in custom commands unexpanded. Unset runs them.
+    pub disable_skill_shell_execution: Option<bool>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

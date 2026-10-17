@@ -1,5 +1,6 @@
 //! Skill discovery, validation, and prompt formatting.
 
+pub mod claude_commands;
 pub mod diagnostics;
 pub mod discovery;
 pub mod frontmatter;
@@ -22,7 +23,9 @@ pub use pa_types::slash_commands::parse_slash_command;
 pub use prompt_templates::{
     LoadPromptTemplatesOptions,
     PromptTemplate,
+    TemplateArguments,
     expand_prompt_template,
+    expand_prompt_template_with_shell,
     load_prompt_templates,
     parse_command_args,
     substitute_args,

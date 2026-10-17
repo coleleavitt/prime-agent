@@ -97,6 +97,14 @@ pub struct BuildSystemPromptOptions<'a> {
     pub generic_mcp_servers: Vec<String>,
     /// The OS sandbox's one environment line (`None`: sandbox off, no line).
     pub sandbox: Option<String>,
+    /// The selected output style (`None`: the default style). Its block is
+    /// the first tail segment; a style that does not keep the coding
+    /// instructions drops the opinionated layer.
+    pub output_style: Option<super::output_style::OutputStyle>,
+    /// The session's additional working directories (`--add-dir`,
+    /// `/add-dir`, `permissions.additionalDirectories`), listed in the
+    /// environment section.
+    pub additional_directories: Vec<String>,
 }
 
 /// Build the system prompt (assembled text only).
@@ -130,11 +138,20 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
                 layers::layer_source("usage").unwrap_or_default(),
                 layers::USAGE_LAYER.trim().to_string(),
             ));
-            segments.push(PromptSegment::static_segment(
-                "opinionated",
-                layers::layer_source("opinionated").unwrap_or_default(),
-                layers::OPINIONATED_LAYER.trim().to_string(),
-            ));
+            // Claude Code drops its coding instructions under a style
+            // without `keep-coding-instructions`; the opinionated layer is
+            // this prompt's equivalent.
+            let keeps_coding_instructions = options
+                .output_style
+                .as_ref()
+                .is_none_or(|style| style.keep_coding_instructions);
+            if keeps_coding_instructions {
+                segments.push(PromptSegment::static_segment(
+                    "opinionated",
+                    layers::layer_source("opinionated").unwrap_or_default(),
+                    layers::OPINIONATED_LAYER.trim().to_string(),
+                ));
+            }
             if let Some(extras) = options.model_prompt_extras {
                 segments.push(PromptSegment::static_segment(
                     "model-prompts",
@@ -159,6 +176,14 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         .unwrap_or_else(|| vec![pa_types::ai::PYTHON_TOOL_NAME]);
     let has_ipython = tools.contains(&pa_types::ai::PYTHON_TOOL_NAME);
     let has_file_access = has_ipython || tools.contains(&"bash");
+
+    if let Some(style) = &options.output_style {
+        segments.push(PromptSegment::dynamic_segment(
+            "output-style",
+            "outputStyle setting",
+            super::output_style::output_style_section(style),
+        ));
+    }
 
     segments.push(PromptSegment::dynamic_segment(
         "packages",
@@ -278,6 +303,15 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
         format!("Working directory: {cwd}"),
         format!("Conversation log: {messages_path}"),
     ];
+    if !options.additional_directories.is_empty() {
+        lines.push("Additional working directories:".to_string());
+        lines.extend(
+            options
+                .additional_directories
+                .iter()
+                .map(|dir| format!(" - {}", dir.replace('\\', "/"))),
+        );
+    }
     match options.vision_capable {
         Some(true) => lines.push(
             "Image input: this model can see images; `attach_image` loads them into context."
@@ -525,6 +559,51 @@ mod tests {
                 .assembled
                 .contains("Enabled generic MCP servers: `t`.")
         );
+    }
+
+    #[test]
+    fn output_style_leads_the_tail_and_may_drop_the_coding_guidelines() {
+        let style = |keep: bool| super::super::output_style::OutputStyle {
+            name: "pirate".to_string(),
+            description: "Arr".to_string(),
+            prompt: "Answer as a pirate.".to_string(),
+            source: super::super::output_style::OutputStyleSource::User,
+            keep_coding_instructions: keep,
+            turn_reminder: None,
+        };
+        let names = |options: &BuildSystemPromptOptions| -> Vec<&'static str> {
+            system_prompt_breakdown(options)
+                .segments
+                .iter()
+                .map(|segment| segment.name)
+                .take(4)
+                .collect()
+        };
+        let mut options = base_options();
+        options.output_style = Some(style(false));
+        assert_eq!(
+            names(&options),
+            ["core", "usage", "output-style", "packages"]
+        );
+        assert!(
+            system_prompt_breakdown(&options)
+                .assembled
+                .contains("# Output Style: pirate\nAnswer as a pirate.")
+        );
+        options.output_style = Some(style(true));
+        assert_eq!(
+            names(&options),
+            ["core", "usage", "opinionated", "output-style"]
+        );
+    }
+
+    #[test]
+    fn additional_directories_are_listed_in_the_environment() {
+        let mut options = base_options();
+        options.additional_directories = vec!["/a".to_string(), "/b/c".to_string()];
+        assert!(system_prompt_breakdown(&options).assembled.contains(
+            "Conversation log: /log.jsonl\nAdditional working directories:\n - /a\n - /b/c\n"
+        ));
     }
 
     #[test]

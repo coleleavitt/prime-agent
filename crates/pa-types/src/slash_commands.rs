@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 10] = [
     "compact",
     "refine",
     "goal",
@@ -14,6 +14,8 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
     "plan",
     "harness",
     "rlm-token-budget",
+    "output-style",
+    "add-dir",
 ];
 
 /// Durable row custom types (TS `messages.ts`): the command echo and its
@@ -411,6 +413,30 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         argument_hint: Some("[on|off|status]"),
         aliases: &[],
         takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "output-style",
+        description: "List output styles or switch to one",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[style]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "add-dir",
+        description: "Add a new working directory",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("<path>"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "vim",
+        description: "Toggle between Vim and Normal editing modes",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
     },
     BuiltinSlashCommand {
         name: "rlm-max-depth",

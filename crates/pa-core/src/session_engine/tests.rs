@@ -981,6 +981,7 @@ async fn template_expansion_applies() {
             None,
         ),
         file_path: "/p/fix.md".to_string(),
+        arguments: crate::skills::TemplateArguments::Positional,
     };
     let engine = AgentSession::new(Arc::new(agent), session, vec![template])
         .await

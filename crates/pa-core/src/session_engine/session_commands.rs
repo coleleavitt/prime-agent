@@ -1,5 +1,6 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, and `/rlm-token-budget`. The host runtime owns
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/rlm-token-budget`,
+//! `/output-style` and `/add-dir`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
 
@@ -250,6 +251,8 @@ pub async fn execute_session_command(
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
         "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
+        "output-style" => execute_output_style(engine, command, &mut execution),
+        "add-dir" => execute_add_dir(engine, command, &mut execution).await,
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -375,6 +378,135 @@ fn execute_rlm_token_budget(
     };
     execution.push_message(slash_command_result(
         command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
+/// The hidden row a mid-session `/output-style` switch delivers.
+pub const OUTPUT_STYLE_CHANGE_CUSTOM_TYPE: &str = "output_style_change";
+
+/// `/output-style [style]` (Claude Code's command): no argument (or an
+/// unknown one) lists the styles; a style name persists `outputStyle`
+/// globally and tells the model on its next turn. The system prompt takes
+/// the style when the next session starts (its cached prefix never changes
+/// mid-session).
+fn execute_output_style(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use crate::prompts::output_style::{
+        DEFAULT_OUTPUT_STYLE,
+        find_output_style,
+        load_output_styles,
+        output_style_change_text,
+        output_style_dirs,
+        output_style_listing,
+    };
+    let context = &engine.feature_context;
+    let mut settings = crate::settings::SettingsManager::create(&context.cwd, &context.agent_dir);
+    let styles = load_output_styles(&output_style_dirs(
+        &context.cwd,
+        &context.agent_dir,
+        settings.project_scope_trusted(),
+    ));
+    let current = settings.get_output_style().map(str::to_string);
+    let requested = command.args.trim();
+    let mut info = |text: String| {
+        execution.push_message(slash_command_result(
+            command, text, true, "info", None, true,
+        ));
+    };
+    let target: Option<Option<&crate::prompts::output_style::OutputStyle>> =
+        if requested.eq_ignore_ascii_case(DEFAULT_OUTPUT_STYLE) {
+            Some(None)
+        } else if requested.is_empty() {
+            None
+        } else {
+            find_output_style(&styles, requested).map(Some)
+        };
+    let Some(target) = target else {
+        if requested.is_empty() || matches!(requested, "help" | "list" | "?") {
+            info(output_style_listing(&styles, current.as_deref()));
+        } else {
+            let names: Vec<&str> = std::iter::once(DEFAULT_OUTPUT_STYLE)
+                .chain(styles.iter().map(|style| style.name.as_str()))
+                .collect();
+            info(format!(
+                "Unknown output style \"{requested}\". Available styles: {}",
+                names.join(", ")
+            ));
+        }
+        return Ok(());
+    };
+    let target_name = target.map_or(DEFAULT_OUTPUT_STYLE, |style| style.name.as_str());
+    if current.as_deref().unwrap_or(DEFAULT_OUTPUT_STYLE) == target_name {
+        info(format!("Output style is already {target_name}"));
+        return Ok(());
+    }
+    settings
+        .set_output_style(target.map(|style| style.name.clone()))
+        .map_err(|error| format!("Could not save output style: {error:#}"))?;
+    engine
+        .session
+        .withdraw_next_turn_rows(OUTPUT_STYLE_CHANGE_CUSTOM_TYPE);
+    engine
+        .session
+        .queue_next_turn_row(super::plan_mode::hidden_row(
+            OUTPUT_STYLE_CHANGE_CUSTOM_TYPE,
+            &output_style_change_text(target),
+        ));
+    info(format!("Output style set to {target_name}"));
+    Ok(())
+}
+
+/// `/add-dir <path>` (Claude Code's command): validate the directory, add
+/// it to the session's working directories, persist the session's list
+/// (resume keeps it), and tell the model on its next turn.
+async fn execute_add_dir(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use super::additional_dirs::{
+        ADDITIONAL_DIRECTORIES_CHANGE_CUSTOM_TYPE,
+        ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE,
+        directories_added_text,
+    };
+    if command.args.trim().is_empty() {
+        return Err("Usage: /add-dir <path>".to_string());
+    }
+    let (added, session_added) = engine
+        .additional_directories
+        .add(&command.args)
+        .map_err(|error| error.to_string())?;
+    let directories: Vec<String> = session_added
+        .iter()
+        .map(|dir| dir.display().to_string())
+        .collect();
+    engine
+        .session
+        .session_handle()
+        .lock()
+        .await
+        .append_custom_entry(
+            ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE,
+            Some(serde_json::json!({ "directories": directories })),
+        )
+        .map_err(|error| error.to_string())?;
+    engine
+        .session
+        .queue_next_turn_row(super::plan_mode::hidden_row(
+            ADDITIONAL_DIRECTORIES_CHANGE_CUSTOM_TYPE,
+            &directories_added_text(&added),
+        ));
+    execution.push_message(slash_command_result(
+        command,
+        format!("Added {} as a working directory.", added.display()),
+        true,
+        "info",
+        None,
+        true,
     ));
     Ok(())
 }
@@ -913,3 +1045,7 @@ mod harness_command_tests;
 #[cfg(test)]
 #[path = "rlm_token_budget_command_tests.rs"]
 mod rlm_token_budget_command_tests;
+
+#[cfg(test)]
+#[path = "claude_parity_command_tests.rs"]
+mod claude_parity_command_tests;

@@ -50,6 +50,8 @@ pub(super) struct FoldAdmission {
     pub(super) agent: Weak<Agent>,
     pub(super) skills: Vec<crate::skills::Skill>,
     pub(super) prompt_templates: Vec<crate::skills::PromptTemplate>,
+    /// Where a folded Claude Code command's shell blocks run.
+    pub(super) cwd: std::path::PathBuf,
     pub(super) features: Vec<Arc<dyn crate::features::SessionFeature>>,
     pub(super) feature_context: Arc<crate::features::SessionFeatureContext>,
     pub(super) feature_notes: crate::features::FeatureNotes,
@@ -75,8 +77,12 @@ impl FoldAdmission {
     /// The rows one folded steer joins the run as, or the refusal.
     async fn admit(&self, text: &str) -> Result<AgentMessageBatch, String> {
         let (skill_expanded, _) = crate::skills::expand_skill_command(text, &self.skills);
-        let normalized =
-            crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
+        let normalized = crate::skills::expand_prompt_template_with_shell(
+            &skill_expanded,
+            &self.prompt_templates,
+            &self.cwd,
+        )
+        .await;
         let mut rows = Vec::new();
         if !self.features.is_empty() {
             match crate::features::review_prompt(

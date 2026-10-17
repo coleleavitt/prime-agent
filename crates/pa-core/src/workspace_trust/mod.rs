@@ -88,6 +88,10 @@ pub enum GatedItem {
     /// A project directory a composition root registered as gated
     /// ([`register_gated_project_dir`]): `.prime/agent/<dir>/`.
     ProjectDir { dir: String, label: String },
+    /// A Claude Code directory in the project (`.claude/commands/`: custom
+    /// commands, which can run shell blocks; `.claude/output-styles/`:
+    /// styles that rewrite the system prompt).
+    ClaudeDir { dir: String, label: String },
 }
 
 impl fmt::Display for GatedItem {
@@ -102,6 +106,7 @@ impl fmt::Display for GatedItem {
             GatedItem::PromptTemplates => write!(f, "{config_dir}/prompts/ (prompt templates)"),
             GatedItem::ProjectSkills(location) => write!(f, "{location} (project skills)"),
             GatedItem::ProjectDir { dir, label } => write!(f, "{config_dir}/{dir}/ ({label})"),
+            GatedItem::ClaudeDir { dir, label } => write!(f, ".claude/{dir}/ ({label})"),
         }
     }
 }

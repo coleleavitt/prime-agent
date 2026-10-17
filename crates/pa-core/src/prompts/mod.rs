@@ -7,6 +7,8 @@ pub mod layers;
 
 pub mod model_prompts;
 
+pub mod output_style;
+
 pub mod system_prompt;
 
 pub use system_prompt::{

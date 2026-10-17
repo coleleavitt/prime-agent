@@ -66,6 +66,10 @@ const KNOWN_FIELDS: &[&str] = &[
     "rlmTokenBudget",
     "fallbackModels",
     "sandbox",
+    "outputStyle",
+    "editorMode",
+    "statusLine",
+    "disableSkillShellExecution",
 ];
 
 /// Extract each known field independently; ignore fields whose JSON type does not match the Rust
