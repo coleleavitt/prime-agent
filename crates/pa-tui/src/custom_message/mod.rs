@@ -52,6 +52,10 @@ pub const HEARTBEAT_PROMPT_CUSTOM_TYPE: &str = "heartbeat_prompt";
 pub const GOAL_CONTEXT_CUSTOM_TYPE: &str = "goal_context";
 pub const IPYTHON_STATE_RESTORED_CUSTOM_TYPE: &str = "ipython_state_restored";
 pub const PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE: &str = "python_skills_unavailable";
+/// Wire twins of `pa_core::cron::tasks::{SCHEDULED_TASK_FIRE_CUSTOM_TYPE,
+/// LOOP_PROMPT_CUSTOM_TYPE}`: a scheduled task's fire and a `/loop`'s first turn.
+pub const SCHEDULED_TASK_FIRE_CUSTOM_TYPE: &str = "scheduled_task_fire";
+pub const LOOP_PROMPT_CUSTOM_TYPE: &str = "loop_prompt";
 pub const RLM_CHILD_FAILURE_CUSTOM_TYPE: &str = "rlm_child_failure";
 pub const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE: &str = "rlm_child_terminal_notice";
 pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
@@ -241,7 +245,9 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         HEARTBEAT_PROMPT_CUSTOM_TYPE
         | GOAL_CONTEXT_CUSTOM_TYPE
         | IPYTHON_STATE_RESTORED_CUSTOM_TYPE
-        | PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE => {
+        | PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE
+        | SCHEDULED_TASK_FIRE_CUSTOM_TYPE
+        | LOOP_PROMPT_CUSTOM_TYPE => {
             vec![ChatEntry::InjectedPrompt(Box::new(injected_prompt_row(
                 custom_type,
                 message,

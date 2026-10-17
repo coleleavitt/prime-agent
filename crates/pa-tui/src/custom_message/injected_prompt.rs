@@ -25,7 +25,9 @@ use super::{
     GOAL_CONTEXT_CUSTOM_TYPE,
     HEARTBEAT_PROMPT_CUSTOM_TYPE,
     IPYTHON_STATE_RESTORED_CUSTOM_TYPE,
+    LOOP_PROMPT_CUSTOM_TYPE,
     PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE,
+    SCHEDULED_TASK_FIRE_CUSTOM_TYPE,
     custom_content_text,
 };
 use crate::chat::Detail;
@@ -57,6 +59,14 @@ pub enum InjectedPromptKind {
     /// `Python skills unavailable · <skill names>` (muted label, dim
     /// names, no marker glyph), expandable to the full report.
     PythonSkillsUnavailable { skills: Vec<String> },
+    /// `Running scheduled task (Oct 17 2:30pm)`: a scheduled task's fire,
+    /// the header the host wrote (Claude Code's transcript line).
+    ScheduledTask { header: String },
+    /// the clock glyph, `/loop`, the cadence: the first turn of a `/loop`.
+    Loop {
+        mode: Option<String>,
+        schedule: Option<String>,
+    },
 }
 
 /// One injected-prompt row (TS `isInjectedPromptMessage` kinds).
@@ -99,11 +109,28 @@ pub(crate) fn injected_prompt_row(
                 })
                 .unwrap_or_default(),
         },
+        SCHEDULED_TASK_FIRE_CUSTOM_TYPE => InjectedPromptKind::ScheduledTask {
+            header: details
+                .get("header")
+                .and_then(Value::as_str)
+                .unwrap_or("Running scheduled task")
+                .to_string(),
+        },
+        LOOP_PROMPT_CUSTOM_TYPE => InjectedPromptKind::Loop {
+            mode: details
+                .get("mode")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            schedule: details
+                .get("schedule")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
         // The dispatch routes only this module's four kinds here; every
         // other custom type (the RLM child status notices included — they
         // render in the `agent_message` class now) owns its own dispatch
         // arm, and an unknown type never reaches this function.
-        _ => unreachable!("injected_prompt_row sees only its four kinds"),
+        _ => unreachable!("injected_prompt_row sees only its six kinds"),
     };
     let body = match &kind {
         // The kernel-state row stays header-only (TS keeps
@@ -173,6 +200,18 @@ fn prompt_header(row: &InjectedPromptRow, theme: &Theme) -> Line {
                 muted,
             ),
         ],
+        InjectedPromptKind::ScheduledTask { header } => vec![
+            Span::styled("\u{25f7}".to_string(), accent),
+            Span::raw(" "),
+            Span::styled(header.clone(), muted),
+        ],
+        InjectedPromptKind::Loop { mode, schedule } => vec![
+            Span::styled("\u{25f7}".to_string(), accent),
+            Span::raw(" "),
+            Span::styled("/loop".to_string(), muted),
+            Span::styled(" \u{b7} ".to_string(), dim),
+            Span::styled(loop_cadence(mode.as_deref(), schedule.as_deref()), muted),
+        ],
         InjectedPromptKind::PythonSkillsUnavailable { skills } => {
             let mut spans = vec![Span::styled("Python skills unavailable".to_string(), muted)];
             if !skills.is_empty() {
@@ -230,6 +269,16 @@ fn heartbeat_schedule(schedule: Option<&str>) -> String {
         "scheduled".to_string()
     } else {
         format!("every {compact}")
+    }
+}
+
+/// The `/loop` row's cadence: the fixed schedule, else how it paces.
+fn loop_cadence(mode: Option<&str>, schedule: Option<&str>) -> String {
+    match (mode, schedule) {
+        (Some("autonomous"), Some(schedule)) => format!("autonomous \u{b7} {schedule}"),
+        (Some("autonomous"), None) => "autonomous \u{b7} self-paced".to_string(),
+        (_, Some(schedule)) => schedule.to_string(),
+        (_, None) => "self-paced".to_string(),
     }
 }
 
@@ -295,6 +344,49 @@ mod tests {
             rows[1][1],
             Span::styled("\u{25f7}".to_string(), theme().fg_style(ThemeColor::Error))
         );
+    }
+
+    /// A scheduled task's fire shows the host's header; a `/loop` row shows
+    /// its cadence; both expand to the prompt the model got.
+    #[test]
+    fn scheduled_task_and_loop_headers() {
+        let fire = injected_prompt_row(
+            SCHEDULED_TASK_FIRE_CUSTOM_TYPE,
+            &serde_json::json!({ "content": "check the deploy" }),
+            &serde_json::json!({ "header": "Running scheduled task (Oct 17 2:30pm)" }),
+        );
+        assert_eq!(fire.body.as_deref(), Some("check the deploy"));
+        let rows = render_injected_prompt(&fire, Detail::Overview, &theme(), 60);
+        assert_eq!(
+            flat(&rows[1]).trim_end(),
+            " \u{25f7} Running scheduled task (Oct 17 2:30pm)"
+        );
+        for (details, cadence) in [
+            (
+                serde_json::json!({ "mode": "fixed", "schedule": "Every 5 minutes" }),
+                "Every 5 minutes",
+            ),
+            (serde_json::json!({ "mode": "dynamic" }), "self-paced"),
+            (
+                serde_json::json!({ "mode": "autonomous" }),
+                "autonomous \u{b7} self-paced",
+            ),
+            (
+                serde_json::json!({ "mode": "autonomous", "schedule": "Every 10 minutes" }),
+                "autonomous \u{b7} Every 10 minutes",
+            ),
+        ] {
+            let row = injected_prompt_row(
+                LOOP_PROMPT_CUSTOM_TYPE,
+                &serde_json::json!({ "content": "x" }),
+                &details,
+            );
+            let rows = render_injected_prompt(&row, Detail::Overview, &theme(), 60);
+            assert_eq!(
+                flat(&rows[1]).trim_end(),
+                format!(" \u{25f7} /loop \u{b7} {cadence}")
+            );
+        }
     }
 
     #[test]
