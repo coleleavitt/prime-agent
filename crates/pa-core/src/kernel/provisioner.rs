@@ -259,6 +259,8 @@ struct ProvisionerInner {
     options: IpythonKernelProvisionerOptions,
     state: Mutex<ProvisionerState>,
     dispose_signal: AbortSignal,
+    /// Told about the files each finished cell opened.
+    file_access_sink: std::sync::OnceLock<crate::kernel::shared::FileAccessSink>,
 }
 
 impl IpythonKernelProvisioner {
@@ -281,6 +283,7 @@ impl IpythonKernelProvisioner {
                     doomed_startups: Vec::new(),
                 }),
                 dispose_signal: AbortSignal::new(),
+                file_access_sink: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -296,6 +299,17 @@ impl IpythonKernelProvisioner {
     #[must_use]
     pub fn manager(&self) -> Option<ReplKernelManager> {
         self.lock_state().manager.clone()
+    }
+
+    /// Hear about the files every finished cell opened (first install wins).
+    pub fn set_file_access_sink(&self, sink: crate::kernel::shared::FileAccessSink) {
+        let _ = self.inner.file_access_sink.set(sink);
+    }
+
+    /// The installed file-access listener, if any.
+    #[must_use]
+    pub fn file_access_sink(&self) -> Option<crate::kernel::shared::FileAccessSink> {
+        self.inner.file_access_sink.get().cloned()
     }
 
     /// The unexpected exit of a kernel this provisioner replaced with a fresh

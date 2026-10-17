@@ -169,6 +169,7 @@ impl InternalExecuteResult {
                 sent_agent_messages: None,
                 bash_commands: None,
                 executed_bash_commands: Vec::new(),
+                file_access: crate::kernel::shared::KernelFileAccess::default(),
                 background_output: None,
                 status: ExecuteStatus::Aborted,
                 error: None,

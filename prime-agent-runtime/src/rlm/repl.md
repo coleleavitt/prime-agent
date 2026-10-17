@@ -142,6 +142,19 @@ well-formed entries and exposes `command`, `exitCode` and `commandTruncated` on
 the `ipython` tool result's `details.bashCommands`, where Workspace Recall reads
 build claims from them.
 
+An `execute` `done` may also add `fileAccess`, optional and additive in the same
+way (no protocol bump): `{"reads"?:[str],"writes"?:[str]}`, the absolute paths
+of the regular files the cell's context (the body and the tasks it spawned)
+opened through Python while the body ran, read-only opens under `reads` and
+write-intent opens (`w`/`a`/`x`/`+` modes, write flags) under `writes`. An
+audit hook (`rlm.file_access`) collects them; interpreter and site-packages
+files, bytecode, the session directory (`RLM_SESSION_DIR`), the agent directory
+and `/proc`, `/sys`, `/dev` are skipped. Each list keeps its first 64 distinct
+paths, an empty list is omitted, and the field is absent when the cell opened
+nothing. Files `bash()` commands open are not seen. The host (`pa-core`
+`KernelFileAccess`) stats and hashes the paths for its changed-file and
+re-read reminders.
+
 Before a cell's `done`, the runtime drains both channels: tagged Python-level
 writes ship synchronously from the writing thread, and the fd pipes are fenced
 with a marker byte sequence awaited in the pumps, so every byte the cell wrote
