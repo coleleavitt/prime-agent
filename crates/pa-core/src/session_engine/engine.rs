@@ -440,6 +440,24 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    // The session's private scratchpad and tasks directories (Claude Code's
+    // per-session scratchpad): in the artifact partition, so the session's
+    // delete removes them. A directory that cannot be made is left out of
+    // the prompt (the kernel still names it; the first write reports why).
+    let scratch =
+        super::scratch::SessionScratch::for_session(session_artifact_dir.as_deref(), &session_id);
+    let scratchpad_line = match scratch.ensure() {
+        Ok(()) => Some(scratch.prompt_line()),
+        Err(error) => {
+            tracing::warn!(
+                target: "pa_core::session",
+                %error,
+                path = %scratch.scratchpad.display(),
+                "the session scratchpad could not be created"
+            );
+            None
+        }
+    };
     // The delegation budget (upstream #1192): a root takes its pool from
     // the global `rlmTokenBudget` setting; a funded child enforces the grant
     // its parent drew even if the setting changed since, and a resumed
@@ -748,6 +766,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_command_prefix,
         serper_api_key,
         session_artifact_dir,
+        &scratch,
         on_restore,
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
@@ -848,6 +867,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             sandbox: sandbox
                 .as_ref()
                 .map(crate::os_sandbox::SessionSandbox::prompt_line),
+            scratchpad: scratchpad_line,
             ..Default::default()
         },
     );
