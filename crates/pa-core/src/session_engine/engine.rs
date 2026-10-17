@@ -342,7 +342,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
-    let length_continuations = settings.get_length_continuations();
+    let output_limit_recovery = settings.get_output_limit_recovery();
+    let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
@@ -611,6 +612,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(telemetry) = &config.telemetry {
         telemetry.register_kernel_bridge(&mut handlers);
     }
+    // `goal.propose` (experimental `modelProposedGoals`, off by default:
+    // the request is refused): the model proposes, the user approves.
+    super::goal_proposal::register_host_handlers(
+        &mut handlers,
+        experimental.model_proposed_goals,
+        std::sync::Arc::clone(wiring.runtime.goal_driver()),
+        std::sync::Arc::clone(&wiring.session),
+        session_id.clone(),
+    );
     // The bundled computer-use skill's `computer_use.*` requests: every
     // backend runs host-side; its adoption events take the bridge's path.
     super::computer_use_host::register_host_handlers(
@@ -966,11 +976,39 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // over the timing-instrumented fn (TS `sdk.ts` instruments first, the
     // `AgentSession` constructor wraps semantic edges over it). The side
     // question keeps the pre-semantic fn, so its calls carry no id.
+    // Usage-limit wrap-up (experimental, off by default): every response's
+    // rate-limit headers reach the session's monitor.
+    let usage_limit = experimental.usage_limit_wrap_up.then(|| {
+        std::sync::Arc::new(super::usage_limit::UsageLimitMonitor::new(
+            experimental.usage_limit_wrap_up_threshold,
+        ))
+    });
+    let stream_fn = match &usage_limit {
+        Some(monitor) => {
+            super::usage_limit::observe_stream_fn(std::sync::Arc::clone(monitor), stream_fn)
+        }
+        None => stream_fn,
+    };
     let timing_stream_fn = super::request_timing::instrument_stream_fn(
         std::sync::Arc::clone(&request_timing_wiring),
         stream_fn,
     );
     let side_question_stream_fn = std::sync::Arc::clone(&timing_stream_fn);
+    // The goal evaluator (experimental, off by default) judges an active
+    // goal at a natural stop, on the session's stream or its own model.
+    let goal_evaluator = experimental.goal_evaluator.then(|| {
+        std::sync::Arc::new(super::goal_evaluator::GoalEvaluator {
+            side: super::side_model::side_model_for(
+                experimental.goal_evaluator_model.as_deref(),
+                &side_question_stream_fn,
+                &model,
+                &config.agent_dir,
+                &config.cwd,
+            ),
+            driver: std::sync::Arc::clone(wiring.runtime.goal_driver()),
+            session: std::sync::Arc::clone(&wiring.session),
+        })
+    });
     let semantic_recorder = config.semantic_edges.take().map(|identity| {
         std::sync::Arc::new(super::semantic_edges::SemanticEdgeRecorder::open(identity))
     });
@@ -1032,12 +1070,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             // A funded subagent that spent its grant stops at this
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
+            let usage_limit = usage_limit.clone();
+            let goal_evaluator = goal_evaluator.clone();
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
+                let usage_limit = usage_limit.clone();
+                let goal_evaluator = goal_evaluator.clone();
                 Box::pin(async move {
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
@@ -1062,10 +1104,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // run goes on past it (the copy is made only for them).
                     let feature_turn =
                         (!crate::features::installed().is_empty()).then(|| context.clone());
+                    // The usage-limit monitor and the goal evaluator read the
+                    // boundary only when the run goes on past it, like the features.
+                    let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
+                        .then(|| context.clone());
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
+                    if let (false, Some(turn)) = (stop, experimental_turn) {
+                        if let Some(monitor) = &usage_limit {
+                            super::usage_limit::after_turn(monitor, &fold_slot, &turn);
+                        }
+                        if let Some(evaluator) = &goal_evaluator {
+                            super::goal_evaluator::after_turn(evaluator, &fold_slot, &turn).await;
+                        }
+                    }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
                     }
@@ -1078,25 +1132,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         follow_up_mode: config.follow_up_mode,
         before_tool_call,
         after_tool_call,
-        // Opt-in (`lengthContinuations`, TS v0.9.8 had none): a reply cut
-        // off at the output-token limit continues in a visible follow-up
-        // turn, bounded by the setting.
-        length_continuation: (length_continuations > 0).then(|| {
-            pa_agent::agent_loop::LengthContinuation {
-                max_continuations: length_continuations,
-                message: std::sync::Arc::new({
-                    let counters = std::sync::Arc::clone(&session_counters);
-                    move |attempt, max| {
+        // A reply cut off at the output-token limit continues: an explicit
+        // `lengthContinuations` keeps upstream's visible rows, unset follows
+        // Claude Code's hidden recovery (`output_limit_recovery`).
+        length_continuation: super::output_limit_recovery::length_continuation(
+            output_limit_recovery,
+            {
+                let counters = std::sync::Arc::clone(&session_counters);
+                std::sync::Arc::new(move || {
                     counters.note_adoption(super::telemetry::SessionAdoption::LengthContinuation);
-                    crate::autonomous::autonomous_continuation_loop_row(
-                        &format!(
-                            "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
-                        ),
-                        pa_agent::now_ms().max(0) as u64,
-                    )
-                }}),
-            }
-        }),
+                })
+            },
+        ),
         // On (reasoning only) unless `repetitionGuard` says otherwise: a
         // degenerate looping generation settles as a guarded error instead
         // of streaming to the output cap.
@@ -1700,3 +1747,6 @@ mod tests;
 
 #[cfg(test)]
 mod append_system_tests;
+
+#[cfg(test)]
+mod experimental_tests;

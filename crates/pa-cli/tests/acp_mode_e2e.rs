@@ -95,6 +95,20 @@ impl AcpChild {
         Self::wrap(child, Some(home), socket)
     }
 
+    /// [`Self::spawn`] with extra environment variables (they flow ACP ->
+    /// supervisor -> worker).
+    fn spawn_with_env(args: &[&str], script: &serde_json::Value, env: &[(&str, &str)]) -> AcpChild {
+        let home = tempfile::TempDir::new().unwrap();
+        let socket = home.path().join("daemon.sock");
+        std::fs::write(home.path().join("worker-script.json"), script.to_string()).unwrap();
+        let mut command = daemon_attached_command(home.path(), &socket, args);
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let child = command.spawn().expect("binary present");
+        Self::wrap(child, Some(home), socket)
+    }
+
     /// The daemon-attached lane whose `rlm.spawn` children are scripted:
     /// `<home>/child-script.json` rides the `PRIME_AGENT_FAUX_CHILD_SCRIPT`
     /// create-config seam (the worker already consumes the key), and the
@@ -1767,7 +1781,13 @@ fn acp_truncated_final_response_maps_to_max_tokens_stop_reason() {
         "engine": "faux",
         "responses": [{ "text": "half an answer", "stopReason": "length" }],
     });
-    let mut client = AcpChild::spawn(&["--mode", "acp", "--no-session"], &script);
+    // The default output-limit recovery would continue the truncated reply;
+    // this test is about a truncation that stays final.
+    let mut client = AcpChild::spawn_with_env(
+        &["--mode", "acp", "--no-session"],
+        &script,
+        &[("PRIME_AGENT_OUTPUT_LIMIT_RECOVERY", "0")],
+    );
     let init = client.request("initialize", &initialize_params());
     let _ = client.wait_response(init, TIMEOUT);
     let new = client.request("session/new", &json!({ "mcpServers": [] }));

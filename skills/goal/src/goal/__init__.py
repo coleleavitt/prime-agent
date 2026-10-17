@@ -66,6 +66,21 @@ async def pause(reason: str) -> dict[str, Any]:
     return await host_request("goal.pause", {"reason": reason})
 
 
+async def propose(condition: str) -> dict[str, Any]:
+    """Propose a session goal for the user to approve with one keypress.
+
+    `condition` is the completion condition, written so a separate evaluator
+    can verify it from the conversation (e.g. "all tests in test/auth pass").
+    Returns at once (`status: "awaiting_approval"`); keep working. The user's
+    answer arrives as a notice; once approved, the goal is active. Only works
+    when the user enabled goal proposals (`experimental.modelProposedGoals`);
+    otherwise, and while a goal is pending, it raises.
+    """
+    if not isinstance(condition, str):
+        raise TypeError(f"condition must be str, got {type(condition).__name__}")
+    return await host_request("goal.propose", {"condition": condition})
+
+
 async def resume() -> dict[str, Any]:
     """Resume a goal you paused with `pause()` once the awaited input arrived.
 

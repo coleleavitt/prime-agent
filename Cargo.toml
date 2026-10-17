@@ -29,6 +29,8 @@ members = [
     "crates/pa-hooks",
     "crates/pa-web",
     "crates/pa-permissions",
+    "crates/pa-observer",
+    "crates/pa-advisor",
 ]
 # Vendored path dependencies with their own manifests stay outside the workspace
 # (third-party code: not linted by the workspace gates).

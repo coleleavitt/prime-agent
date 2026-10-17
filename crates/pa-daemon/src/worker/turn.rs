@@ -59,6 +59,8 @@ pub(super) struct TurnRunner {
     /// runner reads it at every boundary so a create-time rebind is always
     /// current.
     pub(super) herdr: std::sync::Arc<std::sync::Mutex<crate::herdr::HerdrReporter>>,
+    /// The idle compaction (experimental, off by default).
+    pub(super) idle_compaction: super::idle_compaction::IdleCompaction,
 }
 
 /// The idle-passivation context on the turn runner: the worker token
@@ -158,17 +160,18 @@ impl TurnRunner {
                 // window arms for any idle unattached session under a live
                 // threshold; the select's notified arm is the wake path — a
                 // queued delivery wins the race and the next park re-arms.
-                match self.idle_passivation_window() {
-                    Some(remaining) => {
-                        tokio::select! {
-                            () = self.work_notify.notified() => {}
-                            () = tokio::time::sleep(remaining) => {
-                                self.maybe_request_idle_passivation().await;
-                            }
-                        }
+                // The idle compaction (experimental) arms beside it: a
+                // parked session compacts once before the prompt cache
+                // lapses.
+                let passivation = self.idle_passivation_window();
+                let compaction = self.idle_compaction_window();
+                tokio::select! {
+                    () = self.work_notify.notified() => {}
+                    () = super::idle_compaction::sleep_for(passivation) => {
+                        self.maybe_request_idle_passivation().await;
                     }
-                    None => {
-                        self.work_notify.notified().await;
+                    () = super::idle_compaction::sleep_for(compaction) => {
+                        self.maybe_run_idle_compaction().await;
                     }
                 }
             }

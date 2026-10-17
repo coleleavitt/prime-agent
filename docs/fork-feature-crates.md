@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -139,5 +139,6 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 3 | `pa-ledger` (failure ledger, resolution index) → `pa-ravo` (gate, referee, trust, run service) | `pa-trace`, `pa-ledger` |
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
 | 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
+| 6 | Claude Code's flag-gated features: `pa-observer` (observer agents), `pa-advisor` (`advisor.ask`); both inert unless the `experimental` settings turn them on | `pa-core` (`session_engine::side_model`) |
 
 The inventory behind this table (sizes, TS paths, key commits) is kept with the porting work.

@@ -2397,6 +2397,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-advisor"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pa-agent"
 version = "0.10.0"
 dependencies = [
@@ -2494,6 +2506,7 @@ dependencies = [
  "futures",
  "libc",
  "nix 0.29.0",
+ "pa-advisor",
  "pa-agent",
  "pa-ai",
  "pa-anthropic-auth",
@@ -2505,6 +2518,7 @@ dependencies = [
  "pa-learning",
  "pa-ledger",
  "pa-mermaid",
+ "pa-observer",
  "pa-os-sandbox",
  "pa-permissions",
  "pa-plugins",
@@ -2743,6 +2757,18 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "pa-observer"
+version = "0.10.0"
+dependencies = [
+ "pa-agent",
+ "pa-core",
+ "pa-types",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 

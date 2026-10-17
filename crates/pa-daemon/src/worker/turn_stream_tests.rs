@@ -69,6 +69,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         steer_fold: super::steer_fold::FoldState::default(),
     }));
     TurnRunner {
+        idle_compaction: crate::worker::idle_compaction::test_idle_compaction(&engine),
         core,
         input_pauses: crate::session_input_pause::InputPauseTable::new(),
         prompt_admissions: crate::prompt_admission::WorkerAdmissions::new(),

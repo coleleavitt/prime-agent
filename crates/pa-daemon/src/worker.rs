@@ -63,6 +63,7 @@ pub(crate) use queue::{
 pub use queue::{Lane, QueuePriority};
 
 mod create;
+mod idle_compaction;
 mod turn;
 
 use create::{active_session_id_of, worker_server_capabilities};
@@ -213,7 +214,8 @@ pub struct Worker {
     side_questions: crate::side_question::SideQuestionManager,
     /// Single-use peer-transport grants (worker memory only).
     pub(crate) peer_grants: PeerGrantStore,
-    pub(crate) compaction: crate::compaction::CompactionManager,
+    /// Shared with the turn runner, which runs the idle compaction.
+    pub(crate) compaction: Arc<crate::compaction::CompactionManager>,
     pub(crate) tree_navigation: crate::branch_navigation::TreeNavigation,
     /// The `get_context_tree` children cache: the artifact-tree walk is a
     /// multi-second disk read, so requests serve the cached snapshot.
@@ -990,8 +992,18 @@ impl Worker {
             }
             (engine, agent_engine, roster_pushes)
         };
+        let compaction = Arc::new(crate::compaction::CompactionManager::new(
+            std::sync::Arc::clone(&engine),
+            events.clone(),
+            Arc::clone(&core),
+            config.active_session_id.clone(),
+            config.agent_dir.clone(),
+        ));
         // The turn runner drives the engine's queued prompts.
         let runner = TurnRunner {
+            idle_compaction: crate::worker::idle_compaction::IdleCompaction::new(Arc::clone(
+                &compaction,
+            )),
             recovery: Arc::clone(&recovery),
             core: Arc::clone(&core),
             input_pauses: input_pauses.clone(),
@@ -1015,13 +1027,6 @@ impl Worker {
             std::sync::Arc::clone(&engine),
             events.clone(),
             config.active_session_id.clone(),
-        );
-        let compaction = crate::compaction::CompactionManager::new(
-            std::sync::Arc::clone(&engine),
-            events.clone(),
-            Arc::clone(&core),
-            config.active_session_id.clone(),
-            config.agent_dir.clone(),
         );
         let tree_navigation = crate::branch_navigation::TreeNavigation::new(
             std::sync::Arc::clone(&engine),

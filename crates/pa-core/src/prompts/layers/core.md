@@ -188,6 +188,7 @@ In goal mode prime-agent helps an agent stay on track until a task is fully fini
 - `goal.complete() -> dict`: mark goal as completed and get final goal status
 - `goal.pause(reason: str) -> dict`: pause the active goal while it is blocked on the user or an external event (the harness stops continuing it)
 - `goal.resume() -> dict`: resume a goal you paused once the awaited input arrives
+- `goal.propose(condition: str) -> dict`: propose a goal for the user to approve with one keypress (returns at once; the answer arrives as a notice); raises unless the user enabled goal proposals
 
 ## Tasks
 

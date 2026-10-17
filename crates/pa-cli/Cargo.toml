@@ -9,12 +9,14 @@ description = "The prime-agent binary."
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
 default = [
+    "advisor",
     "anthropic-auth",
     "dream",
     "hooks",
     "learning",
     "ledger",
     "mermaid",
+    "observer",
     "permissions",
     "plugins",
     "ravo",
@@ -25,6 +27,11 @@ default = [
     "web",
     "workflow",
 ]
+# Advisor escalation (crates/pa-advisor): the `advisor` skill's
+# `advisor.ask(question)` asks a stronger model with the conversation as
+# context. Inert unless the `experimental.advisorModel` setting (or
+# PRIME_AGENT_ADVISOR_MODEL) names the model.
+advisor = ["dep:pa-advisor"]
 # Anthropic subscription auth through the shared account store
 # (~/.anthropic-accounts, the store the opencode and pi plugins use): the
 # `anthropic` provider's credential source (crates/pa-anthropic-auth).
@@ -51,6 +58,11 @@ mermaid = ["dep:pa-mermaid"]
 # file edits, web and MCP requests, `/permissions`, and the shift+tab mode
 # cycle. Without rules nothing changes.
 permissions = ["dep:pa-permissions"]
+# Observer agents (crates/pa-observer): a background observer model reads a
+# digest of each turn and reports only when it has something. Inert unless the
+# `experimental.observer` setting (or PRIME_AGENT_EXPERIMENTAL_OBSERVER_AGENTS)
+# turns it on.
+observer = ["dep:pa-observer"]
 # WebAssembly plugins (crates/pa-plugins): sandboxed components from
 # `<agent dir>/plugins/` (and a trusted project's) that review tool calls and
 # kernel host requests, add prompt context, show status, and answer the
@@ -99,6 +111,8 @@ pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
+pa-observer = { path = "../pa-observer", optional = true }
+pa-advisor = { path = "../pa-advisor", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 pa-web = { path = "../pa-web", optional = true }
