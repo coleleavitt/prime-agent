@@ -1327,6 +1327,77 @@ const TOOLFORGE_PUBLISH: EventRule = EventRule {
     ],
 };
 
+/// `web search` (v4): one `rlm.web_search` call (the `pa-web` feature
+/// crate). The backend, the outcome, whether a domain filter was used, and
+/// counts only — never the query, a domain, a URL or a result.
+const WEB_SEARCH: EventRule = EventRule {
+    name: "web search",
+    since: 4,
+    properties: &[
+        (
+            "backend",
+            required(enum_rule(&["anthropic", "brave", "exa", "none"], "none")),
+        ),
+        (
+            "outcome",
+            required(enum_rule(
+                &["ok", "error", "no_backend", "invalid", "cancelled"],
+                "error",
+            )),
+        ),
+        (
+            "domain_filter",
+            optional(enum_rule(&["none", "allowed", "blocked"], "none")),
+        ),
+        ("result_count", optional(count())),
+        ("search_count", optional(count())),
+        ("duration_ms", required(duration())),
+    ],
+};
+
+/// `web fetch` (v4): one `rlm.web_fetch` call (the `pa-web` feature crate).
+/// The outcome, the body's kind and status, cache and truncation flags, and
+/// what became of a prompt — never the URL, the prompt, the page or the
+/// answer.
+const WEB_FETCH: EventRule = EventRule {
+    name: "web fetch",
+    since: 4,
+    properties: &[
+        (
+            "outcome",
+            required(enum_rule(
+                &[
+                    "page",
+                    "redirect",
+                    "http_error",
+                    "refused",
+                    "error",
+                    "cancelled",
+                ],
+                "error",
+            )),
+        ),
+        (
+            "kind",
+            required(enum_rule(
+                &["html", "markdown", "text", "binary", "none"],
+                "none",
+            )),
+        ),
+        ("status_code", optional(count())),
+        ("cached", optional(boolean())),
+        ("truncated", optional(boolean())),
+        (
+            "prompt",
+            required(enum_rule(
+                &["none", "given", "answered", "no_model", "failed"],
+                "none",
+            )),
+        ),
+        ("duration_ms", required(duration())),
+    ],
+};
+
 /// `workflow_run_agent` (v4): one Workflow V1 `workflow.run_agent` kernel
 /// host request settled by the host (the fork's `pa-workflow` feature).
 /// Terminal classification, timing, and token totals only — never the
@@ -2000,6 +2071,8 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &DREAM_RUN,
         &DREAM_SESSION_RUN,
         &TOOLFORGE_PUBLISH,
+        &WEB_SEARCH,
+        &WEB_FETCH,
         &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
@@ -2136,6 +2209,8 @@ mod tests {
         // events at v3, the feature crates' adoption events at v4.
         assert_eq!(SCHEMA_VERSION, 4);
         assert_eq!(lookup("toolforge publish").map(|rule| rule.since), Some(4));
+        assert_eq!(lookup("web search").map(|rule| rule.since), Some(4));
+        assert_eq!(lookup("web fetch").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("workflow_run_agent").map(|rule| rule.since), Some(4));
         assert_eq!(
             lookup("workflow_durable_request").map(|rule| rule.since),

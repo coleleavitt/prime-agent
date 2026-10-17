@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -103,6 +103,10 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      429 / a stream opening with a rate-limit or overload error, while it names a credential the request has not
      used). Hooks ignore credentials
      they did not issue; the `anthropic-messages` provider consults them; nothing is registered natively.
+   - one request's wire shape: `pa_ai::types::StreamOptions::on_payload` rewrites the built payload (a server tool,
+     a `tool_choice`) and `on_event` observes every parsed response event after the request hooks, including the
+     content blocks the provider does not model (`server_tool_use`, `web_search_tool_result`); the
+     `anthropic-messages` provider calls `on_event`, the others ignore it.
    Seams to add as features need them: system-prompt layer providers, turn-start observers.
 5. **Data ownership.** A crate owns its files under `~/.prime/agent/<feature>/` (or the session artifact dir) and its
    key in `harness_state.json` (`HarnessState::extensions["<feature>"]`). It never rewrites another crate's data.

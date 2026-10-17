@@ -21,6 +21,7 @@ default = [
     "session-index",
     "toolforge",
     "trace",
+    "web",
     "workflow",
 ]
 # Anthropic subscription auth through the shared account store
@@ -60,6 +61,10 @@ session-index = ["dep:pa-session-index"]
 toolforge = ["dep:pa-toolforge"]
 # Observability: the agent.jsonl span recorder, `trace` / `health`, OTLP export.
 trace = ["dep:pa-trace"]
+# `rlm.web_search` / `rlm.web_fetch` (crates/pa-web): web search through
+# Anthropic's server-side tool (or Brave / Exa with a key) and page fetches
+# converted to Markdown.
+web = ["dep:pa-web"]
 # Workflow host: the kernel's `workflow.run_agent` (V1) and
 # `workflow.v2.request` (V2) (crates/pa-workflow).
 workflow = ["dep:pa-workflow"]
@@ -90,6 +95,7 @@ pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
+pa-web = { path = "../pa-web", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
