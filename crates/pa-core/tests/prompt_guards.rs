@@ -319,6 +319,8 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             // `rlm.enter_worktree` / `rlm.exit_worktree` (pa-daemon's worktree host).
             "worktree.enter" => "rlm.enter_worktree",
             "worktree.exit" => "rlm.exit_worktree",
+            // `rlm.lsp.*` (the pa-lsp feature crate's request table).
+            lsp if lsp.starts_with("lsp.") => "rlm.lsp",
             other => other,
         }
         .to_string(),
@@ -425,6 +427,38 @@ fn registered_host_requests() -> BTreeSet<String> {
             }
         }
     }
+    found.extend(feature_host_requests());
+    found
+}
+
+/// Feature crates whose host requests are model-facing `rlm` functions,
+/// each with the source file that holds its request table (string
+/// constants). Their requests are documented like the native ones.
+const FEATURE_REQUEST_TABLES: &[&str] = &["pa-lsp/src/requests.rs"];
+
+fn feature_host_requests() -> BTreeSet<String> {
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates dir");
+    let mut found = BTreeSet::new();
+    for table in FEATURE_REQUEST_TABLES {
+        let source = std::fs::read_to_string(crates_dir.join(table)).expect("read request table");
+        for line in source.lines() {
+            let line = line.trim_start();
+            if !line.starts_with("pub const ") || !line.contains(": &str = ") {
+                continue;
+            }
+            if let Some(literal) = first_string_literal(line) {
+                if is_request_type_literal(&literal) {
+                    found.insert(literal);
+                }
+            }
+        }
+    }
+    assert!(
+        !found.is_empty(),
+        "the feature request tables yielded nothing; the guard would be vacuous"
+    );
     found
 }
 

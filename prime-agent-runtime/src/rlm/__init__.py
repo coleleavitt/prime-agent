@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 # First: a unittest run isolates its environment before anything resolves state.
 from . import _state_guard as _state_guard
-from . import toolforge, trace
+from . import lsp, toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
 from .factory import (
     FACTORY_HELP,
@@ -1029,6 +1029,7 @@ class _RLMFactoryNamespace:
 
 class _RLMNamespace:
     harness = _harness_state
+    lsp = lsp
     toolforge = toolforge
     get_harness_state = staticmethod(get_harness_state)
 
@@ -1207,6 +1208,7 @@ __all__ = [
     "interrupt_subagent",
     "list_agents",
     "list_subagents",
+    "lsp",
     "messaging_stats",
     "monitor",
     "monitor_list",
