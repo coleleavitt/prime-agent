@@ -16,7 +16,8 @@
 //! `cli command used`, `acp session load`); schema version 5 adds the
 //! Claude Code parity features' adoption events (`permissions_session`,
 //! `observer_session`, `advisor_ask`) and their additive counters
-//! (`custom_command_use_count` on `agent session ended`, `tui_vim_mode` and
+//! (`custom_command_use_count` and the session context row counts on
+//! `agent session ended`, `tui_vim_mode` and
 //! `tui_status_line` on `tui exit`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
@@ -768,6 +769,12 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         // additive): admitted prompts a custom command expanded. Never the
         // command's name or text.
         ("custom_command_use_count", optional(count())),
+        // Session context rows (schema v5, additive): the first-turn
+        // context rows, their deltas, and the per-turn reminder rows that
+        // reached the model. Counts only, never the text.
+        ("session_context_row_count", optional(count())),
+        ("session_context_update_count", optional(count())),
+        ("system_reminder_count", optional(count())),
         ("feature_login_completed_count", optional(count())),
         ("feature_login_failed_count", optional(count())),
         ("feature_login_canceled_count", optional(count())),

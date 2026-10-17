@@ -138,7 +138,13 @@ pub struct SessionContextRows {
     cwd: Option<Arc<std::sync::Mutex<std::path::PathBuf>>>,
     /// The model facts the source reads, when it reads switchable ones.
     model: Option<Arc<std::sync::Mutex<super::context_source::ModelFacts>>>,
+    /// Told the custom type of every row produced (the session telemetry's
+    /// adoption counters); installed once by the engine wiring.
+    observer: std::sync::OnceLock<RowObserver>,
 }
+
+/// Observes the custom type of each context or reminder row produced.
+pub type RowObserver = Arc<dyn Fn(&str) + Send + Sync>;
 
 fn to_loop(row: CustomMessage) -> Option<AgentMessage> {
     session_message_to_loop(&SessionAgentMessage::Custom(row))
@@ -153,7 +159,22 @@ impl SessionContextRows {
             today: Arc::new(crate::prompts::session_context::today_utc),
             cwd: None,
             model: None,
+            observer: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Install the row observer (first install wins).
+    pub fn observe_rows(&self, observer: RowObserver) {
+        let _ = self.observer.set(observer);
+    }
+
+    fn observed(&self, rows: Vec<CustomMessage>) -> Vec<CustomMessage> {
+        if let Some(observer) = self.observer.get() {
+            for row in &rows {
+                observer(&row.custom_type);
+            }
+        }
+        rows
     }
 
     /// Share the model facts the source reads, so [`Self::set_model`] can
@@ -255,12 +276,15 @@ impl SessionContextRows {
         messages: Vec<AgentMessage>,
     ) -> Vec<AgentMessage> {
         let this = Arc::clone(self);
-        tokio::task::spawn_blocking(move || this.turn_start_rows(&messages))
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(to_loop)
-            .collect()
+        tokio::task::spawn_blocking(move || {
+            let rows = this.turn_start_rows(&messages);
+            this.observed(rows)
+        })
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(to_loop)
+        .collect()
     }
 
     /// [`Self::boundary_rows`] off the async runtime, in loop form.
@@ -269,12 +293,15 @@ impl SessionContextRows {
         messages: Vec<AgentMessage>,
     ) -> Vec<AgentMessage> {
         let this = Arc::clone(self);
-        tokio::task::spawn_blocking(move || this.boundary_rows(&messages))
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(to_loop)
-            .collect()
+        tokio::task::spawn_blocking(move || {
+            let rows = this.boundary_rows(&messages);
+            this.observed(rows)
+        })
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(to_loop)
+        .collect()
     }
 }
 

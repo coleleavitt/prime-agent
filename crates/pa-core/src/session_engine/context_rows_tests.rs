@@ -209,3 +209,28 @@ fn a_moved_cwd_reaches_the_source() {
     };
     assert!(text.contains("# Environment update\nWorking directory: /b (was /a)"));
 }
+
+/// The installed observer hears each produced row's kind (the session
+/// telemetry's counters), never its text.
+#[tokio::test]
+async fn the_row_observer_hears_each_row_kind() {
+    let current = Arc::new(Mutex::new(context("/w", "Rule one.", "2026-10-17")));
+    let rows = Arc::new(rows_over(Arc::clone(&current)));
+    let heard = Arc::new(Mutex::new(Vec::<String>::new()));
+    {
+        let heard = Arc::clone(&heard);
+        rows.observe_rows(Arc::new(move |kind| {
+            heard.lock().unwrap().push(kind.to_string())
+        }));
+    }
+    let conversation = rows.turn_start_messages(Vec::new()).await;
+    *current.lock().unwrap() = context("/w", "Rule two.", "2026-10-17");
+    let _ = rows.turn_start_messages(conversation).await;
+    assert_eq!(
+        *heard.lock().unwrap(),
+        vec![
+            SESSION_CONTEXT_CUSTOM_TYPE.to_string(),
+            SESSION_CONTEXT_UPDATE_CUSTOM_TYPE.to_string()
+        ]
+    );
+}

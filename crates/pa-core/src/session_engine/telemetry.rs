@@ -395,6 +395,9 @@ pub struct SessionCounters {
 struct CounterValues {
     skill_use_count: u64,
     custom_command_use_count: u64,
+    session_context_row_count: u64,
+    session_context_update_count: u64,
+    system_reminder_count: u64,
     mcp_connector_use_count: u64,
     kernel_bootstrap_count: u64,
     kernel_bootstrap_cold_count: u64,
@@ -524,6 +527,15 @@ impl SessionCounters {
             for (key, value) in [
                 ("skill_use_count", values.skill_use_count),
                 ("custom_command_use_count", values.custom_command_use_count),
+                (
+                    "session_context_row_count",
+                    values.session_context_row_count,
+                ),
+                (
+                    "session_context_update_count",
+                    values.session_context_update_count,
+                ),
+                ("system_reminder_count", values.system_reminder_count),
                 ("mcp_connector_use_count", values.mcp_connector_use_count),
                 ("kernel_bootstrap_count", values.kernel_bootstrap_count),
                 (
@@ -914,6 +926,22 @@ impl SessionTelemetry {
     /// uploads.
     pub fn note_skill_used(&self) {
         self.counters.with(|values| values.skill_use_count += 1);
+    }
+
+    /// One session context or reminder row reached the model, counted by
+    /// kind (`session_context_row_count`, `session_context_update_count`,
+    /// `system_reminder_count` on `agent session ended`); never its text.
+    pub fn note_context_row(&self, custom_type: &str) {
+        self.counters.with(|values| match custom_type {
+            super::context_rows::SESSION_CONTEXT_CUSTOM_TYPE => {
+                values.session_context_row_count += 1;
+            }
+            super::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE => {
+                values.session_context_update_count += 1;
+            }
+            super::reminders::SYSTEM_REMINDER_CUSTOM_TYPE => values.system_reminder_count += 1,
+            _ => {}
+        });
     }
 
     /// An admitted prompt a Claude Code custom command (`.claude/commands`)

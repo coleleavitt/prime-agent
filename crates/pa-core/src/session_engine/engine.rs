@@ -1531,6 +1531,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // whether this session reports at all).
     if let Some(telemetry) = telemetry.as_ref() {
         session.set_skill_telemetry(telemetry.clone());
+        // The session context and reminder rows count by kind.
+        if let Some(rows) = session.context_rows() {
+            let telemetry = telemetry.clone();
+            rows.observe_rows(Arc::new(move |custom_type| {
+                telemetry.note_context_row(custom_type);
+            }));
+        }
         // Same lifetime for the `rlm_child_*` session counters: the
         // producer's flush counts through this handle.
         wiring.rlm_usage.set_telemetry(telemetry.clone());
