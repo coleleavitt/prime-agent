@@ -31,6 +31,14 @@ code summaries, then Restore code and conversation / Restore conversation /
 Restore code / Summarize from here / Never mind. Without the capability both
 open the `/tree` selector, as Esc Esc did before.
 
+Session modes the session publishes as feature statuses: the `user_message`
+row (`rlm.send_user_message`) renders as its own `● Message` entry
+(`custom_message::brief_message`); while the `brief` status is on, the text
+blocks of the assistant entries in a turn that sent one collapse below the
+`all` detail level (`view/brief.rs`, Claude Code's brief view); while the
+`coordinator` status is on, `/fork` and `/clone` without `--replace` are
+refused (Claude Code's coordinator fork refusal).
+
 ## Non-goals
 No session logic, no providers, no loop policy. The interactive UI renders daemon events and sends user intents (prompts, abort, switch) as daemon commands; the session loop itself lives in the pa-daemon worker. It never computes agent behavior and never spawns the supervisor (launch semantics live in pa-cli).
 

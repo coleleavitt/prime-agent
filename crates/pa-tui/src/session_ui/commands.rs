@@ -269,6 +269,12 @@ impl SessionUi {
                     self.note("Usage: /tree", view);
                 }
             }
+            "fork" | "clone"
+                if self.coordinator_mode
+                    && ForkLaunch::from_args(&resolved.args) == Some(ForkLaunch::NewSession) =>
+            {
+                self.note(super::session_modes::COORDINATOR_FORK_REFUSAL, view);
+            }
             "fork" => match ForkLaunch::from_args(&resolved.args) {
                 Some(launch) => {
                     self.track_feature_outcome("fork", "initiated", None);

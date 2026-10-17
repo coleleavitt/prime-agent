@@ -251,6 +251,7 @@ pub async fn execute_session_command(
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
         "ultracode" => execute_ultracode(engine, command, &mut execution).await,
+        "brief" => execute_brief(engine, command, &mut execution),
         "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
         "output-style" => execute_output_style(engine, command, &mut execution),
         "add-dir" => execute_add_dir(engine, command, &mut execution).await,
@@ -935,6 +936,61 @@ async fn execute_ultracode(
         execution.push_message(slash_command_result(
             command,
             format!("Ultracode is already {status}."),
+            true,
+            "info",
+            None,
+            true,
+        ));
+    }
+    Ok(())
+}
+
+/// `/brief [on|off|status]` (Claude Code's `/brief`): switch brief-only mode.
+/// A change records the durable `brief_mode_change` row (what a resume
+/// restores), the hidden reminder the model reads with its next request,
+/// and the `brief` feature status the TUI collapses assistant text by.
+/// Root sessions only: a child's replies go to its parent.
+fn execute_brief(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use super::brief_mode::BriefCommand;
+    let state = &engine.modes.brief;
+    let target = match super::brief_mode::parse_brief_command(&command.args)? {
+        BriefCommand::Toggle => !state.is_on(),
+        BriefCommand::On => true,
+        BriefCommand::Off => false,
+        BriefCommand::Status => {
+            let status = if state.is_on() { "on" } else { "off" };
+            execution.push_message(slash_command_result(
+                command,
+                format!("Brief mode is {status}."),
+                true,
+                "info",
+                None,
+                true,
+            ));
+            return Ok(());
+        }
+    };
+    if engine.feature_context.rlm_depth > 0 {
+        return Err(
+            "Brief mode is for top-level sessions: a subagent replies to its parent.".to_string(),
+        );
+    }
+    if state.set(target) {
+        execution.push_message(super::brief_mode::brief_mode_change_row(target));
+        execution.push_message(super::brief_mode::brief_mode_reminder_row(target));
+        crate::features::publish_feature_status(
+            &engine.feature_context.session_id,
+            super::brief_mode::brief_status(target),
+        );
+    } else {
+        let status = if target { "on" } else { "off" };
+        execution.push_message(slash_command_result(
+            command,
+            format!("Brief mode is already {status}."),
             true,
             "info",
             None,

@@ -221,6 +221,8 @@ pub struct SessionEngine {
     /// The session's additional working directories (`--add-dir`, the
     /// setting, `/add-dir`): the extra roots other layers may read.
     pub additional_directories: Arc<super::additional_dirs::AdditionalDirectories>,
+    /// Coordinator and brief mode (Claude Code's unreleased modes).
+    pub modes: super::modes::SessionModes,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
@@ -462,10 +464,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let model_context_window = model.context_window;
 
-    let (session_id, restored_plan_mode) = {
+    let (session_id, restored_plan_mode, restored_brief_mode) = {
         let session = wiring.session.lock().await;
-        (session.get_session_id().to_string(), session.plan_mode())
+        (
+            session.get_session_id().to_string(),
+            session.plan_mode(),
+            session.brief_mode(),
+        )
     };
+    // Claude Code's coordinator and brief modes (experimental, off by default).
+    let session_modes = super::modes::SessionModes::resolve(
+        &experimental,
+        config.rlm_depth.unwrap_or(0),
+        config.agent_definition.is_some(),
+        restored_brief_mode,
+    );
+    session_modes.wire_rlm(&wiring.rlm);
     // Plan mode: an explicit start state wins over the branch's newest
     // change; a session that never changed it starts off.
     let plan_mode = super::plan_mode::PlanModeSwitch::new(
@@ -628,7 +642,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         }
         None => feature_gate,
     };
-    if let Some(gate) = gate {
+    // A coordinator refuses worker capabilities before either.
+    if let Some(gate) = session_modes.gate(gate) {
         handlers.set_gate(gate);
     }
     // The `system_router.run` host handler the bundled system-router skill
@@ -679,6 +694,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             },
         );
     }
+    // `rlm.send_user_message` (brief mode) records its row through the same seam.
+    session_modes.register_host_handlers(
+        &mut handlers,
+        cwd.clone(),
+        &presented_artifacts,
+        &wiring.session,
+    );
     // A delegation-budget refusal counts into the session counters.
     let _ = wiring
         .rlm
@@ -972,6 +994,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     .join("\n\n"),
             ),
             output_style,
+            coordinator_section: session_modes
+                .coordinator_section(scratch_directory_text.clone(), list_agent_types),
+            brief_mode: session_modes.brief_in_prompt(),
             ..Default::default()
         },
     );
@@ -1222,10 +1247,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             let goal_evaluator = goal_evaluator.clone();
             let nested = nested_instructions.clone();
             let context_rows = std::sync::Arc::clone(&context_rows);
+            let modes_boundary = session_modes.boundary(wiring.rlm.child_host());
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
                 let nested = nested.clone();
+                let modes_boundary = modes_boundary.clone();
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
@@ -1261,11 +1288,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
                         .then(|| context.clone());
                     // The files this batch touched (nested instruction discovery).
-                    let touched = if nested.is_some() {
+                    let mut touched = if nested.is_some() {
                         super::instruction_boundary::touched_paths(&context.tool_results)
                     } else {
                         Vec::new()
                     };
+                    // A coordinator also loads what its workers loaded.
+                    if nested.is_some() {
+                        modes_boundary
+                            .propagate_nested(&context, &mut touched)
+                            .await;
+                    }
+                    let brief_enforcement = modes_boundary.brief_enforcement(&context);
                     // The nested files the conversation still carries (a
                     // compaction may have summarized some away).
                     let live = if touched.is_empty() {
@@ -1295,6 +1329,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
+                    }
+                    if let (false, Some(text)) = (stop, brief_enforcement) {
+                        super::brief_mode::steer_enforcement(&fold_slot, &text);
                     }
                     if let (false, Some(turn)) = (stop, reminder_turn) {
                         let agent = fold_slot
@@ -1601,7 +1638,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         sandbox,
         mcp_sessions,
         additional_directories,
+        modes: session_modes,
     };
+    engine
+        .modes
+        .publish_statuses(&engine.feature_context.session_id);
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");
     }

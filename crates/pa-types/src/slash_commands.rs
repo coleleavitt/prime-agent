@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 13] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 14] = [
     "compact",
     "refine",
     "goal",
@@ -15,6 +15,7 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 13] = [
     "harness",
     "rlm-token-budget",
     "ultracode",
+    "brief",
     "output-style",
     "add-dir",
     "memory",
@@ -460,6 +461,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         description: "Run a prompt on a recurring interval (e.g. /loop 5m /foo); omit the interval to let the model pace itself; /loop stop ends it",
         execution: SlashCommandExecution::Session,
         argument_hint: Some("[interval] [prompt] | stop"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "brief",
+        description: "Toggle brief-only mode: replies arrive as messages, other assistant text collapses",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[on|off|status]"),
         aliases: &[],
         takes_argument: true,
     },

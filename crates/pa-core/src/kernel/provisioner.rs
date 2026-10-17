@@ -264,6 +264,13 @@ struct ProvisionerInner {
 }
 
 impl IpythonKernelProvisioner {
+    /// The host requests (and gate) the kernel reaches; tests drive them
+    /// without a kernel.
+    #[cfg(test)]
+    pub(crate) fn host_handlers(&self) -> &HostRequestHandlers {
+        &self.inner.options.host_handlers
+    }
+
     pub fn new(cwd: impl Into<PathBuf>, options: IpythonKernelProvisionerOptions) -> Self {
         Self {
             inner: Arc::new(ProvisionerInner {

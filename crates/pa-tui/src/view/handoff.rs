@@ -90,7 +90,9 @@ impl AgentView {
         for section in &self.click.window_sections {
             // A clicked card's slot holds its flipped rows, but the re-entry mounts every card
             // at the level, so its pack must not serve there.
-            if self.toggled_cards.contains(&section.entry) {
+            if self.toggled_cards.contains(&section.entry)
+                || self.brief_hidden.contains(&section.entry)
+            {
                 continue;
             }
             if let Some(slots) = self.entry_layout.get(section.entry) {

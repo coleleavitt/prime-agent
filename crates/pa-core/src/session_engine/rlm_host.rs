@@ -587,6 +587,12 @@ pub struct RlmHostBridge {
     /// What `agent=`, `cwd=` and worktree isolation resolve against
     /// (unset: no agent definitions, `cwd=` taken as given).
     pub spawn_context: std::sync::OnceLock<super::rlm_spawn_agent::SpawnContext>,
+    /// Coordinator mode's `coordinatorForceWorkerInheritModel`: a spawn's
+    /// `model=` is ignored, so workers inherit the session model.
+    pub(crate) ignore_spawn_model: std::sync::atomic::AtomicBool,
+    /// Coordinator mode's `coordinatorPropagateNestedMemory`: the nested
+    /// instruction files a collected worker's session delivered.
+    pub(crate) nested_memory: std::sync::OnceLock<Arc<super::coordinator::NestedMemoryPropagation>>,
 }
 
 impl RlmHostBridge {
@@ -610,6 +616,8 @@ impl RlmHostBridge {
             token_budget: std::sync::OnceLock::new(),
             adoption: std::sync::OnceLock::new(),
             spawn_context: std::sync::OnceLock::new(),
+            ignore_spawn_model: std::sync::atomic::AtomicBool::new(false),
+            nested_memory: std::sync::OnceLock::new(),
         }
     }
 }
@@ -780,6 +788,14 @@ impl RlmHostBridge {
             anyhow::bail!("rlm.spawn prompt must be a string");
         };
         let (mut request, agent_args) = spawn_request_from_payload(prompt, data)?;
+        // Claude Code's coordinator ignores the explicit model parameter
+        // (an agent definition's own model still applies).
+        if self
+            .ignore_spawn_model
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            request.model = None;
+        }
         let isolation = super::rlm_spawn_agent::resolve_spawn_agent(
             &mut request,
             agent_args,
@@ -1036,10 +1052,12 @@ fn register_delete_subagent(handlers: &mut HostRequestHandlers, bridge: &Arc<Rlm
 
 fn register_collect(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
     let host = Arc::clone(&bridge.host);
+    let bridge = Arc::clone(bridge);
     handlers.register(
         "rlm.collect",
         host_handler(move |payload| {
             let host = Arc::clone(&host);
+            let nested_memory = bridge.nested_memory.get().cloned();
             Box::pin(async move {
                 let data = &payload.data;
                 let targets = match data.get("targets") {
@@ -1073,6 +1091,22 @@ fn register_collect(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBrid
                     );
                 };
                 let results = host.collect(targets, timeout_ms).await?;
+                if let Some(nested_memory) = nested_memory {
+                    let dirs: Vec<std::path::PathBuf> = results
+                        .iter()
+                        .filter(|result| result.settled)
+                        .filter_map(|result| result.session_dir.as_deref())
+                        .map(std::path::PathBuf::from)
+                        .collect();
+                    if !dirs.is_empty() {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            for dir in dirs {
+                                nested_memory.note_worker_session_dir(&dir);
+                            }
+                        })
+                        .await;
+                    }
+                }
                 Ok(json!({ "results": results }))
             })
         }),

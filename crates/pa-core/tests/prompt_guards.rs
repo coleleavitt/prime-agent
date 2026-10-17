@@ -299,6 +299,10 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     // bookkeeping around `edit.run`, never called by the model.
     "file_history.before_write",
     "file_history.after_write",
+    // `rlm.send_user_message`: refused outside brief mode, so the core
+    // prompt does not document it; the brief-mode section (system prompt
+    // or `/brief` reminder) does (`brief_mode::BRIEF_SECTION`).
+    "user_message.send",
 ];
 
 /// Map one registered host-request type to the prompt token that documents

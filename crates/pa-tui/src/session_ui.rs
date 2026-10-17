@@ -21,6 +21,7 @@ mod prompt;
 mod queue;
 mod rewind;
 mod search;
+mod session_modes;
 mod sessions_fork;
 mod settings;
 mod share;
@@ -365,6 +366,9 @@ pub(crate) struct SessionUi {
     /// while a feature publishes a permission-mode cycle (see
     /// [`permission_cycle`]); empty keeps the plain plan toggle.
     permission_cycle: Vec<String>,
+    /// The session is in coordinator mode (its `coordinator` status): a
+    /// fork that keeps the original running is refused.
+    coordinator_mode: bool,
     /// This session's persisted file path (family identity of the
     /// subagent linkage; `None` for unpersisted sessions).
     session_file: Option<String>,

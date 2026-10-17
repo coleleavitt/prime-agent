@@ -101,6 +101,12 @@ pub struct BuildSystemPromptOptions<'a> {
     /// fixed for the session (Claude Code keeps memory in the system
     /// prompt too); it varies by project, never by turn.
     pub auto_memory: Option<String>,
+    /// Coordinator mode's section (Claude Code's coordinator prompt), for a
+    /// root session in coordinator mode.
+    pub coordinator_section: Option<String>,
+    /// Whether the session starts in brief mode (Claude Code's "Talking to
+    /// the user" section; a mid-session `/brief` rides a hidden row).
+    pub brief_mode: bool,
 }
 
 /// Build the system prompt (assembled text only).
@@ -164,7 +170,8 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         + 2 * segments.len().saturating_sub(1);
 
     // The session tail, in fixed order: output style -> packages -> auto
-    // memory -> session role -> appended prompt. Each is fixed for the
+    // memory -> session role -> coordinator -> brief -> appended prompt.
+    // Each is fixed for the
     // session's life.
     let tools: Vec<&str> = options
         .selected_tools
@@ -204,6 +211,26 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
             "session-role",
             "RLM recursion state",
             role,
+        ));
+    }
+
+    if let Some(section) = options
+        .coordinator_section
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        segments.push(PromptSegment::dynamic_segment(
+            "coordinator",
+            "experimental.coordinatorMode",
+            section.to_string(),
+        ));
+    }
+
+    if options.brief_mode {
+        segments.push(PromptSegment::dynamic_segment(
+            "brief",
+            "experimental.briefMode",
+            crate::session_engine::brief_mode::BRIEF_SECTION.to_string(),
         ));
     }
 

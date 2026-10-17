@@ -104,6 +104,18 @@ impl SessionUi {
         if let Some(summary) = crate::subagents::own_summary(&self.roster, &identity) {
             self.feature_panels = crate::feature_panel::panels_from_summary(&summary);
             self.permission_cycle = super::permission_cycle::cycle_from_summary(&summary);
+            if let Some(on) = super::session_modes::enabled_in_summary(
+                &summary,
+                super::session_modes::BRIEF_FEATURE,
+            ) {
+                view.set_brief_mode(on);
+            }
+            if let Some(on) = super::session_modes::enabled_in_summary(
+                &summary,
+                super::session_modes::COORDINATOR_FEATURE,
+            ) {
+                self.coordinator_mode = on;
+            }
             self.apply_feature_questions(
                 super::feature_confirm::questions_from_summary(&summary),
                 view,

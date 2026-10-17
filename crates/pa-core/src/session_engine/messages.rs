@@ -743,6 +743,11 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                         // A presented artifact is the user's to see; the
                         // model never receives its preview.
                         | super::presented_artifact::PRESENTED_ARTIFACT_CUSTOM_TYPE
+                        // The model's own `rlm.send_user_message` text (its
+                        // cell holds it) and the user-facing brief-mode
+                        // record (the reminder row tells the model).
+                        | super::brief_mode::USER_MESSAGE_CUSTOM_TYPE
+                        | super::brief_mode::BRIEF_MODE_CHANGE_CUSTOM_TYPE
                         | crate::prompts::model_prompts::MODEL_PROMPT_ERROR_CUSTOM_TYPE
                 ) {
                     continue;

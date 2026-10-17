@@ -226,6 +226,25 @@ itself stays in the kernel (sandbox and plan guard apply); bash and plain
 Python writes are not tracked. `fileCheckpointingEnabled: false` or
 `PRIME_AGENT_DISABLE_FILE_CHECKPOINTING=1` turns it off.
 
+Claude Code's unreleased session modes (`session_engine::modes`, both off
+unless their `experimental` setting or environment variable is on):
+coordinator mode (`session_engine::coordinator`;
+`experimental.coordinatorMode` / `PRIME_AGENT_COORDINATOR_MODE`) gives a root
+session that does not run as an agent definition the coordinator section in
+its prompt and a host-request gate (ahead of the agent-scope and feature
+gates) that refuses worker capabilities (`bash.run`, `file.edit`, `web.*`,
+MCP tool calls, `computer_use.*`, `artifact.present`, worktree moves, the
+system router) unless `coordinatorExtraTools` names them; plain Python file
+access stays possible, so the prompt carries the rule. Its flags make
+`rlm.spawn` ignore `model=` and hand the nested instruction files a worker
+loaded to the coordinator. Brief mode (`session_engine::brief_mode`;
+`experimental.briefMode` / `PRIME_AGENT_BRIEF`, `/brief`) routes the model's
+replies through `rlm.send_user_message` (`user_message.send`, a displayed
+`user_message` row through the `artifact.present` row seam), records
+`brief_mode_change` rows a resume restores, and continues a root run once
+when it stops without a message. Both publish feature statuses (`coordinator`,
+`brief`) the TUI reads.
+
 ## Non-goals
 No provider HTTP (pa-ai), no loop policy (pa-agent), no daemon supervision (pa-daemon), no TUI (pa-tui). No update coordination (the pa-cli coordinator owns the FSM; the update-flow seam here is the daemon-free support layer: `update::version` (semver/channel policy), `update::install` (the managed install-root layout), `update::release` (the channel manifest fetch), `update::download` (sha256-verified archive download + staging)). The package manager installs sources and resolves resource paths only. No workspace snapshot upload, transport, or remote materialization (staging and verification live here; the cloud attach surface owns the transport when it ships).
 
