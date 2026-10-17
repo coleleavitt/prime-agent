@@ -147,7 +147,16 @@ matching scoped rules as a hidden `nested_instructions` row
 (`session_engine::instruction_boundary`) once a cell opens a file there,
 and the per-project auto-memory directory whose `MEMORY.md` index rides
 the `auto-memory` prompt segment. `/memory` lists both
-(`session_engine::memory_command`).
+(`session_engine::memory_command`). `auto_memory::sanitize` is Claude Code's
+exact project-directory name (UTF-16 units, the base-36 Java string hash past
+200 characters), so `~/.claude/projects/<name>` is the directory Claude Code
+writes.
+
+External sessions (`session::external_sessions`): the registry of other
+products' session sources (`ExternalSessionSource`: `list`, `find`,
+`import`) the composition root installs (`pa-cc-import`'s Claude Code
+transcripts). Nothing is installed natively; the daemon serves the
+`external_sessions` commands only while a source is.
 
 OS sandbox (`os_sandbox`, enforcement in `pa-os-sandbox`): `SessionSandbox::resolve` reads
 the `sandbox` setting (off by default; a project scope only tightens it, so the key is
