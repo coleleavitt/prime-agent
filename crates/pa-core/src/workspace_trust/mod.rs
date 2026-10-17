@@ -82,15 +82,17 @@ pub enum GatedItem {
     /// `.prime/agent/prompts/`: prompt templates.
     PromptTemplates,
     /// A project skill directory (`.prime/agent/skills/`, an ancestor's
-    /// `.agents/skills/`, or a project `skills` settings entry): its
-    /// Python skills install into the kernel venv and import at startup.
+    /// `.agents/skills/` or `.claude/skills/`, or a project `skills`
+    /// settings entry): its Python skills install into the kernel venv and
+    /// import at startup, its Claude Code skills can run shell blocks.
     ProjectSkills(String),
     /// A project directory a composition root registered as gated
     /// ([`register_gated_project_dir`]): `.prime/agent/<dir>/`.
     ProjectDir { dir: String, label: String },
-    /// A Claude Code directory in the project (`.claude/commands/`: custom
-    /// commands, which can run shell blocks; `.claude/output-styles/`:
-    /// styles that rewrite the system prompt).
+    /// A Claude Code directory in the project (`.claude/commands/` and
+    /// `.claude/skills/`: custom commands and skills, which can run shell
+    /// blocks; `.claude/output-styles/`: styles that rewrite the system
+    /// prompt).
     ClaudeDir { dir: String, label: String },
 }
 

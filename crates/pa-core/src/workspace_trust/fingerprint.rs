@@ -217,6 +217,7 @@ impl TrustInputs {
                 crate::prompts::output_style::OUTPUT_STYLES_DIR,
                 "output styles",
             ),
+            (crate::skills::claude_skills::CLAUDE_SKILLS_DIR, "skills"),
         ] {
             let root = cwd
                 .join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
@@ -233,6 +234,27 @@ impl TrustInputs {
                     },
                 ));
             }
+        }
+        // The ancestors' `.claude/skills` up to the repository root load as
+        // project skills too (Claude Code's walk).
+        let own_skills = cwd
+            .join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+            .join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR);
+        for root in crate::skills::claude_skills::project_claude_dirs(
+            cwd,
+            crate::skills::claude_skills::CLAUDE_SKILLS_DIR,
+            pa_types::platform::home_dir().as_deref(),
+        ) {
+            if root == own_skills || !dir_has_entries(&root) {
+                continue;
+            }
+            trees.push((
+                GatedItem::ProjectSkills(format!("{}/", root.display())),
+                GatedTree {
+                    label: format!("claude-skills:{}", root.display()),
+                    root,
+                },
+            ));
         }
         TrustInputs {
             settings,

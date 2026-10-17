@@ -23,6 +23,12 @@ only after you trust the workspace.
   installed. The trust hash covers every file in these directories except
   tool caches (`__pycache__`, `*.pyc`, `*.egg-info`, `.git`, test and lint
   caches), so editing a skill's code asks again.
+- Claude Code's project directories: `.claude/commands/` (custom commands)
+  and `.claude/skills/` (skills; the workspace's and every ancestor's up to
+  its repository root), whose `` !`cmd` `` blocks run when they are invoked,
+  and `.claude/output-styles/`, which rewrite the system prompt. The
+  `.claude/skills/` directories found later below the workspace, as the
+  session touches files there, load only in a trusted workspace too.
 
 These project settings keys still apply in an untrusted workspace, because
 they only change presentation or turn behaviour within the providers and

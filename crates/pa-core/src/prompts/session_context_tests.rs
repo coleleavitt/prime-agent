@@ -13,6 +13,9 @@ fn skill(name: &str, description: &str) -> Skill {
         disable_model_invocation: false,
         kind: SkillKind::Markdown,
         python: None,
+        when_to_use: None,
+        user_invocable: true,
+        claude: None,
     }
 }
 
