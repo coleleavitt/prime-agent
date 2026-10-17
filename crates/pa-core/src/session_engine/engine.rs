@@ -341,7 +341,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
-    let length_continuations = settings.get_length_continuations();
+    let output_limit_recovery = settings.get_output_limit_recovery();
     let repetition_guard = settings.get_repetition_guard();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
@@ -1064,25 +1064,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         follow_up_mode: config.follow_up_mode,
         before_tool_call,
         after_tool_call,
-        // Opt-in (`lengthContinuations`, TS v0.9.8 had none): a reply cut
-        // off at the output-token limit continues in a visible follow-up
-        // turn, bounded by the setting.
-        length_continuation: (length_continuations > 0).then(|| {
-            pa_agent::agent_loop::LengthContinuation {
-                max_continuations: length_continuations,
-                message: std::sync::Arc::new({
-                    let counters = std::sync::Arc::clone(&session_counters);
-                    move |attempt, max| {
+        // A reply cut off at the output-token limit continues: an explicit
+        // `lengthContinuations` keeps upstream's visible rows, unset follows
+        // Claude Code's hidden recovery (`output_limit_recovery`).
+        length_continuation: super::output_limit_recovery::length_continuation(
+            output_limit_recovery,
+            {
+                let counters = std::sync::Arc::clone(&session_counters);
+                std::sync::Arc::new(move || {
                     counters.note_adoption(super::telemetry::SessionAdoption::LengthContinuation);
-                    crate::autonomous::autonomous_continuation_loop_row(
-                        &format!(
-                            "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
-                        ),
-                        pa_agent::now_ms().max(0) as u64,
-                    )
-                }}),
-            }
-        }),
+                })
+            },
+        ),
         // On (reasoning only) unless `repetitionGuard` says otherwise: a
         // degenerate looping generation settles as a guarded error instead
         // of streaming to the output cap.

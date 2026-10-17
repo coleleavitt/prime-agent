@@ -140,20 +140,35 @@ pub type LengthContinuationMessageFn = Arc<dyn Fn(u32, u32) -> AgentMessage + Se
 pub struct LengthContinuation {
     pub max_continuations: u32,
     pub message: LengthContinuationMessageFn,
+    /// Also continue a reply the limit cut while it was still reasoning
+    /// (thinking, no text, no tool call), as Claude Code's output-limit
+    /// recovery does; `false` leaves that shape to the dropped-tool-call
+    /// recovery (upstream #969 continued only visible text).
+    pub reasoning_only: bool,
 }
 
 impl LengthContinuation {
     /// Whether `message` is a truncated reply this policy continues: cut
-    /// at the limit with visible text, no tool calls (those are actionable
-    /// as they stand), and the bound not yet reached.
+    /// at the limit with visible text (or, with
+    /// [`Self::reasoning_only`], with nothing but reasoning), no tool calls
+    /// (those are actionable as they stand), and the bound not yet reached.
     #[must_use]
     pub fn continues(&self, message: &crate::types::AssistantMessage, used: u32) -> bool {
-        message.stop_reason == crate::types::StopReason::Length
-            && used < self.max_continuations
-            && message.tool_calls().is_empty()
-            && message.content.iter().any(|block| {
-                matches!(block, crate::types::AssistantContent::Text(text) if !text.text.trim().is_empty())
-            })
+        if message.stop_reason != crate::types::StopReason::Length
+            || used >= self.max_continuations
+            || !message.tool_calls().is_empty()
+        {
+            return false;
+        }
+        let has_text = message.content.iter().any(|block| {
+            matches!(block, crate::types::AssistantContent::Text(text) if !text.text.trim().is_empty())
+        });
+        has_text
+            || (self.reasoning_only
+                && message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, crate::types::AssistantContent::Thinking(_))))
     }
 }
 

@@ -407,11 +407,13 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
 }
 
 /// Upstream #969: with `lengthContinuations` set, a reply cut off at the
-/// output-token limit continues in a visible follow-up turn; unset (the TS
-/// v0.9.8 default) the truncated reply ends the turn.
+/// output-token limit continues in a visible follow-up turn; `0` ends the
+/// turn on the truncated reply; unset follows Claude Code's recovery: a
+/// hidden "Output token limit hit" nudge the model reads and the
+/// transcript does not show.
 #[tokio::test]
 async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
-    async fn run(settings: Option<&str>) -> Vec<String> {
+    async fn run(settings: Option<&str>) -> (Vec<String>, Option<String>) {
         let model = pa_agent::types::Model {
             id: "m".into(),
             name: "m".into(),
@@ -457,7 +459,26 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
             .await
             .unwrap();
         engine.session.agent().wait_for_idle().await;
-        engine
+        // The last user-role text the provider was sent on its final call.
+        let last_sent = provider.calls().last().and_then(|call| {
+            call.messages
+                .iter()
+                .rev()
+                .find_map(|message| match message {
+                    pa_agent::types::Message::User(user) => Some(match &user.content {
+                        pa_agent::types::UserContent::Text(text) => text.clone(),
+                        pa_agent::types::UserContent::Parts(parts) => parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                pa_agent::types::UserPart::Text(text) => Some(text.text.clone()),
+                                pa_agent::types::UserPart::Image(_) => None,
+                            })
+                            .collect(),
+                    }),
+                    _ => None,
+                })
+        });
+        let rows = engine
             .session
             .agent()
             .state()
@@ -499,9 +520,10 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
             })
             // The harness digest row leads every transcript.
             .filter(|row| row != "other")
-            .collect()
+            .collect();
+        (rows, last_sent)
     }
-    let on = run(Some(r#"{"lengthContinuations": 2}"#)).await;
+    let (on, _) = run(Some(r#"{"lengthContinuations": 2}"#)).await;
     assert_eq!(
         on,
         vec![
@@ -512,11 +534,24 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
         ]
     );
     assert_eq!(
-        run(None).await,
+        run(Some(r#"{"lengthContinuations": 0}"#)).await.0,
         vec![
             "user: write it".to_string(),
             "assistant: the first half".to_string(),
         ]
+    );
+    let (recovered, last_sent) = run(None).await;
+    assert_eq!(
+        recovered,
+        vec![
+            "user: write it".to_string(),
+            "assistant: the first half".to_string(),
+            "assistant: the second half".to_string(),
+        ]
+    );
+    assert_eq!(
+        last_sent.as_deref(),
+        Some(crate::settings::experimental::OUTPUT_LIMIT_RECOVERY_TEXT)
     );
 }
 
