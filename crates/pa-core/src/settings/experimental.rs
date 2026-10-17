@@ -11,6 +11,7 @@
 //!   "goalEvaluator": true, "goalEvaluatorModel": "provider/model-id",
 //!   "modelProposedGoals": true,
 //!   "idleCompaction": true, "idleCompactionMinutes": 54, "idleCompactionMinTokens": 200000,
+//!   "idleCompactionAfterMs": 3240000,
 //!   "observer": true, "observerModel": "provider/model-id", "observerInstructions": "...",
 //!   "advisorModel": "provider/model-id"
 //! }
@@ -69,7 +70,11 @@ pub struct ExperimentalSettings {
     pub goal_evaluator_model: Option<String>,
     pub model_proposed_goals: bool,
     pub idle_compaction: bool,
-    pub idle_compaction_minutes: u64,
+    /// How long a session sits idle before it compacts:
+    /// `idleCompactionAfterMs`, else `idleCompactionMinutes` (Claude Code's
+    /// `CLAUDE_CODE_SLEEP_COMPACT_AFTER_MS` / `fireAtFraction` of the cache
+    /// TTL).
+    pub idle_compaction_after_ms: u64,
     pub idle_compaction_min_tokens: u64,
     pub observer: bool,
     /// `provider/model-id` for the observer; `None` uses the session model.
@@ -90,7 +95,7 @@ impl Default for ExperimentalSettings {
             goal_evaluator_model: None,
             model_proposed_goals: false,
             idle_compaction: false,
-            idle_compaction_minutes: DEFAULT_IDLE_COMPACTION_MINUTES,
+            idle_compaction_after_ms: DEFAULT_IDLE_COMPACTION_MINUTES * 60_000,
             idle_compaction_min_tokens: DEFAULT_IDLE_COMPACTION_MIN_TOKENS,
             observer: false,
             observer_model: None,
@@ -136,10 +141,16 @@ impl ExperimentalSettings {
             .and_then(Value::as_f64)
             .filter(|value| value.is_finite() && *value > 0.0 && *value <= 1.0)
             .unwrap_or(defaults.usage_limit_wrap_up_threshold);
-        let idle_minutes = get("idleCompactionMinutes")
+        let idle_after_ms = get("idleCompactionAfterMs")
             .and_then(Value::as_u64)
-            .filter(|minutes| *minutes > 0)
-            .unwrap_or(defaults.idle_compaction_minutes);
+            .filter(|ms| *ms > 0)
+            .or_else(|| {
+                get("idleCompactionMinutes")
+                    .and_then(Value::as_u64)
+                    .filter(|minutes| *minutes > 0)
+                    .map(|minutes| minutes.saturating_mul(60_000))
+            })
+            .unwrap_or(defaults.idle_compaction_after_ms);
         let idle_min_tokens = env(IDLE_COMPACTION_MIN_TOKENS_ENV)
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .or_else(|| get("idleCompactionMinTokens").and_then(Value::as_u64))
@@ -153,7 +164,7 @@ impl ExperimentalSettings {
             goal_evaluator_model: non_empty(get("goalEvaluatorModel")),
             model_proposed_goals: flag("modelProposedGoals", MODEL_PROPOSED_GOALS_ENV),
             idle_compaction: flag("idleCompaction", IDLE_COMPACTION_ENV),
-            idle_compaction_minutes: idle_minutes,
+            idle_compaction_after_ms: idle_after_ms,
             idle_compaction_min_tokens: idle_min_tokens,
             observer: flag("observer", OBSERVER_ENV),
             observer_model: non_empty(get("observerModel")),
@@ -275,7 +286,7 @@ mod tests {
                 goal_evaluator_model: Some("anthropic/claude-haiku".to_string()),
                 model_proposed_goals: true,
                 idle_compaction: true,
-                idle_compaction_minutes: 4,
+                idle_compaction_after_ms: 240_000,
                 idle_compaction_min_tokens: MIN_IDLE_COMPACTION_MIN_TOKENS,
                 observer: true,
                 observer_model: None,

@@ -60,6 +60,19 @@ impl CompactionManager {
         custom_instructions: Option<String>,
         idle_notify: &tokio::sync::Notify,
     ) -> CompactionOutcome {
+        self.run_with_reason("manual", custom_instructions, idle_notify)
+            .await
+    }
+
+    /// [`Self::run`] with the `reason` its `compaction_start`/`compaction_end`
+    /// events carry (`manual` for `/compact`; the idle compaction reports
+    /// `threshold`, the automatic reason clients render).
+    pub(crate) async fn run_with_reason(
+        &self,
+        reason: &str,
+        custom_instructions: Option<String>,
+        idle_notify: &tokio::sync::Notify,
+    ) -> CompactionOutcome {
         // A compaction interrupts the running turn first (TS `compact()` aborts the agent).
         self.wait_for_turn_end(idle_notify).await;
 
@@ -74,7 +87,7 @@ impl CompactionManager {
             let mut core = self.core.lock_or_recover();
             core.compacting = true;
         }
-        let start = compaction_start_event("manual", custom_instructions.as_deref());
+        let start = compaction_start_event(reason, custom_instructions.as_deref());
         let _ = self.emit_session_event(start);
         pa_core::session_engine::compaction_trace::trace(
             "manual.start_emitted",
@@ -114,7 +127,7 @@ impl CompactionManager {
                 self.persist_and_emit_ipython_state(message);
             }
         }
-        let end = compaction_end_event(&outcome, custom_instructions.as_deref());
+        let end = compaction_end_event(reason, &outcome, custom_instructions.as_deref());
         let _ = self.emit_session_event(end);
         pa_core::session_engine::compaction_trace::trace(
             "manual.end_emitted",
@@ -420,27 +433,31 @@ pub(crate) fn interrupted_compaction_disclosure(
 
 /// The `compaction_end` event payload (TS `AgentSessionEvent`), per outcome:
 /// success carries `result`; the rest carry `errorMessage`/`errorSeverity`.
-fn compaction_end_event(outcome: &CompactionOutcome, custom_instructions: Option<&str>) -> Value {
+fn compaction_end_event(
+    reason: &str,
+    outcome: &CompactionOutcome,
+    custom_instructions: Option<&str>,
+) -> Value {
     match outcome {
         CompactionOutcome::Compacted { run } => {
-            compaction_end_success("manual", &run.result, false, custom_instructions)
+            compaction_end_success(reason, &run.result, false, custom_instructions)
         }
         CompactionOutcome::Skipped { message } => compaction_end_unsuccessful(
-            "manual",
+            reason,
             false,
             Some(message),
             Some("warning"),
             custom_instructions,
         ),
         CompactionOutcome::Failed { error } => compaction_end_unsuccessful(
-            "manual",
+            reason,
             false,
             Some(&format!("Compaction failed: {error}")),
             Some("error"),
             custom_instructions,
         ),
         CompactionOutcome::Aborted => {
-            compaction_end_unsuccessful("manual", true, None, Some("error"), custom_instructions)
+            compaction_end_unsuccessful(reason, true, None, Some("error"), custom_instructions)
         }
     }
 }
@@ -534,6 +551,7 @@ mod tests {
         );
         assert_eq!(
             compaction_end_event(
+                "manual",
                 &CompactionOutcome::Compacted { run: Box::new(run) },
                 Some("focus")
             ),
@@ -553,6 +571,7 @@ mod tests {
         );
         assert_eq!(
             compaction_end_event(
+                "manual",
                 &CompactionOutcome::Skipped {
                     message: "Session is too short to compact — try again once it grows"
                         .to_string(),
@@ -569,7 +588,7 @@ mod tests {
             })
         );
         assert_eq!(
-            compaction_end_event(&CompactionOutcome::Aborted, None),
+            compaction_end_event("manual", &CompactionOutcome::Aborted, None),
             json!({
                 "type": "compaction_end",
                 "reason": "manual",
@@ -580,6 +599,7 @@ mod tests {
         );
         assert_eq!(
             compaction_end_event(
+                "manual",
                 &CompactionOutcome::Failed {
                     error: "Summarization failed".to_string(),
                 },
