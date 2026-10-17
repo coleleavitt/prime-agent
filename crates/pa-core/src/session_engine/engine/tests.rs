@@ -98,6 +98,7 @@ async fn engine_runs_tool_loop_and_persists() {
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -210,6 +211,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -290,6 +292,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             prewarm_ipython_kernel: None,
             queued_goal_context_purge: None,
             rlm_token_allowance: None,
+            agent_definition: None,
         }
     }
 
@@ -1202,6 +1205,7 @@ async fn create_session_appends_missing_resume_settings_rows() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -1221,4 +1225,81 @@ async fn create_session_appends_missing_resume_settings_rows() {
         )),
         "entries: {entries:?}"
     );
+}
+
+/// A session that can spawn lists the discovered agent types; a session
+/// running as an agent reads that agent's instructions at the end of its
+/// prompt, and one whose scope denies spawning lists no types.
+#[tokio::test]
+async fn agent_types_are_listed_and_an_agents_instructions_close_its_prompt() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+        max_tokens_explicit: false,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(cwd.join(".prime/agents")).unwrap();
+    std::fs::write(
+        cwd.join(".prime/agents/explore.md"),
+        "---\nname: explore\ndescription: Searches the code\ntools: Read, Grep\n---\nSearch.",
+    )
+    .unwrap();
+    let reviewer = crate::agents::parse_agent_definition(
+        "---\nname: reviewer\ndescription: Reviews\ntools: Read\n---\nReview it.",
+        std::path::Path::new("reviewer.md"),
+        crate::agents::AgentSource::Project,
+    )
+    .unwrap();
+    let prompt = |agent_definition: Option<crate::agents::AgentDefinition>| {
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        let cwd = cwd.clone();
+        let agent_dir = tmp.path().join("agent");
+        let model = model.clone();
+        async move {
+            let host_session = Arc::new(tokio::sync::Mutex::new(
+                crate::session::manager::SessionManager::in_memory(&cwd),
+            ));
+            create_session(SessionEngineConfig {
+                cwd,
+                agent_dir,
+                model: Some(model),
+                stream_fn: Some(provider.stream_fn()),
+                daemonless: true,
+                rlm_subagent_host: Some(Arc::new(super::super::rlm_host::NoRlmChildren::new(
+                    host_session,
+                ))),
+                agent_definition,
+                ..SessionEngineConfig::default()
+            })
+            .await
+            .unwrap()
+            .system_prompt
+        }
+    };
+    let root = prompt(None).await;
+    assert!(
+        root.contains(
+            "Available agent types for `rlm.spawn(agent=...)`:\n\
+             - explore: Searches the code (Tools: Read, Grep)"
+        ),
+        "{root}"
+    );
+    let child = prompt(Some(reviewer)).await;
+    assert!(
+        child.ends_with(
+            "# Agent: reviewer\n\nReview it.\n\nTool scope (Claude Code tool names): Read. \
+             The harness refuses Bash, Agent, SendMessage for this agent; keep to the rest of \
+             the scope yourself."
+        ),
+        "{child}"
+    );
+    assert!(!child.contains("Available agent types"), "{child}");
 }

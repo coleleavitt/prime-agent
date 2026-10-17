@@ -76,6 +76,7 @@ pub use tools::tool_definition::{
 };
 // RLM kernel subsystem: persistent IPython kernel lifecycle.
 pub mod agent_traces;
+pub mod agents;
 pub mod auth;
 pub mod autonomous;
 pub mod cron;
@@ -86,6 +87,7 @@ pub mod factory_eval;
 pub mod features;
 pub mod file_history;
 pub mod git_env;
+pub mod git_worktree;
 pub mod goals;
 pub mod kernel;
 pub mod mcp;

@@ -443,6 +443,7 @@ impl AgentSessionEngine {
             if let Some(handles) = handles {
                 let mut manager = handles.session.lock().await;
                 self.flush_pending_max_depth(&mut manager);
+                self.persist_agent_definition(&mut manager).await;
             }
         }
         let pending_branch = self
@@ -949,6 +950,20 @@ impl AgentSessionEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
+        // The agent this session runs as: the create's definition, else the
+        // one its session file carries (a revived child's create has none).
+        let agent_definition = match create_resources.agent_definition.clone() {
+            Some(definition) => Some(definition),
+            None => match session_file.clone() {
+                Some(file) => tokio::task::spawn_blocking(move || {
+                    pa_core::agents::agent_definition_in_session_file(&file)
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            },
+        };
         // The engine session stays non-persisted (the worker owns the
         // durable file); the configured session dir leads, the file's
         // parent is the fallback.
@@ -1134,6 +1149,7 @@ impl AgentSessionEngine {
                 wiring
             }),
             rlm_token_allowance,
+            agent_definition,
         })
         .await
         .inspect(|engine| {

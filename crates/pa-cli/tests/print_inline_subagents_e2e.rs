@@ -437,7 +437,7 @@ fn print_inline_subagents_enforce_the_depth_limit() {
     // terminal notice (drained as a turn by the quiescence drive).
     let parent_text = serde_json::to_string(&PrintLane::entries(&parent_file)).unwrap();
     assert!(
-        parent_text.contains("[child-exited: no-reply child:kid]"),
+        parent_text.contains(r#"<summary>Agent \"kid\" finished without replying</summary>"#),
         "the parent read the no-reply notice: {parent_text}"
     );
 }

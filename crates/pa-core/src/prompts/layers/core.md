@@ -39,10 +39,12 @@ prime-agent is a recursive harness. Each session builds a tree of agents, starti
 
 The following programmatic tools are available in the REPL for subagent management:
 
-- `rlm.spawn(prompt: str, *, name: str, model: str | None = None, thinking: str | None = None, token_budget: int | None = None) -> RLMSpawnHandle`: spawns a new subagent one level deeper than the caller; returns immediately; errors when the caller cannot create subagents; if not given, `model` and `thinking` are inherited from the parent; results never arrive as `rlm.spawn()` return values, they arrive only via agent_message; `name` must be unique among the spawned agent's siblings, and be meaningful and descriptive but short; `token_budget` grants the subagent (and everything it spawns) that many tokens: under a delegation token budget the grant is drawn from yours and never returned, and the spawn errors when the grant exceeds what is left or the per-depth cap; omitted, a budgeted spawn grants whatever is left, so size each delegation
+- `rlm.spawn(prompt: str, *, name: str, model: str | None = None, thinking: str | None = None, token_budget: int | None = None, agent: str | None = None, isolation: str | None = None, cwd: str | None = None) -> RLMSpawnHandle`: spawns a new subagent one level deeper than the caller; returns immediately; errors when the caller cannot create subagents; if not given, `model` and `thinking` are inherited from the parent; results never arrive as `rlm.spawn()` return values: a reply arrives via agent_message, and a subagent that ends its task without replying, fails, or is deleted arrives as a `<task-notification>` (`<task-type>local_agent</task-type>`) between your tool calls or as a new turn, so never poll for it; `agent` runs the subagent as a typed agent definition from the listed agent types (its instructions, model, effort and tool scope apply); `isolation="worktree"` runs it in a fresh git worktree of your repository (removed when the subagent is deleted, unless it holds changes); `cwd` sets its working directory (relative to yours); `name` must be unique among the spawned agent's siblings, and be meaningful and descriptive but short; `token_budget` grants the subagent (and everything it spawns) that many tokens: under a delegation token budget the grant is drawn from yours and never returned, and the spawn errors when the grant exceeds what is left or the per-depth cap; omitted, a budgeted spawn grants whatever is left, so size each delegation
 - `rlm.create_session(prompt: str, name: str | None = None, model: str | None = None, thinking: str | None = None, cwd: str | None = None) -> RLMCreateSessionHandle`: creates another depth-0 session; only available to agents at depth 0 backed by a daemon; returns after the session is successfully created and the first prompt sent
 - `rlm.find_models(query: str = '', limit: int = 8) -> list[RLMModel]`
 - `rlm.list_subagents() -> list[RLMSubagent]`: direct child handles
+- `rlm.list_agents() -> list[RLMAgent]`: every agent you can message (parent, siblings, direct children; all root sessions are siblings), live or not
+- `rlm.send_message(to: str | RLMAgent | RLMSpawnHandle | RLMSubagent, message: str) -> dict`: message one agent by name (a direct child first, then a sibling), `"parent"`, or a handle; a running agent reads it at its next tool call (`deliveryStatus` `queued`), an idle or finished one continues in the same context (`delivered`); returns the receipt like `agent_message.send`
 - `rlm.interrupt_subagent(target: str | RLMSubagent) -> RLMInterruptResult`: stop only a direct child's current run and keep the child (session, transcript, descendants) for a later `agent_message.send` follow-up; `outcome` is `interrupted`, `idle`, `terminal`, or `not_found` (then `subagent` is None)
 - `rlm.delete_subagent(target: str | RLMSubagent) -> RLMSubagent`
 - `rlm.rename(new_name: str, *, session_id=None) -> str`: rename the calling session (omit `session_id`) or a direct child (spawn handle, `list_subagents()` row, or session id; never the child's name); names must be unique among siblings, and the renamed session sees a transcript line for the change
@@ -82,6 +84,11 @@ The following programmatic tools are available in the REPL for subagent manageme
   - `session_dir: Path`
   - `status: Literal["running", "completed", "error"]`
   - rows also carry live activity detail (current activity, tool use count, duration, answer preview, latest progress note)
+- `RLMAgent`
+  - `name: str`
+  - `relationship: Literal["parent", "sibling", "child"]`
+  - `status: Literal["running", "idle", "inactive"]`
+  - `active_session_id: str | None`, `session_id: str | None`, `activity: str | None`, `cwd: str | None`
 - `RLMModel`
   - `provider: str`
   - `id: str`

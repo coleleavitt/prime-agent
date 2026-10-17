@@ -34,6 +34,19 @@ spawn byte-identically, `cloud` is refused at admission before any host is
 consulted until the cloud child backend exists (never a silent local
 fallback), and the note pins the admission/messaging parity the backend
 must uphold.
+Typed agent definitions (`agents`): Claude Code's `.claude/agents/*.md`
+(and `.prime/agents/*.md`) discovered over the project (the working
+directory up to the repository root) and the user directories
+(`<agent dir>/agents`, `~/.claude/agents`), parsed from YAML frontmatter;
+the listing a spawning session reads at the end of its system prompt; the
+instructions and the host-request gate (`bash.run`, `rlm.run`,
+`agent_message.send`) a session running as one agent gets
+(`SessionEngineConfig::agent_definition`). `rlm.spawn(agent=, isolation=,
+cwd=)` resolves through `session_engine::rlm_spawn_agent`; `git_worktree`
+owns the harness's git worktrees (`<repo>/.prime/worktrees/<slug>` on
+`worktree-<slug>`, removed only when unchanged). Child lifecycle notices
+(`session_engine::rlm_notices`) render Claude Code's agent
+`<task-notification>`.
 The in-process RLM host admits each child terminal notice through the parent
 session inbox: one fsynced JSONL row precedes live registration and child
 settlement. A child that replied settles only after its explicit reply row

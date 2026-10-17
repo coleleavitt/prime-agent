@@ -364,6 +364,9 @@ async fn subscribe_after_spawn_then_shutdown_seeds_the_passive_child() {
             target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         })
         .await
         .expect("spawn child");

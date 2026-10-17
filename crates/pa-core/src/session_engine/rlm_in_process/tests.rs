@@ -221,6 +221,9 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         target: super::super::rlm_host::RlmSpawnTarget::Local,
         spawned_by_request_id: None,
         token_budget: None,
+        cwd: None,
+        agent: None,
+        worktree: None,
     }
 }
 
@@ -854,12 +857,12 @@ async fn a_notice_to_a_busy_parent_is_retained_durably_before_the_run_ends() {
     let rows = raw_notice_rows(&parent_file);
     assert_eq!(rows.len(), 1, "the retained failure row on raw disk");
     assert_eq!(rows[0].child_id, target_id);
-    assert!(rows[0].content.contains("child-failed child:failing"));
+    assert!(rows[0].content.contains("Agent \"failing\" failed"));
     // End the parent's stalled turn: the queued notice drives the next
     // model request without a user prompt, and the row survives.
     rig.engine.session.agent().abort();
     let provider = rig.catalog.provider("glm-5.3");
-    let failure_header = "[child-failed child:failing]".to_string();
+    let failure_header = json_marker("Agent \"failing\" failed");
     eventually(
         "the queued notice to drive the next model request",
         move || {
@@ -1743,6 +1746,13 @@ fn raw_assistant_rows(path: &Path) -> usize {
         .count()
 }
 
+/// A notice summary as it appears inside a serialized request message
+/// (JSON-escaped: the summary's quotes are escaped there).
+fn json_marker(summary: &str) -> String {
+    let encoded = serde_json::to_string(summary).expect("a string serializes");
+    encoded[1..encoded.len() - 1].to_string()
+}
+
 /// Whether the newest context row of one provider request carries the
 /// notice text `header` (a notice-only turn: no user prompt rode it).
 fn request_ends_with_notice(context: &pa_agent::stream::LlmContext, header: &str) -> bool {
@@ -2050,7 +2060,11 @@ async fn a_busy_fresh_parent_forces_buffered_rows_and_the_notice_to_disk() {
         rows[0].notice_key,
         format!("{parent_id}:{}", handle.rlm_child_id)
     );
-    assert!(rows[0].content.contains("no-reply child:fresher"));
+    assert!(
+        rows[0]
+            .content
+            .contains("Agent \"fresher\" finished without replying")
+    );
     // The busy parent is untouched: no user turn, no run end.
     assert!(
         rig.engine.session.agent().state().await.is_streaming,
@@ -2105,7 +2119,7 @@ async fn a_killed_parent_replays_the_unconsumed_notice_without_a_user_prompt() {
     // assistant row follows, which is exactly the crash interval.
     rig.engine.session.agent().abort();
     let parent_provider = rig.catalog.provider("glm-5.3");
-    let notice_header = "[child-exited: no-reply child:fresher]".to_string();
+    let notice_header = json_marker("Agent \"fresher\" finished without replying");
     eventually("the notice-only turn at the idle transition", move || {
         let provider = Arc::clone(&parent_provider);
         let header = notice_header.clone();
@@ -2157,7 +2171,7 @@ async fn a_killed_parent_replays_the_unconsumed_notice_without_a_user_prompt() {
         .expect("the restored context serializes");
     assert!(context_text.contains("hold the line"));
     assert!(
-        context_text.contains("no-reply child:fresher"),
+        context_text.contains(&json_marker("Agent \"fresher\" finished without replying")),
         "the unbound engine retains the unconsumed notice"
     );
     // The binding replays it: one notice-only turn, no user prompt.
@@ -2177,7 +2191,7 @@ async fn a_killed_parent_replays_the_unconsumed_notice_without_a_user_prompt() {
     assert!(
         request_ends_with_notice(
             calls.last().expect("the replay turn's request"),
-            "[child-exited: no-reply child:fresher]"
+            &json_marker("Agent \"fresher\" finished without replying")
         ),
         "the replay turn ends on the notice"
     );
@@ -2186,7 +2200,11 @@ async fn a_killed_parent_replays_the_unconsumed_notice_without_a_user_prompt() {
     let context_text = serde_json::to_string(&engine.session.agent().state().await.messages)
         .expect("the live context serializes");
     assert_eq!(
-        context_text.matches("no-reply child:fresher").count(),
+        context_text
+            .matches(&json_marker(
+                "<summary>Agent \"fresher\" finished without replying"
+            ))
+            .count(),
         1,
         "the replayed notice rides the live context exactly once"
     );
@@ -2214,7 +2232,7 @@ async fn a_killed_parent_replays_the_unconsumed_notice_without_a_user_prompt() {
     let context_text = serde_json::to_string(&engine.session.agent().state().await.messages)
         .expect("the restored context serializes");
     assert!(
-        context_text.contains("no-reply child:fresher"),
+        context_text.contains(&json_marker("Agent \"fresher\" finished without replying")),
         "the consumed notice rides the restored context"
     );
     let lines_before = raw_lines(&facts.session_file).len();
@@ -2324,7 +2342,7 @@ async fn a_faulted_notice_admission_stays_pending_and_recovers_to_one_row() {
     assert!(
         request_ends_with_notice(
             calls.last().expect("the notice turn's request"),
-            "[child-exited: no-reply child:stalled]"
+            &json_marker("Agent \"stalled\" finished without replying")
         ),
         "the recovered admission delivered the notice as the newest context row"
     );
@@ -2631,7 +2649,11 @@ async fn a_grandchilds_terminal_notice_targets_its_own_parent_file() {
         format!("{}:{}", child.session_id, grand.rlm_child_id)
     );
     assert_eq!(rows[0].kind, "completed_without_reply");
-    assert!(rows[0].content.contains("no-reply child:grand"));
+    assert!(
+        rows[0]
+            .content
+            .contains("Agent \"grand\" finished without replying")
+    );
     // Nothing leaked to the top parent while the child stays busy.
     assert!(raw_notice_rows(&parent_file).is_empty());
     // The busy child receives the notice at its next model boundary: end
@@ -2648,7 +2670,9 @@ async fn a_grandchilds_terminal_notice_targets_its_own_parent_file() {
                 .calls()
                 .last()
                 .and_then(|context| serde_json::to_string(context).ok())
-                .is_some_and(|text| text.contains("no-reply child:grand"))
+                .is_some_and(|text| {
+                    text.contains(&json_marker("Agent \"grand\" finished without replying"))
+                })
         }
     })
     .await;
@@ -2740,7 +2764,7 @@ async fn a_replied_child_still_owes_its_failure_row() {
     );
     assert_eq!(rows[0].kind, "error");
     assert_eq!(rows[0].child_id, handle.rlm_child_id);
-    assert!(rows[0].content.contains("child-failed child:failing"));
+    assert!(rows[0].content.contains("Agent \"failing\" failed"));
     let agent_rows = raw_lines(&parent_file)
         .into_iter()
         .filter(|line| {
@@ -2866,7 +2890,7 @@ async fn notice_admission_orders_disk_live_then_publication() {
         "no premature settle before publication"
     );
     let provider = rig.catalog.provider("glm-5.3");
-    let failure_header = "[child-failed child:ordered]".to_string();
+    let failure_header = json_marker("Agent \"ordered\" failed");
     eventually("the notice-only turn's request", move || {
         let provider = Arc::clone(&provider);
         let header = failure_header.clone();
@@ -3014,7 +3038,7 @@ async fn close_children_waits_the_mid_flight_winner_then_settles_once() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].kind, "completed_without_reply");
     let provider = rig.catalog.provider("glm-5.3");
-    let notice_header = "[child-exited: no-reply child:closing]".to_string();
+    let notice_header = json_marker("Agent \"closing\" finished without replying");
     eventually("the notice-only turn's request", move || {
         let provider = Arc::clone(&provider);
         let header = notice_header.clone();
@@ -3224,7 +3248,7 @@ async fn a_marker_miss_kill_replays_the_notice_at_least_once() {
     let context_text = serde_json::to_string(&engine.session.agent().state().await.messages)
         .expect("the restored context serializes");
     assert!(
-        context_text.contains("no-reply child:noted"),
+        context_text.contains(&json_marker("Agent \"noted\" finished without replying")),
         "the unbound engine retains the unconsumed notice"
     );
     facts
@@ -3241,14 +3265,18 @@ async fn a_marker_miss_kill_replays_the_notice_at_least_once() {
     );
     assert!(request_ends_with_notice(
         facts.catalog.provider("glm-5.3").calls().last().unwrap(),
-        "[child-exited: no-reply child:noted]"
+        &json_marker("Agent \"noted\" finished without replying")
     ));
     // The binding stripped the retained row and re-admitted it exactly
     // once: the live context holds ONE copy, never two.
     let context_text = serde_json::to_string(&engine.session.agent().state().await.messages)
         .expect("the live context serializes");
     assert_eq!(
-        context_text.matches("no-reply child:noted").count(),
+        context_text
+            .matches(&json_marker(
+                "<summary>Agent \"noted\" finished without replying"
+            ))
+            .count(),
         1,
         "the replayed notice rides the live context exactly once"
     );
@@ -3362,7 +3390,7 @@ async fn a_kill_between_the_response_and_the_assistant_row_replays_once() {
     );
     assert!(request_ends_with_notice(
         facts.catalog.provider("glm-5.3").calls().last().unwrap(),
-        "[child-exited: no-reply child:crashed]"
+        &json_marker("Agent \"crashed\" finished without replying")
     ));
     assert_eq!(
         raw_notice_rows(&facts.session_file).len(),
@@ -3417,7 +3445,11 @@ async fn a_partial_prewrite_is_reconciled_to_one_canonical_row() {
         1,
         "the torn prefix reconciled to one canonical row (every line parses)"
     );
-    assert!(rows[0].content.contains("no-reply child:torn"));
+    assert!(
+        rows[0]
+            .content
+            .contains("Agent \"torn\" finished without replying")
+    );
     assert_eq!(rows[0].child_id, handle.rlm_child_id);
 }
 
@@ -3458,7 +3490,11 @@ async fn a_sync_failure_after_a_landed_line_is_resynced_once() {
         1,
         "the landed line was re-synced as the one canonical row"
     );
-    assert!(rows[0].content.contains("no-reply child:synced"));
+    assert!(
+        rows[0]
+            .content
+            .contains("Agent \"synced\" finished without replying")
+    );
     assert_eq!(rows[0].child_id, handle.rlm_child_id);
 }
 
@@ -3580,7 +3616,7 @@ async fn close_waits_a_claim_held_admission_then_flips_and_returns_promptly() {
         .unwrap();
     assert_eq!(one(&collected).status, "running");
     let provider = rig.catalog.provider("glm-5.3");
-    let failure_header = "[child-failed child:held-claim]".to_string();
+    let failure_header = json_marker("Agent \"held-claim\" failed");
     eventually("the live notice-only turn", move || {
         let provider = Arc::clone(&provider);
         let header = failure_header.clone();
@@ -3682,7 +3718,7 @@ async fn close_waits_disk_and_live_from_the_durable_stage_then_returns_promptly(
     assert_eq!(child.state().await.settled_status, Some("error"));
     assert_eq!(raw_notice_rows(&parent_file).len(), 1);
     let provider = rig.catalog.provider("glm-5.3");
-    let failure_header = "[child-failed child:held-row]".to_string();
+    let failure_header = json_marker("Agent \"held-row\" failed");
     eventually("the live notice-only turn", move || {
         let provider = Arc::clone(&provider);
         let header = failure_header.clone();
@@ -3917,7 +3953,7 @@ async fn a_mid_admission_engine_drop_completes_live_and_disk_then_drops() {
     // The transaction completes on the held-alive parent: live delivery
     // (a real model request), the durable row, the verdict — and only
     // then does the engine actually drop.
-    let failure_header = "[child-failed child:held-alive]".to_string();
+    let failure_header = json_marker("Agent \"held-alive\" failed");
     eventually("the held-alive notice turn", move || {
         let provider = Arc::clone(&provider);
         let header = failure_header.clone();
@@ -4103,7 +4139,7 @@ async fn a_transient_fault_recovers_while_the_close_loser_waits() {
     assert_eq!(rows[0].child_id, handle.rlm_child_id);
     assert_eq!(rows[0].kind, "error");
     let provider = rig.catalog.provider("glm-5.3");
-    let failure_header = "[child-failed child:transient]".to_string();
+    let failure_header = json_marker("Agent \"transient\" failed");
     eventually("the recovered notice-only turn", move || {
         let provider = Arc::clone(&provider);
         let header = failure_header.clone();
@@ -4220,7 +4256,7 @@ async fn a_parked_cancelled_delete_retries_and_succeeds_after_the_fault_clears()
     assert_eq!(result.status, "cancelled");
     assert!(rig.host.list_subagents().await.unwrap().is_empty());
     let provider = rig.catalog.provider("glm-5.3");
-    let cancelled_header = "[child-exited: cancelled child:retry-delete]".to_string();
+    let cancelled_header = json_marker("Agent \"retry-delete\" was cancelled");
     eventually("the cancelled notice-only turn", move || {
         let provider = Arc::clone(&provider);
         let header = cancelled_header.clone();
@@ -4339,7 +4375,7 @@ async fn a_forced_assistant_persistence_failure_leaves_the_notice_pending() {
     );
     assert!(request_ends_with_notice(
         facts.catalog.provider("glm-5.3").calls().last().unwrap(),
-        "[child-exited: no-reply child:persist-failed]"
+        &json_marker("Agent \"persist-failed\" finished without replying")
     ));
     assert_eq!(
         raw_notice_rows(&facts.session_file).len(),
@@ -4603,7 +4639,11 @@ async fn an_existing_file_dir_sync_fault_keeps_one_row_and_the_retry_resyncs() {
     );
     assert_eq!(rows[0].child_id, handle.rlm_child_id);
     assert_eq!(rows[0].kind, "completed_without_reply");
-    assert!(rows[0].content.contains("no-reply child:dirsynced"));
+    assert!(
+        rows[0]
+            .content
+            .contains("Agent \"dirsynced\" finished without replying")
+    );
     let parent_id = rig.engine.session.session_id().await;
     assert_eq!(
         rows[0].notice_key,

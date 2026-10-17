@@ -7,9 +7,11 @@
 //! (visible, ordinary turn policy), text only, no injected row, no session
 //! command, no agent-message or scheduler origin. A host notice joins too,
 //! as its own row (Claude Code folds its task notifications in after a tool
-//! batch): a finished background command or a watch event queued on a busy
-//! session ([`FOLDABLE_NOTICE_TYPES`]). Everything else (heartbeats,
-//! injected rows, agent messages) keeps the stop-and-restart delivery. A folded item's waiter (`prompt_and_wait`)
+//! batch): a finished background command, a watch event or a child agent's
+//! completion queued on a busy session ([`FOLDABLE_NOTICE_TYPES`]). An agent
+//! message joins as its `agent_message` row (Claude Code's `SendMessage` to
+//! a running agent). Everything else (heartbeats, other injected rows) keeps
+//! the stop-and-restart delivery. A folded item's waiter (`prompt_and_wait`)
 //! settles with the run it joined; its admission id counts as running. A
 //! steer the session refused (an installed feature's prompt review) goes
 //! back to the lane's front and the run ends for it, so the restart's
@@ -52,17 +54,46 @@ pub(crate) struct FoldState {
 
 /// The host notice rows that join a running turn: a finished background
 /// command, a watch event, a monitor's lines, a background cell's end, an
-/// installed feature's notice (an async hook asking to wake the agent).
-pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 5] = [
+/// installed feature's notice (an async hook asking to wake the agent), a
+/// child agent's completion or failure (Claude Code's agent
+/// `<task-notification>`).
+pub(crate) const FOLDABLE_NOTICE_TYPES: [&str; 7] = [
     pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE,
     crate::agent_watch::AGENT_WATCH_NOTICE_CUSTOM_TYPE,
     pa_core::session_engine::messages::MONITOR_EVENT_CUSTOM_TYPE,
     pa_core::session_engine::messages::BACKGROUND_CELL_CUSTOM_TYPE,
     pa_core::features::FEATURE_NOTICE_CUSTOM_TYPE,
+    pa_core::session_engine::rlm_notices::RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
+    pa_core::session_engine::rlm_notices::RLM_CHILD_FAILURE_CUSTOM_TYPE,
 ];
+
+/// Whether a custom row of `kind` can join a running turn (and is then
+/// persisted as that row).
+pub(crate) fn is_folded_row_type(kind: &str) -> bool {
+    FOLDABLE_NOTICE_TYPES.contains(&kind)
+        || kind == pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE
+}
+
+/// Whether `item` is an agent message delivered on the steering lane
+/// (`agent_message.send`, `rlm.send_message`): it joins a running turn as
+/// its own `agent_message` row, Claude Code's `SendMessage` "queued for
+/// delivery at its next tool round".
+fn is_steered_agent_message(item: &QueuedItem) -> bool {
+    item.agent_message.is_some()
+        && item.policy == TurnPolicy::Injected
+        && item.images.is_empty()
+        && item.queue_key.is_none()
+        && item.custom_message.as_ref().is_some_and(|row| {
+            row.get("customType").and_then(serde_json::Value::as_str)
+                == Some(pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE)
+        })
+}
 
 /// Whether `item` can join a running turn.
 fn joinable(item: &QueuedItem) -> bool {
+    if is_steered_agent_message(item) {
+        return true;
+    }
     let plain = item.queue_visible
         && item.policy == TurnPolicy::Queued
         && item.images.is_empty()
@@ -235,6 +266,33 @@ mod tests {
         assert!(!joinable(&agent));
     }
 
+    /// An agent message on the steering lane joins the running turn as its
+    /// row; a keyed or image-bearing one keeps the restart.
+    #[test]
+    fn steered_agent_messages_join() {
+        let message = || {
+            let mut item = item("[agent-message from parent:lead]\nlook at x");
+            item.priority = super::super::queue::QueuePriority::Background;
+            item.policy = TurnPolicy::Injected;
+            item.agent_message = Some("look at x".to_string());
+            item.custom_message = Some(serde_json::json!({
+                "role": "custom",
+                "customType": "agent_message",
+                "content": "[agent-message from parent:lead]\nlook at x",
+                "display": true,
+                "timestamp": 0,
+            }));
+            item
+        };
+        assert!(joinable(&message()));
+        let mut keyed = message();
+        keyed.queue_key = Some("k".to_string());
+        assert!(!joinable(&keyed));
+        let mut other_row = message();
+        other_row.custom_message = Some(serde_json::json!({"customType": "heartbeat_prompt"}));
+        assert!(!joinable(&other_row));
+    }
+
     /// A monitor's batches queue as one notice row per monitor until the
     /// session takes it: a later batch merges its lines in, the end too.
     #[test]
@@ -300,6 +358,8 @@ mod tests {
         assert!(joinable(&notice("monitor_event")));
         assert!(joinable(&notice("background_cell_completed")));
         assert!(joinable(&notice("feature_notice")));
+        assert!(joinable(&notice("rlm_child_terminal_notice")));
+        assert!(joinable(&notice("rlm_child_failure")));
         assert!(!joinable(&notice("heartbeat_prompt")));
         // An idle session's notice is injected, not queued: the runner takes it.
         let mut injected = notice("async_bash_completion");

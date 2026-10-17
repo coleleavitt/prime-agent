@@ -874,6 +874,7 @@ mod tests {
                     steering_mode: None,
                     follow_up_mode: None,
                     rlm_token_allowance: None,
+                    agent_definition: None,
                 },
             )
             .await
@@ -1512,6 +1513,7 @@ mod tests {
                     steering_mode: None,
                     follow_up_mode: None,
                     rlm_token_allowance: None,
+                    agent_definition: None,
                 },
             )
             .await

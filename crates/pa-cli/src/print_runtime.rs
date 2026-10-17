@@ -548,6 +548,8 @@ pub(crate) struct ChildEngineOverrides {
     pub plan_mode: bool,
     /// The child's delegation grant (`rlm.spawn(token_budget=...)`).
     pub token_budget: Option<u64>,
+    /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
+    pub agent_definition: Option<pa_core::agents::AgentDefinition>,
 }
 
 /// A child's model source: a real-provider child carries its resolved
@@ -852,6 +854,10 @@ pub(crate) async fn build_headless_engine_with(
             image_model_router,
             rlm_token_allowance: match embedding {
                 HeadlessEmbedding::Child(overrides) => overrides.token_budget,
+                HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc => None,
+            },
+            agent_definition: match embedding {
+                HeadlessEmbedding::Child(overrides) => overrides.agent_definition.clone(),
                 HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc => None,
             },
         },

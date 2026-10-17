@@ -113,6 +113,10 @@ pub(crate) struct CreateSessionResources {
     /// A client that sends none leaves the setting and the session's own
     /// `/add-dir` additions in charge.
     pub(crate) additional_directories: Vec<String>,
+    /// The typed agent definition an `rlm.spawn(agent=...)` child runs as;
+    /// the first build persists it into the session file, which a revived
+    /// worker reads it back from.
+    pub(crate) agent_definition: Option<pa_core::agents::AgentDefinition>,
 }
 
 impl CreateSessionResources {

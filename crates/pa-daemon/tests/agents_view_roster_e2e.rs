@@ -432,6 +432,9 @@ async fn rlm_children_key_the_roster_by_parent_path_and_child_id() {
             target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         })
         .await
         .expect("spawn child");

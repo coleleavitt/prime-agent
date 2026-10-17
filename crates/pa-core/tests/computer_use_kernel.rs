@@ -209,6 +209,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         rlm_token_allowance: None,
         sandbox_mode: None,
         additional_directories: Vec::new(),
+        agent_definition: None,
     })
     .await
     .expect("create_session");
