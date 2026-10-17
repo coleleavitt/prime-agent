@@ -815,6 +815,7 @@ async fn run_interactive_surface(
                 agents_view_query: None,
                 handoff_seeds: 0,
                 transcript_entry_work: view.entry_work.get(),
+                turn_active_at_exit: false,
             });
         }
     }
@@ -2293,6 +2294,7 @@ async fn run_interactive_surface(
         agents_view_query: None,
         handoff_seeds: view.handoff_seeds,
         transcript_entry_work: view.entry_work.get(),
+        turn_active_at_exit,
     };
     // The agents-view handoff's background detach owns this connection now; every other exit
     // closes it here.

@@ -201,6 +201,11 @@ pub struct Args {
     pub list_sessions: bool,
     /// `--delete-session <id|name>`: delete one saved session and exit.
     pub delete_session: Option<String>,
+    /// `-w, --worktree [name]`: run the session in a managed git worktree
+    /// (`pa_core::worktree`), created or reused before the session starts.
+    pub worktree: bool,
+    /// The worktree's name (`None`: a generated one).
+    pub worktree_name: Option<String>,
 }
 
 impl Args {
@@ -344,6 +349,18 @@ pub fn parse_args(args: &[String]) -> Args {
             "--name" => result.name = Some(require_value!(arg)),
             "--list-sessions" => result.list_sessions = true,
             "--delete-session" => result.delete_session = Some(require_value!(arg)),
+            // The name is optional: the next token is taken only when it is a
+            // valid worktree name, so `-w "fix the login bug"` stays a message.
+            "--worktree" | "-w" => {
+                result.worktree = true;
+                if let Some(next) = args
+                    .get(i + 1)
+                    .filter(|next| crate::global_flags::is_worktree_name_value(next))
+                {
+                    result.worktree_name = Some(next.clone());
+                    i += 1;
+                }
+            }
             "--fork" => result.fork = Some(require_value!(arg)),
             "--session-dir" => result.session_dir = Some(require_value!(arg)),
             "--models" => {
@@ -690,6 +707,17 @@ mod tests {
     #[test]
     fn resume_accepts_selector_bare_and_equals() {
         assert_eq!(parse(&["-r", "abc"]).resume.as_deref(), Some("abc"));
+        let named = parse(&["--worktree", "feature/login", "hello"]);
+        assert!(named.worktree);
+        assert_eq!(named.worktree_name.as_deref(), Some("feature/login"));
+        assert_eq!(named.messages, vec!["hello"]);
+        let unnamed = parse(&["-w", "fix the login bug"]);
+        assert!(unnamed.worktree);
+        assert_eq!(unnamed.worktree_name, None);
+        assert_eq!(unnamed.messages, vec!["fix the login bug"]);
+        let flag_next = parse(&["-w", "--plan"]);
+        assert!(flag_next.worktree && flag_next.plan);
+        assert_eq!(flag_next.worktree_name, None);
         assert!(parse(&["--resume", "--verbose"]).resume_bare);
         assert_eq!(parse(&["--resume=abc"]).resume.as_deref(), Some("abc"));
         assert!(parse(&["--resume="]).resume_bare);

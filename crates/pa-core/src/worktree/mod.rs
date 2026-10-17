@@ -606,5 +606,57 @@ fn reachable_elsewhere(repo_root: &Path, branch: &str, tip: &str) -> bool {
     })
 }
 
+/// The `worktree.baseRef` setting (`fresh` unless set to `head`).
+#[must_use]
+pub fn configured_base(settings: &crate::settings::Settings) -> BaseRef {
+    settings
+        .extra
+        .get("worktree")
+        .and_then(|worktree| worktree.get("baseRef"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(BaseRef::parse)
+        .unwrap_or_default()
+}
+
+/// What leaving a worktree session may do with it (Claude Code's exit
+/// dialog, made never destructive).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitChoice {
+    /// Keep it, for the reason given (shown to the user).
+    Keep { reason: String },
+    /// It is clean, has no new commits, and this session created it: the
+    /// user may remove it.
+    OfferRemoval,
+}
+
+/// Decide what leaving `worktree` may do: only a worktree this session
+/// created, that no running agent still uses, with no uncommitted files and
+/// no new commits, is offered for removal. Blocking: runs git.
+#[must_use]
+pub fn exit_choice(worktree: &Worktree, session_running: bool) -> ExitChoice {
+    let keep = |reason: &str| ExitChoice::Keep {
+        reason: reason.to_string(),
+    };
+    if worktree.existed {
+        return keep("it existed before this session");
+    }
+    if worktree.hook_based {
+        return keep("a WorktreeCreate hook made it");
+    }
+    if session_running {
+        return keep("the agent is still working in it");
+    }
+    if !worktree.path.is_dir() {
+        return keep("it is already gone");
+    }
+    match changes(&worktree.path, worktree.base_commit.as_deref()) {
+        Ok(found) if found.is_clean() => ExitChoice::OfferRemoval,
+        Ok(found) => ExitChoice::Keep {
+            reason: format!("it has {}", found.describe(worktree.branch.as_deref())),
+        },
+        Err(_) => keep("its state could not be read"),
+    }
+}
+
 #[cfg(test)]
 mod tests;

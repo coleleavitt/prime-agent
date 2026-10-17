@@ -353,3 +353,55 @@ fn changes_describe_reads_like_claude_codes_refusal() {
     );
     assert_eq!(WorktreeChanges::default().describe(None), "no changes");
 }
+
+#[test]
+fn only_a_clean_worktree_this_session_made_is_offered_for_removal() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = fixture_repo(&temp);
+    let made = create(&request(&repo, "exit")).unwrap();
+    assert_eq!(exit_choice(&made, false), ExitChoice::OfferRemoval);
+    assert!(matches!(exit_choice(&made, true), ExitChoice::Keep { .. }));
+
+    std::fs::write(made.path.join("dirty.txt"), "x").unwrap();
+    assert_eq!(
+        exit_choice(&made, false),
+        ExitChoice::Keep {
+            reason: "it has 1 uncommitted file".to_string()
+        }
+    );
+    let reused = create(&request(&repo, "exit")).unwrap();
+    std::fs::remove_file(made.path.join("dirty.txt")).unwrap();
+    assert_eq!(
+        exit_choice(&reused, false),
+        ExitChoice::Keep {
+            reason: "it existed before this session".to_string()
+        }
+    );
+}
+
+#[test]
+fn the_base_ref_setting_defaults_to_fresh() {
+    let settings = |value: serde_json::Value| {
+        let mut settings = crate::settings::Settings::default();
+        if let serde_json::Value::Object(map) = value {
+            settings.extra = map;
+        }
+        settings
+    };
+    assert_eq!(
+        configured_base(&settings(serde_json::json!({}))),
+        BaseRef::Fresh
+    );
+    assert_eq!(
+        configured_base(&settings(
+            serde_json::json!({"worktree": {"baseRef": "head"}})
+        )),
+        BaseRef::Head
+    );
+    assert_eq!(
+        configured_base(&settings(
+            serde_json::json!({"worktree": {"baseRef": "odd"}})
+        )),
+        BaseRef::Fresh
+    );
+}

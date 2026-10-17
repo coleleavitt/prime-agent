@@ -1236,6 +1236,7 @@ mod tests {
             offline: true,
             agents_view_requested: false,
             attach_agent: None,
+            worktree: None,
         }
     }
 

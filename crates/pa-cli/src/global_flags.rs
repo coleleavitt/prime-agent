@@ -54,6 +54,12 @@ const GLOBAL_BOOLEAN_FLAGS: [&str; 13] = [
     "--plan",
 ];
 
+/// Whether the token after `-w`/`--worktree` is its name: a valid worktree
+/// name that is not another flag (otherwise the flag stands alone).
+pub(crate) fn is_worktree_name_value(next: &str) -> bool {
+    !next.starts_with('-') && pa_core::worktree::validate_name(next).is_ok()
+}
+
 fn consumes_following_token(args: &[String], index: usize) -> bool {
     let Some(next) = args.get(index + 1) else {
         return false;
@@ -71,6 +77,9 @@ fn consumes_following_token(args: &[String], index: usize) -> bool {
         } else {
             !next.starts_with('-')
         };
+    }
+    if arg == "--worktree" || arg == "-w" {
+        return is_worktree_name_value(next);
     }
     if arg == "--resume" || arg == "-r" {
         return !next.starts_with('-') && !next.starts_with('@');
@@ -253,6 +262,16 @@ mod tests {
             &removed,
         );
         assert_eq!(rotated, args(&["status", "--provider", "status"]));
+    }
+
+    #[test]
+    fn a_worktree_flag_consumes_only_a_valid_name() {
+        let positional =
+            |list: &[&str]| find_first_positional_argument(&args(list)).map(|p| p.index);
+        assert_eq!(positional(&["-w", "feat", "hello"]), Some(2));
+        assert_eq!(positional(&["--worktree", "feature/x", "hello"]), Some(2));
+        assert_eq!(positional(&["-w", "fix the login bug"]), Some(1));
+        assert_eq!(positional(&["--worktree", "--plan", "hello"]), Some(2));
     }
 
     #[test]
