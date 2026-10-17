@@ -29,6 +29,7 @@ from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, 
 from .monitor import monitor, monitor_list, monitor_stop
 from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
+from .schedule import cron, schedule_wakeup
 from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -1143,6 +1144,19 @@ class _RLMNamespace:
     async def exit_worktree(self, action: str, *, discard_changes: bool = False) -> dict[str, Any]:
         return await exit_worktree(action, discard_changes=discard_changes)
 
+    cron = cron
+
+    async def schedule_wakeup(
+        self,
+        delay_seconds: float | None = None,
+        prompt: str | None = None,
+        reason: str | None = None,
+        *,
+        noop: bool | None = None,
+        stop: bool = False,
+    ) -> dict[str, Any]:
+        return await schedule_wakeup(delay_seconds, prompt, reason, noop=noop, stop=stop)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1185,6 +1199,7 @@ __all__ = [
     "RLMSubagent",
     "RLMSubagentActivity",
     "create_session",
+    "cron",
     "RefinementEvent",
     "ToolforgeRejected",
     "ToolforgeSkill",
@@ -1214,6 +1229,7 @@ __all__ = [
     "progress_note",
     "rename",
     "rlm",
+    "schedule_wakeup",
     "send_message",
     "spawn",
     "toolforge",
