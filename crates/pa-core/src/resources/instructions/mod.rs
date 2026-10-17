@@ -129,6 +129,23 @@ struct LoadState {
     deferred: Vec<DeferredRule>,
     /// Files delivered after session start, in delivery order.
     delivered: Vec<PathBuf>,
+    /// Content hashes of delivered files, by canonical path (a file the
+    /// conversation lost must load again despite the duplicate check).
+    delivered_hashes: std::collections::HashMap<PathBuf, u64>,
+    /// Conditional rules that were delivered (they wait again once lost).
+    delivered_rules: Vec<DeferredRule>,
+}
+
+impl LoadState {
+    /// Move the waiting rules that have loaded to `delivered_rules`.
+    fn settle_deferred(&mut self) {
+        let (delivered, waiting): (Vec<DeferredRule>, Vec<DeferredRule>) =
+            std::mem::take(&mut self.deferred)
+                .into_iter()
+                .partition(|rule| self.processed.contains(&canonical(&rule.path)));
+        self.deferred = waiting;
+        self.delivered_rules.extend(delivered);
+    }
 }
 
 /// How a file came to load: its kind, the directory its imports must stay
@@ -438,10 +455,7 @@ impl Loader {
             };
             self.load_file(&rule.path, origin, 0, None, &mut out);
         }
-        let processed = &self.state.processed;
-        self.state
-            .deferred
-            .retain(|rule| !processed.contains(&canonical(&rule.path)));
+        self.state.settle_deferred();
         out
     }
 }
@@ -481,11 +495,54 @@ impl NestedInstructions {
         for path in paths {
             out.extend(loader.touch(path.as_ref()));
         }
-        loader
-            .state
-            .delivered
-            .extend(out.iter().map(|file| file.path.clone()));
+        for file in &out {
+            loader.state.delivered.push(file.path.clone());
+            loader
+                .state
+                .delivered_hashes
+                .insert(canonical(&file.path), content_hash(&file.content));
+        }
         out
+    }
+
+    /// Forget the delivered files the conversation no longer carries (a
+    /// compaction summarized their rows away), so the next touch delivers
+    /// them again, as Claude Code does after a compaction. `live` are the
+    /// files the conversation's nested rows still name.
+    pub fn forget_missing<P: AsRef<Path>>(&self, live: &[P]) {
+        let mut loader = self
+            .loader
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let live: HashSet<PathBuf> = live.iter().map(|path| canonical(path.as_ref())).collect();
+        let state = &mut loader.state;
+        let lost: Vec<PathBuf> = state
+            .delivered
+            .iter()
+            .map(|path| canonical(path))
+            .filter(|key| !live.contains(key))
+            .collect();
+        if lost.is_empty() {
+            return;
+        }
+        for key in &lost {
+            state.processed.remove(key);
+            if let Some(hash) = state.delivered_hashes.remove(key) {
+                state.contents.remove(&hash);
+            }
+            if let Some(dir) = key.parent() {
+                state.visited_dirs.remove(dir);
+            }
+        }
+        let (waiting, kept): (Vec<DeferredRule>, Vec<DeferredRule>) =
+            std::mem::take(&mut state.delivered_rules)
+                .into_iter()
+                .partition(|rule| lost.contains(&canonical(&rule.path)));
+        state.delivered_rules = kept;
+        state.deferred.extend(waiting);
+        state
+            .delivered
+            .retain(|path| live.contains(&canonical(path)));
     }
 
     /// The files delivered after session start (a resumed session's
@@ -510,10 +567,7 @@ impl NestedInstructions {
         for path in paths {
             let key = canonical(path.as_ref());
             loader.state.processed.insert(key.clone());
-            loader
-                .state
-                .deferred
-                .retain(|rule| canonical(&rule.path) != key);
+            loader.state.settle_deferred();
             let path = path.as_ref().to_path_buf();
             if !loader.state.delivered.contains(&path) {
                 loader.state.delivered.push(path);

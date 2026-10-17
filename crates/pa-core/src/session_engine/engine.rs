@@ -1073,12 +1073,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     } else {
                         Vec::new()
                     };
+                    // The nested files the conversation still carries (a
+                    // compaction may have summarized some away).
+                    let live = if touched.is_empty() {
+                        Vec::new()
+                    } else {
+                        super::instruction_boundary::delivered_paths(&context.context.messages)
+                    };
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
                     if let (false, Some(nested)) = (stop, &nested) {
-                        super::instruction_boundary::after_turn(&fold_slot, nested, &touched);
+                        super::instruction_boundary::after_turn(
+                            &fold_slot, nested, &touched, &live,
+                        );
                     }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;

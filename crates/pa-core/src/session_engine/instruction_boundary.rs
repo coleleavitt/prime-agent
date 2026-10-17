@@ -7,7 +7,8 @@
 //! (`feature_boundary`), so the model reads them before its next request.
 //!
 //! The row's details name the delivered files, so a resumed session does
-//! not deliver them again ([`delivered_paths`]).
+//! not deliver them again ([`delivered_paths`]), and a file whose row a
+//! compaction summarized away is delivered again on its next touch.
 
 use std::path::PathBuf;
 
@@ -57,11 +58,13 @@ pub(super) fn nested_row(
     Some(row)
 }
 
-/// Deliver the files a finished batch brings in to the running run.
+/// Deliver the files a finished batch brings in to the running run;
+/// `live` are the delivered files the conversation still carries.
 pub(super) fn after_turn(
     slot: &FoldAdmissionSlot,
     nested: &NestedInstructions,
     touched: &[PathBuf],
+    live: &[PathBuf],
 ) {
     if touched.is_empty() {
         return;
@@ -69,6 +72,7 @@ pub(super) fn after_turn(
     let Some(agent) = slot.get().and_then(|admission| admission.agent.upgrade()) else {
         return;
     };
+    nested.forget_missing(live);
     let Some(row) = nested_row(nested, touched) else {
         return;
     };

@@ -350,3 +350,37 @@ fn binary_and_empty_files_are_skipped_and_large_files_cut() {
     assert!(files[0].content.ends_with("bytes]"));
     assert!(files[0].content.len() < MAX_INSTRUCTION_FILE_BYTES + 100);
 }
+
+#[test]
+fn files_the_conversation_lost_are_delivered_again() {
+    let fx = Fixture::new();
+    Fixture::write(&fx.repo.join("sub/AGENTS.md"), "sub");
+    Fixture::write(&fx.repo.join("sub/CLAUDE.md"), "sub claude");
+    Fixture::write(
+        &fx.repo.join(".claude/rules/md.md"),
+        "---\npaths: \"*.md\"\n---\nmd rule",
+    );
+    let (_, nested) = fx.load(&fx.repo);
+    let first = nested.touch(&[fx.repo.join("sub/x.md")]);
+    assert_eq!(
+        fx.names(&first),
+        vec![
+            "home/repo/sub/AGENTS.md",
+            "home/repo/sub/CLAUDE.md",
+            "home/repo/.claude/rules/md.md"
+        ]
+    );
+    assert!(nested.pending_rules().is_empty());
+    // Every row still in the conversation: nothing changes.
+    nested.forget_missing(&nested.delivered());
+    assert!(nested.touch(&[fx.repo.join("sub/x.md")]).is_empty());
+    // A compaction kept only the CLAUDE.md row.
+    nested.forget_missing(&[fx.repo.join("sub/CLAUDE.md")]);
+    assert_eq!(nested.pending_rules().len(), 1);
+    let again = nested.touch(&[fx.repo.join("sub/y.md")]);
+    assert_eq!(
+        fx.names(&again),
+        vec!["home/repo/sub/AGENTS.md", "home/repo/.claude/rules/md.md"]
+    );
+    assert_eq!(nested.delivered().len(), 3);
+}
