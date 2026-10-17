@@ -26,6 +26,7 @@ from .factory import (
 )
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
+from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -1095,6 +1096,12 @@ class _RLMNamespace:
     def monitor_stop(self, monitor_id: str) -> bool:
         return monitor_stop(monitor_id)
 
+    async def enter_worktree(self, name: str | None = None, *, path: str | None = None) -> dict[str, Any]:
+        return await enter_worktree(name, path=path)
+
+    async def exit_worktree(self, action: str, *, discard_changes: bool = False) -> dict[str, Any]:
+        return await exit_worktree(action, discard_changes=discard_changes)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1143,6 +1150,8 @@ __all__ = [
     "bash",
     "delete_subagent",
     "emit",
+    "enter_worktree",
+    "exit_worktree",
     "find_models",
     "get_harness_state",
     "harness",

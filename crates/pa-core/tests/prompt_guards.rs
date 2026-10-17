@@ -255,6 +255,9 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             "agent_observe.recent" => "agent_observe.recent_messages",
             // The bundled present-artifact skill's request.
             "artifact.present" => "present_artifact",
+            // `rlm.enter_worktree` / `rlm.exit_worktree` (pa-daemon's worktree host).
+            "worktree.enter" => "rlm.enter_worktree",
+            "worktree.exit" => "rlm.exit_worktree",
             other => other,
         }
         .to_string(),

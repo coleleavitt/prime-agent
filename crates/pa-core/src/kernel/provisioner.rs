@@ -330,6 +330,20 @@ impl IpythonKernelProvisioner {
         }
     }
 
+    /// Retarget only where the kernel (re)starts, leaving a running kernel's
+    /// directory alone: for a move the kernel makes itself (it is inside a
+    /// cell that awaits the host, so no other cell can run the chdir).
+    pub fn set_start_cwd(&self, cwd: &std::path::Path) {
+        *self
+            .inner
+            .cwd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = cwd.to_path_buf();
+        if let Some(manager) = self.manager() {
+            manager.set_start_cwd(cwd);
+        }
+    }
+
     /// Whether a kernel has finished starting and is currently running.
     #[must_use]
     pub fn has_running_kernel(&self) -> bool {

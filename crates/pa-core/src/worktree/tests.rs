@@ -405,3 +405,27 @@ fn the_base_ref_setting_defaults_to_fresh() {
         BaseRef::Fresh
     );
 }
+
+#[test]
+fn an_existing_linked_worktree_opens_by_path_but_the_main_checkout_does_not() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = fixture_repo(&temp);
+    let made = create(&request(&repo, "by-path")).unwrap();
+
+    let opened = open_existing(&repo, &made.path).unwrap();
+    assert!(opened.existed);
+    assert_eq!(opened.path, made.path);
+    assert_eq!(opened.branch.as_deref(), Some("worktree-by-path"));
+    assert_eq!(opened.base_commit, made.base_commit);
+
+    assert!(matches!(
+        open_existing(&repo, &repo),
+        Err(WorktreeError::NotAWorktree { .. })
+    ));
+    let plain = temp.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    assert!(matches!(
+        open_existing(&repo, &plain),
+        Err(WorktreeError::NotAWorktree { .. })
+    ));
+}

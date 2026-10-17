@@ -38,10 +38,12 @@ pub(super) fn run(cwd: &Path, args: &[&str]) -> Result<GitOutput, WorktreeError>
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null());
-    // The unit tests' fixture repositories never see this machine's git
-    // configuration (global hooks, signing, excludes).
-    #[cfg(test)]
-    crate::git_env::isolate_fixture(&mut command, &std::env::temp_dir());
+    // A test run's fixture repositories never see this machine's git
+    // configuration (global hooks, signing, excludes), whichever crate's
+    // tests drive the helper.
+    if pa_types::platform::test_isolation::is_test_process() {
+        crate::git_env::isolate_fixture(&mut command, &std::env::temp_dir());
+    }
     let output = command.output().map_err(|error| WorktreeError::Io {
         what: "run git".to_string(),
         error,

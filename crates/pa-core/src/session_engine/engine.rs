@@ -1594,6 +1594,14 @@ impl SessionEngine {
         Ok(())
     }
 
+    /// Follow a working-directory move the kernel made itself
+    /// (`rlm.enter_worktree`): later kernel starts and MCP stdio servers use
+    /// `cwd`; the running kernel already changed directory.
+    pub fn follow_kernel_cwd(&self, cwd: &std::path::Path) {
+        self.provisioner.set_start_cwd(cwd);
+        self.mcp_sessions.set_cwd(cwd);
+    }
+
     /// Release the kernel with a final namespace snapshot, revivable: the next
     /// kernel use boots a fresh kernel and revives the flushed snapshot.
     pub async fn stop_kernel_snapshot(&self) {

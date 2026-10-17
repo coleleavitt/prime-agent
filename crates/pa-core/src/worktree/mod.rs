@@ -327,6 +327,31 @@ pub fn create(request: &CreateRequest) -> Result<Worktree, WorktreeError> {
     })
 }
 
+/// Enter an existing worktree by path (Claude Code's `EnterWorktree` with
+/// `path`): it must be a registered linked worktree of the repository `from`
+/// is in, not the main checkout. The result is marked `existed`, so leaving
+/// it never removes it. Blocking: runs git.
+///
+/// # Errors
+///
+/// No repository, the main working tree, or a path git does not list.
+pub fn open_existing(from: &Path, path: &Path) -> Result<Worktree, WorktreeError> {
+    let repo_root = main_repo_root(from)?;
+    let path = std::fs::canonicalize(path).map_err(|error| WorktreeError::Io {
+        what: format!("resolve {}", path.display()),
+        error,
+    })?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let main = std::fs::canonicalize(&repo_root).unwrap_or_else(|_| repo_root.clone());
+    if path == main {
+        return Err(WorktreeError::NotAWorktree { name, path });
+    }
+    reuse(&repo_root, name, path)
+}
+
 /// An existing directory at the managed path: reused when git lists it as a
 /// worktree of this repository.
 fn reuse(repo_root: &Path, name: String, path: PathBuf) -> Result<Worktree, WorktreeError> {
