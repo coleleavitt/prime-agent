@@ -426,6 +426,8 @@ impl Worker {
     /// admission, cancel the queue-invisible turn actions, abort the in-flight
     /// compaction, and cancel the running turn.
     fn request_abort(&self) {
+        // Claude Code's interrupt rule: a pending self-paced /loop wakeup ends.
+        self.session_tasks.user_abort();
         {
             let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
@@ -722,6 +724,7 @@ impl Worker {
         if !cleared.success {
             return cleared;
         }
+        self.session_tasks.user_abort();
         let mut core = self.core.lock_or_recover();
         core.abort_requested = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.

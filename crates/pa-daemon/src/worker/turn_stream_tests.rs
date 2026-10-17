@@ -92,6 +92,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
                 std::path::PathBuf::from("/nonexistent-supervisor.sock"),
             )),
             worker_token: String::new(),
+            scheduled_tasks: None,
         },
         herdr: std::sync::Arc::new(std::sync::Mutex::new(crate::herdr::HerdrReporter::default())),
     }

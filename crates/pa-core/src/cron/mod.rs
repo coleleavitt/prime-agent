@@ -4,6 +4,7 @@
 
 pub mod scheduler;
 pub mod store;
+pub mod tasks;
 
 use std::collections::BTreeSet;
 

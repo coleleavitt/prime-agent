@@ -329,6 +329,8 @@ impl Worker {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             crate::scheduled_jobs::live_binding(&core)
         };
+        // The session's Claude Code tasks follow the same binding.
+        self.session_tasks.bind();
         if let Some((binding, artifact_dir)) = binding {
             self.scheduled.bind_session(binding, artifact_dir).await?;
         }

@@ -69,6 +69,9 @@ pub(super) struct PassivationContext {
     pub(super) agent_dir: std::path::PathBuf,
     pub(super) link: std::sync::Arc<crate::supervisor_link::SupervisorLink>,
     pub(super) worker_token: String,
+    /// The session's scheduled tasks: pending ones keep the worker resident
+    /// (the worker is what fires them).
+    pub(super) scheduled_tasks: Option<std::sync::Arc<crate::session_tasks::SessionTaskScheduler>>,
 }
 
 impl TurnRunner {
@@ -235,6 +238,15 @@ impl TurnRunner {
         if self.user_bash.is_running() {
             return None;
         }
+        // So does a scheduled task: the worker is what fires it.
+        if self
+            .passivation
+            .scheduled_tasks
+            .as_ref()
+            .is_some_and(|tasks| tasks.has_pending())
+        {
+            return None;
+        }
         let settings =
             pa_core::settings::SettingsManager::create(&cwd, &self.passivation.agent_dir);
         let minutes = match settings.get_idle_eviction() {
@@ -273,6 +285,14 @@ impl TurnRunner {
             return;
         }
         if self.user_bash.is_running() {
+            return;
+        }
+        if self
+            .passivation
+            .scheduled_tasks
+            .as_ref()
+            .is_some_and(|tasks| tasks.has_pending())
+        {
             return;
         }
         let settings =

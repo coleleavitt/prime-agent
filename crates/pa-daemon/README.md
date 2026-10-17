@@ -273,6 +273,20 @@ broadcast owns its surface here too (the worker's cron-store
 — TS daemon-mode's `broadcastGlobal` — and the supervisor re-broadcasts it
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
+Claude Code's session scheduling (`session_tasks`; the book is
+`pa_core::cron::tasks`): the worker owns the clock for the session's
+`rlm.cron.*` tasks, `rlm.schedule_wakeup` loop wakeups and `/loop` jobs,
+since a session outlives its clients. The timer sleeps to the next fire;
+a due task is taken only while the session is idle (no turn, compaction,
+queued input, user bash or input pause; a busy session wakes it through
+the runner's park signal) and admitted on the follow-up lane as an
+injected `scheduled_task_fire` row, so a fire never lands mid-turn. A
+delivered loop tick's settle drives the keepalive wakeup; `abort` and
+`abort_and_clear_queue` cancel pending self-paced wakeups; pending tasks
+keep the worker resident. The book binds with the session (create and
+every replacement): durable tasks load from the session artifact
+partition's `scheduled_tasks.json`. No wire change: the surface is kernel
+host requests plus the `/loop` session command.
 Mid-session worktree isolation (`worktree_host`, Claude Code's
 `EnterWorktree`/`ExitWorktree`): the kernel's `rlm.enter_worktree` /
 `rlm.exit_worktree` send `worktree.enter` / `worktree.exit`; the engine

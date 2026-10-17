@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 12] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 13] = [
     "compact",
     "refine",
     "goal",
@@ -18,6 +18,7 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 12] = [
     "output-style",
     "add-dir",
     "memory",
+    "loop",
 ];
 
 /// Builtin commands that run the bundled skill of the same name: the
@@ -451,6 +452,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         description: "Standing multi-agent orchestration: every substantive task runs as an rlm.workflow (also /effort ultracode)",
         execution: SlashCommandExecution::Session,
         argument_hint: Some("[on|off|status]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "loop",
+        description: "Run a prompt on a recurring interval (e.g. /loop 5m /foo); omit the interval to let the model pace itself; /loop stop ends it",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[interval] [prompt] | stop"),
         aliases: &[],
         takes_argument: true,
     },

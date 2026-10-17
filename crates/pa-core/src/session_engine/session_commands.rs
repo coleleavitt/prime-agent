@@ -255,6 +255,7 @@ pub async fn execute_session_command(
         "output-style" => execute_output_style(engine, command, &mut execution),
         "add-dir" => execute_add_dir(engine, command, &mut execution).await,
         "memory" => execute_memory(engine, command, &mut execution),
+        "loop" => execute_loop(engine, command, &mut execution),
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -945,6 +946,42 @@ async fn execute_ultracode(
 
 /// The rows are durable in the session's own entry chain: the live context
 /// rebuild and a later `/compact` see the same rows the host runtime persists.
+/// `/loop [interval] <prompt>` and `/loop stop` (Claude Code's loop skill):
+/// the host schedules what it can (a fixed interval's recurring job, a
+/// stop); the turn the model runs now follows as the injected `loop_prompt`
+/// row.
+fn execute_loop(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    let Some(tasks) = engine.session_tasks.as_ref() else {
+        return Err(
+            "/loop needs a daemon session: the daemon keeps the schedule while no client is attached."
+                .to_string(),
+        );
+    };
+    let run = tasks.run_loop_command(&command.args)?;
+    execution.push_message(slash_command_result(
+        command, run.text, true, "info", None, true,
+    ));
+    if let Some(turn) = run.turn {
+        execution.continuation_message = Some(CustomMessage {
+            custom_type: crate::cron::tasks::LOOP_PROMPT_CUSTOM_TYPE.to_string(),
+            content: pa_types::ai::UserContent::Text(turn.content),
+            display: true,
+            details: Some(serde_json::json!({
+                "mode": turn.mode,
+                "jobId": turn.job_id,
+                "schedule": turn.schedule,
+            })),
+            timestamp: now_millis(),
+            rest: serde_json::Map::default(),
+        });
+    }
+    Ok(())
+}
+
 async fn persist_rows<'a>(
     engine: &SessionEngine,
     messages: impl Iterator<Item = &'a CustomMessage>,

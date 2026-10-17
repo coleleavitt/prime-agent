@@ -26,6 +26,7 @@ fn park_engine(dir: &std::path::Path) -> AgentSessionEngine {
         store: std::sync::Arc::clone(&store),
         binding: None,
         mutation_hook: None,
+        session_tasks: None,
     };
     AgentSessionEngine::new(AgentEngineConfig {
         cwd: dir.to_path_buf(),

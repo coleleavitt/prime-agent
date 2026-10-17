@@ -2580,6 +2580,7 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "fancy-regex",
  "flate2",
  "futures",

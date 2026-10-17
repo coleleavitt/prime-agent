@@ -145,6 +145,9 @@ pub struct SessionEngine {
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
     pub goal_driver: std::sync::Arc<tokio::sync::Mutex<super::goal_driver::GoalDriver>>,
+    /// The session's Claude Code task book (`/loop` reaches it); `None` when the
+    /// embedding runs no scheduler.
+    pub session_tasks: Option<std::sync::Arc<crate::cron::tasks::SessionTasks>>,
     /// `/goal` pause/clear/start and the kernel's `goal.complete` withdraw
     /// queued goal-context turns through it; `None` when no queue.
     pub queued_goal_context_purge: Option<super::runtime::QueuedGoalContextPurge>,
@@ -1572,6 +1575,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         },
         system_prompt,
         goal_driver,
+        session_tasks: config
+            .cron_store
+            .as_ref()
+            .and_then(|wiring| wiring.session_tasks.clone()),
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),
         mcp_manager,
         turn_boundary,
