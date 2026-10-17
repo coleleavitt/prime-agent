@@ -121,6 +121,10 @@ impl InstalledFeatures {
 pub fn install_enabled_features() -> InstalledFeatures {
     install_trust_gates();
     pa_core::features::install(enabled_features());
+    // `WorktreeCreate`/`WorktreeRemove` command hooks replace git for
+    // managed worktrees when configured.
+    #[cfg(feature = "hooks")]
+    pa_hooks::worktree::install();
     install_credential_sources();
     install_tui_features();
     #[cfg(feature = "session-index")]

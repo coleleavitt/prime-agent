@@ -40,10 +40,14 @@ pub enum HookEvent {
     PostCompact,
     Notification,
     SessionEnd,
+    /// Creates a worktree instead of git (`pa_core::worktree`).
+    WorktreeCreate,
+    /// Removes a worktree a `WorktreeCreate` hook made.
+    WorktreeRemove,
 }
 
 impl HookEvent {
-    pub const ALL: [HookEvent; 12] = [
+    pub const ALL: [HookEvent; 14] = [
         HookEvent::SessionStart,
         HookEvent::UserPromptSubmit,
         HookEvent::PreToolUse,
@@ -56,6 +60,8 @@ impl HookEvent {
         HookEvent::PostCompact,
         HookEvent::Notification,
         HookEvent::SessionEnd,
+        HookEvent::WorktreeCreate,
+        HookEvent::WorktreeRemove,
     ];
 
     /// The settings key and the `hook_event_name` hooks receive.
@@ -74,6 +80,8 @@ impl HookEvent {
             HookEvent::PostCompact => "PostCompact",
             HookEvent::Notification => "Notification",
             HookEvent::SessionEnd => "SessionEnd",
+            HookEvent::WorktreeCreate => "WorktreeCreate",
+            HookEvent::WorktreeRemove => "WorktreeRemove",
         }
     }
 
@@ -94,7 +102,11 @@ impl HookEvent {
             | HookEvent::PostCompact
             | HookEvent::Notification
             | HookEvent::SessionEnd => true,
-            HookEvent::UserPromptSubmit | HookEvent::PostToolBatch | HookEvent::Stop => false,
+            HookEvent::UserPromptSubmit
+            | HookEvent::PostToolBatch
+            | HookEvent::Stop
+            | HookEvent::WorktreeCreate
+            | HookEvent::WorktreeRemove => false,
         }
     }
 }
@@ -416,7 +428,11 @@ mod tests {
                 config.has(event),
                 !matches!(
                     event,
-                    HookEvent::UserPromptSubmit | HookEvent::PreToolUse | HookEvent::PostToolUse
+                    HookEvent::UserPromptSubmit
+                        | HookEvent::PreToolUse
+                        | HookEvent::PostToolUse
+                        | HookEvent::WorktreeCreate
+                        | HookEvent::WorktreeRemove
                 ),
                 "{event:?}"
             );
