@@ -37,7 +37,9 @@ pub use confirm::{
     ConfirmationRequest,
     ConfirmationSurface,
     answer_confirmation,
+    answer_confirmation_remembering,
     confirm,
+    confirm_offering,
     pending_confirmations,
     register_confirmation_surface,
 };
