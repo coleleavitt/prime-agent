@@ -621,3 +621,64 @@ fn trust_carries_to_an_identical_checkout_only() {
         TrustState::Trusted
     );
 }
+
+/// With the Claude Code opt-in, a project `.claude/settings.json` that
+/// carries hooks (or env, a status line, loosening permissions) is gated:
+/// without the opt-in it is never read, so it gates nothing.
+#[test]
+fn claude_code_project_settings_are_gated_only_with_the_opt_in() {
+    let fixture = Fixture::new();
+    let claude = fixture.cwd.join(".claude");
+    fs::create_dir_all(&claude).unwrap();
+    fs::write(
+        claude.join("settings.json"),
+        serde_json::json!({
+            "hooks": { "Stop": [] },
+            "permissions": { "deny": ["Bash(rm:*)"], "allow": ["Bash"] },
+            "theme": "dark",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(fixture.evaluate().state, TrustState::NotRequired);
+    fs::write(
+        fixture.agent_dir.join("settings.json"),
+        r#"{"claudeCodeSettings": true}"#,
+    )
+    .unwrap();
+    let evaluated = fixture.evaluate();
+    assert_eq!(
+        (evaluated.state, evaluated.gated.clone()),
+        (
+            TrustState::Unknown,
+            vec![GatedItem::ClaudeSettings {
+                file: ".claude/settings.json".to_string(),
+                keys: vec!["hooks".to_string(), "permissions".to_string()],
+            }]
+        )
+    );
+    assert_eq!(
+        evaluated.gated[0].to_string(),
+        ".claude/settings.json keys: hooks, permissions"
+    );
+    assert!(!fixture.settings().project_scope_trusted());
+    fixture.trust();
+    assert!(fixture.settings().project_scope_trusted());
+    // A deny-only change does not ask again; a new hook does.
+    fs::write(
+        claude.join("settings.json"),
+        serde_json::json!({
+            "hooks": { "Stop": [] },
+            "permissions": { "deny": ["Bash(rm:*)", "Read(.env)"], "allow": ["Bash"] },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(fixture.evaluate().state, TrustState::Trusted);
+    fs::write(
+        claude.join("settings.local.json"),
+        serde_json::json!({ "env": { "A": "1" } }).to_string(),
+    )
+    .unwrap();
+    assert_eq!(fixture.evaluate().state, TrustState::Changed);
+}

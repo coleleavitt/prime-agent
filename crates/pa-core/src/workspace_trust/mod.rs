@@ -92,6 +92,11 @@ pub enum GatedItem {
     /// commands, which can run shell blocks; `.claude/output-styles/`:
     /// styles that rewrite the system prompt).
     ClaudeDir { dir: String, label: String },
+    /// A project Claude Code settings file (`.claude/settings.json`,
+    /// `.claude/settings.local.json`) with keys that run code or loosen the
+    /// session (hooks, statusLine, env, ...), gated while the user settings
+    /// opt into Claude Code's files.
+    ClaudeSettings { file: String, keys: Vec<String> },
 }
 
 impl fmt::Display for GatedItem {
@@ -107,6 +112,9 @@ impl fmt::Display for GatedItem {
             GatedItem::ProjectSkills(location) => write!(f, "{location} (project skills)"),
             GatedItem::ProjectDir { dir, label } => write!(f, "{config_dir}/{dir}/ ({label})"),
             GatedItem::ClaudeDir { dir, label } => write!(f, ".claude/{dir}/ ({label})"),
+            GatedItem::ClaudeSettings { file, keys } => {
+                write!(f, "{file} keys: {}", keys.join(", "))
+            }
         }
     }
 }
