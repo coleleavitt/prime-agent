@@ -882,3 +882,22 @@ async fn without_a_surface_nothing_is_recorded() {
     );
     assert_eq!(fixture.load().pending().len(), 1);
 }
+
+#[test]
+fn the_opt_in_is_the_permission_rules_one_in_the_user_settings() {
+    let fixture = Fixture::new();
+    let opted_in = || {
+        claude_code_opt_in(&crate::settings::SettingsManager::create(
+            &fixture.cwd,
+            &fixture.agent_dir,
+        ))
+    };
+    assert!(!opted_in());
+    fixture.global_settings(&json!({ "permissions": { "claudeCodeSettings": true } }));
+    assert!(opted_in());
+    // A project cannot opt the user in.
+    fixture.global_settings(&json!({}));
+    fixture.project_settings(&json!({ "permissions": { "claudeCodeSettings": true } }));
+    fixture.trust();
+    assert!(!opted_in());
+}

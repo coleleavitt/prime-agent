@@ -225,12 +225,16 @@ impl ClaudeCodeFiles {
 /// permission rules read).
 #[must_use]
 pub fn claude_code_opt_in(settings: &SettingsManager) -> bool {
-    settings
-        .global_settings()
-        .extra
-        .get("permissions")
-        .and_then(|permissions| permissions.get("claudeCodeSettings"))
-        .and_then(Value::as_bool)
+    // Through the serialized document: the key counts whether the settings
+    // type knows `permissions` or carries it as an extra.
+    serde_json::to_value(settings.global_settings())
+        .ok()
+        .and_then(|document| {
+            document
+                .get("permissions")?
+                .get("claudeCodeSettings")?
+                .as_bool()
+        })
         .unwrap_or(false)
 }
 

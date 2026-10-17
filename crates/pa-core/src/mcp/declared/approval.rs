@@ -301,8 +301,13 @@ impl Approvals {
         claude_code: Option<&ClaudeCodeFiles>,
     ) -> Self {
         let mut approvals = Approvals::default();
-        approvals.add_document(&settings.global_settings().extra);
-        approvals.add_document(&settings.project_settings().extra);
+        // Read through the serialized document, so the keys count whether
+        // the settings type knows them or carries them as extras.
+        for scope in [settings.global_settings(), settings.project_settings()] {
+            if let Ok(Value::Object(document)) = serde_json::to_value(scope) {
+                approvals.add_document(&document);
+            }
+        }
         approvals.add_choices(&read_project_choices(agent_dir, workspace));
         if let Some(files) = claude_code {
             approvals.add_file(&files.user_settings);
