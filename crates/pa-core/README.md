@@ -146,6 +146,20 @@ serves the daemon/TUI `factory_activity` lane from the executor (no kernel
 round trip); `factory::host` registers the kernel's `factory.*` host
 requests.
 
+File checkpoints (`file_history`, Claude Code's file history behind
+`/rewind`): the bundled `edit` skill reports each write around itself
+(`file_history.before_write` / `file_history.after_write`, host-internal
+requests registered for top-level sessions); the host backs the prior bytes
+up content-addressed under `<session artifacts>/file-history/` (private
+directories, pinned-handle leaf operations, 16 MiB per file and 1 GiB per
+session caps) and appends each side to a write log. `FileHistory::plan`/
+`plans` answer what restoring the code to a point in time would change and
+`restore` applies it, recording the restore as writes and skipping a file
+changed outside the agent since its last write unless forced. The write
+itself stays in the kernel (sandbox and plan guard apply); bash and plain
+Python writes are not tracked. `fileCheckpointingEnabled: false` or
+`PRIME_AGENT_DISABLE_FILE_CHECKPOINTING=1` turns it off.
+
 ## Non-goals
 No provider HTTP (pa-ai), no loop policy (pa-agent), no daemon supervision (pa-daemon), no TUI (pa-tui). No update coordination (the pa-cli coordinator owns the FSM; the update-flow seam here is the daemon-free support layer: `update::version` (semver/channel policy), `update::install` (the managed install-root layout), `update::release` (the channel manifest fetch), `update::download` (sha256-verified archive download + staging)). The package manager installs sources and resolves resource paths only. No workspace snapshot upload, transport, or remote materialization (staging and verification live here; the cloud attach surface owns the transport when it ships).
 

@@ -265,6 +265,14 @@ broadcast owns its surface here too (the worker's cron-store
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
 
+`/rewind` (`rewind` module, capability `rewind`): `get_rewind_checkpoints`
+lists the active branch's user prompts with each one's code-restore summary
+(from the session's `pa_core::file_history`, at the time the prompt's entry
+was written); `rewind` settles the running turn, restores the code first,
+then moves the conversation through the `navigate_tree` path onto the prompt
+(the prompt's text returns as `editorText`; `summarize` is "Summarize from
+here", the abandoned-branch summary).
+
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.
 
