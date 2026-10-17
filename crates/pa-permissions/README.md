@@ -68,8 +68,12 @@ The `permissions` key, Claude Code's shape, from (highest first): Claude Code ma
 
 - `fallback` (fork-only, user settings only): `allow` (default) or `ask` for actions no rule covers (`Bash` that is not
   read-only, `Edit`, `WebFetch`, `WebSearch`, MCP calls).
-- `claudeCodeSettings` (fork-only, user settings only): also read Claude Code's files. Off by default: their rules would
-  start refusing or asking in sessions that never did (and print mode refuses every ask).
+- `claudeCodeSettings` (fork-only, user settings only, here or at the top level): also read Claude Code's files. Off by
+  default: their rules would start refusing or asking in sessions that never did (and print mode refuses every ask).
+  The opt-in and the files' locations are pa-core's shared reader (`pa_core::settings::claude_code`), so the hooks
+  and the other Claude Code keys (status line, output style, model, env, ...) follow the same switch. With it on, a
+  project `.claude/settings*.json` file's `allow`, `defaultMode` and `additionalDirectories` are part of the
+  workspace trust hash.
 - **Trust:** a project-scoped file in an untrusted workspace contributes its `deny` and `ask` rules only; `allow`,
   `defaultMode` and `additionalDirectories` wait for trust. No project file may default to `bypassPermissions`.
 - Managed `allowManagedPermissionRulesOnly: true` keeps only the managed rules.

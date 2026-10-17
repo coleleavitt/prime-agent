@@ -162,7 +162,10 @@ Settings key `hooks`, Claude Code's shape:
     `idle_prompt` (no idle timer), and Claude Code's `prompt`/`agent` hooks and events without a counterpart
     (`PermissionRequest`, `StopFailure`, ...: reported as unsupported and skipped).
 - **Scope:** user `~/.prime/agent/settings.json`, and project `.prime/agent/settings.json` only in a trusted
-  workspace (`hooks` is a gated settings key). Project hooks run after user hooks.
+  workspace (`hooks` is a gated settings key). Project hooks run after user hooks. With `"claudeCodeSettings": true`
+  in the user settings, Claude Code's `~/.claude/settings.json`, a trusted project's `.claude/settings.json` and
+  `.claude/settings.local.json`, and the managed settings follow, each command labelled with its source.
+  `disableAllHooks` and the managed `allowManagedHooksOnly` work as in Claude Code.
 
 ## WebAssembly plugins (`pa-plugins`)
 
