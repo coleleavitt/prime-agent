@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
+use pa_types::platform::same_directory;
 
 use crate::session_archive::restore_session;
 use crate::session_store::{SessionInfo, list_sessions};
@@ -38,7 +39,8 @@ pub(crate) fn resolve_saved_session(
     cwd: &str,
 ) -> Result<Option<SessionInfo>> {
     let all = list_sessions(sessions_dir);
-    let local = catalog_session_match(all.iter().filter(|info| info.cwd == cwd), selector)?;
+    let here = |info: &&SessionInfo| same_directory(Path::new(&info.cwd), Path::new(cwd));
+    let local = catalog_session_match(all.iter().filter(here), selector)?;
     if let Some(info) = local {
         return Ok(Some(info.clone()));
     }
@@ -46,8 +48,7 @@ pub(crate) fn resolve_saved_session(
         return Ok(Some(info.clone()));
     }
     let archived = list_sessions(archive_dir);
-    let archived_local =
-        catalog_session_match(archived.iter().filter(|info| info.cwd == cwd), selector)?;
+    let archived_local = catalog_session_match(archived.iter().filter(here), selector)?;
     let matched = match archived_local {
         Some(info) => Some(info),
         None => catalog_session_match(archived.iter(), selector)?,

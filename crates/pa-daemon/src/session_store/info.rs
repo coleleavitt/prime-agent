@@ -31,6 +31,9 @@ pub struct SessionInfo {
     /// The last persisted `thinking_level_change` level; agents-view summaries
     /// surface it for sessions without a live worker.
     pub thinking_level: Option<String>,
+    /// The git branch the session last worked on: the newest `git_state` entry's, else the
+    /// header's.
+    pub git_branch: Option<String>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,
@@ -224,6 +227,8 @@ pub(super) struct SessionScanAccumulator {
     state: Option<String>,
     model: Option<(String, String)>,
     thinking_level: Option<String>,
+    #[serde(default)]
+    git_branch: Option<String>,
     pub(super) message_count: usize,
     pub(super) first_message: String,
     pub(super) all_messages_text: String,
@@ -277,6 +282,7 @@ impl SessionScanState {
                 state: self.acc.state.clone(),
                 model: self.acc.model.clone(),
                 thinking_level: self.acc.thinking_level.clone(),
+                git_branch: self.acc.git_branch.clone(),
                 message_count: self.acc.message_count,
                 first_message: self.acc.first_message.clone(),
                 all_messages_text: self.acc.all_messages_text.clone(),
@@ -404,6 +410,9 @@ pub(super) struct SessionInfoEntry<'a> {
     pub(super) thinking_level: Option<&'a serde_json::value::RawValue>,
     #[serde(default, borrow)]
     pub(super) message: Option<SessionInfoMessage<'a>>,
+    /// `git_state`: the repository context (its `branch`).
+    #[serde(default, borrow)]
+    pub(super) git: Option<&'a serde_json::value::RawValue>,
     /// `child_usage_attributed`: the parent entry the aggregate folds into.
     #[serde(borrow, default)]
     pub(super) target_id: Option<Cow<'a, str>>,
@@ -592,6 +601,7 @@ impl SessionScanState {
             state: acc.state.clone(),
             model: acc.model.clone(),
             thinking_level: acc.thinking_level.clone(),
+            git_branch: acc.git_branch.clone(),
             parent_session_path: header.parent_session.clone(),
             rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
             created: header.timestamp.clone(),
@@ -648,7 +658,27 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
     match entry.type_.as_ref() {
         "session" => {
             let parsed: SessionHeader = serde_json::from_str(trimmed).ok()?;
+            if let Some(branch) = parsed
+                .git
+                .as_ref()
+                .and_then(|git| git.branch.as_deref())
+                .filter(|branch| !branch.is_empty())
+            {
+                acc.git_branch = Some(branch.to_string());
+            }
             acc.header = Some(parsed);
+        }
+        "git_state" => {
+            if let Some(branch) = entry
+                .git
+                .and_then(|raw| {
+                    serde_json::from_str::<pa_types::session::GitContext>(raw.get()).ok()
+                })
+                .and_then(|git| git.branch)
+                .filter(|branch| !branch.is_empty())
+            {
+                acc.git_branch = Some(branch);
+            }
         }
         "session_info" => {
             acc.name = raw_string(entry.name)

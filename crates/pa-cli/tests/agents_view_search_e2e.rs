@@ -10,10 +10,11 @@
     clippy::cast_precision_loss
 )]
 
-//! End-to-end verifier for the agents-view session search (Kevin's
-//! 2026-09-23 directive): queries match the session NAME, the durable
-//! session ID, and the CWD — never first messages, transcript text, or
-//! file paths — and hits render as one flat, relevance-ranked list.
+//! End-to-end verifier for the agents-view session search: queries match the
+//! session NAME, the durable session ID, and the CWD first (Kevin's 2026-09-23
+//! directive), then the git branch, the first message, and the transcript
+//! text below every identity hit (the fork's Claude Code resume parity);
+//! file paths never match, and hits render as one flat, relevance-ranked list.
 #![cfg(unix)]
 
 use std::fmt::Write as _;
@@ -178,7 +179,7 @@ fn dump_frames(label: &str, frames: &[String]) {
 }
 
 #[tokio::test]
-async fn search_matches_names_ids_and_cwd_never_transcripts() {
+async fn search_ranks_identity_hits_above_conversation_hits() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().join("agent");
     let session_dir = agent_dir.join("sessions");
@@ -279,31 +280,38 @@ async fn search_matches_names_ids_and_cwd_never_transcripts() {
     assert!(!outcome.frames.is_empty(), "frames were captured");
     dump_frames("lane", &outcome.frames);
 
-    // Name query: only the named hit renders — the sibling transcripts that mention "fast" stay
-    // hidden.
+    // Name query: the named hit ranks first; a sibling whose transcript mentions "fast" follows it
+    // (a conversation hit), and sessions without the word hide.
     let fast_frame = frame_of(&outcome.frames, " >  fast");
+    let named = fast_frame
+        .find("fast lane refactor")
+        .unwrap_or_else(|| panic!("the named hit renders:\n{fast_frame}"));
+    let conversation = fast_frame
+        .find("migration runner")
+        .unwrap_or_else(|| panic!("the transcript hit renders:\n{fast_frame}"));
     assert!(
-        fast_frame.contains("fast lane refactor"),
-        "the named hit renders:\n{fast_frame}"
+        named < conversation,
+        "the name hit ranks above the transcript hit:\n{fast_frame}"
     );
-    for absent in [
-        "gateway worker",
-        "migration runner",
-        "alpha probe",
-        "Inactive (",
-    ] {
+    for absent in ["gateway worker", "alpha probe", "Inactive ("] {
         assert!(
             !fast_frame.contains(absent),
             "{absent:?} hides under the query (flat ranked list):\n{fast_frame}"
         );
     }
 
-    // Transcript-only text never matches: content is not a picker filter.
+    // Transcript-only text finds the session that said it, and only that one.
     let backoff_frame = frame_of(&outcome.frames, " >  backoff");
     assert!(
-        backoff_frame.contains("No sessions match"),
-        "transcript-only queries match nothing:\n{backoff_frame}"
+        backoff_frame.contains("gateway worker"),
+        "a transcript-only query finds its session:\n{backoff_frame}"
     );
+    for absent in ["fast lane refactor", "migration runner", "alpha probe"] {
+        assert!(
+            !backoff_frame.contains(absent),
+            "{absent:?} hides under the transcript query:\n{backoff_frame}"
+        );
+    }
 
     // Fuzzy name fragment: the gateway session is the sole hit.
     let gtwy_frame = frame_of(&outcome.frames, " >  gtwy");

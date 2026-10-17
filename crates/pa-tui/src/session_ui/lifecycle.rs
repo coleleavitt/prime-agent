@@ -194,6 +194,7 @@ impl SessionUi {
             answered_questions: std::collections::HashSet::new(),
             session_file: None,
             pending_selection: None,
+            pending_selection_lookup: false,
             return_to_agents_view: !options.no_session,
             client_auth: options.client_auth.clone(),
             keybindings: options.keybindings.clone(),

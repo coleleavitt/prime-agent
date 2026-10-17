@@ -5,9 +5,9 @@
 //! session); `session-search-index.ndjson` carries the transcript corpus
 //! (`{file, size, mtimeMs, searchText}`).
 //!
-//! This crate adds two keys the TS reader ignores: `foldVersion` on every
-//! line (the native fold's version the row was derived under) and
-//! `info.thinkingLevel` (a field the TS row does not have). A line without
+//! This crate adds keys the TS reader ignores: `foldVersion` on every
+//! line (the native fold's version the row was derived under), and
+//! `info.thinkingLevel` and `info.gitBranch` (fields the TS row does not have). A line without
 //! `foldVersion` was written by the TS product, whose fold differs from the
 //! native one (its `created` is re-serialized, its usage rules predate the
 //! native ones), so it is never served: the file is folded once and its line
@@ -113,6 +113,8 @@ struct InfoOut<'a> {
     modified: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking_level: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git_branch: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -137,6 +139,8 @@ struct InfoIn {
     modified: String,
     #[serde(default)]
     thinking_level: Option<String>,
+    #[serde(default)]
+    git_branch: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -246,6 +250,7 @@ fn info_out(row: &CatalogSessionRow) -> InfoOut<'_> {
         created: &row.created,
         modified: &row.modified,
         thinking_level: row.thinking_level.as_deref(),
+        git_branch: row.git_branch.as_deref(),
     }
 }
 
@@ -264,6 +269,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         created,
         modified,
         thinking_level,
+        git_branch,
     } = info;
     CatalogSessionRow {
         id,
@@ -272,6 +278,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         state: state.map(|state| state.status),
         model: model.map(|model| (model.provider, model.model_id)),
         thinking_level,
+        git_branch,
         parent_session_path,
         rlm_depth,
         created,
@@ -356,6 +363,7 @@ mod tests {
             name: Some("alpha".to_string()),
             state: Some("active".to_string()),
             model: Some(("anthropic".to_string(), "claude-opus-4-5".to_string())),
+            git_branch: None,
             thinking_level: Some("high".to_string()),
             parent_session_path: None,
             rlm_depth: 0,

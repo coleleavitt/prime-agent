@@ -37,21 +37,59 @@ impl AgentsViewMode {
             Some((roster, saved)) => (roster, saved),
             None => (&self.roster, &self.saved),
         };
-        match self.saved_scope {
-            SavedScope::AllProjects => reconcile_unified_sessions(roster, saved),
+        let in_scope = |row: &&Value| match self.saved_scope {
+            SavedScope::AllProjects => true,
             SavedScope::CurrentProject => {
-                let here: Vec<Value> = saved
-                    .iter()
-                    .filter(|row| {
-                        row.get("cwd")
-                            .and_then(Value::as_str)
-                            .is_some_and(|cwd| std::path::Path::new(cwd) == self.options.cwd)
-                    })
-                    .cloned()
-                    .collect();
-                reconcile_unified_sessions(roster, &here)
+                row.get("cwd").and_then(Value::as_str).is_some_and(|cwd| {
+                    pa_types::platform::same_directory(std::path::Path::new(cwd), &self.options.cwd)
+                })
             }
+        };
+        let on_branch = |row: &&Value| match self.branch_filter() {
+            None => true,
+            Some(head) => {
+                row.get("gitBranch").and_then(Value::as_str) == head.branch.as_deref()
+                    && row
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .is_some_and(|cwd| std::path::Path::new(cwd).starts_with(&head.root))
+            }
+        };
+        if self.saved_scope == SavedScope::AllProjects && self.branch_filter().is_none() {
+            return reconcile_unified_sessions(roster, saved);
         }
+        let kept: Vec<Value> = saved
+            .iter()
+            .filter(in_scope)
+            .filter(on_branch)
+            .cloned()
+            .collect();
+        reconcile_unified_sessions(roster, &kept)
+    }
+
+    /// The active branch filter's repository and branch (`None` when the filter is off or the
+    /// launch directory has no branch to filter by).
+    pub(super) fn branch_filter(&self) -> Option<&super::git_head::GitHead> {
+        self.git_head
+            .as_ref()
+            .filter(|head| self.branch_only && head.branch.is_some())
+    }
+
+    /// `app.agents.branchFilter`: flip the saved catalog between every branch and this
+    /// repository's current branch.
+    pub(super) fn toggle_branch_filter(&mut self) {
+        let Some(branch) = self.git_head.as_ref().and_then(|head| head.branch.clone()) else {
+            self.set_status("Not on a git branch: there is no branch to filter by");
+            return;
+        };
+        self.branch_only = !self.branch_only;
+        if self.branch_only {
+            self.set_status(&format!("Saved sessions: branch {branch} only"));
+        } else {
+            self.set_status("Saved sessions: every branch");
+        }
+        self.actions.push("branch_filter_toggled");
+        self.rebuild_rows();
     }
 
     /// Rebuild rows from the current roster, catalog, and query. A scoped run lists the scope
@@ -318,7 +356,8 @@ impl AgentsViewMode {
         if self.saved_stream.is_empty() {
             return false;
         }
-        for row in std::mem::take(&mut self.saved_stream) {
+        for mut row in std::mem::take(&mut self.saved_stream) {
+            crate::agents_view_state::prepare_saved_search_text(&mut row);
             let path = row.get("path").and_then(Value::as_str);
             let durable_id = row.get("id").and_then(Value::as_str);
             let existing = self.saved.iter().position(|saved| {
@@ -395,6 +434,10 @@ impl AgentsViewMode {
                     .and_then(Value::as_str)
                     .is_none_or(|path| !self.deleted_saved_paths.contains(path))
             })
+            .map(|mut saved| {
+                crate::agents_view_state::prepare_saved_search_text(&mut saved);
+                saved
+            })
             .collect();
         self.saved_fetch_failed = false;
         // The flow's next view run reuses the settled catalog without a fetch.
@@ -442,6 +485,10 @@ impl AgentsViewMode {
         self.notice = None;
         // Any other key clears the exit hint and the stop-or-delete confirm.
         self.exit_armed = false;
+        // The open preview owns every key but the exit key.
+        if self.handle_preview_key(key) {
+            return;
+        }
         let was_delete_armed = self.pending_delete.take();
         let has_query = !self.query.is_empty();
         // The armed composer owns every key before the app-level handlers; the draft
@@ -480,6 +527,18 @@ impl AgentsViewMode {
             && self.keybindings.matches(key, "tui.select.cancel")
             && self.dismiss_incident_notice()
         {
+            return;
+        }
+        // `app.agents.preview` (default ctrl+v): the selected session's conversation in place of
+        // the list (Claude Code's resume-picker preview).
+        if self.keybindings.matches(key, "app.agents.preview") {
+            self.open_preview();
+            return;
+        }
+        // `app.agents.branchFilter` (default ctrl+b): the saved sessions of this repository's
+        // current branch only (Claude Code's resume-picker branch filter).
+        if self.keybindings.matches(key, "app.agents.branchFilter") {
+            self.toggle_branch_filter();
             return;
         }
         // `app.agents.toggleScope` (default ctrl+f, empty editor only): flip the saved catalog

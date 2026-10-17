@@ -115,7 +115,13 @@ impl AgentsViewMode {
         let notice_height = notice_panel.as_ref().map_or(0, Vec::len);
         let list_rows = height.saturating_sub(lines.len() + 1 + notice_height);
         let list_frame_row = lines.len();
-        lines.extend(self.render_list(width, list_rows, list_frame_row));
+        if self.preview.is_some() {
+            // The preview stands in for the list: no row is under the mouse.
+            self.click_rows.clear();
+            lines.extend(self.render_preview(width, list_rows));
+        } else {
+            lines.extend(self.render_list(width, list_rows, list_frame_row));
+        }
         if let Some(panel) = notice_panel {
             lines.extend(panel);
         }
@@ -552,7 +558,7 @@ impl AgentsViewMode {
                 let zone = layout.name_width
                     + 2
                     + layout.model_width
-                    + [layout.host_width, layout.cwd_width]
+                    + [layout.host_width, layout.cwd_width, layout.branch_width]
                         .into_iter()
                         .filter(|width| *width > 0)
                         .map(|width| width + 2)
@@ -703,6 +709,17 @@ impl AgentsViewMode {
                 ratatui::style::Style::default(),
             ));
         }
+        if layout.branch_width > 0 {
+            let branch = layout
+                .branch_cells
+                .get(&row.identity)
+                .map_or("", String::as_str);
+            line.push(theme.fg(ThemeColor::Muted, cell(branch, layout.branch_width)));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
         let details = layout
             .details
             .get(&row.identity)
@@ -802,6 +819,24 @@ impl AgentsViewMode {
         // The notice fallback (the degenerate pane's refusal line) stays Error.
         if let Some(status) = status_override {
             return vec![theme.fg(ThemeColor::Error, truncate_text(status, width))];
+        }
+        // The preview's hints: open, scroll, and the way back.
+        if self.preview.is_some() {
+            let mut hints = vec![format!(
+                "{} resume",
+                self.keybindings.key_text("tui.select.confirm")
+            )];
+            let pair = |a: &str, b: &str| match (first(a), first(b)) {
+                (Some(a), Some(b)) => Some(format!("{a}/{b}")),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
+            };
+            if let Some(keys) = pair("tui.select.up", "tui.select.down") {
+                hints.push(format!("{keys} scroll"));
+            }
+            hints.push("any other key back".to_string());
+            let hint = hints.join("   ");
+            return truncate_line(&vec![theme.fg(ThemeColor::Muted, hint)], width);
         }
         // The reply composer's hints: the confirm key's word by the target's CURRENT
         // state (steer while it streams, send live, resume & send saved), the queue
@@ -927,6 +962,27 @@ impl AgentsViewMode {
         if self.query.is_empty() {
             if let Some(toggle) = first("app.agents.toggleScope") {
                 segments.push(format!("{toggle} saved:{}", self.saved_scope.hint_word()));
+            }
+        }
+        // The branch filter's slot names the branch it narrows to; the preview's slot shows
+        // while a session row is selected.
+        if let Some(branch) = self
+            .git_head
+            .as_ref()
+            .and_then(|head| head.branch.as_deref())
+        {
+            if let Some(toggle) = first("app.agents.branchFilter") {
+                let word = if self.branch_only { branch } else { "all" };
+                segments.push(format!("{toggle} branch:{word}"));
+            }
+        }
+        if self
+            .rows
+            .get(self.selected)
+            .is_some_and(|row| matches!(row.kind, RowKind::Agent | RowKind::Subagent))
+        {
+            if let Some(preview) = first("app.agents.preview") {
+                segments.push(format!("{preview} preview"));
             }
         }
         let hints = segments.join("   ");

@@ -1218,8 +1218,39 @@ fn select_headless_session(options: &RunOptions) -> Result<HeadlessSession, Stri
         return Ok(HeadlessSession::Fork(source));
     }
     if let Some(selector) = &options.session.resume {
-        let resolved = resolve_session_path(selector, cwd, &session_dir)
-            .map_err(|error| render_selector_error(&error))?;
+        let resolved = match resolve_session_path(selector, cwd, &session_dir) {
+            Ok(resolved) => resolved,
+            // An id miss tries the saved sessions' titles (the interactive resolve's order).
+            Err(error @ SessionSelectorError::NotFound { .. }) => {
+                let sessions = pa_daemon::session_store::list_sessions(&session_dir);
+                match crate::resume_selector::sessions_titled(&sessions, selector, cwd).as_slice() {
+                    [] => return Err(render_selector_error(&error)),
+                    [only]
+                        if pa_types::platform::same_directory(
+                            std::path::Path::new(&only.cwd),
+                            cwd,
+                        ) =>
+                    {
+                        ResolvedSession::Local(only.path.clone())
+                    }
+                    [only] => ResolvedSession::Global {
+                        path: only.path.clone(),
+                        cwd: std::path::PathBuf::from(&only.cwd),
+                    },
+                    several => {
+                        return Err(format!(
+                            "Ambiguous session title \"{selector}\": matches {}",
+                            several
+                                .iter()
+                                .map(|info| info.id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                }
+            }
+            Err(error) => return Err(render_selector_error(&error)),
+        };
         return match resolved {
             ResolvedSession::Path(path) | ResolvedSession::Local(path) => {
                 Ok(HeadlessSession::Open(

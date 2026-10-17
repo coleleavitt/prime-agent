@@ -166,18 +166,10 @@ impl SessionUi {
                     self.open_agents_view = true;
                     self.exit_requested = true;
                 } else {
-                    match self.resolve_resume_selector(&resolved.args) {
-                        Some(selection) => {
-                            self.pending_selection = Some(selection);
-                            self.exit_requested = true;
-                        }
-                        None => {
-                            self.note(
-                                &format!("could not resolve session \"{}\"", resolved.args),
-                                view,
-                            );
-                        }
-                    }
+                    let (selection, lookup) = self.resolve_resume_selector(&resolved.args);
+                    self.pending_selection = Some(selection);
+                    self.pending_selection_lookup = lookup;
+                    self.exit_requested = true;
                 }
             }
             // `/model` opens the model picker (menu-only: the TS inline-arg form is deliberately

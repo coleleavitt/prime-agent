@@ -3,7 +3,7 @@
 //! `HOME` when set, then on Windows `USERPROFILE`, else `HOMEDRIVE` + `HOMEPATH`. Where
 //! `os.homedir()` throws, this port returns `None` and each caller owns its fallback.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The user's home directory, Node `os.homedir()` semantics: `HOME` first (always wins, matching
 /// the
@@ -90,6 +90,22 @@ fn expand_tilde(path: &str) -> PathBuf {
         return home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
     PathBuf::from(path)
+}
+
+/// Whether two directory paths name the same directory: equal once made absolute (so a trailing
+/// separator or a `.` component never splits them), else equal after resolving symlinks (a
+/// session recorded under a symlinked path and one under its target). A path that does not exist
+/// compares lexically only.
+#[must_use]
+pub fn same_directory(left: &Path, right: &Path) -> bool {
+    let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    if absolute(left) == absolute(right) {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +296,28 @@ mod tests {
                 assert_eq!(home_dir(), None);
             },
         );
+    }
+
+    #[test]
+    fn same_directory_ignores_trailing_separators_and_follows_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        assert!(same_directory(&real, &real.join(".")));
+        assert!(same_directory(
+            &real,
+            Path::new(&format!("{}/", real.display()))
+        ));
+        assert!(!same_directory(&real, dir.path()));
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(same_directory(&real, &link));
+        }
+        assert!(!same_directory(
+            Path::new("/no/such/dir/a"),
+            Path::new("/no/such/dir/b")
+        ));
     }
 }

@@ -15,36 +15,35 @@ fn session_flags_map_to_selections() {
     let session_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&session_dir).expect("sessions dir");
     assert_eq!(
-        session_selection(&session, Some(session_dir.as_path())),
-        SessionSelection::New
+        session_selection(&session, Some(session_dir.as_path()), dir.path()),
+        ResumeLaunch::Open(SessionSelection::New)
     );
-    // `--continue` never maps to a resume: the candidate resolves through the
-    // agents view or falls through to a fresh session.
+    // `--continue` never maps to a resume: it resolves through the agents view.
     session.continue_recent = true;
     assert_eq!(
-        session_selection(&session, Some(session_dir.as_path())),
-        SessionSelection::New
+        session_selection(&session, Some(session_dir.as_path()), dir.path()),
+        ResumeLaunch::Open(SessionSelection::New)
     );
     session.continue_recent = false;
     session.resume = Some("a1b2c3".to_string());
     assert_eq!(
-        session_selection(&session, Some(session_dir.as_path())),
-        SessionSelection::Attach("a1b2c3".to_string())
+        session_selection(&session, Some(session_dir.as_path()), dir.path()),
+        ResumeLaunch::Open(SessionSelection::Attach("a1b2c3".to_string()))
     );
     let saved = session_dir.join("deadbeefcafe.jsonl");
     std::fs::write(&saved, "{}\n").expect("write file");
     session.resume = Some("deadbeefcafe".to_string());
     assert_eq!(
-        session_selection(&session, Some(session_dir.as_path())),
-        SessionSelection::Resume(saved)
+        session_selection(&session, Some(session_dir.as_path()), dir.path()),
+        ResumeLaunch::Open(SessionSelection::Resume(saved))
     );
 
     let file = dir.path().join("saved.jsonl");
     std::fs::write(&file, "{}\n").expect("write file");
     session.resume = Some(file.to_string_lossy().to_string());
     assert_eq!(
-        session_selection(&session, Some(session_dir.as_path())),
-        SessionSelection::Resume(file)
+        session_selection(&session, Some(session_dir.as_path()), dir.path()),
+        ResumeLaunch::Open(SessionSelection::Resume(file))
     );
 }
 
@@ -122,7 +121,8 @@ fn continue_recent_targets_the_newest_saved_session_for_the_cwd() {
     options.session.session_dir = Some(session_dir);
     let view = continue_recent_view(&options, false).expect("candidate resolves");
     assert_eq!(
-        view.session_id, "newest00000000000000000000000001",
+        view.session_id.as_deref(),
+        Some("newest00000000000000000000000001"),
         "the newest saved session for the cwd is the preselected row"
     );
     assert!(
@@ -137,7 +137,7 @@ fn continue_recent_targets_the_newest_saved_session_for_the_cwd() {
 }
 
 #[test]
-fn continue_recent_without_a_candidate_opens_a_fresh_session() {
+fn continue_recent_without_a_candidate_says_so_in_the_view() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
@@ -152,9 +152,17 @@ fn continue_recent_without_a_candidate_opens_a_fresh_session() {
     let mut options = run_options_for_continue(dir.path());
     options.session.continue_recent = true;
     options.session.session_dir = Some(session_dir);
-    assert!(
-        continue_recent_view(&options, false).is_none(),
-        "no candidate: the launch opens a fresh session, not the view"
+    let view = continue_recent_view(&options, false).expect("the view opens");
+    assert_eq!(
+        view.session_id, None,
+        "no candidate: nothing is preselected"
+    );
+    assert_eq!(
+        view.notice,
+        format!(
+            "No conversation found to continue in {} — pick a session, or Ctrl+N starts a new one.",
+            dir.path().display()
+        )
     );
 }
 
@@ -499,7 +507,7 @@ fn build_tui_options_reads_code_block_indent_settings() {
         r#"{ "markdown": { "codeBlockIndent": "    " } }"#,
     )
     .expect("settings.json");
-    let (options, _) = build_tui_options(
+    let (options, _, _) = build_tui_options(
         &run_options(dir.path()),
         dir.path().join("d.sock"),
         std::sync::Arc::default(),
@@ -509,7 +517,7 @@ fn build_tui_options_reads_code_block_indent_settings() {
 
     let bare = tempfile::TempDir::new().expect("temp dir");
     std::fs::create_dir_all(bare.path().join("agent")).expect("agent dir");
-    let (options, _) = build_tui_options(
+    let (options, _, _) = build_tui_options(
         &run_options(bare.path()),
         bare.path().join("d.sock"),
         std::sync::Arc::default(),
@@ -818,7 +826,7 @@ fn build_tui_options_opens_a_fork_as_the_startup_session() {
     options.config.agent_dir = dir.path().join("agent");
     options.session.fork = Some(id);
     options.session.session_dir = Some(session_dir.clone());
-    let (tui, _) = build_tui_options(
+    let (tui, _, _) = build_tui_options(
         &options,
         dir.path().join("d.sock"),
         std::sync::Arc::default(),
@@ -1084,7 +1092,7 @@ fn interactive_resume_restores_saved_cwd_and_project_settings_unless_overridden(
     for explicit in [true, false] {
         options.session.resume = Some(saved.to_string_lossy().into_owned());
         options.session.cwd_from_flag = explicit;
-        let (tui, _) = build_tui_options(
+        let (tui, _, _) = build_tui_options(
             &options,
             dir.path().join("d.sock"),
             std::sync::Arc::default(),

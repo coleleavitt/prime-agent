@@ -14,7 +14,9 @@ use crate::daemon_session_list::{format_session_age, format_session_display_id, 
 fn sessions_here(session_dir: &Path, cwd: &Path) -> Vec<SessionInfo> {
     list_sessions(session_dir)
         .into_iter()
-        .filter(|info| info.rlm_depth == 0 && Path::new(&info.cwd) == cwd)
+        .filter(|info| {
+            info.rlm_depth == 0 && pa_types::platform::same_directory(Path::new(&info.cwd), cwd)
+        })
         .collect()
 }
 

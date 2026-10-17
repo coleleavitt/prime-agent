@@ -76,6 +76,8 @@ pub struct CatalogSessionRow {
     /// `(provider, model id)`.
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
+    /// The git branch the session last worked on.
+    pub git_branch: Option<String>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,

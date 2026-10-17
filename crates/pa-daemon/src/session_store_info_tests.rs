@@ -10,6 +10,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut state = None;
     let mut model = None;
     let mut thinking_level = None;
+    let mut git_branch: Option<String> = None;
     let mut message_count = 0usize;
     let mut first_message = String::new();
     let mut all_messages_text = String::new();
@@ -26,7 +27,21 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         match entry.type_.as_str() {
             "session" => {
                 let parsed: SessionHeader = serde_json::from_str(trimmed).ok()?;
+                if let Some(branch) = parsed.git.as_ref().and_then(|git| git.branch.clone()) {
+                    git_branch = Some(branch).filter(|branch| !branch.is_empty());
+                }
                 header = Some(parsed);
+            }
+            "git_state" => {
+                if let Some(branch) = entry
+                    .fields
+                    .get("git")
+                    .and_then(|git| git.get("branch"))
+                    .and_then(Value::as_str)
+                    .filter(|branch| !branch.is_empty())
+                {
+                    git_branch = Some(branch.to_string());
+                }
             }
             "session_info" => {
                 name = entry
@@ -165,6 +180,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         state,
         model,
         thinking_level,
+        git_branch,
         parent_session_path: header.parent_session,
         rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
         created: header.timestamp,
@@ -401,6 +417,38 @@ fn a_same_size_rewrite_rescans_from_the_top() {
         "a same-size rewrite must rescan"
     );
     assert_fold_matches(&path);
+}
+
+#[test]
+fn the_branch_is_the_newest_git_state_else_the_header() {
+    let dir = test_dir();
+    let path = dir.join("branch.jsonl");
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"b","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test","git":{"commit":"c0","branch":"main"}}),
+            json!({"type":"message","id":"m1","timestamp":"2026-09-23T00:00:00.000Z","message":{"role":"user","content":"hi","timestamp":1}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(
+        read_session_info(&path).unwrap().git_branch.as_deref(),
+        Some("main")
+    );
+    // A later checkout appends a `git_state` (the resume continues the fold from its cursor).
+    append_rows(
+        &path,
+        &[
+            json!({"type":"git_state","id":"g1","parentId":"m1","timestamp":"2026-09-23T00:01:00.000Z","git":{"commit":"c1","branch":"feature/x"}}),
+            json!({"type":"git_state","id":"g2","parentId":"g1","timestamp":"2026-09-23T00:02:00.000Z","git":{"commit":"c2"}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(
+        read_session_info(&path).unwrap().git_branch.as_deref(),
+        Some("feature/x"),
+        "a detached-head state (no branch) keeps the last named branch"
+    );
 }
 
 #[test]

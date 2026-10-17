@@ -17,7 +17,7 @@ pub(crate) mod windows_pipe;
 #[cfg(windows)]
 mod windows_security;
 
-pub use dirs::{agent_dir, home_dir};
+pub use dirs::{agent_dir, home_dir, same_directory};
 pub use identity::socket_identity;
 pub use process::{
     ignore_sigint_for_suspend,

@@ -437,6 +437,17 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
         def!(&["ctrl+f"], "Filter saved sessions to the current project"),
     ),
     (
+        "app.agents.branchFilter",
+        def!(
+            &["ctrl+b"],
+            "Filter saved sessions to the current git branch"
+        ),
+    ),
+    (
+        "app.agents.preview",
+        def!(&["ctrl+v"], "Preview the selected session's conversation"),
+    ),
+    (
         "app.tree.foldOrUp",
         def!(&["ctrl+left", "alt+left"], "Fold tree branch or move up"),
     ),

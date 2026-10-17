@@ -102,13 +102,8 @@ pub fn looks_like_session_path(selector: &str) -> bool {
             .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("jsonl"))
 }
 
-/// An absolute path without symlink resolution.
-fn normalize_cwd(cwd: &Path) -> PathBuf {
-    std::path::absolute(cwd).unwrap_or_else(|_| cwd.to_path_buf())
-}
-
 fn header_matches_cwd(header: &SessionHeaderInfo, cwd: &Path) -> bool {
-    !header.cwd.is_empty() && normalize_cwd(Path::new(&header.cwd)) == normalize_cwd(cwd)
+    !header.cwd.is_empty() && pa_types::platform::same_directory(Path::new(&header.cwd), cwd)
 }
 
 /// Scan a session directory for valid session headers (invalid files skip).

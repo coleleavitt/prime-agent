@@ -236,7 +236,7 @@ impl Supervisor {
             let mut file_total = 0usize;
             let infos = crate::session_scan::list_sessions_with(&dir, |index, total, info| {
                 file_total = total;
-                if scope_current && info.cwd != scan_cwd {
+                if scope_current && !same_cwd(&info.cwd, &scan_cwd) {
                     // The row is out of scope, but the scan itself goes on.
                     return true;
                 }
@@ -298,7 +298,7 @@ impl Supervisor {
         // The current-cwd scope keeps only the session's own rows in the terminal
         // array: the response is the authoritative catalog.
         if scope_current {
-            infos.retain(|info| info.cwd == cwd);
+            infos.retain(|info| same_cwd(&info.cwd, &cwd));
         }
         // The saved catalog scan never visits session-artifacts, where RLM children
         // persist: merge the passive ledger walk so a passivated descendant stays
@@ -344,7 +344,7 @@ impl Supervisor {
         let mut merged: Vec<_> = passive
             .iter()
             .map(crate::rlm_roster::passive_child_info)
-            .filter(|info| !scope_current || info.cwd == cwd)
+            .filter(|info| !scope_current || same_cwd(&info.cwd, &cwd))
             .collect();
         for info in &merged {
             let row = saved_session_row(info);
@@ -460,7 +460,7 @@ impl Supervisor {
             let scan = tokio::task::spawn_blocking(move || -> Result<Vec<Value>> {
                 let mut infos = list_sessions(&dir);
                 if let Some(cwd) = &cwd {
-                    infos.retain(|info| info.cwd == *cwd);
+                    infos.retain(|info| same_cwd(&info.cwd, cwd));
                 }
                 let mut resident_by_file: Vec<ResidentRoot> = Vec::new();
                 for ((session_file, active_session_id), summary) in
@@ -849,6 +849,9 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
     if let Some(parent) = &info.parent_session_path {
         object.insert("parentSessionPath".to_string(), json!(parent));
     }
+    if let Some(branch) = &info.git_branch {
+        object.insert("gitBranch".to_string(), json!(branch));
+    }
     if let Some((provider, model_id)) = &info.model {
         object.insert(
             "model".to_string(),
@@ -873,6 +876,12 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
         object.insert("thinkingLevel".to_string(), json!(level));
     }
     row
+}
+
+/// Whether a saved row's cwd is the requested project directory (a trailing separator or a
+/// symlinked path never splits one project's sessions).
+fn same_cwd(row_cwd: &str, cwd: &str) -> bool {
+    pa_types::platform::same_directory(std::path::Path::new(row_cwd), std::path::Path::new(cwd))
 }
 
 #[cfg(test)]

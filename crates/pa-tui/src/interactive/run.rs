@@ -659,8 +659,9 @@ async fn run_interactive_surface(
                     return Ok(InteractiveOutcome {
                         return_to_agents_view: true,
                         agents_view_notice: Some(format!(
-                            "Session {selector} is no longer running — pick a session to continue."
+                            "No running or saved session matches \"{selector}\" — pick a session to continue."
                         )),
+                        agents_view_query: Some(selector.clone()),
                         frames,
                         ..Default::default()
                     });
@@ -807,9 +808,11 @@ async fn run_interactive_surface(
                 agents_view_scope: None,
                 return_to_agents_view: false,
                 selection_request: None,
+                selection_needs_lookup: false,
                 copies: Vec::new(),
                 opened_urls: Vec::new(),
                 agents_view_notice: None,
+                agents_view_query: None,
                 handoff_seeds: 0,
                 transcript_entry_work: view.entry_work.get(),
             });
@@ -2278,6 +2281,7 @@ async fn run_interactive_surface(
         return_to_agents_view: preserve_alt_screen,
         agents_view_scope: session.scoped_agents_view.take(),
         selection_request: session.pending_selection,
+        selection_needs_lookup: session.pending_selection_lookup,
         copies: std::mem::take(&mut session.copies),
         opened_urls: std::mem::take(&mut session.opened_urls),
         // The view's status line keeps the wait notice when the chat hands back.
@@ -2286,6 +2290,7 @@ async fn run_interactive_surface(
         } else {
             None
         },
+        agents_view_query: None,
         handoff_seeds: view.handoff_seeds,
         transcript_entry_work: view.entry_work.get(),
     };

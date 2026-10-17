@@ -59,7 +59,7 @@ TS writer, see `tests/fixtures/generate.ts`; this crate's output equals them byt
 - `session-search-index.ndjson`: `{"version":2}`, then `{"file","size","mtimeMs","searchText"}` per session.
 
 Additions the TS reader ignores: `foldVersion` at the end of every line (the native fold's version the row was derived
-under) and `info.thinkingLevel` (after `modified`). Whole numbers print as `JSON.stringify` prints them; numbers are
+under), and `info.thinkingLevel` and `info.gitBranch` (after `modified`). Whole numbers print as `JSON.stringify` prints them; numbers are
 parsed from their text exactly.
 
 ## Telemetry

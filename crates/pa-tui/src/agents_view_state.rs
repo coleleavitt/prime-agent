@@ -150,15 +150,38 @@ const SESSION_NAME_COLUMN_MAX_CELLS: usize = 28;
 /// row spends on its icon and gap.
 const SESSION_TITLE_MAX_CELLS: usize = SESSION_NAME_COLUMN_MAX_CELLS - 2;
 
-/// The picker's name target: the SESSION column's own title, clipped at the column's own cap;
-/// the TS transcript corpus (`allMessagesText`) stays excluded.
+/// The picker's name target: the SESSION column's own title, clipped at the column's own cap.
 fn session_search_name(summary: &Value) -> String {
     truncate_text(&session_title(summary), SESSION_TITLE_MAX_CELLS)
 }
 
+/// The saved row's prepared transcript corpus: [`prepare_saved_search_text`] moves
+/// `allMessagesText` here, normalized once instead of per keystroke.
+const SAVED_SEARCH_TEXT_FIELD: &str = "searchText";
+
+/// The first message's search target cap: a pasted wall of text searches by its opening.
+const FIRST_MESSAGE_SEARCH_MAX_CHARS: usize = 4096;
+
+/// Prepare one saved catalog row for search on arrival: its transcript corpus
+/// (`allMessagesText`, up to 64 KiB) is normalized the way the search normalizes a needle
+/// (lowercase, whitespace runs collapsed) and kept as `searchText`; the raw corpus is dropped
+/// (nothing else reads it). Idempotent: a carried row keeps its prepared text.
+pub(crate) fn prepare_saved_search_text(row: &mut Value) {
+    let Some(object) = row.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::String(text)) = object.remove("allMessagesText") {
+        object.insert(
+            SAVED_SEARCH_TEXT_FIELD.to_string(),
+            Value::String(crate::agents_view_search::normalize_search_text(&text)),
+        );
+    }
+}
+
 /// The picker targets of one unified record: the SESSION column's own title as the name target,
-/// plus the durable session id and the cwd. Daemon data wins; a saved row fills the gaps.
-pub(crate) fn record_search_text(record: &UnifiedRecord) -> SessionSearchText {
+/// the durable session id, the cwd, the git branch, the first message, and the saved transcript
+/// corpus. Daemon data wins; a saved row fills the gaps.
+pub(crate) fn record_search_text(record: &UnifiedRecord) -> SessionSearchText<'_> {
     let summary = summary_for_record(record);
     let pick = |daemon: Option<&str>, saved: Option<&str>| {
         daemon
@@ -183,6 +206,18 @@ pub(crate) fn record_search_text(record: &UnifiedRecord) -> SessionSearchText {
                 .and_then(|daemon| get_str(daemon, "cwd")),
             record.saved.as_ref().and_then(|row| get_str(row, "cwd")),
         ),
+        branch: get_str(&summary, "gitBranch")
+            .unwrap_or_default()
+            .to_string(),
+        first_message: get_str(&summary, "firstMessage")
+            .filter(|text| *text != "(no messages)")
+            .map(|text| text.chars().take(FIRST_MESSAGE_SEARCH_MAX_CHARS).collect())
+            .unwrap_or_default(),
+        transcript: record
+            .saved
+            .as_ref()
+            .and_then(|row| get_str(row, SAVED_SEARCH_TEXT_FIELD))
+            .unwrap_or_default(),
         // A remote row is findable by its MagicDNS hostname and its
         // display model id (TS #2516's review fix: filtering by the
         // tailnet host must surface every remote agent on that machine).
@@ -342,6 +377,7 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
             // The saved catalog row carries the persisted thinking level: it fills the same gap
             // the model does, so a row that lost its level keeps rendering "model:level".
             enrich(&mut merged, "thinkingLevel", saved);
+            enrich(&mut merged, "gitBranch", saved);
         }
         merged
     } else {
@@ -375,12 +411,15 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
             "firstMessage": saved.get("firstMessage").cloned().unwrap_or(Value::Null),
             "model": json_model(saved.get("model").unwrap_or(&Value::Null)),
             "thinkingLevel": saved.get("thinkingLevel").cloned().unwrap_or(Value::Null),
+            "gitBranch": saved.get("gitBranch").cloned().unwrap_or(Value::Null),
         });
-        // A saved row without a persisted level stays key-absent, like the
+        // A saved row without a persisted level (or branch) stays key-absent, like the
         // daemon's saved-session summary rows.
-        if summary.get("thinkingLevel").is_none_or(Value::is_null) {
-            if let Some(object) = summary.as_object_mut() {
-                object.remove("thinkingLevel");
+        if let Some(object) = summary.as_object_mut() {
+            for key in ["thinkingLevel", "gitBranch"] {
+                if object.get(key).is_some_and(Value::is_null) {
+                    object.remove(key);
+                }
             }
         }
         summary
@@ -616,6 +655,10 @@ pub struct RowLayout {
     pub cwd_width: usize,
     /// Each row's Cwd cell, by row identity.
     pub cwd_cells: HashMap<String, String>,
+    /// The Branch column's width; `0` when no row has a branch or the pane is too narrow.
+    pub branch_width: usize,
+    /// Each row's Branch cell, by row identity.
+    pub branch_cells: HashMap<String, String>,
 }
 
 fn table_cell(value: &str, width: usize) -> String {
@@ -659,15 +702,20 @@ fn pad_start(value: &str, width: usize) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OptionalColumn {
     Tokens,
+    Branch,
     Context,
     Cwd,
 }
 
-const OPTIONAL_COLUMN_DROP_ORDER: [OptionalColumn; 3] = [
+const OPTIONAL_COLUMN_DROP_ORDER: [OptionalColumn; 4] = [
     OptionalColumn::Tokens,
+    OptionalColumn::Branch,
     OptionalColumn::Context,
     OptionalColumn::Cwd,
 ];
+
+/// The Branch cell's cap: a long branch name keeps its start.
+const BRANCH_MAX_CELLS: usize = 20;
 
 /// The Cwd cell's cap: the home-abbreviated path, middle-truncated.
 const CWD_MAX_CELLS: usize = 20;
@@ -675,6 +723,7 @@ const CWD_MAX_CELLS: usize = 20;
 /// One row's optional and detail cells.
 struct RowCells {
     cwd: String,
+    branch: String,
     input: String,
     output: String,
     context: String,
@@ -724,8 +773,16 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             } else {
                 String::new()
             };
+            let branch = row
+                .summary
+                .get("gitBranch")
+                .and_then(Value::as_str)
+                .filter(|_| session_row)
+                .map(|branch| truncate_with_ellipsis(branch, BRANCH_MAX_CELLS))
+                .unwrap_or_default();
             RowCells {
                 cwd,
+                branch,
                 input: crate::chrome::format_token_count(row.tokens.input),
                 output: crate::chrome::format_token_count(row.tokens.output),
                 context,
@@ -742,6 +799,13 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             .max(str_width(heading))
     };
     let cwd_width = column_width("Cwd", |cells| &cells.cwd);
+    // The Branch column renders only when some row has a branch (a table without git sessions
+    // keeps its layout).
+    let branch_width = if cells.iter().any(|cells| !cells.branch.is_empty()) {
+        column_width("Branch", |cells| &cells.branch)
+    } else {
+        0
+    };
     let input_width = column_width("Input", |cells| &cells.input);
     let output_width = column_width("Output", |cells| &cells.output);
     let context_width = column_width("Context", |cells| &cells.context);
@@ -776,6 +840,8 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             .iter()
             .map(|column| match column {
                 OptionalColumn::Tokens => input_width + 2 + output_width + 2,
+                OptionalColumn::Branch if branch_width > 0 => branch_width + 2,
+                OptionalColumn::Branch => 0,
                 OptionalColumn::Context => context_width + 2,
                 OptionalColumn::Cwd => cwd_width + 2,
             })
@@ -796,6 +862,11 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     let show_context = shown.contains(&OptionalColumn::Context);
     let cwd_width = if shown.contains(&OptionalColumn::Cwd) {
         cwd_width
+    } else {
+        0
+    };
+    let branch_width = if shown.contains(&OptionalColumn::Branch) {
+        branch_width
     } else {
         0
     };
@@ -822,6 +893,9 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     if cwd_width > 0 {
         headings.push(table_cell("Cwd", cwd_width));
     }
+    if branch_width > 0 {
+        headings.push(table_cell("Branch", branch_width));
+    }
     headings.push(detail_line("Input", "Output", "Context", "Cost", "Age"));
     let details = rows
         .iter()
@@ -839,11 +913,16 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             )
         })
         .collect();
-    let cwd_cells = rows
+    let (cwd_cells, branch_cells) = rows
         .iter()
         .zip(cells)
-        .map(|(row, cells)| (row.identity.clone(), cells.cwd))
-        .collect();
+        .map(|(row, cells)| {
+            (
+                (row.identity.clone(), cells.cwd),
+                (row.identity.clone(), cells.branch),
+            )
+        })
+        .unzip();
     RowLayout {
         legend: table_cell(&headings.join("  "), width),
         name_width,
@@ -852,7 +931,17 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         details,
         cwd_width,
         cwd_cells,
+        branch_width,
+        branch_cells,
     }
+}
+
+/// Clip to a display width, marking the cut with an ellipsis.
+fn truncate_with_ellipsis(value: &str, width: usize) -> String {
+    if str_width(value) <= width {
+        return value.to_string();
+    }
+    format!("{}\u{2026}", truncate_text(value, width.saturating_sub(1)))
 }
 
 #[cfg(test)]
@@ -1040,10 +1129,10 @@ mod tests {
     }
 
     #[test]
-    fn search_matches_the_restricted_corpus_case_insensitively() {
-        // The picker corpus is the session NAME, the durable ID, and the CWD; the TS corpus
-        // fields — first message, transcript text, file paths — never match.
-        let saved = vec![json!({
+    fn search_matches_identity_then_content_case_insensitively() {
+        // The identifying targets (NAME, ID, CWD, branch) match first; the first message and the
+        // prepared transcript corpus match too, below them. File paths never match.
+        let mut row = json!({
             "id": "sess-alpha",
             "path": "/x/alpha.jsonl",
             "name": "RoSTER worker",
@@ -1051,36 +1140,57 @@ mod tests {
             "allMessagesText": "the gateway probe returned 503 twice",
             "cwd": "/home/u/API-server",
             "parentSessionPath": "/x/parent.jsonl",
-        })];
+            "gitBranch": "fix/Probe-Timeouts",
+        });
+        prepare_saved_search_text(&mut row);
+        assert_eq!(
+            row.get("searchText").and_then(Value::as_str),
+            Some("the gateway probe returned 503 twice")
+        );
+        assert!(
+            row.get("allMessagesText").is_none(),
+            "the raw corpus is dropped"
+        );
+        let saved = vec![row];
         let records = reconcile_unified_sessions(&[], &saved);
         let targets = record_search_text(&records[0]);
-        for query in ["alpha", "roster", "ROSTER", "api-server", "sess-al"] {
+        for query in [
+            "alpha",
+            "roster",
+            "ROSTER",
+            "api-server",
+            "sess-al",
+            "probe-timeouts",
+            "deploy the gateway",
+            "GATEWAY PROBE",
+            "503",
+        ] {
             let parsed = parse_search_query(query);
             assert!(
                 score_search(&targets, &parsed).is_some(),
-                "query {query:?} should match the restricted corpus"
+                "query {query:?} should match"
             );
         }
         // Partial words need the fuzzy path on the name (ordered
         // subsequence).
         assert!(score_search(&targets, &parse_search_query("rtwr")).is_some());
-        // Content fields are gone from the picker: first messages, the capped transcript, and
-        // file paths never match.
         for query in [
-            "deploy the gateway",
-            "GATEWAY PROBE",
-            "gateway deploy finished",
             "alpha.jsonl",
             "parent.jsonl",
-            "503",
             "zebra",
+            "gateway deploy finished",
         ] {
             let parsed = parse_search_query(query);
             assert!(
                 score_search(&targets, &parsed).is_none(),
-                "query {query:?} must not match content or path fields"
+                "query {query:?} must not match"
             );
         }
+        // A name hit outranks a branch hit, which outranks a conversation hit.
+        let score = |query: &str| score_search(&targets, &parse_search_query(query)).unwrap();
+        assert!(score("roster") < score("timeouts"));
+        assert!(score("timeouts") < score("deploy"));
+        assert!(score("deploy") < score("twice"));
     }
 
     #[test]
@@ -1320,9 +1430,9 @@ mod tests {
     }
 
     #[test]
-    fn long_first_prompts_enter_only_the_visible_title_head() {
-        // Only the visible HEAD of the first prompt is searchable: text past the column's clip
-        // never matches (the TS corpus joined the whole prompt and transcript).
+    fn a_long_first_prompt_matches_past_the_title_clip_below_it() {
+        // The name target is the visible HEAD of the first prompt; the rest of the prompt still
+        // finds the session, at the first-message tier.
         let prompt = format!(
             "fix the agents view search{}",
             " and then also check the queue lane backoff ceiling because CI is red".repeat(3)
@@ -1342,15 +1452,12 @@ mod tests {
         let visible = truncate_text(&title, SESSION_TITLE_MAX_CELLS);
         let targets = record_search_text(&records[0]);
         assert_eq!(targets.name, visible);
-        assert!(
-            score_search(&targets, &parse_search_query("agents view search")).is_some(),
-            "the visible title head matches"
-        );
+        let head = score_search(&targets, &parse_search_query("agents view search"))
+            .expect("the visible title head matches");
         for query in ["backoff ceiling", "queue lane", "CI is red"] {
-            assert!(
-                score_search(&targets, &parse_search_query(query)).is_none(),
-                "{query:?} lives past the column clip and must not match"
-            );
+            let past = score_search(&targets, &parse_search_query(query))
+                .unwrap_or_else(|| panic!("{query:?} matches the first message"));
+            assert!(head < past, "{query:?} ranks below the title");
         }
     }
 
@@ -1410,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn a_named_sessions_first_message_stays_out_of_the_corpus() {
+    fn a_named_sessions_first_message_ranks_below_its_name() {
         let roster = vec![roster_entry(
             "named",
             "idle",
@@ -1425,15 +1532,12 @@ mod tests {
         let records = reconcile_unified_sessions(&roster, &[]);
         let targets = record_search_text(&records[0]);
         assert_eq!(targets.name, "gateway worker");
-        assert!(
-            score_search(&targets, &parse_search_query("gateway")).is_some(),
-            "the name still matches"
-        );
+        let name =
+            score_search(&targets, &parse_search_query("gateway")).expect("the name still matches");
         for query in ["deploy", "backoff", "flaky"] {
-            assert!(
-                score_search(&targets, &parse_search_query(query)).is_none(),
-                "{query:?} lives in the first prompt, not the displayed title"
-            );
+            let prompt = score_search(&targets, &parse_search_query(query))
+                .unwrap_or_else(|| panic!("{query:?} matches the first prompt"));
+            assert!(name < prompt, "{query:?} ranks below the name");
         }
     }
     // ------------------------------------------------------------------

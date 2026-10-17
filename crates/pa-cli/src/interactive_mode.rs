@@ -14,6 +14,7 @@ use pa_tui::interactive::{InteractiveOptions, ModelSelection, SessionSelection, 
 
 use crate::config;
 use crate::mode::RunOptions;
+use crate::resume_selector::{ResumeLaunch, resolve_resume_launch};
 
 mod daemon;
 
@@ -36,7 +37,7 @@ mod tests;
 pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
     let socket_path = resolve_socket_path(options.daemon_socket.as_deref());
     let configuration_load_started = std::time::Instant::now();
-    let (tui_options, pending_onboarding_stages) = build_tui_options(
+    let (tui_options, pending_onboarding_stages, startup_search) = build_tui_options(
         options,
         socket_path,
         std::sync::Arc::new(std::sync::Mutex::new(
@@ -138,39 +139,27 @@ pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
         // session for the cwd (the notice names it) so the user confirms
         // what continues instead of a blind newest-resume.
         let continue_view = continue_recent_view(options, tui_options.onboarding.is_some());
-        let agents_view = should_open_agents_view(
-            options,
-            tui_options.onboarding.is_some(),
-            continue_view.is_some(),
-        );
+        // A `--resume <selector>` that matched several saved sessions opens the view searching
+        // for it (Claude Code's pre-filled picker).
+        let agents_view = startup_search.is_some()
+            || should_open_agents_view(
+                options,
+                tui_options.onboarding.is_some(),
+                continue_view.is_some(),
+            );
         // The interactive dispatch, one future so EVERY exit — the view
         // loop's, the session run's, a failed open's error return —
         // passes the quick-exit join below.
         let run = async {
-            if agents_view {
-                let (anchor, notice) = continue_view.map_or((None, None), |view| {
-                    (Some(view.session_id), Some(view.notice))
-                });
-                run_agents_view_flow(tui_options, anchor, notice).await
+            if let Some(search) = startup_search {
+                run_agents_view_flow(tui_options, None, Some(search.notice), Some(search.query))
+                    .await
+            } else if agents_view {
+                let (anchor, notice) =
+                    continue_view.map_or((None, None), |view| (view.session_id, Some(view.notice)));
+                run_agents_view_flow(tui_options, anchor, notice, None).await
             } else {
-                let outcome =
-                    pa_tui::interactive::run_interactive(tui_options.clone(), UiMode::Terminal)
-                        .await?;
-                // TS `main.ts`: a direct session run closes into the agents view
-                // when the exit came through agents-back or `/resume`
-                // (`launchAgentsView` anchored on the session just left); every
-                // other exit (ctrl+c/ctrl+d, `/quit`) ends the process.
-                if outcome.return_to_agents_view {
-                    // A startup attach that fell back to the view has no session
-                    // identity to anchor on; its notice seeds the view's status
-                    // line instead.
-                    let anchor =
-                        (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
-                    run_agents_view_flow(tui_options, anchor, outcome.agents_view_notice).await
-                } else {
-                    print_resume_hint(outcome.resume_hint.as_deref());
-                    Ok(())
-                }
+                run_direct_session(tui_options).await
             }
         };
         let result = run.await;
@@ -216,6 +205,77 @@ pub(super) fn flush_startup_telemetry(
     })
 }
 
+/// A direct (CLI-opened) session run, and the sessions its `/resume <selector>` opens after it.
+/// TS `main.ts`: a run closes into the agents view when the exit came through agents-back or
+/// `/resume` (`launchAgentsView` anchored on the session just left); every other exit
+/// (ctrl+c/ctrl+d, `/quit`) ends the process. The session and agents-view futures are large state
+/// machines: boxing them keeps this loop's own future small, so a caller on a small stack (a test
+/// thread) does not overflow.
+async fn run_direct_session(base: InteractiveOptions) -> Result<()> {
+    let mut outcome = Box::pin(pa_tui::interactive::run_interactive(
+        base.clone(),
+        UiMode::Terminal,
+    ))
+    .await?;
+    loop {
+        if let Some(selection) = outcome.selection_request.take() {
+            let anchor = (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
+            match resolve_selection_request(&base, selection, outcome.selection_needs_lookup) {
+                ResumeLaunch::Open(selection) => {
+                    let mut next = base.clone();
+                    next.session = selection;
+                    outcome =
+                        Box::pin(pa_tui::interactive::run_interactive(next, UiMode::Terminal))
+                            .await?;
+                    continue;
+                }
+                ResumeLaunch::Search { query, notice } => {
+                    return Box::pin(run_agents_view_flow(
+                        base,
+                        anchor,
+                        Some(notice),
+                        Some(query),
+                    ))
+                    .await;
+                }
+            }
+        }
+        if outcome.return_to_agents_view {
+            // A startup attach that fell back to the view has no session identity to anchor
+            // on; its notice seeds the view's status line instead.
+            let anchor = (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
+            return Box::pin(run_agents_view_flow(
+                base,
+                anchor,
+                outcome.agents_view_notice,
+                outcome.agents_view_query,
+            ))
+            .await;
+        }
+        print_resume_hint(outcome.resume_hint.as_deref());
+        return Ok(());
+    }
+}
+
+/// A run's `/resume <selector>` request: a selector the TUI could not resolve itself goes through
+/// the saved-session resolve (an id prefix, a title); every other request opens as asked.
+fn resolve_selection_request(
+    base: &InteractiveOptions,
+    selection: SessionSelection,
+    needs_lookup: bool,
+) -> ResumeLaunch {
+    match selection {
+        SessionSelection::Attach(selector) if needs_lookup => {
+            let session_dir = base
+                .session_dir
+                .clone()
+                .unwrap_or_else(|| config::get_agent_dir().join("sessions"));
+            resolve_resume_launch(&selector, &base.cwd, &session_dir)
+        }
+        other => ResumeLaunch::Open(other),
+    }
+}
+
 /// TS `shutdown` prints the dim resume hint (`formatResumeHint`) to stdout
 /// after the TUI is restored; agents-view returns suppress it. Dim is the
 /// TS `chalk.dim` styling (`ESC[2m` ... `ESC[22m`). The print is the last
@@ -238,6 +298,7 @@ async fn run_agents_view_flow(
     base: InteractiveOptions,
     anchor: Option<String>,
     notice: Option<String>,
+    query: Option<String>,
 ) -> Result<()> {
     let mut anchor = anchor;
     // Every view run reuses the roster connection (a chat run hands it
@@ -247,7 +308,7 @@ async fn run_agents_view_flow(
         pa_tui::agents_view::AgentsViewScope,
         Option<SessionSelection>,
     )> = Vec::new();
-    let mut query: Option<String> = None;
+    let mut query: Option<String> = query;
     // A dismissal survives the next view run.
     let mut incident_notice_state: Option<pa_tui::incident_notices::IncidentNoticeState> = None;
     let mut expanded_ancestors: Vec<String> = Vec::new();
@@ -329,44 +390,52 @@ async fn run_agents_view_flow(
         if let Some(cwd) = view.opened_cwd {
             session_options.cwd = cwd;
         }
-        let outcome = pa_tui::interactive::run_interactive_agents_view_open(
+        let mut outcome = pa_tui::interactive::run_interactive_agents_view_open(
             session_options,
             UiMode::Terminal,
         )
         .await?;
-        if !outcome.session_id.is_empty() {
-            anchor = Some(outcome.session_id.clone());
-        }
-        if let Some(notice) = &outcome.agents_view_notice {
-            status_message = Some(notice.clone());
-        }
-        if !outcome.return_to_agents_view {
-            print_resume_hint(outcome.resume_hint.as_deref());
-            if let Some(link) = roster_link.take() {
-                link.close();
-            }
-            return Ok(());
-        }
-        if let Some(scope) = outcome.agents_view_scope {
-            // Push a frame with the session as the return chat and clear the
-            // query — a filter typed to find the session would hide the subtree.
-            frames.retain(|(frame, _)| frame.session_id != scope.session_id);
-            frames.push((
-                scope,
-                Some(SessionSelection::Attach(outcome.active_session_id.clone())),
-            ));
-            query = None;
-        }
-        let mut pending = outcome.selection_request;
-        while let Some(selection) = pending.take() {
-            let mut next = base.clone();
-            next.session = selection;
-            let outcome = pa_tui::interactive::run_interactive(next, UiMode::Terminal).await?;
+        // The opened session, then each session its `/resume <selector>` opens, until one exits
+        // back to the view (or ends the process).
+        loop {
             if !outcome.session_id.is_empty() {
                 anchor = Some(outcome.session_id.clone());
             }
             if let Some(notice) = &outcome.agents_view_notice {
                 status_message = Some(notice.clone());
+            }
+            if let Some(search) = outcome.agents_view_query.take() {
+                query = Some(search);
+            }
+            if let Some(scope) = outcome.agents_view_scope.take() {
+                // Push a frame with the session as the return chat and clear the
+                // query — a filter typed to find the session would hide the subtree.
+                frames.retain(|(frame, _)| frame.session_id != scope.session_id);
+                frames.push((
+                    scope,
+                    Some(SessionSelection::Attach(outcome.active_session_id.clone())),
+                ));
+                query = None;
+            }
+            if let Some(selection) = outcome.selection_request.take() {
+                match resolve_selection_request(&base, selection, outcome.selection_needs_lookup) {
+                    ResumeLaunch::Open(selection) => {
+                        let mut next = base.clone();
+                        next.session = selection;
+                        outcome =
+                            Box::pin(pa_tui::interactive::run_interactive(next, UiMode::Terminal))
+                                .await?;
+                        continue;
+                    }
+                    ResumeLaunch::Search {
+                        query: search,
+                        notice,
+                    } => {
+                        query = Some(search);
+                        status_message = Some(notice);
+                        break;
+                    }
+                }
             }
             if !outcome.return_to_agents_view {
                 print_resume_hint(outcome.resume_hint.as_deref());
@@ -375,15 +444,7 @@ async fn run_agents_view_flow(
                 }
                 return Ok(());
             }
-            if let Some(scope) = outcome.agents_view_scope {
-                frames.retain(|(frame, _)| frame.session_id != scope.session_id);
-                frames.push((
-                    scope,
-                    Some(SessionSelection::Attach(outcome.active_session_id.clone())),
-                ));
-                query = None;
-            }
-            pending = outcome.selection_request;
+            break;
         }
     }
 }
@@ -399,7 +460,11 @@ fn build_tui_options(
     options: &RunOptions,
     socket_path: PathBuf,
     prompt_stash: std::sync::Arc<std::sync::Mutex<pa_tui::prompt_stash::PromptStashStore>>,
-) -> Result<(InteractiveOptions, Vec<pa_telemetry::OnboardingStage>)> {
+) -> Result<(
+    InteractiveOptions,
+    Vec<pa_telemetry::OnboardingStage>,
+    Option<StartupSearch>,
+)> {
     let config = &options.config;
     let session_dir = options
         .session
@@ -416,9 +481,16 @@ fn build_tui_options(
     let script_path = std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").map(PathBuf::from);
     // Flag order (fork -> resume -> create): the daemon opens the fork —
     // never the source — through the create `sessionPath`.
+    let mut startup_search = None;
     let mut session = match &options.session.fork {
         Some(selector) => fork_startup_selection(selector, &config.cwd, session_dir.as_deref())?,
-        None => session_selection(&options.session, session_dir.as_deref()),
+        None => match session_selection(&options.session, session_dir.as_deref(), &config.cwd) {
+            ResumeLaunch::Open(selection) => selection,
+            ResumeLaunch::Search { query, notice } => {
+                startup_search = Some(StartupSearch { query, notice });
+                SessionSelection::New
+            }
+        },
     };
     // A plain resume follows the saved project. Resolve its file before
     // changing cwd, and use the same project for client settings and the
@@ -541,7 +613,14 @@ fn build_tui_options(
         session_has_children: false,
         restore_dock_focus: false,
     };
-    Ok((tui_options_value, pending_onboarding_stages))
+    Ok((tui_options_value, pending_onboarding_stages, startup_search))
+}
+
+/// A `--resume <selector>` that matched several saved sessions: the agents view opens searching
+/// for it, the notice naming the count.
+struct StartupSearch {
+    query: String,
+    notice: String,
 }
 
 /// Map the CLI session flags onto the TUI session selection: explicit `--resume`
@@ -549,13 +628,14 @@ fn build_tui_options(
 fn session_selection(
     session: &crate::mode::SessionOptions,
     session_dir: Option<&Path>,
-) -> SessionSelection {
+    cwd: &Path,
+) -> ResumeLaunch {
     if let Some(selector) = &session.resume {
         let default_dir = config::get_agent_dir().join("sessions");
         let dir = session_dir.unwrap_or(&default_dir);
-        return resolve_resume_selector(selector, dir);
+        return resolve_resume_launch(selector, cwd, dir);
     }
-    SessionSelection::New
+    ResumeLaunch::Open(SessionSelection::New)
 }
 
 /// The interactive launch's fork arm: copy the source into a fresh session file
@@ -609,10 +689,11 @@ fn should_open_agents_view(
 }
 
 /// The `--continue` launch's agents-view target: the newest saved session
-/// for the cwd, plus the status-line notice that names it.
+/// for the cwd (none when the directory has nothing to continue), plus the
+/// status-line notice that names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ContinueRecentView {
-    session_id: String,
+    session_id: Option<String>,
     notice: String,
 }
 
@@ -635,27 +716,24 @@ fn continue_recent_view(
         .clone()
         .unwrap_or_else(|| options.config.agent_dir.join("sessions"));
     let cwd = options.config.cwd.clone();
-    let path = pa_core::session::discovery::find_most_recent_session_for_cwd(&session_dir, &cwd)?;
-    let header = pa_core::session::manager::read_session_header(&path)?;
-    Some(ContinueRecentView {
-        session_id: header.id.clone(),
-        notice: format!(
-            "Most recent session for this directory: {} — Enter continues it, or pick another session.",
-            header.id
-        ),
+    // Nothing to continue says so (Claude Code's "No conversation found to continue") instead
+    // of silently starting a fresh session: the view opens on every session, Ctrl+N starts one.
+    let header = pa_core::session::discovery::find_most_recent_session_for_cwd(&session_dir, &cwd)
+        .and_then(|path| pa_core::session::manager::read_session_header(&path));
+    Some(match header {
+        Some(header) => ContinueRecentView {
+            notice: format!(
+                "Most recent session for this directory: {} — Enter continues it, or pick another session.",
+                header.id
+            ),
+            session_id: Some(header.id),
+        },
+        None => ContinueRecentView {
+            session_id: None,
+            notice: format!(
+                "No conversation found to continue in {} — pick a session, or Ctrl+N starts a new one.",
+                cwd.display()
+            ),
+        },
     })
-}
-
-/// `--resume <selector>`: an existing session file path, a `<id>.jsonl` under
-/// the sessions dir, or a live daemon session id (attach).
-fn resolve_resume_selector(selector: &str, session_dir: &Path) -> SessionSelection {
-    let path = config::expand_tilde_path(selector);
-    if path.is_file() {
-        return SessionSelection::Resume(path);
-    }
-    let candidate = session_dir.join(format!("{selector}.jsonl"));
-    if candidate.is_file() {
-        return SessionSelection::Resume(candidate);
-    }
-    SessionSelection::Attach(selector.to_string())
 }

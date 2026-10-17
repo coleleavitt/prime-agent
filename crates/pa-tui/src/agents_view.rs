@@ -56,7 +56,9 @@ use render::Renderer;
 use render::cell;
 
 mod delete;
+mod git_head;
 mod heartbeats;
+mod preview;
 
 #[cfg(test)]
 use delete::no_effect_summary;
@@ -283,6 +285,8 @@ pub struct AgentsViewLink {
     saved_catalog_loaded: bool,
     /// The saved-catalog project filter the previous run left on.
     saved_scope: SavedScope,
+    /// The branch filter the previous run left on.
+    branch_only: bool,
 }
 
 impl AgentsViewLink {
@@ -294,6 +298,7 @@ impl AgentsViewLink {
             saved_sessions: Vec::new(),
             saved_catalog_loaded: false,
             saved_scope: SavedScope::default(),
+            branch_only: false,
         })
     }
 
@@ -433,6 +438,13 @@ struct AgentsViewMode {
     /// Which projects' saved sessions the Inactive rows list; the flow's link carries it across
     /// re-entries.
     saved_scope: SavedScope,
+    /// `app.agents.branchFilter` (Claude Code's resume-picker `Ctrl+B`): the saved sessions list
+    /// only this repository's sessions on its current branch. Live rows are never filtered.
+    branch_only: bool,
+    /// The launch directory's repository and branch, read once when the view opens.
+    git_head: Option<git_head::GitHead>,
+    /// The open session preview (`app.agents.preview`), shown in place of the list.
+    preview: Option<preview::SessionPreview>,
     /// Optimistic renames by session id (upstream #2099): the newest name the user asked for,
     /// overlaid on every rebuild until the roster or catalog carries it, plus the one write in
     /// flight for that session.
@@ -546,6 +558,7 @@ impl AgentsViewMode {
                 .is_some_and(|anchor| !anchor.is_empty());
         // The first run starts fresh; later runs continue the carried state.
         let incident_notice_state = options.incident_notice_state.take().unwrap_or_default();
+        let options_cwd = options.cwd.clone();
         AgentsViewMode {
             options,
             theme,
@@ -594,6 +607,9 @@ impl AgentsViewMode {
             actions: Vec::new(),
             heartbeats: Vec::new(),
             saved_scope: SavedScope::default(),
+            branch_only: false,
+            git_head: git_head::read_git_head(&options_cwd),
+            preview: None,
             pending_renames: std::collections::HashMap::new(),
         }
     }
@@ -619,6 +635,7 @@ async fn open_roster_link(
             saved_sessions,
             saved_catalog_loaded,
             saved_scope: _,
+            branch_only: _,
         }) = link
         {
             (client, events, saved_sessions, saved_catalog_loaded)
@@ -763,6 +780,7 @@ async fn run_agents_view_surface(
     let carried_scope = link
         .as_ref()
         .map_or_else(SavedScope::default, |link| link.saved_scope);
+    let carried_branch_only = link.as_ref().is_some_and(|link| link.branch_only);
     // This pane may arrive already in TUI state (the chat's teardown preserves it), so a
     // roster-link failure here must hand the terminal back before the error escapes.
     let (client, mut events, roster, saved_sessions, saved_catalog_loaded) =
@@ -787,6 +805,7 @@ async fn run_agents_view_surface(
     mode.saved = saved_sessions;
     mode.saved_catalog_loaded = saved_catalog_loaded;
     mode.saved_scope = carried_scope;
+    mode.branch_only = carried_branch_only && mode.git_head.is_some();
     mode.rebuild_rows();
     // The notice from the log's bounded tail paints on the FIRST frame, before the interval's
     // first tick.
@@ -1269,6 +1288,7 @@ async fn run_agents_view_surface(
             saved_sessions: mode.saved.clone(),
             saved_catalog_loaded: mode.saved_catalog_loaded,
             saved_scope: mode.saved_scope,
+            branch_only: mode.branch_only,
         })
     } else {
         client.close();

@@ -83,6 +83,15 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   runs as interrupted after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
 - Spawn hardening: ETXTBSY-tolerant spawns (`platform::process::{status,spawn}_retrying_text_busy`) for the runtime
   probe, `uv`, and staged-update version probes; runtime-probe memo invalidation scoped to the failed interpreter.
+- Resume follows Claude Code's picker: `--resume <selector>` / `/resume <selector>` resolve in `pa-cli`
+  (`resume_selector`): a file, a saved id (exact, prefix or the 12-character display suffix), then a saved title
+  (exact, case-insensitive, this directory first); several matches open the agents view searching for the selector,
+  no match attaches a running session and that miss opens the same search. `-c` with nothing to continue says so in
+  the agents view. The catalog records each session's git branch (`gitBranch`: the newest `git_state`, else the
+  header; `SESSION_ROW_VERSION` 2, sidecar 3); the agents view shows a Branch column, filters to this repository's
+  branch (`Ctrl+B`), previews a session's conversation from its file tail (`Ctrl+V`), and searches the branch, the
+  whole first message and the transcript corpus below the name/id/cwd tiers (`agents_view_search`). Directory
+  comparisons go through `pa_types::platform::same_directory`.
 - Computer use runs host-side in `crates/pa-computer-use` behind the `computer_use.*` host requests: macOS (AX,
   `CGEvent`, objc2), X11 (#3246; `xdotool`/`xwininfo`/`maim`|`scrot`) and a **Wayland/niri** backend (niri IPC,
   AT-SPI over `zbus`/`atspi-proxies`, wlr virtual pointer/keyboard over `wayland-client`, `grim`), with the logind

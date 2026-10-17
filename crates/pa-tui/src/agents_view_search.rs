@@ -1,8 +1,10 @@
 //! The agents-view session search: a picker over the display NAME (primary), the durable session
-//! ID, and the CWD — the name target is the SESSION column's own title, so a prompt-derived title
-//! is searchable exactly as far as the column displays it. The TS corpus fields (first message,
-//! transcript, file paths) never match — a deliberate divergence (the query language stays
-//! TS-shaped).
+//! ID, and the CWD — the name target is the SESSION column's own title. Below those rank the git
+//! branch, the whole first message, and the saved transcript corpus (Claude Code's resume search
+//! covers the branch; its transcript search is built but off): a token found only in the
+//! conversation still finds the session, after every name, id and path match. The transcript is
+//! matched as a contiguous substring (no fuzzy pass over 64 KiB) and stays out of `re:` mode,
+//! whose backtracking would run over every corpus on every keystroke.
 
 use crate::fuzzy::fuzzy_match;
 
@@ -11,7 +13,7 @@ const STRICT_FUZZY_MAX_TOKEN_SCORE: f64 = 25.0;
 
 /// One record's match targets, in rank order (lower tier ranks first).
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct SessionSearchText {
+pub struct SessionSearchText<'a> {
     /// The SESSION column's title: the `session_title` ladder over the merged summary, clipped to
     /// the column's width cap.
     pub name: String,
@@ -22,16 +24,24 @@ pub struct SessionSearchText {
     /// picker matches remote agents by `MagicDNS` hostname and remote
     /// model id.
     pub host: String,
+    /// The git branch the session last worked on.
+    pub branch: String,
+    /// The session's first user message, whole (the name target clips it to the column).
+    pub first_message: String,
+    /// The saved transcript corpus, already normalized ([`normalize_search_text`]).
+    pub transcript: &'a str,
 }
 
-impl SessionSearchText {
-    /// The regex-mode corpus: the same restricted fields, joined.
+impl SessionSearchText<'_> {
+    /// The regex-mode corpus: every field but the transcript, joined.
     fn corpus(&self) -> String {
         [
             self.name.as_str(),
             self.id.as_str(),
             self.cwd.as_str(),
             self.host.as_str(),
+            self.branch.as_str(),
+            self.first_message.as_str(),
         ]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -153,7 +163,7 @@ struct TokenMatch {
 /// Score one record's targets against the query: `Some(score)` when the query matches (lower is
 /// better). Every token must match at least one target; the record's rank follows its WORST token.
 #[must_use]
-pub fn score_search(targets: &SessionSearchText, query: &ParsedSearchQuery) -> Option<f64> {
+pub fn score_search(targets: &SessionSearchText<'_>, query: &ParsedSearchQuery) -> Option<f64> {
     if query.matches_never {
         return None;
     }
@@ -193,7 +203,7 @@ const TIER_STRIDE: f64 = 100_000.0;
 
 /// One fuzzy token: the best tier it reaches across the targets (TS kept
 /// the contiguous-first-then-fuzzy order; this generalizes it per field).
-fn token_score(token: &str, targets: &SessionSearchText) -> Option<TokenMatch> {
+fn token_score(token: &str, targets: &SessionSearchText<'_>) -> Option<TokenMatch> {
     contiguous_token_score(token, targets).or_else(|| {
         let score = fuzzy_match(token, &targets.name)?;
         (score <= STRICT_FUZZY_MAX_TOKEN_SCORE).then_some(TokenMatch {
@@ -206,7 +216,7 @@ fn token_score(token: &str, targets: &SessionSearchText) -> Option<TokenMatch> {
 /// One contiguous token (or the contiguous phase of a fuzzy token). The tiers mirror VS Code
 /// quick-open scoring: the identity match is highest, then the name ranks exact > prefix >
 /// substring, then the id prefix and substring, then the CWD basename and full path.
-fn contiguous_token_score(token: &str, targets: &SessionSearchText) -> Option<TokenMatch> {
+fn contiguous_token_score(token: &str, targets: &SessionSearchText<'_>) -> Option<TokenMatch> {
     let needle = normalize(token);
     if needle.is_empty() {
         return Some(TokenMatch {
@@ -245,6 +255,16 @@ fn contiguous_token_score(token: &str, targets: &SessionSearchText) -> Option<To
         })
         // The remote row's tailnet host and display model rank last: they
         // identify the machine, not the session (TS #2516's search fix).
+        // The branch identifies the session's line of work: below its directory, above the
+        // machine.
+        .or_else(|| {
+            normalize(&targets.branch)
+                .find(&needle)
+                .map(|found| TokenMatch {
+                    tier: 8.5,
+                    quality: found as f64,
+                })
+        })
         .or_else(|| {
             normalize(&targets.host)
                 .find(&needle)
@@ -253,6 +273,29 @@ fn contiguous_token_score(token: &str, targets: &SessionSearchText) -> Option<To
                     quality: found as f64,
                 })
         })
+        // The conversation ranks below every identifying field: the opening request, then
+        // anything said since.
+        .or_else(|| {
+            normalize(&targets.first_message)
+                .find(&needle)
+                .map(|found| TokenMatch {
+                    tier: 10.0,
+                    quality: found as f64,
+                })
+        })
+        .or_else(|| {
+            targets.transcript.find(&needle).map(|found| TokenMatch {
+                tier: 11.0,
+                quality: found as f64,
+            })
+        })
+}
+
+/// The search normalization (lowercase, whitespace runs collapsed to one space): a target
+/// prepared once with this matches the needles the search normalizes the same way.
+#[must_use]
+pub(crate) fn normalize_search_text(text: &str) -> String {
+    normalize(text)
 }
 
 /// The name tiers: exact, prefix (shorter labels win), then substring (earlier wins).
@@ -299,13 +342,14 @@ fn cwd_basename(cwd: &str) -> String {
 mod tests {
     use super::*;
 
-    fn targets() -> SessionSearchText {
+    fn targets() -> SessionSearchText<'static> {
         SessionSearchText {
             // One word: tier comparisons below stay single-token queries.
             name: "gatewayworker".to_string(),
             id: "01a0b6b3-2e8d-71ab-b1c2-2a7db1bf8077".to_string(),
             cwd: "/home/dev/work/prime-agent".to_string(),
             host: String::new(),
+            ..Default::default()
         }
     }
 
@@ -444,12 +488,14 @@ mod tests {
             id: "ffff0000".to_string(),
             cwd: "/home/u/ops".to_string(),
             host: String::new(),
+            ..Default::default()
         };
         let weak = SessionSearchText {
             name: "gateway worker".to_string(),
             id: "01a0b6b3".to_string(),
             cwd: "/home/u/ops".to_string(),
             host: String::new(),
+            ..Default::default()
         };
         let parsed = parse_search_query("01a0b6b3 gw");
         let strong_score = score_search(&strong, &parsed).expect("the name record matches");
@@ -495,6 +541,7 @@ mod tests {
             id: "fff-fff".to_string(),
             cwd: "/tmp".to_string(),
             host: String::new(),
+            ..Default::default()
         };
         let parsed = parse_search_query("re:(a+)+$");
         assert!(
@@ -516,6 +563,7 @@ mod tests {
             id: "r1".to_string(),
             cwd: "/remote".to_string(),
             host: "milk.tailnet.ts.net prime/model-x".to_string(),
+            ..Default::default()
         };
         for query in ["milk.tailnet.ts.net", "model-x", "tailnet"] {
             let parsed = parse_search_query(query);
@@ -528,6 +576,7 @@ mod tests {
             id: "l1".to_string(),
             cwd: "/local".to_string(),
             host: String::new(),
+            ..Default::default()
         };
         let parsed = parse_search_query("milk.tailnet.ts.net");
         assert!(score_search(&local, &parsed).is_none());

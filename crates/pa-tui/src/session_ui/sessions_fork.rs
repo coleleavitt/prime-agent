@@ -387,24 +387,22 @@ impl SessionUi {
         Ok(())
     }
 
-    /// `/resume <selector>`: a session file path, an `<id>.jsonl` under the
-    /// sessions dir, or a live daemon session id (attach).
-    pub(super) fn resolve_resume_selector(&self, selector: &str) -> Option<SessionSelection> {
+    /// `/resume <selector>`: a session file path or an `<id>.jsonl` under the sessions dir
+    /// resumes here; anything else is an attach the composition root first resolves against
+    /// the saved sessions (an id prefix, a title), flagged by the returned `true`.
+    pub(super) fn resolve_resume_selector(&self, selector: &str) -> (SessionSelection, bool) {
         let selector = selector.trim();
-        if selector.is_empty() {
-            return None;
-        }
         let path = std::path::Path::new(selector);
         if path.is_file() {
-            return Some(SessionSelection::Resume(path.to_path_buf()));
+            return (SessionSelection::Resume(path.to_path_buf()), false);
         }
         if let Some(dir) = &self.session_dir {
             let candidate = dir.join(format!("{selector}.jsonl"));
             if candidate.is_file() {
-                return Some(SessionSelection::Resume(candidate));
+                return (SessionSelection::Resume(candidate), false);
             }
         }
-        Some(SessionSelection::Attach(selector.to_string()))
+        (SessionSelection::Attach(selector.to_string()), true)
     }
 
     /// Options for `/new`: same socket, cwd, persistence, and script seam as

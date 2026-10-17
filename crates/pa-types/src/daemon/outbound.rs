@@ -125,6 +125,9 @@ pub struct DaemonSavedSessionInfo {
     pub message_count: u64,
     pub first_message: String,
     pub all_messages_text: String,
+    /// The git branch the session last worked on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

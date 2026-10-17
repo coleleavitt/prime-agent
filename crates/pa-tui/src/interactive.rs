@@ -516,6 +516,10 @@ pub struct InteractiveOutcome {
     pub agents_view_scope: Option<crate::agents_view::AgentsViewScope>,
     /// `/resume <selector>` requested this session next.
     pub selection_request: Option<SessionSelection>,
+    /// `selection_request` is a bare `/resume <selector>` the TUI could not resolve itself (no
+    /// such file): an [`SessionSelection::Attach`] the composition root resolves against the
+    /// saved sessions (an id prefix, a title) before attaching.
+    pub selection_needs_lookup: bool,
     /// Texts copied out by finished mouse selections (headless runs have no terminal for
     /// OSC 52; the verifiers read these).
     pub copies: Vec<String>,
@@ -525,6 +529,9 @@ pub struct InteractiveOutcome {
     /// A startup attach failed on a session that is truly gone: the run hands off to the
     /// agents view and this notice seeds the view's status line.
     pub agents_view_notice: Option<String>,
+    /// The search the agents view opens with: a `--resume`/`/resume` selector that matched no
+    /// running or saved session.
+    pub agents_view_query: Option<String>,
     /// How many first-draw windows this run served from an adopted cross-view layout handoff
     /// (`view::handoff`): the re-entry's frames are byte-identical either way, so a zero here
     /// is the re-render and a nonzero is the reuse.

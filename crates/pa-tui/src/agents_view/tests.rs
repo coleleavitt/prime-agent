@@ -20,6 +20,7 @@ mod optimistic_rename;
 mod progress_note;
 mod render_pulse;
 mod reply;
+mod resume_parity;
 mod running_lines;
 mod saved_catalog;
 mod search_selection;
