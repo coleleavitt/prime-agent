@@ -58,7 +58,7 @@ pub fn answer_notice(
         (ConfirmationAnswer::Allowed | ConfirmationAnswer::AllowedAlways, Err(error)) => format!(
             "The user approved your proposed goal \"{condition}\", but it could not be set: {error}"
         ),
-        (ConfirmationAnswer::Denied, _) => format!(
+        (ConfirmationAnswer::Denied | ConfirmationAnswer::Refused(_), _) => format!(
             "The user declined your proposed goal \"{condition}\". Continue without it; do not propose it again unless the user asks."
         ),
         (ConfirmationAnswer::TimedOut(_), _) => {

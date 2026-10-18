@@ -128,6 +128,10 @@ impl PermissionsFeature {
                     for problem in &state.settings.problems {
                         tracing::warn!(target: "pa_permissions", "{problem}");
                     }
+                    pa_core::features::set_session_permission_mode(
+                        &context.session_id,
+                        state.mode().as_str(),
+                    );
                     Arc::new(Mutex::new(state))
                 }),
         )
@@ -135,6 +139,8 @@ impl PermissionsFeature {
 
     /// Publish the session's mode status.
     fn publish(context: &SessionFeatureContext, state: &SessionState) {
+        // Hooks and other features read the mode as `permission_mode`.
+        pa_core::features::set_session_permission_mode(&context.session_id, state.mode().as_str());
         publish_feature_status(&context.session_id, state.status());
     }
 
@@ -211,6 +217,7 @@ impl PermissionsFeature {
                             "{reason} (the user did not answer within {}s)",
                             after.as_secs()
                         )),
+                        ConfirmationAnswer::Refused(refusal) => FeatureVerdict::Block(refusal),
                     }
                 })
             }

@@ -200,6 +200,7 @@ pub fn gate_tool_calls(mode: PlanModeSwitch, inner: Option<BeforeToolCallFn>) ->
                 Ok(Some(pa_agent::types::BeforeToolCallResult {
                     block: true,
                     reason: Some(reason),
+                    args: None,
                 }))
             });
         }

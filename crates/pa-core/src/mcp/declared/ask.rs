@@ -76,7 +76,10 @@ pub(super) fn choice_of(answer: ConfirmationAnswer) -> Option<ProjectChoice> {
         ConfirmationAnswer::Allowed => Some(ProjectChoice::Approve),
         ConfirmationAnswer::AllowedAlways => Some(ProjectChoice::ApproveAll),
         ConfirmationAnswer::Denied => Some(ProjectChoice::Reject),
-        ConfirmationAnswer::Unavailable | ConfirmationAnswer::TimedOut(_) => None,
+        // A server approval is never put to a permission reviewer.
+        ConfirmationAnswer::Unavailable
+        | ConfirmationAnswer::TimedOut(_)
+        | ConfirmationAnswer::Refused(_) => None,
     }
 }
 

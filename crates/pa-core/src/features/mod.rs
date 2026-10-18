@@ -19,9 +19,12 @@
 //! notice to the model, waking an idle session.
 
 mod confirm;
+mod events;
 mod lifecycle;
 mod notice;
+mod permission_request;
 mod policy;
+mod session_facts;
 mod status;
 
 use std::future::Future;
@@ -43,6 +46,26 @@ pub use confirm::{
     pending_confirmations,
     register_confirmation_surface,
 };
+pub use events::{
+    DirectoryAddedSource,
+    ElicitationAction,
+    ElicitationMode,
+    ElicitationObservation,
+    ElicitationResponse,
+    InstructionLoadReason,
+    InstructionsLoadedObservation,
+    SetupObservation,
+    SetupTrigger,
+    answer_elicitation,
+    run_setup,
+    run_setup_with,
+    settle_elicitation_result,
+};
+pub(crate) use events::{
+    observe_cwd_changed,
+    observe_directory_added,
+    observe_instructions_loaded,
+};
 pub(crate) use lifecycle::{
     SessionEndNotice,
     compaction_instructions,
@@ -60,8 +83,22 @@ pub use notice::{
 };
 use pa_agent::types::{AgentMessage, ToolResultContent};
 use pa_telemetry::{Properties, TelemetryClient, base_properties, lookup};
+pub use permission_request::{
+    ConfirmationSubject,
+    PermissionRequestObservation,
+    PermissionReview,
+    PermissionReviewer,
+    register_permission_reviewer,
+    with_confirmation_subject,
+};
 pub use policy::FeatureNotes;
 pub(crate) use policy::{host_request_gate, review_prompt, tool_call_hooks};
+pub use session_facts::{
+    session_permission_mode,
+    session_transcript_path,
+    set_session_permission_mode,
+    set_session_transcript_path,
+};
 pub use status::{
     FeatureStatus,
     FeatureStatusSink,
@@ -161,6 +198,29 @@ pub enum FeatureVerdict {
     /// Refuse it: the model sees the reason as the call's error (a tool
     /// call's error result; the kernel's raised error for a host request).
     Block(String),
+}
+
+/// A feature's review of an action that may also rewrite its input
+/// ([`SessionFeature::revise_tool_call`],
+/// [`SessionFeature::revise_host_request`]): Claude Code's `PreToolUse`
+/// `updatedInput`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureReview {
+    pub verdict: FeatureVerdict,
+    /// What the action runs with instead, when it runs: a tool call's
+    /// arguments (validated against the tool's schema like the model's), or
+    /// a host request's whole payload (its `type` cannot change). The first
+    /// rewrite in installation order applies.
+    pub updated_input: Option<serde_json::Value>,
+}
+
+impl From<FeatureVerdict> for FeatureReview {
+    fn from(verdict: FeatureVerdict) -> Self {
+        Self {
+            verdict,
+            updated_input: None,
+        }
+    }
 }
 
 /// The most feature continuations one run takes
@@ -369,6 +429,31 @@ pub trait SessionFeature: Send + Sync {
         Box::pin(async { FeatureVerdict::Allow })
     }
 
+    /// [`Self::review_tool_call`], optionally rewriting the call's
+    /// arguments. The policy asks this one; the default answers with
+    /// [`Self::review_tool_call`] and rewrites nothing, so a feature
+    /// implements whichever it needs.
+    fn revise_tool_call(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        call: &ToolCallObservation,
+    ) -> FeatureFuture<FeatureReview> {
+        let review = self.review_tool_call(context, call);
+        Box::pin(async move { review.await.into() })
+    }
+
+    /// [`Self::review_host_request`], optionally rewriting the request's
+    /// payload. The policy asks this one; the default answers with
+    /// [`Self::review_host_request`] and rewrites nothing.
+    fn revise_host_request(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &HostRequestObservation,
+    ) -> FeatureFuture<FeatureReview> {
+        let review = self.review_host_request(context, request);
+        Box::pin(async move { review.await.into() })
+    }
+
     /// Decide whether a kernel host request may run (the kernel's `bash()`,
     /// computer use, MCP calls, ...). Every installed feature answers; the
     /// first `Block` refuses the request before its handler runs, and
@@ -510,6 +595,69 @@ pub trait SessionFeature: Send + Sync {
     /// feature's own background worker.
     fn on_agent_end(&self, context: &Arc<SessionFeatureContext>) {
         let _ = context;
+    }
+
+    /// A project setup run (`--init` / `--maintenance`, Claude Code's
+    /// `Setup`): no session exists yet. Text returned here is context the
+    /// caller carries into the session it starts ([`run_setup`]).
+    fn on_setup(&self, setup: &SetupObservation) -> FeatureFuture<Option<String>> {
+        let _ = setup;
+        Box::pin(async { None })
+    }
+
+    /// An MCP server asks the user for input (Claude Code's
+    /// `Elicitation`): an answer here is sent instead of asking the user;
+    /// the first answer in installation order wins
+    /// ([`answer_elicitation`]). Awaited before the user is asked, so it
+    /// must stay bounded.
+    fn review_elicitation(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &ElicitationObservation,
+    ) -> FeatureFuture<Option<ElicitationResponse>> {
+        let _ = (context, request);
+        Box::pin(async { None })
+    }
+
+    /// An elicitation was answered (Claude Code's `ElicitationResult`): a
+    /// response returned here replaces `response` before it is sent
+    /// ([`settle_elicitation_result`]).
+    fn review_elicitation_result(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        request: &ElicitationObservation,
+        response: &ElicitationResponse,
+    ) -> FeatureFuture<Option<ElicitationResponse>> {
+        let _ = (context, request, response);
+        Box::pin(async { None })
+    }
+
+    /// Instruction files loaded into the session's context (Claude Code's
+    /// `InstructionsLoaded`): at its start, and as nested ones are found.
+    /// Called on the session path: it must not block.
+    fn on_instructions_loaded(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        files: &[InstructionsLoadedObservation],
+    ) {
+        let _ = (context, files);
+    }
+
+    /// A directory joined the session's working directories (Claude Code's
+    /// `DirectoryAdded`). It must not block.
+    fn on_directory_added(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+        directory: &std::path::Path,
+        source: DirectoryAddedSource,
+    ) {
+        let _ = (context, directory, source);
+    }
+
+    /// The session's working directory moved to `cwd` (`/cwd`, the kernel
+    /// entering a worktree; Claude Code's `CwdChanged`). It must not block.
+    fn on_cwd_changed(&self, context: &Arc<SessionFeatureContext>, cwd: &std::path::Path) {
+        let _ = (context, cwd);
     }
 
     /// The process is about to exit: finish or abandon background work by

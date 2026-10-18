@@ -620,6 +620,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         rlm_depth: config.rlm_depth.unwrap_or(0),
         session_artifact_dir: session_artifact_dir.clone(),
     };
+    // What features report as the session's `transcript_path`.
+    crate::features::set_session_transcript_path(
+        &session_id,
+        conversation_log.as_ref().map(std::path::PathBuf::from),
+    );
     let local_harness_dir =
         crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
     // The only sessions whose `refine.*` host requests register and the
@@ -1245,6 +1250,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
         initial_messages.as_deref().unwrap_or_default(),
     );
+    crate::features::observe_instructions_loaded(
+        crate::features::installed(),
+        &feature_context,
+        &resources
+            .instruction_files
+            .iter()
+            .map(crate::features::InstructionsLoadedObservation::at_session_start)
+            .collect::<Vec<_>>(),
+    );
     // Nested instruction files a resumed conversation already carries are
     // not delivered again.
     let nested_instructions = resources.nested_instructions.clone();
@@ -1858,6 +1872,14 @@ impl SessionEngine {
             self.session
                 .queue_next_turn_row(super::plan_mode::plan_mode_exited_row());
         }
+        // Features read the mode as `permission_mode`; leaving plan mode
+        // does not overwrite a mode the permissions feature set since.
+        let session_id = &self.feature_context.session_id;
+        if enabled {
+            crate::features::set_session_permission_mode(session_id, "plan");
+        } else if crate::features::session_permission_mode(session_id) == "plan" {
+            crate::features::set_session_permission_mode(session_id, "default");
+        }
         Ok(Some(applied))
     }
 
@@ -1976,6 +1998,11 @@ impl SessionEngine {
         if let Some(rows) = self.session.context_rows() {
             rows.set_cwd(cwd);
         }
+        crate::features::observe_cwd_changed(
+            crate::features::installed(),
+            &self.feature_context,
+            cwd,
+        );
         Ok(())
     }
 
@@ -1985,6 +2012,11 @@ impl SessionEngine {
     pub fn follow_kernel_cwd(&self, cwd: &std::path::Path) {
         self.provisioner.set_start_cwd(cwd);
         self.mcp_sessions.set_cwd(cwd);
+        crate::features::observe_cwd_changed(
+            crate::features::installed(),
+            &self.feature_context,
+            cwd,
+        );
     }
 
     /// Release the kernel with a final namespace snapshot, revivable: the next

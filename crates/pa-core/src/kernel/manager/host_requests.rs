@@ -122,26 +122,32 @@ impl Inner {
         let (Some(gate), Some(request_type)) = (handlers.gate().cloned(), request_type) else {
             return dispatch_host_request(&self.bash_jobs, handlers, data);
         };
-        let review = gate.review(request_type, data);
+        let review = gate.review_updating(request_type, data);
         let request_type = request_type.to_string();
         let bash_jobs = Arc::clone(&self.bash_jobs);
         let handlers = handlers.clone();
-        let data = data.clone();
+        let mut data = data.clone();
         Box::pin(async move {
             // A review may wait on the user; a `host_cancel` (the cell was
             // interrupted) stops the wait and refuses the request.
-            let refusal = match crate::kernel::shared::host_request_cancellation() {
+            let review = match crate::kernel::shared::host_request_cancellation() {
                 Some(token) => tokio::select! {
                     biased;
-                    refusal = review => refusal,
+                    review = review => review,
                     () = token.cancelled() => {
-                        Some("the request was cancelled before it was allowed".to_string())
+                        Err("the request was cancelled before it was allowed".to_string())
                     }
                 },
                 None => review.await,
             };
-            if let Some(reason) = refusal {
-                return Err(anyhow!("{request_type} refused: {reason}"));
+            match review {
+                Err(reason) => return Err(anyhow!("{request_type} refused: {reason}")),
+                // A rewrite keeps the request's type.
+                Ok(Some(Value::Object(mut updated))) => {
+                    updated.insert("type".to_string(), Value::String(request_type.clone()));
+                    data = Value::Object(updated);
+                }
+                Ok(Some(_) | None) => {}
             }
             let outcome = dispatch_host_request(&bash_jobs, &handlers, &data).await;
             let error = outcome
