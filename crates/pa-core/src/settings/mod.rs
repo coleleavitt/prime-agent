@@ -4,6 +4,7 @@
 pub mod claude_code;
 pub mod experimental;
 pub(crate) mod interactive_settings;
+pub mod launch;
 pub(crate) mod load;
 pub(crate) mod manager;
 pub(crate) mod merge;

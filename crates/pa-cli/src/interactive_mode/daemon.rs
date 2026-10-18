@@ -175,7 +175,10 @@ fn spawn_supervisor_detached(socket_path: &Path, spawn_cwd: &Path, exe: &Path) -
         .current_dir(spawn_cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        // The launch layer (`--settings`, permission flags, ...) is this
+        // client's: sessions get it with their create, the daemon never.
+        .env_remove(pa_core::settings::launch::LAUNCH_SETTINGS_ENV);
     // The binary entry strips any inherited worker handshake env, so the
     // spawned supervisor never starts in worker mode. A daemon must also not
     // share the launching TUI's terminal session: a session-wide terminal

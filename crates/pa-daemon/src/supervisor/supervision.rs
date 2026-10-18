@@ -91,6 +91,9 @@ fn apply_worker_env(
     client_launch_env: Option<&std::collections::BTreeMap<String, String>>,
     internal_launch_env: std::collections::BTreeMap<String, String>,
 ) {
+    // The command-line launch layer is per client: a worker gets only the
+    // copy its creating client forwarded, never one the daemon booted with.
+    command.env_remove(pa_core::settings::launch::LAUNCH_SETTINGS_ENV);
     if let Some(env) = client_launch_env {
         command.envs(env);
     }
@@ -1140,8 +1143,38 @@ mod tests {
             .collect();
         assert_eq!(
             removals,
-            vec![std::ffi::OsStr::new("RLM_DEPTH")],
-            "RLM_DEPTH is the only removal: the daemon's own env stays             inherited (the e2e's base-sentinel check proves the layer)"
+            vec![
+                std::ffi::OsStr::new(pa_core::settings::launch::LAUNCH_SETTINGS_ENV),
+                std::ffi::OsStr::new("RLM_DEPTH")
+            ],
+            "RLM_DEPTH and the launch layer are the only removals: the daemon's own env stays             inherited (the e2e's base-sentinel check proves the layer)"
+        );
+    }
+
+    /// The command-line launch layer reaches a worker only from its
+    /// creating client: the daemon's boot copy is removed, a forwarded one
+    /// rides.
+    #[test]
+    fn the_launch_layer_rides_only_from_the_client() {
+        let key = pa_core::settings::launch::LAUNCH_SETTINGS_ENV;
+        let mut command = Command::new("x");
+        apply_worker_env(&mut command, None, std::collections::BTreeMap::new());
+        let envs: std::collections::BTreeMap<&std::ffi::OsStr, Option<&std::ffi::OsStr>> =
+            command.as_std().get_envs().collect();
+        assert_eq!(envs.get(std::ffi::OsStr::new(key)), Some(&None));
+        let client =
+            std::collections::BTreeMap::from([(key.to_string(), r#"{"bare":true}"#.to_string())]);
+        let mut command = Command::new("x");
+        apply_worker_env(
+            &mut command,
+            Some(&client),
+            std::collections::BTreeMap::new(),
+        );
+        let envs: std::collections::BTreeMap<&std::ffi::OsStr, Option<&std::ffi::OsStr>> =
+            command.as_std().get_envs().collect();
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new(key)),
+            Some(&Some(std::ffi::OsStr::new(r#"{"bare":true}"#)))
         );
     }
 

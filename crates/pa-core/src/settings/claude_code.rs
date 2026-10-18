@@ -79,6 +79,18 @@ impl ClaudeScope {
             ClaudeScope::Managed | ClaudeScope::User => false,
         }
     }
+
+    /// The `--setting-sources` name that selects the scope; `None` for the
+    /// managed file, which is always read.
+    #[must_use]
+    pub fn launch_source(self) -> Option<super::launch::SettingSource> {
+        match self {
+            ClaudeScope::Managed => None,
+            ClaudeScope::Local => Some(super::launch::SettingSource::Local),
+            ClaudeScope::Project => Some(super::launch::SettingSource::Project),
+            ClaudeScope::User => Some(super::launch::SettingSource::User),
+        }
+    }
 }
 
 /// Where a session's Claude Code settings files are.
@@ -288,6 +300,12 @@ impl ClaudeCodeSettings {
             let Some(path) = paths.file(scope) else {
                 continue;
             };
+            if !scope
+                .launch_source()
+                .is_none_or(super::launch::source_enabled)
+            {
+                continue;
+            }
             if scope.project_scoped()
                 && user_file.is_some()
                 && std::fs::canonicalize(&path).ok() == user_file
