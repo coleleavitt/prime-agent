@@ -12,6 +12,13 @@
 //! | Claude Code project | `<cwd>/.claude/settings.json` | project, opt-in |
 //! | Claude Code user | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` | user, opt-in |
 //!
+//! The command line adds Claude Code's `cliArg` source
+//! ([`pa_core::settings::launch::CliPermissions`]): `--allowedTools` and
+//! `--disallowedTools` rules, `--tools` narrowing (a deny rule for each
+//! governed tool it leaves out), `--permission-mode` (over every
+//! `defaultMode`) and the bypass flags. `--setting-sources` drops the files
+//! of the scopes it leaves out.
+//!
 //! The Claude Code files are read only when the user settings opt in
 //! (`"claudeCodeSettings": true`, top level or inside `permissions`): their
 //! rules would otherwise start refusing or asking in sessions that never
@@ -30,6 +37,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use pa_core::settings::launch::{CliPermissions, LaunchSettings, SettingSource};
 use serde_json::{Map, Value, json};
 
 use crate::mode::PermissionMode;
@@ -50,6 +58,10 @@ pub enum SourceKind {
     ClaudeLocal,
     ClaudeProject,
     ClaudeUser,
+    /// `--allowedTools` / `--disallowedTools` on the command line.
+    CliArg,
+    /// `--tools` on the command line: what it leaves out is denied.
+    ToolsNarrowing,
     /// Answers and commands of this session, not written to a file.
     Session,
 }
@@ -66,6 +78,8 @@ impl SourceKind {
             SourceKind::ClaudeLocal => "Claude Code local settings",
             SourceKind::ClaudeProject => "Claude Code project settings",
             SourceKind::ClaudeUser => "Claude Code user settings",
+            SourceKind::CliArg => "CLI argument",
+            SourceKind::ToolsNarrowing => "CLI tool narrowing",
             SourceKind::Session => "this session",
         }
     }
@@ -82,6 +96,8 @@ impl SourceKind {
             SourceKind::ClaudeManaged
             | SourceKind::User
             | SourceKind::ClaudeUser
+            | SourceKind::CliArg
+            | SourceKind::ToolsNarrowing
             | SourceKind::Session => false,
         }
     }
@@ -126,6 +142,10 @@ pub struct SourcePaths {
     pub claude_dir: Option<PathBuf>,
     /// Claude Code's managed settings file.
     pub managed: Option<PathBuf>,
+    /// The command line's permission flags (the `cliArg` source).
+    pub cli: CliPermissions,
+    /// `--setting-sources`: the file scopes read (`None`: all of them).
+    pub setting_sources: Option<Vec<SettingSource>>,
 }
 
 impl SourcePaths {
@@ -133,12 +153,15 @@ impl SourcePaths {
     #[must_use]
     pub fn resolve(cwd: &Path, agent_dir: &Path) -> Self {
         let claude = pa_core::settings::claude_code::ClaudePaths::resolve(cwd);
+        let launch = LaunchSettings::current().unwrap_or_default();
         SourcePaths {
             cwd: cwd.to_path_buf(),
             agent_dir: agent_dir.to_path_buf(),
             home: claude.home,
             claude_dir: claude.claude_dir,
             managed: claude.managed,
+            cli: launch.permissions,
+            setting_sources: launch.setting_sources,
         }
     }
 
@@ -157,8 +180,30 @@ impl SourcePaths {
         self.cwd.join(LOCAL_SETTINGS_FILE)
     }
 
+    /// Whether `--setting-sources` reads `kind`'s file.
+    fn reads(&self, kind: SourceKind) -> bool {
+        let source = match kind {
+            SourceKind::Local | SourceKind::ClaudeLocal => SettingSource::Local,
+            SourceKind::Project | SourceKind::ClaudeProject => SettingSource::Project,
+            SourceKind::User | SourceKind::ClaudeUser => SettingSource::User,
+            SourceKind::ClaudeManaged
+            | SourceKind::CliArg
+            | SourceKind::ToolsNarrowing
+            | SourceKind::Session => return true,
+        };
+        self.setting_sources
+            .as_ref()
+            .is_none_or(|sources| sources.contains(&source))
+    }
+
     /// Every source file, highest first, with its kind and settings root.
     fn files(&self, claude_code: bool) -> Vec<(SourceKind, PathBuf, PathBuf)> {
+        let mut files = self.all_files(claude_code);
+        files.retain(|(kind, _, _)| self.reads(*kind));
+        files
+    }
+
+    fn all_files(&self, claude_code: bool) -> Vec<(SourceKind, PathBuf, PathBuf)> {
         let home_root = self.home.clone().unwrap_or_else(|| self.cwd.clone());
         let mut files = Vec::new();
         if claude_code {
@@ -343,6 +388,7 @@ pub fn load(paths: &SourcePaths, project_trusted: bool) -> PermissionSettings {
             apply_fallback(&mut settings, &document);
         }
     }
+    apply_cli(&mut settings, &paths.cli, &paths.cwd);
     if settings.bypass_disabled {
         settings.bypass_available = false;
         if settings.default_mode == PermissionMode::BypassPermissions {
@@ -353,6 +399,92 @@ pub fn load(paths: &SourcePaths, project_trusted: bool) -> PermissionSettings {
         }
     }
     settings
+}
+
+/// The governed tools `--tools` can leave out, by the names rules use.
+const NARROWABLE_TOOLS: [&str; 5] = ["Bash", "Edit", "Read", "WebFetch", "WebSearch"];
+
+/// The governed tool a built-in Claude Code tool name is checked as.
+fn governed_tool(name: &str) -> Option<&'static str> {
+    match name {
+        "Bash" => Some("Bash"),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => Some("Edit"),
+        "Read" | "Glob" | "Grep" | "LS" => Some("Read"),
+        "WebFetch" => Some("WebFetch"),
+        "WebSearch" => Some("WebSearch"),
+        _ => None,
+    }
+}
+
+/// The command line's `cliArg` source: its rules (valid ones; the others
+/// are problems), `--tools` narrowing, and the mode flags, which win over
+/// every file's `defaultMode`.
+fn apply_cli(settings: &mut PermissionSettings, cli: &CliPermissions, cwd: &Path) {
+    for (behavior, texts) in [
+        (RuleBehavior::Allow, &cli.allowed_tools),
+        (RuleBehavior::Deny, &cli.disallowed_tools),
+    ] {
+        for text in texts {
+            let label = SourceKind::CliArg.label();
+            match validate(text, behavior) {
+                Validation::Invalid { error, suggestion } => {
+                    settings.problems.push(format!(
+                        "{label}: {} rule {text:?} skipped: {error}{}",
+                        behavior.key(),
+                        suggestion.map_or_else(String::new, |hint| format!(" ({hint})"))
+                    ));
+                    continue;
+                }
+                Validation::Warning(warning) => {
+                    settings.problems.push(format!("{label}: {warning}"));
+                }
+                Validation::Valid => {}
+            }
+            settings.rules.push(SourcedRule {
+                behavior,
+                value: RuleValue::parse(text),
+                source: SourceKind::CliArg,
+                root: cwd.to_path_buf(),
+            });
+        }
+    }
+    if let Some(tools) = &cli.tools {
+        let listed: Vec<&str> = if tools.len() == 1 && tools[0] == "default" {
+            NARROWABLE_TOOLS.to_vec()
+        } else {
+            tools
+                .iter()
+                .filter_map(|tool| governed_tool(RuleValue::parse(tool).tool.as_str()))
+                .collect()
+        };
+        for tool in NARROWABLE_TOOLS {
+            if !listed.contains(&tool) {
+                settings.rules.push(SourcedRule {
+                    behavior: RuleBehavior::Deny,
+                    value: RuleValue::tool(tool),
+                    source: SourceKind::ToolsNarrowing,
+                    root: cwd.to_path_buf(),
+                });
+            }
+        }
+    }
+    if cli.allow_bypass {
+        settings.bypass_available = true;
+    }
+    if let Some(text) = &cli.mode {
+        match PermissionMode::parse(text) {
+            Some(mode) => {
+                if mode == PermissionMode::BypassPermissions {
+                    settings.bypass_available = true;
+                }
+                settings.default_mode = mode;
+            }
+            None => settings.problems.push(format!(
+                "{}: unknown permission mode {text:?}",
+                SourceKind::CliArg.label()
+            )),
+        }
+    }
 }
 
 /// One source's `permissions` object while layering.

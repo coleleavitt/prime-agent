@@ -46,6 +46,8 @@ impl Tree {
             home: Some(home.clone()),
             claude_dir: Some(home.join(".claude")),
             managed: Some(root.join("managed-settings.json")),
+            cli: pa_core::settings::launch::CliPermissions::default(),
+            setting_sources: None,
         };
         Tree { _tmp: tmp, paths }
     }
@@ -772,4 +774,102 @@ async fn a_governed_session_reports_its_counts_when_it_ends() {
         *recorded,
         vec![(PERMISSIONS_SESSION_EVENT.to_string(), expected)]
     );
+}
+
+/// The command line's `cliArg` source: `--allowedTools` allows,
+/// `--disallowedTools` denies (over a file's allow), `--tools` denies what
+/// it leaves out, and `--permission-mode` wins over `defaultMode`.
+#[test]
+fn command_line_flags_are_the_cli_arg_source() {
+    let mut tree = Tree::new();
+    tree.user(&json!({
+        "fallback": "ask",
+        "allow": ["Bash(git push:*)"],
+        "defaultMode": "acceptEdits",
+    }));
+    tree.paths.cli = pa_core::settings::launch::CliPermissions {
+        allowed_tools: vec!["Bash(npm test)".into(), "Bash(".into()],
+        disallowed_tools: vec!["Bash(git push:*)".into()],
+        tools: Some(vec!["Bash".into(), "Grep".into()]),
+        mode: Some("dontAsk".into()),
+        allow_bypass: false,
+    };
+    let mut state = tree.state(true);
+    assert_eq!(state.mode(), PermissionMode::DontAsk);
+    assert_eq!(kind(&bash(&mut state, "npm test")), "allow");
+    let push = bash(&mut state, "git push origin main");
+    assert_eq!(kind(&push), "deny");
+    let Decision::Deny { reason } = push else {
+        unreachable!()
+    };
+    assert!(reason.contains("Bash(git push:*)"), "{reason}");
+    // `--tools Bash,Grep` keeps Bash and Read (Grep), denies the rest.
+    let fetch = state.decide(&Action::WebFetch {
+        url: "https://example.com".into(),
+    });
+    assert_eq!(kind(&fetch), "deny");
+    let edit = state.decide(&Action::Edit {
+        path: tree.cwd().join("a.rs"),
+    });
+    assert_eq!(kind(&edit), "deny");
+    let sources: Vec<SourceKind> = state
+        .settings
+        .rules
+        .iter()
+        .map(|rule| rule.source)
+        .filter(|source| matches!(source, SourceKind::CliArg | SourceKind::ToolsNarrowing))
+        .collect();
+    assert_eq!(
+        sources,
+        vec![
+            SourceKind::CliArg,
+            SourceKind::CliArg,
+            SourceKind::ToolsNarrowing,
+            SourceKind::ToolsNarrowing,
+            SourceKind::ToolsNarrowing,
+        ]
+    );
+    assert!(
+        state
+            .settings
+            .problems
+            .iter()
+            .any(|problem| problem.starts_with("CLI argument: allow rule \"Bash(\" skipped")),
+        "{:?}",
+        state.settings.problems
+    );
+}
+
+/// `--dangerously-skip-permissions` starts in bypass (and puts it in the
+/// cycle), unless a settings source disabled bypass; `--tools default`
+/// narrows nothing.
+#[test]
+fn the_bypass_flags_respect_disable_bypass() {
+    let mut tree = Tree::new();
+    tree.paths.cli = pa_core::settings::launch::CliPermissions {
+        tools: Some(vec!["default".into()]),
+        mode: Some("bypassPermissions".into()),
+        allow_bypass: true,
+        ..Default::default()
+    };
+    let state = tree.state(true);
+    assert_eq!(state.mode(), PermissionMode::BypassPermissions);
+    assert!(state.settings.bypass_available);
+    assert!(state.settings.rules.is_empty());
+    tree.user(&json!({ "disableBypassPermissionsMode": "disable" }));
+    let state = tree.state(true);
+    assert_eq!(state.mode(), PermissionMode::Default);
+    assert!(!state.settings.bypass_available);
+}
+
+/// `--setting-sources` drops the files of the scopes it leaves out.
+#[test]
+fn setting_sources_drop_unselected_files() {
+    let mut tree = Tree::new();
+    tree.user(&json!({ "deny": ["Bash(rm:*)"] }));
+    tree.project(&json!({ "deny": ["Bash(curl:*)"] }));
+    tree.paths.setting_sources = Some(vec![pa_core::settings::launch::SettingSource::Project]);
+    let mut state = tree.state(true);
+    assert_eq!(kind(&bash(&mut state, "rm x")), "allow");
+    assert_eq!(kind(&bash(&mut state, "curl x")), "deny");
 }
