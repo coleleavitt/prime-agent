@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::lineage::{depth_consistent_parent, is_subagent_descendant};
+use super::lineage::{ParentBindings, is_subagent_descendant};
 use super::{
     AgentsViewRow,
     AgentsViewScope,
@@ -76,14 +76,12 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
                 .any(|key| keys.contains(key))
         })
     };
+    let bindings = ParentBindings::new(records);
     let mut base: Vec<BaseRow> = Vec::with_capacity(records.len());
     for (position, record) in records.iter().enumerate() {
         let summary = summary_for_record(record);
         let kind = if !is_direct_scope_child(&summary)
-            && (is_subagent_summary(&summary)
-                || records
-                    .iter()
-                    .any(|parent| depth_consistent_parent(&summary, parent)))
+            && (is_subagent_summary(&summary) || bindings.has_parent_of(&summary))
         {
             RowKind::Subagent
         } else {

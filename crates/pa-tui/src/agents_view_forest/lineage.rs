@@ -90,19 +90,69 @@ fn parent_record_file(parent: &UnifiedRecord) -> Option<&str> {
 /// Whether `parent` sits exactly one level above `child`'s live summary: a fork's source binding
 /// sits at the SAME depth and is a sibling, never a parent.
 pub(super) fn depth_consistent_parent(daemon: &Value, parent: &UnifiedRecord) -> bool {
-    let parent_depth = parent
+    depth_consistent_binding(daemon, parent_record_file(parent), record_depth(parent))
+}
+
+/// A record's RLM depth, live summary first, saved catalog row second.
+fn record_depth(record: &UnifiedRecord) -> Option<u64> {
+    record
         .daemon
         .as_ref()
         .and_then(|daemon| daemon.get("rlmDepth"))
         .and_then(Value::as_u64)
         .or_else(|| {
-            parent
+            record
                 .saved
                 .as_ref()
                 .and_then(|saved| saved.get("rlmDepth"))
                 .and_then(Value::as_u64)
-        });
-    depth_consistent_binding(daemon, parent_record_file(parent), parent_depth)
+        })
+}
+
+/// Every record's session file (normalized) with its depth: answers "does any record sit exactly
+/// one level above this summary's parent binding" ([`depth_consistent_parent`] over the whole
+/// set) in one lookup instead of a scan, which made the row build quadratic in the catalog size
+/// (3 s per rebuild over 6,000 saved sessions).
+pub(super) struct ParentBindings(HashSet<(String, u64)>);
+
+impl ParentBindings {
+    pub(super) fn new(records: &[UnifiedRecord]) -> Self {
+        Self(
+            records
+                .iter()
+                .filter_map(|record| {
+                    let file = parent_record_file(record)?;
+                    let depth = record_depth(record)?;
+                    Some((
+                        crate::agents_view_state::normalize_session_file_path(file),
+                        depth,
+                    ))
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether some record is a depth-consistent parent of `summary`.
+    pub(super) fn has_parent_of(&self, summary: &Value) -> bool {
+        let Some(depth) = summary
+            .get("rlmDepth")
+            .and_then(Value::as_u64)
+            .filter(|depth| *depth > 0)
+        else {
+            return false;
+        };
+        let Some(parent_path) = summary
+            .get("parentSessionPath")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+        else {
+            return false;
+        };
+        self.0.contains(&(
+            crate::agents_view_state::normalize_session_file_path(parent_path),
+            depth - 1,
+        ))
+    }
 }
 
 /// Whether `child` rolls up under `parent`: agent lineage only — a branched/forked session links
