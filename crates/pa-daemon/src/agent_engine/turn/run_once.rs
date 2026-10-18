@@ -431,11 +431,29 @@ impl AgentSessionEngine {
                 agent.continue_run().await
             }
         });
+        // The admission consult covers the admission's head only; the
+        // session's start-of-run work (the context and reminder rows, the
+        // prompt review) runs before the agent registers the run's abort
+        // signal, and an abort landing there found no run to cancel and was
+        // lost. Until the run registers, the cancel flag is polled and
+        // forwarded the moment it can be.
+        let cancel_requested = aborted;
+        let mut awaiting_registration = true;
+        let mut registration_poll = tokio::time::interval(std::time::Duration::from_millis(20));
+        registration_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut aborted = false;
         let mut admission_error: Option<anyhow::Error> = None;
         let mut settled = false;
         loop {
             tokio::select! {
+                _ = registration_poll.tick(), if awaiting_registration => {
+                    if agent.signal().is_some() {
+                        awaiting_registration = false;
+                        if cancel_requested() {
+                            agent.abort();
+                        }
+                    }
+                }
                 event = rx.recv() => {
                     match event {
                         Some(event) => {

@@ -58,6 +58,8 @@ use crate::rlm_children::{DEFAULT_RLM_MAX_DEPTH, ParentIdentity, SupervisorChild
 pub(crate) mod tests;
 
 #[cfg(test)]
+pub(crate) use model::wait_for_script_faux_calls;
+#[cfg(test)]
 pub(crate) use tests::FAUX_TEST_LOCK;
 
 mod goalcore;

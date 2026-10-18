@@ -656,7 +656,10 @@ async fn abort_and_send_queued_acks_before_the_follow_up_delivery() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    // The held response is dequeued (the provider request in flight), so
+    // the abort lands on it and the follow-up gets its own response; a fixed
+    // sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
     let follow = worker
         .dispatch("follow_up", &json!({ "message": "ack follow-up" }))
         .await;

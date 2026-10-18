@@ -746,6 +746,12 @@ async fn start_registered_held_turn(worker: &Worker, active_session_id: &str, pr
             .and_then(|agent| agent.signal())
             .is_some();
         if registered {
+            // Registered is not enough: the abort must land on the provider
+            // request, after the held response was dequeued (the turn's
+            // start-of-run work, such as the session context rows, runs
+            // between the two, longer under load). An abort before it
+            // would leave the 60s held response for the next turn.
+            crate::agent_engine::wait_for_script_faux_calls(1).await;
             return;
         }
         assert!(

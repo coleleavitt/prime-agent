@@ -516,5 +516,42 @@ fn faux_model_from_script(script: &str) -> anyhow::Result<Model> {
     #[cfg(test)]
     assert_faux_test_lock_held();
     let registration = pa_ai::faux::script::register_faux_provider_from_script(&parsed);
-    Ok(registration.get_model())
+    let model = registration.get_model();
+    #[cfg(test)]
+    {
+        *LAST_SCRIPT_FAUX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(registration);
+    }
+    Ok(model)
+}
+
+/// The newest script-registered faux provider (tests read its call count:
+/// a provider request in flight is the readiness an abort probe needs).
+#[cfg(test)]
+static LAST_SCRIPT_FAUX: std::sync::Mutex<Option<pa_ai::faux::FauxProviderRegistration>> =
+    std::sync::Mutex::new(None);
+
+/// Wait until the newest script-registered faux provider has served at
+/// least `calls` requests (the turn's provider request is in flight, its
+/// scripted response dequeued), or panic after ten seconds. Callers hold
+/// `FAUX_TEST_LOCK`, so the registration is theirs.
+#[cfg(test)]
+pub(crate) async fn wait_for_script_faux_calls(calls: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let served = LAST_SCRIPT_FAUX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map_or(0, pa_ai::faux::FauxProviderRegistration::call_count);
+        if served >= calls {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the scripted provider served {served} of {calls} requests"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
