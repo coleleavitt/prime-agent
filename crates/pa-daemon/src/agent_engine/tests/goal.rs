@@ -1001,6 +1001,11 @@ fn active_goal_aborted_turn_row_broadcasts_and_goal_accounting_skips_it() {
         );
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
+    // Streaming is set when the run starts, before the provider request;
+    // the abort must land on the request (the held response dequeued).
+    engine
+        .runtime
+        .block_on(crate::agent_engine::wait_for_script_faux_calls(2));
     engine.abort_in_flight_turn();
     turn.join().expect("the aborted turn settles");
     let events = turn_events.lock().unwrap();

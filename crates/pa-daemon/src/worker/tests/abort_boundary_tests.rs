@@ -143,7 +143,9 @@ async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The provider dequeued the held response (the request is in flight):
+    // a fixed sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
     // Parked steering and one follow-up behind the running turn.
     for message in ["steering one", "steering two"] {
         let steered = worker
@@ -326,7 +328,9 @@ async fn abort_and_send_queued_with_only_follow_ups_starts_the_oldest() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The provider dequeued the held response (the request is in flight):
+    // a fixed sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
     // Two follow-ups park behind the running turn; the steering
     // lane stays empty — nothing armable.
     for message in ["follow-up one", "follow-up two"] {
