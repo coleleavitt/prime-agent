@@ -7,6 +7,7 @@ pub(crate) mod interactive_settings;
 pub(crate) mod load;
 pub(crate) mod manager;
 pub(crate) mod merge;
+pub mod side_ux;
 pub(crate) mod storage;
 pub(crate) mod types;
 
