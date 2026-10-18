@@ -320,6 +320,16 @@ replies through `rlm.send_user_message` (`user_message.send`, a displayed
 when it stops without a message. Both publish feature statuses (`coordinator`,
 `brief`) the TUI reads.
 
+Pull-request links (Claude Code's `linkSessionToPR`,
+`session_engine::pr_link_gate`, outermost on every session's host-request
+gate): a `bash.run` whose command creates a pull or merge request (`gh pr
+create`, `glab mr create`, not `--dry-run`) and that finishes with exit 0
+(in its own reply or a later `bash.follow` of the job) appends a `custom`
+entry of type `pr_link` (`session::pr_link`: `{prNumber, prUrl,
+prRepository}`, the last GitHub/GitLab/Bitbucket URL in its output) unless it
+repeats the last link. The saved-session catalog folds it into
+`CatalogSessionRow::pr_link`.
+
 ## Non-goals
 No provider HTTP (pa-ai), no loop policy (pa-agent), no daemon supervision (pa-daemon), no TUI (pa-tui). No update coordination (the pa-cli coordinator owns the FSM; the update-flow seam here is the daemon-free support layer: `update::version` (semver/channel policy), `update::install` (the managed install-root layout), `update::release` (the channel manifest fetch), `update::download` (sha256-verified archive download + staging)). The package manager installs sources and resolves resource paths only. No workspace snapshot upload, transport, or remote materialization (staging and verification live here; the cloud attach surface owns the transport when it ships).
 

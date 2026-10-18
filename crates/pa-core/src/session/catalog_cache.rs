@@ -78,6 +78,8 @@ pub struct CatalogSessionRow {
     pub thinking_level: Option<String>,
     /// The git branch the session last worked on.
     pub git_branch: Option<String>,
+    /// The pull request the session last linked.
+    pub pr_link: Option<super::pr_link::SessionPrLink>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,

@@ -852,6 +852,13 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
     if let Some(branch) = &info.git_branch {
         object.insert("gitBranch".to_string(), json!(branch));
     }
+    // Claude Code's `prNumber`/`prUrl`/`prRepository`: the resume picker's PR tag, search and
+    // `--from-pr` filter.
+    if let Some(link) = &info.pr_link {
+        object.insert("prNumber".to_string(), json!(link.number));
+        object.insert("prUrl".to_string(), json!(link.url));
+        object.insert("prRepository".to_string(), json!(link.repository));
+    }
     if let Some((provider, model_id)) = &info.model {
         object.insert(
             "model".to_string(),

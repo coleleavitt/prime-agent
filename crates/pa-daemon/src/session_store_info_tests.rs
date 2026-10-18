@@ -11,6 +11,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut model = None;
     let mut thinking_level = None;
     let mut git_branch: Option<String> = None;
+    let mut pr_link: Option<pa_core::session::pr_link::SessionPrLink> = None;
     let mut message_count = 0usize;
     let mut first_message = String::new();
     let mut all_messages_text = String::new();
@@ -60,6 +61,18 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                     .and_then(Value::as_str)
                 {
                     state = Some(normalize_state_status(status));
+                }
+            }
+            "custom"
+                if entry.fields.get("customType").and_then(Value::as_str)
+                    == Some(pa_core::session::pr_link::PR_LINK_CUSTOM_TYPE) =>
+            {
+                if let Some(link) = entry
+                    .fields
+                    .get("data")
+                    .and_then(|data| serde_json::from_value(data.clone()).ok())
+                {
+                    pr_link = Some(link);
                 }
             }
             "model_change" => {
@@ -181,6 +194,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         model,
         thinking_level,
         git_branch,
+        pr_link,
         parent_session_path: header.parent_session,
         rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
         created: header.timestamp,
@@ -448,6 +462,38 @@ fn the_branch_is_the_newest_git_state_else_the_header() {
         read_session_info(&path).unwrap().git_branch.as_deref(),
         Some("feature/x"),
         "a detached-head state (no branch) keeps the last named branch"
+    );
+}
+
+#[test]
+fn the_pull_request_link_is_the_newest_pr_link_entry() {
+    let dir = test_dir();
+    let path = dir.join("pr.jsonl");
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"p","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            json!({"type":"message","id":"m1","timestamp":"2026-09-23T00:00:00.000Z","message":{"role":"user","content":"hi","timestamp":1}}),
+            json!({"type":"custom","id":"x1","parentId":"m1","timestamp":"2026-09-23T00:00:30.000Z","customType":"other","data":{"prNumber":1}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(read_session_info(&path).unwrap().pr_link, None);
+    append_rows(
+        &path,
+        &[
+            json!({"type":"custom","id":"p1","parentId":"x1","timestamp":"2026-09-23T00:01:00.000Z","customType":"pr_link","data":{"prNumber":7,"prUrl":"https://github.com/acme/app/pull/7","prRepository":"acme/app"}}),
+            json!({"type":"custom","id":"p2","parentId":"p1","timestamp":"2026-09-23T00:02:00.000Z","customType":"pr_link","data":{"prNumber":9,"prUrl":"https://github.com/acme/app/pull/9","prRepository":"acme/app"}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(
+        read_session_info(&path).unwrap().pr_link,
+        Some(pa_core::session::pr_link::SessionPrLink {
+            number: 9,
+            url: "https://github.com/acme/app/pull/9".to_string(),
+            repository: "acme/app".to_string(),
+        })
     );
 }
 

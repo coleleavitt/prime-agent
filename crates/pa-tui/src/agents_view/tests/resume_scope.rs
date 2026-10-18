@@ -217,3 +217,30 @@ fn pr_filter_values_parse_like_claude_codes() {
     assert_eq!(PrFilter::parse(Some("login bug")), None);
     assert_eq!(PrFilter::parse(Some("pull/4")), None);
 }
+
+#[test]
+fn a_linked_pull_request_renders_its_column_and_is_searchable() {
+    let mut mode = picker("/work/here", false, None);
+    let mut linked = row_in("linked", "/work/here");
+    linked["name"] = serde_json::json!("ship the login fix");
+    linked["prNumber"] = serde_json::json!(42);
+    linked["prRepository"] = serde_json::json!("acme/app");
+    mode.saved = vec![row_in("plain", "/work/here")];
+    mode.rebuild_rows();
+    let (frame, _) = mode.render_frame(160, 30);
+    let text: Vec<String> = frame.iter().map(flat).collect();
+    assert!(!text.iter().any(|line| line.contains(" PR ")), "{text:#?}");
+    mode.saved = vec![linked, row_in("plain", "/work/here")];
+    mode.rebuild_rows();
+    let (frame, _) = mode.render_frame(160, 30);
+    let text: Vec<String> = frame.iter().map(flat).collect();
+    assert!(text.iter().any(|line| line.contains("PR")), "{text:#?}");
+    assert!(
+        text.iter()
+            .any(|line| line.contains("ship the login fix") && line.contains("#42")),
+        "{text:#?}"
+    );
+    // Claude Code's search matches `pr #<n> <repo>`.
+    type_query(&mut mode, "acme/app");
+    assert_eq!(listed(&mode), vec!["linked"]);
+}

@@ -582,11 +582,16 @@ impl AgentsViewMode {
                 let zone = layout.name_width
                     + 2
                     + layout.model_width
-                    + [layout.host_width, layout.cwd_width, layout.branch_width]
-                        .into_iter()
-                        .filter(|width| *width > 0)
-                        .map(|width| width + 2)
-                        .sum::<usize>();
+                    + [
+                        layout.host_width,
+                        layout.cwd_width,
+                        layout.branch_width,
+                        layout.pr_width,
+                    ]
+                    .into_iter()
+                    .filter(|width| *width > 0)
+                    .map(|width| width + 2)
+                    .sum::<usize>();
                 let title = crate::agents_view_state::truncate_text(&text, zone);
                 let pad = zone.saturating_sub(str_width(&title));
                 let line: Line = vec![
@@ -739,6 +744,17 @@ impl AgentsViewMode {
                 .get(&row.identity)
                 .map_or("", String::as_str);
             line.push(theme.fg(ThemeColor::Muted, cell(branch, layout.branch_width)));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
+        if layout.pr_width > 0 {
+            let pr = layout
+                .pr_cells
+                .get(&row.identity)
+                .map_or("", String::as_str);
+            line.push(theme.fg(ThemeColor::Muted, cell(pr, layout.pr_width)));
             line.push(crate::Span::styled(
                 "  ".to_string(),
                 ratatui::style::Style::default(),

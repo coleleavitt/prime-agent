@@ -319,6 +319,13 @@ session file (or reuses the earlier import of an unchanged session) and
 answers `{ sessionPath, sessionId, cwd, reused }`. Both are control-plane
 commands that run on the blocking pool.
 
+Pull-request links (Claude Code's `pr-link`): the session scan folds the
+newest `custom` entry of type `pr_link` (`pa_core::session::pr_link`, written
+by the engine when a `gh pr create`/`glab mr create` of the session's exits 0
+with a pull or merge request URL) into `SessionInfo::pr_link`; saved-session
+rows carry it as `prNumber`, `prUrl` and `prRepository` (the agents view's PR
+column and search, `--from-pr`). Row version 3, info sidecar version 4.
+
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.
 

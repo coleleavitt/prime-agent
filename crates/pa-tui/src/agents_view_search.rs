@@ -26,6 +26,8 @@ pub struct SessionSearchText<'a> {
     pub host: String,
     /// The git branch the session last worked on.
     pub branch: String,
+    /// The linked pull request (`pr #<n> <repo>`, Claude Code's search target), or empty.
+    pub pr: String,
     /// The session's first user message, whole (the name target clips it to the column).
     pub first_message: String,
     /// The saved transcript corpus, already normalized ([`normalize_search_text`]).
@@ -41,6 +43,7 @@ impl SessionSearchText<'_> {
             self.cwd.as_str(),
             self.host.as_str(),
             self.branch.as_str(),
+            self.pr.as_str(),
             self.first_message.as_str(),
         ]
         .into_iter()
@@ -260,6 +263,7 @@ fn contiguous_token_score(token: &str, targets: &SessionSearchText<'_>) -> Optio
         .or_else(|| {
             normalize(&targets.branch)
                 .find(&needle)
+                .or_else(|| normalize(&targets.pr).find(&needle))
                 .map(|found| TokenMatch {
                     tier: 8.5,
                     quality: found as f64,
