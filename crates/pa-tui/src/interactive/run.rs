@@ -841,6 +841,7 @@ async fn run_interactive_surface(
                 opened_urls: Vec::new(),
                 agents_view_notice: None,
                 agents_view_query: None,
+                agents_view_resume_picker: false,
                 handoff_seeds: 0,
                 transcript_entry_work: view.entry_work.get(),
                 turn_active_at_exit: false,
@@ -2343,6 +2344,7 @@ async fn run_interactive_surface(
             None
         },
         agents_view_query: None,
+        agents_view_resume_picker: session.open_agents_view && session.agents_view_resume_picker,
         handoff_seeds: view.handoff_seeds,
         transcript_entry_work: view.entry_work.get(),
         turn_active_at_exit,

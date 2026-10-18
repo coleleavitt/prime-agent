@@ -119,6 +119,9 @@ pub struct SessionOptions {
     pub continue_recent: bool,
     pub resume_bare: bool,
     pub resume: Option<String>,
+    /// `--from-pr [n|url|term]`: the resume picker on the sessions linked to a pull request
+    /// (`Some("")` without a value).
+    pub from_pr: Option<String>,
     pub fork: Option<String>,
     pub no_session: bool,
     pub session_dir: Option<PathBuf>,

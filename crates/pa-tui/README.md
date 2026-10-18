@@ -28,7 +28,27 @@ Other products' sessions in the agents view (`agents_view/external.rs`): on a
 daemon with the `external_sessions` capability the view fetches
 `list_external_sessions { all: true }` and lists the rows in their own section
 after Inactive, headed by the rows' `sourceLabel` ("Claude Code"), under the
-same project (`Ctrl+F`) and branch (`Ctrl+B`) filters as the saved sessions.
+same project (`Ctrl+A`/`Ctrl+F`, `Ctrl+W`) and branch (`Ctrl+B`) filters as the saved
+sessions.
+
+Resume-picker scoping (Claude Code's `/resume` picker): a view opened as the
+resume picker (`AgentsViewOptions::resume_picker`: `--resume`/`-r` without a
+selector, `/resume` without an argument, `--from-pr`, a selector's search
+fallback) starts its saved sessions on the current project; the plain view
+(`prime-agent agents`, `--continue`, the agents-back key) keeps upstream #826's
+all-projects default and the filters the previous run left on. The current
+project (`agents_view/project_scope.rs`) is the launch directory's repository
+grouped by git worktree, read from the git admin files without spawning git
+(`git_head::read_worktrees`): with several worktrees, the sessions under the
+worktree holding the launch directory (subdirectories included), `Ctrl+W`
+(`app.agents.worktreeFilter`, empty search only) widening to every worktree;
+with one, the launch directory's own sessions plus its removed managed
+worktrees' (`.prime/worktrees/`, `.claude/worktrees/`). `Ctrl+A` (and `Ctrl+F`,
+`app.agents.toggleScope`) shows every project. An empty project says "No
+conversations found in this project. Ctrl+A to show all projects." instead of
+widening. `--from-pr` (`AgentsViewOptions::pr_filter`) keeps only the saved
+sessions whose catalog row carries a `prNumber` (that number, or any). Live
+roster rows are never filtered.
 Opening one sends `import_external_session` and resumes the session file it
 answers (the status line reports the import or its failure); the row never
 resumes the other product's file itself.

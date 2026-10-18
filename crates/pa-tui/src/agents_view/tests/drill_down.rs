@@ -51,6 +51,8 @@ fn pending_ancestors_expand_and_selection_restores_after_reentry() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = vec![
         roster_entry("p", "idle", &parent_summary("p")),

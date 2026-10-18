@@ -60,6 +60,7 @@ mod external;
 mod git_head;
 mod heartbeats;
 mod preview;
+mod project_scope;
 
 #[cfg(test)]
 use delete::no_effect_summary;
@@ -112,6 +113,58 @@ pub struct AgentsViewOptions {
     /// config from (the session's cwd removed, or the view's cwd when the saved
     /// directory no longer exists).
     pub create_config: serde_json::Value,
+    /// The view opens as the resume picker (`--resume`/`-r` without a selector, `/resume` without
+    /// an argument, `--from-pr`, a selector's several-or-no-match search): the saved sessions
+    /// start filtered to the current project like Claude Code's picker, instead of the filter
+    /// the previous view run left on.
+    pub resume_picker: bool,
+    /// `--from-pr [n|url]`: the saved sessions list only those linked to a pull request (any
+    /// when `PrFilter::Any`, else that number).
+    pub pr_filter: Option<PrFilter>,
+}
+
+/// The `--from-pr` filter (Claude Code's `filterByPr`): every session linked to a pull
+/// request, or the sessions linked to one number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrFilter {
+    Any,
+    Number(u64),
+}
+
+impl PrFilter {
+    /// Parse a `--from-pr` value: none is [`PrFilter::Any`], a positive number or a pull/merge
+    /// request URL names one number (Claude Code's `Io`); anything else filters nothing
+    /// (`None`), like Claude Code, which then shows the unfiltered picker.
+    #[must_use]
+    pub fn parse(value: Option<&str>) -> Option<Self> {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Some(Self::Any);
+        };
+        if let Ok(number) = value.parse::<u64>() {
+            return (number > 0).then_some(Self::Number(number));
+        }
+        let mut segments = value.split('/').filter(|segment| !segment.is_empty());
+        let marker = segments
+            .position(|segment| matches!(segment, "pull" | "pull-requests" | "merge_requests"))?;
+        // The URL names a host and a repository before its marker.
+        if marker < 2 {
+            return None;
+        }
+        segments
+            .next()
+            .and_then(|number| number.parse::<u64>().ok())
+            .filter(|number| *number > 0)
+            .map(Self::Number)
+    }
+
+    /// Whether a saved row's `prNumber` passes the filter.
+    fn admits(self, row: &Value) -> bool {
+        let number = row.get("prNumber").and_then(Value::as_u64);
+        match self {
+            Self::Any => number.is_some(),
+            Self::Number(wanted) => number == Some(wanted),
+        }
+    }
 }
 
 /// The open action the run ended with (TS `AgentsViewRunResult`'s
@@ -298,6 +351,8 @@ pub struct AgentsViewLink {
     saved_scope: SavedScope,
     /// The branch filter the previous run left on.
     branch_only: bool,
+    /// The worktree filter the previous run left on.
+    all_worktrees: bool,
 }
 
 impl AgentsViewLink {
@@ -310,6 +365,7 @@ impl AgentsViewLink {
             saved_catalog_loaded: false,
             saved_scope: SavedScope::default(),
             branch_only: false,
+            all_worktrees: false,
         })
     }
 
@@ -454,6 +510,14 @@ struct AgentsViewMode {
     branch_only: bool,
     /// The launch directory's repository and branch, read once when the view opens.
     git_head: Option<git_head::GitHead>,
+    /// `app.agents.worktreeFilter` (Claude Code's resume-picker `Ctrl+W`): the current project
+    /// lists every worktree of the repository instead of the launch directory's worktree only.
+    all_worktrees: bool,
+    /// The launch directory's repository worktrees (the current project's groups), read once
+    /// when the view opens.
+    project: project_scope::ProjectWorktrees,
+    /// `--from-pr`: only sessions linked to a pull request.
+    pr_filter: Option<PrFilter>,
     /// The open session preview (`app.agents.preview`), shown in place of the list.
     preview: Option<preview::SessionPreview>,
     /// Optimistic renames by session id (upstream #2099): the newest name the user asked for,
@@ -470,8 +534,8 @@ struct AgentsViewMode {
 }
 
 /// The saved-catalog project filter (upstream #826): every project's saved sessions (the TS
-/// view's `"all"` scope, the default) or only those whose cwd is the view's cwd (the daemon's
-/// `"current"` scope rule). Live roster rows are never filtered.
+/// view's `"all"` scope, the plain view's default) or only the current project's (Claude Code's
+/// resume-picker default, see [`project_scope`]). Live roster rows are never filtered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum SavedScope {
     #[default]
@@ -577,6 +641,16 @@ impl AgentsViewMode {
         // The first run starts fresh; later runs continue the carried state.
         let incident_notice_state = options.incident_notice_state.take().unwrap_or_default();
         let options_cwd = options.cwd.clone();
+        let saved_scope = if options.resume_picker {
+            SavedScope::CurrentProject
+        } else {
+            SavedScope::default()
+        };
+        let project = project_scope::ProjectWorktrees::new(
+            git_head::read_worktrees(&options_cwd),
+            &std::path::absolute(&options_cwd).unwrap_or_else(|_| options_cwd.clone()),
+        );
+        let pr_filter = options.pr_filter;
         AgentsViewMode {
             options,
             theme,
@@ -624,9 +698,12 @@ impl AgentsViewMode {
             pressed_click: None,
             actions: Vec::new(),
             heartbeats: Vec::new(),
-            saved_scope: SavedScope::default(),
+            saved_scope,
             branch_only: false,
             git_head: git_head::read_git_head(&options_cwd),
+            all_worktrees: false,
+            project,
+            pr_filter,
             preview: None,
             pending_renames: std::collections::HashMap::new(),
             external: Vec::new(),
@@ -657,6 +734,7 @@ async fn open_roster_link(
             saved_catalog_loaded,
             saved_scope: _,
             branch_only: _,
+            all_worktrees: _,
         }) = link
         {
             (client, events, saved_sessions, saved_catalog_loaded)
@@ -802,6 +880,7 @@ async fn run_agents_view_surface(
         .as_ref()
         .map_or_else(SavedScope::default, |link| link.saved_scope);
     let carried_branch_only = link.as_ref().is_some_and(|link| link.branch_only);
+    let carried_all_worktrees = link.as_ref().is_some_and(|link| link.all_worktrees);
     // This pane may arrive already in TUI state (the chat's teardown preserves it), so a
     // roster-link failure here must hand the terminal back before the error escapes.
     let (client, mut events, roster, saved_sessions, saved_catalog_loaded) =
@@ -825,7 +904,12 @@ async fn run_agents_view_surface(
     // below).
     mode.saved = saved_sessions;
     mode.saved_catalog_loaded = saved_catalog_loaded;
-    mode.saved_scope = carried_scope;
+    // The resume picker opens on the current project like Claude Code's (`showAllProjects`
+    // starts false on every open); the plain view keeps the filters the previous run left on.
+    if !options.resume_picker {
+        mode.saved_scope = carried_scope;
+        mode.all_worktrees = carried_all_worktrees;
+    }
     mode.branch_only = carried_branch_only && mode.git_head.is_some();
     mode.rebuild_rows();
     // The notice from the log's bounded tail paints on the FIRST frame, before the interval's
@@ -1334,6 +1418,7 @@ async fn run_agents_view_surface(
             saved_catalog_loaded: mode.saved_catalog_loaded,
             saved_scope: mode.saved_scope,
             branch_only: mode.branch_only,
+            all_worktrees: mode.all_worktrees,
         })
     } else {
         client.close();

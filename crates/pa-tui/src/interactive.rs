@@ -547,6 +547,9 @@ pub struct InteractiveOutcome {
     /// The search the agents view opens with: a `--resume`/`/resume` selector that matched no
     /// running or saved session.
     pub agents_view_query: Option<String>,
+    /// The agents view opens as the resume picker (`/resume` without an argument): its saved
+    /// sessions start on the current project (`AgentsViewOptions::resume_picker`).
+    pub agents_view_resume_picker: bool,
     /// How many first-draw windows this run served from an adopted cross-view layout handoff
     /// (`view::handoff`): the re-entry's frames are byte-identical either way, so a zero here
     /// is the re-render and a nonzero is the reuse.

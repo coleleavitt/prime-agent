@@ -22,6 +22,7 @@ mod progress_note;
 mod render_pulse;
 mod reply;
 mod resume_parity;
+mod resume_scope;
 mod running_lines;
 mod saved_catalog;
 mod search_selection;
@@ -48,6 +49,8 @@ fn mode_with_row(title: &str, model: &str) -> (AgentsViewMode, usize) {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     let row = |title: &str| AgentsViewRow {
         section: Section::Idle,
@@ -157,6 +160,8 @@ fn mode_with_parent_and_child() -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = vec![
         roster_entry("p", "idle", &parent_summary("p")),
@@ -186,6 +191,8 @@ fn mode_with_anchor(anchor: Option<&str>, roster: Vec<serde_json::Value>) -> Age
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = roster;
     mode.rebuild_rows();
@@ -217,6 +224,8 @@ fn scoped_mode(anchor: Option<&str>, roster: Vec<serde_json::Value>) -> AgentsVi
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = roster;
     mode.rebuild_rows();
@@ -248,6 +257,8 @@ fn mode_with_user_bindings(bindings: &[(&str, &str)]) -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = vec![
         roster_entry("p", "idle", &parent_summary("p")),
@@ -275,6 +286,8 @@ fn fresh_mode(roster: Vec<serde_json::Value>) -> AgentsViewMode {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     });
     mode.roster = roster;
     mode.rebuild_rows();

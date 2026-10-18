@@ -12,6 +12,7 @@ use super::{
     Result,
     RowKind,
     RowLayout,
+    SavedScope,
     Section,
     Theme,
     ThemeColor,
@@ -308,12 +309,22 @@ impl AgentsViewMode {
             return Vec::new();
         }
         if self.rows.is_empty() {
-            let text = if self.query.trim().is_empty() {
-                "No sessions yet."
+            let text = if !self.query.trim().is_empty() {
+                "No sessions match your search.".to_string()
+            } else if self.saved_scope == SavedScope::CurrentProject {
+                // Claude Code's resume picker says so and offers the all-projects key instead of
+                // widening on its own.
+                match self.keybindings.first_key("app.agents.toggleScope") {
+                    Some(key) => format!(
+                        "No conversations found in this project. {} to show all projects.",
+                        crate::keybindings::format_key_text(&key)
+                    ),
+                    None => "No conversations found in this project.".to_string(),
+                }
             } else {
-                "No sessions match your search."
+                "No sessions yet.".to_string()
             };
-            return vec![vec![self.theme.fg(ThemeColor::Dim, text.to_string())]];
+            return vec![vec![self.theme.fg(ThemeColor::Dim, text)]];
         }
         let layout = build_layout(&self.rows, width);
         let mut note_details = self
@@ -975,6 +986,13 @@ impl AgentsViewMode {
         if self.query.is_empty() {
             if let Some(toggle) = first("app.agents.toggleScope") {
                 segments.push(format!("{toggle} saved:{}", self.saved_scope.hint_word()));
+            }
+            // The worktree slot (Claude Code's `Ctrl+W`) only exists with several worktrees.
+            if self.project.several() {
+                if let Some(toggle) = first("app.agents.worktreeFilter") {
+                    let word = if self.all_worktrees { "all" } else { "current" };
+                    segments.push(format!("{toggle} worktree:{word}"));
+                }
             }
         }
         // The branch filter's slot names the branch it narrows to; the preview's slot shows

@@ -50,6 +50,8 @@ pub(super) fn child_run(route: &str, socket: PathBuf) {
                     show_hardware_cursor: false,
                     incident_notice_state: None,
                     create_config: serde_json::json!({}),
+                    resume_picker: false,
+                    pr_filter: None,
                 };
                 let view_run = run_agents_view(view_options, AgentsViewUiMode::Terminal, None)
                     .await
@@ -86,6 +88,8 @@ pub(super) fn child_run(route: &str, socket: PathBuf) {
                     show_hardware_cursor: false,
                     incident_notice_state: None,
                     create_config: serde_json::json!({}),
+                    resume_picker: false,
+                    pr_filter: None,
                 };
                 let view_run = run_agents_view(view_options, AgentsViewUiMode::Terminal, None)
                     .await

@@ -54,10 +54,15 @@ impl AgentsViewMode {
             SavedScope::AllProjects => true,
             SavedScope::CurrentProject => {
                 row.get("cwd").and_then(Value::as_str).is_some_and(|cwd| {
-                    pa_types::platform::same_directory(std::path::Path::new(cwd), &self.options.cwd)
+                    self.project.holds(
+                        std::path::Path::new(cwd),
+                        &self.options.cwd,
+                        self.all_worktrees,
+                    )
                 })
             }
         };
+        let linked = |row: &&Value| self.pr_filter.is_none_or(|filter| filter.admits(row));
         let on_branch = |row: &&Value| match self.branch_filter() {
             None => true,
             Some(head) => {
@@ -68,13 +73,17 @@ impl AgentsViewMode {
                         .is_some_and(|cwd| std::path::Path::new(cwd).starts_with(&head.root))
             }
         };
-        if self.saved_scope == SavedScope::AllProjects && self.branch_filter().is_none() {
+        if self.saved_scope == SavedScope::AllProjects
+            && self.branch_filter().is_none()
+            && self.pr_filter.is_none()
+        {
             return reconcile_unified_sessions(roster, saved);
         }
         let kept: Vec<Value> = saved
             .iter()
             .filter(in_scope)
             .filter(on_branch)
+            .filter(linked)
             .cloned()
             .collect();
         reconcile_unified_sessions(roster, &kept)
@@ -103,6 +112,34 @@ impl AgentsViewMode {
         }
         self.actions.push("branch_filter_toggled");
         self.rebuild_rows();
+    }
+
+    /// `app.agents.toggleScope` (Claude Code's resume-picker `Ctrl+A`): flip the saved catalog
+    /// between every project and the current project.
+    pub(super) fn toggle_saved_scope(&mut self) {
+        self.saved_scope = self.saved_scope.toggled();
+        self.set_status(self.saved_scope.status());
+        self.actions.push("saved_scope_toggled");
+        self.rebuild_rows();
+    }
+
+    /// `app.agents.worktreeFilter` (Claude Code's resume-picker `Ctrl+W`): flip the current
+    /// project between the launch directory's worktree and every worktree of the repository.
+    /// Only a repository with several worktrees has the filter; `false` leaves the key to the
+    /// editor.
+    pub(super) fn toggle_worktree_filter(&mut self) -> bool {
+        if !self.project.several() {
+            return false;
+        }
+        self.all_worktrees = !self.all_worktrees;
+        self.set_status(if self.all_worktrees {
+            "Saved sessions: every worktree"
+        } else {
+            "Saved sessions: current worktree only"
+        });
+        self.actions.push("worktree_filter_toggled");
+        self.rebuild_rows();
+        true
     }
 
     /// Rebuild rows from the current roster, catalog, and query. A scoped run lists the scope
@@ -554,13 +591,19 @@ impl AgentsViewMode {
             self.toggle_branch_filter();
             return;
         }
-        // `app.agents.toggleScope` (default ctrl+f, empty editor only): flip the saved catalog
-        // between every project and the view's cwd (upstream #826).
+        // `app.agents.toggleScope` (default ctrl+a, Claude Code's key, and ctrl+f, upstream
+        // #826's; empty editor only): flip the saved catalog between every project and the
+        // current project.
         if !has_query && self.keybindings.matches(key, "app.agents.toggleScope") {
-            self.saved_scope = self.saved_scope.toggled();
-            self.set_status(self.saved_scope.status());
-            self.actions.push("saved_scope_toggled");
-            self.rebuild_rows();
+            self.toggle_saved_scope();
+            return;
+        }
+        // `app.agents.worktreeFilter` (default ctrl+w, empty editor and several worktrees only;
+        // otherwise the editor's word delete): the current project's worktree or all of them.
+        if !has_query
+            && self.keybindings.matches(key, "app.agents.worktreeFilter")
+            && self.toggle_worktree_filter()
+        {
             return;
         }
         // `app.agents.rename` (default ctrl+r, empty editor only, before the delete arm):

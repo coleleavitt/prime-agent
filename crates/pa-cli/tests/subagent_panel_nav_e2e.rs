@@ -362,6 +362,8 @@ async fn down_arrow_focuses_the_dock_and_enter_opens_the_scoped_agents_view() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let view_plan = AgentsHeadlessPlan {
         steps: vec![

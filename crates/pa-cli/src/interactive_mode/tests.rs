@@ -889,6 +889,45 @@ fn a_fork_launch_never_opens_the_agents_view() {
     );
 }
 
+#[test]
+fn resume_launches_open_the_resume_picker_and_agents_the_plain_view() {
+    use pa_tui::agents_view::PrFilter;
+    let picker = |pr_filter| ViewOpening::ResumePicker { pr_filter };
+    let mut session = crate::mode::SessionOptions::default();
+    assert_eq!(startup_opening(&session), (ViewOpening::Browse, None));
+    session.resume_bare = true;
+    assert_eq!(startup_opening(&session), (picker(None), None));
+    session.resume_bare = false;
+    session.from_pr = Some(String::new());
+    assert_eq!(
+        startup_opening(&session),
+        (picker(Some(PrFilter::Any)), None)
+    );
+    session.from_pr = Some("https://github.com/acme/app/pull/42".to_string());
+    assert_eq!(
+        startup_opening(&session),
+        (picker(Some(PrFilter::Number(42))), None)
+    );
+    // A value that names no pull request is the picker's search, like the flag's help says.
+    session.from_pr = Some(" login bug ".to_string());
+    assert_eq!(
+        startup_opening(&session),
+        (picker(None), Some("login bug".to_string()))
+    );
+}
+
+#[test]
+fn from_pr_opens_the_agents_view() {
+    let mut options = run_options_for_continue(std::path::Path::new("/does/not/matter"));
+    assert!(!should_open_agents_view(
+        &options, /*onboarding_pending*/ false, /*continue_view*/ false,
+    ));
+    options.session.from_pr = Some("7".to_string());
+    assert!(should_open_agents_view(
+        &options, /*onboarding_pending*/ false, /*continue_view*/ false,
+    ));
+}
+
 /// A sink whose `send_batch` hangs until the test releases it: the
 /// stand-in for the analytics POST's network round-trip (the same
 /// delivery contract the production sink carries, minus its own

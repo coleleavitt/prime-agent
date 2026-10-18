@@ -82,7 +82,7 @@ fn consumes_following_token(args: &[String], index: usize) -> bool {
     if arg == "--worktree" || arg == "-w" {
         return is_worktree_name_value(next);
     }
-    if arg == "--resume" || arg == "-r" {
+    if arg == "--resume" || arg == "-r" || arg == "--from-pr" {
         return !next.starts_with('-') && !next.starts_with('@');
     }
     if arg == "--print" || arg == "-p" {

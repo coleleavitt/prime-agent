@@ -152,12 +152,20 @@ pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
         // passes the quick-exit join below.
         let run = async {
             if let Some(search) = startup_search {
-                run_agents_view_flow(tui_options, None, Some(search.notice), Some(search.query))
-                    .await
+                let opening = ViewOpening::ResumePicker { pr_filter: None };
+                run_agents_view_flow(
+                    tui_options,
+                    None,
+                    Some(search.notice),
+                    Some(search.query),
+                    opening,
+                )
+                .await
             } else if agents_view {
                 let (anchor, notice) =
                     continue_view.map_or((None, None), |view| (view.session_id, Some(view.notice)));
-                run_agents_view_flow(tui_options, anchor, notice, None).await
+                let (opening, query) = startup_opening(&options.session);
+                run_agents_view_flow(tui_options, anchor, notice, query, opening).await
             } else {
                 let exit = run_direct_session(tui_options).await?;
                 // `--worktree`: the session ran in a managed worktree; leaving
@@ -250,6 +258,7 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
                         anchor,
                         Some(notice),
                         Some(query),
+                        ViewOpening::ResumePicker { pr_filter: None },
                     ))
                     .await?;
                     return Ok(DirectExit::ViaAgentsView);
@@ -260,11 +269,20 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
             // A startup attach that fell back to the view has no session identity to anchor
             // on; its notice seeds the view's status line instead.
             let anchor = (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
+            // `/resume` without an argument and a selector's search fallback open the resume
+            // picker; the agents-back key opens the plain view.
+            let opening =
+                if outcome.agents_view_resume_picker || outcome.agents_view_query.is_some() {
+                    ViewOpening::ResumePicker { pr_filter: None }
+                } else {
+                    ViewOpening::Browse
+                };
             Box::pin(run_agents_view_flow(
                 base,
                 anchor,
                 outcome.agents_view_notice,
                 outcome.agents_view_query,
+                opening,
             ))
             .await?;
             return Ok(DirectExit::ViaAgentsView);
@@ -320,6 +338,50 @@ fn print_resume_hint(hint: Option<&str>) {
     pa_tui::exit_guard::note_exit_progress();
 }
 
+/// How the agents view opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewOpening {
+    /// The plain view (`prime-agent agents`, `--continue`, the agents-back key): the saved
+    /// sessions keep the filters the previous view run left on.
+    Browse,
+    /// The resume picker (`--resume` without a selector, `/resume` without an argument,
+    /// `--from-pr`, a selector's search fallback): the saved sessions start on the current
+    /// project, narrowed to pull-request-linked sessions under `--from-pr`.
+    ResumePicker {
+        pr_filter: Option<pa_tui::agents_view::PrFilter>,
+    },
+}
+
+/// How a launch that opens the agents view opens it: `--resume`/`-r` without a selector and
+/// `--from-pr` open the resume picker (Claude Code's: the current project first);
+/// `prime-agent agents` and `--continue` open the plain view. The query is the picker's
+/// initial search.
+fn startup_opening(session: &crate::mode::SessionOptions) -> (ViewOpening, Option<String>) {
+    match session.from_pr.as_deref() {
+        Some(value) => from_pr_opening(value),
+        None if session.resume_bare => (ViewOpening::ResumePicker { pr_filter: None }, None),
+        None => (ViewOpening::Browse, None),
+    }
+}
+
+/// `--from-pr [value]` (Claude Code's flag): no value lists every session linked to a pull
+/// request, a number or a pull/merge request URL the sessions linked to that number, and any
+/// other value is a search term for the picker.
+fn from_pr_opening(value: &str) -> (ViewOpening, Option<String>) {
+    match pa_tui::agents_view::PrFilter::parse(Some(value)) {
+        Some(filter) => (
+            ViewOpening::ResumePicker {
+                pr_filter: Some(filter),
+            },
+            None,
+        ),
+        None => (
+            ViewOpening::ResumePicker { pr_filter: None },
+            Some(value.trim().to_string()),
+        ),
+    }
+}
+
 /// The agents-view loop: open the view, run the session it opens, and return
 /// to the view on agents-back or bare `/resume`; every other exit ends the app.
 async fn run_agents_view_flow(
@@ -327,8 +389,10 @@ async fn run_agents_view_flow(
     anchor: Option<String>,
     notice: Option<String>,
     query: Option<String>,
+    opening: ViewOpening,
 ) -> Result<()> {
     let mut anchor = anchor;
+    let mut opening = opening;
     // Every view run reuses the roster connection (a chat run hands it
     // back), so a switch back from a chat skips the handshake.
     let mut roster_link: Option<pa_tui::agents_view::AgentsViewLink> = None;
@@ -365,6 +429,11 @@ async fn run_agents_view_flow(
             incident_notice_state: incident_notice_state.take(),
             // The base a saved reply's resume derives from.
             create_config: base.create_config(),
+            resume_picker: matches!(opening, ViewOpening::ResumePicker { .. }),
+            pr_filter: match opening {
+                ViewOpening::ResumePicker { pr_filter } => pr_filter,
+                ViewOpening::Browse => None,
+            },
         };
         let view_run = pa_tui::agents_view::run_agents_view(
             view_options,
@@ -423,6 +492,10 @@ async fn run_agents_view_flow(
             UiMode::Terminal,
         )
         .await?;
+        // The next view run is the plain view unless the session asks for the resume picker
+        // (`/resume` without an argument, a selector's search fallback); `--from-pr`'s filter
+        // belongs to the launch's own picker only.
+        opening = ViewOpening::Browse;
         // The opened session, then each session its `/resume <selector>` opens, until one exits
         // back to the view (or ends the process).
         loop {
@@ -434,6 +507,10 @@ async fn run_agents_view_flow(
             }
             if let Some(search) = outcome.agents_view_query.take() {
                 query = Some(search);
+                opening = ViewOpening::ResumePicker { pr_filter: None };
+            }
+            if outcome.agents_view_resume_picker {
+                opening = ViewOpening::ResumePicker { pr_filter: None };
             }
             if let Some(scope) = outcome.agents_view_scope.take() {
                 // Push a frame with the session as the return chat and clear the
@@ -461,6 +538,7 @@ async fn run_agents_view_flow(
                     } => {
                         query = Some(search);
                         status_message = Some(notice);
+                        opening = ViewOpening::ResumePicker { pr_filter: None };
                         break;
                     }
                 }
@@ -713,6 +791,7 @@ fn should_open_agents_view(
     continue_view: bool,
 ) -> bool {
     options.session.resume_bare
+        || options.session.from_pr.is_some()
         || (options.agents_view_requested && !onboarding_pending && options.session.fork.is_none())
         || continue_view
 }

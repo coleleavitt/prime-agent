@@ -236,6 +236,8 @@ async fn search_ranks_identity_hits_above_conversation_hits() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![
@@ -390,6 +392,8 @@ async fn ranked_hits_sort_by_relevance_then_recency() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![

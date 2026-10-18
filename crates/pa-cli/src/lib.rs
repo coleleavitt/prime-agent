@@ -255,6 +255,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             "--resume without a session selector requires an interactive terminal".to_string(),
         );
     }
+    if parsed.from_pr.is_some() && app_mode != mode::AppMode::Interactive {
+        return Err("--from-pr requires an interactive terminal".to_string());
+    }
 
     if parsed.version {
         println!("{}", crate::config::version());
@@ -310,6 +313,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         if parsed.has_resume() {
             conflicting_flags.push("--resume");
         }
+        if parsed.from_pr.is_some() {
+            conflicting_flags.push("--from-pr");
+        }
         if parsed.no_session {
             conflicting_flags.push("--no-session");
         }
@@ -362,6 +368,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         }
         if parsed.has_resume() {
             conflicting_flags.push("--resume");
+        }
+        if parsed.from_pr.is_some() {
+            conflicting_flags.push("--from-pr");
         }
         if parsed.fork.is_some() {
             conflicting_flags.push("--fork");
@@ -428,6 +437,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         }
         if parsed.has_resume() {
             conflicting_flags.push("--resume");
+        }
+        if parsed.from_pr.is_some() {
+            conflicting_flags.push("--from-pr");
         }
         if parsed.fork.is_some() {
             conflicting_flags.push("--fork");
@@ -536,6 +548,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             continue_recent: parsed.continue_,
             resume_bare: parsed.resume_bare,
             resume: parsed.resume.clone(),
+            from_pr: parsed.from_pr.clone(),
             fork: parsed.fork.clone(),
             no_session: parsed.no_session,
             session_dir,

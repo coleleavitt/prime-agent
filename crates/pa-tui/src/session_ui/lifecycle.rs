@@ -167,6 +167,7 @@ impl SessionUi {
             update_in_flight: false,
             exit_requested: false,
             open_agents_view: false,
+            agents_view_resume_picker: false,
             scoped_agents_view: None,
             roster: Vec::new(),
             heartbeat_catalog: Vec::new(),

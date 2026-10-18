@@ -623,6 +623,8 @@ async fn subagent_session_stays_a_distinct_store_entry() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = pa_tui::agents_view::AgentsHeadlessPlan {
         steps: vec![
