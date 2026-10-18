@@ -405,3 +405,40 @@ fn additional_directories_load_their_own_files_after_the_working_directory() {
         ]
     );
 }
+
+/// A test whose working directory sits under the real home never reads that
+/// home's `.claude` or `.prime` files: the test's isolated `HOME` differs, so
+/// the walk would otherwise take them for a project directory's files.
+#[test]
+fn a_test_never_reads_the_real_homes_state_files() {
+    let _env = crate::packages::test_support::lock_env();
+    let tmp = tempfile::tempdir().unwrap();
+    let real_home = fs::canonicalize(tmp.path()).unwrap().join("real-home");
+    let repo = real_home.join("repo");
+    Fixture::write(&real_home.join(".claude/CLAUDE.md"), "real user claude");
+    Fixture::write(&real_home.join(".claude/rules/r.md"), "real user rule");
+    Fixture::write(&real_home.join(".prime/agent/AGENTS.md"), "real agent dir");
+    Fixture::write(&real_home.join("AGENTS.md"), "home agents");
+    Fixture::write(&repo.join("AGENTS.md"), "repo agents");
+    let previous = std::env::var_os(pa_types::platform::test_isolation::PROTECTED_HOME_ENV);
+    std::env::set_var(
+        pa_types::platform::test_isolation::PROTECTED_HOME_ENV,
+        &real_home,
+    );
+    let (files, _) = load_instructions(InstructionOptions {
+        cwd: repo.clone(),
+        agent_dir: tmp.path().join("agent"),
+        home_dir: Some(tmp.path().join("isolated-home")),
+        claude_user_files: false,
+        additional_dirs: Vec::new(),
+    });
+    match previous {
+        Some(value) => std::env::set_var(
+            pa_types::platform::test_isolation::PROTECTED_HOME_ENV,
+            value,
+        ),
+        None => std::env::remove_var(pa_types::platform::test_isolation::PROTECTED_HOME_ENV),
+    }
+    let paths: Vec<PathBuf> = files.into_iter().map(|file| file.path).collect();
+    assert_eq!(paths, [real_home.join("AGENTS.md"), repo.join("AGENTS.md")]);
+}

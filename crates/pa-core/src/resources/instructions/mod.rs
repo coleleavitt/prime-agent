@@ -316,6 +316,9 @@ impl Loader {
         out: &mut Vec<InstructionFile>,
     ) {
         let import_base = (kind != InstructionKind::User).then_some(base);
+        if is_real_state(rules_dir) {
+            return;
+        }
         for path in rules::rule_files(rules_dir) {
             let Some(text) = read_instruction_text(&path) else {
                 continue;
@@ -360,7 +363,7 @@ impl Loader {
             import_base,
             rule: is_rule,
         } = origin;
-        if !path.is_file() {
+        if !path.is_file() || is_real_state(path) {
             return;
         }
         let key = canonical(path);
@@ -466,6 +469,15 @@ impl Loader {
         self.state.settle_deferred();
         out
     }
+}
+
+/// Whether `path` is the real home's agent or Claude Code state while a test
+/// process runs (a test's isolated `HOME` differs from the passwd home, so a
+/// working directory under the real home would otherwise reach its
+/// `~/.claude` and `~/.prime` files as project files). Always `false`
+/// outside tests.
+fn is_real_state(path: &Path) -> bool {
+    pa_types::platform::test_isolation::real_state_violation("instruction file", path).is_some()
 }
 
 /// Load the session-start instruction files.
