@@ -13,7 +13,20 @@ use crate::surrogate::SurrogateModel;
 
 /// Escalation ladder: each step forces a lower eviction floor (chars).
 /// The tool_use floor tracks at half the text floor (min 60).
-const FLOOR_LADDER: [usize; 5] = [800, 400, 200, 120, 60];
+// Loaded from config.jsonc at runtime (falls back to default if missing).
+const DEFAULT_FLOOR_LADDER: [usize; 5] = [800, 400, 200, 120, 60];
+
+fn load_floor_ladder() -> Vec<usize> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/config.jsonc");
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let json = crate::filter::strip_comments(&content);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+    if let Some(arr) = v["eviction_floor_ladder"].as_array() {
+        arr.iter().filter_map(|v| v.as_u64().map(|u| u as usize)).collect()
+    } else {
+        DEFAULT_FLOOR_LADDER.to_vec()
+    }
+}
 
 /// Refusal guard result.
 pub struct GuardResult {
@@ -79,7 +92,7 @@ impl RefusalGuard {
         let mut best_p = before.0;
         let mut escalations = 0u32;
 
-        for floor in &FLOOR_LADDER {
+        for floor in &load_floor_ladder() {
             let override_floor = Some(*floor);
             let attempt = self.filter_request_body(body, override_floor);
             escalations += 1;

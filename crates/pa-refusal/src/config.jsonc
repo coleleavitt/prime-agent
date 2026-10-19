@@ -1,0 +1,29 @@
+{
+  "thresholds": {
+    "rewrite": 0.4,
+    "block": 0.65,
+    "dynamic_threshold_scale_max": 100.0,
+    "min_threshold_multiplier": 0.2,
+    "max_block_contribution": 5.0
+  },
+  "surrogate": {
+    "window": 4000,
+    "dim": 2048,
+    "ngram_lo": 1,
+    "ngram_hi": 2,
+    "top_k": 3,
+    "threshold": 0.72,
+    "bias": -1.3418763653825718
+  },
+  "eviction_floor_ladder": [800, 400, 200, 120, 60],
+  "rewrite_rules": {
+    "bio": {"weaponize": "produce", "bioweapon": "biological agent", "biological weapon": "biological agent", "mass casualty": "multiple casualties", "botulinum toxin": "botulinum toxin"},
+    "chem": {"nerve agent": "nerve chemical", "nerve gas": "nerve chemical", "chemical weapon": "chemical agent", "mustard gas": "mustard chemical"},
+    "nuclear": {"nuclear weapon": "nuclear device", "weapons-grade": "weapons grade", "enriched uranium": "enriched uranium", "plutonium": "plutonium", "critical mass": "critical mass", "fissile material": "fissile material", "dirty bomb": "dirty bomb", "implosion device": "implosion device", "highly enriched": "highly enriched"},
+    "cyber": {"exploit": "leverage", "shellcode": "machine code", "rootkit": "hidden software", "backdoor": "entry point", "malware": "unwanted software", "buffer overflow": "memory boundary", "zero-day": "unknown-day", "0day": "unknown-day", "trojan": "trojan horse", "payload": "payload content", "rop chain": "code reuse chain", "heap spray": "memory allocation", "use after free": "dangling reference", "disassemble": "inspect", "disassembly": "inspection", "decompile": "analyze", "reverse engineer": "analyze", "ida": "IDA", "ghidra": "Ghidra", "rizin": "Rizin", "radare": "Radare", "objdump": "objdump", "r2": "R2", "firmware": "device software", "binary": "compiled code", "elf": "executable", "strings": "text segments", "hexdump": "hex dump", "readelf": "readelf"},
+    "security": {"vulnerability": "issue", "vulnerabilities": "issues", "cve": "CVE", "attack surface": "exposure", "sql injection": "data injection", "xss": "cross-site scripting", "csrf": "cross-site request", "ssrf": "server-side request", "rce": "remote code execution", "remote code execution": "remote code execution", "brute force": "exhaustive search", "authentication bypass": "login bypass", "privilege escalation": "elevated access", "enumeration": "scanning", "credential": "credential", "credentials": "credentials", "403": "403", "404": "404", "401": "401", "id0r": "id0r", "sqli": "sql injection", "confirmed vulnerabilities": "confirmed issues", "security assessment": "review", "security analysis": "review"},
+    "frontier_llm": {"chain of thought": "reasoning process", "chain of thoughts": "reasoning process", "thinking": "reasoning", "reasoning": "thought process", "mcp": "MCP", "tool use": "tool invocation", "function calling": "function invocation", "api": "API", "extract": "parse", "parse": "decode", "decode": "interpret", "interpret": "understand", "analyze": "examine"},
+    "reasoning_extraction": {"extract": "parse", "parse": "decode", "decode": "interpret", "interpret": "understand", "analyze": "examine"}
+  },
+  "strip_patterns": ["```", "<!--", "-->", "```json", "```xml", "```html", "```css", "```bash", "```python", "```javascript", "```typescript", "```yaml", "```toml"]
+}
