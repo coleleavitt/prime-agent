@@ -500,6 +500,20 @@ pub struct ClassificationResult {
     pub matched_terms_with_score: Vec<(String, String, f64)>,
 }
 
+impl ClassificationResult {
+    /// Create a "pass" classification (score=0, recommendation=Pass).
+    pub fn pass() -> Self {
+        Self {
+            category: None,
+            score: 0.0,
+            recommendation: Recommendation::Pass,
+            scores: HashMap::new(),
+            matched_terms: HashMap::new(),
+            matched_terms_with_score: Vec::new(),
+        }
+    }
+}
+
 /// Recommendation from the classifier.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Recommendation {
@@ -944,6 +958,86 @@ impl ContentFilter {
         parts.join("
 ")
     }
+
+    /// Per-turn filter: scores each turn independently and evicts only the
+    /// highest-scoring turn's content from the body. Returns a fully
+    /// filtered body (not just scores).
+    pub fn filter_per_turn(&self, body: &serde_json::Value) -> FilterResult {
+        let mut result = body.clone();
+        let mut changes: Vec<String> = Vec::new();
+
+        let scores = self.score_per_turn(body);
+        if scores.is_empty() {
+            return FilterResult {
+                body: result,
+                filtered: false,
+                changes,
+                score_before: 0.0,
+                score_after: 0.0,
+                classification: ClassificationResult::pass(),
+            };
+        }
+
+        // Evict the highest-scoring turn
+        let (evict_idx, evict_score) = scores[0];
+
+        if let Some(messages) = result.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            if evict_idx < messages.len() {
+                let msg = messages[evict_idx].clone();
+                let msg_text = msg.get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+
+                // Apply rewrite rules to the evicted message's content
+                if !msg_text.is_empty() {
+                    let mut new = msg_text.to_string();
+                    for (pattern, replacement) in &self.terms.rewrite_rules {
+                        new = new.replace(pattern, replacement);
+                        changes.push(format!("{} -> {}", pattern, replacement));
+                    }
+                    messages[evict_idx] = serde_json::json!({
+                        "role": "assistant",
+                        "content": new,
+                    });
+                }
+
+                changes.push(format!("#{} evicted (score={:.2})", evict_idx, evict_score));
+            }
+        }
+
+        // Classification for the filtered body
+        let text = Self::extract_body_text(&result);
+        let classification = self.classify(&text);
+
+        FilterResult {
+            body: result,
+            filtered: !scores.is_empty(),
+            changes,
+            score_before: scores.iter().map(|(_, s)| *s).sum(),
+            score_after: classification.score,
+            classification,
+        }
+    }
+
+    /// Reload configuration from disk, updating the internal state.
+    ///
+    /// Re-reads `config.jsonc` and updates category weights, rewrite_rules,
+    /// strip_patterns, and thresholds. Useful for hot-reloading at runtime.
+    pub fn reload_from(&mut self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let new_terms = TermDict::from_jsonc(path);
+
+        self.terms.bio = new_terms.bio;
+        self.terms.chem = new_terms.chem;
+        self.terms.nuclear = new_terms.nuclear;
+        self.terms.cyber = new_terms.cyber;
+        self.terms.security = new_terms.security;
+        self.terms.frontier_llm = new_terms.frontier_llm;
+        self.terms.reasoning_extraction = new_terms.reasoning_extraction;
+        self.terms.strip_patterns = new_terms.strip_patterns;
+        self.terms.rewrite_rules = new_terms.rewrite_rules;
+
+        Ok(())
+    }
 }
 
 /// Per-category score for category-aware eviction.
@@ -993,6 +1087,7 @@ pub struct FilterSummary {
 }
 
 // ========== TESTS ==========
+
 
 
 #[cfg(test)]

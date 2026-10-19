@@ -115,6 +115,69 @@ pub fn log_filter_outcome(event: &FilterOutcomeEvent) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Feedback event: actual Anthropic response used to validate/adjust surrogate weights.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FeedbackEvent {
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub request_id: Option<String>,
+    pub predicted_refusal: bool,
+    pub actual_refusal: bool,
+    pub stop_reason: Option<String>,
+    pub feedback_type: String,
+    pub original_score: f64,
+    pub adjusted_score: f64,
+}
+
+impl FeedbackEvent {
+    pub fn new(
+        timestamp: String,
+        session_id: Option<String>,
+        request_id: Option<String>,
+        predicted_refusal: bool,
+        actual_refusal: bool,
+        stop_reason: Option<String>,
+        original_score: f64,
+        adjusted_score: f64,
+    ) -> Self {
+        let feedback_type = if predicted_refusal && actual_refusal {
+            "true_positive"
+        } else if predicted_refusal && !actual_refusal {
+            "false_positive"
+        } else if !predicted_refusal && actual_refusal {
+            "false_negative"
+        } else {
+            "true_negative"
+        };
+
+        Self {
+            timestamp,
+            session_id,
+            request_id,
+            predicted_refusal,
+            actual_refusal,
+            stop_reason,
+            feedback_type: feedback_type.to_string(),
+            original_score,
+            adjusted_score,
+        }
+    }
+}
+
+/// Write feedback events to `feedback-events.jsonl`.
+pub fn log_feedback_event(event: &FeedbackEvent) -> Result<(), Box<dyn std::error::Error>> {
+    let path = log_dir().join("feedback-events.jsonl");
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+
+    let json = serde_json::to_string(event)?;
+    let mut writer = BufWriter::new(file);
+    writeln!(writer, "{}", json)?;
+    Ok(())
+}
+
 /// Save a gzipped refused request body.
 pub fn save_refused_body(body: &serde_json::Value, session_id: &str, _model: &str) -> Result<String, Box<dyn std::error::Error>> {
     let dir = refused_bodies_dir();

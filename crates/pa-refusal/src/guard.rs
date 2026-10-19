@@ -39,6 +39,8 @@ pub struct GuardResult {
     pub threshold: f64,
     pub escalations: u32,
     pub danger: bool,
+    /// Audit trail: exact terms matched and their individual weights from the final classification.
+    pub matched_terms: Option<Vec<(String, String, f64)>>,
 }
 
 /// The refusal guard: pre-flight filter + surrogate closed loop.
@@ -84,6 +86,7 @@ impl RefusalGuard {
                 threshold,
                 escalations: 0,
                 danger: false,
+                matched_terms: None,
             };
         }
 
@@ -117,6 +120,11 @@ impl RefusalGuard {
             threshold,
             escalations,
             danger: best_p >= threshold,
+            matched_terms: if best.classification.matched_terms_with_score.is_empty() {
+                None
+            } else {
+                Some(best.classification.matched_terms_with_score)
+            },
         }
     }
 

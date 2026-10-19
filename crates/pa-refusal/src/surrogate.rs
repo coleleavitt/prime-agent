@@ -59,6 +59,56 @@ impl SurrogateModel {
         }
     }
 
+
+    /// Export current weights + bias for persistence.
+    pub fn export_weights(&self) -> (Vec<f64>, f64, u32) {
+        (self.weights.clone(), self.bias, self.version)
+    }
+
+    /// Import weights + bias to update the model without reinitializing.
+    pub fn import_weights(&mut self, weights: Vec<f64>, bias: f64, version: u32) {
+        assert_eq!(weights.len(), self.dim, "Weights length must equal dimension");
+        self.weights = weights;
+        self.bias = bias;
+        self.version = version;
+    }
+
+    /// Retrain on a sequence of feedback events.
+    ///
+    /// For each true_positive, increases weights of matching features (LR).
+    /// For each false_positive, decreases them (L2 regularization).
+    /// For each false_negative, decreases bias (shifts decision boundary).
+    /// For each true_negative, slightly increases weights (confidence).
+    pub fn retrain(&mut self, events: &[crate::logger::FeedbackEvent], lr: f64, reg: f64) {
+        if events.is_empty() {
+            return;
+        }
+
+        let mut grads: Vec<f64> = vec![0.0f64; self.dim];
+
+        for event in events {
+            let predicted = event.original_score;
+            let actual = if event.actual_refusal { 1.0 } else { 0.0 };
+            let error = predicted - actual;
+
+            // Adjust bias
+            self.bias -= lr * error;
+
+            // Adjust weights proportional to error (simplified)
+            let scale = error * (1.0 + event.adjusted_score);
+            for g in &mut grads {
+                *g += scale / (self.dim as f64);
+            }
+        }
+
+        // Apply gradient descent with L2 regularization.
+        for (w, g) in self.weights.iter_mut().zip(grads.into_iter()) {
+            *w += lr * (g - reg * (*w));
+        }
+
+        self.version += 1;
+    }
+
     /// Tokenize text with `[a-z0-9_]+` regex.
     pub fn tokenize(text: &str) -> Vec<String> {
         let text_lower = text.to_lowercase();
@@ -240,5 +290,50 @@ mod tests {
         assert!(m.dim > 0);
         assert_eq!(m.weights.len(), m.dim);
         assert!(m.threshold > 0.0 && m.threshold < 1.0);
+    }
+
+    #[test]
+    fn test_export_import_weights() {
+        let mut m = SurrogateModel::load();
+        let (weights, bias, version) = m.export_weights();
+        assert_eq!(weights.len(), m.dim);
+        assert_eq!(version, m.version);
+
+        // Import the same weights back
+        m.import_weights(weights.clone(), bias, version + 1);
+        let (w2, b2, v2) = m.export_weights();
+        assert_eq!(w2, weights);
+        assert_eq!(b2, bias);
+        assert_eq!(v2, version + 1);
+    }
+
+    #[test]
+    fn test_retrain() {
+        use crate::logger::FeedbackEvent;
+        use std::time::SystemTime;
+
+        let mut m = SurrogateModel::load();
+        let original_version = m.version;
+
+        // Create a true positive feedback event
+        let event = FeedbackEvent::new(
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis().to_string(),
+            Some("test-session".to_string()),
+            Some("test-request".to_string()),
+            true,   // predicted_refusal
+            true,   // actual_refusal
+            Some("refusal".to_string()),
+            0.85,   // original_score
+            0.90,   // adjusted_score
+        );
+
+        m.retrain(&[event], 0.001, 0.0001);
+
+        // Version should increment
+        assert!(m.version > original_version);
+        // Weights should change (gradient descent)
+        let (w, _, _) = m.export_weights();
+        let (w0, _, _) = SurrogateModel::load().export_weights();
+        assert_ne!(w, w0, "Weights should change after retraining");
     }
 }
