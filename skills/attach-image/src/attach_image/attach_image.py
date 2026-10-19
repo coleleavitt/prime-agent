@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import io
+import tempfile
 from pathlib import Path
+
+from . import _pdf
 
 # Keep in sync with ATTACHMENT_DISPLAY_MIME in src/core/kernel/index.ts.
 _ATTACHMENT_DISPLAY_MIME = "application/vnd.prime-agent.attachment+json"
@@ -199,14 +202,16 @@ def _resize_image(filepath: Path, mime_type: str, size: int, dimensions: tuple[i
     )
 
 
-def _emit_attachment(filepath: Path, mime_type: str, size: int, dimensions: tuple[int, int]) -> str | None:
+def _emit_attachment(
+    filepath: Path, mime_type: str, size: int, dimensions: tuple[int, int], label: str
+) -> str | None:
     from rlm import emit
 
     data_b64, emitted_mime_type, resize_note = _resize_image(filepath, mime_type, size, dimensions)
     emit(
         {
-            _ATTACHMENT_DISPLAY_MIME: {"mime_type": emitted_mime_type, "data": data_b64, "path": str(filepath)},
-            "text/plain": f"Loaded image into context: {filepath}",
+            _ATTACHMENT_DISPLAY_MIME: {"mime_type": emitted_mime_type, "data": data_b64, "path": label},
+            "text/plain": f"Loaded image into context: {label}",
         }
     )
     return resize_note
@@ -246,7 +251,50 @@ async def _read_with_image_model(model_id: str, validated) -> str:
     return f"{text}\n\n(Read by {reader}; the session model cannot see images.)"
 
 
-async def run(*paths: str) -> str:
+def _validate_paths(paths: tuple[str, ...], pages: str | None, scratch: Path) -> list[tuple]:
+    """Each path's attachments as (filepath, mime, size, dimensions, label); a
+    PDF contributes one rendered page image per page."""
+    validated = []
+    saw_pdf = False
+    for index, path in enumerate(paths):
+        filepath = Path(path).expanduser()
+        if not (filepath.is_file() and _pdf.is_pdf(filepath)):
+            validated.append((*_validate_image(path), str(filepath)))
+            continue
+        saw_pdf = True
+        first, last = _pdf.page_range(filepath, pages)
+        out_dir = scratch / f"pdf-{index}"
+        out_dir.mkdir()
+        for page in _pdf.render(filepath, first, last, out_dir):
+            number = int(page.stem.rsplit("-", 1)[1])
+            validated.append((*_validate_image(str(page)), f"{filepath} (page {number})"))
+    if pages is not None and not saw_pdf:
+        raise ValueError("pages applies to PDF files only")
+    return validated
+
+
+async def pdf_text(path: str, pages: str | None = None) -> str:
+    """Extract a PDF's text layer (``pdftotext -layout``), for all pages or ``pages``.
+
+    Cheaper than page images when the layout and figures do not matter; a
+    scanned PDF has no text layer (an empty result): attach its pages instead.
+
+    Args:
+        path: The PDF file.
+        pages: A page (``"3"``) or range (``"1-5"``); None for the whole document.
+
+    Returns:
+        The text, truncated (with a note) past 200,000 characters.
+    """
+    filepath = Path(path).expanduser()
+    if not filepath.is_file():
+        raise FileNotFoundError(f"{path} is not an existing regular file")
+    if not _pdf.is_pdf(filepath):
+        raise ValueError(f"{path} is not a PDF")
+    return _pdf.text(filepath, pages)
+
+
+async def run(*paths: str, pages: str | None = None) -> str:
     """Load one or more on-disk images into the model's context as attachments.
 
     Use this when the model needs to actually SEE an image file — a screenshot,
@@ -258,9 +306,13 @@ async def run(*paths: str) -> str:
     the kernel instead.
 
     Args:
-        *paths: One or more image paths. Relative, absolute, or `~`-prefixed.
-            Supported formats: PNG, JPEG, GIF, WebP. Other types (PDF, audio,
-            video) are not supported and raise an error.
+        *paths: One or more image or PDF paths. Relative, absolute, or
+            `~`-prefixed. Supported formats: PNG, JPEG, GIF, WebP, and PDF
+            (its pages rendered as images with poppler's `pdftoppm`). Other
+            types (audio, video) are not supported and raise an error.
+        pages: For PDFs, a page (``"3"``) or range (``"1-5"``), at most 20
+            pages per call. Without it a PDF of up to 10 pages is attached
+            whole; a longer one raises and asks for pages.
 
     When the session model cannot see images, the host's configured image
     model (`imageModel` in settings.json) reads them instead and its text
@@ -284,18 +336,22 @@ async def run(*paths: str) -> str:
 
     info = await host_request("model.info")
 
-    # Validate every path before emitting or delegating anything, so a later
-    # failure never leaves a partial subset injected or read.
-    validated = [_validate_image(path) for path in paths]
-    if "image" not in info.get("input", []):
-        return await _read_with_image_model(info.get("id") or "the current model", validated)
-    resize_notes = []
-    for filepath, mime, size, dimensions in validated:
-        note = _emit_attachment(filepath, mime, size, dimensions)
-        if note:
-            resize_notes.append(f"{filepath}: {note}")
+    # Validate every path (rendering PDF pages) before emitting or delegating
+    # anything, so a later failure never leaves a partial subset injected or read.
+    with tempfile.TemporaryDirectory(prefix="attach-image-") as scratch:
+        validated = _validate_paths(paths, pages, Path(scratch))
+        if "image" not in info.get("input", []):
+            images = [entry[:4] for entry in validated]
+            return await _read_with_image_model(info.get("id") or "the current model", images)
+        resize_notes = []
+        for filepath, mime, size, dimensions, label in validated:
+            note = _emit_attachment(filepath, mime, size, dimensions, label)
+            if note:
+                resize_notes.append(f"{label}: {note}")
 
     message = f"Loaded {len(validated)} image(s) into context: {', '.join(paths)}"
+    if pages is not None:
+        message += f" (pages {pages})"
     if resize_notes:
         message += "\nResized for efficient inline rendering/replay:\n- " + "\n- ".join(resize_notes)
     return message
