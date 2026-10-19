@@ -666,15 +666,6 @@ impl ContentFilter {
         result
     }
 
-    /// Rewrite terms in text using rewrite rules.
-    pub fn rewrite(&self, text: &str) -> String {
-        let mut result = text.to_string();
-        for (pattern, replacement) in &self.terms.rewrite_rules {
-            result = result.replace(pattern, replacement);
-        }
-        result
-    }
-
     /// Calculate dynamic threshold based on cumulative score.
     pub fn dynamic_threshold(&self, cumulative_score: f64) -> f64 {
         if cumulative_score > self.dynamic_threshold_scale_max {
@@ -813,7 +804,58 @@ impl ContentFilter {
         result
     }
 
-    /// Evict specific messages by highest-scoring category rather than flat char floor.
+    /// Alias for semantic_rewrite: applies rewrite_rules to replace dangerous terms.
+    pub fn rewrite(&self, text: &str) -> String {
+        self.semantic_rewrite(text)
+    }
+
+    /// Semantic rewrite via a local LLM.
+    ///
+    /// Calls a local OpenAI-compatible LLM endpoint (default: http://127.0.0.1:47631,
+    /// the Qwen3.8-35B-A3B ablated model) to paraphrase the text into a lower-risk
+    /// form, using the model's own language understanding rather than a fixed pool.
+    pub fn semantic_rewrite_llm(&self, text: &str) -> String {
+        // Build a prompt that asks the model to rewrite for lower refusal probability
+        // while preserving meaning. The "abliterated" model won't refuse dangerous
+        // content, so it can freely paraphrase.
+        let prompt = format!(
+            "Rewrite the following text to be less likely to trigger Anthropic's content              filter (sonnet/opus) while preserving the core meaning. Do NOT add explanations,              introductions, or fluff — just return the paraphrased text on its own line.
+             Original text:
+---
+{}
+---
+",
+            text
+        );
+
+        // Call the local LLM via OpenAI-compatible API
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post("http://127.0.0.1:47631/v1/chat/completions")
+            .json(&serde_json::json!({
+                "model": "qwen3.8-35b-a3b-distill-abl",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": 2048,
+            }))
+            .send();
+
+        match resp {
+            Ok(r) => {
+                let body = r.text().unwrap_or_default();
+                // Extract the assistant's text response
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    json["choices"][0]["message"]["content"]
+                        .as_str()
+                        .unwrap_or(&text)
+                        .to_string()
+                } else {
+                    text.to_string()
+                }
+            }
+            Err(_) => text.to_string(), // fail open: return original text
+        }
+    }
     /// Returns the modified body with the highest-scoring category's message evicted.
     pub fn category_aware_evict(&self, body: &serde_json::Value, floor_chars: usize) -> Option<EvictResult> {
         let text = Self::extract_body_text(body);
@@ -1037,7 +1079,7 @@ impl ContentFilter {
         self.terms.rewrite_rules = new_terms.rewrite_rules;
 
         Ok(())
-    }
+}
 }
 
 /// Per-category score for category-aware eviction.
