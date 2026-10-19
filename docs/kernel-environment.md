@@ -32,6 +32,26 @@ Notes:
 - The setting applies when a kernel starts. Restart the session (or the kernel) after you
   change it.
 
+## `kernel.editReadCheck`
+
+The bundled `edit` skill (`edit.run`, `edit.write`, `edit.notebook_edit`) compares each write
+with what the model last read in the kernel, as Claude Code's Edit tool does. The kernel
+records the mtime and size of every file a cell opens for reading; the kernel's own writes
+count as known content.
+
+```json
+{ "kernel": { "editReadCheck": "read" } }
+```
+
+| Value | A write to an existing file is refused when |
+| --- | --- |
+| `stale` (default) | the file changed on disk since the model last read it ("File has been modified since read, either by the user or by a linter. Read it again before attempting to write it."). A file the model never read in the kernel is not checked. |
+| `read` | as `stale`, and also when the model never read the file in the kernel ("File has not been read yet. Read it first before writing to it."). Reads through `bash()` (`cat`, `rg`) do not count. |
+| `off` | never. |
+
+Any settings scope may set it; it reaches the kernel as `PRIME_AGENT_EDIT_READ_CHECK` when the
+kernel starts.
+
 ## Kernel snapshots
 
 A persistent session saves the kernel's variables to `kernel-state.dill` in the session's

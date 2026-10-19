@@ -1252,6 +1252,21 @@ impl SettingsManager {
         )
     }
 
+    /// `kernel.editReadCheck`: the `edit` skill's read-state rule (`off`, `stale` or `read`),
+    /// or `None` when unset or unrecognized (the kernel's default, `stale`). Any scope may set
+    /// it: it only decides when the model's own writes are refused.
+    #[must_use]
+    pub fn get_edit_read_check(&self) -> Option<&'static str> {
+        let value = self
+            .merged
+            .kernel
+            .as_ref()
+            .and_then(|kernel| kernel.edit_read_check.as_deref())?;
+        ["off", "stale", "read"]
+            .into_iter()
+            .find(|mode| value.trim().eq_ignore_ascii_case(mode))
+    }
+
     #[must_use]
     pub fn get_session_dir(&self) -> Option<std::path::PathBuf> {
         let session_dir = self.merged.session_dir.as_ref()?;
@@ -1582,6 +1597,34 @@ mod tests {
                 30_000,
                 0
             ]
+        );
+    }
+
+    /// `kernel.editReadCheck`: unset and unknown values leave the kernel's default, a
+    /// project file may set it.
+    #[test]
+    fn edit_read_check_reads_any_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("cwd");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let read = |global: &str, project: &str| {
+            std::fs::write(agent_dir.join("settings.json"), global).unwrap();
+            std::fs::write(cwd.join(".prime/agent/settings.json"), project).unwrap();
+            SettingsManager::create(&cwd, &agent_dir).get_edit_read_check()
+        };
+        assert_eq!(
+            [
+                read("{}", "{}"),
+                read(r#"{ "kernel": { "editReadCheck": "Read" } }"#, "{}"),
+                read(
+                    r#"{ "kernel": { "editReadCheck": "read" } }"#,
+                    r#"{ "kernel": { "editReadCheck": "off" } }"#
+                ),
+                read(r#"{ "kernel": { "editReadCheck": "bogus" } }"#, "{}"),
+            ],
+            [None, Some("read"), Some("off"), None]
         );
     }
 
