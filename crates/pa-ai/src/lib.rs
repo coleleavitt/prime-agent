@@ -13,6 +13,7 @@ pub mod models;
 pub mod models_generated;
 pub mod oauth;
 pub mod registry;
+pub mod refusal_hooks;
 pub mod request_hooks;
 pub mod types;
 

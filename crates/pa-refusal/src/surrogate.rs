@@ -1,0 +1,244 @@
+//! Hashed word-n-gram surrogate predictor of Anthropic cyber refusal.
+//!
+//! Ported from `packages/core/src/refusal-surrogate.ts`. The featurizer is
+//! pure arithmetic + `md5`, deterministic, <1ms. Weights are loaded from the
+//! embedded `model.json` at crate init.
+//!
+//! ## Algorithm
+//!
+//! 1. Tokenize body text with `[a-z0-9_]+` regex (lowercase).
+//! 2. For each n-gram (n=1,2), compute `md5(gram)` and map to a feature index:
+//!    - `idx = int(md5_hex[0:8], 16) % DIM`
+//!    - `sign = +1` if `int(md5_hex[8], 16) % 2 == 0` else `-1`
+//!    - Accumulate into a dimension-sized `Vec<f64>` (dim=2048)
+//! 3. L2-normalize the vector (per-window, dropping sub-200-char tails)
+//! 4. Dot product with learned weights + bias
+//! 5. Sigmoid(z) = `1 / (1 + exp(-z))` -> P(refuse)
+//!
+//! Body-level score = mean of the top-K hottest window probabilities.
+
+pub struct SurrogateModel {
+    pub version: u32,
+    pub window: usize,
+    pub dim: usize,
+    pub ngram_lo: usize,
+    pub ngram_hi: usize,
+    pub top_k: usize,
+    pub threshold: f64,
+    pub bias: f64,
+    pub weights: Vec<f64>,
+}
+
+impl SurrogateModel {
+    /// Load from the embedded model.json.
+    pub fn load() -> Self {
+        let data: serde_json::Value = serde_json::from_str(include_str!("model.json"))
+            .expect("model.json must be valid JSON");
+
+        let v = &data["version"];
+        let win = &data["window"];
+        let dim = &data["dim"];
+        let nlo = &data["ngram_lo"];
+        let nhi = &data["ngram_hi"];
+        let tk = &data["topK"];
+        let thr = &data["threshold"];
+        let bias = &data["bias"];
+        let weights: Vec<f64> =
+            serde_json::from_value(data["weights"].clone()).expect("weights must be a JSON array");
+
+        Self {
+            version: v.as_u64().expect("version") as u32,
+            window: win.as_u64().expect("window") as usize,
+            dim: dim.as_u64().expect("dim") as usize,
+            ngram_lo: nlo.as_u64().expect("ngram_lo") as usize,
+            ngram_hi: nhi.as_u64().expect("ngram_hi") as usize,
+            top_k: tk.as_u64().expect("topK") as usize,
+            threshold: thr.as_f64().expect("threshold"),
+            bias: bias.as_f64().expect("bias"),
+            weights,
+        }
+    }
+
+    /// Tokenize text with `[a-z0-9_]+` regex.
+    pub fn tokenize(text: &str) -> Vec<String> {
+        let text_lower = text.to_lowercase();
+        let mut tokens = Vec::new();
+        let mut start = 0;
+        for (i, c) in text_lower.char_indices() {
+            let is_sep = !c.is_ascii_alphanumeric() && c != '_';
+            if is_sep && start < i {
+                tokens.push(text_lower[start..i].to_string());
+                start = i + c.len_utf8();
+            }
+        }
+        if start < text_lower.len() {
+            tokens.push(text_lower[start..].to_string());
+        }
+        tokens
+    }
+
+    /// Build a feature vector for a single text window.
+    ///
+    /// Uses md5 hashing of n-grams to map to dimension indices.
+    pub fn featurize(&self, text: &str) -> Vec<f64> {
+        let mut v = vec![0.0f64; self.dim];
+        let tokens = Self::tokenize(text);
+
+        for n in self.ngram_lo..=self.ngram_hi {
+            for i in 0..tokens.len().saturating_sub(n - 1) {
+                let gram: String = tokens[i..i + n].join(" ");
+                let digest = md5::compute(gram.as_bytes());
+                let hex = hex::encode(digest.as_ref());
+
+                let idx = u32::from_str_radix(&hex[0..8], 16).unwrap_or(0) % (self.dim as u32);
+                let sign = if u32::from_str_radix(&hex[8..9], 16).unwrap_or(0) % 2 == 0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+
+                v[idx as usize] += sign;
+            }
+        }
+
+        // L2 normalize
+        let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if norm > 0.0 {
+            for x in &mut v {
+                *x /= norm;
+            }
+        }
+        v
+    }
+
+    /// Sigmoid: `1 / (1 + exp(-z))`.
+    fn sigmoid(z: f64) -> f64 {
+        1.0 / (1.0 + (-z).exp())
+    }
+
+    /// Score a single window: `sigmoid(bias + dot(weights, features))`.
+    pub fn score_window(&self, features: &[f64]) -> f64 {
+        let mut z = self.bias;
+        for (w, f) in self.weights.iter().zip(features.iter()) {
+            z += w * f;
+        }
+        Self::sigmoid(z)
+    }
+
+    /// Split text into non-overlapping windows, dropping sub-200-char tails.
+    pub fn to_windows(text: &str, window_size: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        let text_len = text.len();
+        if text_len == 0 {
+            return out;
+        }
+        let bytes = text.as_bytes();
+        let mut pos = 0;
+        while pos < text_len {
+            let end = (pos + window_size).min(text_len);
+            let end = bytes[end..].iter().position(|&b| b == b' ' || b == b'\n').map(|p| end + p).unwrap_or(text_len);
+            let window_str = &text[pos..end];
+            if window_str.len() > 200 {
+                out.push(window_str.to_string());
+            }
+            pos += window_size;
+        }
+        out
+    }
+
+    /// Body-level refusal probability = mean of the top-K hottest window scores.
+    pub fn score_body_text(&self, text: &str) -> f64 {
+        let windows = Self::to_windows(text, self.window);
+        if windows.is_empty() {
+            return 0.0;
+        }
+        let scores: Vec<f64> = windows.iter().map(|w| self.score_window(&self.featurize(w))).collect();
+        let mut sorted = scores.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let k = self.top_k.min(sorted.len());
+        sorted.iter().rev().take(k).sum::<f64>() / k as f64
+    }
+
+    /// Extract semantic text from a request body (matches TS `extractBodyText`).
+    ///
+    /// Handles Anthropic message format: messages with `text`, `thinking`,
+    /// `content` (array of parts), `tool_use` with `input`.
+    pub fn extract_body_text(body: &serde_json::Value) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+            for m in messages {
+                let c = m.get("content");
+                if let Some(content) = c {
+                    match content {
+                        serde_json::Value::String(s) => {
+                            parts.push(s.clone());
+                        }
+                        serde_json::Value::Array(arr) => {
+                            for block in arr {
+                                if let Some(b) = block.as_object() {
+                                    if let Some(s) = b.get("text").and_then(|t| t.as_str()) {
+                                        parts.push(s.to_string());
+                                    }
+                                    if let Some(s) = b.get("thinking").and_then(|t| t.as_str()) {
+                                        parts.push(s.to_string());
+                                    }
+                                    if let Some(s) = b.get("content").and_then(|t| t.as_str()) {
+                                        parts.push(s.to_string());
+                                    } else if let Some(content_arr) = b.get("content").and_then(|t| t.as_array()) {
+                                        for part in content_arr {
+                                            if let Some(s) = part.as_str() {
+                                                parts.push(s.to_string());
+                                            }
+                                        }
+                                    }
+                                    if b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                                        && let Some(input) = b.get("input") {
+                                            parts.push(serde_json::to_string(input).unwrap_or_default());
+                                        }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        parts.join("\n")
+    }
+
+    /// True when the body is predicted likely to be refused.
+    pub fn predict_refusal(&self, body: &serde_json::Value) -> (f64, bool) {
+        let text = Self::extract_body_text(body);
+        let probability = self.score_body_text(&text);
+        let danger = probability >= self.threshold;
+        (probability, danger)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenize() {
+        let tokens = SurrogateModel::tokenize("hello world_123 test!");
+        assert_eq!(tokens, vec!["hello", "world_123", "test"]);
+    }
+
+    #[test]
+    fn test_sigmoid() {
+        assert!((SurrogateModel::sigmoid(0.0) - 0.5).abs() < 1e-10);
+        assert!(SurrogateModel::sigmoid(10.0) > 0.9999);
+        assert!(SurrogateModel::sigmoid(-10.0) < 0.0001);
+    }
+
+    #[test]
+    fn test_model_loads() {
+        let m = SurrogateModel::load();
+        assert!(m.dim > 0);
+        assert_eq!(m.weights.len(), m.dim);
+        assert!(m.threshold > 0.0 && m.threshold < 1.0);
+    }
+}

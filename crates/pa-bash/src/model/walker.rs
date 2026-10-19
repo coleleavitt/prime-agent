@@ -1075,10 +1075,7 @@ impl Walker {
         out
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one record per executed command, every field of it"
-    )]
+
     pub(super) fn record(
         &mut self,
         fields: &[Field<'_>],

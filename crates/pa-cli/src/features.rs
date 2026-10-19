@@ -123,6 +123,12 @@ pub fn install_enabled_features() -> InstalledFeatures {
     pa_core::features::install(enabled_features());
     install_credential_sources();
     install_tui_features();
+    // Install refusal hooks if enabled in settings.
+    if let Ok(cwd) = std::env::current_dir() {
+        let settings =
+            pa_core::settings::SettingsManager::create(&cwd, crate::config::get_agent_dir());
+        install_refusal_hooks(&settings);
+    }
     #[cfg(feature = "session-index")]
     let session_index = {
         let index = pa_session_index::SessionIndex::new();
@@ -186,6 +192,14 @@ pub fn install_trust_gates() {
 pub fn install_credential_sources() {
     #[cfg(feature = "anthropic-auth")]
     pa_anthropic_auth::install();
+}
+
+/// Install the refusal system hooks if enabled in settings.
+pub fn install_refusal_hooks(settings: &pa_core::settings::SettingsManager) {
+    if settings.get_content_filter() {
+        pa_ai::refusal_hooks::RefusalHooks::install_all();
+        tracing::info!("Content filter enabled");
+    }
 }
 
 /// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)

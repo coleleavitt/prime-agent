@@ -458,6 +458,11 @@ pub struct Settings {
     /// cap), the turn continues on the next entry. Default: empty - no
     /// cross-model fallback.
     pub fallback_models: Option<Vec<String>>,
+    /// `contentFilter`: enable the refusal prediction and content filtering
+    /// system that guards outbound API requests. When enabled, requests are
+    /// scored for refusal probability and filtered/rewritten if needed.
+    /// Default: OFF (unset or false).
+    pub content_filter: Option<bool>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

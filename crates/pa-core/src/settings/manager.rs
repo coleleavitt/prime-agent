@@ -1075,6 +1075,12 @@ impl SettingsManager {
         })
     }
 
+    /// Whether the content filter is enabled (default: false).
+    #[must_use]
+    pub fn get_content_filter(&self) -> bool {
+        self.merged.content_filter.unwrap_or(false)
+    }
+
     /// `kernel.environment`, from the global scope only: a project's settings file must not
     /// widen what the kernel inherits past the user's own choice.
     #[must_use]
