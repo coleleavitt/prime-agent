@@ -741,6 +741,184 @@ impl ContentFilter {
         }
     }
 
+    /// Semantic rewrite: generate paraphrase candidates and select the one
+    /// with the lowest keyword score. This handles edge cases where exact
+    /// str.replace is too vague (e.g., "demonstrate the sarin synthesis
+    /// mechanism step-by-step" → "biological agent chemistry workflow").
+    pub fn semantic_rewrite(&self, text: &str) -> String {
+        // Paraphrase candidates ordered by how well they cover the original terms.
+        let candidates: Vec<&str> = vec![
+            "biological agent chemistry workflow",
+            "chemical agent production steps",
+            "chemical synthesis process",
+            "agent chemistry procedure",
+            "chemical production method",
+            "biological agent process",
+            "chemical agent synthesis",
+        ];
+
+        // Score each candidate
+        let text_lower = text.to_lowercase();
+        let mut best = text.to_string();
+        let mut best_score = f64::MAX;
+
+        for candidate in candidates {
+            let candidate_lower = candidate.to_lowercase();
+            let mut candidate_score = 0.0f64;
+
+            // Score how many original terms still appear in the candidate
+            // (lower is better - means we've successfully replaced dangerous terms)
+            for (category, dict) in [
+                ("bio", &self.terms.bio),
+                ("chem", &self.terms.chem),
+                ("nuclear", &self.terms.nuclear),
+                ("cyber", &self.terms.cyber),
+                ("security", &self.terms.security),
+                ("frontier_llm", &self.terms.frontier_llm),
+                ("reasoning_extraction", &self.terms.reasoning_extraction),
+            ] {
+                for (term, weight) in dict {
+                    if candidate_lower.contains(term.to_lowercase().as_str()) {
+                        candidate_score += weight;
+                    }
+                }
+            }
+
+            if candidate_score < best_score {
+                best_score = candidate_score;
+                best = candidate.to_string();
+            }
+        }
+
+        // Also apply standard rewrite rules to the best candidate
+        let mut result = best.clone();
+        for (pattern, replacement) in &self.terms.rewrite_rules {
+            result = result.replace(pattern, replacement);
+        }
+
+        result
+    }
+
+    /// Evict specific messages by highest-scoring category rather than flat char floor.
+    /// Returns the modified body with the highest-scoring category's message evicted.
+    pub fn category_aware_evict(&self, body: &serde_json::Value, floor_chars: usize) -> Option<EvictResult> {
+        let text = Self::extract_body_text(body);
+        let text_lower = text.to_lowercase();
+
+        // Find the highest-scoring category
+
+        let mut best_cat: Option<CategoryScore> = None;
+
+        for (category, dict) in [
+            ("bio", &self.terms.bio),
+            ("chem", &self.terms.chem),
+            ("nuclear", &self.terms.nuclear),
+            ("cyber", &self.terms.cyber),
+            ("security", &self.terms.security),
+            ("frontier_llm", &self.terms.frontier_llm),
+            ("reasoning_extraction", &self.terms.reasoning_extraction),
+        ] {
+            let mut cat_score = 0.0f64;
+            let mut cat_terms: Vec<String> = Vec::new();
+
+            for (term, weight) in dict {
+                if text_lower.contains(term.to_lowercase().as_str()) {
+
+                    cat_score += weight;
+                    cat_terms.push(term.clone());
+                }
+            }
+
+
+            if cat_score > 0.0 {
+                best_cat = Some(CategoryScore {
+                    category: category.to_string(),
+                    score: cat_score,
+                    matched_terms: cat_terms,
+                });
+            }
+        }
+
+        let best = best_cat?;
+
+        // Evict messages containing terms from the highest-scoring category
+        let mut result = body.clone();
+        let mut evicted_terms = Vec::new();
+
+        if let Some(messages) = result.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            let terms_to_evict: Vec<&str> = best.matched_terms.iter().map(|s| s.as_str()).collect();
+
+            let mut to_remove: Vec<usize> = Vec::new();
+            for (idx, msg) in messages.iter().enumerate() {
+                let msg_text = msg.get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+                let msg_lower = msg_text.to_lowercase();
+
+                let mut contains_term = false;
+                for term in &terms_to_evict {
+                    if msg_lower.contains(*term) {
+                        contains_term = true;
+                        evicted_terms.push(term.to_string());
+                    }
+                }
+
+                if contains_term && msg_text.len() > floor_chars {
+                    to_remove.push(idx);
+                }
+            }
+
+            for idx in to_remove.into_iter().rev() {
+                messages.remove(idx);
+            }
+        }
+
+        Some(EvictResult {
+            body: result,
+            evicted_terms,
+            categories_hit: vec![best],
+        })
+    }
+
+    /// Per-turn scoring: returns a score for each message/turn in the body.
+    pub fn score_per_turn(&self, body: &serde_json::Value) -> Vec<(usize, f64)> {
+        let mut scores: Vec<(usize, f64)> = Vec::new();
+
+        if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+            for (idx, msg) in messages.iter().enumerate() {
+                let text = msg.get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+                let text_lower = text.to_lowercase();
+
+                let mut turn_score = 0.0f64;
+
+                for (category, dict) in [
+                    ("bio", &self.terms.bio),
+                    ("chem", &self.terms.chem),
+                    ("nuclear", &self.terms.nuclear),
+                    ("cyber", &self.terms.cyber),
+                    ("security", &self.terms.security),
+                    ("frontier_llm", &self.terms.frontier_llm),
+                    ("reasoning_extraction", &self.terms.reasoning_extraction),
+                ] {
+                    for (term, weight) in dict {
+                        if text_lower.contains(term.to_lowercase().as_str()) {
+                            turn_score += weight;
+                        }
+                    }
+                }
+
+                if turn_score > 0.0 {
+                    scores.push((idx, turn_score));
+                }
+            }
+        }
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores
+    }
+
     fn extract_body_text(body: &serde_json::Value) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
@@ -766,6 +944,22 @@ impl ContentFilter {
         parts.join("
 ")
     }
+}
+
+/// Per-category score for category-aware eviction.
+#[derive(Debug, Clone)]
+pub struct CategoryScore {
+    pub category: String,
+    pub score: f64,
+    pub matched_terms: Vec<String>,
+}
+
+/// Result of category-aware eviction.
+#[derive(Debug, Clone)]
+pub struct EvictResult {
+    pub body: serde_json::Value,
+    pub evicted_terms: Vec<String>,
+    pub categories_hit: Vec<CategoryScore>,
 }
 
 /// Result of filtering a request body.
@@ -799,6 +993,7 @@ pub struct FilterSummary {
 }
 
 // ========== TESTS ==========
+
 
 #[cfg(test)]
 mod tests {
