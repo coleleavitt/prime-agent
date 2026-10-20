@@ -104,6 +104,11 @@ pub type OnPayloadHook =
 /// Hook invoked after the HTTP response is received and before the body is read.
 pub type OnResponseHook = std::sync::Arc<dyn Fn(ProviderResponse, &Model) + Send + Sync>;
 
+/// Hook invoked with each parsed event of a streamed response, in order, as the provider reads it
+/// (after any request hooks rewrote it). It observes the raw wire shape, including content blocks
+/// the provider does not model (a server tool's use and result blocks).
+pub type OnEventHook = std::sync::Arc<dyn Fn(&serde_json::Value, &Model) + Send + Sync>;
+
 /// Options shared by all providers.
 #[derive(Clone, Default)]
 pub struct StreamOptions {
@@ -117,6 +122,9 @@ pub struct StreamOptions {
     pub session_id: Option<String>,
     pub on_payload: Option<OnPayloadHook>,
     pub on_response: Option<OnResponseHook>,
+    /// Observes every parsed response event (`anthropic-messages` only; the other providers
+    /// ignore it).
+    pub on_event: Option<OnEventHook>,
     pub headers: Option<std::collections::HashMap<String, String>>,
     pub timeout_ms: Option<u64>,
     /// Per-read silence budget on the response body in ms (upstream `streamStallTimeoutMs`):
@@ -140,6 +148,7 @@ impl std::fmt::Debug for StreamOptions {
             .field("session_id", &self.session_id)
             .field("on_payload", &self.on_payload.is_some())
             .field("on_response", &self.on_response.is_some())
+            .field("on_event", &self.on_event.is_some())
             .field("headers", &self.headers)
             .field("timeout_ms", &self.timeout_ms)
             .field("stream_stall_timeout_ms", &self.stream_stall_timeout_ms)

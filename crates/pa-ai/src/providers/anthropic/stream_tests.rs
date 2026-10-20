@@ -287,3 +287,148 @@ async fn wire_caller_content_type_override_wins() {
         "the wire head: {head}"
     );
 }
+
+/// The `on_event` observer sees every parsed event in order, including the
+/// content blocks the provider does not model (a server tool's use and
+/// result), while the provider still assembles the text it does model; the
+/// payload hook's server tool reaches the wire.
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one inline SSE script, a body-reading server and a whole-sequence assertion"
+)]
+async fn on_event_observes_every_event_including_unmodeled_blocks() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut sse = [
+        r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1,"output_tokens":2}}}"#,
+        r#"event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web_search","input":{}}}"#,
+        r#"event: content_block_stop
+data: {"type":"content_block_stop","index":0}"#,
+        r#"event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv_1","content":[{"type":"web_search_result","title":"T","url":"https://example.com/"}]}}"#,
+        r#"event: content_block_stop
+data: {"type":"content_block_stop","index":1}"#,
+        r#"event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}"#,
+        r#"event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"done"}}"#,
+        r#"event: content_block_stop
+data: {"type":"content_block_stop","index":2}"#,
+        r#"event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+        r#"event: message_stop
+data: {"type":"message_stop"}"#,
+    ]
+    .join("\n\n");
+    sse.push_str("\n\n");
+    let (request_tx, request_rx) = tokio::sync::oneshot::channel::<String>();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = vec![0; 16384];
+        // Read the head and the whole body (Content-Length) before answering.
+        loop {
+            let read = socket.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&request).into_owned();
+            if let Some(split) = text.find("\r\n\r\n") {
+                let length = text[..split]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if request.len() >= split + 4 + length {
+                    break;
+                }
+            }
+            if read == 0 {
+                break;
+            }
+        }
+        let _ = request_tx.send(String::from_utf8_lossy(&request).into_owned());
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{sse}",
+                    sse.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let model: Model = serde_json::from_value(json!({
+        "id": "claude-test", "name": "Claude Test", "api": "anthropic-messages",
+        "provider": "anthropic", "baseUrl": format!("http://{addr}"), "reasoning": false,
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 128_000, "maxTokens": 8192
+    }))
+    .unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observer = std::sync::Arc::clone(&seen);
+    let options = AnthropicOptions::from_base(StreamOptions {
+        api_key: Some("sk-ant-api-test".into()),
+        on_payload: Some(std::sync::Arc::new(|mut payload, _model| {
+            payload["tools"] = json!([{ "type": "web_search_20250305", "name": "web_search" }]);
+            Some(payload)
+        })),
+        on_event: Some(std::sync::Arc::new(move |event, _model| {
+            let label = match event["type"].as_str().unwrap_or_default() {
+                "content_block_start" => format!(
+                    "start:{}",
+                    event["content_block"]["type"].as_str().unwrap_or_default()
+                ),
+                other => other.to_string(),
+            };
+            observer.lock().unwrap().push(label);
+        })),
+        ..Default::default()
+    });
+    let reader = stream_anthropic(
+        &model,
+        &Context {
+            system_prompt: None,
+            messages: vec![],
+            tools: None,
+        },
+        Some(&options),
+    );
+    let message = reader.result().await;
+    let text: String = message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            AssistantContent::Text(block) => Some(block.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "done");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            "message_start",
+            "start:server_tool_use",
+            "content_block_stop",
+            "start:web_search_tool_result",
+            "content_block_stop",
+            "start:text",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop",
+        ]
+    );
+    let request = request_rx.await.unwrap();
+    assert!(
+        request.contains(r#""type":"web_search_20250305""#),
+        "the payload hook's server tool reaches the wire: {request}"
+    );
+}

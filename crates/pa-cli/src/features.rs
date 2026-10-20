@@ -36,6 +36,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
+    // `rlm.web_search` / `rlm.web_fetch`: the `web.search` / `web.fetch`
+    // host requests (their HTTP clients start on the first request).
+    #[cfg(feature = "web")]
+    features.push(Arc::new(pa_web::WebFeature::new()));
     // The user's command hooks (Claude Code's `hooks` settings key), ahead
     // of the plugins: a refusal from either stops the action.
     #[cfg(feature = "hooks")]

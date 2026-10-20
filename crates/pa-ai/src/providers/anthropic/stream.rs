@@ -773,11 +773,18 @@ async fn run_stream(
     // The TS try/catch encloses this whole streaming section, including the abort and stop-reason
     // checks; the catch settles partial tool calls before the error event carries the message.
     // The hooks' view of each streamed event (none natively: as read).
+    // The caller's event observer sees each event as the provider reads it.
     let respond = |event: Value| -> Vec<Value> {
-        match &hooks {
+        let events = match &hooks {
             Some(hooks) => hooks.response_event(model, &api_key, event),
             None => vec![event],
+        };
+        if let Some(on_event) = &base_options.on_event {
+            for event in &events {
+                on_event(event, model);
+            }
         }
+        events
     };
     let stream_result: Result<(), ProviderError> = async {
         for sse in std::mem::take(&mut opening) {

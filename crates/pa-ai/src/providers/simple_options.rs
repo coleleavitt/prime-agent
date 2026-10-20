@@ -61,6 +61,7 @@ pub fn build_base_options(
         session_id: base.session_id,
         on_payload: base.on_payload,
         on_response: base.on_response,
+        on_event: base.on_event,
         headers: base.headers,
         timeout_ms: base.timeout_ms,
         stream_stall_timeout_ms: base.stream_stall_timeout_ms,

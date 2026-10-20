@@ -27,6 +27,7 @@ from .factory import (
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
 from .toolforge import ToolforgeRejected, ToolforgeSkill
+from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
 _RENAMED_RUN_MESSAGE = "rlm.run was renamed; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -1104,6 +1105,17 @@ class _RLMNamespace:
     def monitor_stop(self, monitor_id: str) -> bool:
         return monitor_stop(monitor_id)
 
+    async def web_search(
+        self,
+        query: str,
+        allowed_domains: list[str] | None = None,
+        blocked_domains: list[str] | None = None,
+    ) -> WebSearchResult:
+        return await web_search(query, allowed_domains, blocked_domains)
+
+    async def web_fetch(self, url: str, prompt: str | None = None, *, offset: int = 0) -> WebFetchResult:
+        return await web_fetch(url, prompt, offset=offset)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1148,6 +1160,9 @@ __all__ = [
     "RefinementEvent",
     "ToolforgeRejected",
     "ToolforgeSkill",
+    "WebFetchResult",
+    "WebSearchHit",
+    "WebSearchResult",
     "active_bash_commands",
     "bash",
     "delete_subagent",
@@ -1181,6 +1196,8 @@ __all__ = [
     "watch_path_cancel",
     "watch_path_get",
     "watch_path_list",
+    "web_fetch",
+    "web_search",
     "workflow",
     "workflow_v2",
 ]
