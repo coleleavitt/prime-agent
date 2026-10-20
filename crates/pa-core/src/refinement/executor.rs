@@ -484,7 +484,23 @@ pub struct AutoRefineReviewContext {
 }
 
 fn parse_auto_refine_review(text: &str) -> anyhow::Result<AutoRefineReview> {
-    let value = super::planner::extract_json_object(text).map_err(anyhow::Error::msg)?;
+    let value = match super::planner::extract_json_object(text) {
+        Ok(value) => value,
+        // A reviewer reply with no JSON object at all (prose only) is not a
+        // failure: the reviewer proposed no structured decision, so the safe
+        // outcome is "do not refine". Only a truncated or malformed object is
+        // a real error worth surfacing to the caller's log.
+        Err(error) if error == super::planner::NO_JSON_OBJECT_ERROR => {
+            return Ok(AutoRefineReview {
+                should_refine: false,
+                rationale: "Reviewer replied without a structured decision; skipping refinement."
+                    .to_string(),
+                instructions: None,
+                reply: serde_json::Map::new(),
+            });
+        }
+        Err(error) => return Err(anyhow::Error::msg(error)),
+    };
     let record = value.as_object().cloned().unwrap_or_default();
     Ok(AutoRefineReview {
         should_refine: record.get("shouldRefine") == Some(&serde_json::Value::Bool(true)),
@@ -655,6 +671,28 @@ mod tests {
                 .chars()
                 .all(|char| char.is_ascii_digit())
         );
+    }
+
+    #[test]
+    fn a_prose_only_review_reply_is_a_no_op_not_a_failure() {
+        // The auto-refine reviewer sometimes answers in prose with no JSON
+        // object. That is "no structured decision", so the review must resolve
+        // to "do not refine" rather than erroring (which logged an
+        // auto-refinement failure for a benign case).
+        let review = parse_auto_refine_review("I don't think any refinement is warranted here.")
+            .expect("a prose reply is not an error");
+        assert!(!review.should_refine);
+        assert!(review.instructions.is_none());
+
+        // A genuinely truncated JSON object is still an error worth surfacing.
+        let truncated = parse_auto_refine_review("{\"shouldRefine\": true, \"rationale\": \"x\"");
+        assert!(truncated.is_err(), "a truncated object stays an error");
+
+        // A well-formed decision still parses.
+        let ok = parse_auto_refine_review("{\"shouldRefine\": true, \"rationale\": \"go\"}")
+            .expect("valid JSON parses");
+        assert!(ok.should_refine);
+        assert_eq!(ok.rationale, "go");
     }
 
     fn entry(kind: RefinementKind, id: &str, content: &str) -> super::super::HarnessEntry {

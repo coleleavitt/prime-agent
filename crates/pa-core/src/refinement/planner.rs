@@ -23,6 +23,11 @@ pub const REFINEMENT_CONTEXT_OVERHEAD_TOKENS: u64 = 1_024;
 
 pub const TRUNCATED_JSON_ERROR: &str = "the model stopped before completing its JSON object. This usually means the output budget was exhausted; retry with a smaller request.";
 
+/// Reply held no JSON object at all (prose only), as distinct from a truncated
+/// or malformed one. The auto-refine review treats this as "no decision"
+/// rather than a failure; see `executor::parse_auto_refine_review`.
+pub const NO_JSON_OBJECT_ERROR: &str = "Refiner did not return a JSON object";
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefinementEdit {
@@ -147,7 +152,7 @@ pub fn extract_json_object(text: &str) -> Result<serde_json::Value, String> {
     if is_incomplete_json(trimmed) {
         return Err(TRUNCATED_JSON_ERROR.to_string());
     }
-    Err("Refiner did not return a JSON object".to_string())
+    Err(NO_JSON_OBJECT_ERROR.to_string())
 }
 
 /// Normalize an untrusted proposal, preserving invalid edit fields for
