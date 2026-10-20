@@ -34,7 +34,6 @@ use std::path::Path;
 use std::fs;
 use std::hash::Hasher;
 use std::collections::hash_map::DefaultHasher;
-use std::cell::RefCell;
 use tracing::debug;
 
 // ========== TYPES ==========
@@ -541,8 +540,10 @@ pub struct ContentFilter {
     pub min_threshold_multiplier: f64,
     pub rewrite_threshold: f64,
     pub block_threshold: f64,
-    /// LRU cache: text_hash -> ClassificationResult, protected by RefCell.
-    cache: std::cell::RefCell<HashMap<String, ClassificationResult>>,
+    /// LRU cache: text_hash -> ClassificationResult. A `Mutex`, not a
+    /// `RefCell`, so the filter is `Sync`: `pa-ai`'s `ProviderRequestHooks`
+    /// is `Send + Sync`, and the filter rides inside it.
+    cache: std::sync::Mutex<HashMap<String, ClassificationResult>>,
 }
 
 impl ContentFilter {
@@ -561,12 +562,15 @@ impl ContentFilter {
     /// Classify text against term dictionaries, using an LRU score cache.
     pub fn classify(&self, text: &str) -> ClassificationResult {
         // Cache check: hash of text -> result
-        println!("classify called with text: {:?}", text);
         let mut hasher = DefaultHasher::new();
         hasher.write(text.as_bytes());
         let key = format!("{:x}", hasher.finish());
-        if let Some(cached) = self.cache.borrow().get(&key) {
-            println!("cache HIT for key={}", key);
+        if let Some(cached) = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
             return cached.clone();
         }
 
@@ -654,14 +658,23 @@ impl ContentFilter {
             matched_terms_with_score,
         };
 
-        // Store in LRU cache (evict oldest if full)
-        if self.cache.borrow().len() >= CACHE_CAPACITY {
-            let first_key = self.cache.borrow().keys().next().cloned();
-            if let Some(k) = first_key {
-                self.cache.borrow_mut().remove(&k);
+        // Store in LRU cache (evict oldest if full). One lock acquisition for
+        // the whole evict-and-insert: std's Mutex is not reentrant, and a lock
+        // taken in an `if` condition is held across its block, so re-locking
+        // inside would deadlock.
+        {
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cache.len() >= CACHE_CAPACITY {
+                let first_key = cache.keys().next().cloned();
+                if let Some(k) = first_key {
+                    cache.remove(&k);
+                }
             }
+            cache.insert(key, result.clone());
         }
-        self.cache.borrow_mut().insert(key, result.clone());
 
         result
     }
@@ -1194,7 +1207,7 @@ impl ContentFilter {
         Self { terms, rewrite_threshold: rewrite, block_threshold: block,
                dynamic_threshold_scale_max: dtsm, min_threshold_multiplier: mtm,
                max_block_contribution: mbc,
-               cache: RefCell::new(HashMap::with_capacity(CACHE_CAPACITY)),
+               cache: std::sync::Mutex::new(HashMap::with_capacity(CACHE_CAPACITY)),
         }
     }
 }
