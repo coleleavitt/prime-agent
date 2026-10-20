@@ -463,6 +463,12 @@ impl SessionEngine for AgentSessionEngine {
                 core.session
                     .set_model_and_thinking_level(&model, &provider, &model_id, level),
             );
+            // The context rows follow the switch, as the RPC `set_model` path
+            // does: the token countdown's window and the environment row's
+            // model name report the model the session now runs, not the one
+            // it was built on (otherwise a session built on a small-window
+            // default keeps that window and model name after switching).
+            core.update_model_facts(&model);
         }
         if let Some(children) = &self.children {
             children.set_model(format!("{}/{}", model.provider, model.id));

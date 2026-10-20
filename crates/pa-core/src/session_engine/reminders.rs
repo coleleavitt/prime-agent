@@ -390,6 +390,13 @@ impl Reminders {
             .store(window, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// The window the token countdown reports against (the active model's).
+    #[must_use]
+    pub fn context_window(&self) -> u64 {
+        self.context_window
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     #[must_use]
     pub fn toggles(&self) -> ReminderToggles {
         self.toggles

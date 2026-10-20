@@ -1488,3 +1488,97 @@ fn failed_oauth_refresh_fails_the_turn_as_an_authentication_error() {
             .unwrap();
     assert_eq!(stored, auth, "the credential is kept for a later retry");
 }
+
+/// A custom provider with two models of different context windows, so a
+/// switch between them moves an observable budget.
+fn write_two_window_provider_models_json(agent_dir: &std::path::Path) {
+    std::fs::create_dir_all(agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("models.json"),
+        serde_json::json!({
+            "providers": {
+                "battery": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9",
+                    "apiKey": "sk-battery",
+                    "models": [
+                        {
+                            "id": "small",
+                            "name": "Small",
+                            "api": "openai-completions",
+                            "contextWindow": 128_000,
+                            "maxTokens": 4096,
+                        },
+                        {
+                            "id": "large",
+                            "name": "Large",
+                            "api": "openai-completions",
+                            "contextWindow": 1_000_000,
+                            "maxTokens": 4096,
+                        }
+                    ]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// Reading the token countdown's window off the live session's context rows.
+async fn live_context_window(engine: &AgentSessionEngine) -> u64 {
+    let guard = engine.session.lock().await;
+    let core = guard.as_ref().expect("the session is built");
+    core.session
+        .context_rows()
+        .expect("a built session has context rows")
+        .reminders()
+        .context_window()
+}
+
+/// Regression: a live model switch moves the `<total_tokens>` countdown
+/// window (and the environment row's model) to the model the session now
+/// runs. Before the fix the interactive `switch_model` path updated the
+/// agent and provider but never refreshed the context-row model facts, so a
+/// session built on a small-window default kept that window after switching
+/// to a large-window model - the countdown read nearly empty on a model with
+/// room to spare.
+#[tokio::test]
+async fn switch_model_moves_the_token_countdown_to_the_new_models_window() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let agent_dir = dir.path().join("agent");
+    write_two_window_provider_models_json(&agent_dir);
+    let engine = std::sync::Arc::new(restore_test_engine(
+        dir.path(),
+        Some("battery"),
+        Some("small"),
+    ));
+    engine.register_arc();
+    // A read seam builds the session on the small-window model.
+    let _ = engine.connection_commands().await;
+    assert_eq!(
+        live_context_window(&engine).await,
+        128_000,
+        "the session builds on the small model's window"
+    );
+
+    let switched = {
+        let engine = std::sync::Arc::clone(&engine);
+        tokio::task::spawn_blocking(move || {
+            engine.switch_model(EngineModelSelection {
+                provider: Some("battery".to_string()),
+                model: Some("large".to_string()),
+                api_key: None,
+                thinking: None,
+            })
+        })
+        .await
+        .expect("switch join")
+    };
+    assert!(switched, "the in-allowlist switch proceeds");
+    assert_eq!(
+        live_context_window(&engine).await,
+        1_000_000,
+        "the countdown follows the switched-to model's window"
+    );
+}
