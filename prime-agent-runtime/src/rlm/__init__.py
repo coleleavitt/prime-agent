@@ -132,6 +132,15 @@ class RLMChildResult:
     tool_use_count: int | None = None
     replied_since_task: bool | None = None
 
+    @property
+    def answer(self) -> str | None:
+        """Alias for `answer_text`, the child's full final answer.
+
+        `.answer` is the obvious name to reach for; keeping it pointed at
+        `answer_text` avoids an AttributeError on the common guess.
+        """
+        return self.answer_text
+
 
 def _spawn_handle_from_payload(payload: Any) -> RLMSpawnHandle:
     if not isinstance(payload, dict):
