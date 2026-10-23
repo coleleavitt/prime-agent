@@ -12,6 +12,11 @@
 //! shows a third choice for it, and an answer that takes it ends the
 //! question as [`ConfirmationAnswer::AllowedAlways`]; what remembering means
 //! is the asker's business.
+//!
+//! The same surface carries structured questions ([`super::question`]):
+//! they wait in the same per-session queue, publish under the status's
+//! `questions` key, and are answered by the same command with an `answer`
+//! object.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +26,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
+use super::question::QuestionRequest;
 use super::status::{FeatureStatus, publish_feature_status};
 
 /// The feature status pending confirmations publish under.
@@ -63,16 +69,44 @@ pub enum ConfirmationAnswer {
     TimedOut(Duration),
 }
 
-/// The user's answer to one question.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Answer {
+/// The user's answer to one pending item.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Answer {
     Deny,
     Allow,
     AllowAlways,
+    /// A structured question's answer object.
+    Respond(serde_json::Value),
+}
+
+/// One pending item: a yes/no confirmation or a structured question.
+#[derive(Debug, Clone)]
+pub(super) enum PendingRequest {
+    Confirmation(ConfirmationRequest),
+    Question(QuestionRequest),
+}
+
+impl PendingRequest {
+    fn id(&self) -> &str {
+        match self {
+            PendingRequest::Confirmation(request) => &request.id,
+            PendingRequest::Question(request) => &request.id,
+        }
+    }
+
+    /// The session's status line while this item is the oldest pending.
+    fn line(&self) -> String {
+        match self {
+            PendingRequest::Confirmation(request) => {
+                format!("waiting for your confirmation: {}", request.action)
+            }
+            PendingRequest::Question(request) => request.line.clone(),
+        }
+    }
 }
 
 struct Pending {
-    request: ConfirmationRequest,
+    request: PendingRequest,
     answer: oneshot::Sender<Answer>,
 }
 
@@ -98,24 +132,28 @@ fn lock() -> std::sync::MutexGuard<'static, HashMap<String, SessionConfirmations
 /// Publish `session_id`'s pending questions. Called with the registry lock
 /// held, so concurrent changes publish in the order they were made.
 fn publish(session_id: &str, session: Option<&SessionConfirmations>) {
-    let pending: Vec<&ConfirmationRequest> = session
-        .map(|session| {
-            session
-                .pending
-                .iter()
-                .map(|pending| &pending.request)
-                .collect()
+    let pending: &[Pending] = session.map_or(&[], |session| session.pending.as_slice());
+    let confirmations: Vec<&ConfirmationRequest> = pending
+        .iter()
+        .filter_map(|pending| match &pending.request {
+            PendingRequest::Confirmation(request) => Some(request),
+            PendingRequest::Question(_) => None,
         })
-        .unwrap_or_default();
-    let line = pending
-        .first()
-        .map(|request| format!("waiting for your confirmation: {}", request.action));
+        .collect();
+    let questions: Vec<&QuestionRequest> = pending
+        .iter()
+        .filter_map(|pending| match &pending.request {
+            PendingRequest::Question(request) => Some(request),
+            PendingRequest::Confirmation(_) => None,
+        })
+        .collect();
+    let line = pending.first().map(|pending| pending.request.line());
     publish_feature_status(
         session_id,
         FeatureStatus {
             feature: CONFIRMATION_FEATURE.to_string(),
             line,
-            status: serde_json::json!({ "confirmations": pending }),
+            status: serde_json::json!({ "confirmations": confirmations, "questions": questions }),
         },
     );
 }
@@ -177,11 +215,57 @@ impl Drop for Withdraw<'_> {
         let before = session.pending.len();
         session
             .pending
-            .retain(|pending| pending.request.id != self.id);
+            .retain(|pending| pending.request.id() != self.id);
         if session.pending.len() != before {
             publish(self.session_id, Some(session));
         }
     }
+}
+
+/// A fresh id for a pending item (`<prefix>-<n>`, unique in the process).
+pub(super) fn next_pending_id(prefix: &str) -> String {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    format!("{prefix}-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+/// How waiting for a pending item ended without an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Unanswered {
+    /// No surface (print mode), or it was withdrawn meanwhile.
+    Unavailable,
+    TimedOut(Duration),
+}
+
+/// Queue `request` on `session_id`'s surface and wait for its answer, up to
+/// `timeout` (`None` waits until it is answered, the surface goes, or the
+/// asker stops waiting).
+pub(super) async fn ask_pending(
+    session_id: &str,
+    request: PendingRequest,
+    timeout: Option<Duration>,
+) -> Result<Answer, Unanswered> {
+    let id = request.id().to_string();
+    let (answer, answered) = oneshot::channel();
+    {
+        let mut sessions = lock();
+        let Some(session) = sessions
+            .get_mut(session_id)
+            .filter(|session| session.surfaces > 0)
+        else {
+            return Err(Unanswered::Unavailable);
+        };
+        session.pending.push(Pending { request, answer });
+        publish(session_id, Some(session));
+    }
+    let _withdraw = Withdraw { session_id, id };
+    let answered = match timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, answered).await {
+            Ok(answered) => answered,
+            Err(_) => return Err(Unanswered::TimedOut(timeout)),
+        },
+        None => answered.await,
+    };
+    answered.map_err(|_| Unanswered::Unavailable)
 }
 
 /// Ask the user whether `action` may run, because of `reason`, and wait up
@@ -205,35 +289,18 @@ pub async fn confirm_offering(
     remember: Option<&str>,
     timeout: Duration,
 ) -> ConfirmationAnswer {
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    let id = format!("confirm-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
-    let (answer, answered) = oneshot::channel();
-    {
-        let mut sessions = lock();
-        let Some(session) = sessions
-            .get_mut(session_id)
-            .filter(|session| session.surfaces > 0)
-        else {
-            return ConfirmationAnswer::Unavailable;
-        };
-        session.pending.push(Pending {
-            request: ConfirmationRequest {
-                id: id.clone(),
-                action: action.to_string(),
-                reason: reason.to_string(),
-                remember: remember.map(str::to_string),
-            },
-            answer,
-        });
-        publish(session_id, Some(session));
-    }
-    let _withdraw = Withdraw { session_id, id };
-    match tokio::time::timeout(timeout, answered).await {
-        Ok(Ok(Answer::Allow)) => ConfirmationAnswer::Allowed,
-        Ok(Ok(Answer::AllowAlways)) => ConfirmationAnswer::AllowedAlways,
-        Ok(Ok(Answer::Deny)) => ConfirmationAnswer::Denied,
-        Ok(Err(_)) => ConfirmationAnswer::Unavailable,
-        Err(_) => ConfirmationAnswer::TimedOut(timeout),
+    let request = PendingRequest::Confirmation(ConfirmationRequest {
+        id: next_pending_id("confirm"),
+        action: action.to_string(),
+        reason: reason.to_string(),
+        remember: remember.map(str::to_string),
+    });
+    match ask_pending(session_id, request, Some(timeout)).await {
+        Ok(Answer::Allow | Answer::Respond(_)) => ConfirmationAnswer::Allowed,
+        Ok(Answer::AllowAlways) => ConfirmationAnswer::AllowedAlways,
+        Ok(Answer::Deny) => ConfirmationAnswer::Denied,
+        Err(Unanswered::Unavailable) => ConfirmationAnswer::Unavailable,
+        Err(Unanswered::TimedOut(timeout)) => ConfirmationAnswer::TimedOut(timeout),
     }
 }
 
@@ -254,6 +321,22 @@ pub fn answer_confirmation_remembering(
     allow: bool,
     remember: bool,
 ) -> bool {
+    answer_pending(session_id, id, allow, remember, None)
+}
+
+/// Answer `session_id`'s pending item `id`, a confirmation or a structured
+/// question: `allow: false` refuses a confirmation and declines a question;
+/// `allow: true` allows a confirmation (remembering it when `remember` and
+/// the question offered it) and answers a question with `answer` (an empty
+/// object when absent). `false` when no such item is pending.
+#[must_use = "`false` means the item was no longer pending"]
+pub fn answer_pending(
+    session_id: &str,
+    id: &str,
+    allow: bool,
+    remember: bool,
+    answer: Option<serde_json::Value>,
+) -> bool {
     let mut sessions = lock();
     let Some(session) = sessions.get_mut(session_id) else {
         return false;
@@ -261,16 +344,24 @@ pub fn answer_confirmation_remembering(
     let Some(index) = session
         .pending
         .iter()
-        .position(|pending| pending.request.id == id)
+        .position(|pending| pending.request.id() == id)
     else {
         return false;
     };
     let pending = session.pending.remove(index);
     publish(session_id, Some(session));
-    let answer = match (allow, remember && pending.request.remember.is_some()) {
-        (false, _) => Answer::Deny,
-        (true, false) => Answer::Allow,
-        (true, true) => Answer::AllowAlways,
+    let answer = match (&pending.request, allow) {
+        (_, false) => Answer::Deny,
+        (PendingRequest::Confirmation(request), true) => {
+            if remember && request.remember.is_some() {
+                Answer::AllowAlways
+            } else {
+                Answer::Allow
+            }
+        }
+        (PendingRequest::Question(_), true) => {
+            Answer::Respond(answer.unwrap_or_else(|| serde_json::json!({})))
+        }
     };
     // The asker may have stopped waiting a moment ago; the question is
     // answered either way.
@@ -278,9 +369,8 @@ pub fn answer_confirmation_remembering(
     true
 }
 
-/// `session_id`'s pending questions, oldest first.
-#[must_use]
-pub fn pending_confirmations(session_id: &str) -> Vec<ConfirmationRequest> {
+/// `session_id`'s pending items, oldest first.
+pub(super) fn pending_requests(session_id: &str) -> Vec<PendingRequest> {
     lock().get(session_id).map_or_else(Vec::new, |session| {
         session
             .pending
@@ -288,6 +378,18 @@ pub fn pending_confirmations(session_id: &str) -> Vec<ConfirmationRequest> {
             .map(|pending| pending.request.clone())
             .collect()
     })
+}
+
+/// `session_id`'s pending confirmations, oldest first.
+#[must_use]
+pub fn pending_confirmations(session_id: &str) -> Vec<ConfirmationRequest> {
+    pending_requests(session_id)
+        .into_iter()
+        .filter_map(|request| match request {
+            PendingRequest::Confirmation(request) => Some(request),
+            PendingRequest::Question(_) => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]

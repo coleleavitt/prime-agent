@@ -152,6 +152,7 @@ impl SessionUi {
         }
         // A question that waited behind this confirm opens now.
         self.open_next_feature_question(view);
+        self.open_next_ask_question(view);
         self.dirty = true;
         Ok(())
     }

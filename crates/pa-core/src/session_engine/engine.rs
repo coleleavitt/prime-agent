@@ -360,6 +360,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let output_limit_recovery = settings.get_output_limit_recovery();
     let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
+    // `rlm.ask_user`'s wait (Claude Code's `askUserQuestionTimeout`), read
+    // before `settings` moves into the loader.
+    let ask_user_timeout = settings.get_ask_user_question_timeout();
     let reminder_toggles = settings.get_reminders();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
@@ -754,6 +757,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         std::sync::Arc::clone(wiring.runtime.goal_driver()),
         std::sync::Arc::clone(&wiring.session),
         session_id.clone(),
+    );
+    // `user.ask` (`rlm.ask_user`, Claude Code's AskUserQuestion): the
+    // model's multiple-choice questions on the confirmation surface. Only
+    // the main session asks; a subagent is refused.
+    super::ask_user::register_host_handlers(
+        &mut handlers,
+        session_id.clone(),
+        config.rlm_depth.unwrap_or(0),
+        ask_user_timeout,
     );
     // `skill.load` (`rlm.load_skill`): the model loads a skill's
     // instructions, Claude Code's Skill tool.

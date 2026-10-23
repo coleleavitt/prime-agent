@@ -87,6 +87,9 @@ pub struct AgentView {
     pub model_picker: Option<crate::model_picker::ModelPicker>,
     pub tree_selector: Option<crate::tree_selector::TreeSelector>,
     pub confirm: Option<crate::confirm::ConfirmPanel>,
+    /// The `rlm.ask_user` multiple-choice question panel (Claude Code's
+    /// AskUserQuestion), opened for the oldest pending `ask_user` question.
+    pub(crate) ask_question: Option<crate::session_ui::AskQuestionPanel>,
     pub provider_auth: Option<crate::provider_auth::ProviderAuthSelector>,
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,
     pub fork_selector: Option<crate::user_message_selector::UserMessageSelector>,
@@ -327,6 +330,7 @@ impl AgentView {
             model_picker: None,
             tree_selector: None,
             confirm: None,
+            ask_question: None,
             provider_auth: None,
             auth_panel: None,
             fork_selector: None,

@@ -591,6 +591,34 @@ async def send_user_message(
     return await host_request("user_message.send", payload)
 
 
+async def ask_user(questions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ask the user 1-4 multiple-choice questions (Claude Code's AskUserQuestion).
+
+    ``questions`` is a list of 1-4 question dicts; each is
+    ``{"question": str, "header": str, "options": [...], "multiSelect": bool}``
+    where ``options`` is 2-4 ``{"label": str, "description": str, "preview": str}``
+    choices (``description`` and ``preview`` optional; ``preview`` is multiline
+    content shown when the option is focused). The user always also gets a
+    free-text "Other" choice. Returns ``{"status", "answers", "message"}`` (and
+    ``"annotations"``/``"response"`` when the user added them): ``status`` is
+    ``"answered"`` or ``"timed_out"``. ``answers`` maps each question's text to
+    the chosen label (multi-select labels comma-joined); ``message`` is the
+    human-readable summary to act on.
+
+    Raises when no interactive user can answer (print mode / no client), in a
+    subagent, or when the user dismisses the questions. Use it only when the
+    user has a genuine decision with at least two distinct choices; otherwise
+    state your approach and continue.
+    """
+    if isinstance(questions, dict):
+        raise TypeError("questions must be a list of question dicts, not a single dict")
+    if not isinstance(questions, (list, tuple)) or not all(
+        isinstance(question, dict) for question in questions
+    ):
+        raise TypeError("questions must be a list of question dicts")
+    return await host_request("user.ask", {"questions": [dict(question) for question in questions]})
+
+
 def _subagent_selector(target: Any) -> str:
     """Normalize a direct-child selector for interrupt/delete: spawn handle, subagent row, or id/name string."""
     if isinstance(target, (RLMSpawnHandle, RLMSubagent)):
@@ -1132,6 +1160,9 @@ class _RLMNamespace:
     ) -> dict[str, Any]:
         return await send_user_message(message, attachments, status=status)
 
+    async def ask_user(self, questions: list[dict[str, Any]]) -> dict[str, Any]:
+        return await ask_user(questions)
+
     async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
         return await interrupt_subagent(target)
 
@@ -1259,6 +1290,7 @@ __all__ = [
     "WebSearchHit",
     "WebSearchResult",
     "active_bash_commands",
+    "ask_user",
     "bash",
     "delete_subagent",
     "emit",

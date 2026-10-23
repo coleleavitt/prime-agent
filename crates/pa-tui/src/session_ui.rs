@@ -4,6 +4,7 @@
 //! view crate modules; this module only decides what the view shows.
 
 mod apply;
+mod ask_question;
 mod auth;
 mod bash;
 mod commands;
@@ -33,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 pub(crate) use apply::CompactionAbortNote;
+pub(crate) use ask_question::AskQuestionPanel;
 use auth::{McpAuthIntent, PendingModelSignIn, SetModelOutcome};
 pub(crate) use bash::BashActivityUpdate;
 use bash::{ResyncBash, SideBashRun};
@@ -362,6 +364,12 @@ pub(crate) struct SessionUi {
     /// Questions this client answered that the daemon may still list (a
     /// roster summary can lag the answer); forgotten once it stops.
     answered_questions: std::collections::HashSet<String>,
+    /// The `rlm.ask_user` multiple-choice questions pending on the surface,
+    /// oldest first: `(id, payload)` (see [`ask_question`]).
+    ask_questions: Vec<(String, serde_json::Value)>,
+    /// Ask-user questions this client answered that the daemon may still
+    /// list; forgotten once it stops.
+    answered_ask_questions: std::collections::HashSet<String>,
     /// The session commands the plan-mode key sends instead of `/plan`
     /// while a feature publishes a permission-mode cycle (see
     /// [`permission_cycle`]); empty keeps the plain plan toggle.

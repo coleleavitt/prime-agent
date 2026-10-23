@@ -124,6 +124,7 @@ impl AgentView {
             || self.rewind_selector.is_some()
             || self.share_loader.is_some()
             || self.confirm.is_some()
+            || self.ask_question.is_some()
             || self.provider_auth.is_some()
             || self.auth_panel.is_some()
             || self.reload_box.is_some()
@@ -142,6 +143,8 @@ impl AgentView {
                 dock.extend(self.render_share_loader(loader, width));
             } else if let Some(confirm) = self.confirm.as_ref() {
                 dock.extend(confirm.render(&self.theme, width, self.editor.keybindings()));
+            } else if let Some(panel) = self.ask_question.as_ref() {
+                dock.extend(panel.render(&self.theme, width, self.editor.keybindings()));
             } else if let Some(selector) = self.provider_auth.as_mut() {
                 dock.extend(selector.render(&self.theme, width, self.editor.keybindings()));
             } else if let Some(panel) = self.auth_panel.as_mut() {
@@ -311,6 +314,7 @@ impl AgentView {
             || self.rewind_selector.is_some()
             || self.share_loader.is_some()
             || self.confirm.is_some()
+            || self.ask_question.is_some()
             || self.provider_auth.is_some()
             || self.auth_panel.is_some()
             || self.reload_box.is_some()

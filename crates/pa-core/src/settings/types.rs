@@ -465,6 +465,15 @@ pub struct Settings {
     /// output-token limit auto-continues (upstream #969). Unset or 0 is
     /// OFF, the TS v0.9.8 behavior (a truncated reply ends the turn).
     pub length_continuations: Option<u64>,
+    /// `askUserQuestionTimeout` (Claude Code's key): how long `rlm.ask_user`
+    /// waits before it answers with the away-from-keyboard text (`60s`,
+    /// `5m`, `10m`, any `<n>s`/`<n>m`); unset, `never` or `default` waits
+    /// for the user.
+    pub ask_user_question_timeout: Option<String>,
+    /// `plansDirectory` (Claude Code's key): where plan-mode plan files
+    /// live, relative to the project root and inside it; unset is
+    /// `<agent dir>/plans`.
+    pub plans_directory: Option<String>,
     /// `repetitionGuard`: stop a degenerate looping generation mid-stream
     /// instead of streaming it to the output cap (upstream #1798):
     /// `"thinking"` (the default when unset) guards reasoning only, `"all"`

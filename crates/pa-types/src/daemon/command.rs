@@ -597,7 +597,9 @@ pub enum DaemonCommand {
     /// Answer a question a session's hooks or plugins put to the user
     /// before an action (the session's `confirmation` feature status):
     /// `allow` lets the action run, otherwise it is refused. Rust-native
-    /// extension, advertised by the `feature_confirmation` capability.
+    /// extension, advertised by the `feature_confirmation` capability; a
+    /// structured question (`feature_questions`) takes an `answer` object
+    /// in `rest`, and `allow: false` declines it.
     AnswerFeatureConfirmation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

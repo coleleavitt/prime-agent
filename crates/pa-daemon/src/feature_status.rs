@@ -43,7 +43,10 @@ pub(crate) fn publish(
 }
 
 /// `answer_feature_confirmation`: answer a question the session's hooks or
-/// plugins put to the user (`pa_core::features::confirm`). Answers
+/// plugins put to the user (`pa_core::features::confirm`), or a structured
+/// question (`pa_core::features::ask_question`: the model's `rlm.ask_user`,
+/// the plan approval) with the optional `answer` object (the
+/// `feature_questions` capability; `allow: false` declines it). Answers
 /// `{"answered": false}` when it is no longer pending (already answered by
 /// another client, timed out, or the action was aborted).
 pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::DaemonResponse {
@@ -67,12 +70,21 @@ pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::D
         .get("remember")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let answered = pa_core::features::answer_confirmation_remembering(
-        session_id,
-        confirmation_id,
-        allow,
-        remember,
-    );
+    // `answer` (optional, additive): a structured question's answer object.
+    let answer = match payload.get("answer") {
+        None | Some(Value::Null) => None,
+        Some(answer @ Value::Object(_)) => Some(answer.clone()),
+        Some(_) => {
+            return crate::protocol::response_failure(
+                None,
+                COMMAND,
+                "answer must be an object",
+                None,
+            );
+        }
+    };
+    let answered =
+        pa_core::features::answer_pending(session_id, confirmation_id, allow, remember, answer);
     crate::protocol::response_success(None, COMMAND, Some(json!({ "answered": answered })))
 }
 
@@ -194,6 +206,38 @@ mod tests {
         assert_eq!(
             offering.await.unwrap(),
             pa_core::features::ConfirmationAnswer::AllowedAlways
+        );
+    }
+
+    #[tokio::test]
+    async fn a_structured_question_takes_the_answer_object() {
+        let session = "daemon-question";
+        let _surface = pa_core::features::register_confirmation_surface(session);
+        let asking = tokio::spawn(pa_core::features::ask_question(
+            session,
+            pa_core::features::QUESTION_KIND_ASK_USER,
+            "waiting for your answer",
+            json!({ "questions": [] }),
+            None,
+        ));
+        let id = loop {
+            if let Some(question) = pa_core::features::pending_questions(session).pop() {
+                break question.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        let malformed = answer_feature_confirmation(&json!({
+            "activeSessionId": session, "confirmationId": id, "allow": true, "answer": "A"
+        }));
+        assert_eq!(malformed.error.as_deref(), Some("answer must be an object"));
+        let answered = answer_feature_confirmation(&json!({
+            "activeSessionId": session, "confirmationId": id, "allow": true,
+            "answer": { "answers": { "Which?": "A" } }
+        }));
+        assert_eq!(answered.data, Some(json!({ "answered": true })));
+        assert_eq!(
+            asking.await.unwrap(),
+            pa_core::features::QuestionAnswer::Answered(json!({ "answers": { "Which?": "A" } }))
         );
     }
 }

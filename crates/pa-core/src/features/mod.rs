@@ -12,7 +12,8 @@
 //!
 //! Submodules: [`policy`] routes a session's tool calls, kernel host
 //! requests and prompts through the features' reviews; [`confirm`] asks the
-//! user when a review answers `Ask`; [`status`] carries the statuses
+//! user when a review answers `Ask`, and [`question`] puts structured
+//! questions on the same surface; [`status`] carries the statuses
 //! features publish to the session-event surface; [`lifecycle`] composes
 //! the features' answers at the agent's stop, after a tool batch, around a
 //! compaction and at the session's end; [`notice`] delivers a feature's
@@ -22,6 +23,7 @@ mod confirm;
 mod lifecycle;
 mod notice;
 mod policy;
+mod question;
 mod status;
 
 use std::future::Future;
@@ -38,6 +40,7 @@ pub use confirm::{
     ConfirmationSurface,
     answer_confirmation,
     answer_confirmation_remembering,
+    answer_pending,
     confirm,
     confirm_offering,
     pending_confirmations,
@@ -62,6 +65,15 @@ use pa_agent::types::{AgentMessage, ToolResultContent};
 use pa_telemetry::{Properties, TelemetryClient, base_properties, lookup};
 pub use policy::FeatureNotes;
 pub(crate) use policy::{host_request_gate, review_prompt, tool_call_hooks};
+pub use question::{
+    QUESTION_KIND_ASK_USER,
+    QUESTION_KIND_ENTER_PLAN_MODE,
+    QUESTION_KIND_PLAN_APPROVAL,
+    QuestionAnswer,
+    QuestionRequest,
+    ask_question,
+    pending_questions,
+};
 pub use status::{
     FeatureStatus,
     FeatureStatusSink,
