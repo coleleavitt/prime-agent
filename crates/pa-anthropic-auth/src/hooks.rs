@@ -134,6 +134,21 @@ impl SharedStoreSource {
     /// store lock, when that is a different one.
     fn recover_unauthorized(&self, request: &RejectedRequest<'_>) -> Option<String> {
         let rejected = request.api_key;
+        // Re-read the store first, as Codex's session manager does ("recovery
+        // always rereads under the lock before choosing a token"). A tool that
+        // shares the store (Claude Code) may have already rotated a fresh token
+        // in, and `store_token` also refreshes a merely-expired token under the
+        // store claim - either way, when the store now yields a token other
+        // than the rejected one, use it without the explicit 401-refresh dance
+        // (no needless lock fight with the peer mid-refresh). This is the
+        // overnight "token revoked" case: the presented token was invalidated
+        // by someone else's rotation, and a daemon restart used to be the only
+        // way to pick the new one up.
+        if let Some(current) = self.reread_store_token(rejected) {
+            return Some(current);
+        }
+        // The store still holds the rejected token: claim a refresh, and if the
+        // login's refresh token is revoked, rotate to another login.
         let recovery = {
             let _flight = self.flight.lock_or_recover();
             block_on_own_runtime(self.client().recover_unauthorized(
@@ -142,14 +157,8 @@ impl SharedStoreSource {
                 &SharedRefreshOptions::default(),
             ))
         };
-        // The refresh could not run: its store claim is held by another tool
-        // mid-refresh, or the call hit an I/O/runtime error. Fall back to the
-        // store's current token - a tool that shares this store (Claude Code)
-        // may have already rotated a fresh one in, usable without a refresh of
-        // our own. This is the overnight "token revoked" case: the presented
-        // token was invalidated by someone else's rotation, and re-reading the
-        // store picks the new one up (a daemon restart used to be the only way
-        // to recover).
+        // The refresh could not run (a held store claim, an I/O/runtime error):
+        // re-read once more in case a peer rotated a token in while it ran.
         let Ok(Ok(recovery)) = recovery else {
             return self.reread_store_token(rejected);
         };
