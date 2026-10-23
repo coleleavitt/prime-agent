@@ -901,9 +901,11 @@ fn attach_image_texts_describe_the_image_model_path() {
         .expect("the core layer documents attach_image");
     assert_eq!(
         core_line,
-        "- `attach_image(*paths: str) -> str`: loads images directly into context if the agent's \
-         model is vision-capable; on a text-only model, a configured vision-capable `imageModel` \
-         reads them and returns its text description (errors when none is configured)"
+        "- `attach_image(*paths: str, pages: str | None = None) -> str`: loads images directly \
+         into context if the agent's model is vision-capable; on a text-only model, a configured \
+         vision-capable `imageModel` reads them and returns its text description (errors when none \
+         is configured). A PDF's pages are attached as images: `pages=\"1-5\"` (at most 20 per \
+         call; required past 10 pages)"
     );
 
     let skill = sorted_bundled_skills()

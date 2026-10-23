@@ -44,7 +44,7 @@ class Decoded:
         return self.bom + text.encode(self.encoding)
 
 
-def decode(raw: bytes) -> Decoded:
+def _decode(raw: bytes) -> Decoded:
     """Decode a file's bytes without newline translation.
 
     Raises:
@@ -63,11 +63,11 @@ def decode(raw: bytes) -> Decoded:
     return Decoded(text=text, encoding=encoding, bom=bom)
 
 
-def new_file() -> Decoded:
+def _new_file() -> Decoded:
     return Decoded(text="", encoding="utf-8", bom=b"")
 
 
-def to_crlf(text: str) -> str:
+def _to_crlf(text: str) -> str:
     """``text`` with every bare LF written as CRLF."""
     return _BARE_LF.sub("\r\n", text)
 
@@ -98,7 +98,7 @@ class Match:
     new: str
 
 
-def find(content: str, old: str, new: str) -> Match | None:
+def _find(content: str, old: str, new: str) -> Match | None:
     """Locate ``old`` in ``content`` and adapt ``new`` to the file's spelling.
 
     Tried in order: the exact text; the text with its line breaks written as
@@ -109,7 +109,7 @@ def find(content: str, old: str, new: str) -> Match | None:
     """
     candidates = [(old, new)]
     if "\r\n" in content and _BARE_LF.search(old):
-        candidates.append((to_crlf(old), to_crlf(new)))
+        candidates.append((_to_crlf(old), _to_crlf(new)))
     for candidate_old, candidate_new in candidates:
         if candidate_old in content:
             return Match(candidate_old, candidate_new)
@@ -163,7 +163,7 @@ def _apply_quote_style(old: str, actual: str, new: str) -> str:
     return new
 
 
-def deletion_target(content: str, old: str) -> str:
+def _deletion_target(content: str, old: str) -> str:
     """Deleting a line also deletes its line break (Claude Code's rule): when
     the replacement is empty and ``old`` ends mid-line, take the break after it."""
     if old.endswith("\n"):
@@ -174,6 +174,6 @@ def deletion_target(content: str, old: str) -> str:
     return old
 
 
-def display(text: str) -> str:
+def _display(text: str) -> str:
     """Text for the diff display: CRLF shown as LF."""
     return text.replace("\r\n", "\n")

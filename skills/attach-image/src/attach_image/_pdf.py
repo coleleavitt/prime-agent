@@ -27,7 +27,7 @@ _INSTALL_HINT = (
 )
 
 
-def is_pdf(path: Path) -> bool:
+def _is_pdf(path: Path) -> bool:
     try:
         with path.open("rb") as handle:
             return handle.read(5) == b"%PDF-"
@@ -35,7 +35,7 @@ def is_pdf(path: Path) -> bool:
         return False
 
 
-def parse_pages(pages: str) -> tuple[int, int]:
+def _parse_pages(pages: str) -> tuple[int, int]:
     """``"3"`` or ``"2-5"`` as (first, last), 1-based and inclusive."""
     match = _PAGES.match(str(pages))
     if match is None:
@@ -63,7 +63,7 @@ def _failure(name: str, completed: subprocess.CompletedProcess[bytes], path: Pat
     return ValueError(f"{name} failed on {path}: {stderr or f'exit code {completed.returncode}'}")
 
 
-def page_count(path: Path) -> int | None:
+def _page_count(path: Path) -> int | None:
     """The document's page count, or None when pdfinfo cannot tell."""
     completed = subprocess.run(
         [_tool("pdfinfo"), str(path)],
@@ -77,10 +77,10 @@ def page_count(path: Path) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def page_range(path: Path, pages: str | None) -> tuple[int, int]:
+def _page_range(path: Path, pages: str | None) -> tuple[int, int]:
     """The pages one read covers, checked against the document and the
     per-read bounds (Claude Code's wording)."""
-    count = page_count(path)
+    count = _page_count(path)
     if count == 0:
         raise ValueError("PDF reports 0 pages (empty page tree). The PDF may be invalid.")
     if pages is None:
@@ -96,7 +96,7 @@ def page_range(path: Path, pages: str | None) -> tuple[int, int]:
                 f"{MAX_PAGES_PER_READ} pages per request."
             )
         return 1, count
-    first, last = parse_pages(pages)
+    first, last = _parse_pages(pages)
     if last - first + 1 > MAX_PAGES_PER_READ:
         raise ValueError(f"pages {pages!r} names more than {MAX_PAGES_PER_READ} pages; read at most that many per call")
     if count is not None and last > count:
@@ -109,7 +109,7 @@ def page_range(path: Path, pages: str | None) -> tuple[int, int]:
     return first, last
 
 
-def render(path: Path, first: int, last: int, out_dir: Path) -> list[Path]:
+def _render(path: Path, first: int, last: int, out_dir: Path) -> list[Path]:
     """Render pages ``first..last`` as JPEGs at 100 dpi; one file per page, in order."""
     prefix = out_dir / "page"
     completed = subprocess.run(
@@ -127,11 +127,11 @@ def render(path: Path, first: int, last: int, out_dir: Path) -> list[Path]:
     return rendered
 
 
-def text(path: Path, pages: str | None) -> str:
+def _text(path: Path, pages: str | None) -> str:
     """The text layer of ``pages`` (the whole document when None), laid out."""
     command = [_tool("pdftotext"), "-layout"]
     if pages is not None:
-        first, last = parse_pages(pages)
+        first, last = _parse_pages(pages)
         command += ["-f", str(first), "-l", str(last)]
     completed = subprocess.run(
         [*command, str(path), "-"],

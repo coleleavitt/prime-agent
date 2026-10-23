@@ -24,7 +24,7 @@ _OUTPUTS_LIMIT = 10_000
 _CELL_INDEX_ID = re.compile(r"^cell-(\d+)$")
 
 
-def parse(text: str) -> dict[str, Any]:
+def _parse(text: str) -> dict[str, Any]:
     try:
         notebook = json.loads(text)
     except json.JSONDecodeError as error:
@@ -40,12 +40,12 @@ def parse(text: str) -> dict[str, Any]:
     return notebook
 
 
-def dump(notebook: dict[str, Any], trailing_newline: bool) -> str:
+def _dump(notebook: dict[str, Any], trailing_newline: bool) -> str:
     text = json.dumps(notebook, indent=1, ensure_ascii=False)
     return text + "\n" if trailing_newline else text
 
 
-def language(notebook: dict[str, Any]) -> str:
+def _language(notebook: dict[str, Any]) -> str:
     info = (notebook.get("metadata") or {}).get("language_info") or {}
     return str(info.get("name") or "python")
 
@@ -61,7 +61,7 @@ def _joined(value: Any) -> str:
     return "".join(value) if isinstance(value, list) else str(value)
 
 
-def cell_id(cell: dict[str, Any], index: int) -> str:
+def _cell_id(cell: dict[str, Any], index: int) -> str:
     return str(cell.get("id") or f"cell-{index}")
 
 
@@ -82,39 +82,39 @@ def _output_text(output: dict[str, Any]) -> str:
     return ""
 
 
-def render(notebook: dict[str, Any], only: str | None = None) -> str:
+def _render(notebook: dict[str, Any], only: str | None = None) -> str:
     """The notebook (or the one cell ``only`` names) as Read renders it."""
-    lang = language(notebook)
+    lang = _language(notebook)
     cells = notebook["cells"]
     indices = range(len(cells))
     if only is not None:
-        index = find_cell(notebook, only)
+        index = _find_cell(notebook, only)
         if index is None:
             raise ValueError(f'Cell with ID "{only}" not found in notebook')
         indices = range(index, index + 1)
     parts = []
     for index in indices:
         cell = cells[index]
-        ident = cell_id(cell, index)
+        ident = _cell_id(cell, index)
         kind = cell.get("cell_type", "code")
         tags = ""
         if kind != "code":
             tags += f"<cell_type>{kind}</cell_type>"
         elif lang != "python":
-            tags += f"<language>{lang}</language>"
+            tags += f"<_language>{lang}</_language>"
         parts.append(f'<cell id="{ident}">{tags}{_source(cell)}</cell id="{ident}">')
         if kind == "code" and cell.get("outputs"):
             texts = [_output_text(output) for output in cell["outputs"] if isinstance(output, dict)]
             if sum(len(text) for text in texts) > _OUTPUTS_LIMIT and only is None:
                 texts = [
                     "Outputs are too large to include. Read them with "
-                    f'edit.notebook_read(path, cell_id="{ident}")'
+                    f'edit.notebook_read(path, _cell_id="{ident}")'
                 ]
             parts.extend(text for text in texts if text)
     return "\n".join(parts)
 
 
-def find_cell(notebook: dict[str, Any], ident: str) -> int | None:
+def _find_cell(notebook: dict[str, Any], ident: str) -> int | None:
     """The index of the cell ``ident`` names: its ``id``, else ``cell-N``."""
     cells = notebook["cells"]
     for index, cell in enumerate(cells):
@@ -126,7 +126,7 @@ def find_cell(notebook: dict[str, Any], ident: str) -> int | None:
     return None
 
 
-def apply(
+def _apply(
     notebook: dict[str, Any],
     new_source: str,
     ident: str | None,
@@ -151,7 +151,7 @@ def apply(
             raise ValueError("Cell ID must be specified when not inserting a new cell.")
         index = 0
     else:
-        found = find_cell(notebook, ident)
+        found = _find_cell(notebook, ident)
         if found is None:
             raise ValueError(f'Cell with ID "{ident}" not found in notebook.')
         index = found + 1 if edit_mode == "insert" else found
@@ -164,7 +164,7 @@ def apply(
     has_ids = nbformat > 4 or (nbformat == 4 and minor >= 5)
     if mode == "delete":
         removed = cells.pop(index)
-        return mode, cell_id(removed, index), _source(removed), str(removed.get("cell_type", "code"))
+        return mode, _cell_id(removed, index), _source(removed), str(removed.get("cell_type", "code"))
     if mode == "insert":
         kind = cell_type or "code"
         cell: dict[str, Any] = {"cell_type": kind}
@@ -176,7 +176,7 @@ def apply(
             cell["execution_count"] = None
             cell["outputs"] = []
         cells.insert(index, cell)
-        return mode, cell_id(cell, index), None, kind
+        return mode, _cell_id(cell, index), None, kind
     cell = cells[index]
     previous = _source(cell)
     cell["source"] = new_source
@@ -188,4 +188,4 @@ def apply(
     if cell.get("cell_type") == "code":
         cell["execution_count"] = None
         cell["outputs"] = []
-    return mode, cell_id(cell, index), previous, str(cell.get("cell_type", "code"))
+    return mode, _cell_id(cell, index), previous, str(cell.get("cell_type", "code"))

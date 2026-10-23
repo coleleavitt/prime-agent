@@ -258,14 +258,14 @@ def _validate_paths(paths: tuple[str, ...], pages: str | None, scratch: Path) ->
     saw_pdf = False
     for index, path in enumerate(paths):
         filepath = Path(path).expanduser()
-        if not (filepath.is_file() and _pdf.is_pdf(filepath)):
+        if not (filepath.is_file() and _pdf._is_pdf(filepath)):
             validated.append((*_validate_image(path), str(filepath)))
             continue
         saw_pdf = True
-        first, last = _pdf.page_range(filepath, pages)
+        first, last = _pdf._page_range(filepath, pages)
         out_dir = scratch / f"pdf-{index}"
         out_dir.mkdir()
-        for page in _pdf.render(filepath, first, last, out_dir):
+        for page in _pdf._render(filepath, first, last, out_dir):
             number = int(page.stem.rsplit("-", 1)[1])
             validated.append((*_validate_image(str(page)), f"{filepath} (page {number})"))
     if pages is not None and not saw_pdf:
@@ -289,9 +289,9 @@ async def pdf_text(path: str, pages: str | None = None) -> str:
     filepath = Path(path).expanduser()
     if not filepath.is_file():
         raise FileNotFoundError(f"{path} is not an existing regular file")
-    if not _pdf.is_pdf(filepath):
+    if not _pdf._is_pdf(filepath):
         raise ValueError(f"{path} is not a PDF")
-    return _pdf.text(filepath, pages)
+    return _pdf._text(filepath, pages)
 
 
 async def run(*paths: str, pages: str | None = None) -> str:

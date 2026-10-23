@@ -25,13 +25,13 @@ _DIFF_DISPLAY_MIME = "application/vnd.prime-agent.diff+json"
 _DIFF_DISPLAY_LIMIT = 256 * 1024
 
 
-def target(path: str) -> tuple[Path, str]:
+def _target(path: str) -> tuple[Path, str]:
     """The file ``path`` names (``~`` expanded) and its absolute spelling."""
     filepath = Path(path).expanduser()
     return filepath, os.path.abspath(filepath)
 
 
-def read_refusal(absolute: str) -> str | None:
+def _read_refusal(absolute: str) -> str | None:
     """Why the kernel's read state refuses a write to ``absolute``, if it does."""
     try:
         from rlm import file_access
@@ -43,7 +43,7 @@ def read_refusal(absolute: str) -> str | None:
         return None
 
 
-def note_written(absolute: str) -> None:
+def _note_written(absolute: str) -> None:
     try:
         from rlm import file_access
 
@@ -52,7 +52,7 @@ def note_written(absolute: str) -> None:
         pass
 
 
-async def check_permission(path: str) -> None:
+async def _check_permission(path: str) -> None:
     """Ask the host whether ``path`` may be written; raise when refused."""
     try:
         from rlm import host_request
@@ -69,7 +69,7 @@ async def check_permission(path: str) -> None:
         raise PermissionError(str(error)) from error
 
 
-async def report_write(request_type: str, path: str) -> None:
+async def _report_write(request_type: str, path: str) -> None:
     """Report one side of a write to the host's file history (best effort)."""
     try:
         from rlm import host_request
@@ -81,20 +81,20 @@ async def report_write(request_type: str, path: str) -> None:
         pass
 
 
-async def write_bytes(filepath: Path, resolved: str, data: bytes, *, create_parents: bool = False) -> None:
+async def _write_bytes(filepath: Path, resolved: str, data: bytes, *, create_parents: bool = False) -> None:
     """Write ``data`` to ``filepath`` in place, bracketed by the /rewind reports.
 
     In place (not a rename) so the file keeps its inode, mode and links.
     """
-    await report_write("file_history.before_write", resolved)
+    await _report_write("file_history.before_write", resolved)
     if create_parents:
         filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "wb") as handle:
         handle.write(data)
-    await report_write("file_history.after_write", resolved)
+    await _report_write("file_history.after_write", resolved)
 
 
-def emit_diff(path: str, old_str: str, new_str: str, start_line: int, summary: str) -> None:
+def _emit_diff(path: str, old_str: str, new_str: str, start_line: int, summary: str) -> None:
     """Stream a diff to the host as a display event; best effort outside the kernel."""
     try:
         from rlm import emit
