@@ -579,6 +579,10 @@ pub struct RlmHostBridge {
     pub(crate) semantic_spawn: std::sync::OnceLock<SemanticSpawnAnchor>,
     /// The session's plan mode, read at every spawn (a child inherits it).
     pub(crate) plan_mode: std::sync::OnceLock<super::plan_mode::PlanModeSwitch>,
+    /// Applies the model's `rlm.enter_plan_mode` / `rlm.exit_plan_mode`
+    /// decision at the next turn boundary (`None` until the engine binds
+    /// one; a session without one cannot apply a model-driven change).
+    pub(crate) plan_control: std::sync::OnceLock<Arc<dyn super::plan_host::PlanModeControl>>,
     /// The session's delegation budget (`None` until the engine installs
     /// one; unset when no budget applies): every spawn draws its grant.
     pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
@@ -613,6 +617,7 @@ impl RlmHostBridge {
             usage,
             semantic_spawn: std::sync::OnceLock::new(),
             plan_mode: std::sync::OnceLock::new(),
+            plan_control: std::sync::OnceLock::new(),
             token_budget: std::sync::OnceLock::new(),
             adoption: std::sync::OnceLock::new(),
             spawn_context: std::sync::OnceLock::new(),

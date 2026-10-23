@@ -327,6 +327,10 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             "skill.load" => "rlm.load_skill",
             // `rlm.ask_user` (Claude Code's AskUserQuestion).
             "user.ask" => "rlm.ask_user",
+            // `rlm.enter_plan_mode` / `rlm.exit_plan_mode` (Claude Code's
+            // ExitPlanMode and its plan-approval dialog).
+            "plan.enter" => "rlm.enter_plan_mode",
+            "plan.exit" => "rlm.exit_plan_mode",
             // `rlm.lsp.*` (the pa-lsp feature crate's request table).
             lsp if lsp.starts_with("lsp.") => "rlm.lsp",
             other => other,

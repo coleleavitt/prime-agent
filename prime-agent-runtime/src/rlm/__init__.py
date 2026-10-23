@@ -619,6 +619,38 @@ async def ask_user(questions: list[dict[str, Any]]) -> dict[str, Any]:
     return await host_request("user.ask", {"questions": [dict(question) for question in questions]})
 
 
+async def enter_plan_mode() -> dict[str, Any]:
+    """Ask the user to enter plan mode (Claude Code's plan mode).
+
+    In plan mode you investigate and produce a plan; file edits and other
+    mutating actions are blocked until the user approves a plan (via
+    ``exit_plan_mode``) or turns plan mode off. Returns
+    ``{"status": "entered" | "declined" | "already_on", "message": str}``.
+    Raises in print mode (no one can approve) or in a subagent.
+    """
+    return await host_request("plan.enter", {})
+
+
+async def exit_plan_mode(plan: str) -> dict[str, Any]:
+    """Present a finished ``plan`` for the user to approve (Claude Code's ExitPlanMode).
+
+    Call this only in plan mode, once the plan is ready. The plan (markdown)
+    is written to the session's plan file and shown in an approval dialog with
+    three choices: approve and auto-accept edits, approve and approve edits
+    manually, or keep planning (with feedback). Returns
+    ``{"status": "approved" | "keep_planning", "message": str}`` (and ``mode``
+    on approval, ``feedback`` when the user asked to keep planning): on
+    approval plan mode turns off and you carry out the plan; otherwise revise
+    the plan with the feedback and do not start the work. Raises when not in
+    plan mode, in print mode, or in a subagent.
+    """
+    if not isinstance(plan, str):
+        raise TypeError(f"plan must be str, got {type(plan).__name__}")
+    if not plan.strip():
+        raise ValueError("plan must not be empty")
+    return await host_request("plan.exit", {"plan": plan})
+
+
 def _subagent_selector(target: Any) -> str:
     """Normalize a direct-child selector for interrupt/delete: spawn handle, subagent row, or id/name string."""
     if isinstance(target, (RLMSpawnHandle, RLMSubagent)):
@@ -1163,6 +1195,12 @@ class _RLMNamespace:
     async def ask_user(self, questions: list[dict[str, Any]]) -> dict[str, Any]:
         return await ask_user(questions)
 
+    async def enter_plan_mode(self) -> dict[str, Any]:
+        return await enter_plan_mode()
+
+    async def exit_plan_mode(self, plan: str) -> dict[str, Any]:
+        return await exit_plan_mode(plan)
+
     async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
         return await interrupt_subagent(target)
 
@@ -1294,7 +1332,9 @@ __all__ = [
     "bash",
     "delete_subagent",
     "emit",
+    "enter_plan_mode",
     "enter_worktree",
+    "exit_plan_mode",
     "exit_worktree",
     "find_models",
     "get_harness_state",

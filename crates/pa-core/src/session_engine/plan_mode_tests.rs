@@ -210,8 +210,15 @@ async fn plan_command_reports_status_and_unchanged_state() {
     run_command(&engine, "/plan on").await;
     assert!(engine.plan_mode_enabled());
     let bad = run_command(&engine, "/plan maybe").await;
-    assert_eq!(bad.error.as_deref(), Some("Usage: /plan [on|off|status]"));
+    assert_eq!(
+        bad.error.as_deref(),
+        Some("Usage: /plan [on|off|status|view]")
+    );
     assert!(engine.plan_mode_enabled());
+    // `/plan view` reports the plan file (none written yet).
+    let view = texts(&run_command(&engine, "/plan view").await);
+    assert_eq!(view.len(), 1);
+    assert!(view[0].contains("No plan has been written yet"), "{view:?}");
 }
 
 /// On a machine with no OS sandbox (an injected assessment), turning plan mode

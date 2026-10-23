@@ -890,6 +890,22 @@ async fn execute_plan(
             ));
             return Ok(());
         }
+        super::plan_mode::PlanCommand::View => {
+            let plan_file = engine.plan_file();
+            let message = match plan_file.read() {
+                Some(plan) if !plan.trim().is_empty() => {
+                    format!("Current plan ({}):\n\n{plan}", plan_file.path().display())
+                }
+                _ => format!(
+                    "No plan has been written yet. The agent writes one with rlm.exit_plan_mode; it lives at {}.",
+                    plan_file.path().display()
+                ),
+            };
+            execution.push_message(slash_command_result(
+                command, message, true, "info", None, true,
+            ));
+            return Ok(());
+        }
     };
     if let Some(applied) = engine.set_plan_mode(target).await? {
         engine.track_plan_mode(target, "command");

@@ -211,6 +211,9 @@ pub struct SessionEngine {
     /// Why plan mode falls back to the in-kernel guard on this machine (no OS
     /// sandbox), told to the user when it turns on.
     plan_mode_fallback: Option<String>,
+    /// The session's plan-mode plan file (Claude Code's `plansDirectory`):
+    /// `rlm.exit_plan_mode` writes it and `/plan view` reads it.
+    plan_file: super::plan_file::PlanFile,
     /// The `artifact.present` seam (upstream #1062): a host whose durable
     /// session lives outside the engine installs its row sink here.
     pub presented_artifacts: Arc<super::presented_artifact::PresentedArtifacts>,
@@ -360,9 +363,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let output_limit_recovery = settings.get_output_limit_recovery();
     let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
-    // `rlm.ask_user`'s wait (Claude Code's `askUserQuestionTimeout`), read
-    // before `settings` moves into the loader.
+    // `rlm.ask_user`'s wait (Claude Code's `askUserQuestionTimeout`) and the
+    // plan-mode plan file's directory (Claude Code's `plansDirectory`), both
+    // read before `settings` moves into the loader.
     let ask_user_timeout = settings.get_ask_user_question_timeout();
+    let plans_directory = settings.get_plans_directory().map(str::to_string);
     let reminder_toggles = settings.get_reminders();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
@@ -505,6 +510,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             session.brief_mode(),
         )
     };
+    // The plan-mode plan file (Claude Code's `plansDirectory`): the exit-plan
+    // approval writes it, `/plan view` reads it.
+    let plan_file = super::plan_file::PlanFile::resolve(
+        plans_directory.as_deref(),
+        &cwd,
+        &config.agent_dir,
+        &session_id,
+    );
     // Claude Code's coordinator and brief modes (experimental, off by default).
     let session_modes = super::modes::SessionModes::resolve(
         &experimental,
@@ -765,6 +778,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &mut handlers,
         session_id.clone(),
         config.rlm_depth.unwrap_or(0),
+        ask_user_timeout,
+    );
+    // `plan.enter` / `plan.exit` (`rlm.enter_plan_mode` / `rlm.exit_plan_mode`,
+    // Claude Code's ExitPlanMode and its approval dialog): the model drives
+    // plan mode on the confirmation surface; the engine's bound control
+    // applies the approved change at the next turn boundary.
+    super::plan_host::register_host_handlers(
+        &mut handlers,
+        std::sync::Arc::clone(&wiring.rlm),
+        session_id.clone(),
+        config.rlm_depth.unwrap_or(0),
+        plan_file.clone(),
         ask_user_timeout,
     );
     // `skill.load` (`rlm.load_skill`): the model loads a skill's
@@ -1483,6 +1508,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 recorder: std::sync::Arc::clone(recorder),
             });
     }
+    // Bind the plan-mode controller `rlm.enter_plan_mode` / `rlm.exit_plan_mode`
+    // use: the approved change queues on the turn boundary and
+    // `consume_pending_plan_mode` applies it after the model's cell settles.
+    let _ = wiring.rlm.plan_control.set(std::sync::Arc::new(
+        super::plan_host::TurnBoundaryPlanControl::new(std::sync::Arc::clone(&turn_boundary)),
+    ));
     let telemetry_agent = std::sync::Arc::clone(&agent);
     let mut session = AgentSession::from_session_arc(
         agent.clone(),
@@ -1718,6 +1749,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         auth_notice_sink: std::sync::Mutex::new(None),
         plan_mode,
         plan_mode_fallback: plan.fallback_reason().map(str::to_string),
+        plan_file,
         presented_artifacts,
         sandbox,
         mcp_sessions,
@@ -1829,6 +1861,13 @@ impl SessionEngine {
     #[must_use]
     pub fn plan_mode_fallback(&self) -> Option<&str> {
         self.plan_mode_fallback.as_deref()
+    }
+
+    /// The session's plan-mode plan file (Claude Code's `plansDirectory`):
+    /// `rlm.exit_plan_mode` writes it and `/plan view` reads it.
+    #[must_use]
+    pub fn plan_file(&self) -> &super::plan_file::PlanFile {
+        &self.plan_file
     }
 
     /// Switch plan mode: the kernel's confinement follows before the change
