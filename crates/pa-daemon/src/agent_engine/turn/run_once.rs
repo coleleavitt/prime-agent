@@ -271,8 +271,9 @@ impl AgentSessionEngine {
                                             let _ = tx.send(EngineEvent::UserMessage(value));
                                         }
                                     }
-                                    // A host notice folded into the run (a finished
-                                    // background command, a watch event) persists and
+                                    // A host notice or an agent message folded into
+                                    // the run (a finished background command, a watch
+                                    // event, a child's completion) persists and
                                     // reaches clients as its custom row, like the row
                                     // that starts a run.
                                     pa_agent::types::AgentMessage::Custom(row)
@@ -282,10 +283,9 @@ impl AgentSessionEngine {
                                                 .payload
                                                 .get("customType")
                                                 .and_then(Value::as_str)
-                                                .is_some_and(|kind| {
-                                                    crate::worker::steer_fold::FOLDABLE_NOTICE_TYPES
-                                                        .contains(&kind)
-                                                }) =>
+                                                .is_some_and(
+                                                    crate::worker::steer_fold::is_folded_row_type,
+                                                ) =>
                                     {
                                         if let Some(value) = session_wire_value(agent_message) {
                                             let _ = tx.send(EngineEvent::CustomMessage(value));
@@ -431,11 +431,29 @@ impl AgentSessionEngine {
                 agent.continue_run().await
             }
         });
+        // The admission consult covers the admission's head only; the
+        // session's start-of-run work (the context and reminder rows, the
+        // prompt review) runs before the agent registers the run's abort
+        // signal, and an abort landing there found no run to cancel and was
+        // lost. Until the run registers, the cancel flag is polled and
+        // forwarded the moment it can be.
+        let cancel_requested = aborted;
+        let mut awaiting_registration = true;
+        let mut registration_poll = tokio::time::interval(std::time::Duration::from_millis(20));
+        registration_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut aborted = false;
         let mut admission_error: Option<anyhow::Error> = None;
         let mut settled = false;
         loop {
             tokio::select! {
+                _ = registration_poll.tick(), if awaiting_registration => {
+                    if agent.signal().is_some() {
+                        awaiting_registration = false;
+                        if cancel_requested() {
+                            agent.abort();
+                        }
+                    }
+                }
                 event = rx.recv() => {
                     match event {
                         Some(event) => {

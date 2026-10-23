@@ -40,6 +40,24 @@ impl AgentView {
             &self.theme,
             width,
         ));
+        // Vim mode's `-- INSERT --` indicator, then the status line rows
+        // (Claude Code's placement: under the prompt).
+        if let Some(indicator) = self
+            .editor
+            .vim_mode()
+            .and_then(crate::editor::VimMode::indicator)
+            .filter(|_| !self.chrome.vim_indicator_hidden)
+        {
+            lines.push(vec![Span::styled(
+                indicator.to_string(),
+                self.theme.fg_style(ThemeColor::Dim),
+            )]);
+        }
+        lines.extend(crate::status_line::render_status_rows(
+            &self.chrome.status_line,
+            self.chrome.status_line_padding,
+            width,
+        ));
         // The tray's `← manage` hint is a click region (operator directive 2026-09-29): its own
         // cells, never the depth label, perform the handoff.
         let tray_row = lines.len();

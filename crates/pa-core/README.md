@@ -17,7 +17,15 @@ SDK `rmcp` over stdio child processes and streamable HTTP): one
 `McpSessions` per agent session behind the `mcp.session.*` /
 `mcp.integration.*` host requests the kernel's `rlm.mcp` and
 `rlm.McpIntegration` thin clients send; connections outlive kernel restarts
-and close on reload, config change, idle, and session end. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive; the kernel's `bash()` commands are checked and run host-side by `pa-bash`, served as native `bash.*` host requests from one job table per kernel manager, answered for the activity view without a kernel round trip, started under the kernel's own prepared OS sandbox, and killed with the kernel), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings), session manager (persist/resume). Autonomous mode
+and close on reload, config change, idle, and session end. Declared servers
+(`mcp/declared/`, [docs/mcp-json.md](../../docs/mcp-json.md)): Claude Code's
+`.mcp.json` files from the filesystem root down to the working directory and,
+opted in, `~/.claude.json`'s user and local servers, merged with the settings'
+`mcpServers` (settings > local > project > user), parsed with Claude Code's
+validation and `${VAR}` / `${VAR:-default}` expansion; a project server runs
+once approved (`enabledMcpjsonServers` / `disabledMcpjsonServers` /
+`enableAllProjectMcpServers`, the agent dir's `mcp-project-choices.json`), and
+`ask_pending_project_servers` asks through the confirmation surface. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive; the kernel's `bash()` commands are checked and run host-side by `pa-bash`, served as native `bash.*` host requests from one job table per kernel manager, answered for the activity view without a kernel round trip, started under the kernel's own prepared OS sandbox, and killed with the kernel), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings), session manager (persist/resume). Autonomous mode
 (`autonomous`): runtime state with limit normalization, continuation and
 gate-failure texts, shell quality gates with retry windows and git
 worktree snapshotting, and the `AutonomousDriver` policy trait a turn
@@ -34,6 +42,27 @@ spawn byte-identically, `cloud` is refused at admission before any host is
 consulted until the cloud child backend exists (never a silent local
 fallback), and the note pins the admission/messaging parity the backend
 must uphold.
+Typed agent definitions (`agents`): Claude Code's `.claude/agents/*.md`
+(and `.prime/agents/*.md`) discovered over the project (the working
+directory up to the repository root) and the user directories
+(`<agent dir>/agents`, `~/.claude/agents`), parsed from YAML frontmatter;
+the listing a spawning session reads at the end of its system prompt; the
+instructions and the host-request gate (`bash.run`, `rlm.run`,
+`agent_message.send`) a session running as one agent gets
+(`SessionEngineConfig::agent_definition`). `rlm.spawn(agent=, isolation=,
+cwd=)` resolves through `session_engine::rlm_spawn_agent`; an isolated
+child's worktree is a managed `worktree` (`agent-<id>` cut from `HEAD`,
+removed with the child only when unchanged). Child lifecycle notices
+(`session_engine::rlm_notices`) render Claude Code's agent
+`<task-notification>`. A definition's `memory` scope (`user`, `project`,
+`local`) gives the session a persistent agent memory (`agents::memory`):
+`<agent dir>/agent-memory/<agent>/`, `<project>/.prime/agent-memory/<agent>/`
+or `<project>/.prime/agent-memory-local/<agent>/` (Claude Code's
+`~/.claude/agent-memory`, `.claude/agent-memory`, `.claude/agent-memory-local`
+directories in place when only they exist), its `MEMORY.md` index under
+Claude Code's "Persistent Agent Memory" instructions after the agent's own,
+and the directory writable under the OS sandbox; a project or local memory
+that leads out of the project is read-only. Auto memory's switches govern it.
 The in-process RLM host admits each child terminal notice through the parent
 session inbox: one fsynced JSONL row precedes live registration and child
 settlement. A child that replied settles only after its explicit reply row
@@ -44,6 +73,30 @@ crash after the parent model responds but before its assistant row and marker
 are synced can repeat inference. No durable terminal row means the child's
 pre-crash outcome remains interrupted or unknown, never fabricated as done.
 Platform wall (`platform`): process control (signals/process groups, kernel exit waits), file locking, file permissions, and shell selection - every OS-specific behavior in the engine lives there behind cfg-gated implementations (the durable-write rename primitive is pa-telemetry's `rename_onto`, re-exported as `platform::rename_onto`). Scheduled jobs (`cron`, the `AgentCronJobStore` port of `core/cron-jobs.ts`): file-backed job state under session artifacts (`scheduled-jobs.json` partitions) with cross-process locking, plus the public read-only scan (`cron::store::read_scheduled_jobs_artifact`) the update flow's roster projection and boot re-arm read. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive), skills loading, system prompt assembly, compaction, harness refinement, settings/config, package manager (npm/git/local source install/remove/list/update against settings, plus `resolve()`: precedence-ranked session resource resolution over configured packages, settings arrays, auto-discovery, and bundled skills), session manager (persist/resume). origin/main
+
+Claude Code's session scheduling (`cron::tasks`; `CronCreate`/`CronList`/`CronDelete`,
+`ScheduleWakeup`, `/loop`): a pure task book over an injected clock and zone. Five-field cron in the
+user's local time (`chrono::Local` behind the `CronZone` seam; daylight-saving edges follow Vixie
+cron), Claude Code's per-id jitter, recurring tasks that expire after seven days, one-shots that
+delete themselves, self-paced loop wakeups clamped to [60, 3600] with the keepalive and the
+interrupt rule, the autonomous-loop preambles and sentinels, and `/loop` parsing with the skill's
+interval table. `SessionTasks` wraps the book for the `rlm.cron.*` / `rlm.schedule_wakeup` host
+handlers (registered from `KernelCronWiring::session_tasks`) and the `/loop` session command, and
+keeps durable tasks in the session artifact partition's `scheduled_tasks.json` (Claude Code's file
+shape). The embedding's scheduler (pa-daemon's `session_tasks`) owns time and delivery. Flags:
+`PRIME_AGENT_DISABLE_CRON`, `PRIME_AGENT_LOOP_PERSISTENT`, `PRIME_AGENT_LOOP_KEEPALIVE=0`.
+
+Managed git worktrees (`worktree`, Claude Code's `--worktree`/`EnterWorktree`): the one helper the
+`--worktree` launch, the mid-session `worktree.enter`/`worktree.exit` host requests and child isolation share.
+`create(&CreateRequest)` makes or reuses `<repo>/.prime/worktrees/<name>` on branch `worktree-<name>` (`fresh`:
+`origin/HEAD` as last fetched, else `HEAD`; `head`: the requesting `HEAD`; setting `worktree.baseRef`), never
+resets an existing branch, records the base commit (`PRIME_AGENT_BASE` in the worktree's git dir), adds the
+managed dir to `info/exclude`, and copies `.worktreeinclude` files; `changes`, `exit_choice` and `remove` (keeps
+work unless `discard`; deletes the branch only when its tip is reachable elsewhere) end it. A
+`WorktreeHooks` provider (`install_hooks`) replaces git. Session scratch directories
+(`session_engine::scratch`): each session's private `scratchpad/` and `tasks/` in its artifact partition (removed
+with the session), named to the kernel as `PRIME_AGENT_SCRATCHPAD`/`PRIME_AGENT_TASKS_DIR` and in the
+environment section; the kernel manager's job table persists every `bash()` output to `tasks/<job id>.output`.
 
 Provider resilience policies in `session_engine`: the shared quick-retry
 policy (TS `provider-retry.ts`: permanent-kind classification,
@@ -100,7 +153,11 @@ turn-behaviour keys; everything else, unknown keys included, waits for trust),
 and `load_resources` skips its `SYSTEM.md`/`APPEND_SYSTEM.md`, project
 prompt templates, and project skills (`.prime/agent/skills/`, ancestor
 `.agents/skills/`, settings `skills` paths), so an untrusted Python skill is
-never editable-installed into the kernel venv or imported. The hash covers
+never editable-installed into the kernel venv or imported; Claude Code's
+`.claude/commands/` (custom commands, whose `` !`cmd` `` blocks run at
+admission), `.claude/skills/` (the working directory's and its ancestors' up to
+the repository root) and `.claude/output-styles/` (plus
+`.prime/agent/output-styles/`) are gated the same way. The hash covers
 every file of those skill trees except tool caches. A change to the gated content reads as `Changed` (asks again);
 a theme edit does not. Project-scope writes from an untrusted workspace are
 refused; the product's own project writes in a trusted one re-pin the record.
@@ -109,15 +166,99 @@ the composition root asks (`record`, `list`). A corrupt store trusts nothing
 and is never overwritten. A run from the home directory, whose project config
 dir is the agent dir, needs no decision.
 
+Claude Code skills (`skills::claude_skills`, `skills::dynamic`): instruction
+skills from `.claude/skills/<name>/SKILL.md` (Claude Code 2.1.296's loader:
+the directory names the skill; `description` with the first-line fallback,
+`when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `model`,
+`disable-model-invocation`, `user-invocable`). The project directories are the
+working directory's and its ancestors' up to the repository root (stopping
+before home), then each additional directory's; `~/.claude/skills`
+(`CLAUDE_CONFIG_DIR` aware) loads only with the `claudeCodeUserSkills` setting
+(unset is off). They follow the Prime Agent skills: a Prime Agent skill of the
+same name wins and the Claude Code copy is reported as a collision. The
+inventory lists `<description> - <when_to_use>` and the `rlm.load_skill` call;
+the user runs one as `/<name>` (unless a builtin command or a Prime Agent
+prompt template has the name) or `/skill:<name>`; `skill.load`
+(`session_engine::skill_host`, the kernel's `rlm.load_skill(name, args)`) is
+the model's Skill tool and refuses `disable-model-invocation` skills. An
+invocation's text is Claude Code's: `Base directory for this skill: <dir>`
+and the body with the arguments, `${CLAUDE_SKILL_DIR}`,
+`${CLAUDE_PROJECT_DIR}` and `${CLAUDE_SESSION_ID}` substituted and the
+`` !`cmd` `` blocks run (`disableSkillShellExecution` turns them off). In a
+trusted workspace a file a cell touches below the working directory brings in
+the `.claude/skills` directories between it and the working directory (Claude
+Code's dynamic skills), announced as a hidden `dynamic_skills` row
+(`session_engine::skill_boundary`).
+
+Saved workflows (`session_engine::workflows_command`): `/workflows` lists the
+saved workflow scripts `rlm.workflow.run(name=...)` resolves
+(`.prime/workflows/` then `.claude/workflows/` per project directory, nearest
+first, then `<agent dir>/workflows/` and `~/.claude/workflows/`; Python
+scripts only, named by file stem) and the session's recent runs (the
+`workflows/<run id>/run.json` records under the session artifact directory).
+
+Instruction files and auto memory (`resources::instructions`,
+`resources::auto_memory`; contract in `docs/instruction-files.md`): one
+loader for the AGENTS.md and CLAUDE.md families with Claude Code's rules
+(`@path` imports, `*.local.md`, `.claude/rules` and `.prime/agent/rules`
+with `paths:`-scoped rules, the opt-in `~/.claude` user scope), the
+`NestedInstructions` tracker that delivers a subdirectory's files and the
+matching scoped rules as a hidden `nested_instructions` row
+(`session_engine::instruction_boundary`) once a cell opens a file there,
+and the per-project auto-memory directory whose `MEMORY.md` index rides
+the `auto-memory` prompt segment. `/memory` lists both
+(`session_engine::memory_command`). `auto_memory::sanitize` is Claude Code's
+exact project-directory name (UTF-16 units, the base-36 Java string hash past
+200 characters), so `~/.claude/projects/<name>` is the directory Claude Code
+writes.
+
+External sessions (`session::external_sessions`): the registry of other
+products' session sources (`ExternalSessionSource`: `list`, `find`,
+`import`) the composition root installs (`pa-cc-import`'s Claude Code
+transcripts). Nothing is installed natively; the daemon serves the
+`external_sessions` commands only while a source is.
+
+Claude Code's settings files (`settings::claude_code`): one reader for the
+managed, `.claude/settings.local.json`, `.claude/settings.json` and
+`~/.claude/settings.json` files, with Claude Code's precedence and merge,
+behind the user-settings opt-in `claudeCodeSettings: true` (top level or in
+`permissions`). Project files apply only in a trusted workspace, and with
+the opt-in on their keys that run code or loosen the session (`hooks`,
+`statusLine`, `env`, `model`, `outputStyle`, `permissions.allow`,
+`defaultMode`, `additionalDirectories`) are part of the trust hash
+(`GatedItem::ClaudeSettings`). pa-permissions and pa-hooks read through it;
+`SettingsManager` layers `statusLine`, `outputStyle`, `model` (a full
+`claude-*` id as `anthropic` default, a soft preference), `cleanupPeriodDays`
+(the archive age) under this agent's own settings, joins
+`permissions.additionalDirectories`, hands `env` to the kernel (the
+harness's own variables win; a project file cannot set `HOME`/`XDG_*`; a
+`PATH`/`HOME` override is logged), and reads `disableAllHooks` (hooks and
+the status line command off). `includeCoAuthoredBy`/`attribution` have no
+counterpart: the system prompt has no git-commit section.
+
 OS sandbox (`os_sandbox`, enforcement in `pa-os-sandbox`): `SessionSandbox::resolve` reads
 the `sandbox` setting (off by default; a project scope only tightens it, so the key is
 untrusted-safe) and the `--sandbox` override (`SessionEngineConfig::sandbox_mode`) once per
 session. The kernel spawns under it (`KernelManagerOptions::sandbox`: the workspace plus the
 temp dir, the session artifacts, the harness stores and the orphan journal's directory stay
 writable), so every `bash()`/`subprocess` child inherits it; the host's stdio MCP servers
-(`McpSessionOptions::sandbox`) and the daemon's `!` lane spawn through `SessionSandbox::command`; the system prompt's environment section gets
+(`McpSessionOptions::sandbox`) and the daemon's `!` lane spawn through `SessionSandbox::command`; the session context's environment section gets
 `prompt_line` (no line when off); `agent started` reports `sandbox_mode`. An enabled sandbox
 the machine cannot enforce refuses to spawn. See `docs/os-sandbox.md`.
+
+Session context and reminders (Claude Code's context attachments): the system prompt holds
+only the static layers and the session-fixed tail (packages, session role, appended prompt), so
+it is byte-stable for the provider cache. `prompts::session_context` renders the volatile
+context (instruction files, skills inventory, generic MCP servers, `EnvironmentFields`, date)
+as one hidden `session_context` row ahead of the first turn and `session_context_update` deltas
+after; each row persists a `ContextFingerprint` (paths and hashes), and
+`session_engine::context_rows` computes the next row against the live conversation, so resume
+and compaction need no other state. `session_engine::context_source` reads the live context
+(`instruction_files` is the one loader; `ContextRowsWiring` the engine's seam);
+`session_engine::reminders` adds the per-turn `<system-reminder>` row (changed files from
+`file_tracker`, fed by the kernel's `fileAccess`; the task-list nag; silent turns; elapsed
+time; `<total_tokens>`; re-reads), each switchable under the `reminders` setting.
+`SessionEngine::session_context_text` returns the first-turn row's text.
 
 The factory (`factory`): state-machine workflows of spawned child agents,
 host-side. `factory::spec` is the single write-time validator, dag compiler,
@@ -145,6 +286,39 @@ gate, the exports) behind the kernel's `rlm.factory` library functions (the
 serves the daemon/TUI `factory_activity` lane from the executor (no kernel
 round trip); `factory::host` registers the kernel's `factory.*` host
 requests.
+
+File checkpoints (`file_history`, Claude Code's file history behind
+`/rewind`): the bundled `edit` skill reports each write around itself
+(`file_history.before_write` / `file_history.after_write`, host-internal
+requests registered for top-level sessions); the host backs the prior bytes
+up content-addressed under `<session artifacts>/file-history/` (private
+directories, pinned-handle leaf operations, 16 MiB per file and 1 GiB per
+session caps) and appends each side to a write log. `FileHistory::plan`/
+`plans` answer what restoring the code to a point in time would change and
+`restore` applies it, recording the restore as writes and skipping a file
+changed outside the agent since its last write unless forced. The write
+itself stays in the kernel (sandbox and plan guard apply); bash and plain
+Python writes are not tracked. `fileCheckpointingEnabled: false` or
+`PRIME_AGENT_DISABLE_FILE_CHECKPOINTING=1` turns it off.
+
+Claude Code's unreleased session modes (`session_engine::modes`, both off
+unless their `experimental` setting or environment variable is on):
+coordinator mode (`session_engine::coordinator`;
+`experimental.coordinatorMode` / `PRIME_AGENT_COORDINATOR_MODE`) gives a root
+session that does not run as an agent definition the coordinator section in
+its prompt and a host-request gate (ahead of the agent-scope and feature
+gates) that refuses worker capabilities (`bash.run`, `file.edit`, `web.*`,
+MCP tool calls, `computer_use.*`, `artifact.present`, worktree moves, the
+system router) unless `coordinatorExtraTools` names them; plain Python file
+access stays possible, so the prompt carries the rule. Its flags make
+`rlm.spawn` ignore `model=` and hand the nested instruction files a worker
+loaded to the coordinator. Brief mode (`session_engine::brief_mode`;
+`experimental.briefMode` / `PRIME_AGENT_BRIEF`, `/brief`) routes the model's
+replies through `rlm.send_user_message` (`user_message.send`, a displayed
+`user_message` row through the `artifact.present` row seam), records
+`brief_mode_change` rows a resume restores, and continues a root run once
+when it stops without a message. Both publish feature statuses (`coordinator`,
+`brief`) the TUI reads.
 
 ## Non-goals
 No provider HTTP (pa-ai), no loop policy (pa-agent), no daemon supervision (pa-daemon), no TUI (pa-tui). No update coordination (the pa-cli coordinator owns the FSM; the update-flow seam here is the daemon-free support layer: `update::version` (semver/channel policy), `update::install` (the managed install-root layout), `update::release` (the channel manifest fetch), `update::download` (sha256-verified archive download + staging)). The package manager installs sources and resolves resource paths only. No workspace snapshot upload, transport, or remote materialization (staging and verification live here; the cloud attach surface owns the transport when it ships).

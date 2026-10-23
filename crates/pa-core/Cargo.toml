@@ -23,6 +23,11 @@ pa-os-sandbox = { path = "../pa-os-sandbox" }
 # The bundled computer-use skill's host side (`computer_use.*` host requests).
 pa-computer-use = { path = "../pa-computer-use" }
 base64 = "0.22"
+# Claude Code's session cron runs in the user's local time zone
+# (`cron::tasks`): chrono's `Local` reads `TZ` and the system zone database,
+# daylight-saving transitions included. Already in the workspace through
+# pa-anthropic-auth (same version and features).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 fancy-regex = "0.14"
 # The traces browser login's auth challenge (RSA-2048 keypair, OAEP-SHA256
 # result decrypt; sha2 matches the workspace's version, pem for the SPKI

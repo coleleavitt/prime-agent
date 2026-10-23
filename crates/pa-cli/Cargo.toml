@@ -9,12 +9,17 @@ description = "The prime-agent binary."
 # The fork's feature crates (docs/fork-feature-crates.md); `--no-default-features`
 # builds the native product.
 default = [
+    "advisor",
     "anthropic-auth",
+    "cc-import",
     "dream",
     "hooks",
     "learning",
     "ledger",
+    "lsp",
     "mermaid",
+    "observer",
+    "permissions",
     "plugins",
     "ravo",
     "recall",
@@ -24,10 +29,20 @@ default = [
     "web",
     "workflow",
 ]
+# Advisor escalation (crates/pa-advisor): the `advisor` skill's
+# `advisor.ask(question)` asks a stronger model with the conversation as
+# context. Inert unless the `experimental.advisorModel` setting (or
+# PRIME_AGENT_ADVISOR_MODEL) names the model.
+advisor = ["dep:pa-advisor"]
 # Anthropic subscription auth through the shared account store
 # (~/.anthropic-accounts, the store the opencode and pi plugins use): the
 # `anthropic` provider's credential source (crates/pa-anthropic-auth).
 anthropic-auth = ["dep:pa-anthropic-auth"]
+# Claude Code sessions (crates/pa-cc-import): the agents view lists
+# ~/.claude/projects transcripts in their own section and `--resume <id>`
+# finds them; opening one imports it into a new session file (the transcript
+# is never written).
+cc-import = ["dep:pa-cc-import"]
 # Dream-RSI (pa-dream): `prime-agent dream`, the standalone zero-token runner,
 # and the in-session `dream.*` host requests, `/dream` and the `dream` skill.
 dream = ["dep:pa-dream"]
@@ -41,10 +56,26 @@ hooks = ["dep:pa-hooks"]
 learning = ["ravo", "dep:pa-learning"]
 # The failure ledger and the ipython resolution index (crates/pa-ledger).
 ledger = ["dep:pa-ledger"]
+# Claude Code's LSP integration (crates/pa-lsp): language servers from the
+# `lspServers` setting or a trusted project's `.lsp.json`, started per language
+# on first use, behind `rlm.lsp.*`, and their new diagnostics delivered after
+# edits as a hidden `<new-diagnostics>` reminder. Inert without configured
+# servers.
+lsp = ["dep:pa-lsp"]
 # The fork's Mermaid diagrams in the TUI: lovely-mermaid 0.3.3, a too-wide
 # flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
 # in agent/custom messages and /btw (crates/pa-mermaid).
 mermaid = ["dep:pa-mermaid"]
+# Claude Code's permission rules and modes (crates/pa-permissions): the
+# `permissions` settings key's allow/ask/deny rules over the kernel's bash(),
+# file edits, web and MCP requests, `/permissions`, and the shift+tab mode
+# cycle. Without rules nothing changes.
+permissions = ["dep:pa-permissions"]
+# Observer agents (crates/pa-observer): a background observer model reads a
+# digest of each turn and reports only when it has something. Inert unless the
+# `experimental.observer` setting (or PRIME_AGENT_EXPERIMENTAL_OBSERVER_AGENTS)
+# turns it on.
+observer = ["dep:pa-observer"]
 # WebAssembly plugins (crates/pa-plugins): sandboxed components from
 # `<agent dir>/plugins/` (and a trusted project's) that review tool calls and
 # kernel host requests, add prompt context, show status, and answer the
@@ -93,9 +124,14 @@ pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
 pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
+pa-observer = { path = "../pa-observer", optional = true }
+pa-advisor = { path = "../pa-advisor", optional = true }
+pa-cc-import = { path = "../pa-cc-import", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
 pa-web = { path = "../pa-web", optional = true }
+pa-lsp = { path = "../pa-lsp", optional = true }
+pa-permissions = { path = "../pa-permissions", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }

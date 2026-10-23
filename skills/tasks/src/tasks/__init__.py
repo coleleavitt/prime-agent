@@ -112,6 +112,11 @@ def _load(path: Path | None) -> dict[str, Any]:
 
 def _save(path: Path | None, store: dict[str, Any]) -> None:
     global _memory_store
+    # Host-readable write marks: a reminder producer outside the kernel (Claude Code's
+    # todo nag) compares ``last_write_at`` with its turn timestamps to count the turns
+    # since the list last changed; ``writes`` counts every change.
+    store["last_write_at"] = _now()
+    store["writes"] = int(store.get("writes") or 0) + 1
     if path is None:
         _memory_store = store
         return

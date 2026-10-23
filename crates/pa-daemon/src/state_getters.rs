@@ -213,18 +213,25 @@ impl Worker {
         )
     }
 
-    /// `get_system_prompt` (TS `{ systemPrompt }`).
+    /// `get_system_prompt` (TS `{ systemPrompt }`), plus the additive
+    /// `sessionContext` (the first turn's hidden context row) when the
+    /// engine has one; older clients ignore it.
     pub(crate) async fn handle_get_system_prompt(&self) -> DaemonResponse {
         if let Err(response) = self.require_created("get_system_prompt") {
             return response;
         }
         let prompt = self.engine.system_prompt().await;
         match prompt {
-            Ok(prompt) => response_success(
-                None,
-                "get_system_prompt",
-                Some(json!({ "systemPrompt": prompt })),
-            ),
+            Ok(prompt) => {
+                let mut data = json!({ "systemPrompt": prompt });
+                match self.engine.session_context().await {
+                    Ok(context) if !context.is_empty() => {
+                        data["sessionContext"] = Value::String(context);
+                    }
+                    Ok(_) | Err(_) => {}
+                }
+                response_success(None, "get_system_prompt", Some(data))
+            }
             Err(error) => response_failure(None, "get_system_prompt", &format!("{error:#}"), None),
         }
     }

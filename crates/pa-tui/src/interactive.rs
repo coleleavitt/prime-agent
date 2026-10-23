@@ -480,6 +480,21 @@ impl InteractiveOptions {
         if let Some(sandbox) = &self.sandbox_mode {
             config["sandbox"] = json!(sandbox);
         }
+        // `--add-dir`: the launch's extra working directories (an in-memory list; no settings
+        // read happens here).
+        let additional_directories = self
+            .client_settings
+            .as_ref()
+            .map(|settings| settings.launch_additional_directories())
+            .unwrap_or_default();
+        if !additional_directories.is_empty() {
+            config["additionalDirectories"] = json!(
+                additional_directories
+                    .iter()
+                    .map(|dir| dir.display().to_string())
+                    .collect::<Vec<_>>()
+            );
+        }
         // `telemetryDisabled` rides the runtime config: a resume's create reads it back.
         if self.telemetry_disabled == Some(true) {
             config["telemetryDisabled"] = json!(true);
@@ -539,6 +554,9 @@ pub struct InteractiveOutcome {
     /// The view's per-entry transcript work over the run (`AgentView::entry_work`): the
     /// session-size-independence verifiers compare it across runs instead of timing them.
     pub transcript_entry_work: u64,
+    /// The agent was still running when the client left (the daemon keeps
+    /// it running): the composition root must not remove what it works in.
+    pub turn_active_at_exit: bool,
 }
 
 /// Inputs consumed by the UI loop. Terminal keys arrive one event at a time; headless steps

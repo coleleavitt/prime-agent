@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
-from . import plan_guard, trace
+from . import file_access, plan_guard, trace
 from .bash import _kill_live_handles
 
 PROTOCOL_VERSION = 6
@@ -1116,6 +1116,8 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
     execution = _CellExecution()
     cell_token = _current_cell.set(cell_id)
     execution_token = _current_cell_execution.set(execution)
+    # Set before the body task is created, so the body and the tasks it spawns record into it.
+    files, files_token = file_access.begin_cell()
     try:
         # The span ends (and its trace event ships) before this request's
         # result/error/done frames, keeping done the last event of the id.
@@ -1127,6 +1129,7 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
             execution.owner = task
             status, value, error = await _run_guarded(task, cell_id)
             bash_commands = execution.close_bash_commands()
+            opened_files = files.close()
             result_text: str | None = None
             if status == "detached":
                 status, value = "ok", None
@@ -1165,8 +1168,13 @@ async def _handle_execute(req: dict[str, Any], ns: dict[str, Any]) -> None:
         if bash_commands:
             # Optional: hosts that predate the field ignore it.
             done["bashCommands"] = bash_commands
+        if opened_files:
+            # Optional, like bashCommands: the files the cell opened (paths only).
+            done["fileAccess"] = opened_files
         _send(done)
     finally:
+        files.close()
+        file_access.reset_cell(files_token)
         execution.close_bash_commands()
         execution.owner = None
         execution.finished.set()
@@ -2508,6 +2516,9 @@ def main() -> None:
     user_module = types.ModuleType("__main__")
     user_module.__dict__["__builtins__"] = __builtins__
     sys.modules["__main__"] = user_module
+    # After the runtime's own imports: cells' file opens feed the host's
+    # changed-file reminders (`fileAccess` on the done frame).
+    file_access.install()
 
     # Trace context: an external TRACEPARENT seeds the root the serve task
     # copies at creation; finished spans ship as trace events on the stream.

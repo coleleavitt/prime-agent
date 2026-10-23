@@ -259,9 +259,18 @@ struct ProvisionerInner {
     options: IpythonKernelProvisionerOptions,
     state: Mutex<ProvisionerState>,
     dispose_signal: AbortSignal,
+    /// Told about the files each finished cell opened.
+    file_access_sink: std::sync::OnceLock<crate::kernel::shared::FileAccessSink>,
 }
 
 impl IpythonKernelProvisioner {
+    /// The host requests (and gate) the kernel reaches; tests drive them
+    /// without a kernel.
+    #[cfg(test)]
+    pub(crate) fn host_handlers(&self) -> &HostRequestHandlers {
+        &self.inner.options.host_handlers
+    }
+
     pub fn new(cwd: impl Into<PathBuf>, options: IpythonKernelProvisionerOptions) -> Self {
         Self {
             inner: Arc::new(ProvisionerInner {
@@ -281,6 +290,7 @@ impl IpythonKernelProvisioner {
                     doomed_startups: Vec::new(),
                 }),
                 dispose_signal: AbortSignal::new(),
+                file_access_sink: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -296,6 +306,17 @@ impl IpythonKernelProvisioner {
     #[must_use]
     pub fn manager(&self) -> Option<ReplKernelManager> {
         self.lock_state().manager.clone()
+    }
+
+    /// Hear about the files every finished cell opened (first install wins).
+    pub fn set_file_access_sink(&self, sink: crate::kernel::shared::FileAccessSink) {
+        let _ = self.inner.file_access_sink.set(sink);
+    }
+
+    /// The installed file-access listener, if any.
+    #[must_use]
+    pub fn file_access_sink(&self) -> Option<crate::kernel::shared::FileAccessSink> {
+        self.inner.file_access_sink.get().cloned()
     }
 
     /// The unexpected exit of a kernel this provisioner replaced with a fresh
@@ -327,6 +348,20 @@ impl IpythonKernelProvisioner {
         match self.manager() {
             Some(manager) => manager.set_cwd(cwd).await,
             None => Ok(()),
+        }
+    }
+
+    /// Retarget only where the kernel (re)starts, leaving a running kernel's
+    /// directory alone: for a move the kernel makes itself (it is inside a
+    /// cell that awaits the host, so no other cell can run the chdir).
+    pub fn set_start_cwd(&self, cwd: &std::path::Path) {
+        *self
+            .inner
+            .cwd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = cwd.to_path_buf();
+        if let Some(manager) = self.manager() {
+            manager.set_start_cwd(cwd);
         }
     }
 

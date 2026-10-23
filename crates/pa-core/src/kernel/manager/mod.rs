@@ -169,6 +169,7 @@ impl InternalExecuteResult {
                 sent_agent_messages: None,
                 bash_commands: None,
                 executed_bash_commands: Vec::new(),
+                file_access: crate::kernel::shared::KernelFileAccess::default(),
                 background_output: None,
                 status: ExecuteStatus::Aborted,
                 error: None,
@@ -578,6 +579,12 @@ impl ReplKernelManager {
             anyhow::bail!("Python kernel could not change directory: {detail}");
         }
         Ok(())
+    }
+
+    /// Set the directory a restart or respawn starts in, without touching
+    /// the running kernel's (see [`Self::set_cwd`] for the move that does).
+    pub fn set_start_cwd(&self, cwd: &std::path::Path) {
+        *lock(&self.inner.cwd_override) = Some(cwd.to_path_buf());
     }
 
     #[must_use]

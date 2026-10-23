@@ -1,6 +1,7 @@
 //! Session entry parsing, migration, context reconstruction, and tree.
 pub mod catalog_cache;
 pub mod discovery;
+pub mod external_sessions;
 pub mod manager;
 pub mod manager_ext;
 pub mod tree;

@@ -69,6 +69,8 @@ impl Worker {
                 | "get_user_messages_for_forking"
                 | "set_session_entry_label"
                 | "navigate_tree"
+                | "get_rewind_checkpoints"
+                | "rewind"
                 | "fork"
                 | "fork_export"
                 | "export_html"
@@ -187,6 +189,8 @@ impl Worker {
             "get_user_messages_for_forking" => self.tree_navigation.get_user_messages_for_forking(),
             "set_session_entry_label" => self.tree_navigation.set_session_entry_label(payload),
             "navigate_tree" => self.handle_navigate_tree(payload).await,
+            "get_rewind_checkpoints" => self.handle_get_rewind_checkpoints().await,
+            "rewind" => self.handle_rewind(payload).await,
             "fork" => self.handle_fork(payload).await,
             "fork_export" => self.handle_fork_export(payload).await,
             "abort_branch_summary" => {
@@ -296,7 +300,7 @@ impl Worker {
 
     /// `navigate_tree` with the reload's announcement: announced before the
     /// response reaches the client, so surfaces never show the pre-navigation goal.
-    async fn handle_navigate_tree(&self, payload: &Value) -> DaemonResponse {
+    pub(crate) async fn handle_navigate_tree(&self, payload: &Value) -> DaemonResponse {
         let response = self.tree_navigation.navigate_tree(payload).await;
         if response.success {
             // The target branch's recorded directory (upstream #2528).
@@ -422,6 +426,8 @@ impl Worker {
     /// admission, cancel the queue-invisible turn actions, abort the in-flight
     /// compaction, and cancel the running turn.
     fn request_abort(&self) {
+        // Claude Code's interrupt rule: a pending self-paced /loop wakeup ends.
+        self.session_tasks.user_abort();
         {
             let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
@@ -718,6 +724,7 @@ impl Worker {
         if !cleared.success {
             return cleared;
         }
+        self.session_tasks.user_abort();
         let mut core = self.core.lock_or_recover();
         core.abort_requested = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.

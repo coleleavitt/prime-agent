@@ -2508,6 +2508,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-advisor"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "pa-telemetry",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pa-agent"
 version = "0.10.0"
 dependencies = [
@@ -2596,6 +2609,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-cc-import"
+version = "0.10.0"
+dependencies = [
+ "pa-core",
+ "pa-types",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pa-cli"
 version = "0.10.0"
 dependencies = [
@@ -2606,18 +2631,23 @@ dependencies = [
  "futures",
  "libc",
  "nix 0.29.0",
+ "pa-advisor",
  "pa-agent",
  "pa-ai",
  "pa-anthropic-auth",
  "pa-bash",
+ "pa-cc-import",
  "pa-core",
  "pa-daemon",
  "pa-dream",
  "pa-hooks",
  "pa-learning",
  "pa-ledger",
+ "pa-lsp",
  "pa-mermaid",
+ "pa-observer",
  "pa-os-sandbox",
+ "pa-permissions",
  "pa-plugins",
  "pa-ravo",
  "pa-recall",
@@ -2676,6 +2706,7 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "fancy-regex",
  "flate2",
  "futures",
@@ -2830,6 +2861,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-lsp"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "pa-mermaid"
 version = "0.10.0"
 dependencies = [
@@ -2859,6 +2907,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-observer"
+version = "0.10.0"
+dependencies = [
+ "pa-agent",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pa-os-sandbox"
 version = "0.10.0"
 dependencies = [
@@ -2868,6 +2929,23 @@ dependencies = [
  "seccompiler",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "pa-permissions"
+version = "0.10.0"
+dependencies = [
+ "ignore",
+ "pa-agent",
+ "pa-core",
+ "pa-telemetry",
+ "pa-types",
+ "regex",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

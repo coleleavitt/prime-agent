@@ -1,0 +1,19 @@
+[package]
+name = "pa-cc-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Claude Code sessions in prime-agent: lists ~/.claude/projects transcripts beside the saved sessions and imports one into a new session file to continue it."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-types = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { version = "1", features = ["v7"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -832,6 +832,7 @@ fn length_continuation_agent(provider: &Arc<ScriptedProvider>, max: u32) -> Agen
                     timestamp: 0,
                 }))
             }),
+            reasoning_only: false,
         }),
         ..Default::default()
     })
@@ -908,6 +909,91 @@ async fn a_length_truncated_reply_ends_the_run_without_the_policy() {
         transcript(&agent.state().await.messages),
         vec![("user", "go".to_string()), ("assistant", "cut".to_string())]
     );
+}
+
+/// Script a turn the output limit cut while it was still reasoning: only a
+/// thinking block, no text and no tool call.
+fn reasoning_only_length_turn(provider: &ScriptedProvider) {
+    let mut message = pa_agent::types::AssistantMessage {
+        content: Vec::new(),
+        api: test_model().api,
+        provider: test_model().provider,
+        model: test_model().id,
+        response_model: None,
+        response_id: None,
+        diagnostics: None,
+        usage: pa_agent::types::Usage::zero(),
+        stop_reason: StopReason::Length,
+        stop_reason_raw: None,
+        error_message: None,
+        timestamp: 0,
+        discarded_usage: None,
+    };
+    let start = message.clone();
+    message.content.push(AssistantContent::Thinking(
+        pa_agent::types::ThinkingContent {
+            thinking: "still working it out".to_string(),
+            thinking_signature: None,
+            redacted: None,
+        },
+    ));
+    provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(vec![
+        pa_agent::scripted::ScriptStep::Event(Box::new(AssistantMessageEvent::Start {
+            partial: start,
+        })),
+        pa_agent::scripted::ScriptStep::Event(Box::new(AssistantMessageEvent::Done {
+            reason: StopReason::Length,
+            message,
+        })),
+    ]));
+}
+
+/// Claude Code's output-limit recovery also nudges a reply the limit cut
+/// while it was still reasoning; the policy's `reasoning_only` opts in, and
+/// without it such a turn ends the run (no tools here, so no dropped-call
+/// recovery either).
+#[tokio::test]
+async fn a_reasoning_only_cut_continues_only_when_the_policy_covers_it() {
+    for reasoning_only in [true, false] {
+        let provider = Arc::new(ScriptedProvider::new(test_model()));
+        let agent = Agent::new(AgentOptions {
+            stream_fn: Some(provider.stream_fn()),
+            length_continuation: Some(pa_agent::agent_loop::LengthContinuation {
+                max_continuations: 3,
+                message: Arc::new(|attempt, max| {
+                    AgentMessage::Standard(Message::User(pa_agent::types::UserMessage {
+                        content: UserContent::Text(format!("continue {attempt}/{max}")),
+                        timestamp: 0,
+                    }))
+                }),
+                reasoning_only,
+            }),
+            ..Default::default()
+        });
+        agent.set_model(test_model()).await;
+        reasoning_only_length_turn(&provider);
+        provider.push_text_turn("the answer");
+        agent.prompt("think hard").await.unwrap();
+        agent.wait_for_idle().await;
+        let expected = if reasoning_only {
+            vec![
+                ("user", "think hard".to_string()),
+                ("assistant", String::new()),
+                ("user", "continue 1/3".to_string()),
+                ("assistant", "the answer".to_string()),
+            ]
+        } else {
+            vec![
+                ("user", "think hard".to_string()),
+                ("assistant", String::new()),
+            ]
+        };
+        assert_eq!(
+            transcript(&agent.state().await.messages),
+            expected,
+            "reasoning_only={reasoning_only}"
+        );
+    }
 }
 
 fn guarded_agent(provider: &Arc<ScriptedProvider>) -> Agent {
@@ -1232,6 +1318,7 @@ async fn a_tool_call_cut_off_at_the_output_limit_is_not_run_and_the_model_hears_
                     timestamp: 0,
                 }))
             }),
+            reasoning_only: false,
         }),
         ..Default::default()
     });

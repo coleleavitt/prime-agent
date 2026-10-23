@@ -24,6 +24,30 @@ list; rows carry their session's `◷ N` heartbeat count from the
 
 Mermaid diagrams (TS `components/mermaid.ts`): `mermaid` fences in assistant text (never thinking) render as Unicode box-drawing diagrams per the `markdown.mermaid` setting (off/final/streaming, `markdown::MermaidMode`, live through `/settings`), joined to the surrounding paragraph exactly as the TS markdown rewrite joins them; a settled diagram that dropped source keeps its fence plus the `Mermaid diagram not rendered: …` notice, and one wider than the transcript keeps its fence. The renderer is an in-crate port of grok-mermaid 0.2.3 (`src/mermaid/`, Apache-2.0 — its license ships beside the module), byte-identical to the package on the golden corpus (`scripts/mermaid-goldens.mjs` regenerates it), with display widths from this crate's own grapheme measure; renders are cached by source. The diagram renderer seam (`diagram.rs`, `pa_tui::diagram`): a process-wide renderer installed once by the composition root lays out every fence instead (rows or the kept source, each with notice lines, the paragraph closed after them, goldens from the fork's TS transform in `markdown/diagram_transform_goldens.json`) and may opt into custom messages, agent-message bodies (received and ipython-sent; plain text split around fences per the fork's TS text renderer, `custom_message/diagram_text_goldens.json`), and `/btw` answers; with none installed every surface renders as above. Settled diagrams (never a streaming paint) count once per source into the run's `diagram::RenderCounts` (drawn, kept as source, drawn after the renderer adapted the layout — `DiagramLayout::Rows::adapted`) through a fixed lock-free digest table, atomics only on the paint path; counting is off until the composition root calls `diagram::set_render_counting(true)`, and `diagram::take_render_counts()` reads and resets one run's counts (pa-cli puts them on `tui exit`).
 
+Other products' sessions in the agents view (`agents_view/external.rs`): on a
+daemon with the `external_sessions` capability the view fetches
+`list_external_sessions { all: true }` and lists the rows in their own section
+after Inactive, headed by the rows' `sourceLabel` ("Claude Code"), under the
+same project (`Ctrl+F`) and branch (`Ctrl+B`) filters as the saved sessions.
+Opening one sends `import_external_session` and resumes the session file it
+answers (the status line reports the import or its failure); the row never
+resumes the other product's file itself.
+
+`/rewind` (aliases `/checkpoint`, `/undo`) and Esc Esc on an empty editor
+open the rewind picker (`rewind_selector`, Claude Code's message selector)
+on a daemon with the `rewind` capability: the branch's prompts with their
+code summaries, then Restore code and conversation / Restore conversation /
+Restore code / Summarize from here / Never mind. Without the capability both
+open the `/tree` selector, as Esc Esc did before.
+
+Session modes the session publishes as feature statuses: the `user_message`
+row (`rlm.send_user_message`) renders as its own `● Message` entry
+(`custom_message::brief_message`); while the `brief` status is on, the text
+blocks of the assistant entries in a turn that sent one collapse below the
+`all` detail level (`view/brief.rs`, Claude Code's brief view); while the
+`coordinator` status is on, `/fork` and `/clone` without `--replace` are
+refused (Claude Code's coordinator fork refusal).
+
 ## Non-goals
 No session logic, no providers, no loop policy. The interactive UI renders daemon events and sends user intents (prompts, abort, switch) as daemon commands; the session loop itself lives in the pa-daemon worker. It never computes agent behavior and never spawns the supervisor (launch semantics live in pa-cli).
 

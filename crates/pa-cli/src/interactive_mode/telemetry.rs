@@ -375,6 +375,16 @@ impl pa_tui::interactive::InteractionTelemetry for CliInteractionTelemetry {
                 "tui_inline_image_count",
                 serde_json::Value::from(images.count),
             );
+            // Claude Code's editor settings in force at exit (flags only).
+            let settings = self.settings();
+            properties.set(
+                "tui_vim_mode",
+                serde_json::Value::from(settings.get_editor_mode() == "vim"),
+            );
+            properties.set(
+                "tui_status_line",
+                serde_json::Value::from(settings.get_status_line().is_some()),
+            );
             for (key, count) in &counters.counts {
                 properties.set(key, serde_json::Value::from(*count));
             }
@@ -478,6 +488,9 @@ mod tests {
             Some("kitty" | "iterm2" | "off")
         ));
         assert_eq!(exits[0]["properties"]["tui_inline_image_count"], 0);
+        // Default editor settings: no vim mode, no status line command.
+        assert_eq!(exits[0]["properties"]["tui_vim_mode"], false);
+        assert_eq!(exits[0]["properties"]["tui_status_line"], false);
         assert!(exits[1]["properties"].get("tui_scroll_count").is_none());
         assert!(
             exits[1]["properties"]

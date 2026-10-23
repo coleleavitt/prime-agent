@@ -188,6 +188,9 @@ pub struct Args {
     /// `--sandbox <mode>`: the OS sandbox for this run (`off` | `read-only` |
     /// `workspace-write`), over the `sandbox` setting.
     pub sandbox: Option<pa_core::os_sandbox::SandboxMode>,
+    /// `--add-dir <directory>` (repeatable): extra working directories for
+    /// the session (Claude Code's flag).
+    pub add_dirs: Vec<String>,
     pub verbose: bool,
     pub messages: Vec<String>,
     #[allow(clippy::struct_field_names)]
@@ -201,6 +204,11 @@ pub struct Args {
     pub list_sessions: bool,
     /// `--delete-session <id|name>`: delete one saved session and exit.
     pub delete_session: Option<String>,
+    /// `-w, --worktree [name]`: run the session in a managed git worktree
+    /// (`pa_core::worktree`), created or reused before the session starts.
+    pub worktree: bool,
+    /// The worktree's name (`None`: a generated one).
+    pub worktree_name: Option<String>,
 }
 
 impl Args {
@@ -344,6 +352,18 @@ pub fn parse_args(args: &[String]) -> Args {
             "--name" => result.name = Some(require_value!(arg)),
             "--list-sessions" => result.list_sessions = true,
             "--delete-session" => result.delete_session = Some(require_value!(arg)),
+            // The name is optional: the next token is taken only when it is a
+            // valid worktree name, so `-w "fix the login bug"` stays a message.
+            "--worktree" | "-w" => {
+                result.worktree = true;
+                if let Some(next) = args
+                    .get(i + 1)
+                    .filter(|next| crate::global_flags::is_worktree_name_value(next))
+                {
+                    result.worktree_name = Some(next.clone());
+                    i += 1;
+                }
+            }
             "--fork" => result.fork = Some(require_value!(arg)),
             "--session-dir" => result.session_dir = Some(require_value!(arg)),
             "--models" => {
@@ -493,6 +513,10 @@ pub fn parse_args(args: &[String]) -> Args {
             "--verbose" => result.verbose = true,
             "--offline" => result.offline = true,
             "--plan" => result.plan = true,
+            "--add-dir" => {
+                let value = require_value!(arg);
+                result.add_dirs.push(value);
+            }
             "--sandbox" => {
                 let value = require_value!(arg);
                 if let Some(mode) = pa_core::os_sandbox::SandboxMode::from_wire(&value) {
@@ -645,6 +669,30 @@ mod tests {
         assert!(!parse(&["hello"]).plan);
     }
 
+    /// `--add-dir` repeats, resolves against the working directory, and reaches the config.
+    #[test]
+    fn add_dir_flags_reach_the_config_resolved() {
+        let parsed = parse(&["--add-dir", "../lib", "--add-dir", "/abs", "hi"]);
+        let config = crate::mode::runtime_config_from_args(
+            &parsed,
+            std::path::PathBuf::from("/work"),
+            std::path::PathBuf::from("/agent"),
+            None,
+            crate::mode::AppMode::Print,
+            /*telemetry_disabled*/ true,
+        );
+        assert_eq!(
+            (config.additional_directories, parsed.messages),
+            (
+                vec![
+                    std::path::PathBuf::from("/work/../lib"),
+                    std::path::PathBuf::from("/abs")
+                ],
+                vec!["hi".to_string()]
+            )
+        );
+    }
+
     /// `--sandbox <mode>` takes one of the three modes, reaches the session config, and
     /// rejects anything else.
     #[test]
@@ -690,6 +738,17 @@ mod tests {
     #[test]
     fn resume_accepts_selector_bare_and_equals() {
         assert_eq!(parse(&["-r", "abc"]).resume.as_deref(), Some("abc"));
+        let named = parse(&["--worktree", "feature/login", "hello"]);
+        assert!(named.worktree);
+        assert_eq!(named.worktree_name.as_deref(), Some("feature/login"));
+        assert_eq!(named.messages, vec!["hello"]);
+        let unnamed = parse(&["-w", "fix the login bug"]);
+        assert!(unnamed.worktree);
+        assert_eq!(unnamed.worktree_name, None);
+        assert_eq!(unnamed.messages, vec!["fix the login bug"]);
+        let flag_next = parse(&["-w", "--plan"]);
+        assert!(flag_next.worktree && flag_next.plan);
+        assert_eq!(flag_next.worktree_name, None);
         assert!(parse(&["--resume", "--verbose"]).resume_bare);
         assert_eq!(parse(&["--resume=abc"]).resume.as_deref(), Some("abc"));
         assert!(parse(&["--resume="]).resume_bare);

@@ -10,6 +10,7 @@ use crate::editor::Editor;
 use crate::session::TranscriptItem;
 use crate::theme::Theme;
 
+mod brief;
 pub(crate) mod click;
 pub(crate) mod editor_surface;
 mod expansion;
@@ -89,6 +90,8 @@ pub struct AgentView {
     pub provider_auth: Option<crate::provider_auth::ProviderAuthSelector>,
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,
     pub fork_selector: Option<crate::user_message_selector::UserMessageSelector>,
+    /// The `/rewind` picker (Esc Esc on an empty editor).
+    pub rewind_selector: Option<crate::rewind_selector::RewindSelector>,
     /// The `/effort` inline picker (TS
     /// `ThinkingSelectorComponent` seam): while set, it owns the whole frame
     /// like the model picker.
@@ -170,6 +173,11 @@ pub struct AgentView {
     /// Entries whose card a click flipped away from the level's
     /// tool-output expansion (see `view/expansion.rs`).
     toggled_cards: std::collections::BTreeSet<usize>,
+    /// Whether the session is in brief mode (its `brief` feature status).
+    brief_mode: bool,
+    /// Assistant entries whose text brief mode collapses (see
+    /// `view/brief.rs`).
+    brief_hidden: std::collections::BTreeSet<usize>,
     /// Per-assistant-entry markdown block caches: a streaming message re-renders every frame, so
     /// settled blocks replay from the cache. `RefCell` because the layout pass borrows immutably.
     md_caches:
@@ -283,6 +291,7 @@ impl AgentView {
             || self.goal_panel.is_some()
             || self.info_panel.is_some()
             || self.fork_selector.is_some()
+            || self.rewind_selector.is_some()
             || self.confirm.is_some()
             || self.share_loader.is_some()
             || self.reload_box.is_some()
@@ -321,6 +330,7 @@ impl AgentView {
             provider_auth: None,
             auth_panel: None,
             fork_selector: None,
+            rewind_selector: None,
             choice_picker: None,
             harness_selector: None,
             mcp_view: None,
@@ -354,6 +364,8 @@ impl AgentView {
             sparse_enabled: true,
             sparse_entries: std::collections::BTreeSet::new(),
             toggled_cards: std::collections::BTreeSet::new(),
+            brief_mode: false,
+            brief_hidden: std::collections::BTreeSet::new(),
             md_caches: std::cell::RefCell::new(std::collections::HashMap::new()),
             layout_width: 0,
             layout_options: None,
@@ -385,6 +397,7 @@ impl AgentView {
         self.chat.push(entry);
         self.entry_layout.push([None, None, None]);
         self.sparse_note_append();
+        self.brief_note_append();
     }
 
     pub fn chat_len(&self) -> usize {
@@ -404,9 +417,13 @@ impl AgentView {
         self.md_caches.borrow_mut().remove(&index);
         self.sparse_entries.remove(&index);
         self.toggled_cards.remove(&index);
+        self.brief_hidden.remove(&index);
         self.entry_heights.pop();
         self.entry_layout.pop();
-        self.chat.pop()
+        let popped = self.chat.pop();
+        // The popped entry may have been its turn's brief message.
+        self.refresh_brief_hidden();
+        popped
     }
 
     /// Replace the text and tone of the status entry at `index` in place;
@@ -535,7 +552,13 @@ impl AgentView {
             .iter()
             .map(|index| index + count)
             .collect();
+        self.brief_hidden = self
+            .brief_hidden
+            .iter()
+            .map(|index| index + count)
+            .collect();
         self.note_prepended_entries(count, seam_before, cursor_spacing_before);
+        self.refresh_brief_hidden();
     }
 
     /// Drop the whole transcript and its cached layout (a fresh snapshot
@@ -545,6 +568,7 @@ impl AgentView {
         self.sparse_enabled = true;
         self.sparse_entries.clear();
         self.toggled_cards.clear();
+        self.brief_hidden.clear();
         self.sparse_window = None;
         self.chat.clear();
         self.entry_layout.clear();

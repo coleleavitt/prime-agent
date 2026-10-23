@@ -220,6 +220,19 @@ pub fn system_prompt_header_rows(prompt: &str) -> Vec<ClientLine> {
     ]]
 }
 
+/// The `/system-prompt` header of the session context section: the context the
+/// first turn carries as a hidden row (instruction files, skills, environment, date).
+#[must_use]
+pub fn session_context_header_rows(context: &str) -> Vec<ClientLine> {
+    let chars = context.encode_utf16().count();
+    vec![vec![
+        raw_span("Session Context "),
+        dim(format!(
+            "({chars} chars, sent as the first turn's hidden row)"
+        )),
+    ]]
+}
+
 /// The `/system-prompt` body rows: the prompt split into source lines for per-line wrapping.
 #[must_use]
 pub fn system_prompt_body_rows(prompt: &str) -> Vec<ClientLine> {

@@ -37,7 +37,9 @@ pub use confirm::{
     ConfirmationRequest,
     ConfirmationSurface,
     answer_confirmation,
+    answer_confirmation_remembering,
     confirm,
+    confirm_offering,
     pending_confirmations,
     register_confirmation_surface,
 };
@@ -709,12 +711,22 @@ const UNREVIEWED_HOST_REQUESTS: &[&str] = &[
     "bash.consumed",
     "model.info",
     "telemetry.emit",
+    // The edit skill's file-checkpoint reports: the write they bracket stays
+    // in the kernel, so refusing a report would refuse nothing.
+    "file_history.before_write",
+    "file_history.after_write",
 ];
 
 /// Kernel host requests no feature observes after they ran: bookkeeping
 /// whose replies carry nothing a policy reads (and `bash.consumed`, which
 /// must stay synchronous).
-const UNOBSERVED_HOST_REQUESTS: &[&str] = &["bash.consumed", "model.info", "telemetry.emit"];
+const UNOBSERVED_HOST_REQUESTS: &[&str] = &[
+    "bash.consumed",
+    "model.info",
+    "telemetry.emit",
+    "file_history.before_write",
+    "file_history.after_write",
+];
 
 /// Whether installed features review `request_type` before it runs.
 #[must_use]

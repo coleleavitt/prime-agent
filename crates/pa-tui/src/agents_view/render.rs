@@ -322,18 +322,23 @@ impl AgentsViewMode {
             .map(|row| self.render_note_details(row, width))
             .filter(|details| !details.is_empty());
         // Each non-empty section contributes a spacer (when not first), its heading, then its rows.
-        let counts: Vec<(Section, usize)> = [Section::Running, Section::Idle, Section::Inactive]
-            .into_iter()
-            .map(|section| {
-                (
-                    section,
-                    self.rows
-                        .iter()
-                        .filter(|row| row.kind == RowKind::Agent && row.section == section)
-                        .count(),
-                )
-            })
-            .collect();
+        let counts: Vec<(Section, usize)> = [
+            Section::Running,
+            Section::Idle,
+            Section::Inactive,
+            Section::External,
+        ]
+        .into_iter()
+        .map(|section| {
+            (
+                section,
+                self.rows
+                    .iter()
+                    .filter(|row| row.kind == RowKind::Agent && row.section == section)
+                    .count(),
+            )
+        })
+        .collect();
         let mut display: Vec<DisplayItem> = Vec::new();
         // While a query is active the list is a ranked picker: one flat, relevance-ordered run
         // of hits (per-row icons carry the status), not status section blocks.
@@ -459,9 +464,17 @@ impl AgentsViewMode {
                         .iter()
                         .find(|(count_section, _)| count_section == section)
                         .map_or(0, |(_, count)| *count);
+                    let title = match section {
+                        Section::External => self
+                            .external_section_label()
+                            .unwrap_or_else(|| section_title(*section).to_string()),
+                        Section::Running | Section::Idle | Section::Inactive => {
+                            section_title(*section).to_string()
+                        }
+                    };
                     lines.push(vec![self.theme.fg(
                         ThemeColor::Muted,
-                        truncate_text(&format!("{} ({count})", section_title(*section)), width),
+                        truncate_text(&format!("{title} ({count})"), width),
                     )]);
                 }
                 DisplayItem::Row(index, row) => {
@@ -595,7 +608,7 @@ impl AgentsViewMode {
         let icon_color = match row.section {
             Section::Running => ThemeColor::Text,
             Section::Idle => ThemeColor::Warning,
-            Section::Inactive => ThemeColor::Dim,
+            Section::Inactive | Section::External => ThemeColor::Dim,
         };
         let icon_style = theme
             .fg_style(icon_color)

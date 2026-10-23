@@ -117,7 +117,9 @@ async fn settle(session_id: &str, action: &str, verdicts: Vec<FeatureVerdict>) -
     }
     let reason = asks.join("; ");
     match confirm(session_id, action, &reason, CONFIRMATION_TIMEOUT).await {
-        ConfirmationAnswer::Allowed => None,
+        // `settle` offers nothing to remember, so an always-allow is a plain
+        // allow here.
+        ConfirmationAnswer::Allowed | ConfirmationAnswer::AllowedAlways => None,
         ConfirmationAnswer::Denied => Some(format!("{reason} (the user refused it)")),
         ConfirmationAnswer::Unavailable => Some(format!(
             "{reason} (it needs the user's confirmation, and no client can ask for it)"

@@ -189,6 +189,12 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_mcp_static_token",
     "remove_mcp_connection",
     "mark_anthropic_warning_shown",
+    // `/rewind` (capability `rewind`), fork-native.
+    "get_rewind_checkpoints",
+    "rewind",
+    // Other products' sessions (capability `external_sessions`), fork-native.
+    "list_external_sessions",
+    "import_external_session",
 ];
 
 /// Parsed client command envelope.
@@ -383,12 +389,25 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "session_model_selection",
                 // `fork_export` writes a fork file and leaves the live session running (#1389).
                 "fork_export",
+                // `get_rewind_checkpoints` + `rewind`: `/rewind` restores code
+                // (file checkpoints) and/or the conversation.
+                "rewind",
             ]
             .iter()
             .map(std::string::ToString::to_string),
         )
+        // `list_external_sessions` + `import_external_session`: only while
+        // the composition root installed a source (`pa-cc-import`).
+        .chain(
+            pa_core::session::external_sessions::installed()
+                .then(|| EXTERNAL_SESSIONS_CAPABILITY.to_string()),
+        )
         .collect()
 }
+
+/// The server capability behind `list_external_sessions` and
+/// `import_external_session`.
+pub const EXTERNAL_SESSIONS_CAPABILITY: &str = "external_sessions";
 
 /// Parse a client command line the way the TS supervisor does: only
 /// `type: "command"` envelopes are accepted; bare commands fail with the
@@ -877,6 +896,12 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::NavigateTree {
             active_session_id, ..
         }
+        | DaemonCommand::GetRewindCheckpoints {
+            active_session_id, ..
+        }
+        | DaemonCommand::Rewind {
+            active_session_id, ..
+        }
         | DaemonCommand::ImportJsonl {
             active_session_id, ..
         }
@@ -960,6 +985,8 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         } => active_session_id.as_deref(),
         // Control-plane commands carry no session selector.
         DaemonCommand::List { .. }
+        | DaemonCommand::ListExternalSessions { .. }
+        | DaemonCommand::ImportExternalSession { .. }
         | DaemonCommand::ListAgentPeers { .. }
         | DaemonCommand::GetWorkerPeerTransport { .. }
         | DaemonCommand::RosterSubscribe { .. }
@@ -982,6 +1009,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
     match command {
         DaemonCommand::List { .. } => "list",
         DaemonCommand::ListSavedSessions { .. } => "list_saved_sessions",
+        DaemonCommand::ListExternalSessions { .. } => "list_external_sessions",
+        DaemonCommand::ImportExternalSession { .. } => "import_external_session",
         DaemonCommand::ListAgentPeers { .. } => "list_agent_peers",
         DaemonCommand::GetDirectWorkerTransport { .. } => "get_direct_worker_transport",
         DaemonCommand::GetWorkerPeerTransport { .. } => "get_worker_peer_transport",
@@ -1079,6 +1108,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::Fork { .. } => "fork",
         DaemonCommand::ForkExport { .. } => "fork_export",
         DaemonCommand::NavigateTree { .. } => "navigate_tree",
+        DaemonCommand::GetRewindCheckpoints { .. } => "get_rewind_checkpoints",
+        DaemonCommand::Rewind { .. } => "rewind",
         DaemonCommand::ImportJsonl { .. } => "import_jsonl",
         DaemonCommand::ExportHtml { .. } => "export_html",
         DaemonCommand::ExportJsonl { .. } => "export_jsonl",

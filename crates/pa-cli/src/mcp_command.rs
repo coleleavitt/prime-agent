@@ -204,7 +204,23 @@ pub fn run_mcp_management_command(args: &[String]) -> Result<String> {
     match action {
         "list" => {
             require_count(args, 1, "mcp list")?;
-            Ok(format_mcp_server_list(&get_global_mcp_servers()))
+            let settings_servers = get_global_mcp_servers();
+            // The `.mcp.json` servers (with their approval) and, opted in,
+            // Claude Code's follow the settings' own.
+            let declared = crate::mcp_project::declared_server_lines();
+            Ok(match (settings_servers.is_empty(), declared.is_empty()) {
+                (_, true) => format_mcp_server_list(&settings_servers),
+                (true, false) => declared.join("\n"),
+                (false, false) => format!(
+                    "{}\n{}",
+                    format_mcp_server_list(&settings_servers),
+                    declared.join("\n")
+                ),
+            })
+        }
+        "reset-project-choices" => {
+            require_count(args, 1, "mcp reset-project-choices")?;
+            crate::mcp_project::reset_project_choices()
         }
         "get" => {
             require_count(args, 2, "mcp get <name>")?;
@@ -216,8 +232,14 @@ pub fn run_mcp_management_command(args: &[String]) -> Result<String> {
             Ok(format!("{name}: {}", config.type_name()))
         }
         "remove" => {
-            require_count(args, 2, "mcp remove <name>")?;
-            let name = validate_name(&args[1])?;
+            let (scope, rest) = crate::mcp_project::take_scope(&args[1..])?;
+            if rest.len() != 1 {
+                bail!("Usage: mcp remove <name>");
+            }
+            let name = validate_name(&rest[0])?;
+            if scope == crate::mcp_project::WriteScope::Project {
+                return crate::mcp_project::remove_project_server(name);
+            }
             let servers = get_global_mcp_servers();
             if !servers.contains_key(name) || !remove_global_mcp_server(name)? {
                 bail!("MCP server \"{name}\" was not found.");
@@ -226,7 +248,11 @@ pub fn run_mcp_management_command(args: &[String]) -> Result<String> {
             Ok(format!("Removed MCP server \"{name}\"."))
         }
         "add" => {
-            let (name, config, force) = parse_mcp_add_args(&args[1..])?;
+            let (scope, rest) = crate::mcp_project::take_scope(&args[1..])?;
+            let (name, config, force) = parse_mcp_add_args(&rest)?;
+            if scope == crate::mcp_project::WriteScope::Project {
+                return crate::mcp_project::add_project_server(name, &config, force);
+            }
             let replaced = get_global_mcp_servers().contains_key(name);
             if replaced && !force {
                 bail!("MCP server \"{name}\" already exists. Use --force to replace it.");

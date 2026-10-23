@@ -45,6 +45,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "prompts",
     "themes",
     "enableSkillCommands",
+    "fileCheckpointingEnabled",
     "bundledSkills",
     "enableBuiltinSkills",
     "terminal",
@@ -63,9 +64,17 @@ const KNOWN_FIELDS: &[&str] = &[
     "requestTiming",
     "lengthContinuations",
     "repetitionGuard",
+    "reminders",
     "rlmTokenBudget",
     "fallbackModels",
+    "autoMemoryEnabled",
+    "claudeCodeUserInstructions",
+    "claudeCodeUserSkills",
     "sandbox",
+    "outputStyle",
+    "editorMode",
+    "statusLine",
+    "disableSkillShellExecution",
 ];
 
 /// Extract each known field independently; ignore fields whose JSON type does not match the Rust

@@ -123,10 +123,19 @@ rider serializes only when a notice is parked. The reserved kinds are
 daemon provenance, never client data (`child_status_notices.rs`): the
 prompt/steer/follow-up parse and the `restore_actions` validation answer a
 caller-supplied custom row claiming one loudly — it never parks, never
-folds — and the daemon's own notice injection rides the follow-up route
+folds — and the daemon's own notice injection rides the steer route
 with a one-shot capability minted in the worker process (the wire's
 optional `rlmNoticeNonce`), so the queue's classification only ever sees
-daemon-authentic rows.
+daemon-authentic rows. The notice content is Claude Code's agent
+`<task-notification>` (`local_agent`, with `<usage>` and `<worktree>`), and
+the steering fold (`worker/steer_fold.rs`) joins it, like an agent message
+on the steering lane, into a busy parent's running turn at its next tool
+boundary; an idle parent wakes on it. A typed-agent spawn
+(`rlm.spawn(agent=...)`) carries the definition in the child create's
+`config.agentDefinition` (and `runtimeMetadata.agentType`); the child worker
+persists it as the session's `agent_definition` entry, so a revived child
+keeps running as that agent. A worktree-isolated child records its
+worktree, and `rlm.delete_subagent` removes it unless it holds work.
 Factory run notices (`factory_notices.rs`): the worker implements pa-core's
 `FactoryNotices` port over its own queue — each run milestone the session's
 factory executor announces queues one `factory_run_notice` row (a
@@ -264,6 +273,51 @@ broadcast owns its surface here too (the worker's cron-store
 — TS daemon-mode's `broadcastGlobal` — and the supervisor re-broadcasts it
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
+Claude Code's session scheduling (`session_tasks`; the book is
+`pa_core::cron::tasks`): the worker owns the clock for the session's
+`rlm.cron.*` tasks, `rlm.schedule_wakeup` loop wakeups and `/loop` jobs,
+since a session outlives its clients. The timer sleeps to the next fire;
+a due task is taken only while the session is idle (no turn, compaction,
+queued input, user bash or input pause; a busy session wakes it through
+the runner's park signal) and admitted on the follow-up lane as an
+injected `scheduled_task_fire` row, so a fire never lands mid-turn. A
+delivered loop tick's settle drives the keepalive wakeup; `abort` and
+`abort_and_clear_queue` cancel pending self-paced wakeups; pending tasks
+keep the worker resident. The book binds with the session (create and
+every replacement): durable tasks load from the session artifact
+partition's `scheduled_tasks.json`. No wire change: the surface is kernel
+host requests plus the `/loop` session command.
+Mid-session worktree isolation (`worktree_host`, Claude Code's
+`EnterWorktree`/`ExitWorktree`): the kernel's `rlm.enter_worktree` /
+`rlm.exit_worktree` send `worktree.enter` / `worktree.exit`; the engine
+creates, opens or removes the worktree through `pa_core::worktree`, and the
+worker's `WorktreeSession` seam (`worker/worktree_seam.rs`) records the move
+on the branch (the `/cwd` `session_cwd_state` entry plus a
+`worktree_session_state` entry), moves the session's and engine's cwd and
+emits `cwd_changed`; later kernel starts follow, and the kernel changes its
+own directory from the reply. Removal refuses work (uncommitted files, new
+commits) unless `discardChanges`, and never removes a worktree entered by
+path.
+
+`/rewind` (`rewind` module, capability `rewind`): `get_rewind_checkpoints`
+lists the active branch's user prompts with each one's code-restore summary
+(from the session's `pa_core::file_history`, at the time the prompt's entry
+was written); `rewind` settles the running turn, restores the code first,
+then moves the conversation through the `navigate_tree` path onto the prompt
+(the prompt's text returns as `editorText`; `summarize` is "Summarize from
+here", the abandoned-branch summary).
+
+Other products' sessions (`supervisor/external_sessions.rs`, capability
+`external_sessions`, advertised only while the composition root installed a
+source in `pa_core::session::external_sessions`, e.g. `pa-cc-import`'s
+Claude Code transcripts): `list_external_sessions` (`cwd`, or `all`) answers
+the sources' rows, newest first (`source`, `sourceLabel`, `id` =
+`<source>:<id>`, `externalId`, `path`, `cwd`, `name`, `firstMessage`,
+`created`, `modified`, `gitBranch`, `messageCount`); `import_external_session`
+(`source`, `externalId`, optional `sessionDir`) converts one into a new
+session file (or reuses the earlier import of an unchanged session) and
+answers `{ sessionPath, sessionId, cwd, reused }`. Both are control-plane
+commands that run on the blocking pool.
 
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.

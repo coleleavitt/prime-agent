@@ -12,11 +12,21 @@ use pa_tui::client_settings::ClientSettings;
 pub struct CliClientSettings {
     cwd: PathBuf,
     agent_dir: PathBuf,
+    /// `--add-dir`: the launch's extra working directories.
+    additional_directories: Vec<PathBuf>,
 }
 
 impl CliClientSettings {
-    pub fn new(cwd: PathBuf, agent_dir: PathBuf) -> Arc<Self> {
-        Arc::new(Self { cwd, agent_dir })
+    pub fn new(
+        cwd: PathBuf,
+        agent_dir: PathBuf,
+        additional_directories: Vec<PathBuf>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            cwd,
+            agent_dir,
+            additional_directories,
+        })
     }
 
     fn manager(&self) -> pa_core::settings::SettingsManager {
@@ -302,6 +312,34 @@ impl ClientSettings for CliClientSettings {
     fn set_telemetry_notice_shown(&self) -> Result<()> {
         self.manager().set_telemetry_notice_shown(true)
     }
+
+    fn status_line(&self) -> Option<pa_tui::client_settings::StatusLineSettings> {
+        self.manager()
+            .get_status_line()
+            .and_then(pa_tui::client_settings::StatusLineSettings::from_value)
+    }
+
+    fn output_style(&self) -> String {
+        self.manager()
+            .get_output_style()
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    fn editor_mode(&self) -> pa_tui::client_settings::EditorMode {
+        match self.manager().get_editor_mode() {
+            "vim" => pa_tui::client_settings::EditorMode::Vim,
+            _ => pa_tui::client_settings::EditorMode::Normal,
+        }
+    }
+
+    fn set_editor_mode(&self, mode: pa_tui::client_settings::EditorMode) -> Result<()> {
+        self.manager().set_editor_mode(mode.wire_name())
+    }
+
+    fn launch_additional_directories(&self) -> Vec<PathBuf> {
+        self.additional_directories.clone()
+    }
 }
 
 #[cfg(test)]
@@ -314,7 +352,8 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).expect("agent dir");
-        let settings = CliClientSettings::new(dir.path().to_path_buf(), agent_dir.clone());
+        let settings =
+            CliClientSettings::new(dir.path().to_path_buf(), agent_dir.clone(), Vec::new());
 
         assert!(settings.show_images());
         assert!(!settings.quiet_startup());
@@ -327,6 +366,20 @@ mod tests {
         settings.set_idle_eviction_minutes("off").expect("idle");
         settings.set_tree_filter_mode("all").expect("tree filter");
         settings.set_show_images(false).expect("show images");
+
+        // `/vim` persists `editorMode`.
+        assert_eq!(
+            settings.editor_mode(),
+            pa_tui::client_settings::EditorMode::Normal
+        );
+        settings
+            .set_editor_mode(pa_tui::client_settings::EditorMode::Vim)
+            .expect("editor mode");
+        assert_eq!(
+            settings.editor_mode(),
+            pa_tui::client_settings::EditorMode::Vim
+        );
+        assert_eq!(settings.status_line(), None);
 
         assert_eq!(settings.theme().as_deref(), Some("dark"));
         assert_eq!(settings.idle_eviction_minutes(), "off");
@@ -374,5 +427,43 @@ mod tests {
             std::fs::read_to_string(agent_dir.join("settings.json")).expect("settings file");
         let value: serde_json::Value = serde_json::from_str(&content).expect("parse");
         assert_eq!(value["factory"]["enabled"], false);
+    }
+
+    /// With `claudeCodeSettings`, a trusted project's Claude Code status
+    /// line and output style reach the TUI when this agent sets neither.
+    #[test]
+    fn the_tui_reads_claude_codes_status_line_and_output_style() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let cwd = dir.path().join("repo");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".claude")).expect("claude dir");
+        std::fs::create_dir_all(&agent_dir).expect("agent dir");
+        std::fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"claudeCodeSettings": true}"#,
+        )
+        .expect("user settings");
+        std::fs::write(
+            cwd.join(".claude").join("settings.local.json"),
+            serde_json::json!({
+                "statusLine": { "type": "command", "command": "echo cc", "padding": 2 },
+                "outputStyle": "Explanatory",
+            })
+            .to_string(),
+        )
+        .expect("claude settings");
+        let settings = CliClientSettings::new(cwd.clone(), agent_dir.clone(), Vec::new());
+        // Untrusted, the project's keys wait.
+        assert_eq!(settings.status_line(), None);
+        assert_eq!(settings.output_style(), "default");
+        pa_core::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            pa_core::workspace_trust::TrustDecision::Trusted,
+        )
+        .expect("trust");
+        let line = settings.status_line().expect("status line");
+        assert_eq!((line.command.as_str(), line.padding), ("echo cc", 2));
+        assert_eq!(settings.output_style(), "Explanatory");
     }
 }

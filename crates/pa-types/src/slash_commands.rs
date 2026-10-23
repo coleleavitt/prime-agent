@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 15] = [
     "compact",
     "refine",
     "goal",
@@ -14,7 +14,36 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 8] = [
     "plan",
     "harness",
     "rlm-token-budget",
+    "ultracode",
+    "brief",
+    "output-style",
+    "add-dir",
+    "memory",
+    "loop",
+    "workflows",
 ];
+
+/// Builtin commands that run the bundled skill of the same name: the
+/// submission expands like `/skill:<name> <args>` (Claude Code's
+/// `/code-review`, alias `/review`), so the model receives the skill's
+/// instructions with the typed arguments.
+pub const SKILL_SLASH_COMMAND_NAMES: [&str; 1] = ["code-review"];
+
+/// The bundled skill a typed command name (or alias) runs, if it is one of
+/// [`SKILL_SLASH_COMMAND_NAMES`].
+#[must_use]
+pub fn skill_slash_command(name: &str) -> Option<&'static str> {
+    // The builtin table only (no registry cache): this runs on prompt
+    // admission, possibly before the composition root registers features.
+    let canonical = CANONICAL_BUILTIN_SLASH_COMMANDS
+        .iter()
+        .find(|command| command.name == name || command.aliases.contains(&name))?
+        .name;
+    SKILL_SLASH_COMMAND_NAMES
+        .iter()
+        .copied()
+        .find(|skill| *skill == canonical)
+}
 
 /// Durable row custom types (TS `messages.ts`): the command echo and its
 /// result, persisted in sessions and rendered by every surface.
@@ -323,6 +352,14 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         takes_argument: false,
     },
     BuiltinSlashCommand {
+        name: "rewind",
+        description: "Restore the code and/or conversation to a previous point",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &["checkpoint", "undo"],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
         name: "login",
         description: "Configure provider authentication",
         execution: SlashCommandExecution::Client,
@@ -413,12 +450,86 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         takes_argument: true,
     },
     BuiltinSlashCommand {
+        name: "ultracode",
+        description: "Standing multi-agent orchestration: every substantive task runs as an rlm.workflow (also /effort ultracode)",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[on|off|status]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "loop",
+        description: "Run a prompt on a recurring interval (e.g. /loop 5m /foo); omit the interval to let the model pace itself; /loop stop ends it",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[interval] [prompt] | stop"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "brief",
+        description: "Toggle brief-only mode: replies arrive as messages, other assistant text collapses",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[on|off|status]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "code-review",
+        description: "Review the current diff or a PR for bugs and cleanups",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some(
+            "[low|medium|high|xhigh|max|ultra] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]",
+        ),
+        aliases: &["review"],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "output-style",
+        description: "List output styles or switch to one",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[style]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "add-dir",
+        description: "Add a new working directory",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("<path>"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "vim",
+        description: "Toggle between Vim and Normal editing modes",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
         name: "rlm-max-depth",
         description: "Set/view the per-chat persistent RLM max depth immediately; never interrupts or queues the running turn",
         execution: SlashCommandExecution::Client,
         argument_hint: Some("[<int> [--global]]"),
         aliases: &[],
         takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "memory",
+        description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "workflows",
+        description: "List the saved workflows (.prime/workflows, .claude/workflows) and this session's recent workflow runs",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
     },
     BuiltinSlashCommand {
         name: "rlm-token-budget",
@@ -738,6 +849,21 @@ mod tests {
                 SlashCommandExecution::Session
             );
         }
+    }
+
+    /// `/code-review` and its `/review` alias run the bundled skill; other
+    /// commands, `/skill:` forms and unknown names do not.
+    #[test]
+    fn skill_commands_resolve_through_aliases() {
+        assert_eq!(skill_slash_command("code-review"), Some("code-review"));
+        assert_eq!(skill_slash_command("review"), Some("code-review"));
+        assert_eq!(skill_slash_command("model"), None);
+        assert_eq!(skill_slash_command("skill:code-review"), None);
+        assert_eq!(skill_slash_command("nope"), None);
+        // A skill command is not a session-engine command: it reaches the
+        // model as the expanded skill.
+        assert!(!is_session_slash_command_name("code-review"));
+        assert!(is_session_slash_command_name("ultracode"));
     }
 
     #[test]

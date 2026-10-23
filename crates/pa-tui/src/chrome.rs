@@ -92,6 +92,13 @@ pub struct ChromeState {
     /// Hide the splash `cwd` line (the scoped agents view keeps its
     /// metadata rows centered against the logo).
     pub splash_hide_cwd: bool,
+    /// The status line command's last output rows (raw, ANSI styling
+    /// kept); empty renders nothing.
+    pub status_line: Vec<String>,
+    /// Columns of left padding before each status row (`statusLine.padding`).
+    pub status_line_padding: usize,
+    /// `statusLine.hideVimModeIndicator`: the command renders the mode.
+    pub vim_indicator_hidden: bool,
 }
 
 /// Which actionable group owns the dock's selection. Every group is

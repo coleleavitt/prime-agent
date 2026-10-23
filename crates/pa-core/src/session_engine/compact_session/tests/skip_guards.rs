@@ -174,3 +174,34 @@ async fn execute_compaction_skips_when_already_compacted() {
     assert_eq!(outcome, CompactOutcome::Skipped("Already compacted"));
     registration.unregister();
 }
+
+/// Ambient context rows (the harness digest, the session context and its
+/// updates, the reminders) are never summarizer input: a conversation whose
+/// only pre-cut rows are ambient has no history to summarize, so a split
+/// turn needs only its prefix summary.
+#[test]
+fn ambient_context_rows_are_not_summarizer_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session = SessionManager::in_memory(tmp.path());
+    for custom_type in [
+        "harness_digest",
+        super::super::super::context_rows::SESSION_CONTEXT_CUSTOM_TYPE,
+        super::super::super::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE,
+        super::super::super::reminders::SYSTEM_REMINDER_CUSTOM_TYPE,
+        "goal_continuation",
+    ] {
+        session
+            .append_custom_message(custom_type, UserContent::Text("x".into()), false, None)
+            .unwrap();
+    }
+    let kept: Vec<String> = session
+        .get_entries()
+        .iter()
+        .filter_map(super::super::message_from_entry)
+        .filter_map(|message| match message {
+            AgentMessage::Custom(row) => Some(row.custom_type),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kept, ["goal_continuation"]);
+}

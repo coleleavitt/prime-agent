@@ -61,6 +61,9 @@ pub struct KernelCronWiring {
     /// The post-mutation seam for kernel `rlm_heartbeat.*` requests;
     /// `None` leaves mutations unannounced (the embedded default).
     pub mutation_hook: Option<super::host_requests::RlmHeartbeatMutationHook>,
+    /// The session's Claude Code task book (`rlm.cron.*`, `rlm.schedule_wakeup`,
+    /// `/loop`); `None` when the embedding runs no scheduler.
+    pub session_tasks: Option<std::sync::Arc<crate::cron::tasks::SessionTasks>>,
 }
 
 /// The live/durable session identity for kernel-created rlm heartbeats.
@@ -144,12 +147,18 @@ pub fn wire_session_runtime(
         ),
         None => fallback_binding(),
     };
+    // `rlm.spawn(agent=..., cwd=..., isolation=...)` resolves against the
+    // session's directory.
+    let spawn_cwd = std::path::PathBuf::from(&binding.cwd);
     // An embedding-owned store replaces the engine-private one, so
     // kernel `rlm_heartbeat.*` writes reach the daemon catalog; the
     // private file store remains the embedded/standalone default.
     let mutation_hook = cron_store
         .as_ref()
         .and_then(|wiring| wiring.mutation_hook.clone());
+    let session_tasks = cron_store
+        .as_ref()
+        .and_then(|wiring| wiring.session_tasks.clone());
     let cron_store = cron_store.map_or_else(
         || Arc::new(AgentCronJobStore::new(agent_dir.join("cron-jobs.json"))),
         |wiring| wiring.store,
@@ -180,6 +189,9 @@ pub fn wire_session_runtime(
     let session = Arc::new(tokio::sync::Mutex::new(session));
     let mut handlers = HostRequestHandlers::default();
     runtime.register_host_handlers(session.clone(), &mut handlers);
+    if let Some(tasks) = &session_tasks {
+        crate::cron::tasks::host::register_host_handlers(&mut handlers, tasks);
+    }
     let model_registry = rlm.model_registry.unwrap_or_else(|| {
         let auth = crate::auth::AuthStorage::create(agent_dir);
         let mut registry =
@@ -208,6 +220,13 @@ pub fn wire_session_runtime(
         rlm_usage.clone(),
         rlm.progress_note_emit,
     ));
+    if !spawn_cwd.as_os_str().is_empty() {
+        let _ = rlm_bridge
+            .spawn_context
+            .set(super::rlm_spawn_agent::SpawnContext {
+                search: crate::agents::AgentSearch::for_session(&spawn_cwd, agent_dir),
+            });
+    }
     register_rlm_host_handlers(&mut handlers, &rlm_bridge);
     // The kernel's `rlm.harness` store calls.
     crate::refinement::store::register_host_handlers(&mut handlers);
@@ -260,14 +279,29 @@ pub(crate) fn kernel_env_overrides(agent_dir: &std::path::Path) -> HashMap<Strin
     )])
 }
 
+/// The settings' session environment under the kernel's own overrides: a
+/// settings file cannot point the kernel at another agent dir.
+pub(crate) fn kernel_base_env(
+    agent_dir: &std::path::Path,
+    settings_env: Vec<(String, String)>,
+) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = settings_env.into_iter().collect();
+    env.extend(kernel_env_overrides(agent_dir));
+    env
+}
+
 /// Build the kernel provisioner for a session: host handlers for the goal/heartbeat bridge
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
 /// leak its own paths into the kernel (#109). A persistent session's artifact dir is
 /// likewise propagated (`RLM_SESSION_DIR` + `RLM_HARNESS_STATE_DIR`), so kernel-side
-/// harness writes land in the session-local store. `cwd` is the SESSION's working directory.
+/// harness writes land in the session-local store. The session's scratch directories ride
+/// `PRIME_AGENT_SCRATCHPAD` and `PRIME_AGENT_TASKS_DIR` (see [`super::scratch`]). `cwd` is the
+/// SESSION's working directory.
 /// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
-/// `create_session`, not the kernel boot.
+/// `create_session`, not the kernel boot. `settings_env` is the session environment the
+/// settings set (Claude Code's `env`, behind its opt-in): the kernel and every command it
+/// runs get it, and the harness's own variables above win over it.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
 #[must_use]
 pub fn kernel_provisioner(
@@ -280,6 +314,7 @@ pub fn kernel_provisioner(
     command_prefix: Option<String>,
     serper_api_key: Option<String>,
     session_artifact_dir: Option<std::path::PathBuf>,
+    scratch: &super::scratch::SessionScratch,
     on_restore: Option<crate::kernel::provisioner::RestoreCallback>,
     on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
@@ -287,12 +322,16 @@ pub fn kernel_provisioner(
     environment: crate::kernel::shared::KernelEnvironment,
     plan_mode: crate::kernel::plan_guard::PlanMode,
     sandbox: Option<crate::os_sandbox::SessionSandbox>,
+    settings_env: Vec<(String, String)>,
 ) -> Arc<KernelProvisioner> {
-    let mut env = kernel_env_overrides(agent_dir);
+    let mut env = kernel_base_env(agent_dir, settings_env);
     env.extend(kernel_harness_env(
         agent_dir,
         session_artifact_dir.as_deref(),
     ));
+    // The scratchpad the model writes temporary files to, and the tasks
+    // directory the host's job table persists `bash()` output in.
+    env.extend(scratch.kernel_env());
     if let Some(serper_api_key) = serper_api_key {
         env.insert("SERPER_API_KEY".to_string(), serper_api_key);
     }
@@ -409,7 +448,10 @@ impl IpythonKernelProvisioner for KernelProvisioner {
             // wraps it in its own abort signal.
             let signal = signal.map(crate::kernel::cancellation::AbortSignal::from_token);
             let manager = this.ensure(on_progress, signal).await?;
-            Ok(Box::new(KernelManagerExecutor { manager }) as Box<dyn KernelExecutor>)
+            Ok(Box::new(KernelManagerExecutor {
+                manager,
+                file_access: this.file_access_sink(),
+            }) as Box<dyn KernelExecutor>)
         })
     }
 
@@ -428,6 +470,8 @@ impl IpythonKernelProvisioner for KernelProvisioner {
 /// Adapts the kernel manager to the ipython tool's executor contract.
 struct KernelManagerExecutor {
     manager: crate::kernel::manager::ReplKernelManager,
+    /// Told about the files each finished cell opened.
+    file_access: Option<crate::kernel::shared::FileAccessSink>,
 }
 
 impl KernelExecutor for KernelManagerExecutor {
@@ -446,6 +490,7 @@ impl KernelExecutor for KernelManagerExecutor {
         let signal = options.signal;
         let timeout_ms = options.timeout_ms;
         let on_late_sent_agent_message = options.on_late_sent_agent_message;
+        let file_access = self.file_access.clone();
         Box::pin(async move {
             let result = manager
                 .execute_bounded(
@@ -460,6 +505,9 @@ impl KernelExecutor for KernelManagerExecutor {
                 )
                 .await
                 .map_err(classify_execute_error)?;
+            if let Some(sink) = file_access.filter(|_| !result.file_access.is_empty()) {
+                sink(&result.file_access);
+            }
             Ok(convert_execute_result(result))
         })
     }
@@ -519,6 +567,15 @@ fn convert_execute_result(
         sent_agent_messages: result.sent_agent_messages.unwrap_or_default(),
         bash_commands: result.bash_commands,
         executed_bash_commands: result.executed_bash_commands,
+        // The one `fileAccess` report feeds both the changed-file reminders
+        // (the provisioner's sink) and nested instruction discovery.
+        accessed_paths: result.file_access.paths(),
+        written_paths: result
+            .file_access
+            .writes
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
     }
@@ -558,6 +615,33 @@ mod tests {
         assert_eq!(
             (other.is_busy_after_interrupt(), other.message()),
             (false, "Kernel has been shut down".to_string())
+        );
+    }
+
+    /// Claude Code's `env` reaches the kernel; the kernel's own agent dir
+    /// still wins.
+    #[test]
+    fn the_settings_environment_reaches_the_kernel_under_its_own_variables() {
+        let agent_dir = std::path::Path::new("/agent");
+        let env = kernel_base_env(
+            agent_dir,
+            vec![
+                ("FEATURE_FLAG".to_string(), "on".to_string()),
+                (
+                    "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+                    "/elsewhere".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(
+            env,
+            HashMap::from([
+                ("FEATURE_FLAG".to_string(), "on".to_string()),
+                (
+                    "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+                    "/agent".to_string()
+                ),
+            ])
         );
     }
 }

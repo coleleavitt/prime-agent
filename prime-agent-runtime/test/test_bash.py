@@ -95,6 +95,29 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         awaited = await handle
         self.assertEqual(handle.poll(), awaited)
 
+    async def test_output_path_names_the_hosts_persisted_output(self):
+        def reply_for(path):
+            job = {"id": "j" * 32, "pid": 4242, "pgid": 4242, "startedAt": "2026-10-17T00:00:00+00:00"}
+            if path is not None:
+                job["outputPath"] = path
+            return {
+                "status": "ok",
+                "job": job,
+                "events": [
+                    {"type": "finished", "exitCode": 0, "duration": 0.0, "output": "hi\n", "fields": {}},
+                    {"type": "reaped", "bytes": 3},
+                ],
+                "cursor": 2,
+                "done": True,
+            }
+
+        for path in ("/session/tasks/jjjj.output", None):
+            with self.subTest(path=path):
+                with mock.patch.object(bash_module, "_request", lambda *_args, **_kwargs: reply_for(path)):
+                    handle = bash("echo hi")
+                self.assertEqual(handle.output_path, path)
+                self.assertEqual((await handle).output, "hi\n")
+
     async def test_awaiting_a_result_again_returns_it(self):
         # Models write `h = await bash(...)` and then `await h` (8 times in
         # user logs): awaiting the result is harmless and gives it back.

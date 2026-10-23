@@ -15,6 +15,7 @@ pub mod config;
 pub mod kernel_bash;
 pub mod run;
 mod session;
+pub mod worktree;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};

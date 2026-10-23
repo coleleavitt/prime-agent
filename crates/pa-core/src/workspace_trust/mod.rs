@@ -82,12 +82,26 @@ pub enum GatedItem {
     /// `.prime/agent/prompts/`: prompt templates.
     PromptTemplates,
     /// A project skill directory (`.prime/agent/skills/`, an ancestor's
-    /// `.agents/skills/`, or a project `skills` settings entry): its
-    /// Python skills install into the kernel venv and import at startup.
+    /// `.agents/skills/` or `.claude/skills/`, or a project `skills`
+    /// settings entry): its Python skills install into the kernel venv and
+    /// import at startup, its Claude Code skills can run shell blocks.
     ProjectSkills(String),
     /// A project directory a composition root registered as gated
     /// ([`register_gated_project_dir`]): `.prime/agent/<dir>/`.
     ProjectDir { dir: String, label: String },
+    /// A Claude Code directory in the project (`.claude/commands/` and
+    /// `.claude/skills/`: custom commands and skills, which can run shell
+    /// blocks; `.claude/output-styles/`: styles that rewrite the system
+    /// prompt).
+    ClaudeDir { dir: String, label: String },
+    /// A project Claude Code settings file (`.claude/settings.json`,
+    /// `.claude/settings.local.json`) with keys that run code or loosen the
+    /// session (hooks, statusLine, env, ...), gated while the user settings
+    /// opt into Claude Code's files.
+    ClaudeSettings { file: String, keys: Vec<String> },
+    /// A project file a composition root registered as gated
+    /// ([`register_gated_project_file`]): `<path>` under the workspace root.
+    ProjectFile { path: String, label: String },
 }
 
 impl fmt::Display for GatedItem {
@@ -102,6 +116,11 @@ impl fmt::Display for GatedItem {
             GatedItem::PromptTemplates => write!(f, "{config_dir}/prompts/ (prompt templates)"),
             GatedItem::ProjectSkills(location) => write!(f, "{location} (project skills)"),
             GatedItem::ProjectDir { dir, label } => write!(f, "{config_dir}/{dir}/ ({label})"),
+            GatedItem::ClaudeDir { dir, label } => write!(f, ".claude/{dir}/ ({label})"),
+            GatedItem::ClaudeSettings { file, keys } => {
+                write!(f, "{file} keys: {}", keys.join(", "))
+            }
+            GatedItem::ProjectFile { path, label } => write!(f, "{path} ({label})"),
         }
     }
 }
@@ -127,6 +146,33 @@ pub fn register_gated_project_dir(dir: &'static str, label: &'static str) {
 
 fn gated_project_dirs() -> Vec<(&'static str, &'static str)> {
     GATED_PROJECT_DIRS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Project files the composition root gates: `(path under the workspace
+/// root, label)`.
+static GATED_PROJECT_FILES: std::sync::Mutex<Vec<(&'static str, &'static str)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Gate the project file `<workspace>/<path>` (a configuration file a
+/// composition root loads from a project and runs, such as `.lsp.json`'s
+/// server commands): a workspace that has the file needs trust, and its
+/// bytes are part of the trusted fingerprint (a change asks again). `label`
+/// names it in the trust prompt. Idempotent; call before the first
+/// evaluation.
+pub fn register_gated_project_file(path: &'static str, label: &'static str) {
+    let mut files = GATED_PROJECT_FILES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !files.iter().any(|(known, _)| *known == path) {
+        files.push((path, label));
+    }
+}
+
+fn gated_project_files() -> Vec<(&'static str, &'static str)> {
+    GATED_PROJECT_FILES
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
@@ -268,6 +314,31 @@ pub fn record(
         true
     })?;
     Ok(evaluate(cwd, agent_dir))
+}
+
+/// Carry a trust decision to a new checkout of the same project (a managed
+/// worktree): `to` becomes trusted only when `from` is explicitly trusted
+/// and `to`'s gated content is byte-identical to `from`'s, so trust never
+/// extends to configuration the user has not seen. True when recorded.
+///
+/// # Errors
+///
+/// Returns an error when the store cannot be locked, parsed, or written.
+pub fn carry_trust(from: &Path, to: &Path, agent_dir: &Path) -> Result<bool> {
+    if evaluate(from, agent_dir).state != TrustState::Trusted {
+        return Ok(false);
+    }
+    let target = evaluate(to, agent_dir);
+    if target.state == TrustState::NotRequired || target.state == TrustState::Trusted {
+        return Ok(false);
+    }
+    let same_content = fingerprint::TrustInputs::collect(from, agent_dir).digest()
+        == fingerprint::TrustInputs::collect(to, agent_dir).digest();
+    if !same_content {
+        return Ok(false);
+    }
+    record(to, agent_dir, TrustDecision::Trusted)?;
+    Ok(true)
 }
 
 /// Re-pin a trusted workspace's record to its current content: the

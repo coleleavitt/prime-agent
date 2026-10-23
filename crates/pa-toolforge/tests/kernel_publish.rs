@@ -111,6 +111,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
 
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -151,6 +152,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         factory_notices: None,
         daemonless: true,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .expect("create_session");

@@ -57,6 +57,7 @@ async fn engine_runs_tool_loop_and_persists() {
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -97,6 +98,7 @@ async fn engine_runs_tool_loop_and_persists() {
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -168,6 +170,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -208,6 +211,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -247,6 +251,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     ) -> SessionEngineConfig {
         SessionEngineConfig {
             sandbox_mode: None,
+            additional_directories: Vec::new(),
             plan_mode: None,
             on_late_sent_agent_message: None,
             semantic_edges: None,
@@ -287,6 +292,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             prewarm_ipython_kernel: None,
             queued_goal_context_purge: None,
             rlm_token_allowance: None,
+            agent_definition: None,
         }
     }
 
@@ -345,14 +351,32 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+    assert!(
+        !first_turn_context(&engine)
+            .await
+            .contains("# Generic MCP Connections")
+    );
 
     write_credential("https://fixture.example/mcp");
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(engine.system_prompt.contains("# Generic MCP Connections"));
-    assert!(engine.system_prompt.contains("`fixture-oauth`"));
+    let context = first_turn_context(&engine).await;
+    assert!(context.contains("# Generic MCP Connections"));
+    assert!(context.contains("`fixture-oauth`"));
+    // The guidance is the first turn's row, never prompt text.
+    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+}
+
+/// The session context row a fresh session's first turn would carry.
+async fn first_turn_context(engine: &SessionEngine) -> String {
+    let rows = engine
+        .session
+        .context_rows()
+        .expect("the engine installs context rows")
+        .turn_start_messages(Vec::new())
+        .await;
+    serde_json::to_string(&rows).unwrap()
 }
 
 #[tokio::test]
@@ -407,11 +431,13 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
 }
 
 /// Upstream #969: with `lengthContinuations` set, a reply cut off at the
-/// output-token limit continues in a visible follow-up turn; unset (the TS
-/// v0.9.8 default) the truncated reply ends the turn.
+/// output-token limit continues in a visible follow-up turn; `0` ends the
+/// turn on the truncated reply; unset follows Claude Code's recovery: a
+/// hidden "Output token limit hit" nudge the model reads and the
+/// transcript does not show.
 #[tokio::test]
 async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
-    async fn run(settings: Option<&str>) -> Vec<String> {
+    async fn run(settings: Option<&str>) -> (Vec<String>, Option<String>) {
         let model = pa_agent::types::Model {
             id: "m".into(),
             name: "m".into(),
@@ -457,7 +483,26 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
             .await
             .unwrap();
         engine.session.agent().wait_for_idle().await;
-        engine
+        // The last user-role text the provider was sent on its final call.
+        let last_sent = provider.calls().last().and_then(|call| {
+            call.messages
+                .iter()
+                .rev()
+                .find_map(|message| match message {
+                    pa_agent::types::Message::User(user) => Some(match &user.content {
+                        pa_agent::types::UserContent::Text(text) => text.clone(),
+                        pa_agent::types::UserContent::Parts(parts) => parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                pa_agent::types::UserPart::Text(text) => Some(text.text.clone()),
+                                pa_agent::types::UserPart::Image(_) => None,
+                            })
+                            .collect(),
+                    }),
+                    _ => None,
+                })
+        });
+        let rows = engine
             .session
             .agent()
             .state()
@@ -499,9 +544,10 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
             })
             // The harness digest row leads every transcript.
             .filter(|row| row != "other")
-            .collect()
+            .collect();
+        (rows, last_sent)
     }
-    let on = run(Some(r#"{"lengthContinuations": 2}"#)).await;
+    let (on, _) = run(Some(r#"{"lengthContinuations": 2}"#)).await;
     assert_eq!(
         on,
         vec![
@@ -512,11 +558,24 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
         ]
     );
     assert_eq!(
-        run(None).await,
+        run(Some(r#"{"lengthContinuations": 0}"#)).await.0,
         vec![
             "user: write it".to_string(),
             "assistant: the first half".to_string(),
         ]
+    );
+    let (recovered, last_sent) = run(None).await;
+    assert_eq!(
+        recovered,
+        vec![
+            "user: write it".to_string(),
+            "assistant: the first half".to_string(),
+            "assistant: the second half".to_string(),
+        ]
+    );
+    assert_eq!(
+        last_sent.as_deref(),
+        Some(crate::settings::experimental::OUTPUT_LIMIT_RECOVERY_TEXT)
     );
 }
 
@@ -1132,6 +1191,7 @@ async fn create_session_appends_missing_resume_settings_rows() {
         steering_mode: None,
         follow_up_mode: None,
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_token_allowance: None,
@@ -1163,6 +1223,7 @@ async fn create_session_appends_missing_resume_settings_rows() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        agent_definition: None,
     })
     .await
     .unwrap();
@@ -1182,4 +1243,169 @@ async fn create_session_appends_missing_resume_settings_rows() {
         )),
         "entries: {entries:?}"
     );
+}
+
+/// A session that can spawn lists the discovered agent types; a session
+/// running as an agent reads that agent's instructions at the end of its
+/// prompt, and one whose scope denies spawning lists no types.
+#[tokio::test]
+async fn agent_types_are_listed_and_an_agents_instructions_close_its_prompt() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+        max_tokens_explicit: false,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(cwd.join(".prime/agents")).unwrap();
+    std::fs::write(
+        cwd.join(".prime/agents/explore.md"),
+        "---\nname: explore\ndescription: Searches the code\ntools: Read, Grep\n---\nSearch.",
+    )
+    .unwrap();
+    let reviewer = crate::agents::parse_agent_definition(
+        "---\nname: reviewer\ndescription: Reviews\ntools: Read\n---\nReview it.",
+        std::path::Path::new("reviewer.md"),
+        crate::agents::AgentSource::Project,
+    )
+    .unwrap();
+    let prompt = |agent_definition: Option<crate::agents::AgentDefinition>| {
+        let provider = Arc::new(ScriptedProvider::new(model.clone()));
+        let cwd = cwd.clone();
+        let agent_dir = tmp.path().join("agent");
+        let model = model.clone();
+        async move {
+            let host_session = Arc::new(tokio::sync::Mutex::new(
+                crate::session::manager::SessionManager::in_memory(&cwd),
+            ));
+            create_session(SessionEngineConfig {
+                cwd,
+                agent_dir,
+                model: Some(model),
+                stream_fn: Some(provider.stream_fn()),
+                daemonless: true,
+                rlm_subagent_host: Some(Arc::new(super::super::rlm_host::NoRlmChildren::new(
+                    host_session,
+                ))),
+                agent_definition,
+                ..SessionEngineConfig::default()
+            })
+            .await
+            .unwrap()
+        }
+    };
+    // The listing rides the session context row (the prompt stays
+    // byte-stable); an agent's own instructions close its prompt.
+    let root = prompt(None).await;
+    let root_context = root.session.context_rows().unwrap().full_context_text();
+    assert!(!root.system_prompt.contains("Available agent types"));
+    assert!(
+        root_context.contains(
+            "Available agent types for `rlm.spawn(agent=...)`:\n\
+             - explore: Searches the code (Tools: Read, Grep)"
+        ),
+        "{root_context}"
+    );
+    let child = prompt(Some(reviewer)).await.system_prompt;
+    assert!(
+        child.ends_with(
+            "# Agent: reviewer\n\nReview it.\n\nTool scope (Claude Code tool names): Read. \
+             The harness refuses Bash, Agent, SendMessage for this agent; keep to the rest of \
+             the scope yourself."
+        ),
+        "{child}"
+    );
+    assert!(!child.contains("Available agent types"), "{child}");
+}
+
+/// An agent whose definition declares `memory` gets its memory directory,
+/// the index in its system prompt under Claude Code's instructions, and
+/// the directory writable under the OS sandbox.
+#[tokio::test]
+async fn an_agent_with_memory_gets_its_directory_index_and_sandbox_root() {
+    let model = pa_agent::types::Model {
+        id: "m".into(),
+        name: "m".into(),
+        api: "test".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        cost: pa_agent::types::UsageCost::default(),
+        context_window: 1_000,
+        max_tokens: 100,
+        max_tokens_explicit: false,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    let agent_dir = tmp.path().join("agent");
+    std::fs::create_dir_all(cwd.join(".git")).unwrap();
+    let memory_dir = cwd.join(".prime/agent-memory/reviewer");
+    std::fs::create_dir_all(&memory_dir).unwrap();
+    std::fs::write(
+        memory_dir.join("MEMORY.md"),
+        "- [Style](style.md) - prefer early returns\n",
+    )
+    .unwrap();
+    let reviewer = crate::agents::parse_agent_definition(
+        "---\nname: reviewer\ndescription: Reviews\nmemory: project\n---\nReview it.",
+        std::path::Path::new("reviewer.md"),
+        crate::agents::AgentSource::Project,
+    )
+    .unwrap();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    let host_session = Arc::new(tokio::sync::Mutex::new(
+        crate::session::manager::SessionManager::in_memory(&cwd),
+    ));
+    let engine = create_session(SessionEngineConfig {
+        cwd: cwd.clone(),
+        agent_dir: agent_dir.clone(),
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        daemonless: true,
+        // A spawned child: no auto memory of its own.
+        rlm_depth: Some(1),
+        sandbox_mode: Some(crate::os_sandbox::SandboxMode::WorkspaceWrite),
+        rlm_subagent_host: Some(Arc::new(super::super::rlm_host::NoRlmChildren::new(
+            host_session,
+        ))),
+        agent_definition: Some(reviewer),
+        ..SessionEngineConfig::default()
+    })
+    .await
+    .unwrap();
+    let prompt = &engine.system_prompt;
+    assert!(!prompt.contains("# auto memory"), "{prompt}");
+    assert!(
+        prompt.contains(&format!(
+            "# Persistent Agent Memory\n\nYou have a persistent, file-based memory system at `{}`.",
+            memory_dir.display()
+        )),
+        "{prompt}"
+    );
+    assert!(
+        prompt.ends_with(
+            "- Since this memory is project-scope and shared with your team via version control, \
+             tailor your memories to this project\n\n## MEMORY.md\n\n- [Style](style.md) - prefer \
+             early returns"
+        ),
+        "{prompt}"
+    );
+    let settings = crate::settings::SettingsManager::create(&cwd, &agent_dir);
+    let expected = crate::os_sandbox::SessionSandbox::resolve(
+        &settings,
+        Some(crate::os_sandbox::SandboxMode::WorkspaceWrite),
+        &cwd,
+    )
+    .map(|sandbox| sandbox.with_writable_root(memory_dir.clone()));
+    match (engine.sandbox.as_ref(), expected.as_ref()) {
+        (Some(actual), Some(expected)) => assert!(actual.same_policy(expected)),
+        (actual, expected) => assert_eq!(actual.is_some(), expected.is_some()),
+    }
 }

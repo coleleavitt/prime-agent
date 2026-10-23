@@ -63,6 +63,52 @@ impl AgentSessionEngine {
         }
     }
 
+    /// Persist the create's agent definition as the session's durable
+    /// `agent_definition` entry, once: a revived worker's create carries
+    /// none and reads it back from the file, and a rebuild finds it there.
+    pub(super) async fn persist_agent_definition(
+        &self,
+        manager: &mut pa_core::session::manager::SessionManager,
+    ) {
+        let Some(definition) = self
+            .create_resources
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .agent_definition
+            .clone()
+        else {
+            return;
+        };
+        let file = self
+            .session_file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(file) = file {
+            let recorded = tokio::task::spawn_blocking(move || {
+                pa_core::agents::agent_definition_in_session_file(&file)
+            })
+            .await
+            .ok()
+            .flatten();
+            if recorded.as_ref() == Some(&definition) {
+                return;
+            }
+        }
+        let data = match serde_json::to_value(&definition) {
+            Ok(data) => data,
+            Err(error) => {
+                eprintln!("pa-daemon: the agent definition does not serialize: {error}");
+                return;
+            }
+        };
+        if let Err(error) =
+            manager.append_custom_entry(pa_core::agents::AGENT_DEFINITION_ENTRY_TYPE, Some(data))
+        {
+            eprintln!("pa-daemon: failed to persist the agent definition: {error:#}");
+        }
+    }
+
     /// Arm the no-progress backoff's one-shot wake: a durable cron job at
     /// `wake_at_ms` whose prompt is the wake marker. Without it the advertised
     /// 10s/20s/40s retry would never run. Best effort: `None` outside a

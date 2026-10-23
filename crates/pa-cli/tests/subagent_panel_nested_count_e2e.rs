@@ -207,6 +207,7 @@ fn children_host(
     );
     sessions.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: depth,
         rlm_max_depth: 3,
         // Off-catalog on purpose: scripted children do not resolve models.
@@ -230,6 +231,9 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         target: RlmSpawnTarget::Local,
         spawned_by_request_id: None,
         token_budget: None,
+        cwd: None,
+        agent: None,
+        worktree: None,
     }
 }
 

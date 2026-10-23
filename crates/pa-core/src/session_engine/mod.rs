@@ -2,11 +2,13 @@
 //! (prompt normalization, busy-admission rules, `SessionManager`
 //! persistence); the Agent owns the loop, this layer decides admission.
 
+pub mod additional_dirs;
 pub mod agent_messaging;
 pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
 pub mod branch_summarization;
+pub mod brief_mode;
 pub mod compact_session;
 pub mod compaction;
 pub mod compaction_exec;
@@ -14,11 +16,17 @@ pub mod compaction_trace;
 pub mod compaction_utils;
 pub(crate) mod computer_use_host;
 pub mod context_limit;
+pub mod context_rows;
+pub mod context_source;
+pub mod coordinator;
 pub mod engine;
 pub mod error_classify;
 pub mod factory_host;
+pub mod file_tracker;
 pub mod goal_boundary;
 pub mod goal_driver;
+pub mod goal_evaluator;
+pub mod goal_proposal;
 pub mod harness_digest;
 pub mod headless;
 pub mod host_requests;
@@ -26,6 +34,7 @@ pub mod image_model_routing;
 pub mod ipython_state;
 pub mod messages;
 pub mod messaging_stats;
+pub mod output_limit_recovery;
 pub mod plan_mode;
 pub mod presented_artifact;
 pub mod provider_adapter;
@@ -34,22 +43,27 @@ pub mod provider_park;
 pub mod provider_retry;
 pub mod refine;
 mod refinement_gate;
+pub mod reminders;
 pub mod request_timing;
 pub mod rlm_host;
 pub mod rlm_in_process;
 pub mod rlm_notices;
+pub mod rlm_spawn_agent;
 pub mod rlm_token_budget;
 pub mod rlm_usage;
 pub mod runtime;
 pub mod runtime_wiring;
+pub mod scratch;
 pub mod semantic_edges;
 pub mod session_commands;
 pub mod session_events;
+pub mod side_model;
 pub mod side_question;
 pub mod skills_unavailable_notice;
 pub mod slash_commands;
 pub mod state_restore_notice;
 pub mod steering_fold;
+pub mod usage_limit;
 // The `system_router.run` handler is registered by the engine wiring and
 // tested in-module; nothing outside the crate consumes it.
 pub(crate) mod system_router_host;
@@ -57,20 +71,29 @@ pub mod telemetry;
 pub mod tool_bridge;
 pub mod tool_intent_recovery;
 pub mod turn_boundary;
+pub mod ultracode;
 
 mod admission;
 mod compaction_arms;
 mod feature_boundary;
+mod instruction_boundary;
+pub mod memory_command;
+pub mod modes;
+mod skill_boundary;
+pub mod skill_host;
 mod terminal_inbox;
 mod wiring;
+pub mod workflows_command;
 
 use std::sync::Arc;
 
 pub use feature_boundary::FEATURE_CONTINUATION_CUSTOM_TYPE;
+pub use instruction_boundary::NESTED_INSTRUCTIONS_CUSTOM_TYPE;
 use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, ThinkingLevel};
 use pa_types::session::{AgentMessage as SessionAgentMessage, FileEntry};
 use pa_types::sync::MutexExt;
+pub use skill_boundary::DYNAMIC_SKILLS_CUSTOM_TYPE;
 use slash_commands::{SessionSlashCommand, SlashCommandRegistry};
 
 use crate::session::manager::{SessionManager, capture_git_context};
@@ -165,6 +188,10 @@ pub struct AgentSession {
     /// The session's plan mode: while on, every admitted turn carries the
     /// plan-mode context row. `None` until the engine wiring installs it.
     plan_mode: Option<plan_mode::PlanModeSwitch>,
+    /// The ultracode opt-in (the keyword and the standing mode): admitted
+    /// user turns carry its hidden reminder rows. Shared with the steering
+    /// fold; the engine wiring replaces the settings-less default.
+    ultracode: Arc<ultracode::UltracodeState>,
     /// The installed features' view of this session: an admitted prompt is
     /// reviewed through them ([`crate::features::SessionFeature::prompt_context`]).
     /// `None` until the engine wiring installs it, and when no feature is
@@ -178,6 +205,9 @@ pub struct AgentSession {
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,
     /// The skill inventory `/skill:<name>` submissions expand against.
     skills: Vec<crate::skills::Skill>,
+    /// The skills discovered under touched directories (Claude Code's
+    /// dynamic skills); `None` when discovery is off.
+    dynamic_skills: Option<Arc<crate::skills::dynamic::DynamicSkills>>,
     /// The telemetry handle for the `skill_use_count` counter the prompt
     /// path owns (`None` in sessions without telemetry).
     skill_telemetry: Option<std::sync::Arc<telemetry::SessionTelemetry>>,
@@ -217,6 +247,10 @@ pub struct AgentSession {
     /// How this session's automatic refine reviews ask and what an
     /// approval runs; `None` is the native policy.
     auto_refine_policy: Option<std::sync::Arc<dyn crate::refinement::executor::AutoRefinePolicy>>,
+    /// The session context and reminder rows an admitted turn carries ahead
+    /// of its prompt; `None` until the engine wiring installs them (a
+    /// session built directly sends none).
+    context_rows: Option<Arc<context_rows::SessionContextRows>>,
     /// Serializes notice admissions with parent input and generation close.
     terminal_admission: tokio::sync::Mutex<TerminalAdmission>,
     /// Agent-message reply IDs pre-synced by the parent inbox. Ordinary
@@ -319,9 +353,11 @@ impl AgentSession {
             compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             plan_mode: None,
+            ultracode: Arc::new(ultracode::UltracodeState::new(None)),
             feature_context: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
+            dynamic_skills: None,
             skill_telemetry: None,
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),
@@ -330,6 +366,7 @@ impl AgentSession {
             agent_dir: None,
             refinement_gate: None,
             auto_refine_policy: None,
+            context_rows: None,
             terminal_admission: tokio::sync::Mutex::new(TerminalAdmission::default()),
             pre_synced_reply_ids,
             terminal_pump_shutdown,

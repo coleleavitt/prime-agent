@@ -133,7 +133,9 @@ impl FactoryNotice {
             summary: &summary,
             tool_use_id: None,
             output_file: None,
+            note: None,
             result: Some(&result),
+            trailer: None,
         })
     }
 

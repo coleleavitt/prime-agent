@@ -225,6 +225,15 @@ pub struct RlmSpawnRequest {
     /// The child's delegation grant (upstream #1192), drawn from this
     /// session's budget pool at spawn; `None` when no budget applies.
     pub token_budget: Option<u64>,
+    /// The child's working directory (`cwd=`, or its worktree); `None`
+    /// keeps the parent's.
+    pub cwd: Option<String>,
+    /// The typed agent definition the child runs as (`agent=`).
+    pub agent: Option<crate::agents::AgentDefinition>,
+    /// The worktree the child runs in (`isolation="worktree"`): created at
+    /// admission, owned by the host's child record afterwards (removed
+    /// with the child when unchanged).
+    pub worktree: Option<crate::worktree::Worktree>,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -575,6 +584,15 @@ pub struct RlmHostBridge {
     pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
     /// The session counters a budget refusal counts into (adoption).
     pub(crate) adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
+    /// What `agent=`, `cwd=` and worktree isolation resolve against
+    /// (unset: no agent definitions, `cwd=` taken as given).
+    pub spawn_context: std::sync::OnceLock<super::rlm_spawn_agent::SpawnContext>,
+    /// Coordinator mode's `coordinatorForceWorkerInheritModel`: a spawn's
+    /// `model=` is ignored, so workers inherit the session model.
+    pub(crate) ignore_spawn_model: std::sync::atomic::AtomicBool,
+    /// Coordinator mode's `coordinatorPropagateNestedMemory`: the nested
+    /// instruction files a collected worker's session delivered.
+    pub(crate) nested_memory: std::sync::OnceLock<Arc<super::coordinator::NestedMemoryPropagation>>,
 }
 
 impl RlmHostBridge {
@@ -597,6 +615,9 @@ impl RlmHostBridge {
             plan_mode: std::sync::OnceLock::new(),
             token_budget: std::sync::OnceLock::new(),
             adoption: std::sync::OnceLock::new(),
+            spawn_context: std::sync::OnceLock::new(),
+            ignore_spawn_model: std::sync::atomic::AtomicBool::new(false),
+            nested_memory: std::sync::OnceLock::new(),
         }
     }
 }
@@ -766,7 +787,20 @@ impl RlmHostBridge {
         let Some(prompt) = data.get("prompt").and_then(Value::as_str) else {
             anyhow::bail!("rlm.spawn prompt must be a string");
         };
-        let mut request = spawn_request_from_payload(prompt, data)?;
+        let (mut request, agent_args) = spawn_request_from_payload(prompt, data)?;
+        // Claude Code's coordinator ignores the explicit model parameter
+        // (an agent definition's own model still applies).
+        if self
+            .ignore_spawn_model
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            request.model = None;
+        }
+        let isolation = super::rlm_spawn_agent::resolve_spawn_agent(
+            &mut request,
+            agent_args,
+            self.spawn_context.get(),
+        )?;
         // A child spawned during plan mode must not be an edit
         // escape hatch.
         request.plan_mode = self
@@ -810,7 +844,23 @@ impl RlmHostBridge {
             request.token_budget = self.reserve_child_grant(request.token_budget)?;
         }
         let grant = request.token_budget;
-        let handle = self.host.spawn(request).await?;
+        // The worktree is cut last, after every refusal above, so a refused
+        // spawn leaves no checkout behind; a failed host spawn removes it.
+        if isolation == Some(crate::agents::AgentIsolation::Worktree) {
+            super::rlm_spawn_agent::prepare_worktree(&mut request, self.spawn_context.get())?;
+        }
+        let worktree = request.worktree.clone();
+        let handle = match self.host.spawn(request).await {
+            Ok(handle) => handle,
+            Err(error) => {
+                if let Some(worktree) = worktree {
+                    if let Err(cleanup) = crate::worktree::remove_if_unchanged(&worktree) {
+                        tracing::warn!(error = %cleanup, "rlm.spawn: the failed child's worktree stays");
+                    }
+                }
+                return Err(error);
+            }
+        };
         // The status surface names the child each grant funded.
         if let (Some(budget), Some(grant)) = (self.token_budget.get(), grant) {
             budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
@@ -824,15 +874,29 @@ impl RlmHostBridge {
 }
 
 /// Shared kwargs validation for `rlm.run`: unsupported keys are rejected
-/// with the sorted key list.
-fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmSpawnRequest> {
+/// with the sorted key list. The agent-definition and placement kwargs
+/// come back separately for [`super::rlm_spawn_agent`] to resolve.
+fn spawn_request_from_payload(
+    prompt: &str,
+    data: &Value,
+) -> anyhow::Result<(RlmSpawnRequest, super::rlm_spawn_agent::SpawnAgentArgs)> {
     const OPERATION: &str = "rlm.spawn";
     let kwargs = kwargs_from_payload(data);
     reject_unsupported_kwargs(
         &kwargs,
         OPERATION,
-        &["name", "model", "thinking", "target", "token_budget"],
+        &[
+            "name",
+            "model",
+            "thinking",
+            "target",
+            "token_budget",
+            "agent",
+            "isolation",
+            "cwd",
+        ],
     )?;
+    let agent_args = super::rlm_spawn_agent::SpawnAgentArgs::from_kwargs(&kwargs, OPERATION)?;
     let name = optional_string_kwarg(&kwargs, "name", OPERATION)?;
     let name = normalize_requested_rlm_subagent_session_name(name, OPERATION)?;
     if let Some(name) = &name {
@@ -855,16 +919,22 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
             anyhow::anyhow!("{OPERATION} token_budget must be a positive integer")
         })?),
     };
-    Ok(RlmSpawnRequest {
-        prompt: prompt.to_string(),
-        name,
-        model,
-        thinking,
-        spawned_by_request_id: None,
-        target: target.unwrap_or_default(),
-        plan_mode: false,
-        token_budget,
-    })
+    Ok((
+        RlmSpawnRequest {
+            prompt: prompt.to_string(),
+            name,
+            model,
+            thinking,
+            spawned_by_request_id: None,
+            target: target.unwrap_or_default(),
+            plan_mode: false,
+            token_budget,
+            cwd: None,
+            agent: None,
+            worktree: None,
+        },
+        agent_args,
+    ))
 }
 
 fn register_create_session(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
@@ -982,10 +1052,12 @@ fn register_delete_subagent(handlers: &mut HostRequestHandlers, bridge: &Arc<Rlm
 
 fn register_collect(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
     let host = Arc::clone(&bridge.host);
+    let bridge = Arc::clone(bridge);
     handlers.register(
         "rlm.collect",
         host_handler(move |payload| {
             let host = Arc::clone(&host);
+            let nested_memory = bridge.nested_memory.get().cloned();
             Box::pin(async move {
                 let data = &payload.data;
                 let targets = match data.get("targets") {
@@ -1019,6 +1091,22 @@ fn register_collect(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBrid
                     );
                 };
                 let results = host.collect(targets, timeout_ms).await?;
+                if let Some(nested_memory) = nested_memory {
+                    let dirs: Vec<std::path::PathBuf> = results
+                        .iter()
+                        .filter(|result| result.settled)
+                        .filter_map(|result| result.session_dir.as_deref())
+                        .map(std::path::PathBuf::from)
+                        .collect();
+                    if !dirs.is_empty() {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            for dir in dirs {
+                                nested_memory.note_worker_session_dir(&dir);
+                            }
+                        })
+                        .await;
+                    }
+                }
                 Ok(json!({ "results": results }))
             })
         }),

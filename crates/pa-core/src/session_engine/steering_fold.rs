@@ -49,10 +49,19 @@ pub trait SteeringFold: Send + Sync {
 pub(super) struct FoldAdmission {
     pub(super) agent: Weak<Agent>,
     pub(super) skills: Vec<crate::skills::Skill>,
+    /// The dynamically discovered skills a folded command may also name.
+    pub(super) dynamic_skills: Option<Arc<crate::skills::dynamic::DynamicSkills>>,
+    /// `${CLAUDE_SESSION_ID}` in a folded Claude Code skill's body.
+    pub(super) session_id: String,
     pub(super) prompt_templates: Vec<crate::skills::PromptTemplate>,
+    /// Where a folded Claude Code command's shell blocks run.
+    pub(super) cwd: std::path::PathBuf,
     pub(super) features: Vec<Arc<dyn crate::features::SessionFeature>>,
     pub(super) feature_context: Arc<crate::features::SessionFeatureContext>,
     pub(super) feature_notes: crate::features::FeatureNotes,
+    /// The session's ultracode state: a folded steer with the keyword
+    /// carries its reminder row.
+    pub(super) ultracode: Arc<super::ultracode::UltracodeState>,
 }
 
 /// The admission slot the boundary hook reads (set after the agent is
@@ -74,9 +83,22 @@ impl FoldAdmission {
 
     /// The rows one folded steer joins the run as, or the refusal.
     async fn admit(&self, text: &str) -> Result<AgentMessageBatch, String> {
-        let (skill_expanded, _) = crate::skills::expand_skill_command(text, &self.skills);
-        let normalized =
-            crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
+        let skills = match &self.dynamic_skills {
+            Some(dynamic) => dynamic.with_known(&self.skills),
+            None => self.skills.clone(),
+        };
+        let variables = crate::skills::claude_skills::SkillVariables {
+            project_dir: &self.cwd,
+            session_id: &self.session_id,
+        };
+        let (skill_expanded, _) =
+            crate::skills::expand_skill_command(text, &skills, &variables).await;
+        let normalized = crate::skills::expand_prompt_template_with_shell(
+            &skill_expanded,
+            &self.prompt_templates,
+            &self.cwd,
+        )
+        .await;
         let mut rows = Vec::new();
         if !self.features.is_empty() {
             match crate::features::review_prompt(
@@ -98,6 +120,12 @@ impl FoldAdmission {
                 crate::features::PromptDecision::Continue { context: None } => {}
             }
         }
+        rows.extend(
+            self.ultracode
+                .steer_rows(text)
+                .into_iter()
+                .filter_map(|row| session_message_to_loop(&SessionAgentMessage::Custom(row))),
+        );
         rows.push(user_prompt_message(&normalized, &[]));
         Ok(if rows.len() == 1 {
             rows.remove(0).into()
@@ -123,7 +151,14 @@ pub(super) async fn fold_queued_steers(fold: &dyn SteeringFold, slot: &FoldAdmis
         };
         match admitted {
             Ok(batch) => {
-                agent.steer(batch);
+                // A host row (a notice, an agent message) keeps driving the
+                // session if the run is aborted before it is read; a user's
+                // steer parks with the user's rows.
+                if steer.custom.is_some() {
+                    agent.steer_host(batch);
+                } else {
+                    agent.steer(batch);
+                }
                 fold.settled(steer, Ok(()));
             }
             Err(reason) => fold.settled(steer, Err(reason)),

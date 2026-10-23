@@ -536,6 +536,7 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
         thinking: None,
         child_script: Some(script.to_string_lossy().to_string()),
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
     });
     let handle = children
         .spawn(RlmSpawnRequest {
@@ -547,6 +548,9 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
             spawned_by_request_id: None,
             plan_mode: false,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         })
         .await
         .expect("spawn");

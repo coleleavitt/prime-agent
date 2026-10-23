@@ -384,6 +384,33 @@ pub fn user_entry_text(entry: &SessionEntry) -> Option<String> {
     Some(message_text(message))
 }
 
+/// One user prompt on the active branch (`/rewind`'s picker row).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchUserPrompt {
+    pub entry_id: String,
+    pub text: String,
+    /// When the prompt's entry was written (Unix ms): its file checkpoint.
+    pub timestamp_ms: u64,
+}
+
+/// The user prompts with text on the active branch, oldest first. A prompt
+/// whose entry time does not parse is left out (it names no checkpoint).
+#[must_use]
+pub fn branch_user_prompts(store: &SessionFile) -> Vec<BranchUserPrompt> {
+    store
+        .branch()
+        .into_iter()
+        .filter_map(|entry| {
+            let text = user_entry_text(entry).filter(|text| !text.trim().is_empty())?;
+            Some(BranchUserPrompt {
+                entry_id: entry.id.clone(),
+                text,
+                timestamp_ms: crate::util::iso_to_unix_ms(&entry.timestamp)?,
+            })
+        })
+        .collect()
+}
+
 /// The typed-entry form of one store entry (None when it does not
 /// round-trip; unknown kinds still parse as `FileEntry::Unknown`).
 #[must_use]
@@ -459,6 +486,27 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![first.as_str(), second.as_str()]);
         assert_eq!(messages[0]["text"], json!("first prompt"));
+    }
+
+    #[test]
+    fn branch_user_prompts_follow_the_active_branch_only() {
+        let (_dir, mut store) = temp_store();
+        let first = message_entry(&mut store, "user", "first prompt");
+        let answer = message_entry(&mut store, "assistant", "answer");
+        message_entry(&mut store, "user", "abandoned prompt");
+        store.branch_to(Some(&answer)).unwrap();
+        message_entry(&mut store, "user", "   ");
+        let kept = message_entry(&mut store, "user", "kept prompt");
+        let prompts = branch_user_prompts(&store);
+        let ids: Vec<&str> = prompts
+            .iter()
+            .map(|prompt| prompt.entry_id.as_str())
+            .collect();
+        assert_eq!(ids, vec![first.as_str(), kept.as_str()]);
+        let expected_ms =
+            crate::util::iso_to_unix_ms(&store.entry(&kept).unwrap().timestamp).unwrap();
+        assert_eq!(prompts[1].timestamp_ms, expected_ms);
+        assert_eq!(prompts[1].text, "kept prompt");
     }
 
     #[test]

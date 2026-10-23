@@ -28,8 +28,8 @@ use pa_core::session_engine::rlm_host::{
 };
 use pa_core::session_engine::rlm_notices::{
     RlmChildTerminalNotice,
-    create_rlm_child_failure_message,
-    create_rlm_child_terminal_notice,
+    create_rlm_child_failure_message_with,
+    create_rlm_child_terminal_notice_with,
 };
 use pa_core::session_engine::rlm_usage::{RlmChildUsageReport, RlmChildUsageSink};
 use pa_types::daemon::{DaemonCommand, DaemonSessionLifecycle, PromptInput};
@@ -122,6 +122,11 @@ pub struct ParentIdentity {
     /// The parent's `--sandbox` override (wire name): every child is created
     /// under it, so `rlm.spawn` cannot step outside the run's sandbox.
     pub sandbox: Option<String>,
+    /// The parent's resource exclusions (`--no-context-files`,
+    /// `--no-skills`, `--no-prompt-templates`): every child is created with
+    /// them, the way TS children inherit the parent's session config, so a
+    /// run without AGENTS.md/CLAUDE.md files never grows them in a child.
+    pub resource_exclusions: pa_types::daemon::SessionResourceExclusions,
 }
 
 impl ParentIdentity {
@@ -224,9 +229,21 @@ struct ChildRecord {
     last_emitted_status: Option<&'static str>,
     /// Serializes parent-directed rename and delete for this child.
     rename_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The git worktree the child runs in (`isolation="worktree"`): its
+    /// notices name it, and the delete removes it when it holds no work.
+    worktree: Option<pa_core::worktree::Worktree>,
 }
 
 impl ChildRecord {
+    /// What the child's terminal notice reports beyond its outcome: the
+    /// run's wall time and its worktree.
+    fn notice_extras(&self) -> pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
+        pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
+            duration_ms: Some(now_ms().saturating_sub(self.started_at_ms)),
+            worktree: self.worktree.clone(),
+        }
+    }
+
     /// Raw run status: `running` | `done` | `error` | `cancelled`.
     fn status(&self) -> &'static str {
         self.settled_status.unwrap_or("running")
@@ -735,6 +752,7 @@ impl SupervisorChildSessions {
                 pending_usage_report: None,
                 last_emitted_status: None,
                 answer_text: None,
+                worktree: None,
             })));
     }
 
@@ -778,6 +796,7 @@ impl SupervisorChildSessions {
                 emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 last_emitted_status: None,
                 rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                worktree: None,
             })));
     }
 

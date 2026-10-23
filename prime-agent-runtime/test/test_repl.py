@@ -1192,6 +1192,37 @@ class ReplTest(unittest.TestCase):
         plain = self.repl.execute("bash-commands-none", "1 + 1")
         self.assertNotIn("bashCommands", one(plain, "done"))
 
+    def test_done_frame_reports_the_files_the_cell_opened(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.realpath(tmp)
+            read_path = os.path.join(root, "sub", "read.txt")
+            write_path = os.path.join(root, "written.md")
+            os.makedirs(os.path.dirname(read_path))
+            with open(read_path, "w", encoding="utf-8") as handle:
+                handle.write("hello")
+            code = "\n".join(
+                [
+                    "import pathlib, importlib, json",
+                    "importlib.reload(json)",
+                    f"text = open({read_path!r}).read()",
+                    f"pathlib.Path({write_path!r}).write_text(text)",
+                    f"open({read_path!r}).close()",
+                    f"open({read_path.encode()!r}, 'rb').close()",
+                    "text",
+                ]
+            )
+            events = self.repl.execute("accessed-paths", code)
+            done = one(events, "done")
+            self.assertEqual(done["status"], "ok")
+            # First-seen order, once each, split by intent; interpreter and
+            # venv files (the reloaded stdlib module) are not reported. The
+            # host derives nested instruction discovery's `accessedPaths`
+            # from these lists.
+            self.assertEqual(done["fileAccess"], {"reads": [read_path], "writes": [write_path]})
+
+        plain = self.repl.execute("accessed-paths-none", "1 + 1")
+        self.assertNotIn("fileAccess", one(plain, "done"))
+
     def test_async_bash_completion_notifies_only_after_an_unawaited_creating_cell(self):
         direct = self.repl.execute(
             "bash-direct", "from rlm import bash\n(await bash('printf direct')).exit_code"

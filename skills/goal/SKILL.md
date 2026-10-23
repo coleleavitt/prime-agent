@@ -41,6 +41,12 @@ await goal.complete()
   depends entirely on the user or an external event (an approval, a credential,
   an answer). `reason` says what it is waiting for. The harness stops sending
   continuations while the goal is paused.
+- `await goal.propose(condition)` — propose a session goal the user approves
+  with one keypress (non-blocking: it returns `awaiting_approval` and the
+  answer arrives as a notice; once approved the goal is active). Write the
+  condition so a separate evaluator can verify it from the conversation.
+  Only available when the user enabled goal proposals
+  (`experimental.modelProposedGoals`); otherwise it raises.
 - `await goal.resume()` — resume a goal you paused once the awaited input
   arrived. A goal the user paused (`/goal pause`) can only be resumed by the
   user (`/goal resume`).

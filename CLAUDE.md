@@ -98,6 +98,108 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   `LockedHint` lock probe for both Linux backends. `skills/computer-use` is a thin Python client (no pyobjc or
   PyGObject in the kernel).
 
+Claude Code parity port (branch `cc-parity`; no kernel or daemon protocol bump; new daemon capabilities `rewind` and
+`external_sessions`; adoption telemetry schema 6: `permissions_session`, `observer_session`, `advisor_ask`,
+`lsp_session`, plus custom-command, vim and status-line counters; every new `rlm` function is in the ready probe):
+
+- Context and instructions: the system prompt is byte-stable (static layers, packages, session role, appended
+  prompt). Instruction files, skills inventory, MCP servers, environment (cwd, branch, platform, shell, OS, model,
+  sandbox, scratchpad) and date ride the first turn as a hidden `session_context` row (`prompts::session_context`),
+  later turns get `session_context_update` deltas (`session_engine::context_rows`). Per-turn `<system-reminder>` rows
+  (`session_engine::reminders`, switchable via `reminders.*`): changed files (the kernel's additive `fileAccess` on
+  `done`), the `tasks` nag, silent turns, elapsed time, `<total_tokens>`, re-reads. One instruction loader
+  (`pa-core::resources::instructions`, `docs/instruction-files.md`): AGENTS.md/CLAUDE.md families root-to-cwd plus
+  `.claude/CLAUDE.md`, `*.local.md`, `.prime/agent/rules`, `.claude/rules` (`~/.claude` only with
+  `claudeCodeUserInstructions`), `@path` imports (depth 5), `paths:`-scoped rules; subdirectory files arrive as a
+  hidden `nested_instructions` row once a cell touches them (`accessedPaths`, `session_engine::instruction_boundary`).
+  Auto memory (`resources::auto_memory`, on by default for top-level sessions; `autoMemoryEnabled: false`,
+  `PRIME_AGENT_DISABLE_AUTO_MEMORY`, `--no-context-files`): `<agent dir>/projects/<checkout>/memory/MEMORY.md`
+  (200 lines / 25 KB), its directory name exactly Claude Code's; `/memory` lists both.
+- Checkpoints and `/rewind` (on by default; `fileCheckpointingEnabled`, `PRIME_AGENT_DISABLE_FILE_CHECKPOINTING`): the
+  `edit` skill reports each write (`file_history.before_write`/`after_write`, host-internal) and
+  `pa-core::file_history` keeps prior bytes content-addressed under `<session artifacts>/file-history/` (bash and
+  plain Python writes are not tracked; a file changed outside the agent is skipped unless forced). Daemon
+  `get_rewind_checkpoints`/`rewind` (`pa-daemon::rewind`) restore code, then the conversation via `navigate_tree`.
+  TUI: `/rewind` (`/checkpoint`, `/undo`) and Esc Esc on an empty editor (`rewind_selector`); old daemons get `/tree`.
+- Agents and messaging: a child that ends without replying, fails or is deleted reaches its parent as a
+  `<task-notification>` on the steering lane; agent messages fold mid-turn. `rlm.send_message` / `rlm.list_agents`.
+  Typed agent definitions (`.prime/agents`, `.claude/agents`; `pa-core::agents`) via `rlm.spawn(agent=...)`:
+  instructions appended, model/effort defaults, `Bash`/`Agent`/`SendMessage` scope enforced by a host-request gate,
+  persisted as an `agent_definition` entry; a definition's `memory: user|project|local` gives it a persistent
+  `agent-memory/<agent>/` (`pa_core::agents::memory`). `isolation="worktree"` children use `pa_core::worktree`
+  (removed with the child only when unchanged).
+- Coordinator and brief modes (Claude Code's unreleased, both off;
+  `pa-core::session_engine::{coordinator,brief_mode,modes}`): `experimental.coordinatorMode` /
+  `PRIME_AGENT_COORDINATOR_MODE` appends CC's coordinator prompt and gates `bash.run`, `file.edit`, `web.*`, MCP,
+  `computer_use.*` and worktree moves (unless `coordinatorExtraTools`); `experimental.briefMode` / `PRIME_AGENT_BRIEF`
+  / `/brief` adds `rlm.send_user_message` (a displayed `user_message` row, "● Message" in the TUI) and collapses
+  plain assistant text.
+- Other flag-gated Claude Code behaviors under `experimental` (`pa-core::settings::experimental`, `PRIME_AGENT_*`
+  overrides; side calls via `session_engine::side_model`). On: output-limit recovery (up to 3 hidden resume nudges;
+  `PRIME_AGENT_OUTPUT_LIMIT_RECOVERY=0`). Off: `usageLimitWrapUp`, `goalEvaluator`, `modelProposedGoals`
+  (`goal.propose`), `idleCompaction`, and the feature crates `pa-observer` (`observer`: per-turn digests to a
+  background observer, reports as notices) and `pa-advisor` (`advisorModel`: the `advisor` skill's `advisor.ask`).
+- Web (`crates/pa-web`, feature `web`): `rlm.web_search` / `rlm.web_fetch` (`web.search` / `web.fetch`). Search via
+  Anthropic's server-side `web_search_20250305` on the session's Anthropic login (through the generic
+  `pa_ai::types::StreamOptions::on_event` seam), else Brave or Exa with a key (`web.*`, `BRAVE_API_KEY`,
+  `EXA_API_KEY`). Fetch: GET to Markdown (`htmd`), https upgrade, private hosts refused, same-host redirects, 15-minute
+  cache, untrusted-content fence, 100k-character windows; an optional `prompt` uses `web.fetchModel`.
+- Permissions (`crates/pa-permissions`, feature `permissions`; inert without rules): CC's `permissions.allow/ask/deny`
+  syntax and validator over `bash()` (compound commands part by part, paths against Edit/Read rules), `file.edit`,
+  `web.*`, MCP and tool calls; deny > ask > mode > allow > read-only > fallback (unmatched runs unless
+  `"fallback": "ask"`); modes default/acceptEdits/plan/bypassPermissions/dontAsk, shift+tab cycles via the
+  `permissions` feature status; `/permissions`; always-allow answers (`features::confirm_offering`, `remember`)
+  persist to `.prime/agent/settings.local.json`; untrusted projects contribute only deny/ask. Python run directly in
+  the kernel is not gated.
+- Worktrees and scratch: `pa_core::worktree` is the one helper (sessions, children, workflows) for
+  `<repo>/.prime/worktrees/<name>` on `worktree-<name>` (base `origin/HEAD`, or HEAD with `worktree.baseRef: "head"`;
+  `.worktreeinclude` copied; never destructive by default; pa-hooks WorktreeCreate/WorktreeRemove can replace git).
+  `prime-agent -w, --worktree [name]`; `rlm.enter_worktree` / `rlm.exit_worktree` (pa-daemon `worktree_host`) move a
+  running session like `/cwd`. Each session has a private `scratchpad/` and `tasks/` (`PRIME_AGENT_SCRATCHPAD`,
+  `PRIME_AGENT_TASKS_DIR`); every `bash()` output is saved to `tasks/<job id>.output` (pruned to 200 files / 512 MiB).
+- Workflows and review: `rlm.workflow` (`rlm/workflow_script.py`) runs CC's async Workflow scripts
+  (`agent`/`pipeline`/`parallel`/`phase`/`log`/`args`/`budget`, schema results with a repair retry) over `rlm.spawn`
+  children, journaled under `<session>/workflows/<wf id>/` for `resume_from`; `start()` backgrounds a run. Saved
+  workflows resolve `<name>.py` from `.prime/workflows/`, `.claude/workflows/`, `<agent dir>/workflows/`,
+  `~/.claude/workflows/` (`/workflows`). The bundled `code-review` skill (`/code-review`, `/review`) and
+  `workflow-authoring`. `session_engine::ultracode`: the `ultracode` keyword reminder
+  (`workflowKeywordTriggerEnabled`) and the standing `/ultracode` mode.
+- Small surfaces: `.claude/commands` custom commands as prompt templates (CC argument rules, `` !`cmd` `` blocks
+  through the `bash()` guards, `disableSkillShellExecution`); output styles (`outputStyle`, `/output-style`); the
+  TUI's `statusLine` off the paint path; vim mode (`editorMode`, `/vim`, `pa-tui/src/editor/vim.rs`); additional
+  directories (`--add-dir`, `/add-dir`, `permissions.additionalDirectories`) as one persisted session list.
+- Scheduling: `rlm.cron.create/list/delete`, `rlm.schedule_wakeup`, `/loop [interval] <prompt>|stop`.
+  `pa_core::cron::tasks` is a pure task book (local-time five-field cron, CC's jitter, 7-day expiry, wakeups clamped
+  to [60, 3600]); durable tasks in the session artifacts' `scheduled_tasks.json`. pa-daemon's `session_tasks` fires
+  them only while idle, as `scheduled_task_fire` rows on the follow-up lane; pending tasks keep the worker resident.
+  `PRIME_AGENT_DISABLE_CRON`, `PRIME_AGENT_LOOP_PERSISTENT`, `PRIME_AGENT_LOOP_KEEPALIVE=0`.
+- Claude Code settings, opt-in (`claudeCodeSettings: true` in user settings): `pa_core::settings::claude_code` is the
+  one reader of CC's managed, `.claude/settings{,.local}.json` and `~/.claude/settings.json` (CC precedence; project
+  files only when trusted, `GatedItem::ClaudeSettings`). pa-permissions, pa-hooks (source-labelled hooks,
+  `disableAllHooks`, `allowManagedHooksOnly`) and the `.mcp.json` approvals read through it; `SettingsManager` layers
+  `statusLine`, `outputStyle`, `model`, `cleanupPeriodDays`, `additionalDirectories` and `env` (to kernel and hooks;
+  harness variables win) under the agent's own settings.
+- Claude Code skills (`pa-core::skills::claude_skills`): `.claude/skills/<name>/SKILL.md` cwd-to-repo-root
+  (trust-gated) and additional directories; `~/.claude/skills` only with `claudeCodeUserSkills`. Instruction-only, a
+  prime-agent skill of the same name wins; `/<name>` or `/skill:<name>`; `rlm.load_skill(name, args)` (`skill.load`)
+  returns CC's invocation text; touched subdirectories' skills arrive as a hidden `dynamic_skills` row.
+- `.mcp.json` (`pa-core::mcp::declared`, `docs/mcp-json.md`): every `.mcp.json` root-to-cwd (nearest wins), plus
+  `~/.claude.json` user/local servers when opted in; CC validation and `${VAR:-default}` expansion. The file is a
+  workspace-trust gated project file (an untrusted repo's `.mcp.json` is ignored; editing it asks again), and each
+  project server still needs approval (`enabledMcpjsonServers` and friends, `<agentDir>/mcp-project-choices.json`,
+  the confirm panel). `/mcp` shows source and approval; `prime-agent mcp add/remove --scope project`, `mcp list`,
+  `mcp reset-project-choices`.
+- LSP (`crates/pa-lsp`, feature `lsp`; inert without servers): `lspServers` or a trusted `.lsp.json`
+  (`workspace_trust::register_gated_project_file`); servers start on first use and stop with the session.
+  `rlm.lsp.{definition, implementation, references, hover, document_symbols, workspace_symbols, call_hierarchy,
+  diagnostics, servers}`; after a cell writes files (python_repl `fileWrites` host fact) new diagnostics arrive as a
+  hidden `<new-diagnostics>` reminder (`lspDiagnosticsWaitMs`).
+- Claude Code sessions (`crates/pa-cc-import`, feature `cc-import`): the agents view lists `~/.claude/projects`
+  transcripts in a "Claude Code" section (daemon `list_external_sessions` / `import_external_session`, via the
+  `pa_core::session::external_sessions` seam); opening one, or `--resume <cc uuid | title>`, converts it into a new
+  session file (`importedFrom`; tool calls as text plus `claude_code_tool_result` rows, thinking dropped). The source
+  transcript is never written; an unchanged session reuses its import.
+
 ## Current State
 
 Branch `merge-rust-port`, pushed to the fork remote (`fork`, `coleleavitt/prime-agent`). Upstream `main` is merged
@@ -107,11 +209,17 @@ Decision API revert (#3522) followed, `serde-saphyr` kept over upstream's `yaml_
 rename (#3400) followed. Upstream merges go through a merge driver that formats base/ours/theirs in the fork's style
 first, and `Cargo.lock` is rebuilt as the union of both locks pruned by cargo. Live handoff notes: `MEMORY.md`.
 
+Branch `cc-parity` (local only, not pushed) holds the Claude Code parity port on top of `9a9ab23cb`: seventeen feature
+branches merged in two rounds, with integration fixes in their own commits (one worktree helper, `.mcp.json` through
+the `claude_code` reader and behind workspace trust, the hold-refusal classifier accepting `target/<triple>/<profile>`).
+
 The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
 `pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
 `validate`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
 `pa-session-index`, `pa-mermaid`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
-`~/.anthropic-accounts` store via the vendored anthropic-rs SDK). Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
+`~/.anthropic-accounts` store via the vendored anthropic-rs SDK). The Claude Code parity port added `pa-web`,
+`pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp` and `pa-cc-import` (all in pa-cli's default features;
+observer and advisor stay inert until their `experimental` settings name a model). Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
 formats are byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. Static bug
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 
@@ -140,6 +248,9 @@ Open:
   window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`) unless niri is the
   computer-use fork (`WindowGeometry`/`CaptureWindow`/`WindowAt`, contract in the niri fork's `CONTRACT.md`).
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
+- `cargo deny` advisories fail on RUSTSEC-2026-0370/0371/0372 (`zbus_names`, `zvariant`, `zvariant_derive`
+  unmaintained, via `pa-computer-use`); licenses pass. Ignore in `deny.toml` or replace: the user's call.
+- The `attach-image` and `present-artifact` skill tests need Pillow (`PIL`), missing from the runtime venv.
 
 ## Working Rules
 

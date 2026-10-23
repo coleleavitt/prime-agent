@@ -1,6 +1,8 @@
 //! Settings subsystem: typed settings documents, global/project storage,
 //! legacy migrations, and the manager.
 
+pub mod claude_code;
+pub mod experimental;
 pub(crate) mod interactive_settings;
 pub(crate) mod load;
 pub(crate) mod manager;
@@ -8,6 +10,8 @@ pub(crate) mod merge;
 pub(crate) mod storage;
 pub(crate) mod types;
 
+#[cfg(test)]
+mod claude_code_tests;
 #[cfg(test)]
 mod persistence_tests;
 

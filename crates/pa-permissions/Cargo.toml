@@ -1,0 +1,28 @@
+[package]
+name = "pa-permissions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Claude Code-compatible permission rules and modes: allow/ask/deny rule lists over the kernel's bash(), file edits, web and MCP requests, /permissions, and the mode cycle."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-agent = { path = "../pa-agent" }
+pa-telemetry = { workspace = true }
+pa-types = { path = "../pa-types" }
+serde_json.workspace = true
+tracing.workspace = true
+# Gitignore-style path patterns (Claude Code's Read/Edit rule syntax); the
+# same version pa-core and pa-tui already resolve.
+ignore = "0.4"
+# Bash wildcard patterns compile to anchored regexes.
+regex = "1"
+# WebFetch(domain:...) rules match the URL's host.
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio.workspace = true
+
+[lints]
+workspace = true

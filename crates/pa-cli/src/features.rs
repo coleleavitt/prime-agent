@@ -40,6 +40,16 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // host requests (their HTTP clients start on the first request).
     #[cfg(feature = "web")]
     features.push(Arc::new(pa_web::WebFeature::new()));
+    // `rlm.lsp.*` and the `<new-diagnostics>` reminders: language servers
+    // from the `lspServers` setting or a trusted `.lsp.json`, each started
+    // on first use for a file of its language.
+    #[cfg(feature = "lsp")]
+    features.push(Arc::new(pa_lsp::LspFeature::new()));
+    // Claude Code's permission rules and modes (the `permissions` settings
+    // key), ahead of the hooks and plugins: a deny rule refuses before any
+    // hook runs a command for the action.
+    #[cfg(feature = "permissions")]
+    features.push(Arc::new(pa_permissions::PermissionsFeature::new()));
     // The user's command hooks (Claude Code's `hooks` settings key), ahead
     // of the plugins: a refusal from either stops the action.
     #[cfg(feature = "hooks")]
@@ -48,6 +58,14 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // requests, prompt context, status panels, the `wasm-plugins` skill.
     #[cfg(feature = "plugins")]
     features.push(Arc::new(pa_plugins::PluginsFeature::new()));
+    // Observer agents (experimental): a background observer reads each
+    // turn's digest of the sessions whose settings turn it on.
+    #[cfg(feature = "observer")]
+    features.push(Arc::new(pa_observer::ObserverFeature::new()));
+    // Advisor escalation (experimental): `advisor.ask` and the bundled
+    // `advisor` skill where an advisor model is configured.
+    #[cfg(feature = "advisor")]
+    features.push(Arc::new(pa_advisor::AdvisorFeature::new()));
     features
 }
 
@@ -125,6 +143,10 @@ impl InstalledFeatures {
 pub fn install_enabled_features() -> InstalledFeatures {
     install_trust_gates();
     pa_core::features::install(enabled_features());
+    // `WorktreeCreate`/`WorktreeRemove` command hooks replace git for
+    // managed worktrees when configured.
+    #[cfg(feature = "hooks")]
+    pa_hooks::worktree::install();
     install_credential_sources();
     install_tui_features();
     // Install refusal hooks if enabled in settings.
@@ -133,6 +155,7 @@ pub fn install_enabled_features() -> InstalledFeatures {
             pa_core::settings::SettingsManager::create(&cwd, crate::config::get_agent_dir());
         install_refusal_hooks(&settings);
     }
+    install_session_sources();
     #[cfg(feature = "session-index")]
     let session_index = {
         let index = pa_session_index::SessionIndex::new();
@@ -179,10 +202,21 @@ fn install_crash_record(trace: Option<pa_trace::RecorderHandle>) {
     }));
 }
 
-/// Gate what the enabled features load from a project and run behind
-/// workspace trust: (feature `plugins`) `.prime/agent/plugins/`. Idempotent;
-/// no I/O.
+/// Gate what the product and the enabled features load from a project and
+/// run behind workspace trust: the project's `.mcp.json` server commands
+/// (always; each server also needs its own approval), (feature `plugins`)
+/// `.prime/agent/plugins/`, (feature `lsp`) the project's `.lsp.json`
+/// server commands. Idempotent; no I/O.
 pub fn install_trust_gates() {
+    pa_core::workspace_trust::register_gated_project_file(
+        pa_core::mcp::MCP_JSON_FILE,
+        "MCP servers",
+    );
+    #[cfg(feature = "lsp")]
+    pa_core::workspace_trust::register_gated_project_file(
+        pa_lsp::config::PROJECT_CONFIG_FILE,
+        "language servers",
+    );
     #[cfg(feature = "plugins")]
     pa_core::workspace_trust::register_gated_project_dir(
         pa_plugins::PLUGINS_DIR,
@@ -204,6 +238,14 @@ pub fn install_refusal_hooks(settings: &pa_core::settings::SettingsManager) {
         pa_ai::refusal_hooks::RefusalHooks::install_all();
         tracing::info!("Content filter enabled");
     }
+}
+
+/// Install the enabled features' external session sources: (feature
+/// `cc-import`) Claude Code's transcripts, listed by the daemon and the
+/// resume selector. Idempotent; no I/O (a listing reads the transcripts).
+pub fn install_session_sources() {
+    #[cfg(feature = "cc-import")]
+    pa_cc_import::install();
 }
 
 /// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)
@@ -327,12 +369,35 @@ mod tests {
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
+            #[cfg(feature = "web")]
+            "web",
+            #[cfg(feature = "lsp")]
+            "lsp",
+            #[cfg(feature = "permissions")]
+            "permissions",
             #[cfg(feature = "hooks")]
             "hooks",
             #[cfg(feature = "plugins")]
             "plugins",
+            #[cfg(feature = "observer")]
+            "observer",
+            #[cfg(feature = "advisor")]
+            "advisor",
         ];
         assert_eq!(names, expected);
+        // `cc-import` is not a session feature: it installs an external
+        // session source (the agents view's and the resume selector's
+        // Claude Code sessions), and nothing else installs one.
+        install_session_sources();
+        let sources: Vec<String> = pa_core::session::external_sessions::sources()
+            .iter()
+            .map(|source| source.source().to_string())
+            .collect();
+        let expected_sources: Vec<&str> = vec![
+            #[cfg(feature = "cc-import")]
+            "claude-code",
+        ];
+        assert_eq!(sources, expected_sources);
     }
 
     /// `--no-default-features` installs no credential source, so auth.json
@@ -344,5 +409,30 @@ mod tests {
         install_credential_sources();
         assert!(pa_core::auth::credential_source("anthropic").is_none());
         assert!(pa_ai::request_hooks::request_hooks("anthropic").is_none());
+    }
+
+    /// A project's `.mcp.json` (server commands it would start) is gated
+    /// behind workspace trust in every build, like `.lsp.json`.
+    #[test]
+    fn a_project_mcp_json_needs_a_trusted_workspace() {
+        let home = tempfile::tempdir().unwrap();
+        let agent_dir = home.path().join("agent");
+        let cwd = home.path().join("repo");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        install_trust_gates();
+        std::fs::write(
+            cwd.join(pa_core::mcp::MCP_JSON_FILE),
+            r#"{"mcpServers": {"x": {"command": "x"}}}"#,
+        )
+        .unwrap();
+        assert!(!pa_core::workspace_trust::evaluate(&cwd, &agent_dir).is_trusted());
+        pa_core::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            pa_core::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
+        assert!(pa_core::workspace_trust::evaluate(&cwd, &agent_dir).is_trusted());
     }
 }

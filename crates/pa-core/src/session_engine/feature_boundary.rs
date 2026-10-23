@@ -24,7 +24,7 @@ use crate::features::{
 /// keeps the agent going) reaches the model as.
 pub const FEATURE_CONTINUATION_CUSTOM_TYPE: &str = "feature_continuation";
 
-fn steer_hidden_row(agent: &Agent, custom_type: &str, text: &str) {
+pub(super) fn steer_hidden_row(agent: &Agent, custom_type: &str, text: &str) {
     if let Some(row) = session_message_to_loop(&SessionAgentMessage::Custom(
         super::plan_mode::hidden_row(custom_type, text),
     )) {

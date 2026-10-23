@@ -286,11 +286,39 @@ async fn run_interactive_surface(
     view.show_images = options.show_images;
     if let Some(settings) = &options.client_settings {
         view.show_hardware_cursor = settings.show_hardware_cursor();
+        view.editor
+            .set_vim_enabled(settings.editor_mode() == crate::client_settings::EditorMode::Vim);
         // A chat opens at the persisted `chatDetail` level; an unset store reads as the collapsed
         // `overview` startup level (operator directive 2026-09-28).
         view.detail = crate::chat::Detail::from_wire_name(&settings.chat_detail());
     }
     apply_startup_chrome(&mut view, &options);
+    // The status line (`statusLine`): its command runs off the paint path, on the loop's own
+    // timer arm, and reports back over its channel.
+    let status_line_settings = options
+        .client_settings
+        .as_ref()
+        .and_then(|settings| settings.status_line());
+    if let Some(settings) = &status_line_settings {
+        view.chrome.status_line_padding = settings.padding;
+        view.chrome.vim_indicator_hidden = settings.hide_vim_mode_indicator;
+    }
+    let (mut status_line, mut status_line_rx) = crate::status_line::StatusLine::new(
+        status_line_settings,
+        options.cwd.clone(),
+        crate::status_line::RunFacts {
+            added_dirs: options
+                .client_settings
+                .as_ref()
+                .map(|settings| settings.launch_additional_directories())
+                .unwrap_or_default(),
+            output_style: options
+                .client_settings
+                .as_ref()
+                .map_or_else(|| "default".to_string(), |settings| settings.output_style()),
+            started: tokio::time::Instant::now(),
+        },
+    );
     let (ui_tx, mut ui_rx) = mpsc::unbounded_channel::<UiInput>();
     // Headless verification runs capture the OSC 52 clipboard channel instead of the plain pipes.
     let headless = matches!(ui, UiMode::Headless(_));
@@ -815,6 +843,7 @@ async fn run_interactive_surface(
                 agents_view_query: None,
                 handoff_seeds: 0,
                 transcript_entry_work: view.entry_work.get(),
+                turn_active_at_exit: false,
             });
         }
     }
@@ -1405,6 +1434,13 @@ async fn run_interactive_surface(
                 render_deadline = Some(next);
             }
         }
+        if status_line.enabled() {
+            status_line.observe_facts(
+                &session.status_line_facts(&view),
+                tokio::time::Instant::now(),
+            );
+        }
+        let status_line_deadline = status_line.deadline();
         let was_active = session.turn_active;
         // The quiet tick's arming state, snapshotted before the select: the arm future reads these
         // locals instead of borrowing the surface.
@@ -1673,6 +1709,22 @@ async fn run_interactive_surface(
             maybe_note = notes_rx.recv() => {
                 if let Some(note) = maybe_note {
                     session.apply_background_note(&note, &mut view);
+                }
+            }
+            () = async {
+                match status_line_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                status_line.fire(tokio::time::Instant::now());
+            }
+            maybe_status = status_line_rx.recv() => {
+                if let Some(rows) = maybe_status.and_then(|run| status_line.apply(run)) {
+                    if view.chrome.status_line != rows {
+                        view.chrome.status_line = rows;
+                        session.dirty = true;
+                    }
                 }
             }
             maybe_backfill = backfill_rx.recv() => {
@@ -2293,6 +2345,7 @@ async fn run_interactive_surface(
         agents_view_query: None,
         handoff_seeds: view.handoff_seeds,
         transcript_entry_work: view.entry_work.get(),
+        turn_active_at_exit,
     };
     // The agents-view handoff's background detach owns this connection now; every other exit
     // closes it here.

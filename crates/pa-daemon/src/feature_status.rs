@@ -61,7 +61,18 @@ pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::D
             None,
         );
     }
-    let answered = pa_core::features::answer_confirmation(session_id, confirmation_id, allow);
+    // `remember` (optional, additive): take the question's offer to remember
+    // the answer (a permission rule); a question without one ignores it.
+    let remember = payload
+        .get("remember")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let answered = pa_core::features::answer_confirmation_remembering(
+        session_id,
+        confirmation_id,
+        allow,
+        remember,
+    );
     crate::protocol::response_success(None, COMMAND, Some(json!({ "answered": answered })))
 }
 
@@ -159,6 +170,30 @@ mod tests {
         assert_eq!(
             asking.await.unwrap(),
             pa_core::features::ConfirmationAnswer::Denied
+        );
+
+        // `remember` takes the question's offer to remember the answer.
+        let offering = tokio::spawn(pa_core::features::confirm_offering(
+            "daemon-confirm",
+            "Run `npm test`",
+            "why",
+            Some("Bash(npm test *)"),
+            std::time::Duration::from_secs(30),
+        ));
+        let id = loop {
+            if let Some(question) = pa_core::features::pending_confirmations("daemon-confirm").pop()
+            {
+                break question.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        let remembered = answer_feature_confirmation(&json!({
+            "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": true, "remember": true
+        }));
+        assert_eq!(remembered.data, Some(json!({ "answered": true })));
+        assert_eq!(
+            offering.await.unwrap(),
+            pa_core::features::ConfirmationAnswer::AllowedAlways
         );
     }
 }

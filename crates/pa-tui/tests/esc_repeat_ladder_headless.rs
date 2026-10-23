@@ -1,7 +1,9 @@
 //! Headless e2e for the double-Escape repeat ladder's termination
 //! (operator report 2026-09-29): repeated Escape at the empty editor
 //! converges to the inert empty state — the repeat's tree action is one
-//! shot per input chain, and any non-Escape key re-arms the gesture.
+//! shot per input chain, and any non-Escape key re-arms the gesture. On a
+//! daemon with the `rewind` capability the gesture opens `/rewind` (Claude
+//! Code's Esc Esc) instead of the tree.
 #![cfg(unix)]
 // The mock supervisor's request loop is one arm per wire command; splitting adds indirection.
 #![allow(clippy::too_many_lines)]
@@ -9,6 +11,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -25,12 +28,17 @@ use serde_json::{Value, json};
 
 struct MockSupervisor {
     listener: UnixListener,
+    capabilities: Vec<&'static str>,
+    /// Every command the client sent, in order.
+    seen: Arc<Mutex<Vec<Value>>>,
 }
 
 impl MockSupervisor {
-    fn bind(socket: &std::path::Path) -> Self {
+    fn bind(socket: &std::path::Path, capabilities: Vec<&'static str>) -> Self {
         MockSupervisor {
             listener: UnixListener::bind(socket).expect("bind mock socket"),
+            capabilities,
+            seen: Arc::default(),
         }
     }
 
@@ -45,7 +53,7 @@ impl MockSupervisor {
         let hello = json!({
             "type": "daemon_hello",
             "protocol": { "name": "prime-agent.daemon", "version": 7 },
-            "serverCapabilities": [],
+            "serverCapabilities": self.capabilities,
             "clientId": "mock",
         });
         write_json(&mut writer, &hello);
@@ -67,7 +75,53 @@ impl MockSupervisor {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
+            self.seen.lock().unwrap().push(command.clone());
             match command_type.as_str() {
+                "get_rewind_checkpoints" => {
+                    write_json(
+                        &mut writer,
+                        &json!({
+                            "type": "response",
+                            "id": id,
+                            "command": "get_rewind_checkpoints",
+                            "success": true,
+                            "data": {
+                                "codeRestore": true,
+                                "checkpoints": [{
+                                    "entryId": "n0",
+                                    "text": "first",
+                                    "timestamp": 1,
+                                    "code": {
+                                        "filesChanged": ["/tmp/work/main.rs"],
+                                        "insertions": 2,
+                                        "deletions": 5,
+                                        "externallyModified": [],
+                                        "unrestorable": [],
+                                    },
+                                }],
+                            },
+                        }),
+                    );
+                }
+                "rewind" => {
+                    write_json(
+                        &mut writer,
+                        &json!({
+                            "type": "response",
+                            "id": id,
+                            "command": "rewind",
+                            "success": true,
+                            "data": {
+                                "code": {
+                                    "restored": ["/tmp/work/main.rs"],
+                                    "deleted": [],
+                                    "skipped": [],
+                                },
+                                "conversation": { "cancelled": false, "editorText": "first" },
+                            },
+                        }),
+                    );
+                }
                 "create" => {
                     write_json(
                         &mut writer,
@@ -423,10 +477,20 @@ fn esc() -> HeadlessStep {
 /// capture dedupes consecutive identical frames, so each tree-selector mount lands as its own
 /// frame.
 fn run_plan(steps: Vec<HeadlessStep>) -> Vec<String> {
+    run_plan_with(Vec::new(), steps).0
+}
+
+/// [`run_plan`] against a daemon advertising `capabilities`; also returns the
+/// commands the client sent.
+fn run_plan_with(
+    capabilities: Vec<&'static str>,
+    steps: Vec<HeadlessStep>,
+) -> (Vec<String>, Vec<Value>) {
     std::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
-    let supervisor = MockSupervisor::bind(&socket);
+    let supervisor = MockSupervisor::bind(&socket, capabilities);
+    let seen = Arc::clone(&supervisor.seen);
     let handle = std::thread::spawn(move || supervisor.serve());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -442,7 +506,8 @@ fn run_plan(steps: Vec<HeadlessStep>) -> Vec<String> {
         .block_on(run_interactive(options(socket), UiMode::Headless(plan)))
         .expect("interactive run");
     handle.join().expect("mock supervisor finished");
-    outcome.frames
+    let seen = seen.lock().unwrap().clone();
+    (outcome.frames, seen)
 }
 
 /// The tree-selector pane's title row (the mount's needle).
@@ -514,4 +579,61 @@ fn a_non_escape_key_re_arms_the_double_escape_gesture() {
         !last.contains(TREE_PANE),
         "the second chain's selector also dismisses back to the empty editor: {last}"
     );
+}
+
+fn enter() -> HeadlessStep {
+    HeadlessStep::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+}
+
+/// The `/rewind` pane's description row (the mount's needle).
+const REWIND_PANE: &str = "Restore the code and/or conversation to the point before";
+
+/// With the `rewind` capability, Esc Esc on the empty editor opens Claude Code's rewind picker:
+/// Enter picks the prompt, Enter confirms the focused "Restore code and conversation", the daemon
+/// gets the restore, and the prompt's text comes back to the editor.
+#[test]
+fn double_escape_opens_rewind_and_restores_code_and_conversation() {
+    let steps = vec![
+        HeadlessStep::WaitMs(300),
+        esc(),
+        esc(),
+        HeadlessStep::WaitMs(200),
+        enter(),
+        HeadlessStep::WaitMs(100),
+        enter(),
+        HeadlessStep::WaitMs(300),
+    ];
+    let (frames, seen) = run_plan_with(vec!["rewind"], steps);
+    assert!(
+        frames.iter().any(|frame| frame.contains(REWIND_PANE)),
+        "the gesture mounts the rewind picker"
+    );
+    assert!(
+        !frames.iter().any(|frame| frame.contains(TREE_PANE)),
+        "not the tree selector"
+    );
+    assert!(
+        frames.iter().any(|frame| frame.contains("main.rs +2 -5")),
+        "the row carries its code summary"
+    );
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.contains("The code will be restored +2 -5 in main.rs.")),
+        "the confirmation states the code restore"
+    );
+    let rewind = seen
+        .iter()
+        .find(|command| command["type"] == "rewind")
+        .expect("the confirmed choice reached the daemon");
+    assert_eq!(rewind["entryId"], "n0");
+    assert_eq!(rewind["restoreCode"], true);
+    assert_eq!(rewind["restoreConversation"], true);
+    assert_eq!(rewind["summarize"], false);
+    let last = frames.last().expect("frames");
+    assert!(
+        last.contains("Restored the code: 1 file"),
+        "the outcome is noted: {last}"
+    );
+    assert!(!last.contains(REWIND_PANE), "the picker closed: {last}");
 }

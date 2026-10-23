@@ -4,6 +4,114 @@ use super::*;
 /// The eager turn abort: an abort landing mid-provider-wait cancels the
 /// in-flight fetch immediately; the aborted row carries `EMPTY_USAGE`,
 /// never the goal accounting.
+/// A cancel that lands after the admission consult but before the run
+/// registers its abort signal (the session's start-of-run work: context and
+/// reminder rows, the prompt review) still cancels the turn: the flag is
+/// forwarded once the run registers, instead of being lost and leaving the
+/// turn to wait out the provider.
+#[test]
+fn a_cancel_before_the_run_registers_still_aborts_the_turn() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::TempDir::new().unwrap();
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let script = json!({
+        "responses": [{ "text": "held reply", "delayMs": 60000 }],
+    });
+    let parsed = pa_ai::faux::script::parse_faux_script(&script).expect("faux script parses");
+    let registration = pa_ai::faux::script::register_faux_provider_from_script(&parsed);
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "faux": {
+                    "api": "faux",
+                    "baseUrl": "http://localhost:0",
+                    "apiKey": "sk-faux",
+                    "models": [{
+                        "id": "faux-1",
+                        "name": "Faux Model",
+                        "contextWindow": 128_000,
+                        "maxTokens": 16384,
+                    }],
+                },
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({
+            "defaultProvider": "faux",
+            "defaultModel": "faux-1",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let engine = AgentSessionEngine::new(AgentEngineConfig {
+        cwd: dir.path().to_path_buf(),
+        agent_dir,
+        provider: None,
+        model: None,
+        api_key: None,
+        thinking: None,
+        session_dir: None,
+        session_file: None,
+        faux_script: None,
+        supervisor_link: None,
+        telemetry_disabled: None,
+        cron_store: None,
+        queued_steering_probe: None,
+        steering_fold: None,
+    })
+    .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    // The admission consults read the flag clear; every later read sees the
+    // cancel (it landed inside the [admission, registration] window).
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let turn_reads = std::sync::Arc::clone(&reads);
+    let turn_engine = std::sync::Arc::clone(&engine);
+    let started = std::time::Instant::now();
+    let turn = std::thread::spawn(move || {
+        let mut aborted_rows = 0;
+        turn_engine.run_prompt(
+            0,
+            PromptRequest {
+                batch: Vec::new(),
+                images: Vec::new(),
+                message: "hello".to_string(),
+                source: "user".to_string(),
+                agent_message_id: None,
+                custom_message: None,
+            },
+            &|| turn_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2,
+            &mut |event| {
+                if let EngineEvent::AssistantMessage(message) = &event {
+                    if message["stopReason"] == json!("aborted") {
+                        aborted_rows += 1;
+                    }
+                }
+                true
+            },
+        );
+        aborted_rows
+    });
+    let (settled_tx, settled_rx) = std::sync::mpsc::channel::<usize>();
+    let waiter = std::thread::spawn(move || {
+        let _ = settled_tx.send(turn.join().unwrap());
+    });
+    let aborted_rows = settled_rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("the cancelled turn settles, not after the 60s hold");
+    waiter.join().unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    assert!(registration.call_count() <= 1);
+    assert_eq!(aborted_rows, 1, "the turn ends as aborted");
+}
+
 #[test]
 fn abort_in_flight_turn_cancels_a_mid_provider_wait() {
     let _faux = FAUX_TEST_LOCK
@@ -315,21 +423,26 @@ fn settled_turn_emits_the_run_agent_end_payload() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the run's message set (the deferred harness digest rides first)"
+        ["custom", "custom", "user", "assistant"],
+        "the run's message set (the session context row, then the deferred harness digest)"
     );
     assert_eq!(
         messages[0]["customType"],
-        json!("harness_digest"),
-        "the deferred digest row is the run's first message"
+        json!("session_context"),
+        "the session context row is the run's first message"
     );
     assert_eq!(
-        messages[1]["content"],
+        messages[1]["customType"],
+        json!("harness_digest"),
+        "the deferred digest row follows it"
+    );
+    assert_eq!(
+        messages[2]["content"],
         json!([{ "type": "text", "text": "plain turn" }]),
         "the accepted user row rides the payload"
     );
     assert_eq!(
-        messages[2]["content"],
+        messages[3]["content"],
         json!([{ "type": "text", "text": "settled reply" }]),
         "the settled assistant row rides the payload"
     );
@@ -407,11 +520,11 @@ fn retried_run_restarts_with_its_own_agent_frames() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the failed run's message set (the digest row rides first)"
+        ["custom", "custom", "user", "assistant"],
+        "the failed run's message set (the session context and digest rows ride first)"
     );
     assert_eq!(
-        first[2]["stopReason"],
+        first[3]["stopReason"],
         json!("error"),
         "the failed run ends on the error row"
     );

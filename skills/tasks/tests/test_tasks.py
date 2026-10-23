@@ -269,6 +269,18 @@ class PersistenceTests(TasksTestCase):
         self.assertEqual([task["id"] for task in stored["tasks"]], ["1"])
         self.assertEqual(sorted(path.name for path in self.session_dir.iterdir()), ["tasks.json"])
 
+    async def test_every_change_records_the_write_marks_reads_do_not(self) -> None:
+        await tasks.create("a")
+        first = self.stored()
+        self.assertEqual(first["writes"], 1)
+        await tasks.update("1", status="in_progress")
+        await tasks.list()
+        await tasks.get("1")
+        second = self.stored()
+        self.assertEqual(second["writes"], 2)
+        self.assertGreaterEqual(second["last_write_at"], first["last_write_at"])
+        self.assertGreaterEqual(second["last_write_at"], second["tasks"][0]["updated_at"])
+
     async def test_a_failed_write_leaves_the_previous_file(self) -> None:
         await tasks.create("a")
         before = self.store_file.read_bytes()

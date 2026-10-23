@@ -345,6 +345,7 @@ async fn subscribe_after_spawn_then_shutdown_seeds_the_passive_child() {
     );
     children.set_identity(ParentIdentity {
         sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 0,
         rlm_max_depth: 2,
         model: Some("scripted/faux-1".to_string()),
@@ -364,6 +365,9 @@ async fn subscribe_after_spawn_then_shutdown_seeds_the_passive_child() {
             target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         })
         .await
         .expect("spawn child");

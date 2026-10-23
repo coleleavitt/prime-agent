@@ -44,6 +44,7 @@ pub(crate) mod learning_command;
 pub(crate) mod list_models;
 pub(crate) mod mcp_command;
 pub(crate) mod mcp_login;
+pub(crate) mod mcp_project;
 #[cfg(feature = "mermaid")]
 pub(crate) mod mermaid_diagrams;
 pub(crate) mod mode;
@@ -62,6 +63,7 @@ pub(crate) mod tailscale;
 pub(crate) mod telemetry_notice;
 pub(crate) mod traces_login;
 pub(crate) mod workspace_trust_gate;
+pub(crate) mod worktree_launch;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
 /// into the `prime-agent` binary, plus the entry point that drives it.
@@ -351,6 +353,30 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     let agent_dir = crate::config::get_agent_dir();
+    // `-w, --worktree [name]`: the session runs in a managed worktree, made
+    // (or reused) before anything else reads the directory.
+    let (cwd, launched_worktree) = if parsed.worktree {
+        let mut conflicting_flags: Vec<&str> = Vec::new();
+        if parsed.continue_ {
+            conflicting_flags.push("--continue");
+        }
+        if parsed.has_resume() {
+            conflicting_flags.push("--resume");
+        }
+        if parsed.fork.is_some() {
+            conflicting_flags.push("--fork");
+        }
+        if !conflicting_flags.is_empty() {
+            return Err(format!(
+                "--worktree cannot be combined with {} (a resumed session keeps its own directory)",
+                conflicting_flags.join(", ")
+            ));
+        }
+        let worktree = worktree_launch::enter(&cwd, &agent_dir, parsed.worktree_name.as_deref())?;
+        (worktree.path.clone(), Some(worktree))
+    } else {
+        (cwd, None)
+    };
     // The named-session flags (upstream #1294): the listing and the delete exit before any
     // session starts; `--name` becomes the resume of the named (or newly created) session.
     let flag_session_dir = parsed.session_dir.clone();
@@ -513,7 +539,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             fork: parsed.fork.clone(),
             no_session: parsed.no_session,
             session_dir,
-            cwd_from_flag: parsed.cwd.is_some(),
+            // A worktree launch pins its directory like `--cwd` does.
+            cwd_from_flag: parsed.cwd.is_some() || launched_worktree.is_some(),
         },
         messages: cli_messages,
         initial_message,
@@ -527,6 +554,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         offline: parsed.offline,
         agents_view_requested: public_command.explicit_agents_view,
         attach_agent: public_command.attach_agent,
+        worktree: launched_worktree,
     };
 
     match runtime.run(&options) {

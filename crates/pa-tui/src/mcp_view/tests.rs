@@ -685,3 +685,76 @@ fn set_search_filters_to_the_typed_partial() {
         "Enter applies the surviving match"
     );
 }
+
+/// The daemon's `declaredServers` annotate the user cards with their scope
+/// and file, and a `.mcp.json` server waiting for approval (or rejected)
+/// gets its own row, which Enter leaves alone (the confirm prompt asks).
+#[test]
+fn declared_servers_show_their_source_and_approval() {
+    let mut response = catalog_response();
+    response["declaredServers"] = json!([
+        {
+            "name": "fixture-echo", "scope": "project",
+            "scopeLabel": "Project config (shared via .mcp.json)",
+            "source": "/repo/.mcp.json", "transport": "stdio", "approval": "approved"
+        },
+        {
+            "name": "repo-db", "scope": "project",
+            "scopeLabel": "Project config (shared via .mcp.json)",
+            "source": "/repo/.mcp.json", "transport": "stdio", "approval": "pending"
+        },
+        {
+            "name": "repo-old", "scope": "project",
+            "scopeLabel": "Project config (shared via .mcp.json)",
+            "source": "/repo/.mcp.json", "transport": "http", "approval": "rejected"
+        },
+        {
+            "name": "notion", "scope": "user", "scopeLabel": "User config",
+            "source": "/home/u/.claude.json", "transport": "http"
+        }
+    ]);
+    let mut view = McpView::from_response(&response, 30);
+    let rows = frame_text(&mut view);
+    assert!(
+        rows.iter()
+            .any(|row| row == " Project config (shared via .mcp.json): /repo/.mcp.json"),
+        "the selected user card names its file: {rows:?}"
+    );
+    // A catalog card never takes a declaration.
+    view.handle_key("down", &kb());
+    assert!(
+        frame_text(&mut view)
+            .iter()
+            .any(|row| row == " Notion workflows."),
+        "the catalog card keeps its detail"
+    );
+    view.handle_key("down", &kb());
+    view.handle_key("down", &kb());
+    view.handle_key("down", &kb());
+    let rows = frame_text(&mut view);
+    let selected = rows
+        .iter()
+        .find(|row| row.starts_with("\u{203a}"))
+        .expect("selected row");
+    assert!(selected.starts_with("\u{203a} repo-db"), "{selected}");
+    assert!(selected.ends_with("Pending approval"), "{selected}");
+    assert!(
+        rows.iter().any(|row| row
+            == " Waiting for your approval (the prompt opens with /mcp) \u{b7} /repo/.mcp.json"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row == " \u{2191}/\u{2193} navigate \u{b7} Esc close"),
+        "no Enter action on a pending row: {rows:?}"
+    );
+    assert_eq!(view.handle_key("enter", &kb()), McpViewAction::None);
+    view.handle_key("down", &kb());
+    let rows = frame_text(&mut view);
+    let selected = rows
+        .iter()
+        .find(|row| row.starts_with("\u{203a}"))
+        .expect("selected row");
+    assert!(selected.starts_with("\u{203a} repo-old"), "{selected}");
+    assert!(selected.ends_with("Rejected"), "{selected}");
+}

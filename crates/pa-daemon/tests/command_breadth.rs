@@ -532,6 +532,22 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "mark_anthropic_warning_shown",
         r#"{"type": "mark_anthropic_warning_shown", "activeSessionId": "sess"}"#,
     ),
+    (
+        "get_rewind_checkpoints",
+        r#"{"type": "get_rewind_checkpoints", "activeSessionId": "sess"}"#,
+    ),
+    (
+        "rewind",
+        r#"{"type": "rewind", "activeSessionId": "sess", "entryId": "e", "restoreCode": true}"#,
+    ),
+    (
+        "list_external_sessions",
+        r#"{"type": "list_external_sessions", "all": true}"#,
+    ),
+    (
+        "import_external_session",
+        r#"{"type": "import_external_session", "source": "claude-code", "externalId": "x"}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -561,6 +577,10 @@ fn known_command_types_match_the_ts_list() {
                     | "kill_kernel_bash"
                     | "detach_running_cell"
                     | "mark_anthropic_warning_shown"
+                    | "get_rewind_checkpoints"
+                    | "rewind"
+                    | "list_external_sessions"
+                    | "import_external_session"
             ),
             "unexpected non-TS command type: {extra}"
         );

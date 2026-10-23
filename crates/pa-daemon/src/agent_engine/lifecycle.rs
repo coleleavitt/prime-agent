@@ -130,6 +130,14 @@ impl AgentSessionEngine {
             remote_source: None,
             probe_override: None,
         });
+        // The declared servers beyond `mcpServers` (the approved `.mcp.json`
+        // servers, opted in Claude Code's), read in the live cwd.
+        let mut mcp = mcp;
+        let declared_cwd = std::sync::Arc::clone(&cwd);
+        mcp.set_declared_servers_source(pa_core::mcp::workspace_declared_servers(
+            move || declared_cwd.read_or_recover().clone(),
+            config.agent_dir.clone(),
+        ));
         // The kernel's `mcp.begin_login` host request: the worker runs the
         // OAuth login; wired before any session registers host handlers.
         let mcp = std::sync::Arc::new(std::sync::Mutex::new(mcp));
@@ -164,6 +172,7 @@ impl AgentSessionEngine {
             bash_consumed_sink: std::sync::Mutex::new(None),
             monitor_event_sink: std::sync::Mutex::new(None),
             notice_row_sink: std::sync::Mutex::new(None),
+            worktree_session: std::sync::Mutex::new(None),
             goal_queue_purge: std::sync::Mutex::new(None),
             goal_backoff_wake_job_id: std::sync::Mutex::new(None),
             stale_goal_terminal_pending: std::sync::Mutex::new(None),
@@ -263,13 +272,24 @@ impl AgentSessionEngine {
         sandbox
     }
 
-    /// Expand a `/skill:<name>` submission against the core session
-    /// (built here when needed); non-skill inputs and build failures
-    /// pass through unchanged.
+    /// Whether a submission may be a skill command the core session
+    /// expands: `/skill:<name>`, or `/<name>` that no session command takes
+    /// (a Claude Code skill's own command).
+    pub(crate) fn may_be_skill_submission(text: &str) -> bool {
+        text.starts_with("/skill:")
+            || (text.starts_with('/')
+                && pa_types::slash_commands::parse_slash_command(text).is_some()
+                && crate::session_commands::parse_prompt_session_command(text).is_none())
+    }
+
+    /// Expand a skill command (`/skill:<name>`, or `/<name>` for a Claude
+    /// Code skill) against the core session (built here when needed);
+    /// non-skill inputs and build failures pass through unchanged.
     pub(crate) fn expand_skill_submission(&self, text: &str) -> String {
         // The floor keys on the ORIGINAL invocation's shape, not the
         // expanded parse: a skill body can contain a close tag plus a
-        // `\n\n` tail that parses as a trailing user message.
+        // `\n\n` tail that parses as a trailing user message. A Claude
+        // Code skill's own `/<name>` runs without arguments, as there.
         let bare_invocation = pa_types::slash_commands::parse_slash_command(text)
             .is_some_and(|(name, args)| name.starts_with("skill:") && args.trim().is_empty());
         let Ok(model) = self.resolve_model() else {
@@ -282,7 +302,7 @@ impl AgentSessionEngine {
         let expanded = self.runtime.block_on(async {
             let guard = self.session.lock().await;
             match guard.as_deref() {
-                Some(engine) => engine.expand_skill_submission(text),
+                Some(engine) => engine.expand_skill_submission(text).await,
                 None => text.to_string(),
             }
         });
@@ -442,6 +462,7 @@ impl AgentSessionEngine {
             if let Some(handles) = handles {
                 let mut manager = handles.session.lock().await;
                 self.flush_pending_max_depth(&mut manager);
+                self.persist_agent_definition(&mut manager).await;
             }
         }
         let pending_branch = self
@@ -844,6 +865,7 @@ impl AgentSessionEngine {
         self.register_bash_notice_host_handlers(&mut handlers);
         self.register_monitor_host_handler(&mut handlers);
         self.register_cell_completed_host_handler(&mut handlers);
+        self.register_worktree_host_handlers(&mut handlers);
         // The swarm digest lanes (PRs C/D/E): the inbox reads and the
         // watches ride the same engine seams the bash notices hold.
         self.register_digest_inbox_host_handlers(&mut handlers);
@@ -947,6 +969,20 @@ impl AgentSessionEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
+        // The agent this session runs as: the create's definition, else the
+        // one its session file carries (a revived child's create has none).
+        let agent_definition = match create_resources.agent_definition.clone() {
+            Some(definition) => Some(definition),
+            None => match session_file.clone() {
+                Some(file) => tokio::task::spawn_blocking(move || {
+                    pa_core::agents::agent_definition_in_session_file(&file)
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            },
+        };
         // The engine session stays non-persisted (the worker owns the
         // durable file); the configured session dir leads, the file's
         // parent is the fallback.
@@ -1039,6 +1075,11 @@ impl AgentSessionEngine {
             additional_skill_paths: create_resources.skills,
             additional_prompt_paths: create_resources.prompt_templates,
             resource_exclusions: create_resources.resource_exclusions,
+            additional_directories: create_resources
+                .additional_directories
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect(),
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host: self.children.clone().map(|children| {
                 children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>
@@ -1127,6 +1168,7 @@ impl AgentSessionEngine {
                 wiring
             }),
             rlm_token_allowance,
+            agent_definition,
         })
         .await
         .inspect(|engine| {
@@ -1160,6 +1202,8 @@ impl AgentSessionEngine {
                 .clone()
             {
                 engine.set_feature_status_sink(sink);
+                // The questions need the surface the sink just registered.
+                engine.ask_project_mcp_approvals();
             }
             if let Some(sink) = self.feature_notice_sink.lock_or_recover().clone() {
                 engine.set_feature_notice_sink(sink);

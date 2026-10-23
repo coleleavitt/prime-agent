@@ -130,13 +130,17 @@ fn classify_from(exe: Option<&Path>, own_exe: Option<&Path>) -> HolderFlavor {
         .position(|component| component == "target")
     {
         // A cargo build tree answers its profile directory
-        // (`<repo>/target/<profile>/...`); anything else named `target`
-        // is not evidence about this product.
-        let profile = components
-            .get(index + 1)
-            .map(String::as_str)
-            .unwrap_or_default();
-        if matches!(profile, "debug" | "release" | "bench" | "test") {
+        // (`<repo>/target/<profile>/...`, or `<repo>/target/<triple>/
+        // <profile>/...` for a `--target` build); anything else named
+        // `target` is not evidence about this product.
+        let is_profile = |component: Option<&String>| {
+            component.is_some_and(|profile| {
+                matches!(profile.as_str(), "debug" | "release" | "bench" | "test")
+            })
+        };
+        let after = components.get(index + 1);
+        let is_triple = after.is_some_and(|triple| triple.split('-').count() >= 3);
+        if is_profile(after) || (is_triple && is_profile(components.get(index + 2))) {
             return HolderFlavor::ThisBuild;
         }
     }
@@ -628,6 +632,24 @@ Session: ts01ab";
                 Some(own)
             ),
             HolderFlavor::ThisBuild
+        );
+        // A `--target <triple>` build nests the profile under the triple.
+        assert_eq!(
+            classify_from(
+                Some(Path::new(
+                    "/w/target/x86_64-unknown-linux-gnu/debug/deps/hold_refusal_e2e-1a2b"
+                )),
+                Some(own)
+            ),
+            HolderFlavor::ThisBuild
+        );
+        // A directory named `target` that is not a cargo tree claims nothing.
+        assert_eq!(
+            classify_from(
+                Some(Path::new("/srv/target/x86_64-unknown-linux-gnu/bin/tool")),
+                Some(own)
+            ),
+            HolderFlavor::AnotherProcess
         );
         // The deployed TS release binary, and the preserved legacy tree
         // after the takeover reads the same.

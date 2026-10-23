@@ -79,6 +79,7 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(reader: Option<R>) -> Stri
 pub async fn run(hook: &HookCommand, cwd: &Path, session_id: &str, input: &Value) -> Outcome {
     let mut command = shell(&hook.command);
     command
+        .envs(hook.env.iter().map(|(name, value)| (name, value)))
         .current_dir(cwd)
         .env("CLAUDE_PROJECT_DIR", cwd)
         .env("PRIME_AGENT_PROJECT_DIR", cwd)
@@ -147,7 +148,11 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
         Some(2) => {
             let reason = outcome.stderr.trim();
             return HookAnswer::Block(if reason.is_empty() {
-                format!("blocked by hook {:?}", hook.command)
+                format!(
+                    "blocked by hook {:?} from {}",
+                    hook.command,
+                    hook.source.label()
+                )
             } else {
                 reason.to_string()
             });
@@ -157,6 +162,7 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
                 target: "pa_hooks",
                 event = event.name(),
                 command = hook.command.as_str(),
+                source = hook.source.label(),
                 code = ?outcome.code,
                 "hook failed (non-blocking): {}",
                 outcome.stderr.trim()
@@ -232,6 +238,8 @@ mod tests {
 
     fn hook(command: &str) -> HookCommand {
         HookCommand {
+            source: crate::config::HookSource::Inline,
+            env: std::sync::Arc::default(),
             command: command.to_string(),
             timeout: Duration::from_secs(5),
             mode: crate::config::HookMode::Blocking,
@@ -403,9 +411,8 @@ mod tests {
         );
         let slow = run(
             &HookCommand {
-                command: "sleep 30".to_string(),
                 timeout: Duration::from_millis(200),
-                mode: crate::config::HookMode::Blocking,
+                ..hook("sleep 30")
             },
             dir.path(),
             "s1",
@@ -414,5 +421,40 @@ mod tests {
         .await;
         assert_eq!(slow.code, None);
         assert!(slow.stderr.contains("timed out"), "{slow:?}");
+    }
+
+    /// Claude Code's `env` reaches every hook command.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_runs_with_the_settings_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = run(
+            &HookCommand {
+                env: std::sync::Arc::new(vec![("CC_SETTING".to_string(), "from-cc".to_string())]),
+                ..hook("printf %s \"$CC_SETTING\"")
+            },
+            dir.path(),
+            "s1",
+            &json!({}),
+        )
+        .await;
+        assert_eq!(ran, outcome(0, "from-cc", ""));
+    }
+
+    /// A refusal without a reason names the command and where it came from.
+    #[test]
+    fn a_silent_refusal_names_the_hooks_source() {
+        let hook = HookCommand {
+            source: crate::config::HookSource::ClaudeCode(
+                pa_core::settings::claude_code::ClaudeScope::Project,
+            ),
+            ..hook("guard")
+        };
+        assert_eq!(
+            answer(HookEvent::PreToolUse, &hook, &outcome(2, "", "")),
+            HookAnswer::Block(
+                "blocked by hook \"guard\" from Claude Code project settings".to_string()
+            )
+        );
     }
 }

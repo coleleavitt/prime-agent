@@ -59,6 +59,8 @@ pub(super) struct TurnRunner {
     /// runner reads it at every boundary so a create-time rebind is always
     /// current.
     pub(super) herdr: std::sync::Arc<std::sync::Mutex<crate::herdr::HerdrReporter>>,
+    /// The idle compaction (experimental, off by default).
+    pub(super) idle_compaction: super::idle_compaction::IdleCompaction,
 }
 
 /// The idle-passivation context on the turn runner: the worker token
@@ -67,6 +69,9 @@ pub(super) struct PassivationContext {
     pub(super) agent_dir: std::path::PathBuf,
     pub(super) link: std::sync::Arc<crate::supervisor_link::SupervisorLink>,
     pub(super) worker_token: String,
+    /// The session's scheduled tasks: pending ones keep the worker resident
+    /// (the worker is what fires them).
+    pub(super) scheduled_tasks: Option<std::sync::Arc<crate::session_tasks::SessionTaskScheduler>>,
 }
 
 impl TurnRunner {
@@ -158,17 +163,18 @@ impl TurnRunner {
                 // window arms for any idle unattached session under a live
                 // threshold; the select's notified arm is the wake path — a
                 // queued delivery wins the race and the next park re-arms.
-                match self.idle_passivation_window() {
-                    Some(remaining) => {
-                        tokio::select! {
-                            () = self.work_notify.notified() => {}
-                            () = tokio::time::sleep(remaining) => {
-                                self.maybe_request_idle_passivation().await;
-                            }
-                        }
+                // The idle compaction (experimental) arms beside it: a
+                // parked session compacts once before the prompt cache
+                // lapses.
+                let passivation = self.idle_passivation_window();
+                let compaction = self.idle_compaction_window();
+                tokio::select! {
+                    () = self.work_notify.notified() => {}
+                    () = super::idle_compaction::sleep_for(passivation) => {
+                        self.maybe_request_idle_passivation().await;
                     }
-                    None => {
-                        self.work_notify.notified().await;
+                    () = super::idle_compaction::sleep_for(compaction) => {
+                        self.maybe_run_idle_compaction().await;
                     }
                 }
             }
@@ -232,6 +238,15 @@ impl TurnRunner {
         if self.user_bash.is_running() {
             return None;
         }
+        // So does a scheduled task: the worker is what fires it.
+        if self
+            .passivation
+            .scheduled_tasks
+            .as_ref()
+            .is_some_and(|tasks| tasks.has_pending())
+        {
+            return None;
+        }
         let settings =
             pa_core::settings::SettingsManager::create(&cwd, &self.passivation.agent_dir);
         let minutes = match settings.get_idle_eviction() {
@@ -270,6 +285,14 @@ impl TurnRunner {
             return;
         }
         if self.user_bash.is_running() {
+            return;
+        }
+        if self
+            .passivation
+            .scheduled_tasks
+            .as_ref()
+            .is_some_and(|tasks| tasks.has_pending())
+        {
             return;
         }
         let settings =

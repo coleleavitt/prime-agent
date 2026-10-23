@@ -63,6 +63,7 @@ pub(crate) use queue::{
 pub use queue::{Lane, QueuePriority};
 
 mod create;
+mod idle_compaction;
 mod turn;
 
 use create::{active_session_id_of, worker_server_capabilities};
@@ -82,6 +83,7 @@ use turn::TurnRunner;
 
 mod commands;
 mod session_cwd;
+mod worktree_seam;
 
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`).
@@ -213,7 +215,8 @@ pub struct Worker {
     side_questions: crate::side_question::SideQuestionManager,
     /// Single-use peer-transport grants (worker memory only).
     pub(crate) peer_grants: PeerGrantStore,
-    pub(crate) compaction: crate::compaction::CompactionManager,
+    /// Shared with the turn runner, which runs the idle compaction.
+    pub(crate) compaction: Arc<crate::compaction::CompactionManager>,
     pub(crate) tree_navigation: crate::branch_navigation::TreeNavigation,
     /// The `get_context_tree` children cache: the artifact-tree walk is a
     /// multi-second disk read, so requests serve the cached snapshot.
@@ -253,6 +256,9 @@ pub struct Worker {
     /// The scheduling surface: the session's cron/heartbeat store plus the
     /// scheduler firing due jobs into the queue (jobs rebind on replacement).
     pub(crate) scheduled: std::sync::Arc<crate::scheduled_jobs::ScheduledJobs>,
+    /// The session's Claude Code tasks (`rlm.cron.*`, `rlm.schedule_wakeup`,
+    /// `/loop`) and the scheduler delivering them while the session is idle.
+    pub(crate) session_tasks: std::sync::Arc<crate::session_tasks::SessionTaskScheduler>,
     /// The session's Herdr reporter (the built-in connector): starts
     /// disabled and is (re)bound at `create` from the create payload's
     /// client env — the session's own pane identity, never this
@@ -281,11 +287,13 @@ pub struct Worker {
 /// store, durable binding, and mutation hook for `rlm_heartbeat.*`.
 fn kernel_cron_wiring(
     scheduled: &std::sync::Arc<crate::scheduled_jobs::ScheduledJobs>,
+    session_tasks: &std::sync::Arc<crate::session_tasks::SessionTaskScheduler>,
 ) -> pa_core::session_engine::runtime_wiring::KernelCronWiring {
     pa_core::session_engine::runtime_wiring::KernelCronWiring {
         store: std::sync::Arc::clone(scheduled.store()),
         binding: None,
         mutation_hook: Some(scheduled.mutation_hook()),
+        session_tasks: Some(std::sync::Arc::clone(session_tasks.tasks())),
     }
 }
 
@@ -461,6 +469,17 @@ impl Worker {
             Arc::clone(&recovery),
             Arc::clone(&idle_notify),
         ));
+        let session_tasks = crate::session_tasks::SessionTaskScheduler::new(
+            pa_core::cron::tasks::SessionTasks::system(),
+            crate::session_tasks::SchedulerWiring {
+                core: Arc::clone(&core),
+                work_notify: Arc::clone(&work_notify),
+                idle_notify: Arc::clone(&idle_notify),
+                user_bash: std::sync::Arc::clone(&user_bash),
+                input_pauses: input_pauses.clone(),
+                recovery: Arc::clone(&recovery),
+            },
+        );
         // The digest inbox lane (swarm PRs C/D/E): the receiving worker owns
         // the lane — the durable inbox, the controller with its counters, and
         // the notice admission/withdrawal through the queue lanes.
@@ -474,6 +493,7 @@ impl Worker {
             agent_dir: config.agent_dir.clone(),
             link: Arc::clone(&roster_link),
             worker_token: worker_token.clone(),
+            scheduled_tasks: Some(std::sync::Arc::clone(&session_tasks)),
         };
         let (engine, agent_engine, roster_pushes): (
             std::sync::Arc<dyn SessionEngine>,
@@ -502,7 +522,7 @@ impl Worker {
                         faux_script: Some(script.to_string()),
                         supervisor_link: Some(supervisor_link_config(&config)),
                         telemetry_disabled: config.telemetry_disabled,
-                        cron_store: Some(kernel_cron_wiring(&scheduled)),
+                        cron_store: Some(kernel_cron_wiring(&scheduled, &session_tasks)),
                         queued_steering_probe: queued_steering_probe.clone(),
                         steering_fold: Some(steering_fold.clone()),
                     }) {
@@ -533,7 +553,7 @@ impl Worker {
                         faux_script: None,
                         supervisor_link: Some(supervisor_link_config(&config)),
                         telemetry_disabled: config.telemetry_disabled,
-                        cron_store: Some(kernel_cron_wiring(&scheduled)),
+                        cron_store: Some(kernel_cron_wiring(&scheduled, &session_tasks)),
                         queued_steering_probe: queued_steering_probe.clone(),
                         steering_fold: Some(steering_fold.clone()),
                     }) {
@@ -693,6 +713,7 @@ impl Worker {
                 // (a cron or heartbeat run must not lose its kernel).
                 let jobs_core = Arc::clone(&core);
                 let jobs_store = std::sync::Arc::clone(scheduled.store());
+                let jobs_tasks = std::sync::Arc::clone(&session_tasks);
                 concrete.set_registered_jobs_probe(std::sync::Arc::new(move || {
                     let active_session_id = {
                         jobs_core
@@ -701,13 +722,15 @@ impl Worker {
                             .active_session_id
                             .clone()
                     };
-                    jobs_store.list().into_iter().any(|job| {
-                        job.active_session_id == active_session_id
-                            && matches!(
-                                job.status,
-                                pa_core::cron::JobStatus::Active | pa_core::cron::JobStatus::Paused
-                            )
-                    })
+                    jobs_tasks.has_pending()
+                        || jobs_store.list().into_iter().any(|job| {
+                            job.active_session_id == active_session_id
+                                && matches!(
+                                    job.status,
+                                    pa_core::cron::JobStatus::Active
+                                        | pa_core::cron::JobStatus::Paused
+                                )
+                        })
                 }));
                 // The live compaction summary-delta sink: every summarizer
                 // text delta reaches clients as one ephemeral frame (never
@@ -799,6 +822,13 @@ impl Worker {
                     });
                 });
                 concrete.set_notice_row_sink(row_sink);
+                // The worktree seam (`rlm.enter_worktree` / `rlm.exit_worktree`):
+                // a kernel-made move recorded on the branch like `/cwd`.
+                concrete.set_worktree_session(Arc::new(worktree_seam::WorkerWorktreeSeam::new(
+                    Arc::clone(&core),
+                    Arc::clone(&events),
+                    Arc::downgrade(concrete),
+                )));
                 // The factory run notice lane: the session's executor
                 // announces each run milestone into the follow-up lane,
                 // and the kernel's own read of the run withdraws it.
@@ -990,8 +1020,18 @@ impl Worker {
             }
             (engine, agent_engine, roster_pushes)
         };
+        let compaction = Arc::new(crate::compaction::CompactionManager::new(
+            std::sync::Arc::clone(&engine),
+            events.clone(),
+            Arc::clone(&core),
+            config.active_session_id.clone(),
+            config.agent_dir.clone(),
+        ));
         // The turn runner drives the engine's queued prompts.
         let runner = TurnRunner {
+            idle_compaction: crate::worker::idle_compaction::IdleCompaction::new(Arc::clone(
+                &compaction,
+            )),
             recovery: Arc::clone(&recovery),
             core: Arc::clone(&core),
             input_pauses: input_pauses.clone(),
@@ -1015,13 +1055,6 @@ impl Worker {
             std::sync::Arc::clone(&engine),
             events.clone(),
             config.active_session_id.clone(),
-        );
-        let compaction = crate::compaction::CompactionManager::new(
-            std::sync::Arc::clone(&engine),
-            events.clone(),
-            Arc::clone(&core),
-            config.active_session_id.clone(),
-            config.agent_dir.clone(),
         );
         let tree_navigation = crate::branch_navigation::TreeNavigation::new(
             std::sync::Arc::clone(&engine),
@@ -1092,6 +1125,7 @@ impl Worker {
             navigation,
             prompt_admissions,
             scheduled,
+            session_tasks,
             herdr: std::sync::Arc::clone(&herdr_slot),
             herdr_generation: std::sync::Arc::clone(&herdr_generation),
             create_gate: tokio::sync::Mutex::new(()),

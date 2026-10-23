@@ -30,6 +30,7 @@
 //! notices still drive their turn (the daemon's `followUp` notice action is
 //! unchanged); only the transcript row's class moves.
 
+pub mod brief_message;
 pub(crate) mod geometry;
 pub(crate) use geometry::agent_message_body_count;
 pub(crate) mod injected_prompt;
@@ -37,6 +38,7 @@ pub(crate) mod refinement;
 pub(crate) mod render;
 pub mod skill_invocation;
 
+pub use brief_message::{BriefAttachment, BriefMessageRow, USER_MESSAGE_CUSTOM_TYPE};
 use injected_prompt::injected_prompt_row;
 pub use injected_prompt::{InjectedPromptKind, InjectedPromptRow};
 use serde_json::Value;
@@ -52,6 +54,10 @@ pub const HEARTBEAT_PROMPT_CUSTOM_TYPE: &str = "heartbeat_prompt";
 pub const GOAL_CONTEXT_CUSTOM_TYPE: &str = "goal_context";
 pub const IPYTHON_STATE_RESTORED_CUSTOM_TYPE: &str = "ipython_state_restored";
 pub const PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE: &str = "python_skills_unavailable";
+/// Wire twins of `pa_core::cron::tasks::{SCHEDULED_TASK_FIRE_CUSTOM_TYPE,
+/// LOOP_PROMPT_CUSTOM_TYPE}`: a scheduled task's fire and a `/loop`'s first turn.
+pub const SCHEDULED_TASK_FIRE_CUSTOM_TYPE: &str = "scheduled_task_fire";
+pub const LOOP_PROMPT_CUSTOM_TYPE: &str = "loop_prompt";
 pub const RLM_CHILD_FAILURE_CUSTOM_TYPE: &str = "rlm_child_failure";
 pub const RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE: &str = "rlm_child_terminal_notice";
 pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
@@ -231,6 +237,10 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         }],
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
         PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
+        // `rlm.send_user_message`: the agent's message to the user.
+        USER_MESSAGE_CUSTOM_TYPE => vec![ChatEntry::BriefMessage(Box::new(
+            brief_message::brief_message_row(&content, details),
+        ))],
         AGENT_MESSAGE_CUSTOM_TYPE => agent_message_entry(details).map_or_else(
             || vec![generic_panel_entry(custom_type, message)],
             |entry| vec![entry],
@@ -241,7 +251,9 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         HEARTBEAT_PROMPT_CUSTOM_TYPE
         | GOAL_CONTEXT_CUSTOM_TYPE
         | IPYTHON_STATE_RESTORED_CUSTOM_TYPE
-        | PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE => {
+        | PYTHON_SKILLS_UNAVAILABLE_CUSTOM_TYPE
+        | SCHEDULED_TASK_FIRE_CUSTOM_TYPE
+        | LOOP_PROMPT_CUSTOM_TYPE => {
             vec![ChatEntry::InjectedPrompt(Box::new(injected_prompt_row(
                 custom_type,
                 message,
@@ -449,14 +461,35 @@ fn agent_message_entry(details: &Value) -> Option<ChatEntry> {
 
 /// One RLM child status notice (`rlm_child_terminal_notice` /
 /// `rlm_child_failure`) as the subagent-mail row: the child that exited is
-/// the mail's counterpart, the notice text is the body (the full content,
-/// header included, so the outcome wording rides intact).
+/// the mail's counterpart. The body is the notice's one-line `summary` and
+/// its outcome text (the last assistant text, the cancel reason or the
+/// error) when the details carry them (the model reads the row's
+/// `<task-notification>`); an older row without a summary shows its full
+/// content, header included, so the outcome wording rides intact.
 fn rlm_child_status_row(message: &Value, details: &Value) -> AgentMessageRow {
     let content = custom_content_text(message);
+    let summary = details
+        .get("summary")
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.is_empty());
+    let body = match summary {
+        Some(summary) => {
+            let outcome = ["lastAssistantTextPreview", "reason", "error"]
+                .iter()
+                .find_map(|key| details.get(*key).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|outcome| !outcome.is_empty());
+            match outcome {
+                Some(outcome) => format!("{summary}\n\n{outcome}"),
+                None => summary.to_string(),
+            }
+        }
+        None => content.clone(),
+    };
     AgentMessageRow {
         direction: AgentMessageDirection::Received,
         counterpart: rlm_child_session_name(details, &content),
-        message: content,
+        message: body,
     }
 }
 
@@ -849,6 +882,46 @@ mod tests {
                 if row.counterpart == "legacy-worker"
                     && row.message == "[child-failed child:legacy-worker]\n\nspawn failed"
         ));
+    }
+
+    /// A child's `<task-notification>` row shows its summary and outcome,
+    /// never the notification markup the model reads.
+    #[test]
+    fn rlm_child_task_notification_rows_show_the_summary_and_outcome() {
+        let body = |custom_type: &str, details: serde_json::Value| {
+            let entries = decoded(&json!({
+                "role": "custom",
+                "customType": custom_type,
+                "content": "<task-notification>\n<task-id>sub-1</task-id>\n</task-notification>",
+                "display": true,
+                "details": details,
+            }));
+            match entries.as_slice() {
+                [ChatEntry::AgentMessage(row)] => row.message.clone(),
+                other => panic!("{custom_type} must decode to the agent-message class: {other:?}"),
+            }
+        };
+        assert_eq!(
+            [
+                body(
+                    RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" finished without replying", "lastAssistantTextPreview": "done" }),
+                ),
+                body(
+                    RLM_CHILD_FAILURE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" failed", "error": "boom" }),
+                ),
+                body(
+                    RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE,
+                    json!({ "sessionName": "kid", "summary": "Agent \"kid\" was cancelled", "reason": null }),
+                ),
+            ],
+            [
+                "Agent \"kid\" finished without replying\n\ndone".to_string(),
+                "Agent \"kid\" failed\n\nboom".to_string(),
+                "Agent \"kid\" was cancelled".to_string(),
+            ]
+        );
     }
 
     /// The unavailable-skills row decodes the failed names and keeps the

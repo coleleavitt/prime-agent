@@ -37,6 +37,19 @@ impl AgentsViewMode {
             Some((roster, saved)) => (roster, saved),
             None => (&self.roster, &self.saved),
         };
+        // Other products' sessions list after the saved ones, under the same project and
+        // branch filters.
+        let with_external;
+        let saved = if self.external.is_empty() {
+            saved
+        } else {
+            with_external = saved
+                .iter()
+                .chain(self.external.iter())
+                .cloned()
+                .collect::<Vec<Value>>();
+            &with_external
+        };
         let in_scope = |row: &&Value| match self.saved_scope {
             SavedScope::AllProjects => true,
             SavedScope::CurrentProject => {

@@ -146,6 +146,7 @@ impl SessionUi {
             || view.info_panel.is_some()
             || view.tree_selector.is_some()
             || view.fork_selector.is_some()
+            || view.rewind_selector.is_some()
             || view.share_loader.is_some()
             || view.mcp_view.is_some()
             || view.factory_view.is_some()
@@ -471,6 +472,9 @@ impl SessionUi {
         if view.fork_selector.is_some() {
             return self.handle_fork_selector_key(key, view).await;
         }
+        if view.rewind_selector.is_some() {
+            return self.handle_rewind_selector_key(key, view).await;
+        }
         if view.confirm.is_some() {
             return self.handle_confirm_key(key, view).await;
         }
@@ -578,6 +582,13 @@ impl SessionUi {
             self.subagents_focused = false;
             self.update_subagent_summary(view);
         }
+        // Vim mode owns NORMAL mode's printable keys and INSERT mode's Escape before any app
+        // binding; everything it declines (Enter, chords, a bare NORMAL-mode Escape) falls through.
+        if view.editor.handle_vim_key(&id) {
+            self.clear_ctrl_c_hint();
+            self.dirty = true;
+            return Ok(());
+        }
         // The editor's own ctrl+v is otherwise unbound, so the exact match is
         // safe before any editor motion.
         if view
@@ -627,13 +638,14 @@ impl SessionUi {
                 self.dirty = true;
                 return Ok(());
             }
-            // Double-Escape: the second press within the window opens the tree when the session is
-            // idle or the editor empty, and clears the input otherwise. The repeat's tree action is
-            // one shot per input chain (the operator's 2026-09-29 Esc-overflow ruling).
+            // Double-Escape: the second press within the window opens `/rewind` (Claude Code's
+            // message selector; the tree on a daemon without it) when the session is idle or the
+            // editor empty, and clears the input otherwise. The repeat's tree action is one shot per
+            // input chain (the operator's 2026-09-29 Esc-overflow ruling).
             if let Some(action) = self.take_escape_repeat_action() {
                 if action == "tree" {
                     self.escape_tree_shortcut_spent = true;
-                    self.open_tree_selector(view, None).await?;
+                    self.open_rewind_or_tree(view).await?;
                 } else {
                     view.editor.set_text("");
                 }
@@ -793,10 +805,19 @@ impl SessionUi {
         }
         // Plan mode flips through the session command (durable, and the
         // kernel guard follows); the draft in the editor stays untouched.
+        // A published permission-mode cycle replaces the toggle with its
+        // commands (Claude Code's shift+tab mode cycle).
         if view.editor.keybindings().matches(&id, "app.plan.toggle") {
             self.track_client_adoption(crate::interactive::ClientAdoption::PlanKey);
-            self.submit_prompt("/plan", SubmitBehavior::Steer, view)
-                .await?;
+            let commands = if self.permission_cycle.is_empty() {
+                vec!["/plan".to_string()]
+            } else {
+                self.permission_cycle.clone()
+            };
+            for command in commands {
+                self.submit_prompt(&command, SubmitBehavior::Steer, view)
+                    .await?;
+            }
             return Ok(());
         }
         if view.editor.keybindings().matches(&id, "app.tools.expand") {

@@ -594,15 +594,20 @@ async fn get_commands(state: &Arc<RpcState>) -> Result<ResponseData, String> {
         commands.push(entry);
     }
     for skill in &engine.skills {
-        let mut entry = json!({
-            "name": format!("skill:{}", skill.name),
-            "source": "skill",
-            "sourceInfo": skill.source_info,
-        });
-        if !skill.description.is_empty() {
-            entry["description"] = json!(skill.description);
+        for name in pa_core::skills::skill_command_names(skill) {
+            let mut entry = json!({
+                "name": name,
+                "source": "skill",
+                "sourceInfo": skill.source_info,
+            });
+            if let Some(hint) = pa_core::skills::skill_argument_hint(skill) {
+                entry["argumentHint"] = json!(hint);
+            }
+            if !skill.description.is_empty() {
+                entry["description"] = json!(skill.description);
+            }
+            commands.push(entry);
         }
-        commands.push(entry);
     }
     Ok(ResponseData::Present(json!({ "commands": commands })))
 }

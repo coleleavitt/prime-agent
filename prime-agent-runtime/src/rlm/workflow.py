@@ -313,3 +313,41 @@ def _unknown_reply(
         "result": None,
         "error": {"code": "EXECUTION_UNKNOWN", "message": message},
     }
+
+
+# The workflow script API (Claude Code's Workflow tool): `rlm.workflow.run`,
+# `start`, and the hooks a running script calls. It lives in its own module;
+# this one re-exports it so `rlm.workflow` is the one model-facing name.
+from .workflow_script import (  # noqa: E402,F401
+    AgentOutcome,
+    AgentRequest,
+    Budget,
+    SavedWorkflow,
+    WorkflowBudgetExceeded,
+    WorkflowContext,
+    WorkflowError,
+    WorkflowHandle,
+    WorkflowResult,
+    agent,
+    find_saved,
+    get_budget,
+    get_args,
+    journal_key,
+    list_saved,
+    load_journal,
+    log,
+    parallel,
+    phase,
+    pipeline,
+    result,
+    run,
+    runs,
+    saved_workflow_dirs,
+    size_guideline,
+    start,
+    status,
+    workflow,
+)
+
+# `rlm.workflow.list()`: the saved workflows (Claude Code's `.claude/workflows/`).
+list = list_saved  # noqa: A001

@@ -339,17 +339,25 @@ impl SupervisorChildSessionsInner {
                 let mut row = record.lock().await;
                 let claimed = cancelled_by_delete && !row.notice_delivered;
                 row.notice_delivered = true;
-                claimed.then(|| super::RlmChildTerminalNotice::Cancelled {
-                    child_id: row.rlm_child_id.clone(),
-                    session_name: row.session_name.clone(),
-                    reason: Some("Deleted by parent orchestrator".into()),
+                claimed.then(|| {
+                    (
+                        super::RlmChildTerminalNotice::Cancelled {
+                            child_id: row.rlm_child_id.clone(),
+                            session_name: row.session_name.clone(),
+                            reason: Some("Deleted by parent orchestrator".into()),
+                        },
+                        row.notice_extras(),
+                    )
                 })
             };
-            if let Some(notice) = notice {
-                self.deliver_terminal_notice(super::create_rlm_child_terminal_notice(
-                    &notice,
-                    super::now_ms(),
-                ))
+            if let Some((notice, extras)) = notice {
+                self.deliver_terminal_notice(
+                    pa_core::session_engine::rlm_notices::create_rlm_child_terminal_notice_with(
+                        &notice,
+                        &extras,
+                        super::now_ms(),
+                    ),
+                )
                 .await;
             }
         }
@@ -553,6 +561,7 @@ fn ledger_child_records(
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             last_emitted_status: None,
             rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            worktree: None,
         });
     }
     records

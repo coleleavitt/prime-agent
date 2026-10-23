@@ -40,7 +40,7 @@ impl AgentSession {
         &self,
         message: &pa_types::session::CustomMessage,
     ) -> anyhow::Result<Vec<pa_agent::types::AgentMessage>> {
-        let mut prompt_messages = Vec::new();
+        let mut prompt_messages = self.context_turn_rows().await;
         if let Some(digest_row) = self.pending_digest_prompt_row().await? {
             prompt_messages.push(digest_row);
         }
@@ -155,19 +155,38 @@ impl AgentSession {
         let expand = options.expand_prompt_templates.unwrap_or(true);
         // TS `_finishSubmissionNormalization` order: skill commands expand first, prompt templates
         // second; both are gated by the same policy flag.
-        let (normalized, used_skill) = if expand {
-            let (skill_expanded, used_skill) =
-                crate::skills::expand_skill_command(text, &self.skills);
-            let normalized =
-                crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
-            (normalized, used_skill)
+        let (skill_expanded, used_skill) = if expand {
+            self.expand_user_skill_command(text).await
         } else {
-            (text.to_string(), None)
+            (text.to_string(), false)
+        };
+        let normalized = if expand {
+            crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
+        } else {
+            skill_expanded.clone()
         };
 
         if let Some(command) = parse_session_command(&self.slash_commands, &normalized) {
             return Ok(PromptOutcome::SessionCommand(command));
         }
+        // A Claude Code command's shell blocks run only now, once the text is
+        // known to be a prompt (classification above never runs them).
+        if expand && crate::skills::is_claude_command(&skill_expanded, &self.prompt_templates) {
+            if let Some(telemetry) = &self.skill_telemetry {
+                telemetry.note_custom_command_used();
+            }
+        }
+        let normalized = if expand {
+            let cwd = self.session.lock().await.get_cwd().to_path_buf();
+            crate::skills::expand_prompt_template_with_shell(
+                &skill_expanded,
+                &self.prompt_templates,
+                &cwd,
+            )
+            .await
+        } else {
+            normalized
+        };
 
         let admission = self.terminal_admission.lock().await;
         let state = self.agent.state().await;
@@ -177,9 +196,12 @@ impl AgentSession {
         // once. A pre-expanded block (the daemon emits the accepted row
         // before admission) counts here too — the block parse carries the
         // skill identity.
-        let skill_used = used_skill.is_some()
-            || pa_types::skill_blocks::parse_skill_block(&normalized)
-                .is_some_and(|block| self.skills.iter().any(|skill| skill.name == block.name));
+        let skill_used = used_skill
+            || pa_types::skill_blocks::parse_skill_block(&normalized).is_some_and(|block| {
+                self.command_skills()
+                    .iter()
+                    .any(|skill| skill.name == block.name)
+            });
         if skill_used {
             if let Some(telemetry) = &self.skill_telemetry {
                 telemetry.note_skill_used();
@@ -198,11 +220,16 @@ impl AgentSession {
         // a refusal never reaches the model, and their context rides ahead
         // of it.
         let feature_row = self.feature_prompt_row(&normalized).await?;
+        let ultracode_rows = self.ultracode_rows(text).await;
         if busy {
             let message = user_prompt_message(&normalized, &images);
-            let message: pa_agent::agent::AgentMessageBatch = match feature_row {
-                Some(row) => vec![row, message].into(),
-                None => message.into(),
+            let mut rows: Vec<_> = feature_row.into_iter().collect();
+            rows.extend(ultracode_rows);
+            let message: pa_agent::agent::AgentMessageBatch = if rows.is_empty() {
+                message.into()
+            } else {
+                rows.push(message);
+                rows.into()
             };
             match options.streaming_behavior {
                 Some(StreamingBehavior::Steer) => self.agent.steer(message),
@@ -218,14 +245,16 @@ impl AgentSession {
                 .await?;
             // The turn's prompt messages: the deferred first-turn harness
             // digest rides first when one is due, streamed ahead of the user
-            // prompt and carried on `agent_end`.
-            let mut prompt_messages = Vec::new();
+            // prompt and carried on `agent_end`. The session context (full
+            // on the first turn, a delta after) and the due reminders lead.
+            let mut prompt_messages = self.context_turn_rows().await;
             if let Some(digest_row) = self.pending_digest_prompt_row().await? {
                 prompt_messages.push(digest_row);
             }
             prompt_messages.extend(self.take_next_turn_rows().await);
             prompt_messages.extend(self.plan_mode_context_row());
             prompt_messages.extend(feature_row);
+            prompt_messages.extend(ultracode_rows);
             prompt_messages.push(user_prompt_message(&normalized, &images));
             // Each batched action contributes its user row after the
             // primary, through the same admission normalization (TS
@@ -233,9 +262,14 @@ impl AgentSession {
             // normalizes every row at the shared admission).
             for row in &options.batch {
                 let row_text = if expand {
-                    let (skill_expanded, _) =
-                        crate::skills::expand_skill_command(&row.text, &self.skills);
-                    crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
+                    let (skill_expanded, _) = self.expand_user_skill_command(&row.text).await;
+                    let cwd = self.session.lock().await.get_cwd().to_path_buf();
+                    crate::skills::expand_prompt_template_with_shell(
+                        &skill_expanded,
+                        &self.prompt_templates,
+                        &cwd,
+                    )
+                    .await
                 } else {
                     row.text.clone()
                 };
@@ -288,9 +322,66 @@ impl AgentSession {
         Ok(PromptOutcome::Prompt)
     }
 
+    /// Install the session context and reminder rows (the engine wiring).
+    pub fn set_context_rows(
+        &mut self,
+        rows: std::sync::Arc<super::context_rows::SessionContextRows>,
+    ) {
+        self.context_rows = Some(rows);
+    }
+
+    /// The installed context rows, if any.
+    #[must_use]
+    pub fn context_rows(&self) -> Option<&std::sync::Arc<super::context_rows::SessionContextRows>> {
+        self.context_rows.as_ref()
+    }
+
+    /// The context and reminder rows an admitted turn carries first.
+    async fn context_turn_rows(&self) -> Vec<pa_agent::types::AgentMessage> {
+        let Some(rows) = self.context_rows.as_ref() else {
+            return Vec::new();
+        };
+        let messages = self.agent.state().await.messages;
+        rows.turn_start_messages(messages).await
+    }
+
+    /// Forget the files the model read (its context no longer holds them).
+    pub(super) fn forget_file_reads(&self) {
+        if let Some(rows) = self.context_rows.as_ref() {
+            rows.reminders().files().clear();
+        }
+    }
+
     /// Install the session's plan-mode switch (the engine wiring).
     pub fn set_plan_mode_switch(&mut self, mode: super::plan_mode::PlanModeSwitch) {
         self.plan_mode = Some(mode);
+    }
+
+    /// Install the session's ultracode state (the engine wiring shares it
+    /// with the steering fold).
+    pub fn set_ultracode_state(&mut self, state: std::sync::Arc<super::ultracode::UltracodeState>) {
+        self.ultracode = state;
+    }
+
+    /// The session's ultracode state, restored from the branch's newest
+    /// `ultracode_change` row on first use.
+    pub async fn ultracode(&self) -> &std::sync::Arc<super::ultracode::UltracodeState> {
+        if self.ultracode.needs_restore() {
+            let recorded = self.session.lock().await.ultracode_mode();
+            self.ultracode.restore(recorded);
+        }
+        &self.ultracode
+    }
+
+    /// The ultracode reminder rows one admitted user turn carries (the
+    /// keyword is detected on the text as typed, before expansion).
+    async fn ultracode_rows(&self, typed: &str) -> Vec<pa_agent::types::AgentMessage> {
+        self.ultracode()
+            .await
+            .turn_rows(typed)
+            .into_iter()
+            .filter_map(|row| session_message_to_loop(&SessionAgentMessage::Custom(row)))
+            .collect()
     }
 
     /// Route admitted prompts through the installed features (the engine

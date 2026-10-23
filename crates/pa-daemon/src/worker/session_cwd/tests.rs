@@ -245,3 +245,47 @@ async fn a_tree_move_before_the_entry_returns_to_the_branch_cwd() {
         (dir.path().display().to_string(), false)
     );
 }
+
+/// A kernel-made worktree move (`rlm.enter_worktree`) records the same
+/// branch entry `/cwd` writes, so a resume restarts in the worktree, plus
+/// the worktree state the exit reads back.
+#[tokio::test]
+async fn a_worktree_move_records_the_cwd_and_the_worktree_state() {
+    use crate::worktree_host::{WorktreeSession as _, WorktreeSessionState, WorktreeSessionView};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let moved = dir.path().join("wt");
+    std::fs::create_dir(&moved).unwrap();
+    let worker = created(dir.path(), dir.path(), json!({})).await;
+    let seam = crate::worker::worktree_seam::WorkerWorktreeSeam::new(
+        Arc::clone(&worker.core),
+        Arc::clone(&worker.events),
+        std::sync::Weak::new(),
+    );
+    let state = WorktreeSessionState {
+        active: true,
+        original_cwd: dir.path().display().to_string(),
+        worktree: pa_core::worktree::Worktree {
+            name: "wt".to_string(),
+            path: moved.clone(),
+            branch: Some("worktree-wt".to_string()),
+            repo_root: None,
+            base_commit: None,
+            existed: false,
+            hook_based: false,
+            copied: Vec::new(),
+        },
+    };
+    let cwd = moved.display().to_string();
+    seam.moved(&cwd, &state).unwrap();
+    assert_eq!(
+        seam.view(),
+        WorktreeSessionView {
+            cwd: cwd.clone(),
+            session_id: "cwd-session".to_string(),
+            state: Some(state),
+        }
+    );
+    let core = worker.core.lock().unwrap();
+    assert_eq!(core.store.as_ref().and_then(branch_cwd), Some(cwd));
+}

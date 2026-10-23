@@ -1,5 +1,6 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, and `/rlm-token-budget`. The host runtime owns
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/memory`, `/rlm-token-budget`,
+//! `/output-style` and `/add-dir`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
 
@@ -249,7 +250,14 @@ pub async fn execute_session_command(
         "autonomous" => execute_autonomous(params, command, &mut execution),
         "context-limit" => execute_context_limit(engine, params, command, &mut execution).await,
         "plan" => execute_plan(engine, command, &mut execution).await,
+        "ultracode" => execute_ultracode(engine, command, &mut execution).await,
+        "brief" => execute_brief(engine, command, &mut execution),
         "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
+        "output-style" => execute_output_style(engine, command, &mut execution),
+        "add-dir" => execute_add_dir(engine, command, &mut execution).await,
+        "memory" => execute_memory(engine, command, &mut execution),
+        "loop" => execute_loop(engine, command, &mut execution),
+        "workflows" => execute_workflows(engine, command, &mut execution).await,
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -358,6 +366,47 @@ async fn execute_context_limit(
 /// budget's pool, this session's spend, what is left to grant, and the
 /// grant each spawned subagent drew. The budget is configured by the
 /// global `rlmTokenBudget` setting; the command only reports.
+/// `/memory`: the session's instruction files and auto memory
+/// ([`super::memory_command`]); display-only.
+fn execute_memory(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err("Usage: /memory".to_string());
+    }
+    let text = super::memory_command::memory_report(&engine.instructions);
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
+/// `/workflows`: the saved workflows and this session's recent runs
+/// ([`super::workflows_command`]); display-only.
+async fn execute_workflows(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err("Usage: /workflows".to_string());
+    }
+    let cwd = engine
+        .session
+        .shared_persistence()
+        .lock()
+        .await
+        .get_cwd()
+        .to_path_buf();
+    let text = super::workflows_command::workflows_report(&engine.workflows, &cwd);
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
 fn execute_rlm_token_budget(
     engine: &SessionEngine,
     command: &SessionSlashCommand,
@@ -375,6 +424,127 @@ fn execute_rlm_token_budget(
     };
     execution.push_message(slash_command_result(
         command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
+/// The hidden row a mid-session `/output-style` switch delivers.
+pub const OUTPUT_STYLE_CHANGE_CUSTOM_TYPE: &str = "output_style_change";
+
+/// `/output-style [style]` (Claude Code's command): no argument (or an
+/// unknown one) lists the styles; a style name persists `outputStyle`
+/// globally and tells the model on its next turn. The system prompt takes
+/// the style when the next session starts (its cached prefix never changes
+/// mid-session).
+fn execute_output_style(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use crate::prompts::output_style::{
+        DEFAULT_OUTPUT_STYLE,
+        find_output_style,
+        load_output_styles,
+        output_style_change_text,
+        output_style_dirs,
+        output_style_listing,
+    };
+    let context = &engine.feature_context;
+    let mut settings = crate::settings::SettingsManager::create(&context.cwd, &context.agent_dir);
+    let styles = load_output_styles(&output_style_dirs(
+        &context.cwd,
+        &context.agent_dir,
+        settings.project_scope_trusted(),
+    ));
+    let current = settings.get_output_style().map(str::to_string);
+    let requested = command.args.trim();
+    let mut info = |text: String| {
+        execution.push_message(slash_command_result(
+            command, text, true, "info", None, true,
+        ));
+    };
+    let target: Option<Option<&crate::prompts::output_style::OutputStyle>> =
+        if requested.eq_ignore_ascii_case(DEFAULT_OUTPUT_STYLE) {
+            Some(None)
+        } else if requested.is_empty() {
+            None
+        } else {
+            find_output_style(&styles, requested).map(Some)
+        };
+    let Some(target) = target else {
+        if requested.is_empty() || matches!(requested, "help" | "list" | "?") {
+            info(output_style_listing(&styles, current.as_deref()));
+        } else {
+            let names: Vec<&str> = std::iter::once(DEFAULT_OUTPUT_STYLE)
+                .chain(styles.iter().map(|style| style.name.as_str()))
+                .collect();
+            info(format!(
+                "Unknown output style \"{requested}\". Available styles: {}",
+                names.join(", ")
+            ));
+        }
+        return Ok(());
+    };
+    let target_name = target.map_or(DEFAULT_OUTPUT_STYLE, |style| style.name.as_str());
+    if current.as_deref().unwrap_or(DEFAULT_OUTPUT_STYLE) == target_name {
+        info(format!("Output style is already {target_name}"));
+        return Ok(());
+    }
+    settings
+        .set_output_style(target.map(|style| style.name.clone()))
+        .map_err(|error| format!("Could not save output style: {error:#}"))?;
+    engine
+        .session
+        .withdraw_next_turn_rows(OUTPUT_STYLE_CHANGE_CUSTOM_TYPE);
+    engine
+        .session
+        .queue_next_turn_row(super::plan_mode::hidden_row(
+            OUTPUT_STYLE_CHANGE_CUSTOM_TYPE,
+            &output_style_change_text(target),
+        ));
+    info(format!("Output style set to {target_name}"));
+    Ok(())
+}
+
+/// `/add-dir <path>` (Claude Code's command): validate the directory, add
+/// it to the session's working directories, persist the session's list
+/// (resume keeps it), and tell the model on its next turn.
+async fn execute_add_dir(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use super::additional_dirs::ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE;
+    if command.args.trim().is_empty() {
+        return Err("Usage: /add-dir <path>".to_string());
+    }
+    let (added, session_added) = engine
+        .additional_directories
+        .add(&command.args)
+        .map_err(|error| error.to_string())?;
+    let directories: Vec<String> = session_added
+        .iter()
+        .map(|dir| dir.display().to_string())
+        .collect();
+    engine
+        .session
+        .session_handle()
+        .lock()
+        .await
+        .append_custom_entry(
+            ADDITIONAL_DIRECTORIES_STATE_CUSTOM_TYPE,
+            Some(serde_json::json!({ "directories": directories })),
+        )
+        .map_err(|error| error.to_string())?;
+    // The model learns of it from the session context's environment update
+    // on the next turn (`prompts::session_context`), like a `/cwd` move.
+    execution.push_message(slash_command_result(
+        command,
+        format!("Added {} as a working directory.", added.display()),
+        true,
+        "info",
+        None,
+        true,
     ));
     Ok(())
 }
@@ -758,8 +928,141 @@ async fn execute_plan(
     Ok(())
 }
 
+/// `/ultracode [on|off|status]` (and `/effort ultracode`): switch the
+/// standing opt-in to multi-agent orchestration. A change records the
+/// durable `ultracode_change` row (what a resume restores); the model hears
+/// about it from the next turn's reminder row.
+async fn execute_ultracode(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    let state = engine.session.ultracode().await;
+    let target = match super::ultracode::parse_ultracode_command(&command.args)? {
+        super::ultracode::UltracodeCommand::On => true,
+        super::ultracode::UltracodeCommand::Off => false,
+        super::ultracode::UltracodeCommand::Status => {
+            let status = if state.is_on() { "on" } else { "off" };
+            execution.push_message(slash_command_result(
+                command,
+                format!("Ultracode is {status}."),
+                true,
+                "info",
+                None,
+                true,
+            ));
+            return Ok(());
+        }
+    };
+    if state.set(target) {
+        execution.push_message(super::ultracode::ultracode_change_row(target));
+    } else {
+        let status = if target { "on" } else { "off" };
+        execution.push_message(slash_command_result(
+            command,
+            format!("Ultracode is already {status}."),
+            true,
+            "info",
+            None,
+            true,
+        ));
+    }
+    Ok(())
+}
+
+/// `/brief [on|off|status]` (Claude Code's `/brief`): switch brief-only mode.
+/// A change records the durable `brief_mode_change` row (what a resume
+/// restores), the hidden reminder the model reads with its next request,
+/// and the `brief` feature status the TUI collapses assistant text by.
+/// Root sessions only: a child's replies go to its parent.
+fn execute_brief(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    use super::brief_mode::BriefCommand;
+    let state = &engine.modes.brief;
+    let target = match super::brief_mode::parse_brief_command(&command.args)? {
+        BriefCommand::Toggle => !state.is_on(),
+        BriefCommand::On => true,
+        BriefCommand::Off => false,
+        BriefCommand::Status => {
+            let status = if state.is_on() { "on" } else { "off" };
+            execution.push_message(slash_command_result(
+                command,
+                format!("Brief mode is {status}."),
+                true,
+                "info",
+                None,
+                true,
+            ));
+            return Ok(());
+        }
+    };
+    if engine.feature_context.rlm_depth > 0 {
+        return Err(
+            "Brief mode is for top-level sessions: a subagent replies to its parent.".to_string(),
+        );
+    }
+    if state.set(target) {
+        execution.push_message(super::brief_mode::brief_mode_change_row(target));
+        execution.push_message(super::brief_mode::brief_mode_reminder_row(target));
+        crate::features::publish_feature_status(
+            &engine.feature_context.session_id,
+            super::brief_mode::brief_status(target),
+        );
+    } else {
+        let status = if target { "on" } else { "off" };
+        execution.push_message(slash_command_result(
+            command,
+            format!("Brief mode is already {status}."),
+            true,
+            "info",
+            None,
+            true,
+        ));
+    }
+    Ok(())
+}
+
 /// The rows are durable in the session's own entry chain: the live context
 /// rebuild and a later `/compact` see the same rows the host runtime persists.
+/// `/loop [interval] <prompt>` and `/loop stop` (Claude Code's loop skill):
+/// the host schedules what it can (a fixed interval's recurring job, a
+/// stop); the turn the model runs now follows as the injected `loop_prompt`
+/// row.
+fn execute_loop(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    let Some(tasks) = engine.session_tasks.as_ref() else {
+        return Err(
+            "/loop needs a daemon session: the daemon keeps the schedule while no client is attached."
+                .to_string(),
+        );
+    };
+    let run = tasks.run_loop_command(&command.args)?;
+    execution.push_message(slash_command_result(
+        command, run.text, true, "info", None, true,
+    ));
+    if let Some(turn) = run.turn {
+        execution.continuation_message = Some(CustomMessage {
+            custom_type: crate::cron::tasks::LOOP_PROMPT_CUSTOM_TYPE.to_string(),
+            content: pa_types::ai::UserContent::Text(turn.content),
+            display: true,
+            details: Some(serde_json::json!({
+                "mode": turn.mode,
+                "jobId": turn.job_id,
+                "schedule": turn.schedule,
+            })),
+            timestamp: now_millis(),
+            rest: serde_json::Map::default(),
+        });
+    }
+    Ok(())
+}
+
 async fn persist_rows<'a>(
     engine: &SessionEngine,
     messages: impl Iterator<Item = &'a CustomMessage>,
@@ -913,3 +1216,7 @@ mod harness_command_tests;
 #[cfg(test)]
 #[path = "rlm_token_budget_command_tests.rs"]
 mod rlm_token_budget_command_tests;
+
+#[cfg(test)]
+#[path = "claude_parity_command_tests.rs"]
+mod claude_parity_command_tests;

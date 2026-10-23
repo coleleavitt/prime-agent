@@ -208,10 +208,20 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "mcp add <name> --url <url> [--bearer-token-env-var <env>|--oauth] [--force]",
         "Add an HTTP or stdio MCP server",
     )
-    .description("For stdio, use: mcp add <name> [--cwd <dir>] [--env CHILD=SOURCE] -- <command> [args...]"),
-    CommandSpec::new(&["mcp", "list"], "mcp list", "List user MCP servers"),
+    .description("For stdio, use: mcp add <name> [--cwd <dir>] [--env CHILD=SOURCE] -- <command> [args...]")
+    .options(&[
+        "--scope <user|project>  user: the user settings (default); project: ./.mcp.json, shared with the repository (runs once approved)",
+    ]),
+    CommandSpec::new(&["mcp", "list"], "mcp list", "List user MCP servers")
+        .description("Also lists the .mcp.json servers from here up to the filesystem root, with their approval."),
     CommandSpec::new(&["mcp", "get"], "mcp get <name>", "Show a user MCP server"),
-    CommandSpec::new(&["mcp", "remove"], "mcp remove <name>", "Remove a user MCP server"),
+    CommandSpec::new(&["mcp", "remove"], "mcp remove <name>", "Remove a user MCP server")
+        .options(&["--scope <user|project>  Remove from the user settings (default) or ./.mcp.json"]),
+    CommandSpec::new(
+        &["mcp", "reset-project-choices"],
+        "mcp reset-project-choices",
+        "Forget this project's .mcp.json server approvals and rejections",
+    ),
     CommandSpec::new(
         &["package"],
         "package <install|remove|list|update>",
@@ -487,6 +497,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "List this directory's saved sessions and exit",
             ),
             (
+                "-w, --worktree [name]",
+                "Run in a git worktree under .prime/worktrees/ (created or reused)",
+            ),
+            (
                 "--delete-session <id|name>",
                 "Delete a saved session and exit",
             ),
@@ -497,6 +511,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
             (
                 "--sandbox <mode>",
                 "OS sandbox for the kernel and its commands this run: off, read-only, workspace-write",
+            ),
+            (
+                "--add-dir <directory>",
+                "Additional working directory for this session (repeatable)",
             ),
             (
                 "--goal <objective>",

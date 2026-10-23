@@ -79,7 +79,9 @@ async fn aborted_turn_row_broadcasts_and_persists_through_the_worker_gate() {
     }
     // Let the admitted turn reach the provider: the held reply keeps the fetch
     // in flight, so the abort lands mid-provider-wait and settles the aborted row.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The provider dequeued the held response (the request is in flight):
+    // a fixed sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(2).await;
     let abort = worker.dispatch("abort", &json!({})).await;
     assert!(abort.success, "abort failed: {abort:?}");
     let idle = worker.dispatch("wait_for_idle", &json!({})).await;
@@ -308,7 +310,9 @@ async fn kill_cancels_a_mid_provider_wait_turn_and_surfaces_the_aborted_row() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The provider dequeued the held response (the request is in flight):
+    // a fixed sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
     // The kill must answer on the cancelled turn, not the 60s hold: the abort
     // funnel fires before the archive/dispose waits on the session mutex.
     let started = std::time::Instant::now();
@@ -437,7 +441,9 @@ async fn compact_interrupt_swallows_the_aborted_row() {
     assert!(turn.success, "the prompt failed: {turn:?}");
     // Let the admitted turn reach the provider (the 60s hold), then compact: the
     // aborted row must stay off the wire (TS `_disconnectFromAgent`).
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The provider dequeued the held response (the request is in flight):
+    // a fixed sleep raced the turn's start-of-run work under load.
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
     let compact = worker
         .dispatch(
             "compact",

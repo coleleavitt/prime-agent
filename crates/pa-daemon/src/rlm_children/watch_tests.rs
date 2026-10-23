@@ -245,7 +245,7 @@ async fn spawn_fake_supervisor(
                                 Some(json!({ "interrupted": true })),
                             )
                         }
-                        "follow_up" => {
+                        "steer" => {
                             let _ = follow_up_tx.send(command.clone());
                             response_success(
                                 Some(&id),
@@ -358,6 +358,9 @@ async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
             target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
             token_budget: None,
+            cwd: None,
+            agent: None,
+            worktree: None,
         })
         .await
         .expect("spawn must succeed against the fake supervisor")
@@ -417,7 +420,7 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
         .await
         .expect("the watcher must deliver the notice")
         .expect("the follow_up channel stays open");
-    assert_eq!(follow_up["type"], "follow_up");
+    assert_eq!(follow_up["type"], "steer");
     assert_eq!(follow_up["activeSessionId"], "parent-live");
     let custom = &follow_up["customMessage"];
     assert_eq!(custom["role"], "custom");
@@ -426,9 +429,26 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
         follow_up["rlmNoticeNonce"].as_str().is_some(),
         "the notice carries the one-shot capability the parent's queue admission consumes"
     );
-    assert_eq!(
-        custom["content"],
-        "[child-exited: no-reply child:f20-worker]\n\nLast assistant text: the child final answer"
+    // The agent `<task-notification>`: the child's last text is the result,
+    // the run's wall time the usage.
+    let content = custom["content"].as_str().expect("text content");
+    let duration_ms = custom["details"]["durationMs"]
+        .as_u64()
+        .expect("the notice reports the run's wall time");
+    assert!(
+        content.starts_with(&format!(
+            "<task-notification>\n<task-id>{}</task-id>\n<task-type>local_agent</task-type>\n\
+             <status>completed</status>\n<summary>Agent \"f20-worker\" finished without replying</summary>\n",
+            handle.rlm_child_id
+        )),
+        "{content}"
+    );
+    assert!(
+        content.ends_with(&format!(
+            "<result>the child final answer</result>\n\
+             <usage><duration_ms>{duration_ms}</duration_ms></usage>\n</task-notification>"
+        )),
+        "{content}"
     );
     assert_eq!(custom["details"]["childId"], handle.rlm_child_id);
     assert_eq!(custom["details"]["sessionName"], "f20-worker");
@@ -621,11 +641,21 @@ async fn a_cancelled_child_keeps_its_display_running_through_the_watcher_settle(
     assert_eq!(display.status, "running");
 }
 
-/// The `follow_up` carries exactly the TS failure row (`createRlmChildFailureMessage`).
+/// The `steer` carries exactly the failure row: the agent
+/// `<task-notification>` with the run's wall time.
 fn assert_failure_row(follow_up: &Value, child_id: &str, error: &str) {
     let custom = &follow_up["customMessage"];
     let timestamp = custom["timestamp"].as_u64().expect("failure row timestamp");
-    let expected = create_rlm_child_failure_message(child_id, "f20-worker", error, timestamp);
+    let extras = pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
+        duration_ms: custom["details"]["durationMs"].as_u64(),
+        worktree: None,
+    };
+    assert!(
+        extras.duration_ms.is_some(),
+        "the row reports the run's wall time"
+    );
+    let expected =
+        create_rlm_child_failure_message_with(child_id, "f20-worker", error, &extras, timestamp);
     assert_eq!(
         *custom,
         serde_json::to_value(AgentMessage::Custom(expected)).unwrap()
@@ -1398,6 +1428,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         last_emitted_status: None,
         rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        worktree: None,
     };
     // A running child that goes unreachable is the error class.
     assert!(super::lifecycle::should_mark_unreachable_error(&base()));
@@ -1974,6 +2005,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         last_emitted_status: None,
         rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         interrupted: false,
+        worktree: None,
     }));
     let claimed = sessions
         .inner

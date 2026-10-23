@@ -367,6 +367,26 @@ impl SettingsManager {
             .unwrap_or(false)
     }
 
+    /// `autoMemoryEnabled`: unset is on.
+    #[must_use]
+    pub fn get_auto_memory_enabled(&self) -> bool {
+        self.settings().auto_memory_enabled.unwrap_or(true)
+    }
+
+    /// `claudeCodeUserInstructions`: unset is off.
+    #[must_use]
+    pub fn get_claude_code_user_instructions(&self) -> bool {
+        self.settings()
+            .claude_code_user_instructions
+            .unwrap_or(false)
+    }
+
+    /// `claudeCodeUserSkills`: unset is off.
+    #[must_use]
+    pub fn get_claude_code_user_skills(&self) -> bool {
+        self.settings().claude_code_user_skills.unwrap_or(false)
+    }
+
     /// `factory.enabled` setter: persists the opt-in gate to the global
     /// scope (the same shared settings key the daemon's lane advertisement
     /// and the kernel's factory gate read).

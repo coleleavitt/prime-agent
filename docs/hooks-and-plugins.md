@@ -69,6 +69,10 @@ for `bash.run` the command (never its environment), clipped to 600 characters.
   An unanswered question is refused after `CONFIRMATION_TIMEOUT` (5 minutes); an aborted run stops waiting.
 - **Print mode:** there is no surface, so an `Ask` is refused at once: `<reason> (it needs the user's confirmation,
   and no client can ask for it)`. A refused `Ask` reads `<reason> (the user refused it)`.
+- **Remembering:** a feature that asks through `features::confirm_offering` offers to remember the answer (a
+  permission rule, `pa-permissions`): the question carries `remember` (the rule), the TUI adds "Yes, and don't ask
+  again for <rule>", and that choice answers with `remember: true` (additive on `answer_feature_confirmation`; an
+  older daemon reads a plain allow). The asker sees `ConfirmationAnswer::AllowedAlways`.
 
 The model-facing surface is the Python kernel: the model's tool call is nearly always `python_repl`, and the
 commands that matter run as `bash()` inside it. A policy that only sees tool calls would see one opaque cell.
@@ -158,7 +162,10 @@ Settings key `hooks`, Claude Code's shape:
     `idle_prompt` (no idle timer), and Claude Code's `prompt`/`agent` hooks and events without a counterpart
     (`PermissionRequest`, `StopFailure`, ...: reported as unsupported and skipped).
 - **Scope:** user `~/.prime/agent/settings.json`, and project `.prime/agent/settings.json` only in a trusted
-  workspace (`hooks` is a gated settings key). Project hooks run after user hooks.
+  workspace (`hooks` is a gated settings key). Project hooks run after user hooks. With `"claudeCodeSettings": true`
+  in the user settings, Claude Code's `~/.claude/settings.json`, a trusted project's `.claude/settings.json` and
+  `.claude/settings.local.json`, and the managed settings follow, each command labelled with its source.
+  `disableAllHooks` and the managed `allowManagedHooksOnly` work as in Claude Code.
 
 ## WebAssembly plugins (`pa-plugins`)
 

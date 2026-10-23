@@ -45,6 +45,9 @@ pub(super) struct TrustInputs {
     system_prompt: Option<PathBuf>,
     append_system_prompt: Option<PathBuf>,
     trees: Vec<(GatedItem, GatedTree)>,
+    /// With the Claude Code opt-in: each project `.claude/settings*.json`
+    /// file's keys that run code or loosen the session.
+    claude_settings: Vec<(String, serde_json::Map<String, Value>)>,
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -192,11 +195,93 @@ impl TrustInputs {
                 ));
             }
         }
+        // The project's output styles rewrite the system prompt.
+        let styles = project_dir.join(crate::prompts::output_style::OUTPUT_STYLES_DIR);
+        if dir_has_entries(&styles) {
+            trees.push((
+                GatedItem::ProjectDir {
+                    dir: crate::prompts::output_style::OUTPUT_STYLES_DIR.to_string(),
+                    label: "output styles".to_string(),
+                },
+                GatedTree {
+                    label: "output-styles".to_string(),
+                    root: styles,
+                },
+            ));
+        }
+        // Claude Code's project directories this harness reads: custom
+        // commands (their shell blocks run at expansion) and output styles.
+        for (dir, label) in [
+            (
+                crate::skills::claude_commands::CLAUDE_COMMANDS_DIR,
+                "custom commands",
+            ),
+            (
+                crate::prompts::output_style::OUTPUT_STYLES_DIR,
+                "output styles",
+            ),
+            (crate::skills::claude_skills::CLAUDE_SKILLS_DIR, "skills"),
+        ] {
+            let root = cwd
+                .join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+                .join(dir);
+            if dir_has_entries(&root) {
+                trees.push((
+                    GatedItem::ClaudeDir {
+                        dir: dir.to_string(),
+                        label: label.to_string(),
+                    },
+                    GatedTree {
+                        label: format!("claude:{dir}"),
+                        root,
+                    },
+                ));
+            }
+        }
+        // The ancestors' `.claude/skills` up to the repository root load as
+        // project skills too (Claude Code's walk).
+        let own_skills = cwd
+            .join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+            .join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR);
+        for root in crate::skills::claude_skills::project_claude_dirs(
+            cwd,
+            crate::skills::claude_skills::CLAUDE_SKILLS_DIR,
+            pa_types::platform::home_dir().as_deref(),
+        ) {
+            if root == own_skills || !dir_has_entries(&root) {
+                continue;
+            }
+            trees.push((
+                GatedItem::ProjectSkills(format!("{}/", root.display())),
+                GatedTree {
+                    label: format!("claude-skills:{}", root.display()),
+                    root,
+                },
+            ));
+        }
+        // Project files a composition root gated (each hashed as a
+        // one-file tree).
+        for (path, label) in super::gated_project_files() {
+            let root = cwd.join(path);
+            if root.is_file() {
+                trees.push((
+                    GatedItem::ProjectFile {
+                        path: path.to_string(),
+                        label: label.to_string(),
+                    },
+                    GatedTree {
+                        label: format!("project-file:{path}"),
+                        root,
+                    },
+                ));
+            }
+        }
         TrustInputs {
             settings,
             system_prompt: file("SYSTEM.md"),
             append_system_prompt: file("APPEND_SYSTEM.md"),
             trees,
+            claude_settings: claude_settings(cwd, agent_dir),
         }
     }
 
@@ -205,6 +290,7 @@ impl TrustInputs {
             && self.system_prompt.is_none()
             && self.append_system_prompt.is_none()
             && self.trees.is_empty()
+            && self.claude_settings.is_empty()
     }
 
     pub(super) fn gated(&self) -> Vec<GatedItem> {
@@ -221,6 +307,14 @@ impl TrustInputs {
             gated.push(GatedItem::AppendSystemPrompt);
         }
         gated.extend(self.trees.iter().map(|(item, _)| item.clone()));
+        gated.extend(
+            self.claude_settings
+                .iter()
+                .map(|(file, keys)| GatedItem::ClaudeSettings {
+                    file: file.clone(),
+                    keys: keys.keys().cloned().collect(),
+                }),
+        );
         gated
     }
 
@@ -249,8 +343,52 @@ impl TrustInputs {
                 &tree_digest(&tree.root),
             );
         }
+        for (file, keys) in &self.claude_settings {
+            let mut keys = Value::Object(keys.clone());
+            sort_keys(&mut keys);
+            frame(
+                &mut hasher,
+                &format!("claude-settings:{file}"),
+                keys.to_string().as_bytes(),
+            );
+        }
         format!("sha256:{}", hex(&hasher.finalize()))
     }
+}
+
+/// The gated keys of the project's Claude Code settings files, when the
+/// user settings opt into them (a file that is the user's own
+/// `~/.claude/settings.json`, in a session at the home directory, is not
+/// the project's).
+fn claude_settings(cwd: &Path, agent_dir: &Path) -> Vec<(String, serde_json::Map<String, Value>)> {
+    use crate::settings::claude_code::{self, ClaudePaths, ClaudeScope};
+    if !claude_code::opted_in(agent_dir) {
+        return Vec::new();
+    }
+    let paths = ClaudePaths::resolve(cwd);
+    let user_file = paths
+        .file(ClaudeScope::User)
+        .and_then(|file| std::fs::canonicalize(file).ok());
+    let mut gated = Vec::new();
+    for (scope, shown) in [
+        (ClaudeScope::Project, ".claude/settings.json"),
+        (ClaudeScope::Local, ".claude/settings.local.json"),
+    ] {
+        let Some(path) = paths.file(scope) else {
+            continue;
+        };
+        if user_file.is_some() && std::fs::canonicalize(&path).ok() == user_file {
+            continue;
+        }
+        let Ok(Some(document)) = claude_code::read_document(&path) else {
+            continue;
+        };
+        let keys = claude_code::gated_subset(&document);
+        if !keys.is_empty() {
+            gated.push((shown.to_string(), keys));
+        }
+    }
+    gated
 }
 
 fn frame(hasher: &mut Sha256, label: &str, bytes: &[u8]) {

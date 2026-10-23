@@ -106,6 +106,47 @@ impl AgentSession {
         self.skills = skills;
     }
 
+    /// Install the session's dynamically discovered skills: user commands
+    /// resolve against them after the loaded skills.
+    pub fn set_dynamic_skills(
+        &mut self,
+        dynamic: std::sync::Arc<crate::skills::dynamic::DynamicSkills>,
+    ) {
+        self.dynamic_skills = Some(dynamic);
+    }
+
+    /// The skills a user's command resolves against: the loaded ones, then
+    /// the discovered ones whose names they lack.
+    pub(crate) fn command_skills(&self) -> Vec<crate::skills::Skill> {
+        match &self.dynamic_skills {
+            Some(dynamic) => dynamic.with_known(&self.skills),
+            None => self.skills.clone(),
+        }
+    }
+
+    /// Expand a user's skill command ([`crate::skills::expand_skill_command`])
+    /// with this session's working directory and id; returns the text and
+    /// whether a skill expanded.
+    pub(crate) async fn expand_user_skill_command(&self, text: &str) -> (String, bool) {
+        if !text.starts_with('/') {
+            return (text.to_string(), false);
+        }
+        let skills = self.command_skills();
+        let (cwd, session_id) = {
+            let session = self.session.lock().await;
+            (
+                session.get_cwd().to_path_buf(),
+                session.get_session_id().to_string(),
+            )
+        };
+        let variables = crate::skills::claude_skills::SkillVariables {
+            project_dir: &cwd,
+            session_id: &session_id,
+        };
+        let (expanded, used) = crate::skills::expand_skill_command(text, &skills, &variables).await;
+        (expanded, used.is_some())
+    }
+
     /// Bind the telemetry handle the `skill_use_count` counter counts
     /// through (the engine wiring owns the telemetry lifetime and
     /// installs it once the session telemetry is assembled).

@@ -267,6 +267,26 @@ pub struct WarningSettings {
     pub anthropic_extra_usage: Option<bool>,
 }
 
+/// `reminders`: the per-turn `<system-reminder>` notes, each switchable.
+/// Unset keys keep the defaults (`changedFiles`, `taskList` and `tokensLeft`
+/// on, the rest off; see `session_engine::reminders`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderSettings {
+    /// A file the model read changed on disk since.
+    pub changed_files: Option<bool>,
+    /// A cell re-read a file that had not changed since its last read.
+    pub read_dedup: Option<bool>,
+    /// The `tasks` skill has not been used for a while.
+    pub task_list: Option<bool>,
+    /// Several assistant turns in a row said nothing to the user.
+    pub silent_turns: Option<bool>,
+    /// Time elapsed since the session started.
+    pub elapsed_time: Option<bool>,
+    /// Tokens left in the context window (`<total_tokens>`).
+    pub tokens_left: Option<bool>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTracesSettings {
@@ -400,6 +420,10 @@ pub struct Settings {
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
     pub enable_skill_commands: Option<bool>,
+    /// `fileCheckpointingEnabled` (Claude Code's key): back up the files the
+    /// kernel's edit helpers write so `/rewind` can restore code (on when
+    /// unset; see `file_history`).
+    pub file_checkpointing_enabled: Option<bool>,
     pub bundled_skills: Option<BundledSkillsSettings>,
     pub enable_builtin_skills: Option<bool>,
     pub terminal: Option<TerminalSettings>,
@@ -447,6 +471,8 @@ pub struct Settings {
     /// (or `true`) guards reply text too, `"off"` (or `false`) disables it.
     /// Raw JSON validated at access time.
     pub repetition_guard: Option<serde_json::Value>,
+    /// `reminders`: which per-turn reminders the model receives.
+    pub reminders: Option<ReminderSettings>,
     /// `rlmTokenBudget` (global scope only): the host-enforced delegation
     /// budget, a token count or `{ "total": n, "perDepth": [n, ...] }`
     /// (upstream #1192). Unset is OFF (TS v0.9.8 had no budget). Raw JSON
@@ -463,6 +489,33 @@ pub struct Settings {
     /// scored for refusal probability and filtered/rewritten if needed.
     /// Default: OFF (unset or false).
     pub content_filter: Option<bool>,
+    /// `outputStyle` (Claude Code's key): the output style the system
+    /// prompt carries (`default`, a built-in, or a custom style's name).
+    /// Unset is the default style.
+    pub output_style: Option<String>,
+    /// `editorMode` (Claude Code's key): `"vim"` turns on the prompt
+    /// editor's vim keys; unset or `"normal"` keeps the default keys.
+    pub editor_mode: Option<String>,
+    /// `statusLine` (Claude Code's shape: `{ "type": "command", "command",
+    /// "padding", "refreshInterval" }`): a command whose output renders
+    /// under the prompt. Raw JSON validated by the client. Unset is off.
+    pub status_line: Option<serde_json::Value>,
+    /// `disableSkillShellExecution` (Claude Code's key): `true` leaves
+    /// `` !`cmd` `` blocks in custom commands unexpanded. Unset runs them.
+    pub disable_skill_shell_execution: Option<bool>,
+    /// `autoMemoryEnabled` (Claude Code's key): the per-project auto-memory
+    /// directory and its `MEMORY.md` index in the prompt. Unset is ON.
+    pub auto_memory_enabled: Option<bool>,
+    /// `claudeCodeUserInstructions`: also read Claude Code's user-scope
+    /// instruction files (`~/.claude/CLAUDE.md`, `~/.claude/rules/`). Unset
+    /// is OFF, so installing Claude Code never changes this agent's prompt.
+    pub claude_code_user_instructions: Option<bool>,
+    /// `claudeCodeUserSkills`: also load Claude Code's user skills
+    /// (`~/.claude/skills/<name>/SKILL.md`, `CLAUDE_CONFIG_DIR` aware) into
+    /// the skills inventory. Unset is OFF, like `claudeCodeUserInstructions`:
+    /// installing Claude Code never grows this agent's prompt. The project's
+    /// `.claude/skills` load in a trusted workspace regardless.
+    pub claude_code_user_skills: Option<bool>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,

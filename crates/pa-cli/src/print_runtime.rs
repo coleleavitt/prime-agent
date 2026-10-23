@@ -548,6 +548,8 @@ pub(crate) struct ChildEngineOverrides {
     pub plan_mode: bool,
     /// The child's delegation grant (`rlm.spawn(token_budget=...)`).
     pub token_budget: Option<u64>,
+    /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
+    pub agent_definition: Option<pa_core::agents::AgentDefinition>,
 }
 
 /// A child's model source: a real-provider child carries its resolved
@@ -792,6 +794,7 @@ pub(crate) async fn build_headless_engine_with(
         pa_core::session_engine::engine::SessionEngineConfig {
             // `--sandbox`; without it the `sandbox` setting decides.
             sandbox_mode: config.sandbox_mode,
+            additional_directories: config.additional_directories.clone(),
             // `--plan`; without it the session restores its own mode. A
             // spawned child starts in its parent's mode.
             plan_mode: match embedding {
@@ -851,6 +854,10 @@ pub(crate) async fn build_headless_engine_with(
             image_model_router,
             rlm_token_allowance: match embedding {
                 HeadlessEmbedding::Child(overrides) => overrides.token_budget,
+                HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc => None,
+            },
+            agent_definition: match embedding {
+                HeadlessEmbedding::Child(overrides) => overrides.agent_definition.clone(),
                 HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc => None,
             },
         },
@@ -1132,11 +1139,23 @@ async fn select_model(
         // The lookup is scoped like TS findInitialModel's saved default: the
         // flag, when given, has already matched the saved provider above.
         let scope = flag_provider.or(saved_provider);
-        return available.iter().find(|model| {
+        let found = available.iter().find(|model| {
             scope.is_none_or(|provider| model.provider.eq_ignore_ascii_case(provider))
                 && (model.id.eq_ignore_ascii_case(saved_model)
                     || format!("{}/{}", model.provider, model.id).eq_ignore_ascii_case(saved_model))
-        }).cloned().ok_or_else(|| format!("Configured default model \"{saved_model}\" is unavailable. Check settings.json, models.json, and provider authentication."));
+        });
+        match found {
+            Some(model) => return Ok(model.clone()),
+            // Claude Code's `model` (claudeCodeSettings) is a preference,
+            // not this agent's configuration: unavailable, the usual
+            // default applies.
+            None if settings.default_model_from_claude_code() => {}
+            None => {
+                return Err(format!(
+                    "Configured default model \"{saved_model}\" is unavailable. Check settings.json, models.json, and provider authentication."
+                ));
+            }
+        }
     }
     // A settings defaultProvider without a defaultModel does not scope the
     // no-flag choice (TS reads the two keys together); only the flag does.
@@ -1224,7 +1243,26 @@ fn select_headless_session(options: &RunOptions) -> Result<HeadlessSession, Stri
             Err(error @ SessionSelectorError::NotFound { .. }) => {
                 let sessions = pa_daemon::session_store::list_sessions(&session_dir);
                 match crate::resume_selector::sessions_titled(&sessions, selector, cwd).as_slice() {
-                    [] => return Err(render_selector_error(&error)),
+                    // Another product's session (a Claude Code id or title) imports into
+                    // a new session file first.
+                    [] => {
+                        match crate::resume_selector::import_external(selector, cwd, &session_dir) {
+                            None => return Err(render_selector_error(&error)),
+                            Some(Err(notice)) => return Err(notice),
+                            Some(Ok(imported))
+                                if pa_types::platform::same_directory(
+                                    std::path::Path::new(&imported.cwd),
+                                    cwd,
+                                ) =>
+                            {
+                                ResolvedSession::Local(imported.path)
+                            }
+                            Some(Ok(imported)) => ResolvedSession::Global {
+                                path: imported.path,
+                                cwd: std::path::PathBuf::from(&imported.cwd),
+                            },
+                        }
+                    }
                     [only]
                         if pa_types::platform::same_directory(
                             std::path::Path::new(&only.cwd),

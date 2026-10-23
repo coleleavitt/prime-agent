@@ -58,9 +58,49 @@ pub(crate) fn effort_command(
     EffortCommandOutcome::Apply { level: requested }
 }
 
+/// `/effort ultracode [on|off|status]` (Claude Code's standing ultracode
+/// mode) is the session's `/ultracode` command, not a thinking level: the
+/// session command it forwards as, or `None` for any other argument.
+#[must_use]
+pub(crate) fn ultracode_session_command(arg: &str) -> Option<String> {
+    let mut words = arg.split_whitespace();
+    if !words.next()?.eq_ignore_ascii_case("ultracode") {
+        return None;
+    }
+    let rest = words.collect::<Vec<_>>().join(" ");
+    Some(if rest.is_empty() {
+        "/ultracode".to_string()
+    } else {
+        format!("/ultracode {rest}")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effort_ultracode_forwards_to_the_session_command() {
+        assert_eq!(
+            [
+                "ultracode",
+                " ULTRACODE  off ",
+                "ultracode status",
+                "high",
+                "",
+                "ultracoder"
+            ]
+            .map(ultracode_session_command),
+            [
+                Some("/ultracode".to_string()),
+                Some("/ultracode off".to_string()),
+                Some("/ultracode status".to_string()),
+                None,
+                None,
+                None,
+            ]
+        );
+    }
 
     fn levels() -> Vec<String> {
         ["off", "low", "medium", "high"]

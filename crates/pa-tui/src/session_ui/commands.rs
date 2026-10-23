@@ -108,6 +108,14 @@ impl SessionUi {
             self.track_command_used(resolved.name);
             return self.open_harness_selector(behavior, view);
         }
+        // `/effort ultracode [on|off]` switches the session's standing
+        // ultracode mode (the `/ultracode` session command), not a level.
+        if resolved.name == "effort" {
+            if let Some(forwarded) = effort_picker::ultracode_session_command(&resolved.args) {
+                self.track_command_used(resolved.name);
+                return self.send_prompt(&forwarded, behavior, view);
+            }
+        }
         let command = registry
             .get(resolved.name)
             .expect("resolved name is builtin");
@@ -246,6 +254,13 @@ impl SessionUi {
                     }
                 }
             }
+            "rewind" => {
+                if resolved.args.is_empty() {
+                    self.open_rewind_or_tree(view).await?;
+                } else {
+                    self.note("Usage: /rewind", view);
+                }
+            }
             "tree" => {
                 if resolved.args.is_empty() {
                     self.track_feature_outcome("tree", "initiated", None);
@@ -253,6 +268,12 @@ impl SessionUi {
                 } else {
                     self.note("Usage: /tree", view);
                 }
+            }
+            "fork" | "clone"
+                if self.coordinator_mode
+                    && ForkLaunch::from_args(&resolved.args) == Some(ForkLaunch::NewSession) =>
+            {
+                self.note(super::session_modes::COORDINATOR_FORK_REFUSAL, view);
             }
             "fork" => match ForkLaunch::from_args(&resolved.args) {
                 Some(launch) => {
@@ -701,6 +722,18 @@ impl SessionUi {
                         let mut rows = info_commands::system_prompt_header_rows(prompt);
                         rows.push(Vec::new());
                         rows.extend(info_commands::system_prompt_body_rows(prompt));
+                        // Daemons that send the session context separately
+                        // (the prompt no longer carries it).
+                        if let Some(context) = data
+                            .get("sessionContext")
+                            .and_then(Value::as_str)
+                            .filter(|context| !context.is_empty())
+                        {
+                            rows.push(Vec::new());
+                            rows.extend(info_commands::session_context_header_rows(context));
+                            rows.push(Vec::new());
+                            rows.extend(info_commands::system_prompt_body_rows(context));
+                        }
                         self.open_info_panel(view, None, InfoContent::Rows(rows));
                         self.track_menu_opened("system-prompt", "command");
                     }
@@ -850,6 +883,29 @@ impl SessionUi {
                     return Ok(());
                 }
                 self.handle_reload_command(view)?;
+            }
+            // `/vim`: toggle the editor's vim mode and persist `editorMode`.
+            "vim" => {
+                let enabled = !view.editor.vim_enabled();
+                view.editor.set_vim_enabled(enabled);
+                let mode = if enabled {
+                    crate::client_settings::EditorMode::Vim
+                } else {
+                    crate::client_settings::EditorMode::Normal
+                };
+                if let Some(settings) = &self.client_settings {
+                    if let Err(error) = settings.set_editor_mode(mode) {
+                        self.error_row(&format!("{error:#}"), view);
+                    }
+                }
+                self.note(
+                    if enabled {
+                        "Editor mode set to vim. Press Escape for NORMAL mode, i to insert."
+                    } else {
+                        "Editor mode set to normal."
+                    },
+                    view,
+                );
             }
             "heartbeats" => {
                 if !resolved.args.is_empty() {

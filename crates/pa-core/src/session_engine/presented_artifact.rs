@@ -55,7 +55,8 @@ impl PresentedArtifacts {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
     }
 
-    fn sink(&self) -> Option<PresentedArtifactSink> {
+    /// The installed row sink (also the `rlm.send_user_message` row's).
+    pub(crate) fn sink(&self) -> Option<PresentedArtifactSink> {
         self.sink
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

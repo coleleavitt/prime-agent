@@ -505,7 +505,7 @@ impl TreeNavigation {
 
     /// Wait until the running turn (if any) has settled (the compaction
     /// flow's interrupt-and-settle loop).
-    async fn wait_turn_end(&self) {
+    pub(crate) async fn wait_turn_end(&self) {
         loop {
             let busy = {
                 let mut core = self.core.lock_or_recover();

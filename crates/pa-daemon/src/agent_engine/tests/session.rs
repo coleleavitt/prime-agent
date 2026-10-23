@@ -501,3 +501,103 @@ fn a_bare_invocation_of_a_close_tagged_body_still_floors() {
     );
     assert_eq!(assistant_texts(&events), vec!["ok"]);
 }
+
+/// One faux-driven engine whose trusted working directory carries a Claude
+/// Code skill (`.claude/skills/deploy/SKILL.md`), running `prompt`.
+fn run_claude_skill_prompt(prompt: &str) -> (std::path::PathBuf, Vec<EngineEvent>) {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::TempDir::new().unwrap();
+    let cwd = dir.path().join("work");
+    let agent_dir = dir.path().join("agent");
+    let skill_dir = cwd.join(".claude").join("skills").join("deploy");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\ndescription: Deploy a target\n---\nDeploy $ARGUMENTS from ${CLAUDE_SKILL_DIR}.",
+    )
+    .unwrap();
+    pa_core::workspace_trust::record(
+        &cwd,
+        &agent_dir,
+        pa_core::workspace_trust::TrustDecision::Trusted,
+    )
+    .unwrap();
+    let engine = AgentSessionEngine::new(AgentEngineConfig {
+        cwd,
+        agent_dir,
+        provider: None,
+        model: None,
+        api_key: None,
+        thinking: None,
+        session_dir: None,
+        session_file: None,
+        faux_script: Some(json!({ "engine": "faux", "responses": [{ "text": "ok" }] }).to_string()),
+        supervisor_link: None,
+        telemetry_disabled: None,
+        cron_store: None,
+        queued_steering_probe: None,
+        steering_fold: None,
+    })
+    .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    engine.register_arc();
+    let mut events: Vec<EngineEvent> = Vec::new();
+    engine.run_prompt(
+        0,
+        PromptRequest {
+            batch: Vec::new(),
+            images: Vec::new(),
+            message: prompt.to_string(),
+            source: "user".to_string(),
+            agent_message_id: None,
+            custom_message: None,
+        },
+        &|| false,
+        &mut |event| {
+            events.push(event);
+            true
+        },
+    );
+    (skill_dir, events)
+}
+
+/// A Claude Code skill answers to its own `/<name>`: the accepted row is
+/// the expanded block (Claude Code's base-directory line, the arguments and
+/// `${CLAUDE_SKILL_DIR}` substituted), and a bare invocation runs as is.
+#[test]
+fn a_claude_code_skill_runs_by_its_bare_name() {
+    let (skill_dir, events) = run_claude_skill_prompt("/deploy prod");
+    let texts = user_texts(&events);
+    let row = texts
+        .iter()
+        .find(|text| text.starts_with("<skill"))
+        .unwrap_or_else(|| panic!("the accepted row carries the expanded block: {texts:?}"));
+    let parsed = pa_types::skill_blocks::parse_skill_block(row)
+        .unwrap_or_else(|| panic!("the accepted row parses as a skill block: {row:?}"));
+    assert_eq!(
+        (parsed.name.as_str(), parsed.user_message.as_deref()),
+        ("deploy", Some("prod"))
+    );
+    assert_eq!(
+        parsed.content,
+        format!(
+            "Base directory for this skill: {0}\n\nDeploy prod from {0}.",
+            skill_dir.display()
+        )
+    );
+    assert_eq!(assistant_texts(&events), vec!["ok"]);
+
+    let (_, events) = run_claude_skill_prompt("/deploy");
+    let texts = user_texts(&events);
+    let row = texts
+        .iter()
+        .find(|text| text.starts_with("<skill"))
+        .unwrap_or_else(|| panic!("the bare command expands too: {texts:?}"));
+    assert!(
+        !row.contains(crate::agent_engine::lifecycle::BARE_SKILL_INVOCATION_INSTRUCTION),
+        "a Claude Code skill's own command carries no floor: {row:?}"
+    );
+}

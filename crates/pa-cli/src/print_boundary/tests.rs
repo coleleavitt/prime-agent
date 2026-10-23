@@ -106,6 +106,7 @@ async fn faux_engine_with_telemetry(
         .expect("a session manager");
     let engine = create_session(SessionEngineConfig {
         sandbox_mode: None,
+        additional_directories: Vec::new(),
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
@@ -146,6 +147,7 @@ async fn faux_engine_with_telemetry(
         steering_fold: None,
         rlm_token_allowance: None,
         should_stop_after_turn: None,
+        agent_definition: None,
     })
     .await
     .expect("the faux session assembles");

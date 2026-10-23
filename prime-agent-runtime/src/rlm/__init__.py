@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 # First: a unittest run isolates its environment before anything resolves state.
 from . import _state_guard as _state_guard
-from . import toolforge, trace
+from . import lsp, toolforge, trace
 from .bash import BashHandle, BashResult, active_bash_commands, bash
 from .factory import (
     FACTORY_HELP,
@@ -24,9 +24,13 @@ from .factory import (
     stop_factory,
     watch_factory,
 )
+from .agents import RLMAgent, list_agents, send_message
 from .harness import HarnessEntry, HarnessScope, HarnessState, RefinementEvent, get_harness_state
 from .monitor import monitor, monitor_list, monitor_stop
+from .skill_loader import load_skill
+from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
+from .schedule import cron, schedule_wakeup
 from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -223,6 +227,8 @@ async def spawn(
     cwd: str | None = None,
     target: str | None = None,
     token_budget: int | None = None,
+    agent: str | None = None,
+    isolation: str | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -242,6 +248,14 @@ async def spawn(
     grant is drawn from this session's pool and must fit what is left and
     the per-depth cap; without one it funds the child alone. Omitted, a
     budgeted session grants whatever is left (up to the per-depth cap).
+    ``agent`` runs the child as a typed agent definition (``.prime/agents``
+    or ``.claude/agents`` ``<name>.md``, project then user): its instructions
+    join the child's system prompt, its model and effort fill ``model`` and
+    ``thinking`` when they are omitted, and the harness refuses the tools its
+    scope denies (``bash()``, spawning, agent messages).
+    ``isolation="worktree"`` runs the child in a fresh git worktree of the
+    parent's repository (a definition can ask for it too); the worktree is
+    removed with the child when it holds no changes.
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
@@ -262,6 +276,14 @@ async def spawn(
         kwargs["target"] = target
     if token_budget is not None:
         kwargs["token_budget"] = token_budget
+    if agent is not None:
+        if not isinstance(agent, str) or not agent.strip():
+            raise TypeError("agent must be a non-empty str")
+        kwargs["agent"] = agent.strip()
+    if isolation is not None:
+        if isolation != "worktree":
+            raise ValueError('isolation must be "worktree"')
+        kwargs["isolation"] = isolation
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
@@ -538,6 +560,35 @@ async def progress_note(message: str) -> RLMProgressNoteResult:
     if retry_after_ms is not None and (not isinstance(retry_after_ms, int) or isinstance(retry_after_ms, bool)):
         raise RuntimeError("rlm.progress.note returned an invalid retry_after_ms")
     return RLMProgressNoteResult(accepted=accepted, retry_after_ms=retry_after_ms)
+
+
+async def send_user_message(
+    message: str,
+    attachments: list[str] | None = None,
+    *,
+    status: str = "normal",
+) -> dict[str, Any]:
+    """Send a message the user reads (brief mode's visible output channel).
+
+    ``message`` supports markdown. ``attachments`` are file paths (absolute or
+    relative to the working directory) shown alongside it. ``status`` is
+    ``"normal"`` when replying to the user and ``"proactive"`` when initiating.
+    Raises outside brief mode (the user turns it on with ``/brief``).
+    """
+    if not isinstance(message, str):
+        raise TypeError(f"message must be str, got {type(message).__name__}")
+    if not message.strip():
+        raise ValueError("message must not be empty")
+    if attachments is not None:
+        if isinstance(attachments, (str, bytes)) or not all(isinstance(path, str) for path in attachments):
+            raise TypeError("attachments must be a list of path strings")
+        attachments = [str(path) for path in attachments]
+    if status not in ("normal", "proactive"):
+        raise ValueError('status must be "normal" or "proactive"')
+    payload: dict[str, Any] = {"message": message, "status": status}
+    if attachments:
+        payload["attachments"] = attachments
+    return await host_request("user_message.send", payload)
 
 
 def _subagent_selector(target: Any) -> str:
@@ -1018,6 +1069,7 @@ class _RLMFactoryNamespace:
 
 class _RLMNamespace:
     harness = _harness_state
+    lsp = lsp
     toolforge = toolforge
     get_harness_state = staticmethod(get_harness_state)
 
@@ -1031,6 +1083,8 @@ class _RLMNamespace:
         cwd: str | None = None,
         target: str | None = None,
         token_budget: int | None = None,
+        agent: str | None = None,
+        isolation: str | None = None,
     ) -> RLMSpawnHandle:
         return await spawn(
             prompt,
@@ -1040,6 +1094,8 @@ class _RLMNamespace:
             cwd=cwd,
             target=target,
             token_budget=token_budget,
+            agent=agent,
+            isolation=isolation,
         )
 
     async def create_session(
@@ -1058,8 +1114,23 @@ class _RLMNamespace:
     async def list_subagents(self) -> list[RLMSubagent]:
         return await list_subagents()
 
+    async def list_agents(self) -> list[RLMAgent]:
+        return await list_agents()
+
+    async def send_message(self, to: Any, message: str) -> dict[str, Any]:
+        return await send_message(to, message)
+
     async def progress_note(self, message: str) -> RLMProgressNoteResult:
         return await progress_note(message)
+
+    async def send_user_message(
+        self,
+        message: str,
+        attachments: list[str] | None = None,
+        *,
+        status: str = "normal",
+    ) -> dict[str, Any]:
+        return await send_user_message(message, attachments, status=status)
 
     async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
         return await interrupt_subagent(target)
@@ -1116,6 +1187,28 @@ class _RLMNamespace:
     async def web_fetch(self, url: str, prompt: str | None = None, *, offset: int = 0) -> WebFetchResult:
         return await web_fetch(url, prompt, offset=offset)
 
+    async def load_skill(self, name: str, args: str = "") -> str:
+        return await load_skill(name, args)
+
+    async def enter_worktree(self, name: str | None = None, *, path: str | None = None) -> dict[str, Any]:
+        return await enter_worktree(name, path=path)
+
+    async def exit_worktree(self, action: str, *, discard_changes: bool = False) -> dict[str, Any]:
+        return await exit_worktree(action, discard_changes=discard_changes)
+
+    cron = cron
+
+    async def schedule_wakeup(
+        self,
+        delay_seconds: float | None = None,
+        prompt: str | None = None,
+        reason: str | None = None,
+        *,
+        noop: bool | None = None,
+        stop: bool = False,
+    ) -> dict[str, Any]:
+        return await schedule_wakeup(delay_seconds, prompt, reason, noop=noop, stop=stop)
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1148,6 +1241,7 @@ __all__ = [
     "McpIntegration",
     "McpToolError",
     "NotEnabled",
+    "RLMAgent",
     "RLMCreateSessionHandle",
     "RLMInterruptResult",
     "RLMModel",
@@ -1157,6 +1251,7 @@ __all__ = [
     "RLMSubagent",
     "RLMSubagentActivity",
     "create_session",
+    "cron",
     "RefinementEvent",
     "ToolforgeRejected",
     "ToolforgeSkill",
@@ -1167,6 +1262,8 @@ __all__ = [
     "bash",
     "delete_subagent",
     "emit",
+    "enter_worktree",
+    "exit_worktree",
     "find_models",
     "get_harness_state",
     "harness",
@@ -1175,7 +1272,10 @@ __all__ = [
     "inbox_list",
     "inbox_read",
     "interrupt_subagent",
+    "list_agents",
     "list_subagents",
+    "load_skill",
+    "lsp",
     "messaging_stats",
     "monitor",
     "monitor_list",
@@ -1183,6 +1283,9 @@ __all__ = [
     "progress_note",
     "rename",
     "rlm",
+    "schedule_wakeup",
+    "send_message",
+    "send_user_message",
     "spawn",
     "toolforge",
     "trace",

@@ -7,7 +7,14 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
 ## Scope
 
 - **Settings:** `hooks` in `<agent dir>/settings.json`, then in a trusted project's `.prime/agent/settings.json`
-  (`hooks` is a gated key, so an untrusted project contributes none). Settings are read once per session.
+  (`hooks` is a gated key, so an untrusted project contributes none). With `"claudeCodeSettings": true` in the user
+  settings, Claude Code's files follow (read through `pa_core::settings::claude_code`): `~/.claude/settings.json`,
+  a trusted project's `.claude/settings.json` and `.claude/settings.local.json`, then the managed settings. Every
+  command carries its source (`HookSource`): warnings, a refusal without a reason (`blocked by hook "x" from Claude
+  Code project settings`) and a Claude Code hook's `asyncRewake` notice name it. Settings are read once per session.
+- **Switches:** `disableAllHooks: true` (this agent's settings or Claude Code's) turns every hook off, except the
+  managed ones unless the managed settings set it; the managed `allowManagedHooksOnly: true` keeps only the managed
+  hooks. Claude Code's `env` is in every hook command's environment.
 - **Input:** every event gets Claude Code's base fields (`session_id`, `transcript_path` (empty), `cwd`,
   `hook_event_name`, `permission_mode` (`default`)) plus its own:
 
@@ -25,6 +32,12 @@ scripts work unmodified. The design and the user-facing contract are in `docs/ho
   | `PostCompact` | after a compaction committed | `trigger`, `compact_summary` | none |
   | `Notification` | a background completion notice reaches the model (`[bash-done ...]`, a child's terminal notice); a `PreToolUse` hook asks the user | `message`, `title`, `notification_type` (`background_task_completed`, `permission_prompt`) | none |
   | `SessionEnd` | the host ends the session (`dispose_kernel`) or its engine drops | `reason` (`other`) | none |
+  | `WorktreeCreate` | a managed worktree is made (`--worktree`, `rlm.enter_worktree`, child isolation); replaces git, so it also works outside a repository | `name` | exit 0 and the created directory as the last stdout line; anything else fails the creation. The first command runs |
+  | `WorktreeRemove` | a worktree a `WorktreeCreate` hook made is removed | `worktree_path` | any non-zero exit fails the removal (the worktree is kept). Every command runs |
+
+  `WorktreeCreate`/`WorktreeRemove` are not session events: `pa_hooks::worktree::install` registers them with
+  `pa_core::worktree` (the composition root does), and they read the `hooks` settings of the directory the worktree
+  is made from. `session_id` is empty for the `--worktree` launch (no session exists yet).
 
   `background_tasks` lists the kernel's `bash()` commands still running (tracked from `bash.run` until their result,
   a detached `bash.completed`, a `bash.kill` or `bash.killAll`) and the child agents still running.

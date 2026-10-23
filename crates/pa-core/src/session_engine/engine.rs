@@ -121,6 +121,14 @@ pub struct SessionEngineConfig {
     /// `--sandbox <mode>`: replaces the `sandbox` setting's mode for this run (`off` included).
     /// `None` keeps the setting.
     pub sandbox_mode: Option<crate::os_sandbox::SandboxMode>,
+    /// `--add-dir`: extra working directories for this run, joined with
+    /// the `permissions.additionalDirectories` setting and the session's
+    /// own `/add-dir` additions.
+    pub additional_directories: Vec<PathBuf>,
+    /// The typed agent definition this session runs as (an
+    /// `rlm.spawn(agent=...)` child): its instructions end the system
+    /// prompt and its tool scope gates the kernel's host requests.
+    pub agent_definition: Option<crate::agents::AgentDefinition>,
 }
 
 pub struct SessionEngine {
@@ -131,10 +139,17 @@ pub struct SessionEngine {
     pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub agents_files: Vec<crate::resources::ContextFile>,
+    /// The instruction files and auto memory `/memory` reports.
+    pub instructions: super::memory_command::SessionInstructions,
+    /// Where `/workflows` finds the saved workflows and the run journals.
+    pub workflows: super::workflows_command::WorkflowsContext,
     pub system_prompt: String,
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
     pub goal_driver: std::sync::Arc<tokio::sync::Mutex<super::goal_driver::GoalDriver>>,
+    /// The session's Claude Code task book (`/loop` reaches it); `None` when the
+    /// embedding runs no scheduler.
+    pub session_tasks: Option<std::sync::Arc<crate::cron::tasks::SessionTasks>>,
     /// `/goal` pause/clear/start and the kernel's `goal.complete` withdraw
     /// queued goal-context turns through it; `None` when no queue.
     pub queued_goal_context_purge: Option<super::runtime::QueuedGoalContextPurge>,
@@ -205,26 +220,23 @@ pub struct SessionEngine {
     /// The session's MCP client connections (behind the kernel's `rlm.mcp`
     /// calls): they outlive kernel restarts and close with the session.
     pub mcp_sessions: crate::mcp::McpSessions,
+    /// The session's additional working directories (`--add-dir`, the
+    /// setting, `/add-dir`): the extra roots other layers may read.
+    pub additional_directories: Arc<super::additional_dirs::AdditionalDirectories>,
+    /// Coordinator and brief mode (Claude Code's unreleased modes).
+    pub modes: super::modes::SessionModes,
 }
 
 /// Skill overrides for built-in integrations the user is not logged into,
 /// plus the enabled persistent generic servers.
 async fn mcp_gating(
     settings: &crate::settings::SettingsManager,
+    cwd: &std::path::Path,
     agent_dir: std::path::PathBuf,
 ) -> anyhow::Result<(Vec<String>, Vec<String>, crate::mcp::McpManager)> {
-    let user_servers = settings
-        .settings()
-        .mcp_servers
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(server, config)| {
-            serde_json::from_value(config)
-                .ok()
-                .map(|parsed| (server, parsed))
-        })
-        .collect::<std::collections::HashMap<String, crate::mcp::McpServerConfig>>();
+    // The settings' servers, the approved `.mcp.json` servers, and (opted
+    // in) Claude Code's own.
+    let user_servers = crate::mcp::DeclaredServers::load(cwd, &agent_dir, settings).dispatchable();
     // The MCP manager snapshots auth with a blocking lock; run it off the
     // async runtime.
     tokio::task::spawn_blocking(move || mcp_gating_blocking(user_servers, &agent_dir))
@@ -294,6 +306,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(traces) = traces {
         session_manager.on_persist(Box::new(move |path| traces.persisted(path)));
     }
+    // A resumed session keeps the directories its `/add-dir` added.
+    let persisted_directories =
+        super::additional_dirs::persisted_directories(session_manager.get_branch(None).into_iter());
     let wiring = super::runtime_wiring::wire_session_runtime(
         session_manager,
         &config.agent_dir,
@@ -313,6 +328,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Captured before `settings` moves into the resource loader: the
     // compaction budget and the auto-refine gates.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
+    let file_checkpointing_setting = settings.settings().file_checkpointing_enabled;
     let layer_cap = |layer: &crate::settings::Settings| {
         layer
             .compaction
@@ -341,13 +357,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
-    let length_continuations = settings.get_length_continuations();
+    let output_limit_recovery = settings.get_output_limit_recovery();
+    let experimental = settings.experimental();
     let repetition_guard = settings.get_repetition_guard();
+    let reminder_toggles = settings.get_reminders();
     // The delegation budget's setting (upstream #1192), read before
     // `settings` moves into the loader; the budget itself is built once
     // the session's artifact dir (its durable ledger's home) is known.
     let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
+    // Claude Code's settings files (behind `claudeCodeSettings`): their
+    // `env` reaches the kernel and its commands; what was not taken is
+    // logged, so a PATH override is never silent.
+    let claude_code_env = settings.get_claude_code_env();
+    for problem in settings.claude_code_problems() {
+        tracing::warn!(target: "pa_core::claude_code_settings", "{problem}");
+    }
     // Captured before `settings` moves into the resource loader: the
     // factory host bridge's preflight facts (the daemon `allowedModels`
     // pin), like the request-timing snapshot above; and the
@@ -359,7 +384,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let router_allowed_models = factory_allowed_models.clone();
     let router_retry_policy = settings.get_provider_retry_policy();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
-        mcp_gating(&settings, config.agent_dir.clone()).await?;
+        mcp_gating(&settings, &cwd, config.agent_dir.clone()).await?;
     let mcp_manager = config
         .mcp_manager
         .take()
@@ -372,9 +397,43 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             generic_mcp_servers.push(server);
         }
     }
+    // The additional working directories and the output style, read
+    // before `settings` moves into the resource loader.
+    // Claude Code's user-scope instruction files (the session context row
+    // reads them each turn through the canonical loader).
+    let claude_user_instructions = settings.get_claude_code_user_instructions();
+    // Claude Code's dynamic skills (`.claude/skills` below the working
+    // directory, found as the session touches files) load only in a
+    // trusted workspace, like the project's own skills.
+    let skill_discovery =
+        (settings.project_scope_trusted() && !config.resource_exclusions.no_skills).then(|| {
+            if settings.get_disable_skill_shell_execution() {
+                crate::skills::claude_commands::ShellExpansion::Disabled
+            } else {
+                crate::skills::claude_commands::ShellExpansion::Enabled
+            }
+        });
+    let mut launch_directories = config.additional_directories.clone();
+    launch_directories.extend(settings.get_additional_directories(&cwd));
+    let additional_directories = Arc::new(super::additional_dirs::AdditionalDirectories::resolve(
+        &cwd,
+        &launch_directories,
+        &persisted_directories,
+    ));
+    let output_style = settings.get_output_style().and_then(|name| {
+        let styles = crate::prompts::output_style::load_output_styles(
+            &crate::prompts::output_style::output_style_dirs(
+                &cwd,
+                &config.agent_dir,
+                settings.project_scope_trusted(),
+            ),
+        );
+        crate::prompts::output_style::find_output_style(&styles, name).cloned()
+    });
     let resources = load_resources(ResourceLoaderOptions {
         cwd: cwd.clone(),
         agent_dir: config.agent_dir.clone(),
+        additional_directories: additional_directories.list(),
         settings: Some(settings),
         extra_builtin_skill_overrides,
         additional_skill_paths: config.additional_skill_paths.clone(),
@@ -382,10 +441,37 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         no_skills: config.resource_exclusions.no_skills,
         no_prompt_templates: config.resource_exclusions.no_prompt_templates,
         no_context_files: config.resource_exclusions.no_context_files,
+        // Auto memory is a top-level session's (a subagent's prompt stays
+        // task-focused, as in Claude Code).
+        auto_memory: config.rlm_depth.unwrap_or(0) == 0,
+        // An agent definition's `memory` scope: its persistent memory.
+        agent_memory: config
+            .agent_definition
+            .as_ref()
+            .and_then(crate::agents::memory_request),
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: config.prompt_guidelines.clone(),
         ..Default::default()
     })?;
+    let dynamic_skills = skill_discovery.map(|shell| {
+        Arc::new(crate::skills::dynamic::DynamicSkills::new(
+            cwd.clone(),
+            shell,
+        ))
+    });
+    // The model writes its memory files from the kernel: a `workspace-write`
+    // sandbox keeps the auto-memory directory writable.
+    let sandbox = match (sandbox, &resources.auto_memory) {
+        (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
+        (sandbox, _) => sandbox,
+    };
+    // So is the agent's persistent memory (unless it is read-only).
+    let sandbox = match (sandbox, &resources.agent_memory) {
+        (Some(sandbox), Some(memory)) if !memory.read_only => {
+            Some(sandbox.with_writable_root(memory.dir.clone()))
+        }
+        (sandbox, _) => sandbox,
+    };
 
     let model = config
         .model
@@ -408,10 +494,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let model_context_window = model.context_window;
 
-    let (session_id, restored_plan_mode) = {
+    let (session_id, restored_plan_mode, restored_brief_mode) = {
         let session = wiring.session.lock().await;
-        (session.get_session_id().to_string(), session.plan_mode())
+        (
+            session.get_session_id().to_string(),
+            session.plan_mode(),
+            session.brief_mode(),
+        )
     };
+    // Claude Code's coordinator and brief modes (experimental, off by default).
+    let session_modes = super::modes::SessionModes::resolve(
+        &experimental,
+        config.rlm_depth.unwrap_or(0),
+        config.agent_definition.is_some(),
+        restored_brief_mode,
+    );
+    session_modes.wire_rlm(&wiring.rlm);
     // Plan mode: an explicit start state wins over the branch's newest
     // change; a session that never changed it starts off.
     let plan_mode = super::plan_mode::PlanModeSwitch::new(
@@ -440,6 +538,28 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::harness_digest::session_artifact_dir_for_log)
         });
+    let workflows_context = super::workflows_command::WorkflowsContext {
+        agent_dir: config.agent_dir.clone(),
+        session_artifact_dir: session_artifact_dir.clone(),
+    };
+    // The session's private scratchpad and tasks directories (Claude Code's
+    // per-session scratchpad): in the artifact partition, so the session's
+    // delete removes them. A directory that cannot be made is left out of
+    // the prompt (the kernel still names it; the first write reports why).
+    let scratch =
+        super::scratch::SessionScratch::for_session(session_artifact_dir.as_deref(), &session_id);
+    let scratch_directory_text = match scratch.ensure() {
+        Ok(()) => Some(scratch.scratchpad.display().to_string().replace('\\', "/")),
+        Err(error) => {
+            tracing::warn!(
+                target: "pa_core::session",
+                %error,
+                path = %scratch.scratchpad.display(),
+                "the session scratchpad could not be created"
+            );
+            None
+        }
+    };
     // The delegation budget (upstream #1192): a root takes its pool from
     // the global `rlmTokenBudget` setting; a funded child enforces the grant
     // its parent drew even if the setting changed since, and a resumed
@@ -528,14 +648,36 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the next tool result or admitted prompt.
     let feature_notes = crate::features::FeatureNotes::default();
     crate::features::register_session_host_handlers(&feature_context, &mut handlers);
+    // File checkpoints for `/rewind` (Claude Code's file history): the
+    // kernel's edit helpers report their writes into the session's artifact
+    // tree. Top-level sessions only: a child's writes are its own.
+    if config.rlm_depth.unwrap_or(0) == 0
+        && crate::file_history::checkpointing_enabled(file_checkpointing_setting)
+    {
+        if let Some(dir) = session_artifact_dir.as_deref() {
+            crate::file_history::register_host_handlers(
+                &mut handlers,
+                &crate::file_history::FileHistory::for_artifact_dir(dir),
+            );
+        }
+    }
     // Installed features review every kernel host request (the kernel's
     // `bash()` included) before it is dispatched; later registrations keep
     // the gate.
-    if let Some(gate) = crate::features::host_request_gate(
+    let feature_gate = crate::features::host_request_gate(
         crate::features::installed(),
         &feature_context,
         &feature_notes,
-    ) {
+    );
+    // An agent's tool scope refuses first, then the features review.
+    let gate = match &config.agent_definition {
+        Some(definition) => {
+            crate::agents::agent_tool_gate(definition, feature_gate.clone()).or(feature_gate)
+        }
+        None => feature_gate,
+    };
+    // A coordinator refuses worker capabilities before either.
+    if let Some(gate) = session_modes.gate(gate) {
         handlers.set_gate(gate);
     }
     // The `system_router.run` host handler the bundled system-router skill
@@ -586,6 +728,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             },
         );
     }
+    // `rlm.send_user_message` (brief mode) records its row through the same seam.
+    session_modes.register_host_handlers(
+        &mut handlers,
+        cwd.clone(),
+        &presented_artifacts,
+        &wiring.session,
+    );
     // A delegation-budget refusal counts into the session counters.
     let _ = wiring
         .rlm
@@ -597,6 +746,26 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if let Some(telemetry) = &config.telemetry {
         telemetry.register_kernel_bridge(&mut handlers);
     }
+    // `goal.propose` (experimental `modelProposedGoals`, off by default:
+    // the request is refused): the model proposes, the user approves.
+    super::goal_proposal::register_host_handlers(
+        &mut handlers,
+        experimental.model_proposed_goals,
+        std::sync::Arc::clone(wiring.runtime.goal_driver()),
+        std::sync::Arc::clone(&wiring.session),
+        session_id.clone(),
+    );
+    // `skill.load` (`rlm.load_skill`): the model loads a skill's
+    // instructions, Claude Code's Skill tool.
+    super::skill_host::register_host_handlers(
+        &mut handlers,
+        super::skill_host::SkillHostConfig {
+            skills: resources.skills.clone(),
+            dynamic: dynamic_skills.clone(),
+            cwd: cwd.clone(),
+            session_id: session_id.clone(),
+        },
+    );
     // The bundled computer-use skill's `computer_use.*` requests: every
     // backend runs host-side; its adoption events take the bridge's path.
     super::computer_use_host::register_host_handlers(
@@ -738,6 +907,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .await
         .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
     };
+    // Captured before the provisioner takes them: the environment's shell
+    // line and the `tasks` skill's store for the task-list reminder.
+    let context_shell = kernel_shell_path
+        .as_ref()
+        .map(|path| path.display().to_string());
+    let tasks_file = session_artifact_dir
+        .as_ref()
+        .map(|dir| dir.join("tasks.json"));
+    // `${CLAUDE_SESSION_ID}` in a folded Claude Code skill command.
+    let fold_session_id = session_id.clone();
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -748,6 +927,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_command_prefix,
         serper_api_key,
         session_artifact_dir,
+        &scratch,
         on_restore,
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
@@ -755,6 +935,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         kernel_environment,
         plan.clone(),
         sandbox.clone(),
+        claude_code_env,
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {
@@ -818,19 +999,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &model_prompts.errors,
             ));
     }
+    // The agent types a spawn can run: listed (in the session context row)
+    // only where spawning works (a host is wired and the session's own scope
+    // allows it).
+    let list_agent_types = config.rlm_subagent_host.is_some()
+        && config.allow_recursion != Some(false)
+        && config.agent_definition.as_ref().is_none_or(|definition| {
+            crate::agents::allows(definition, crate::agents::GatedTool::Agent)
+        });
     let system_prompt = crate::prompts::system_prompt::build_system_prompt(
         &crate::prompts::system_prompt::BuildSystemPromptOptions {
             custom_prompt: resources.system_prompt.clone(),
             model_prompt_extras: model_prompts.extras.as_deref(),
-            vision_capable: prompt_vision_capable,
-            cwd: cwd.display().to_string(),
-            messages_path: conversation_log.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
-            skills: visible_skills.clone(),
+            auto_memory: resources
+                .auto_memory
+                .as_ref()
+                .map(crate::resources::auto_memory::memory_prompt_section),
             selected_tools: Some(
                 active_tool_names
                     .iter()
@@ -843,14 +1027,64 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             rlm_depth: config.rlm_depth,
             daemonless: config.daemonless,
             can_spawn: config.rlm_subagent_host.is_some(),
-            generic_mcp_servers,
-            append_system_prompt: Some(resources.append_system_prompt.join("\n\n")),
-            sandbox: sandbox
-                .as_ref()
-                .map(crate::os_sandbox::SessionSandbox::prompt_line),
+            append_system_prompt: Some(
+                resources
+                    .append_system_prompt
+                    .iter()
+                    .cloned()
+                    .chain(config.agent_definition.as_ref().map(|definition| {
+                        crate::agents::agent_prompt(definition, resources.agent_memory.as_ref())
+                    }))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ),
+            output_style,
+            coordinator_section: session_modes
+                .coordinator_section(scratch_directory_text.clone(), list_agent_types),
+            brief_mode: session_modes.brief_in_prompt(),
             ..Default::default()
         },
     );
+    // The volatile context the prompt no longer carries: hidden rows on the
+    // first turn, deltas later, and the per-turn reminders.
+    let context_rows =
+        super::context_source::session_context_rows(super::context_source::ContextRowsWiring {
+            cwd: cwd.clone(),
+            agent_dir: config.agent_dir.clone(),
+            load_instruction_files: !config.resource_exclusions.no_context_files,
+            skills: visible_skills.clone(),
+            tools: active_tool_names.clone(),
+            mcp_servers: generic_mcp_servers,
+            conversation_log: conversation_log.clone(),
+            model: super::context_source::ModelFacts {
+                label: Some(prompt_model_selector.clone()),
+                vision_capable: prompt_vision_capable,
+                context_window: compaction_settings
+                    .max_context_tokens
+                    .map_or(model_context_window, |cap| cap.min(model_context_window)),
+            },
+            sandbox: sandbox
+                .as_ref()
+                .map(crate::os_sandbox::SessionSandbox::prompt_line),
+            shell: context_shell,
+            reminders: reminder_toggles,
+            tasks_file,
+            scratch_directory: scratch_directory_text,
+            instruction_options: crate::resources::instructions::InstructionOptions {
+                cwd: cwd.clone(),
+                agent_dir: config.agent_dir.clone(),
+                home_dir: pa_types::platform::home_dir(),
+                claude_user_files: claude_user_instructions,
+                additional_dirs: if crate::resources::additional_directory_context_enabled() {
+                    additional_directories.list()
+                } else {
+                    Vec::new()
+                },
+            },
+            additional_directories: Some(Arc::clone(&additional_directories)),
+            list_agent_types,
+        });
+    provisioner.set_file_access_sink(context_rows.reminders().files().sink());
 
     // Captured before the digest context moves the local harness dir and
     // the loop wiring moves the session model: the factory host bridge's
@@ -952,11 +1186,39 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // over the timing-instrumented fn (TS `sdk.ts` instruments first, the
     // `AgentSession` constructor wraps semantic edges over it). The side
     // question keeps the pre-semantic fn, so its calls carry no id.
+    // Usage-limit wrap-up (experimental, off by default): every response's
+    // rate-limit headers reach the session's monitor.
+    let usage_limit = experimental.usage_limit_wrap_up.then(|| {
+        std::sync::Arc::new(super::usage_limit::UsageLimitMonitor::new(
+            experimental.usage_limit_wrap_up_threshold,
+        ))
+    });
+    let stream_fn = match &usage_limit {
+        Some(monitor) => {
+            super::usage_limit::observe_stream_fn(std::sync::Arc::clone(monitor), stream_fn)
+        }
+        None => stream_fn,
+    };
     let timing_stream_fn = super::request_timing::instrument_stream_fn(
         std::sync::Arc::clone(&request_timing_wiring),
         stream_fn,
     );
     let side_question_stream_fn = std::sync::Arc::clone(&timing_stream_fn);
+    // The goal evaluator (experimental, off by default) judges an active
+    // goal at a natural stop, on the session's stream or its own model.
+    let goal_evaluator = experimental.goal_evaluator.then(|| {
+        std::sync::Arc::new(super::goal_evaluator::GoalEvaluator {
+            side: super::side_model::side_model_for(
+                experimental.goal_evaluator_model.as_deref(),
+                &side_question_stream_fn,
+                &model,
+                &config.agent_dir,
+                &config.cwd,
+            ),
+            driver: std::sync::Arc::clone(wiring.runtime.goal_driver()),
+            session: std::sync::Arc::clone(&wiring.session),
+        })
+    });
     let semantic_recorder = config.semantic_edges.take().map(|identity| {
         std::sync::Arc::new(super::semantic_edges::SemanticEdgeRecorder::open(identity))
     });
@@ -983,6 +1245,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
         initial_messages.as_deref().unwrap_or_default(),
     );
+    // Nested instruction files a resumed conversation already carries are
+    // not delivered again.
+    let nested_instructions = resources.nested_instructions.clone();
+    if let Some(nested) = &nested_instructions {
+        nested.mark_delivered(&super::instruction_boundary::delivered_paths(
+            initial_messages.as_deref().unwrap_or_default(),
+        ));
+    }
     // Whether a queued steer is waiting: a run that ends with one continues
     // on it at once, so the features hear no agent stop.
     let steering_probe = config.queued_steering_probe.clone();
@@ -1018,12 +1288,26 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             // A funded subagent that spent its grant stops at this
             // boundary (the turn that crossed it is kept).
             let budget = rlm_token_budget.clone();
+            let usage_limit = usage_limit.clone();
+            let goal_evaluator = goal_evaluator.clone();
+            let nested = nested_instructions.clone();
+            let dynamic_skills = dynamic_skills.clone();
+            let known_skills = Arc::new(resources.skills.clone());
+            let context_rows = std::sync::Arc::clone(&context_rows);
+            let modes_boundary = session_modes.boundary(wiring.rlm.child_host());
             Some(std::sync::Arc::new(move |context| {
                 let fold = fold.clone();
                 let fold_slot = std::sync::Arc::clone(&fold_slot);
+                let nested = nested.clone();
+                let modes_boundary = modes_boundary.clone();
+                let dynamic_skills = dynamic_skills.clone();
+                let known_skills = Arc::clone(&known_skills);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
                 let budget = budget.clone();
+                let usage_limit = usage_limit.clone();
+                let goal_evaluator = goal_evaluator.clone();
+                let context_rows = std::sync::Arc::clone(&context_rows);
                 Box::pin(async move {
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
@@ -1048,12 +1332,72 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     // run goes on past it (the copy is made only for them).
                     let feature_turn =
                         (!crate::features::installed().is_empty()).then(|| context.clone());
+                    // The usage-limit monitor and the goal evaluator read the
+                    // boundary only when the run goes on past it, like the features.
+                    let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
+                        .then(|| context.clone());
+                    // The files this batch touched (nested instruction discovery).
+                    let mut touched = if nested.is_some() || dynamic_skills.is_some() {
+                        super::instruction_boundary::touched_paths(&context.tool_results)
+                    } else {
+                        Vec::new()
+                    };
+                    // A coordinator also loads what its workers loaded.
+                    if nested.is_some() {
+                        modes_boundary
+                            .propagate_nested(&context, &mut touched)
+                            .await;
+                    }
+                    let brief_enforcement = modes_boundary.brief_enforcement(&context);
+                    // The nested files the conversation still carries (a
+                    // compaction may have summarized some away).
+                    let live = if touched.is_empty() {
+                        Vec::new()
+                    } else {
+                        super::instruction_boundary::delivered_paths(&context.context.messages)
+                    };
+                    // The context and reminder rows ride a run that goes on
+                    // past a tool batch.
+                    let reminder_turn = (!context.tool_results.is_empty()).then(|| context.clone());
                     let stop = match boundary {
                         Some(hook) => hook(context).await?,
                         None => false,
                     };
+                    if let (false, Some(turn)) = (stop, experimental_turn) {
+                        if let Some(monitor) = &usage_limit {
+                            super::usage_limit::after_turn(monitor, &fold_slot, &turn);
+                        }
+                        if let Some(evaluator) = &goal_evaluator {
+                            super::goal_evaluator::after_turn(evaluator, &fold_slot, &turn).await;
+                        }
+                    }
+                    if let (false, Some(nested)) = (stop, &nested) {
+                        super::instruction_boundary::after_turn(
+                            &fold_slot, nested, &touched, &live,
+                        );
+                    }
+                    if let (false, Some(dynamic)) = (stop, &dynamic_skills) {
+                        super::skill_boundary::after_turn(
+                            &fold_slot,
+                            dynamic,
+                            &known_skills,
+                            touched.clone(),
+                        )
+                        .await;
+                    }
                     if let (false, Some(turn)) = (stop, feature_turn) {
                         super::feature_boundary::after_turn(&fold_slot, &turn).await;
+                    }
+                    if let (false, Some(text)) = (stop, brief_enforcement) {
+                        super::brief_mode::steer_enforcement(&fold_slot, &text);
+                    }
+                    if let (false, Some(turn)) = (stop, reminder_turn) {
+                        let agent = fold_slot
+                            .get()
+                            .and_then(|admission| admission.agent.upgrade());
+                        if let Some(agent) = agent {
+                            super::context_rows::after_turn(&context_rows, &agent, &turn).await;
+                        }
                     }
                     Ok(stop)
                 })
@@ -1064,25 +1408,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         follow_up_mode: config.follow_up_mode,
         before_tool_call,
         after_tool_call,
-        // Opt-in (`lengthContinuations`, TS v0.9.8 had none): a reply cut
-        // off at the output-token limit continues in a visible follow-up
-        // turn, bounded by the setting.
-        length_continuation: (length_continuations > 0).then(|| {
-            pa_agent::agent_loop::LengthContinuation {
-                max_continuations: length_continuations,
-                message: std::sync::Arc::new({
-                    let counters = std::sync::Arc::clone(&session_counters);
-                    move |attempt, max| {
+        // A reply cut off at the output-token limit continues: an explicit
+        // `lengthContinuations` keeps upstream's visible rows, unset follows
+        // Claude Code's hidden recovery (`output_limit_recovery`).
+        length_continuation: super::output_limit_recovery::length_continuation(
+            output_limit_recovery,
+            {
+                let counters = std::sync::Arc::clone(&session_counters);
+                std::sync::Arc::new(move || {
                     counters.note_adoption(super::telemetry::SessionAdoption::LengthContinuation);
-                    crate::autonomous::autonomous_continuation_loop_row(
-                        &format!(
-                            "[auto-continue {attempt}/{max}: the previous reply was cut off at the output-token limit]\n\nContinue exactly where the previous reply stopped. Do not repeat what was already written."
-                        ),
-                        pa_agent::now_ms().max(0) as u64,
-                    )
-                }}),
-            }
-        }),
+                })
+            },
+        ),
         // On (reasoning only) unless `repetitionGuard` says otherwise: a
         // degenerate looping generation settles as a guarded error instead
         // of streaming to the output cap.
@@ -1098,13 +1435,20 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await;
 
     let agent = Arc::new(agent);
+    let ultracode = Arc::new(super::ultracode::UltracodeState::new(Some(
+        config.agent_dir.clone(),
+    )));
     let _ = fold_admission.set(super::steering_fold::FoldAdmission {
         agent: Arc::downgrade(&agent),
         skills: resources.skills.clone(),
+        dynamic_skills: dynamic_skills.clone(),
+        session_id: fold_session_id,
         prompt_templates: resources.prompts.clone(),
+        cwd: cwd.clone(),
         features: crate::features::installed().to_vec(),
         feature_context: Arc::clone(&feature_context),
         feature_notes: feature_notes.clone(),
+        ultracode: Arc::clone(&ultracode),
     });
     // TS `_startRlmChildRun`'s spawn anchor: the `rlm.spawn` host handler
     // names the parent's in-flight turn through this weak seam (the
@@ -1130,6 +1474,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_plan_mode_switch(plan_mode.clone());
+    session.set_ultracode_state(ultracode);
+    session.set_context_rows(context_rows);
     if !crate::features::installed().is_empty() {
         session.set_feature_context(Arc::clone(&feature_context), feature_notes);
     }
@@ -1195,6 +1541,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     ));
     session.set_kernel_state_probe(Some(kernel_state_probe));
     session.set_skills(resources.skills.clone());
+    if let Some(dynamic) = &dynamic_skills {
+        session.set_dynamic_skills(Arc::clone(dynamic));
+    }
     session.set_image_model_router(config.image_model_router.clone());
     // The semantic-edge handoff: the daemon's child registry and retry
     // park read the recorder; the side question keeps the pre-semantic
@@ -1285,6 +1634,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // whether this session reports at all).
     if let Some(telemetry) = telemetry.as_ref() {
         session.set_skill_telemetry(telemetry.clone());
+        // The session context and reminder rows count by kind.
+        if let Some(rows) = session.context_rows() {
+            let telemetry = telemetry.clone();
+            rows.observe_rows(Arc::new(move |custom_type| {
+                telemetry.note_context_row(custom_type);
+            }));
+        }
         // Same lifetime for the `rlm_child_*` session counters: the
         // producer's flush counts through this handle.
         wiring.rlm_usage.set_telemetry(telemetry.clone());
@@ -1312,8 +1668,18 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,
         agents_files: resources.agents_files,
+        instructions: super::memory_command::SessionInstructions {
+            files: resources.instruction_files,
+            nested: resources.nested_instructions,
+            auto_memory: resources.auto_memory,
+        },
+        workflows: workflows_context,
         system_prompt,
         goal_driver,
+        session_tasks: config
+            .cron_store
+            .as_ref()
+            .and_then(|wiring| wiring.session_tasks.clone()),
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),
         mcp_manager,
         turn_boundary,
@@ -1335,7 +1701,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         presented_artifacts,
         sandbox,
         mcp_sessions,
+        additional_directories,
+        modes: session_modes,
     };
+    engine
+        .modes
+        .publish_statuses(&engine.feature_context.session_id);
     if config.plan_mode == Some(true) && restored_plan_mode != Some(true) {
         engine.track_plan_mode(true, "flag");
     }
@@ -1385,6 +1756,21 @@ impl SessionEngine {
             );
         }
         *slot = Some(sink);
+    }
+
+    /// Ask the user, through the confirmation surface
+    /// ([`Self::set_feature_status_sink`]), about the workspace's
+    /// `.mcp.json` servers that wait for approval (Claude Code's "New MCP
+    /// server found in this project"), in the background. A child session
+    /// never asks: its parent's user answers for the workspace.
+    pub fn ask_project_mcp_approvals(&self) {
+        if self.feature_context.rlm_depth > 0 || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        tokio::spawn(crate::mcp::ask_pending_project_servers(
+            self.feature_context.session_id.clone(),
+            std::sync::Arc::clone(&self.mcp_manager),
+        ));
     }
 
     /// Deliver the installed features' notices for this session
@@ -1511,6 +1897,9 @@ impl SessionEngine {
             },
             (model.context_window > 0).then_some(model.context_window),
         );
+        if let Some(rows) = self.session.context_rows() {
+            rows.set_model(super::context_source::ModelFacts::of(model));
+        }
     }
 
     /// A weak reference for lock-free kernel liveness probes without
@@ -1521,14 +1910,15 @@ impl SessionEngine {
         std::sync::Arc::downgrade(&self.provisioner)
     }
 
-    /// Expand a `/skill:<name>` submission into its `<skill>` block for
-    /// the accepted-turn row (TS `_expandSkillCommand`; the row the daemon
-    /// emits before admission must match the text the model turn
-    /// receives). Non-skill inputs pass through unchanged; the admitted
-    /// turn's own expansion is idempotent over the block. The
-    /// `skill_use_count` counter counts at the admission, not here.
-    pub fn expand_skill_submission(&self, text: &str) -> String {
-        crate::skills::expand_skill_command(text, &self.skills).0
+    /// Expand a skill command (`/skill:<name>`, or `/<name>` for a Claude
+    /// Code skill) into its `<skill>` block for the accepted-turn row (TS
+    /// `_expandSkillCommand`; the row the daemon emits before admission
+    /// must match the text the model turn receives). Non-skill inputs pass
+    /// through unchanged; the admitted turn's own expansion is idempotent
+    /// over the block. The `skill_use_count` counter counts at the
+    /// admission, not here.
+    pub async fn expand_skill_submission(&self, text: &str) -> String {
+        self.session.expand_user_skill_command(text).await.0
     }
 
     /// Withdraw the queued goal-context turns: a minted continuation waiting
@@ -1561,6 +1951,18 @@ impl SessionEngine {
         self.mcp_sessions.close_all().await;
     }
 
+    /// The session context a fresh conversation's first turn carries as its
+    /// hidden `session_context` row (instruction files, skills inventory,
+    /// MCP servers, environment, date), read now.
+    pub async fn session_context_text(&self) -> String {
+        let Some(rows) = self.session.context_rows().cloned() else {
+            return String::new();
+        };
+        tokio::task::spawn_blocking(move || rows.full_context_text())
+            .await
+            .unwrap_or_default()
+    }
+
     /// Retarget the session kernel's working directory (`/cwd`, upstream
     /// #2528): a running kernel changes directory now, the next start uses
     /// `cwd`.
@@ -1571,7 +1973,18 @@ impl SessionEngine {
     pub async fn set_kernel_cwd(&self, cwd: &std::path::Path) -> anyhow::Result<()> {
         self.provisioner.set_cwd(cwd).await?;
         self.mcp_sessions.set_cwd(cwd);
+        if let Some(rows) = self.session.context_rows() {
+            rows.set_cwd(cwd);
+        }
         Ok(())
+    }
+
+    /// Follow a working-directory move the kernel made itself
+    /// (`rlm.enter_worktree`): later kernel starts and MCP stdio servers use
+    /// `cwd`; the running kernel already changed directory.
+    pub fn follow_kernel_cwd(&self, cwd: &std::path::Path) {
+        self.provisioner.set_start_cwd(cwd);
+        self.mcp_sessions.set_cwd(cwd);
     }
 
     /// Release the kernel with a final namespace snapshot, revivable: the next
@@ -1681,3 +2094,9 @@ mod tests;
 
 #[cfg(test)]
 mod append_system_tests;
+
+#[cfg(test)]
+mod experimental_tests;
+
+#[cfg(test)]
+mod context_rows_tests;

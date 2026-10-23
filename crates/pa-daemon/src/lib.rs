@@ -87,6 +87,7 @@ pub mod registration;
 pub(crate) mod registry;
 pub(crate) mod remote_mesh;
 mod revival_gate;
+mod rewind;
 pub mod rlm_child_model;
 pub mod rlm_child_usage;
 pub mod rlm_children;
@@ -110,6 +111,7 @@ pub mod session_navigation;
 pub(crate) mod session_scan;
 pub mod session_stats;
 pub mod session_store;
+pub(crate) mod session_tasks;
 pub mod session_tree;
 pub mod session_usage;
 pub(crate) mod setting_switches;
@@ -139,6 +141,7 @@ pub(crate) mod user_bash;
 pub mod util;
 pub mod worker;
 pub(crate) mod worker_stderr;
+pub mod worktree_host;
 
 #[cfg(test)]
 pub(crate) mod test_support;

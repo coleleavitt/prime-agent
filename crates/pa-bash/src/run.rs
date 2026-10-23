@@ -206,6 +206,33 @@ mod tests {
     }
 
     #[test]
+    fn a_table_with_an_output_dir_persists_each_commands_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let tasks = temp.path().join("tasks");
+        let table = JobTable::new();
+        let plain = run(&table, "echo memory-only", &json!({"waitMs": 10_000}));
+        assert!(plain["job"].get("outputPath").is_none(), "{plain}");
+
+        table.set_output_dir(Some(tasks.clone()));
+        let reply = run(&table, "echo one; echo two >&2", &json!({"waitMs": 10_000}));
+        assert_eq!(reply["done"], true, "{reply}");
+        let id = reply["job"]["id"].as_str().unwrap();
+        let path = tasks.join(format!("{id}.output"));
+        assert_eq!(reply["job"]["outputPath"], path.to_string_lossy().as_ref());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\n");
+
+        let listed = handle(&table, &json!({"type": "bash.activity", "action": "list"}));
+        let rows = listed["activities"].as_array().unwrap();
+        let row = rows.iter().find(|row| row["id"] == id).unwrap();
+        assert_eq!(row["outputPath"], path.to_string_lossy().as_ref());
+        let memory_only = rows
+            .iter()
+            .find(|row| row["id"] == plain["job"]["id"])
+            .unwrap();
+        assert!(memory_only.get("outputPath").is_none());
+    }
+
+    #[test]
     fn a_longer_command_continues_through_follow() {
         let table = JobTable::new();
         let reply = run(&table, "sleep 0.3; echo done", &json!({"waitMs": 0}));

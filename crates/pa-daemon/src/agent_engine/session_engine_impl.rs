@@ -257,6 +257,16 @@ impl SessionEngine for AgentSessionEngine {
         Some(std::sync::Arc::clone(&self.mcp))
     }
 
+    fn ask_project_mcp_approvals(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(engine) = self.session.lock().await.as_deref() {
+                engine.ask_project_mcp_approvals();
+            }
+        })
+    }
+
     fn model_context_window(&self) -> Option<u64> {
         self.resolve_model().ok().map(|model| model.context_window)
     }
@@ -453,6 +463,12 @@ impl SessionEngine for AgentSessionEngine {
                 core.session
                     .set_model_and_thinking_level(&model, &provider, &model_id, level),
             );
+            // The context rows follow the switch, as the RPC `set_model` path
+            // does: the token countdown's window and the environment row's
+            // model name report the model the session now runs, not the one
+            // it was built on (otherwise a session built on a small-window
+            // default keeps that window and model name after switching).
+            core.update_model_facts(&model);
         }
         if let Some(children) = &self.children {
             children.set_model(format!("{}/{}", model.provider, model.id));
@@ -916,6 +932,7 @@ impl SessionEngine for AgentSessionEngine {
                 thinking: identity.thinking.clone(),
                 child_script: identity.child_script,
                 sandbox: self.create_resources.read_or_recover().sandbox.clone(),
+                resource_exclusions: self.create_resources.read_or_recover().resource_exclusions,
             };
             children.set_identity(parent);
         }
@@ -1062,15 +1079,20 @@ impl SessionEngine for AgentSessionEngine {
                 commands.push(entry);
             }
             for skill in &engine.skills {
-                let mut entry = json!({
-                    "name": format!("skill:{}", skill.name),
-                    "source": "skill",
-                    "sourceInfo": skill.source_info,
-                });
-                if !skill.description.is_empty() {
-                    entry["description"] = json!(skill.description);
+                for name in pa_core::skills::skill_command_names(skill) {
+                    let mut entry = json!({
+                        "name": name,
+                        "source": "skill",
+                        "sourceInfo": skill.source_info,
+                    });
+                    if let Some(hint) = pa_core::skills::skill_argument_hint(skill) {
+                        entry["argumentHint"] = json!(hint);
+                    }
+                    if !skill.description.is_empty() {
+                        entry["description"] = json!(skill.description);
+                    }
+                    commands.push(entry);
                 }
-                commands.push(entry);
             }
             commands
         })
@@ -1173,6 +1195,19 @@ impl SessionEngine for AgentSessionEngine {
             let guard = self.session.lock().await;
             let engine = guard.as_deref().expect("session built above");
             Ok(engine.system_prompt.clone())
+        })
+    }
+
+    fn session_context(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+    {
+        Box::pin(async move {
+            let model = self.resolve_model()?;
+            self.ensure_core_session_async(&model).await?;
+            let guard = self.session.lock().await;
+            let engine = guard.as_deref().expect("session built above");
+            Ok(engine.session_context_text().await)
         })
     }
 
@@ -1295,14 +1330,14 @@ impl SessionEngine for AgentSessionEngine {
         let mut emit = self.goal_tracking_emit(emit);
         // The accepted-turn row carries the skill-expanded text (the
         // transcript renders the skill card).
-        if request.message.starts_with("/skill:") {
+        if Self::may_be_skill_submission(&request.message) {
             request.message = self.expand_skill_submission(&request.message);
         }
         // The batched rows expand in place BEFORE the accepted rows emit:
         // the core's batch admission re-expands each row itself, so the raw
         // command must never reach it.
         for row in &mut request.batch {
-            if row.text.starts_with("/skill:") {
+            if Self::may_be_skill_submission(&row.text) {
                 row.text = self.expand_skill_submission(&row.text);
             }
         }

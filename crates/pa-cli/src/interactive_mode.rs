@@ -159,7 +159,22 @@ pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
                     continue_view.map_or((None, None), |view| (view.session_id, Some(view.notice)));
                 run_agents_view_flow(tui_options, anchor, notice, None).await
             } else {
-                run_direct_session(tui_options).await
+                let exit = run_direct_session(tui_options).await?;
+                // `--worktree`: the session ran in a managed worktree; leaving
+                // it keeps work and offers to remove a clean one.
+                if let Some(worktree) = &options.worktree {
+                    let running = match exit {
+                        DirectExit::Session { turn_active } => turn_active,
+                        DirectExit::ViaAgentsView => true,
+                    };
+                    let worktree = worktree.clone();
+                    let agent_dir = options.config.agent_dir.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::worktree_launch::finish(&worktree, running, &agent_dir);
+                    })
+                    .await;
+                }
+                Ok(())
             }
         };
         let result = run.await;
@@ -211,7 +226,7 @@ pub(super) fn flush_startup_telemetry(
 /// (ctrl+c/ctrl+d, `/quit`) ends the process. The session and agents-view futures are large state
 /// machines: boxing them keeps this loop's own future small, so a caller on a small stack (a test
 /// thread) does not overflow.
-async fn run_direct_session(base: InteractiveOptions) -> Result<()> {
+async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
     let mut outcome = Box::pin(pa_tui::interactive::run_interactive(
         base.clone(),
         UiMode::Terminal,
@@ -230,13 +245,14 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<()> {
                     continue;
                 }
                 ResumeLaunch::Search { query, notice } => {
-                    return Box::pin(run_agents_view_flow(
+                    Box::pin(run_agents_view_flow(
                         base,
                         anchor,
                         Some(notice),
                         Some(query),
                     ))
-                    .await;
+                    .await?;
+                    return Ok(DirectExit::ViaAgentsView);
                 }
             }
         }
@@ -244,17 +260,29 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<()> {
             // A startup attach that fell back to the view has no session identity to anchor
             // on; its notice seeds the view's status line instead.
             let anchor = (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
-            return Box::pin(run_agents_view_flow(
+            Box::pin(run_agents_view_flow(
                 base,
                 anchor,
                 outcome.agents_view_notice,
                 outcome.agents_view_query,
             ))
-            .await;
+            .await?;
+            return Ok(DirectExit::ViaAgentsView);
         }
         print_resume_hint(outcome.resume_hint.as_deref());
-        return Ok(());
+        return Ok(DirectExit::Session {
+            turn_active: outcome.turn_active_at_exit,
+        });
     }
+}
+
+/// How a direct session run ended: in the session itself (and whether the
+/// agent was still working), or through the agents view (which may have
+/// opened other sessions, so nothing is known about the first one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectExit {
+    Session { turn_active: bool },
+    ViaAgentsView,
 }
 
 /// A run's `/resume <selector>` request: a selector the TUI could not resolve itself goes through
@@ -577,6 +605,7 @@ fn build_tui_options(
         client_settings: Some(crate::client_settings::CliClientSettings::new(
             config.cwd.clone(),
             config.agent_dir.clone(),
+            config.additional_directories.clone(),
         )),
         version: crate::config::version().to_string(),
         onboarding,

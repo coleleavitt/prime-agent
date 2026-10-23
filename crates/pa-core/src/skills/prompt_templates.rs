@@ -5,8 +5,22 @@ use std::path::{Path, PathBuf};
 pub use pa_types::slash_commands::parse_slash_command;
 use serde::Serialize;
 
+use super::claude_commands::{ClaudeCommandOptions, ShellExpansion};
 use super::frontmatter::parse_frontmatter;
 use super::{SourceInfo, SourceScope, create_synthetic_source_info, skill_markdown_name};
+
+/// How a template's arguments substitute into its body.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum TemplateArguments {
+    /// Prime Agent's own templates: `$1` (one-based), `$@`, `$ARGUMENTS`,
+    /// `${@:N:L}`.
+    #[default]
+    Positional,
+    /// A Claude Code command (`.claude/commands`): zero-based `$N`,
+    /// `$ARGUMENTS[N]`, named `$name`, the appended `ARGUMENTS:` line, and
+    /// inline shell blocks.
+    ClaudeCode(ClaudeCommandOptions),
+}
 
 /// A prompt template loaded from a markdown file.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -18,6 +32,9 @@ pub struct PromptTemplate {
     pub content: String,
     pub source_info: SourceInfo,
     pub file_path: String,
+    /// The substitution rules (not part of the wire listing).
+    #[serde(skip)]
+    pub arguments: TemplateArguments,
 }
 
 /// Parse command arguments respecting quoted strings (bash-style).
@@ -176,6 +193,7 @@ fn load_template_from_file(file_path: &Path, source_info: SourceInfo) -> Option<
         content: body,
         source_info,
         file_path: file_path.display().to_string(),
+        arguments: TemplateArguments::Positional,
     })
 }
 
@@ -308,17 +326,65 @@ pub fn load_prompt_templates(options: &LoadPromptTemplatesOptions) -> Vec<Prompt
     templates
 }
 
+/// The template `/name args...` names, with its body's arguments
+/// substituted.
+fn substitute_template<'a>(
+    text: &str,
+    templates: &'a [PromptTemplate],
+) -> Option<(&'a PromptTemplate, String)> {
+    let (name, raw_args) = parse_slash_command(text)?;
+    let template = templates.iter().find(|t| t.name == name)?;
+    let expanded = match &template.arguments {
+        TemplateArguments::Positional => {
+            substitute_args(&template.content, &parse_command_args(&raw_args))
+        }
+        TemplateArguments::ClaudeCode(options) => {
+            super::claude_commands::substitute_claude_arguments(
+                &template.content,
+                &raw_args,
+                &options.argument_names,
+            )
+        }
+    };
+    Some((template, expanded))
+}
+
+/// Whether `text` invokes a Claude Code custom command (`.claude/commands`)
+/// among `templates` (the `custom_command_use_count` telemetry counter).
+#[must_use]
+pub fn is_claude_command(text: &str, templates: &[PromptTemplate]) -> bool {
+    parse_slash_command(text).is_some_and(|(name, _)| {
+        templates.iter().any(|template| {
+            template.name == name && matches!(template.arguments, TemplateArguments::ClaudeCode(_))
+        })
+    })
+}
+
 /// Expand `/name args...` into the matching template, else return the text.
+/// Shell blocks in a Claude Code command stay unexpanded (classification
+/// never runs commands); admission uses [`expand_prompt_template_with_shell`].
 #[must_use]
 pub fn expand_prompt_template(text: &str, templates: &[PromptTemplate]) -> String {
-    let Some(parsed) = parse_slash_command(text) else {
+    substitute_template(text, templates).map_or_else(|| text.to_string(), |(_, expanded)| expanded)
+}
+
+/// [`expand_prompt_template`] for a prompt about to be admitted: a Claude
+/// Code command's `` !`cmd` `` blocks run in `cwd` (unless its shell
+/// expansion is disabled) and their output replaces them.
+pub async fn expand_prompt_template_with_shell(
+    text: &str,
+    templates: &[PromptTemplate],
+    cwd: &Path,
+) -> String {
+    let Some((template, expanded)) = substitute_template(text, templates) else {
         return text.to_string();
     };
-    if let Some(template) = templates.iter().find(|t| t.name == parsed.0) {
-        let args = parse_command_args(&parsed.1);
-        return substitute_args(&template.content, &args);
+    match &template.arguments {
+        TemplateArguments::ClaudeCode(options) if options.shell == ShellExpansion::Enabled => {
+            super::claude_commands::expand_shell_blocks(&expanded, cwd).await
+        }
+        TemplateArguments::ClaudeCode(_) | TemplateArguments::Positional => expanded,
     }
-    text.to_string()
 }
 
 // `parseSlashCommand` (name, args for `/name args...`) is shared vocabulary:
@@ -374,6 +440,7 @@ mod tests {
             content: "Fix $1 and also $2 now".to_string(),
             source_info: create_synthetic_source_info("/p", "local", SourceScope::User, None),
             file_path: "/p/fix.md".to_string(),
+            arguments: TemplateArguments::Positional,
         };
         assert_eq!(
             expand_prompt_template("/fix lint types", std::slice::from_ref(&template)),
@@ -383,6 +450,32 @@ mod tests {
         assert_eq!(
             expand_prompt_template("/unknown x", std::slice::from_ref(&template)),
             "/unknown x"
+        );
+    }
+
+    #[test]
+    fn only_a_claude_code_command_counts_as_one() {
+        let template = |name: &str, arguments| PromptTemplate {
+            name: name.to_string(),
+            description: String::new(),
+            argument_hint: None,
+            content: "body".to_string(),
+            source_info: create_synthetic_source_info("/p", "local", SourceScope::User, None),
+            file_path: format!("/p/{name}.md"),
+            arguments,
+        };
+        let templates = [
+            template("own", TemplateArguments::Positional),
+            template(
+                "cc",
+                TemplateArguments::ClaudeCode(
+                    super::super::claude_commands::ClaudeCommandOptions::default(),
+                ),
+            ),
+        ];
+        assert_eq!(
+            ["/cc x", "/own x", "/missing", "cc"].map(|text| is_claude_command(text, &templates)),
+            [true, false, false, false]
         );
     }
 

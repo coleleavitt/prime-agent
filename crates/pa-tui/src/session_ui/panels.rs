@@ -103,6 +103,19 @@ impl SessionUi {
         // carries statuses published before this client attached.
         if let Some(summary) = crate::subagents::own_summary(&self.roster, &identity) {
             self.feature_panels = crate::feature_panel::panels_from_summary(&summary);
+            self.permission_cycle = super::permission_cycle::cycle_from_summary(&summary);
+            if let Some(on) = super::session_modes::enabled_in_summary(
+                &summary,
+                super::session_modes::BRIEF_FEATURE,
+            ) {
+                view.set_brief_mode(on);
+            }
+            if let Some(on) = super::session_modes::enabled_in_summary(
+                &summary,
+                super::session_modes::COORDINATOR_FEATURE,
+            ) {
+                self.coordinator_mode = on;
+            }
             self.apply_feature_questions(
                 super::feature_confirm::questions_from_summary(&summary),
                 view,
@@ -378,6 +391,20 @@ impl SessionUi {
         }
         self.dirty = true;
         Ok(())
+    }
+
+    /// The session facts the status line payload reads (client state only).
+    pub(crate) fn status_line_facts<'a>(
+        &'a self,
+        view: &'a AgentView,
+    ) -> crate::status_line::PayloadFacts<'a> {
+        crate::status_line::PayloadFacts {
+            session_id: &self.session_id,
+            transcript_path: self.session_file.as_deref(),
+            cwd: &self.cwd,
+            chrome: &view.chrome,
+            vim_mode: view.editor.vim_mode(),
+        }
     }
 
     /// The activity dock follows the scoped heartbeat catalog (the tray no

@@ -1,5 +1,6 @@
 //! `prime-agent prompt`: dump the fully-assembled effective system prompt with
-//! its per-layer breakdown, without starting a session or a provider.
+//! its per-layer breakdown, and the session context the first turn carries
+//! as a hidden row, without starting a session or a provider.
 
 use pa_core::resources::{ResourceLoaderOptions, load_resources};
 use pa_core::settings::SettingsManager;
@@ -58,14 +59,14 @@ pub fn run_prompt_command(args: &[String]) -> i32 {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     match assemble_breakdown(&cwd, parsed.model.as_deref()) {
-        Ok((breakdown, errors)) => {
+        Ok((breakdown, session_context, errors)) => {
             for error in &errors {
                 eprintln!("Error: {error}");
             }
             if parsed.json {
-                print_json(&breakdown);
+                print_json(&breakdown, &session_context);
             } else {
-                print_text(&breakdown);
+                print_text(&breakdown, &session_context);
             }
             0
         }
@@ -79,7 +80,7 @@ pub fn run_prompt_command(args: &[String]) -> i32 {
 fn assemble_breakdown(
     cwd: &std::path::Path,
     model: Option<&str>,
-) -> anyhow::Result<(pa_core::prompts::SystemPromptBreakdown, Vec<String>)> {
+) -> anyhow::Result<(pa_core::prompts::SystemPromptBreakdown, String, Vec<String>)> {
     let agent_dir = get_agent_dir();
     let model_prompts = pa_core::prompts::model_prompts::load_model_prompts(model, &agent_dir);
     let settings = SettingsManager::create(cwd, &agent_dir);
@@ -102,38 +103,63 @@ fn assemble_breakdown(
     let resources = load_resources(ResourceLoaderOptions {
         extra_builtin_skill_overrides: skill_overrides,
         system_prompt: None,
-        ..ResourceLoaderOptions::new(cwd.to_path_buf(), agent_dir)
+        // The dump shows a top-level session's prompt.
+        auto_memory: true,
+        ..ResourceLoaderOptions::new(cwd.to_path_buf(), agent_dir.clone())
     })?;
     let breakdown = pa_core::prompts::system_prompt::system_prompt_breakdown(
         &pa_core::prompts::BuildSystemPromptOptions {
-            cwd: cwd.display().to_string(),
-            // A dump has no session file; the tail states the value it uses.
-            messages_path: None,
             custom_prompt: resources.system_prompt.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
-            skills: resources.skills.clone(),
+            auto_memory: resources
+                .auto_memory
+                .as_ref()
+                .map(pa_core::resources::auto_memory::memory_prompt_section),
             // The shipped model-tool surface: `python_repl` only; bash/edit are kernel-resident
             // programmatic tools.
             selected_tools: Some(vec![pa_types::ai::PYTHON_TOOL_NAME]),
             allow_recursion: Some(true),
-            generic_mcp_servers: generic_servers,
             rlm_depth: Some(0),
-            // The `sandbox` setting's environment line, as a session would state it.
-            sandbox: pa_core::os_sandbox::SessionSandbox::resolve(&settings, None, cwd)
-                .as_ref()
-                .map(pa_core::os_sandbox::SessionSandbox::prompt_line),
             model_prompt_extras: model_prompts.extras.as_deref(),
             ..Default::default()
         },
     );
-    Ok((breakdown, model_prompts.errors))
+    // The first turn's session context row, as a session in `cwd` would send it.
+    let source = pa_core::session_engine::context_source::ContextSourceConfig {
+        cwd: std::sync::Arc::new(std::sync::Mutex::new(cwd.to_path_buf())),
+        load_instruction_files: true,
+        skills: resources.skills,
+        tools: vec![pa_types::ai::PYTHON_TOOL_NAME.to_string()],
+        mcp_servers: generic_servers,
+        // A dump has no session file; the row states the value it uses.
+        conversation_log: None,
+        model: std::sync::Arc::default(),
+        // The `sandbox` setting's environment line, as a session would state it.
+        sandbox: pa_core::os_sandbox::SessionSandbox::resolve(&settings, None, cwd)
+            .as_ref()
+            .map(pa_core::os_sandbox::SessionSandbox::prompt_line),
+        shell: pa_core::platform::shell::default_kernel_bash_shell(),
+        scratch_directory: None,
+        instruction_options: pa_core::resources::instructions::InstructionOptions {
+            cwd: cwd.to_path_buf(),
+            agent_dir: agent_dir.clone(),
+            home_dir: pa_types::platform::home_dir(),
+            claude_user_files: settings.get_claude_code_user_instructions(),
+            additional_dirs: Vec::new(),
+        },
+        additional_directories: None,
+        // A dump has no spawn host: no agent types.
+        list_agent_types: false,
+        agent_dir,
+    };
+    let session_context = (pa_core::session_engine::context_source::context_source(source))();
+    Ok((
+        breakdown,
+        session_context.render_full(),
+        model_prompts.errors,
+    ))
 }
 
-fn print_text(breakdown: &pa_core::prompts::SystemPromptBreakdown) {
+fn print_text(breakdown: &pa_core::prompts::SystemPromptBreakdown, session_context: &str) {
     println!("# prime-agent system prompt breakdown");
     println!();
     println!("cached prefix (static layers, byte-stable across sessions):");
@@ -156,6 +182,13 @@ fn print_text(breakdown: &pa_core::prompts::SystemPromptBreakdown) {
     );
     println!();
     println!("{}", breakdown.assembled);
+    println!();
+    println!(
+        "# session context (the first turn's hidden row, {} chars; later turns carry only changes)",
+        session_context.chars().count()
+    );
+    println!();
+    println!("{session_context}");
 }
 
 fn print_segment(segment: &pa_core::prompts::PromptSegment) {
@@ -167,7 +200,7 @@ fn print_segment(segment: &pa_core::prompts::PromptSegment) {
     );
 }
 
-fn print_json(breakdown: &pa_core::prompts::SystemPromptBreakdown) {
+fn print_json(breakdown: &pa_core::prompts::SystemPromptBreakdown, session_context: &str) {
     let segments = breakdown
         .segments
         .iter()
@@ -186,6 +219,7 @@ fn print_json(breakdown: &pa_core::prompts::SystemPromptBreakdown) {
             "segments": segments,
             "cachedPrefixLen": breakdown.cached_prefix_len,
             "prompt": breakdown.assembled,
+            "sessionContext": session_context,
         })
     );
 }
@@ -225,7 +259,8 @@ mod tests {
     #[test]
     fn assembles_the_layered_prompt_for_a_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let (breakdown, errors) = assemble_breakdown(dir.path(), Some("mock/mock-1")).unwrap();
+        let (breakdown, session_context, errors) =
+            assemble_breakdown(dir.path(), Some("mock/mock-1")).unwrap();
         assert!(errors.is_empty());
         assert!(breakdown.assembled.starts_with("# prime-agent harness"));
         assert!(
@@ -233,11 +268,10 @@ mod tests {
                 .assembled
                 .contains("Recursive agent depth: 0 (root)")
         );
-        assert!(
-            breakdown
-                .assembled
-                .contains("Conversation log: not persisted")
-        );
+        // The environment is the first turn's row, not prompt text.
+        assert!(!breakdown.assembled.contains("Conversation log:"));
+        assert!(session_context.contains("Conversation log: not persisted"));
+        assert!(session_context.contains("<available_skills>"));
         // Every static segment sits inside the cached prefix.
         for segment in &breakdown.segments {
             let inside = breakdown

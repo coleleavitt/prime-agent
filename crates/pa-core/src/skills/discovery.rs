@@ -156,6 +156,17 @@ pub(crate) fn load_skill_from_file(
             SkillKind::Markdown
         },
         python,
+        when_to_use: frontmatter
+            .get("when_to_use")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string),
+        user_invocable: frontmatter
+            .get("user-invocable")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        claude: None,
     };
     (Some(skill), diagnostics)
 }

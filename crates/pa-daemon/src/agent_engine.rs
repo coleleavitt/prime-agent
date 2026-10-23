@@ -58,6 +58,8 @@ use crate::rlm_children::{DEFAULT_RLM_MAX_DEPTH, ParentIdentity, SupervisorChild
 pub(crate) mod tests;
 
 #[cfg(test)]
+pub(crate) use model::wait_for_script_faux_calls;
+#[cfg(test)]
 pub(crate) use tests::FAUX_TEST_LOCK;
 
 mod goalcore;
@@ -184,6 +186,9 @@ pub struct AgentSessionEngine {
     /// The prebuilt notice-row seam (`cell.completed`); `None` outside a
     /// daemon worker.
     pub(crate) notice_row_sink: std::sync::Mutex<Option<crate::engine::NoticeRowSink>>,
+    /// The worker's worktree seam (`worktree.enter` / `worktree.exit`).
+    pub(crate) worktree_session:
+        std::sync::Mutex<Option<std::sync::Arc<dyn crate::worktree_host::WorktreeSession>>>,
     /// The factory run notice lane (the worker's follow-up queue), threaded
     /// into every session build; `None` outside a daemon worker.
     pub(crate) factory_notices: std::sync::Mutex<

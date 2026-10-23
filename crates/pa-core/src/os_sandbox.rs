@@ -157,6 +157,21 @@ impl SessionSandbox {
         }
     }
 
+    /// The same sandbox with `root` writable too (the session's auto-memory
+    /// directory: the model writes its memory files there). A `read-only`
+    /// sandbox stays as it is: it never grows a writable root.
+    #[must_use]
+    pub fn with_writable_root(mut self, root: PathBuf) -> Self {
+        if self.policy.confinement == Confinement::ReadOnly
+            || self.policy.writable_roots.contains(&root)
+        {
+            return self;
+        }
+        self.policy.writable_roots.push(root);
+        self.support = pa_os_sandbox::assess(&self.policy);
+        self
+    }
+
     /// Whether `other` enforces the same policy (a spawn under either is confined alike).
     #[must_use]
     pub fn same_policy(&self, other: &SessionSandbox) -> bool {
@@ -479,6 +494,33 @@ mod tests {
                 Some(SandboxMode::ReadOnly)
             ]
         );
+    }
+
+    /// The auto-memory directory joins a `workspace-write` sandbox's writable roots once; a
+    /// `read-only` sandbox never grows one.
+    #[test]
+    fn a_writable_root_joins_workspace_write_only() {
+        let sandbox = |confinement| SessionSandbox {
+            policy: SandboxPolicy {
+                confinement,
+                network: NetworkAccess::Denied,
+                writable_roots: vec![PathBuf::from("/tmp")],
+            },
+            support: Err(SandboxError::Unsupported {
+                reason: "test".to_string(),
+            }),
+            extra_scratch: Vec::new(),
+        };
+        let memory = PathBuf::from("/agent/projects/-repo/memory");
+        let widened = sandbox(Confinement::WorkspaceWrite)
+            .with_writable_root(memory.clone())
+            .with_writable_root(memory.clone());
+        assert_eq!(
+            widened.policy.writable_roots,
+            vec![PathBuf::from("/tmp"), memory.clone()]
+        );
+        let read_only = sandbox(Confinement::ReadOnly).with_writable_root(memory);
+        assert_eq!(read_only.policy.writable_roots, vec![PathBuf::from("/tmp")]);
     }
 
     /// Plan mode tightens any configured mode to `read-only` and keeps its network rule; with

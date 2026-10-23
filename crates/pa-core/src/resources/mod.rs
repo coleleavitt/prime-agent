@@ -16,8 +16,8 @@ use crate::skills::{
     load_skills,
 };
 
-/// AGENTS.md-family candidates, in priority order.
-const CONTEXT_FILE_CANDIDATES: [&str; 4] = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+pub mod auto_memory;
+pub mod instructions;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextFile {
@@ -25,49 +25,33 @@ pub struct ContextFile {
     pub content: String,
 }
 
-fn load_context_file_from_dir(dir: &Path) -> Option<ContextFile> {
-    for filename in CONTEXT_FILE_CANDIDATES {
-        let file_path = dir.join(filename);
-        if let Ok(content) = std::fs::read_to_string(&file_path) {
-            return Some(ContextFile {
-                path: file_path,
-                content,
-            });
-        }
-    }
-    None
-}
-
-/// Load the global (agentDir) context file first, then the nearest-to-root ancestor chain of cwd.
+/// The session-start instruction files of `cwd` ([`instructions`]) as
+/// context files: the user scope first, then the ancestor chain root-first.
 #[must_use]
 pub fn load_project_context_files(cwd: &Path, agent_dir: &Path) -> Vec<ContextFile> {
-    let mut context_files = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    if let Some(global) = load_context_file_from_dir(agent_dir) {
-        seen.insert(global.path.clone());
-        context_files.push(global);
-    }
+    let (files, _) = instructions::load_instructions(instructions::InstructionOptions {
+        cwd: cwd.to_path_buf(),
+        agent_dir: agent_dir.to_path_buf(),
+        home_dir: pa_types::platform::home_dir(),
+        claude_user_files: false,
+        additional_dirs: Vec::new(),
+    });
+    files.into_iter().map(context_file).collect()
+}
 
-    // Walk cwd upward, collecting context files; root-most first in output.
-    let mut ancestors = Vec::new();
-    let mut current = cwd.to_path_buf();
-    loop {
-        if let Some(found) = load_context_file_from_dir(&current) {
-            if seen.insert(found.path.clone()) {
-                ancestors.push(found);
-            }
-        }
-        let Some(parent) = current.parent() else {
-            break;
-        };
-        if parent == current {
-            break;
-        }
-        current = parent.to_path_buf();
+fn context_file(file: instructions::InstructionFile) -> ContextFile {
+    ContextFile {
+        path: file.path,
+        content: file.content,
     }
-    ancestors.reverse();
-    context_files.extend(ancestors);
-    context_files
+}
+
+/// Claude Code's opt-in for the additional directories' own context files
+/// (`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`); off by default, as
+/// there.
+pub(crate) fn additional_directory_context_enabled() -> bool {
+    let value = std::env::var("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD").ok();
+    pa_bash::is_truthy_env_value(value.as_deref())
 }
 
 // Session resource resolution (package-manager `resolve()`) feeds the loader below.
@@ -84,6 +68,17 @@ pub struct LoadedResources {
     pub skill_diagnostics: Vec<ResourceDiagnostic>,
     pub prompts: Vec<PromptTemplate>,
     pub agents_files: Vec<ContextFile>,
+    /// The loaded instruction files with their kinds (`agents_files` is
+    /// their path/content view).
+    pub instruction_files: Vec<instructions::InstructionFile>,
+    /// The instruction files that load later, on first touch of a path
+    /// they cover (`None` with `no_context_files`).
+    pub nested_instructions: Option<std::sync::Arc<instructions::NestedInstructions>>,
+    /// The session's auto memory (`None` when off).
+    pub auto_memory: Option<auto_memory::AutoMemory>,
+    /// The persistent memory of the agent the session runs as (`None`
+    /// without a `memory` scope, or when auto memory is off).
+    pub agent_memory: Option<crate::agents::AgentMemory>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
     /// Read-only continual harness overlays mounted from the resolved
@@ -95,6 +90,10 @@ pub struct LoadedResources {
 /// Resource loading options (the TS `DefaultResourceLoaderOptions` surface, minus the theme
 /// machinery).
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-session switches (CLI flags and the subagent gate)"
+)]
 pub struct ResourceLoaderOptions {
     pub cwd: PathBuf,
     pub agent_dir: PathBuf,
@@ -109,8 +108,23 @@ pub struct ResourceLoaderOptions {
     pub no_skills: bool,
     pub no_prompt_templates: bool,
     pub no_context_files: bool,
+    /// Whether this session may carry auto memory (top-level sessions);
+    /// the `autoMemoryEnabled` setting and the environment switch still
+    /// decide.
+    pub auto_memory: bool,
+    /// The agent (type and memory scope) whose persistent memory the
+    /// session carries; auto memory's switches still decide.
+    pub agent_memory: Option<(String, crate::agents::AgentMemoryScope)>,
+    /// The home directory for `~/` imports and the `~/.claude` user scope
+    /// (default: the platform's).
+    pub home_dir: Option<PathBuf>,
     pub system_prompt: Option<String>,
     pub append_system_prompt: Vec<String>,
+    /// The session's additional working directories (`--add-dir`,
+    /// `/add-dir`, `permissions.additionalDirectories`): their
+    /// `.claude/commands` load, and their context files when
+    /// `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` is set.
+    pub additional_directories: Vec<PathBuf>,
 }
 
 impl ResourceLoaderOptions {
@@ -141,6 +155,16 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     let project_cwd = settings
         .project_scope_trusted()
         .then_some(options.cwd.as_path());
+    let command_shell = if settings.get_disable_skill_shell_execution() {
+        crate::skills::claude_commands::ShellExpansion::Disabled
+    } else {
+        crate::skills::claude_commands::ShellExpansion::Enabled
+    };
+    let instruction_settings = InstructionSettings {
+        auto_memory: settings.get_auto_memory_enabled(),
+        claude_user_files: settings.get_claude_code_user_instructions(),
+    };
+    let claude_user_skills = settings.get_claude_code_user_skills();
     let resolution = resolution::resolve_session_resources(&options, settings)?;
 
     let mut resources = LoadedResources::default();
@@ -173,6 +197,47 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         })
         .collect();
     resources.skill_diagnostics = skills_result.diagnostics;
+    // Claude Code skills follow the Prime Agent skills (a Prime Agent skill
+    // of the same name wins). The working directory's (and its ancestors')
+    // `.claude/skills` load only in a trusted workspace (their bodies can
+    // run shell blocks); the additional directories are the user's own
+    // choice; `~/.claude/skills` only with `claudeCodeUserSkills`.
+    if !options.no_skills {
+        let home = options
+            .home_dir
+            .clone()
+            .or_else(pa_types::platform::home_dir);
+        let project_dirs = project_cwd
+            .map(|cwd| {
+                crate::skills::claude_skills::project_claude_dirs(
+                    cwd,
+                    crate::skills::claude_skills::CLAUDE_SKILLS_DIR,
+                    home.as_deref(),
+                )
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .chain(options.additional_directories.iter().map(|dir| {
+                dir.join(crate::skills::claude_commands::CLAUDE_DIR_NAME)
+                    .join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR)
+            }))
+            .collect();
+        let claude = crate::skills::claude_skills::load_claude_skills(
+            &crate::skills::claude_skills::ClaudeSkillRoots {
+                user_dir: claude_user_skills
+                    .then(|| crate::skills::claude_commands::user_claude_dir_in(home.as_deref()))
+                    .flatten()
+                    .map(|dir| dir.join(crate::skills::claude_skills::CLAUDE_SKILLS_DIR)),
+                project_dirs,
+                shell: command_shell,
+            },
+        );
+        crate::skills::claude_skills::merge_claude_skills(
+            &mut resources.skills,
+            &mut resources.skill_diagnostics,
+            claude,
+        );
+    }
     // Resolution-time warnings (e.g. missing bundled skills directory).
     resources
         .skill_diagnostics
@@ -193,7 +258,7 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     }
 
     // Prompt templates: CLI paths + resolved paths, then additional paths.
-    let all_prompts = if options.no_prompt_templates && resolution.prompt_paths.is_empty() {
+    let mut all_prompts = if options.no_prompt_templates && resolution.prompt_paths.is_empty() {
         Vec::new()
     } else {
         load_prompt_templates(&LoadPromptTemplatesOptions {
@@ -203,6 +268,24 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
             include_defaults: false,
         })
     };
+    // Claude Code custom commands follow the Prime Agent templates (a
+    // template of the same name wins). The working directory's commands
+    // load only in a trusted workspace (they can run shell blocks); the
+    // additional directories are the user's own choice.
+    if !options.no_prompt_templates {
+        let project_roots = project_cwd
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(options.additional_directories.iter().cloned())
+            .collect();
+        all_prompts.extend(crate::skills::claude_commands::load_claude_commands(
+            &crate::skills::claude_commands::ClaudeCommandRoots {
+                project_roots,
+                user_dir: crate::skills::claude_commands::user_claude_dir(),
+                shell: command_shell,
+            },
+        ));
+    }
     resources.prompts = dedupe_prompts(all_prompts)
         .into_iter()
         .map(|mut prompt| {
@@ -214,6 +297,23 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
             prompt
         })
         .collect();
+    // A Claude Code skill answers to `/<name>` unless a builtin command or
+    // a Prime Agent prompt template has the name.
+    let native_template_names: Vec<&str> = resources
+        .prompts
+        .iter()
+        .filter(|prompt| {
+            !matches!(
+                prompt.arguments,
+                crate::skills::TemplateArguments::ClaudeCode(_)
+            )
+        })
+        .map(|prompt| prompt.name.as_str())
+        .collect();
+    crate::skills::claude_skills::assign_bare_commands(
+        &mut resources.skills,
+        &native_template_names,
+    );
     for path in &options.additional_prompt_paths {
         if is_local_path(path) && !Path::new(path).exists() {
             resources.skill_diagnostics.push(ResourceDiagnostic::Error {
@@ -223,9 +323,41 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         }
     }
 
-    // Agents files (project context).
+    // Instruction files (project context) and auto memory.
     if !options.no_context_files {
-        resources.agents_files = load_project_context_files(&options.cwd, &options.agent_dir);
+        let (files, nested) = instructions::load_instructions(instructions::InstructionOptions {
+            cwd: options.cwd.clone(),
+            agent_dir: options.agent_dir.clone(),
+            home_dir: options
+                .home_dir
+                .clone()
+                .or_else(pa_types::platform::home_dir),
+            claude_user_files: instruction_settings.claude_user_files,
+            // The additional directories' own instruction files load only on
+            // Claude Code's opt-in.
+            additional_dirs: if additional_directory_context_enabled() {
+                options.additional_directories.clone()
+            } else {
+                Vec::new()
+            },
+        });
+        resources.agents_files = files.iter().cloned().map(context_file).collect();
+        resources.instruction_files = files;
+        resources.nested_instructions = Some(std::sync::Arc::new(nested));
+        let memory_on = instruction_settings.auto_memory && !auto_memory::disabled_by_env();
+        if options.auto_memory && memory_on {
+            resources.auto_memory = Some(auto_memory::load_auto_memory(
+                &options.agent_dir,
+                &options.cwd,
+            ));
+        }
+        if let (Some((agent, scope)), true) = (&options.agent_memory, memory_on) {
+            resources.agent_memory = Some(crate::agents::load_agent_memory(
+                &crate::agents::AgentMemoryRoots::for_session(&options.cwd, &options.agent_dir),
+                agent,
+                *scope,
+            ));
+        }
     }
 
     // System prompt: explicit source or discovered file content.
@@ -259,6 +391,13 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         .extend(resources.package_harness.diagnostics.iter().cloned());
 
     Ok(resources)
+}
+
+/// The settings the instruction loader reads (taken before resolution
+/// consumes the settings manager).
+struct InstructionSettings {
+    auto_memory: bool,
+    claude_user_files: bool,
 }
 
 fn diagnostics_path(diagnostic: &ResourceDiagnostic) -> Option<String> {
@@ -458,6 +597,74 @@ mod tests {
             .find(|prompt| prompt.name == "fix")
             .expect("package prompt loaded");
         assert_eq!(prompt.source_info.source, "../fixture-pkg");
+    }
+
+    /// `~/.claude/skills` loads only with `claudeCodeUserSkills`; a Prime
+    /// Agent skill of the same name wins over a Claude Code one.
+    #[test]
+    fn claude_user_skills_need_the_setting_and_native_skills_win() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let agent_dir = tmp.path().join("agent");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(cwd.join(".git")).unwrap();
+        let write = |dir: &Path, name: &str, description: &str| {
+            fs::create_dir_all(dir.join(name)).unwrap();
+            fs::write(
+                dir.join(name).join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {description}\n---\nbody"),
+            )
+            .unwrap();
+        };
+        write(&agent_dir.join("skills"), "shared", "native shared");
+        let user_skills = home.join(".claude").join("skills");
+        write(&user_skills, "mine", "user claude skill");
+        write(&user_skills, "shared", "claude shared");
+        write(
+            &cwd.join(".claude").join("skills"),
+            "local",
+            "project claude skill",
+        );
+        crate::workspace_trust::record(
+            &cwd,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
+        let load = |settings: &str| {
+            fs::write(agent_dir.join("settings.json"), settings).unwrap();
+            load_resources(ResourceLoaderOptions {
+                home_dir: Some(home.clone()),
+                ..ResourceLoaderOptions::new(&cwd, &agent_dir)
+            })
+            .unwrap()
+        };
+        let claude_names = |resources: &LoadedResources| {
+            resources
+                .skills
+                .iter()
+                .filter(|skill| skill.claude.is_some())
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let without = load("{}");
+        assert_eq!(claude_names(&without), vec!["local"]);
+        let with = load(r#"{"claudeCodeUserSkills": true}"#);
+        assert_eq!(claude_names(&with), vec!["mine", "local"]);
+        let shared = with
+            .skills
+            .iter()
+            .find(|skill| skill.name == "shared")
+            .unwrap();
+        assert_eq!(
+            (shared.description.as_str(), shared.claude.is_none()),
+            ("native shared", true)
+        );
+        assert!(with.skill_diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            ResourceDiagnostic::Collision { collision, .. }
+                if collision.name == "shared" && collision.loser_path.contains(".claude")
+        )));
     }
 
     #[test]

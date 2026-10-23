@@ -93,6 +93,8 @@ pub struct RuntimeConfig {
     pub plan_mode: bool,
     /// `--sandbox <mode>`: the OS sandbox mode for this run, over the `sandbox` setting.
     pub sandbox_mode: Option<pa_core::os_sandbox::SandboxMode>,
+    /// `--add-dir`: extra working directories, resolved against `cwd`.
+    pub additional_directories: Vec<PathBuf>,
 }
 
 impl RuntimeConfig {
@@ -148,6 +150,9 @@ pub struct RunOptions {
     pub offline: bool,
     pub agents_view_requested: bool,
     pub attach_agent: Option<String>,
+    /// The managed worktree `--worktree` launched into (the interactive exit
+    /// offers to remove it when clean).
+    pub worktree: Option<pa_core::worktree::Worktree>,
 }
 
 /// A missing runtime subsystem, reported as a typed error instead of faked
@@ -272,7 +277,6 @@ pub fn runtime_config_from_args(
     let prompt_templates = resolve_cli_path(&parsed.prompt_templates);
     let themes = resolve_cli_path(&parsed.themes);
     RuntimeConfig {
-        cwd,
         agent_dir,
         session_dir,
         provider: parsed.provider.clone(),
@@ -300,6 +304,17 @@ pub fn runtime_config_from_args(
         }),
         plan_mode: parsed.plan,
         sandbox_mode: parsed.sandbox,
+        additional_directories: parsed
+            .add_dirs
+            .iter()
+            .map(|dir| match dir.strip_prefix("~/") {
+                Some(rest) => pa_types::platform::home_dir()
+                    .unwrap_or_default()
+                    .join(rest),
+                None => cwd.join(dir),
+            })
+            .collect(),
+        cwd,
     }
 }
 

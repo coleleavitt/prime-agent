@@ -85,6 +85,8 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "fork"
         | "fork_export"
         | "navigate_tree"
+        | "get_rewind_checkpoints"
+        | "rewind"
         | "import_jsonl"
         | "export_html"
         | "export_jsonl"
@@ -116,6 +118,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "ack_result",
     "list",
     "list_saved_sessions",
+    "list_external_sessions",
     "list_agent_peers",
     "get_direct_worker_transport",
     "attach",
@@ -146,6 +149,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "get_session_context",
     "get_session_tree",
     "get_user_messages_for_forking",
+    "get_rewind_checkpoints",
     "get_last_assistant_text",
     "get_system_prompt",
     "get_rlm_max_depth_status",

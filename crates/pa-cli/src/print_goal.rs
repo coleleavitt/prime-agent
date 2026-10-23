@@ -833,6 +833,7 @@ mod tests {
             pa_core::session_engine::engine::create_session(
                 pa_core::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
+                    additional_directories: Vec::new(),
                     plan_mode: None,
                     on_late_sent_agent_message: None,
                     semantic_edges: None,
@@ -873,6 +874,7 @@ mod tests {
                     steering_mode: None,
                     follow_up_mode: None,
                     rlm_token_allowance: None,
+                    agent_definition: None,
                 },
             )
             .await
@@ -1284,16 +1286,18 @@ mod tests {
     #[tokio::test]
     async fn threshold_hold_mints_before_the_compaction_and_runs_after() {
         let _guard = FAUX_TEST_LOCK.lock().await;
-        // A small output budget keeps the 20k window's combined input+output
-        // ceiling satisfiable (threshold 13_904 = window - 2_000 budget - 4_096
-        // estimate floor).
+        // A small output budget keeps the 24k window's combined input+output
+        // ceiling satisfiable (threshold 17_904 = window - 2_000 budget - 4_096
+        // estimate floor). The window sits mid-range (about 20k to 30k pass
+        // with today's system prompt), so a prompt change of a few hundred
+        // tokens does not move the crossing.
         let mut model_script = script(
             &json!([
                 "crossing reply",
                 "the compaction summary",
                 "continuation reply",
             ]),
-            20_000,
+            24_000,
         );
         model_script["maxTokens"] = json!(2_000);
         let bed = goal_bed_with_resumed_goal(
@@ -1305,6 +1309,9 @@ mod tests {
                     "keepRecentTokens": 10,
                 },
                 "autoRefine": { "enabled": false },
+                // The threshold arithmetic is pinned to the prompt without
+                // the auto-memory section.
+                "autoMemoryEnabled": false,
             }),
         )
         .await;
@@ -1342,6 +1349,15 @@ mod tests {
                         .unwrap_or_default();
                     marks.push((payload.custom_type.clone(), slot));
                 }
+                // The session context and reminder rows ride ahead of every
+                // turn; the order under test is the goal's.
+                pa_types::session::FileEntry::CustomMessage { payload, .. }
+                    if matches!(
+                        payload.custom_type.as_str(),
+                        pa_core::session_engine::context_rows::SESSION_CONTEXT_CUSTOM_TYPE
+                            | pa_core::session_engine::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE
+                            | pa_core::session_engine::reminders::SYSTEM_REMINDER_CUSTOM_TYPE
+                    ) => {}
                 pa_types::session::FileEntry::CustomMessage { payload, .. } => {
                     let slot = payload
                         .details
@@ -1470,6 +1486,7 @@ mod tests {
             pa_core::session_engine::engine::create_session(
                 pa_core::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
+                    additional_directories: Vec::new(),
                     plan_mode: None,
                     on_late_sent_agent_message: None,
                     semantic_edges: None,
@@ -1510,6 +1527,7 @@ mod tests {
                     steering_mode: None,
                     follow_up_mode: None,
                     rlm_token_allowance: None,
+                    agent_definition: None,
                 },
             )
             .await
