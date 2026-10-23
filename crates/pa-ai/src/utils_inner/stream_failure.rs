@@ -557,7 +557,29 @@ pub fn stream_failure_message(info: &StreamFailureInfo, detail: Option<&str>) ->
     if let Some(request_id) = &info.request_id {
         let _ = write!(message, " [request_id: {request_id}]");
     }
+    if let Some(hint) = auth_recovery_hint(info.kind, detail) {
+        let _ = write!(message, " {hint}");
+    }
     message
+}
+
+/// An actionable recovery hint for an authentication failure whose detail shows
+/// an OAuth token was revoked or expired (Claude Code surfaces the same
+/// `Please run /login` guidance). A revoked OAuth login cannot be retried with
+/// the same token, and a bare 401 body is opaque, so the message names the fix.
+/// `None` for non-auth failures and for auth failures that are not an OAuth
+/// token problem (a bad API key gets no re-login advice).
+fn auth_recovery_hint(kind: StreamFailureKind, detail: Option<&str>) -> Option<&'static str> {
+    if kind != StreamFailureKind::Auth {
+        return None;
+    }
+    let detail = detail.unwrap_or_default().to_lowercase();
+    let oauth_token_problem = detail.contains("oauth")
+        || detail.contains("revoked")
+        || (detail.contains("token") && detail.contains("expired"));
+    oauth_token_problem.then_some(
+        "The login was rejected (its OAuth token was revoked or expired); run /login to sign in again.",
+    )
 }
 
 /// Classify a stream failure from the provider's error type and status code.

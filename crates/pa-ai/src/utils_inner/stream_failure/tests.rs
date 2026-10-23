@@ -115,6 +115,50 @@ fn classified_message_with_parenthesized_status() {
     );
 }
 
+/// A revoked/expired OAuth token (a 401 auth failure whose detail names the
+/// OAuth token) gets an actionable `run /login` hint, like Claude Code. A bad
+/// API key (auth failure, no OAuth signal) and a non-auth failure do not.
+#[test]
+fn an_oauth_revoked_auth_failure_tells_the_user_to_run_login() {
+    let auth = StreamFailureInfo {
+        kind: StreamFailureKind::Auth,
+        provider_error_type: Some("authentication_error".into()),
+        status: Some(401),
+        request_id: Some("req_abc".into()),
+        retry_after_ms: None,
+        raw: None,
+        transport: None,
+    };
+    let message = stream_failure_message(&auth, Some("OAuth access token has been revoked."));
+    assert!(
+        message.contains("run /login to sign in again"),
+        "revoked OAuth login names the fix: {message}"
+    );
+    assert!(message.contains("[request_id: req_abc]"));
+
+    // A bare API-key 401 (no OAuth signal) gets no re-login advice.
+    let api_key = stream_failure_message(&auth, Some("invalid x-api-key"));
+    assert!(
+        !api_key.contains("/login"),
+        "a bad API key is not an OAuth re-login case: {api_key}"
+    );
+
+    // A non-auth failure never gets the hint.
+    let overloaded = StreamFailureInfo {
+        kind: StreamFailureKind::Overloaded,
+        provider_error_type: Some("overloaded_error".into()),
+        status: Some(529),
+        request_id: None,
+        retry_after_ms: None,
+        raw: None,
+        transport: None,
+    };
+    assert!(
+        !stream_failure_message(&overloaded, Some("oauth revoked token expired"))
+            .contains("/login")
+    );
+}
+
 #[test]
 fn stop_reason_failures() {
     let err = stream_failure_from_stop_reason(Some("refusal"), None);
