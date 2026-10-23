@@ -49,8 +49,9 @@ count as known content.
 | `read` | as `stale`, and also when the model never read the file in the kernel ("File has not been read yet. Read it first before writing to it."). Reads through `bash()` (`cat`, `rg`) do not count. |
 | `off` | never. |
 
-Any settings scope may set it; it reaches the kernel as `PRIME_AGENT_EDIT_READ_CHECK` when the
-kernel starts.
+The global scope sets it, and a project `.prime/agent/settings.json` once the workspace is
+trusted (an untrusted repo cannot weaken the rule to `off`); it reaches the kernel as
+`PRIME_AGENT_EDIT_READ_CHECK` when the kernel starts.
 
 ## Kernel snapshots
 
