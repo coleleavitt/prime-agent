@@ -384,11 +384,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_review_stamps_the_cooldown() {
+    async fn a_truncated_review_is_a_failure_that_stamps_the_cooldown() {
         let session = session(true).await;
         session.mark_compact_auto_refine_pending();
-        // An unparseable review reply is a failed review.
-        let model = faux_model(&[serde_json::json!({"text": "not json"})]);
+        // A truncated JSON object (the reply was cut off mid-value) is a
+        // genuine review failure.
+        let model = faux_model(&[serde_json::json!({"text": "{\"shouldRefine\": true"})]);
         assert!(
             consume(&session, &model, CompactAutoRefineSurface::Checkpoint)
                 .await
@@ -397,6 +398,27 @@ mod tests {
         let (pending, last_review_at, turns) = state(&session);
         assert!(!pending, "the trigger was consumed");
         assert!(last_review_at.is_some(), "the failure stamped the cooldown");
+        assert_eq!(turns, 0, "the counter reset");
+    }
+
+    #[tokio::test]
+    async fn a_prose_review_declines_without_failing_but_still_cools_down() {
+        let session = session(true).await;
+        session.mark_compact_auto_refine_pending();
+        // A reply with no JSON object at all (prose) is not a failure: the
+        // reviewer proposed nothing, so the round declines (Ok(None)) rather
+        // than erroring, and the attempt still stamps the cooldown.
+        let model = faux_model(&[serde_json::json!({"text": "not json"})]);
+        assert!(matches!(
+            consume(&session, &model, CompactAutoRefineSurface::Checkpoint).await,
+            Ok(None)
+        ));
+        let (pending, last_review_at, turns) = state(&session);
+        assert!(!pending, "the trigger was consumed");
+        assert!(
+            last_review_at.is_some(),
+            "a declined review still stamps the cooldown"
+        );
         assert_eq!(turns, 0, "the counter reset");
     }
 
