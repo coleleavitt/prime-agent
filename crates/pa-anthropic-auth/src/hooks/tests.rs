@@ -174,3 +174,70 @@ fn a_token_the_store_did_not_serve_is_left_alone() {
     );
     assert_eq!(token_hits.load(Ordering::SeqCst), 0);
 }
+
+/// The overnight shared-store bug: a tool that shares the store (Claude Code)
+/// rotated a fresh token in, so the token this process presents is rejected
+/// (401). Its own refresh cannot run - the endpoint is unreachable, standing in
+/// for the store claim held by the other tool mid-refresh - so recovery falls
+/// back to RE-READING the store, which already holds the peer's fresh token.
+/// Before the fix this returned nothing and only a daemon restart recovered.
+#[test]
+fn a_401_recovers_by_re_reading_a_peer_rotated_token_when_refresh_cannot_run() {
+    let (_home, source) = source_over(vec![row("stale", Duration::hours(2))], "http://127.0.0.1:9");
+    let stale = access_of("stale");
+    // A peer (Claude Code) rotates a fresh token into the shared store.
+    let mut rotated = row("stale", Duration::hours(8));
+    if let anthropic::token::Credential::Oauth(tokens) = &mut rotated.credential {
+        tokens.access = anthropic::token::AccessToken::new(ROTATED_ACCESS.to_string());
+    }
+    AccountStore::mutate(source.store_path(), |store| {
+        store.upsert(rotated);
+        Ok(())
+    })
+    .expect("peer rotation");
+
+    let model = messages_model("anthropic-reread", "http://127.0.0.1:9");
+    let headers = std::collections::BTreeMap::new();
+    let rejected = pa_ai::request_hooks::RejectedRequest {
+        model: &model,
+        api_key: &stale,
+        rejection: pa_ai::request_hooks::Rejection::Unauthorized,
+        status: 401,
+        provider_error_type: Some("authentication_error"),
+        headers: &headers,
+        body: "OAuth access token has been revoked",
+    };
+    assert_eq!(
+        source.recover_unauthorized(&rejected).as_deref(),
+        Some(ROTATED_ACCESS),
+        "re-read the peer-rotated store token"
+    );
+    assert_eq!(source.usage().recovered, 1);
+}
+
+/// The same path with nothing newer in the store recovers nothing (no endless
+/// re-presentation of a token the store itself still holds as current).
+#[test]
+fn a_401_with_no_newer_store_token_does_not_recover() {
+    let (_home, source) = source_over(
+        vec![row("stale2", Duration::hours(2))],
+        "http://127.0.0.1:9",
+    );
+    let stale = access_of("stale2");
+    let model = messages_model("anthropic-reread-none", "http://127.0.0.1:9");
+    let headers = std::collections::BTreeMap::new();
+    let rejected = pa_ai::request_hooks::RejectedRequest {
+        model: &model,
+        api_key: &stale,
+        rejection: pa_ai::request_hooks::Rejection::Unauthorized,
+        status: 401,
+        provider_error_type: Some("authentication_error"),
+        headers: &headers,
+        body: "OAuth access token has been revoked",
+    };
+    assert_eq!(
+        source.recover_unauthorized(&rejected),
+        None,
+        "nothing newer in the store -> no recovery"
+    );
+}

@@ -141,8 +141,17 @@ impl SharedStoreSource {
                 rejected,
                 &SharedRefreshOptions::default(),
             ))
-            .ok()?
-            .ok()?
+        };
+        // The refresh could not run: its store claim is held by another tool
+        // mid-refresh, or the call hit an I/O/runtime error. Fall back to the
+        // store's current token - a tool that shares this store (Claude Code)
+        // may have already rotated a fresh one in, usable without a refresh of
+        // our own. This is the overnight "token revoked" case: the presented
+        // token was invalidated by someone else's rotation, and re-reading the
+        // store picks the new one up (a daemon restart used to be the only way
+        // to recover).
+        let Ok(Ok(recovery)) = recovery else {
+            return self.reread_store_token(rejected);
         };
         if let Some(outcome) = recovery.outcome.filter(|_| recovery.decision.retry) {
             let token = outcome.tokens.access.expose().to_string();
@@ -183,8 +192,18 @@ impl SharedStoreSource {
                 reason = recovery.decision.reason.as_str(),
                 "the shared store's token was rejected with 401 and could not be refreshed"
             );
-            return None;
+            // The refresh failed (a held store claim, a transient error), but a
+            // tool sharing the store may still have rotated a fresh token in -
+            // re-read before giving up.
+            return self.reread_store_token(rejected);
         }
+        self.reread_store_token(rejected)
+    }
+
+    /// After a 401, re-read the store's current token: a tool that shares the
+    /// store (Claude Code) may have rotated a fresh one in. `Some` only when it
+    /// differs from the rejected token - otherwise there is nothing new to try.
+    fn reread_store_token(&self, rejected: &str) -> Option<String> {
         let current = self.store_token()?;
         (current != rejected).then(|| {
             self.count(UsageEvent::Recovered);
