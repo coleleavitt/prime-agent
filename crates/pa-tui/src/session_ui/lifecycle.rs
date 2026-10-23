@@ -193,6 +193,7 @@ impl SessionUi {
             feature_questions: Vec::new(),
             answered_questions: std::collections::HashSet::new(),
             ask_questions: Vec::new(),
+            choice_questions: Vec::new(),
             answered_ask_questions: std::collections::HashSet::new(),
             permission_cycle: Vec::new(),
             coordinator_mode: false,
@@ -568,6 +569,7 @@ impl SessionUi {
             self.feature_questions.clear();
             self.answered_questions.clear();
             self.ask_questions.clear();
+            self.choice_questions.clear();
             self.answered_ask_questions.clear();
         }
         // The stash state follows the stable id of the session now rendered: the initial attach and

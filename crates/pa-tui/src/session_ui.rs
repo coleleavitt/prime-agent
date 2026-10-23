@@ -367,8 +367,12 @@ pub(crate) struct SessionUi {
     /// The `rlm.ask_user` multiple-choice questions pending on the surface,
     /// oldest first: `(id, payload)` (see [`ask_question`]).
     ask_questions: Vec<(String, serde_json::Value)>,
-    /// Ask-user questions this client answered that the daemon may still
-    /// list; forgotten once it stops.
+    /// The model-driven choice questions pending on the surface, oldest
+    /// first (`rlm.enter_plan_mode` consent, the `rlm.exit_plan_mode` plan
+    /// approval; see [`ask_question`]).
+    choice_questions: Vec<ask_question::ChoiceQuestion>,
+    /// Ask-user and choice questions this client answered that the daemon
+    /// may still list; forgotten once it stops.
     answered_ask_questions: std::collections::HashSet<String>,
     /// The session commands the plan-mode key sends instead of `/plan`
     /// while a feature publishes a permission-mode cycle (see

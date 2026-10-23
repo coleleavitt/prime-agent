@@ -780,6 +780,10 @@ impl SessionUi {
                         view,
                     );
                     self.apply_ask_questions(super::ask_question::ask_questions_of(&status), view);
+                    self.apply_choice_questions(
+                        super::ask_question::choice_questions_of(&status),
+                        view,
+                    );
                 }
                 if feature == super::permission_cycle::PERMISSIONS_FEATURE {
                     self.permission_cycle = super::permission_cycle::cycle_of(&status);

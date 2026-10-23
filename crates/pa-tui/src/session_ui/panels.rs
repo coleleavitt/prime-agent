@@ -124,6 +124,10 @@ impl SessionUi {
                 super::ask_question::ask_questions_from_summary(&summary),
                 view,
             );
+            self.apply_choice_questions(
+                super::ask_question::choice_questions_from_summary(&summary),
+                view,
+            );
         }
         view.chrome.feature_panel = crate::feature_panel::rows(&self.feature_panels);
         let dock = self.activity_dock_state();

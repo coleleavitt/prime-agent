@@ -11,7 +11,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use serde_json::{Map, Value, json};
 
-use super::{AgentView, DaemonCommand, SessionUi};
+use super::{AgentView, DaemonCommand, PendingConfirm, SessionUi};
 use crate::Line;
 use crate::keybindings::KeybindingsManager;
 use crate::menu_panel::{hint_row, key_hint, menu_row};
@@ -483,6 +483,142 @@ impl SessionUi {
     }
 }
 
+/// A model-driven single-choice question (`rlm.enter_plan_mode` consent,
+/// the `rlm.exit_plan_mode` plan approval): the host publishes its `prompt`
+/// and `choices` (`{value, label}`), and the client answers with
+/// `{choice: value}`. Rendered as a [`crate::confirm::ConfirmPanel`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChoiceQuestion {
+    pub(crate) id: String,
+    pub(crate) prompt: String,
+    /// A short plan preview shown under the prompt (the plan approval).
+    pub(crate) plan: Option<String>,
+    /// `(label, value)` rows, in order.
+    pub(crate) choices: Vec<(String, String)>,
+}
+
+/// The model-driven choice questions a `confirmation` status carries (its
+/// `questions` key, any kind other than `ask_user` with a `choices` list),
+/// oldest first.
+pub(super) fn choice_questions_of(status: &Value) -> Vec<ChoiceQuestion> {
+    status
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|question| question.get("kind").and_then(Value::as_str) != Some(ASK_USER_KIND))
+        .filter_map(|question| {
+            let id = question
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())?;
+            let payload = question.get("payload")?;
+            let choices: Vec<(String, String)> = payload
+                .get("choices")
+                .and_then(Value::as_array)?
+                .iter()
+                .filter_map(|choice| {
+                    let value = choice.get("value").and_then(Value::as_str)?;
+                    let label = choice.get("label").and_then(Value::as_str).unwrap_or(value);
+                    Some((label.to_string(), value.to_string()))
+                })
+                .collect();
+            if choices.len() < 2 {
+                return None;
+            }
+            Some(ChoiceQuestion {
+                id: id.to_string(),
+                prompt: payload
+                    .get("prompt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Choose an option")
+                    .to_string(),
+                plan: payload
+                    .get("plan")
+                    .and_then(Value::as_str)
+                    .filter(|plan| !plan.trim().is_empty())
+                    .map(str::to_string),
+                choices,
+            })
+        })
+        .collect()
+}
+
+/// The model-driven choice questions a roster summary carries.
+pub(super) fn choice_questions_from_summary(summary: &Value) -> Vec<ChoiceQuestion> {
+    summary
+        .get("featureStatus")
+        .and_then(|statuses| statuses.get(super::feature_confirm::CONFIRMATION_FEATURE))
+        .and_then(|entry| entry.get("status"))
+        .map(choice_questions_of)
+        .unwrap_or_default()
+}
+
+impl SessionUi {
+    /// Adopt the session's pending choice questions: forget answers no
+    /// longer listed, drop answered ones, and open the oldest otherwise.
+    pub(super) fn apply_choice_questions(
+        &mut self,
+        mut questions: Vec<ChoiceQuestion>,
+        view: &mut AgentView,
+    ) {
+        questions.retain(|question| !self.answered_ask_questions.contains(&question.id));
+        self.choice_questions = questions;
+        if let Some(PendingConfirm::ChoiceQuestion { id, .. }) = &self.pending_confirm {
+            if !self
+                .choice_questions
+                .iter()
+                .any(|question| &question.id == id)
+            {
+                self.pending_confirm = None;
+                view.confirm = None;
+                self.dirty = true;
+            }
+        }
+        self.open_next_choice_question(view);
+    }
+
+    /// Open the oldest pending choice question, unless a panel is open.
+    pub(super) fn open_next_choice_question(&mut self, view: &mut AgentView) {
+        if self.pending_confirm.is_some() || view.confirm.is_some() || view.ask_question.is_some() {
+            return;
+        }
+        let Some(question) = self.choice_questions.first() else {
+            return;
+        };
+        let mut message = question.prompt.clone();
+        if let Some(plan) = &question.plan {
+            let preview: Vec<&str> = plan.lines().take(12).collect();
+            message.push('\n');
+            message.push('\n');
+            message.push_str(&preview.join("\n"));
+        }
+        let labels: Vec<String> = question
+            .choices
+            .iter()
+            .map(|(label, _)| label.clone())
+            .collect();
+        view.confirm = Some(crate::confirm::ConfirmPanel::choices_defaulting_to_last(
+            "Plan mode",
+            &message,
+            labels,
+        ));
+        self.pending_confirm = Some(PendingConfirm::ChoiceQuestion {
+            id: question.id.clone(),
+            choices: question.choices.clone(),
+        });
+        self.dirty = true;
+    }
+
+    /// Answer choice question `id` with the chosen value (`None` declines).
+    pub(super) fn answer_choice_question(&mut self, id: String, value: Option<String>) {
+        self.choice_questions.retain(|question| question.id != id);
+        self.answered_ask_questions.insert(id.clone());
+        let answer = value.map(|value| serde_json::json!({ "choice": value }));
+        self.answer_ask_question(id, answer);
+    }
+}
+
 /// The pane's key hint.
 fn hint(kb: &KeybindingsManager, multi_select: bool) -> String {
     let mut hints = vec![key_hint(
@@ -605,6 +741,49 @@ mod tests {
             action,
             AskAction::Submit(json!({ "answers": { "Which library?": "Tempora" } }))
         );
+    }
+
+    #[test]
+    fn choice_questions_parse_plan_approval_and_consent() {
+        let status = json!({ "questions": [
+            { "id": "question-9", "kind": "ask_user", "payload": { "questions": [] } },
+            { "id": "question-10", "kind": "plan_approval", "payload": {
+                "prompt": "Would you like to proceed?",
+                "plan": "# Plan\nShip it.",
+                "choices": [
+                    { "value": "acceptEdits", "label": "Yes, and auto-accept edits" },
+                    { "value": "default", "label": "Yes, and manually approve edits" },
+                    { "value": "keepPlanning", "label": "No, keep planning" },
+                ],
+            }},
+            { "id": "question-11", "kind": "enter_plan_mode", "payload": {
+                "prompt": "Enter plan mode?",
+                "choices": [{ "value": "enter", "label": "Enter plan mode" }, { "value": "decline", "label": "No" }],
+            }},
+            // A single-choice entry is dropped (no decision).
+            { "id": "question-12", "kind": "plan_approval", "payload": { "choices": [{ "value": "only" }] }},
+        ]});
+        let parsed = choice_questions_of(&status);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "question-10");
+        assert_eq!(parsed[0].prompt, "Would you like to proceed?");
+        assert_eq!(parsed[0].plan.as_deref(), Some("# Plan\nShip it."));
+        assert_eq!(
+            parsed[0].choices,
+            vec![
+                (
+                    "Yes, and auto-accept edits".to_string(),
+                    "acceptEdits".to_string()
+                ),
+                (
+                    "Yes, and manually approve edits".to_string(),
+                    "default".to_string()
+                ),
+                ("No, keep planning".to_string(), "keepPlanning".to_string()),
+            ]
+        );
+        assert_eq!(parsed[1].id, "question-11");
+        assert_eq!(parsed[1].plan, None);
     }
 
     #[test]
