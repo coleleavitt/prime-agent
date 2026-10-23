@@ -1,5 +1,5 @@
 //! The multiple-choice question panel (`rlm.ask_user`, Claude Code's
-//! AskUserQuestion): the model's 1-4 questions published on the session's
+//! `AskUserQuestion`): the model's 1-4 questions published on the session's
 //! confirmation surface under the status's `questions` key. The panel steps
 //! through the questions, each with its header chip, 2-4 options (label,
 //! description, and a focused option's multiline preview), a `multiSelect`
@@ -82,7 +82,8 @@ impl PanelQuestion {
             .options
             .iter()
             .zip(&self.picked)
-            .filter_map(|(option, picked)| picked.then(|| option.label.clone()))
+            .filter(|(_, picked)| **picked)
+            .map(|(option, _)| option.label.clone())
             .collect();
         let other = self.other.trim();
         if self.multi_select {
@@ -272,9 +273,7 @@ impl AskQuestionPanel {
             if !multi && !on_other {
                 // A single-select pick is exclusive.
                 let question = self.question_mut();
-                for picked in &mut question.picked {
-                    *picked = false;
-                }
+                question.picked.fill(false);
                 question.picked[cursor] = true;
             }
             self.question_mut().editing_other = false;

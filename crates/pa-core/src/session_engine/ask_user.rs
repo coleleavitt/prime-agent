@@ -500,10 +500,8 @@ pub fn parse_timeout(setting: Option<&str>) -> Option<Duration> {
     let setting = setting?.trim();
     let (number, unit) = if let Some(number) = setting.strip_suffix('s') {
         (number, 1)
-    } else if let Some(number) = setting.strip_suffix('m') {
-        (number, 60)
     } else {
-        return None;
+        (setting.strip_suffix('m')?, 60)
     };
     number
         .trim()

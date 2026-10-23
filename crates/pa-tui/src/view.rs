@@ -88,7 +88,7 @@ pub struct AgentView {
     pub tree_selector: Option<crate::tree_selector::TreeSelector>,
     pub confirm: Option<crate::confirm::ConfirmPanel>,
     /// The `rlm.ask_user` multiple-choice question panel (Claude Code's
-    /// AskUserQuestion), opened for the oldest pending `ask_user` question.
+    /// `AskUserQuestion`), opened for the oldest pending `ask_user` question.
     pub(crate) ask_question: Option<crate::session_ui::AskQuestionPanel>,
     pub provider_auth: Option<crate::provider_auth::ProviderAuthSelector>,
     pub auth_panel: Option<crate::auth_panel::AuthPanel>,

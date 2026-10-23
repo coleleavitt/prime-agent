@@ -1,6 +1,6 @@
 //! `rlm.enter_plan_mode` / `rlm.exit_plan_mode`: the model asks to enter
 //! plan mode, and presents a finished plan for the user to approve, Claude
-//! Code's ExitPlanMode and its plan-approval dialog (2.1.309
+//! Code's `ExitPlanMode` and its plan-approval dialog (2.1.309
 //! `chunk-7ak0g5xy` `spt`/`apt`).
 //!
 //! Both run on the session's confirmation surface (the same surface as
