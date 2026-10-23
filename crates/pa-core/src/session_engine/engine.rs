@@ -1025,23 +1025,31 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 let boundary = boundary.clone();
                 let budget = budget.clone();
                 Box::pin(async move {
+                    // Checked before the fold: a run that stops here must not
+                    // take queued steers it will never answer.
+                    if budget.as_ref().is_some_and(|budget| budget.exhausted()) {
+                        tracing::info!(
+                            target: "pa_core::rlm_token_budget",
+                            "subagent stopped: its RLM token grant is spent"
+                        );
+                        return Ok(true);
+                    }
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
                     // model call); only the ones that cannot still end the run.
                     if let Some(fold) = &fold {
                         super::steering_fold::fold_queued_steers(fold.as_ref(), &fold_slot).await;
                     }
-                    let exhausted = budget.as_ref().is_some_and(|budget| {
-                        let exhausted = budget.exhausted();
-                        if exhausted {
-                            tracing::info!(
-                                target: "pa_core::rlm_token_budget",
-                                "subagent stopped: its RLM token grant is spent"
-                            );
-                        }
-                        exhausted
-                    });
-                    if exhausted || steering.as_ref().is_some_and(|probe| probe()) {
+                    // A queued steer ends the run only once the agent holds no
+                    // rows of its own: rows folded in above ride this run's
+                    // next turn. Ending the run under them would leave them to
+                    // the idle pump, whose run no embedding owns.
+                    let steer_ends_run = steering.as_ref().is_some_and(|probe| probe())
+                        && !fold_slot
+                            .get()
+                            .and_then(|admission| admission.agent.upgrade())
+                            .is_some_and(|agent| agent.has_queued_messages());
+                    if steer_ends_run {
                         return Ok(true);
                     }
                     // The installed features see the boundary only when the

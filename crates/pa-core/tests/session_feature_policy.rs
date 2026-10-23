@@ -572,3 +572,87 @@ async fn a_queued_host_notice_joins_the_running_turn_as_its_row() {
         ]
     );
 }
+
+/// A host notice folded at a boundary where a queued steer ends the run is
+/// answered in that same run. Ending the run under it would leave the notice
+/// in the agent's queue for the session's idle pump, whose run no embedding
+/// owns: the daemon then neither shows nor saves it and refuses every prompt
+/// with "Agent is already processing" until it ends.
+#[tokio::test]
+async fn a_folded_notice_is_answered_in_its_run_when_a_queued_steer_ends_it() {
+    install_policy();
+    let model = model();
+    let provider = Arc::new(ScriptedProvider::new(model.clone()));
+    provider.push_tool_call_turn(None, vec![("call-1", "echo", json!({}))]);
+    provider.push_text_turn("saw the notice");
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let queue = Arc::new(QueuedNotice::default());
+    let echo = ToolDefinition {
+        name: "echo".to_string(),
+        label: "Echo".to_string(),
+        description: "echo".to_string(),
+        prompt_snippet: String::new(),
+        parameters: json!({ "type": "object", "properties": {} }),
+        execution_mode: Some(ExecutionMode::Sequential),
+        prepare_arguments: None,
+        execute: Arc::new(|_id, _params, _signal, _on_update| {
+            Box::pin(async { Ok(ToolExecutionResult::text("echoed")) })
+        }),
+    };
+    let engine = Box::pin(create_session(SessionEngineConfig {
+        cwd,
+        agent_dir: tmp.path().join("agent"),
+        model: Some(model),
+        stream_fn: Some(provider.stream_fn()),
+        tools: vec![bridge_tool(echo)],
+        steering_fold: Some(Arc::clone(&queue) as Arc<_>),
+        // A steer that cannot join waits in the lane behind the notice.
+        queued_steering_probe: Some(Arc::new(|| true)),
+        ..SessionEngineConfig::default()
+    }))
+    .await
+    .unwrap();
+    let first_run = Arc::new(std::sync::Mutex::new(None::<Vec<AgentMessage>>));
+    let sink = Arc::clone(&first_run);
+    let _subscription = engine
+        .session
+        .agent()
+        .subscribe(move |event, _signal| {
+            if let pa_agent::types::AgentEvent::AgentEnd { messages } = event {
+                sink.lock().unwrap().get_or_insert(messages);
+            }
+            Box::pin(async { Ok(()) })
+        })
+        .await;
+    engine
+        .prompt("start", PromptOptions::default())
+        .await
+        .unwrap();
+
+    let first_run = first_run.lock().unwrap().clone().expect("the run ended");
+    let run: Vec<String> = first_run
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Custom(row) if row.payload["customType"] == "async_bash_completion" => {
+                Some("async_bash_completion".to_string())
+            }
+            AgentMessage::Standard(Message::User(user)) => Some(text_of(&user.content)),
+            AgentMessage::Standard(Message::ToolResult(_)) => Some("tool result".to_string()),
+            AgentMessage::Standard(Message::Assistant(_)) => Some("assistant".to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        run,
+        [
+            "start",
+            "assistant",
+            "tool result",
+            "async_bash_completion",
+            "assistant"
+        ]
+    );
+    assert!(!engine.session.agent().has_queued_messages());
+}
