@@ -373,6 +373,10 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 // `answer_feature_confirmation`: a hook's or plugin's `ask`
                 // is put to the user.
                 "feature_confirmation",
+                // `answer_feature_confirmation { answer }`: the structured
+                // questions (`rlm.ask_user`, the plan approval) on the same
+                // surface.
+                "feature_questions",
                 "session_input_admission",
                 "prompt_admission_cancellation",
                 "owned_prompt_cancellation",
@@ -1252,6 +1256,7 @@ mod tests {
         }
         assert_eq!(serde_json::to_value(&parsed.command).unwrap(), command);
         assert!(default_server_capabilities().contains(&"feature_confirmation".to_string()));
+        assert!(default_server_capabilities().contains(&"feature_questions".to_string()));
     }
 
     #[test]

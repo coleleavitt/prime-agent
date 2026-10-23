@@ -4,6 +4,7 @@
 
 pub mod additional_dirs;
 pub mod agent_messaging;
+pub mod ask_user;
 pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
@@ -35,6 +36,8 @@ pub mod ipython_state;
 pub mod messages;
 pub mod messaging_stats;
 pub mod output_limit_recovery;
+pub mod plan_file;
+pub mod plan_host;
 pub mod plan_mode;
 pub mod presented_artifact;
 pub mod provider_adapter;

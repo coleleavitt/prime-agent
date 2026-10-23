@@ -1224,6 +1224,27 @@ impl SettingsManager {
         }
     }
 
+    /// `askUserQuestionTimeout`: how long `rlm.ask_user` waits for the user;
+    /// `None` waits until the question is answered.
+    #[must_use]
+    pub fn get_ask_user_question_timeout(&self) -> Option<std::time::Duration> {
+        crate::session_engine::ask_user::parse_timeout(
+            self.merged.ask_user_question_timeout.as_deref(),
+        )
+    }
+
+    /// `plansDirectory`: the plan-file directory setting as written (a
+    /// project-relative path; [`crate::session_engine::plan_file`] resolves
+    /// and checks it).
+    #[must_use]
+    pub fn get_plans_directory(&self) -> Option<&str> {
+        self.merged
+            .plans_directory
+            .as_deref()
+            .map(str::trim)
+            .filter(|directory| !directory.is_empty())
+    }
+
     /// `lengthContinuations`: the bound on consecutive auto-continuations
     /// of a reply cut off at the output-token limit, clamped to
     /// [`MAX_LENGTH_CONTINUATIONS`]. 0 (the default) is off.

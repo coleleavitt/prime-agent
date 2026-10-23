@@ -192,6 +192,9 @@ impl SessionUi {
             feature_panels: crate::feature_panel::FeaturePanels::new(),
             feature_questions: Vec::new(),
             answered_questions: std::collections::HashSet::new(),
+            ask_questions: Vec::new(),
+            choice_questions: Vec::new(),
+            answered_ask_questions: std::collections::HashSet::new(),
             permission_cycle: Vec::new(),
             coordinator_mode: false,
             session_file: None,
@@ -565,6 +568,9 @@ impl SessionUi {
             self.feature_panels.clear();
             self.feature_questions.clear();
             self.answered_questions.clear();
+            self.ask_questions.clear();
+            self.choice_questions.clear();
+            self.answered_ask_questions.clear();
         }
         // The stash state follows the stable id of the session now rendered: the initial attach and
         // every in-place switch rebind through here.

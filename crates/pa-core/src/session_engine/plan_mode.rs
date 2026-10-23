@@ -148,9 +148,11 @@ pub enum PlanCommand {
     On,
     Off,
     Status,
+    /// `/plan view`: show the current plan file.
+    View,
 }
 
-/// Parse `/plan [on|off|status]`.
+/// Parse `/plan [on|off|status|view]`.
 ///
 /// # Errors
 ///
@@ -161,8 +163,149 @@ pub fn parse_plan_command(args: &str) -> Result<PlanCommand, String> {
         "on" => Ok(PlanCommand::On),
         "off" => Ok(PlanCommand::Off),
         "status" => Ok(PlanCommand::Status),
-        _ => Err("Usage: /plan [on|off|status]".to_string()),
+        "view" => Ok(PlanCommand::View),
+        _ => Err("Usage: /plan [on|off|status|view]".to_string()),
     }
+}
+
+// Model-callable enter/exit plan mode (Claude Code's ExitPlanMode and the
+// plan-approval dialog, 2.1.309 `chunk-7ak0g5xy` `spt`/`apt`).
+
+/// Claude Code's plan-approval prompt (`chunk-7ak0g5xy`).
+pub const PLAN_APPROVAL_PROMPT: &str =
+    "Claude has written up a plan and is ready to execute. Would you like to proceed?";
+/// Claude Code's "auto-accept edits" choice label.
+pub const PLAN_CHOICE_ACCEPT_EDITS_LABEL: &str = "Yes, and auto-accept edits";
+/// Claude Code's "manually approve edits" choice label.
+pub const PLAN_CHOICE_MANUAL_LABEL: &str = "Yes, and manually approve edits";
+/// Claude Code's "keep planning" choice label.
+pub const PLAN_CHOICE_KEEP_PLANNING_LABEL: &str = "No, keep planning";
+
+/// The consent prompt for the model's request to enter plan mode.
+pub const ENTER_PLAN_PROMPT: &str = "The agent wants to enter plan mode: it will investigate and plan, and file edits are blocked until you approve a plan or turn plan mode off. Enter plan mode?";
+
+/// The user's answer to the exit-plan approval dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanExitChoice {
+    /// Approve the plan and auto-accept edits (`acceptEdits`).
+    AcceptEdits,
+    /// Approve the plan and approve edits manually (`default`).
+    ApproveManually,
+    /// Keep planning, with the user's feedback for the model.
+    KeepPlanning { feedback: Option<String> },
+}
+
+impl PlanExitChoice {
+    /// The answer object's `choice` string.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PlanExitChoice::AcceptEdits => "acceptEdits",
+            PlanExitChoice::ApproveManually => "default",
+            PlanExitChoice::KeepPlanning { .. } => "keepPlanning",
+        }
+    }
+
+    /// The permission mode a client switches to on approval; `None` for
+    /// keep-planning (plan mode stays on). The daemon maps it to
+    /// `pa_permissions::PermissionMode` and its `/permissions mode` command.
+    #[must_use]
+    pub fn permission_mode(&self) -> Option<&'static str> {
+        match self {
+            PlanExitChoice::AcceptEdits => Some("acceptEdits"),
+            PlanExitChoice::ApproveManually => Some("default"),
+            PlanExitChoice::KeepPlanning { .. } => None,
+        }
+    }
+
+    /// Whether the plan was approved (plan mode turns off).
+    #[must_use]
+    pub fn approved(&self) -> bool {
+        !matches!(self, PlanExitChoice::KeepPlanning { .. })
+    }
+}
+
+/// The exit-plan approval question payload (`QUESTION_KIND_PLAN_APPROVAL`):
+/// the plan text, the plan file path, Claude Code's prompt, and the three
+/// choices the client renders.
+#[must_use]
+pub fn plan_approval_payload(plan: &str, plan_file_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "prompt": PLAN_APPROVAL_PROMPT,
+        "plan": plan,
+        "planFilePath": plan_file_path,
+        "choices": [
+            { "value": "acceptEdits", "label": PLAN_CHOICE_ACCEPT_EDITS_LABEL },
+            { "value": "default", "label": PLAN_CHOICE_MANUAL_LABEL },
+            { "value": "keepPlanning", "label": PLAN_CHOICE_KEEP_PLANNING_LABEL, "feedback": true },
+        ],
+    })
+}
+
+/// Read the exit-plan approval dialog's answer object
+/// (`{choice, feedback?}`); an unknown or missing choice keeps planning.
+#[must_use]
+pub fn interpret_plan_exit_answer(answer: &serde_json::Value) -> PlanExitChoice {
+    let feedback = answer
+        .get("feedback")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|feedback| !feedback.is_empty())
+        .map(str::to_string);
+    match answer.get("choice").and_then(serde_json::Value::as_str) {
+        Some("acceptEdits") => PlanExitChoice::AcceptEdits,
+        Some("default") => PlanExitChoice::ApproveManually,
+        _ => PlanExitChoice::KeepPlanning { feedback },
+    }
+}
+
+/// The kernel reply `rlm.exit_plan_mode` returns for `choice`.
+#[must_use]
+pub fn plan_exit_reply(choice: &PlanExitChoice) -> serde_json::Value {
+    match choice {
+        PlanExitChoice::AcceptEdits => serde_json::json!({
+            "status": "approved",
+            "mode": "acceptEdits",
+            "message": "The user approved the plan and turned on auto-accept edits. Plan mode is off; carry out the plan, applying edits without asking.",
+        }),
+        PlanExitChoice::ApproveManually => serde_json::json!({
+            "status": "approved",
+            "mode": "default",
+            "message": "The user approved the plan. Plan mode is off; carry out the plan, and edits are approved as usual.",
+        }),
+        PlanExitChoice::KeepPlanning { feedback } => {
+            let mut reply = serde_json::json!({
+                "status": "keep_planning",
+                "message": match feedback {
+                    Some(feedback) => format!("The user wants to keep planning. Their feedback: {feedback}. Revise the plan accordingly; do not start the work yet."),
+                    None => "The user wants to keep planning. Do not start the work yet; refine the plan.".to_string(),
+                },
+            });
+            if let Some(feedback) = feedback {
+                reply["feedback"] = serde_json::json!(feedback);
+            }
+            reply
+        }
+    }
+}
+
+/// The consent question payload for entering plan mode
+/// (`QUESTION_KIND_ENTER_PLAN_MODE`).
+#[must_use]
+pub fn enter_plan_payload() -> serde_json::Value {
+    serde_json::json!({
+        "prompt": ENTER_PLAN_PROMPT,
+        "choices": [
+            { "value": "enter", "label": "Enter plan mode" },
+            { "value": "decline", "label": "No, keep working normally" },
+        ],
+    })
+}
+
+/// Whether the enter-plan consent answer said to enter (`{choice: "enter"}`).
+#[must_use]
+pub fn enter_plan_accepted(answer: &serde_json::Value) -> bool {
+    answer.get("choice").and_then(serde_json::Value::as_str) == Some("enter")
 }
 
 /// The warning shown when plan mode turns on where no OS sandbox can enforce
@@ -279,15 +422,63 @@ mod tests {
     #[test]
     fn plan_command_parsing() {
         assert_eq!(
-            ["", " on ", "off", "status", "maybe"].map(parse_plan_command),
+            ["", " on ", "off", "status", "view", "maybe"].map(parse_plan_command),
             [
                 Ok(PlanCommand::Toggle),
                 Ok(PlanCommand::On),
                 Ok(PlanCommand::Off),
                 Ok(PlanCommand::Status),
-                Err("Usage: /plan [on|off|status]".to_string()),
+                Ok(PlanCommand::View),
+                Err("Usage: /plan [on|off|status|view]".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn the_plan_exit_dialog_maps_choices_to_modes_and_replies() {
+        use serde_json::json;
+        let accept = interpret_plan_exit_answer(&json!({ "choice": "acceptEdits" }));
+        assert_eq!(accept, PlanExitChoice::AcceptEdits);
+        assert_eq!(accept.permission_mode(), Some("acceptEdits"));
+        assert!(accept.approved());
+        assert_eq!(plan_exit_reply(&accept)["mode"], "acceptEdits");
+
+        let manual = interpret_plan_exit_answer(&json!({ "choice": "default" }));
+        assert_eq!(manual, PlanExitChoice::ApproveManually);
+        assert_eq!(manual.permission_mode(), Some("default"));
+        assert_eq!(plan_exit_reply(&manual)["status"], "approved");
+
+        let keep = interpret_plan_exit_answer(
+            &json!({ "choice": "keepPlanning", "feedback": " add tests " }),
+        );
+        assert_eq!(
+            keep,
+            PlanExitChoice::KeepPlanning {
+                feedback: Some("add tests".to_string())
+            }
+        );
+        assert_eq!(keep.permission_mode(), None);
+        assert!(!keep.approved());
+        let reply = plan_exit_reply(&keep);
+        assert_eq!(reply["status"], "keep_planning");
+        assert_eq!(reply["feedback"], "add tests");
+
+        // An unknown or missing choice keeps planning (safe default).
+        assert_eq!(
+            interpret_plan_exit_answer(&json!({})),
+            PlanExitChoice::KeepPlanning { feedback: None }
+        );
+
+        // The approval payload carries the plan, the path and three choices.
+        let payload = plan_approval_payload("# Plan", "/p/plans/s.md");
+        assert_eq!(payload["plan"], "# Plan");
+        assert_eq!(payload["planFilePath"], "/p/plans/s.md");
+        assert_eq!(payload["choices"].as_array().unwrap().len(), 3);
+        assert_eq!(payload["prompt"], PLAN_APPROVAL_PROMPT);
+
+        assert!(enter_plan_accepted(&json!({ "choice": "enter" })));
+        assert!(!enter_plan_accepted(&json!({ "choice": "decline" })));
+        assert!(!enter_plan_accepted(&json!({})));
     }
 
     #[tokio::test]

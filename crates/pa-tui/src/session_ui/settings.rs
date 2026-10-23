@@ -37,6 +37,14 @@ pub(super) enum PendingConfirm {
     /// A question the session's hooks or plugins put to the user before an
     /// action: `Yes` allows it, `No` or escape refuses it.
     FeatureQuestion { id: String },
+    /// A model-driven choice question answered with a `{choice}` object
+    /// (`rlm.enter_plan_mode` consent, the `rlm.exit_plan_mode` plan
+    /// approval): `choices` are the panel's `(label, value)` rows, and the
+    /// last is the safe default escape takes.
+    ChoiceQuestion {
+        id: String,
+        choices: Vec<(String, String)>,
+    },
     /// An image-bearing prompt parked at the image-routing fallback (a
     /// text-only model, no configured imageModel): the draft with its
     /// markers and bytes until one of the panel's three choices lands.
@@ -103,6 +111,15 @@ impl SessionUi {
                     self.pending_confirm = None;
                     self.answer_feature_question(id, false, false);
                 }
+                // Escape on a choice question takes its last choice (keep
+                // planning / decline), so the kernel never hangs.
+                if let Some(PendingConfirm::ChoiceQuestion { id, choices }) = &self.pending_confirm
+                {
+                    let id = id.clone();
+                    let default = choices.last().map(|(_, value)| value.clone());
+                    self.pending_confirm = None;
+                    self.answer_choice_question(id, default);
+                }
                 // The image fallback's parked prompt keeps its draft: the
                 // editor cleared when the submit opened the panel, and
                 // the panel owned the frame while open, so the draft
@@ -124,6 +141,13 @@ impl SessionUi {
                         let (allow, remember) = super::feature_confirm::answer_of_choice(&option);
                         self.answer_feature_question(id, allow, remember);
                     }
+                    Some(PendingConfirm::ChoiceQuestion { id, choices }) => {
+                        let value = choices
+                            .iter()
+                            .find(|(label, _)| label == &option)
+                            .map(|(_, value)| value.clone());
+                        self.answer_choice_question(id, value);
+                    }
                     pending => {
                         if option == "Yes" {
                             match pending {
@@ -136,12 +160,13 @@ impl SessionUi {
                                 Some(PendingConfirm::Update) => {
                                     self.spawn_update(view);
                                 }
-                                // The image prompt's and a feature question's
-                                // choices dispatched in the outer arm; they
-                                // never reach the Yes ladder.
+                                // The image prompt's, a feature question's and
+                                // a choice question's choices dispatched in the
+                                // outer arm; they never reach the Yes ladder.
                                 Some(
                                     PendingConfirm::ImagePrompt { .. }
-                                    | PendingConfirm::FeatureQuestion { .. },
+                                    | PendingConfirm::FeatureQuestion { .. }
+                                    | PendingConfirm::ChoiceQuestion { .. },
                                 )
                                 | None => {}
                             }
@@ -152,6 +177,8 @@ impl SessionUi {
         }
         // A question that waited behind this confirm opens now.
         self.open_next_feature_question(view);
+        self.open_next_ask_question(view);
+        self.open_next_choice_question(view);
         self.dirty = true;
         Ok(())
     }

@@ -41,6 +41,7 @@ impl AgentSessionEngine {
                 Some(engine) => self.runtime.block_on(async {
                     engine.turn_boundary.compaction_scheduled().await
                         || engine.turn_boundary.refine_pending().await
+                        || engine.turn_boundary.plan_mode_pending()
                 }),
                 None => false,
             }
@@ -219,6 +220,32 @@ impl AgentSessionEngine {
                 }
             }
             None => {}
+        }
+        // Apply a model-driven plan-mode change (`rlm.enter_plan_mode` /
+        // `rlm.exit_plan_mode`) queued during the turn: the host handler
+        // could not restart the kernel mid-cell, so it runs here. The engine
+        // queues the durable change row and the per-turn notices itself; the
+        // approved permission mode is switched through the normal
+        // `/permissions mode` session command (a no-op without the
+        // permissions feature).
+        let plan_mode = {
+            let guard = self.session.blocking_lock();
+            match guard.as_deref() {
+                Some(engine) => self.runtime.block_on(engine.consume_pending_plan_mode()),
+                None => None,
+            }
+        };
+        if let Some(outcome) = plan_mode {
+            if let Some(mode) = outcome.permission_mode {
+                let command = pa_core::session_engine::slash_commands::SessionSlashCommand {
+                    name: "permissions",
+                    args: format!("mode {mode}"),
+                    text: format!("/permissions mode {mode}"),
+                };
+                if crate::session_commands::run_session_command(self, &command, emit).is_none() {
+                    return BoundaryRun::Cancelled;
+                }
+            }
         }
         if stopped_for_compaction {
             BoundaryRun::StoppedForCompaction { compacted }

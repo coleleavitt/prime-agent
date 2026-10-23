@@ -16,6 +16,20 @@ use super::engine::SessionEngine;
 use crate::kernel::shared::{HostRequestHandlers, host_handler};
 use crate::session::manager::SessionManager;
 
+/// A model-driven plan-mode change queued by `rlm.enter_plan_mode` /
+/// `rlm.exit_plan_mode`, applied at the next turn boundary (the host handler
+/// cannot restart the kernel mid-cell).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanModeRequest {
+    /// Plan mode's target state.
+    pub enabled: bool,
+    /// The permission mode the exit approval chose (`pa_permissions`
+    /// spelling, e.g. `acceptEdits` / `default`); `None` leaves it (and for
+    /// entering plan mode). The daemon worker applies it through
+    /// `/permissions mode`.
+    pub permission_mode: Option<String>,
+}
+
 /// A scheduled compaction (kernel `compact.run`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCompaction {
@@ -159,6 +173,9 @@ pub struct TurnBoundaryRequests {
     runtime: std::sync::RwLock<Option<Arc<TurnBoundaryRuntime>>>,
     compaction: Mutex<Option<PendingCompaction>>,
     refine: Mutex<Option<PendingRefine>>,
+    /// A model-driven plan-mode change (`rlm.enter_plan_mode` /
+    /// `rlm.exit_plan_mode`) to apply at the next boundary; last write wins.
+    plan_mode: std::sync::Mutex<Option<PlanModeRequest>>,
     /// Who hears about a pending refinement dropped unserviced.
     refine_dropped: std::sync::Mutex<Vec<RefineDroppedFn>>,
     /// The host's planning source for `refine.preview`; unset, the
@@ -189,6 +206,33 @@ impl TurnBoundaryRequests {
     /// Install the session's package overlay (first install wins).
     pub fn set_package_harness(&self, state: Arc<crate::refinement::HarnessState>) {
         let _ = self.package_harness.set(state);
+    }
+
+    /// Queue a model-driven plan-mode change for the next boundary (last
+    /// write wins, so a later request supersedes an unserviced one).
+    pub fn queue_plan_mode(&self, request: PlanModeRequest) {
+        *self
+            .plan_mode
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(request);
+    }
+
+    /// Whether a model-driven plan-mode change is queued (non-destructive).
+    #[must_use]
+    pub fn plan_mode_pending(&self) -> bool {
+        self.plan_mode
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// Take the queued plan-mode change, if any.
+    #[must_use]
+    pub fn take_plan_mode(&self) -> Option<PlanModeRequest> {
+        self.plan_mode
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// Bind the assembled session runtime (first bind wins).
@@ -786,6 +830,72 @@ impl SessionEngine {
             .await;
         consumption
     }
+
+    /// Apply a model-driven plan-mode change queued by `rlm.enter_plan_mode`
+    /// / `rlm.exit_plan_mode` at this turn boundary (the host handler cannot
+    /// restart the kernel mid-cell). The durable change row and the per-turn
+    /// notices are queued on the session like `/plan`'s own; the returned
+    /// outcome tells the worker the resulting state and the permission mode
+    /// to switch to (`pa_permissions` spelling, via `/permissions mode`).
+    /// `None` when nothing was queued; the mode changes only when it
+    /// differed.
+    pub async fn consume_pending_plan_mode(&self) -> Option<PlanModeConsumption> {
+        let request = self.turn_boundary.take_plan_mode()?;
+        let applied = match self.set_plan_mode(request.enabled).await {
+            Ok(outcome) => outcome,
+            // A failed sync keeps the prior mode; the model was already told
+            // the change was requested, so surface the failure as a notice.
+            Err(error) => {
+                self.session
+                    .queue_next_turn_row(super::plan_mode::hidden_row(
+                        super::plan_mode::PLAN_MODE_EXITED_CUSTOM_TYPE,
+                        &format!("Plan mode could not be changed: {error}"),
+                    ));
+                return Some(PlanModeConsumption {
+                    enabled: self.plan_mode_enabled(),
+                    changed: false,
+                    permission_mode: None,
+                });
+            }
+        };
+        let changed = applied.is_some();
+        if changed {
+            self.track_plan_mode(request.enabled, "model");
+            // Persist the durable change row the way `/plan` does; the
+            // per-turn and fallback notices follow `set_plan_mode`'s own.
+            self.session
+                .queue_next_turn_row(super::plan_mode::plan_mode_change_row(request.enabled));
+            if request.enabled {
+                if let Some(reason) = self.plan_mode_fallback() {
+                    self.session
+                        .queue_next_turn_row(super::plan_mode::hidden_row(
+                            super::plan_mode::PLAN_MODE_EXITED_CUSTOM_TYPE,
+                            &super::plan_mode::fallback_notice(reason),
+                        ));
+                }
+            }
+        }
+        Some(PlanModeConsumption {
+            enabled: request.enabled,
+            changed,
+            // Switch the permission mode only when the plan mode changed.
+            permission_mode: changed.then_some(request.permission_mode).flatten(),
+        })
+    }
+}
+
+/// The outcome of applying a model-driven plan-mode change at a turn
+/// boundary: the resulting state and the permission mode the worker switches
+/// to (`pa_permissions` spelling, via `/permissions mode`). The rows are
+/// queued on the session by [`SessionEngine::consume_pending_plan_mode`].
+#[derive(Debug, Clone)]
+pub struct PlanModeConsumption {
+    /// Plan mode's resulting state.
+    pub enabled: bool,
+    /// Whether the mode actually changed (it was not already that state).
+    pub changed: bool,
+    /// The permission mode to switch to (`None` leaves it).
+    pub permission_mode: Option<String>,
 }
 
 /// An optional string field with the exact TS validation message on a

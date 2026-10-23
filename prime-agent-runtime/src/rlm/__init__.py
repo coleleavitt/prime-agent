@@ -591,6 +591,66 @@ async def send_user_message(
     return await host_request("user_message.send", payload)
 
 
+async def ask_user(questions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ask the user 1-4 multiple-choice questions (Claude Code's AskUserQuestion).
+
+    ``questions`` is a list of 1-4 question dicts; each is
+    ``{"question": str, "header": str, "options": [...], "multiSelect": bool}``
+    where ``options`` is 2-4 ``{"label": str, "description": str, "preview": str}``
+    choices (``description`` and ``preview`` optional; ``preview`` is multiline
+    content shown when the option is focused). The user always also gets a
+    free-text "Other" choice. Returns ``{"status", "answers", "message"}`` (and
+    ``"annotations"``/``"response"`` when the user added them): ``status`` is
+    ``"answered"`` or ``"timed_out"``. ``answers`` maps each question's text to
+    the chosen label (multi-select labels comma-joined); ``message`` is the
+    human-readable summary to act on.
+
+    Raises when no interactive user can answer (print mode / no client), in a
+    subagent, or when the user dismisses the questions. Use it only when the
+    user has a genuine decision with at least two distinct choices; otherwise
+    state your approach and continue.
+    """
+    if isinstance(questions, dict):
+        raise TypeError("questions must be a list of question dicts, not a single dict")
+    if not isinstance(questions, (list, tuple)) or not all(
+        isinstance(question, dict) for question in questions
+    ):
+        raise TypeError("questions must be a list of question dicts")
+    return await host_request("user.ask", {"questions": [dict(question) for question in questions]})
+
+
+async def enter_plan_mode() -> dict[str, Any]:
+    """Ask the user to enter plan mode (Claude Code's plan mode).
+
+    In plan mode you investigate and produce a plan; file edits and other
+    mutating actions are blocked until the user approves a plan (via
+    ``exit_plan_mode``) or turns plan mode off. Returns
+    ``{"status": "entered" | "declined" | "already_on", "message": str}``.
+    Raises in print mode (no one can approve) or in a subagent.
+    """
+    return await host_request("plan.enter", {})
+
+
+async def exit_plan_mode(plan: str) -> dict[str, Any]:
+    """Present a finished ``plan`` for the user to approve (Claude Code's ExitPlanMode).
+
+    Call this only in plan mode, once the plan is ready. The plan (markdown)
+    is written to the session's plan file and shown in an approval dialog with
+    three choices: approve and auto-accept edits, approve and approve edits
+    manually, or keep planning (with feedback). Returns
+    ``{"status": "approved" | "keep_planning", "message": str}`` (and ``mode``
+    on approval, ``feedback`` when the user asked to keep planning): on
+    approval plan mode turns off and you carry out the plan; otherwise revise
+    the plan with the feedback and do not start the work. Raises when not in
+    plan mode, in print mode, or in a subagent.
+    """
+    if not isinstance(plan, str):
+        raise TypeError(f"plan must be str, got {type(plan).__name__}")
+    if not plan.strip():
+        raise ValueError("plan must not be empty")
+    return await host_request("plan.exit", {"plan": plan})
+
+
 def _subagent_selector(target: Any) -> str:
     """Normalize a direct-child selector for interrupt/delete: spawn handle, subagent row, or id/name string."""
     if isinstance(target, (RLMSpawnHandle, RLMSubagent)):
@@ -1132,6 +1192,15 @@ class _RLMNamespace:
     ) -> dict[str, Any]:
         return await send_user_message(message, attachments, status=status)
 
+    async def ask_user(self, questions: list[dict[str, Any]]) -> dict[str, Any]:
+        return await ask_user(questions)
+
+    async def enter_plan_mode(self) -> dict[str, Any]:
+        return await enter_plan_mode()
+
+    async def exit_plan_mode(self, plan: str) -> dict[str, Any]:
+        return await exit_plan_mode(plan)
+
     async def interrupt_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMInterruptResult:
         return await interrupt_subagent(target)
 
@@ -1259,10 +1328,13 @@ __all__ = [
     "WebSearchHit",
     "WebSearchResult",
     "active_bash_commands",
+    "ask_user",
     "bash",
     "delete_subagent",
     "emit",
+    "enter_plan_mode",
     "enter_worktree",
+    "exit_plan_mode",
     "exit_worktree",
     "find_models",
     "get_harness_state",

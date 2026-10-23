@@ -150,7 +150,7 @@ impl SessionUi {
 
     /// Open the oldest pending question, unless a confirm is already open.
     pub(super) fn open_next_feature_question(&mut self, view: &mut AgentView) {
-        if self.pending_confirm.is_some() || view.confirm.is_some() {
+        if self.pending_confirm.is_some() || view.confirm.is_some() || view.ask_question.is_some() {
             return;
         }
         let Some(question) = self.feature_questions.first() else {

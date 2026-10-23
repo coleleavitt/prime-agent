@@ -478,6 +478,9 @@ impl SessionUi {
         if view.confirm.is_some() {
             return self.handle_confirm_key(key, view).await;
         }
+        if view.ask_question.is_some() {
+            return self.handle_ask_question_key(key, view);
+        }
         if view.provider_auth.is_some() {
             return self.handle_provider_auth_key(key, view).await;
         }
