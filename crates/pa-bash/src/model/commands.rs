@@ -1213,6 +1213,7 @@ impl Walker {
     /// Run the script `path` names: read it when it is in the workspace (or
     /// written earlier by this command, or it is the shell's stdin), else
     /// opaque.
+    #[allow(clippy::too_many_arguments)]
     fn script_file(
         &mut self,
         path: &Arg,
