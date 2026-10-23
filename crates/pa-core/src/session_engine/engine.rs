@@ -369,7 +369,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Claude Code's settings files (behind `claudeCodeSettings`): their
     // `env` reaches the kernel and its commands; what was not taken is
     // logged, so a PATH override is never silent.
-    let claude_code_env = settings.get_claude_code_env();
+    let mut claude_code_env = settings.get_claude_code_env();
+    // `kernel.editReadCheck` reaches the kernel's `rlm.file_access` (the
+    // `edit` skill's read-state rule) as its variable.
+    if let Some(mode) = settings.get_edit_read_check() {
+        claude_code_env.push(("PRIME_AGENT_EDIT_READ_CHECK".to_string(), mode.to_string()));
+    }
     for problem in settings.claude_code_problems() {
         tracing::warn!(target: "pa_core::claude_code_settings", "{problem}");
     }

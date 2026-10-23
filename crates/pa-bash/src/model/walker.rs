@@ -1075,7 +1075,7 @@ impl Walker {
         out
     }
 
-
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn record(
         &mut self,
         fields: &[Field<'_>],

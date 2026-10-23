@@ -1,6 +1,6 @@
 ---
 name: attach-image
-description: Load an on-disk image (PNG, JPEG, GIF, WebP) into the model's context as a viewable attachment so the model can directly SEE it — for screenshots, diagrams, charts, photos, or scanned pages. Use this when you need to perceive an image's visual contents. On a text-only model, the configured vision-capable `imageModel` (settings.json) reads the images and returns a text description instead; errors clearly when no such image model is configured.
+description: Load an on-disk image (PNG, JPEG, GIF, WebP) or PDF pages into the model's context as a viewable attachment so the model can directly SEE it — for screenshots, diagrams, charts, photos, or scanned pages. Use this when you need to perceive an image's visual contents. On a text-only model, the configured vision-capable `imageModel` (settings.json) reads the images and returns a text description instead; errors clearly when no such image model is configured.
 ---
 
 # Attach Image
@@ -45,8 +45,25 @@ frame. Transparent images that need compression are composited onto a neutral
 gray background. Extremely large images are rejected by pixel count before full
 processing. The original file is left untouched.
 
-Supported formats: PNG, JPEG, GIF, WebP. The skill errors if a file is not a
-supported image.
+Supported formats: PNG, JPEG, GIF, WebP, and PDF. The skill errors if a file is
+not a supported image or PDF.
+
+## PDFs
+
+A PDF's pages are rendered as images (poppler's `pdftoppm`, 100 dpi JPEG) and
+attached like any image:
+
+```python
+print(await attach_image("paper.pdf"))               # up to 10 pages: every page
+print(await attach_image("paper.pdf", pages="3-7"))  # a page or range, at most 20 per call
+print(await attach_image.pdf_text("paper.pdf", pages="1-20"))  # the text layer only
+```
+
+A PDF of more than 10 pages needs `pages`. `pdf_text` returns the text layer
+(`pdftotext -layout`), which is cheaper when figures and layout do not matter;
+a scanned PDF has none, so attach its pages instead. Both need poppler-utils
+(`pdftoppm`, `pdfinfo`, `pdftotext`); without them the skill names the install
+command.
 
 When the current model cannot see images, the images are read by the image
 model configured as `imageModel` in settings.json instead: one bounded child on

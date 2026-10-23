@@ -1252,6 +1252,22 @@ impl SettingsManager {
         )
     }
 
+    /// `kernel.editReadCheck`: the `edit` skill's read-state rule (`off`, `stale` or `read`),
+    /// or `None` when unset or unrecognized (the kernel's default, `stale`). Read from the
+    /// merged view: the global scope sets it, and a project scope once the workspace is trusted;
+    /// it only decides when the model's own writes are refused.
+    #[must_use]
+    pub fn get_edit_read_check(&self) -> Option<&'static str> {
+        let value = self
+            .merged
+            .kernel
+            .as_ref()
+            .and_then(|kernel| kernel.edit_read_check.as_deref())?;
+        ["off", "stale", "read"]
+            .into_iter()
+            .find(|mode| value.trim().eq_ignore_ascii_case(mode))
+    }
+
     #[must_use]
     pub fn get_session_dir(&self) -> Option<std::path::PathBuf> {
         let session_dir = self.merged.session_dir.as_ref()?;
@@ -1582,6 +1598,47 @@ mod tests {
                 30_000,
                 0
             ]
+        );
+    }
+
+    /// `kernel.editReadCheck`: unset and unknown values leave the kernel's default; the global
+    /// scope always applies (case-insensitively), and a project file only once the workspace is
+    /// trusted (an untrusted repo cannot weaken the edit's read-state rule to `off`).
+    #[test]
+    fn edit_read_check_reads_global_and_the_trusted_project_scope() {
+        use crate::workspace_trust::{TrustDecision, record};
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("cwd");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let check = |global: &str, project: &str| {
+            std::fs::write(agent_dir.join("settings.json"), global).unwrap();
+            std::fs::write(cwd.join(".prime/agent/settings.json"), project).unwrap();
+            SettingsManager::create(&cwd, &agent_dir).get_edit_read_check()
+        };
+        let read = r#"{ "kernel": { "editReadCheck": "read" } }"#;
+        let off = r#"{ "kernel": { "editReadCheck": "off" } }"#;
+        // Untrusted workspace: the global scope sets it (case-insensitively), the project scope
+        // is dropped, and an unknown value falls back to the kernel default.
+        assert_eq!(
+            [
+                check("{}", "{}"),
+                check(r#"{ "kernel": { "editReadCheck": "Read" } }"#, "{}"),
+                check("{}", read),
+                check(read, off),
+                check(r#"{ "kernel": { "editReadCheck": "bogus" } }"#, "{}"),
+            ],
+            [None, Some("read"), None, Some("read"), None]
+        );
+        // Trust the workspace (the on-disk state is fingerprinted, so record after the final
+        // write): the project scope now sets and overrides it.
+        std::fs::write(agent_dir.join("settings.json"), read).unwrap();
+        std::fs::write(cwd.join(".prime/agent/settings.json"), off).unwrap();
+        record(&cwd, &agent_dir, TrustDecision::Trusted).unwrap();
+        assert_eq!(
+            SettingsManager::create(&cwd, &agent_dir).get_edit_read_check(),
+            Some("off")
         );
     }
 

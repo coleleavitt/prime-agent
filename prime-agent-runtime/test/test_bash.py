@@ -20,6 +20,24 @@ bash_module = sys.modules["rlm.bash"]
 
 
 class BashTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_timeout_kills_the_command_and_marks_the_result(self):
+        started = asyncio.get_running_loop().time()
+        result = await bash("echo start; sleep 30", timeout=0.5)
+        self.assertTrue(result.timed_out)
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(result.output, "start\nCommand timed out after 0.5s")
+        self.assertLess(asyncio.get_running_loop().time() - started, 20)
+
+    async def test_a_command_inside_its_timeout_is_untouched(self):
+        result = await bash("echo ok", timeout=30)
+        self.assertEqual((result.exit_code, result.output, result.timed_out), (0, "ok\n", False))
+
+    def test_a_timeout_must_be_a_positive_number_of_seconds(self):
+        for bad in (0, -1, True, "5"):
+            with self.subTest(timeout=bad), self.assertRaises(ValueError):
+                bash("true", timeout=bad)
+        self.assertEqual(bash_module._format_seconds(150), "2m 30s")
+
     async def test_activity_handles_are_scoped_and_tail_is_bounded(self):
         handle = bash("printf 'first\nsecond\n'; sleep 20")
         from rlm.bash import activity_request

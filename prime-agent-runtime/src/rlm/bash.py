@@ -41,6 +41,8 @@ _IS_POSIX = os.name == "posix"
 # Cancelled one-shot awaits: TERM grace before the group KILL, then the bounded
 # wait for a confirmed group exit before CancelledError propagates.
 _CANCEL_TERM_GRACE = 0.5
+# A timed-out command gets this long after SIGTERM before the group is killed.
+_TIMEOUT_TERM_GRACE = 5.0
 _CANCEL_KILL_WAIT = 2.0
 _ACTIVE_INVENTORY_LIMIT = 100
 _COMPLETION_NOTICE_COMMAND_CAP = 1000
@@ -794,6 +796,9 @@ class BashResult:
     exit_code: int
     output: str
     duration: float
+    # The command ran past its `timeout=` and was killed (Claude Code's Bash
+    # timeout); the output ends with a "Command timed out after" line.
+    timed_out: bool = False
 
     def __await__(self) -> Generator[Any, None, BashResult]:
         # `h = await bash(cmd)` followed by `await h` is a common slip: awaiting
@@ -909,6 +914,8 @@ class BashHandle:
         self._span_lock = threading.Lock()
         self._span_context = contextvars.copy_context()
         self._killed = False
+        self._timed_out = False
+        self._timeout_seconds: float | None = None
         self._script = script
         completion_context = _current_cell_completion_context()
         self._creating_cell_finished = completion_context[0] if completion_context else None
@@ -1052,6 +1059,31 @@ class BashHandle:
             return
         _request({"type": "bash.kill", "id": self._activity_id, "signal": int(sig), "graceMs": int(grace * 1000)})
 
+    def _arm_timeout(self, seconds: float) -> None:
+        """Kill the command if it is still running ``seconds`` after it started."""
+        self._timeout_seconds = seconds
+        remaining = max(0.0, seconds - (time.monotonic() - self._started))
+        timer = threading.Timer(remaining, self._expire)
+        timer.daemon = True
+        timer.start()
+        self._add_done_callback(timer.cancel)
+
+    def _expire(self) -> None:
+        # The timer thread: a command that finished meanwhile is left alone.
+        if self._done.is_set() or self._reaped:
+            return
+        self._timed_out = True
+        self._killed = True
+        with contextlib.suppress(BaseException):
+            _request(
+                {
+                    "type": "bash.kill",
+                    "id": self._activity_id,
+                    "signal": int(signal.SIGTERM),
+                    "graceMs": int(_TIMEOUT_TERM_GRACE * 1000),
+                }
+            )
+
     def _follow(self, cursor: int = 0) -> None:
         """Mirror the host's job events: progress events become trace events,
         the result finalizes the handle, and the reap releases it."""
@@ -1128,7 +1160,11 @@ class BashHandle:
         with self._callback_lock:
             if self._done.is_set():
                 return
-            self._result = BashResult(exit_code=exit_code, output=output, duration=duration)
+            timed_out = self._timed_out
+            if timed_out and self._timeout_seconds is not None:
+                note = f"Command timed out after {_format_seconds(self._timeout_seconds)}"
+                output = f"{output}\n{note}" if output and not output.endswith("\n") else f"{output}{note}"
+            self._result = BashResult(exit_code=exit_code, output=output, duration=duration, timed_out=timed_out)
             self._done.set()
             callbacks = self._callbacks
             self._callbacks = []
@@ -1495,9 +1531,29 @@ def _run_kernel_bash_guards(
     )
 
 
+def _format_seconds(seconds: float) -> str:
+    """``90`` as ``1m 30s``, ``0.5`` as ``0.5s`` (Claude Code's duration style)."""
+    if seconds < 60:
+        return f"{seconds:g}s"
+    minutes, rest = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {rest}s"
+    return f"{minutes}m {rest}s"
+
+
+def _timeout_seconds(timeout: Any) -> float | None:
+    if timeout is None:
+        return None
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not timeout > 0:
+        raise ValueError("timeout must be a positive number of seconds (or None for no timeout)")
+    return float(timeout)
+
+
 def bash(
     command: str,
     *,
+    timeout: float | None = None,
     allow_destructive_git: bool = False,
     allow_destructive_chmod: bool = False,
     allow_force_push: bool = False,
@@ -1519,6 +1575,12 @@ def bash(
     Output written after the completion fence (e.g. by an EXIT trap or a
     background job) is not in BashResult.output but stays visible via
     handle.output()/tail().
+
+    `timeout` (seconds, default None: no limit) bounds the command's run from
+    its start, awaited or not: past it the process group gets SIGTERM, then
+    SIGKILL after a grace period, and the result has `timed_out=True` and an
+    output ending "Command timed out after ...". Claude Code's Bash tool
+    takes the same bound in milliseconds.
 
     Destructive git discard commands (`git checkout -- .`, `git restore .`,
     `git reset --hard`, `git clean` that is not a dry run) are refused while
@@ -1616,6 +1678,7 @@ def bash(
     """
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
+    timeout_seconds = _timeout_seconds(timeout)
     _install_shutdown_hook()
     # One read of the prefix feeds the guards and the spawn, so a mid-call
     # environment change cannot make the executed script differ from the text
@@ -1639,6 +1702,8 @@ def bash(
         handle = BashHandle(command, script=script, _validated=True)
     finally:
         _handoff.launch = None
+    if timeout_seconds is not None:
+        handle._arm_timeout(timeout_seconds)
     from . import repl
 
     repl.emit(

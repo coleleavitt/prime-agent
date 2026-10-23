@@ -198,6 +198,11 @@ pub struct KernelSettings {
     /// `"inherit"` (default: everything) or `"scrub-credentials"` (without the model-provider
     /// API keys Prime Agent manages). Read from the global scope only.
     pub environment: Option<String>,
+    /// What the `edit` skill checks against the model's reads before it writes a file:
+    /// `"stale"` (default: refuse a file changed on disk since the model read it),
+    /// `"read"` (also refuse an existing file the model never read, Claude Code's Edit rule)
+    /// or `"off"`.
+    pub edit_read_check: Option<String>,
 }
 
 /// `sandbox`: OS-level confinement of the Python kernel (and everything it spawns) and of the `!`
