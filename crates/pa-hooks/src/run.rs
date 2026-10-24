@@ -17,7 +17,7 @@ use std::process::Stdio;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::config::{HookCommand, HookEvent};
+use crate::config::{CommandShell, HookCommand, HookEvent, HookKind, OnFailure};
 
 /// The most of a hook's stdout or stderr kept.
 const MAX_OUTPUT: usize = 64 * 1024;
@@ -46,19 +46,40 @@ pub struct Outcome {
     pub stderr: String,
 }
 
-fn shell(command: &str) -> tokio::process::Command {
-    #[cfg(windows)]
-    {
-        let mut shell = tokio::process::Command::new("cmd");
-        shell.arg("/C").arg(command);
-        shell
-    }
-    #[cfg(not(windows))]
-    {
-        let mut shell = tokio::process::Command::new("sh");
-        shell.arg("-c").arg(command);
-        shell
-    }
+/// The process a `command` hook runs as: through its shell, or (`args`)
+/// the executable itself.
+fn process(hook: &HookCommand) -> tokio::process::Command {
+    let shell = match &hook.kind {
+        HookKind::Command {
+            args: Some(args),
+            ..
+        } => {
+            let mut process = tokio::process::Command::new(&hook.command);
+            process.args(args);
+            return process;
+        }
+        HookKind::Command { shell, .. } => *shell,
+        HookKind::Http { .. } | HookKind::Prompt { .. } | HookKind::Agent { .. } => {
+            CommandShell::Default
+        }
+    };
+    let (program, flag) = match shell {
+        CommandShell::Bash => (
+            std::env::var("SHELL")
+                .ok()
+                .filter(|shell| !shell.is_empty())
+                .unwrap_or_else(|| "bash".to_string()),
+            "-c",
+        ),
+        CommandShell::PowerShell => ("pwsh".to_string(), "-Command"),
+        #[cfg(windows)]
+        CommandShell::Default => ("cmd".to_string(), "/C"),
+        #[cfg(not(windows))]
+        CommandShell::Default => ("sh".to_string(), "-c"),
+    };
+    let mut process = tokio::process::Command::new(program);
+    process.arg(flag).arg(&hook.command);
+    process
 }
 
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(reader: Option<R>) -> String {
@@ -73,11 +94,29 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(reader: Option<R>) -> Stri
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// Run `hook` in `cwd` with `input` on its stdin. Never fails: a spawn
+/// Run `hook` with `input`: a `command` hook in `cwd` with the input on its
+/// stdin, an `http` hook as a POST of it. Never fails: a spawn or request
 /// failure or a timeout is an outcome without a code, and its stderr says
-/// why.
+/// why. `prompt` and `agent` hooks need the session's model and run through
+/// [`crate::model_hooks`]; here they are a failure.
 pub async fn run(hook: &HookCommand, cwd: &Path, session_id: &str, input: &Value) -> Outcome {
-    let mut command = shell(&hook.command);
+    match &hook.kind {
+        HookKind::Command { .. } => run_command(hook, cwd, session_id, input).await,
+        HookKind::Http { .. } => crate::http::post(hook, input).await,
+        HookKind::Prompt { .. } | HookKind::Agent { .. } => Outcome {
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "{} hook {:?} needs a session's model",
+                hook.kind.type_name(),
+                hook.command
+            ),
+        },
+    }
+}
+
+async fn run_command(hook: &HookCommand, cwd: &Path, session_id: &str, input: &Value) -> Outcome {
+    let mut command = process(hook);
     command
         .envs(hook.env.iter().map(|(name, value)| (name, value)))
         .current_dir(cwd)
@@ -140,6 +179,79 @@ fn text(value: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// One hook's answer and the rest of what its JSON output says.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HookOutput {
+    pub answer: HookAnswer,
+    /// `systemMessage`: shown to the user, not the model.
+    pub system_message: Option<String>,
+    /// `hookSpecificOutput.updatedInput` (`PreToolUse`), or a
+    /// `PermissionRequest` allow's `decision.updatedInput`.
+    pub updated_input: Option<Value>,
+    /// `hookSpecificOutput.watchPaths` (`SessionStart`, `CwdChanged`,
+    /// `FileChanged`): files `FileChanged` watches.
+    pub watch_paths: Vec<String>,
+    /// `hookSpecificOutput.{action, content}` (`Elicitation`,
+    /// `ElicitationResult`).
+    pub elicitation: Option<pa_core::features::ElicitationResponse>,
+}
+
+impl Default for HookAnswer {
+    fn default() -> Self {
+        HookAnswer::Pass { context: None }
+    }
+}
+
+/// Read one outcome as `event`'s [`HookOutput`].
+#[must_use]
+pub fn output(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookOutput {
+    let answer = answer(event, hook, outcome);
+    let json = (outcome.code == Some(0))
+        .then(|| serde_json::from_str::<Value>(outcome.stdout.trim()).ok())
+        .flatten()
+        .filter(Value::is_object);
+    let Some(json) = json else {
+        return HookOutput {
+            answer,
+            ..HookOutput::default()
+        };
+    };
+    let specific = json.get("hookSpecificOutput").unwrap_or(&Value::Null);
+    let updated_input = match event {
+        HookEvent::PermissionRequest => specific
+            .get("decision")
+            .filter(|decision| decision.get("behavior").and_then(Value::as_str) == Some("allow"))
+            .and_then(|decision| decision.get("updatedInput")),
+        _ => specific.get("updatedInput"),
+    }
+    .filter(|input| input.is_object())
+    .cloned();
+    let watch_paths = specific
+        .get("watchPaths")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    let elicitation = specific
+        .get("action")
+        .and_then(Value::as_str)
+        .and_then(pa_core::features::ElicitationAction::parse)
+        .filter(|_| matches!(event, HookEvent::Elicitation | HookEvent::ElicitationResult))
+        .map(|action| pa_core::features::ElicitationResponse {
+            action,
+            content: specific.get("content").filter(|content| content.is_object()).cloned(),
+        });
+    HookOutput {
+        answer,
+        system_message: text(&json, "systemMessage"),
+        updated_input,
+        watch_paths,
+        elicitation,
+    }
+}
+
 /// Read one outcome as `event`'s answer; a non-blocking error is logged.
 #[must_use]
 pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAnswer {
@@ -158,6 +270,21 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
             });
         }
         _ => {
+            // `onFailure: "block"` counts a failure as exit code 2 where the
+            // event can be blocked.
+            if hook.on_failure == OnFailure::Block && event.failure_can_block() {
+                let why = outcome.stderr.trim();
+                return HookAnswer::Block(format!(
+                    "hook {:?} from {} failed{}",
+                    hook.command,
+                    hook.source.label(),
+                    if why.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {why}")
+                    }
+                ));
+            }
             tracing::warn!(
                 target: "pa_hooks",
                 event = event.name(),
@@ -199,6 +326,18 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
             text(&json, "stopReason").unwrap_or_else(|| "stopped by a hook".to_string()),
         );
     }
+    // A `PermissionRequest` hook decides for the user.
+    if let Some(decision) = specific.get("decision").filter(|_| event == HookEvent::PermissionRequest) {
+        match decision.get("behavior").and_then(Value::as_str) {
+            Some("allow") => return HookAnswer::Allow { context },
+            Some("deny") => {
+                return HookAnswer::Block(
+                    text(decision, "message").unwrap_or_else(|| "denied by a hook".to_string()),
+                );
+            }
+            _ => {}
+        }
+    }
     match specific.get("permissionDecision").and_then(Value::as_str) {
         Some("deny") => {
             return HookAnswer::Block(
@@ -237,13 +376,7 @@ mod tests {
     use super::*;
 
     fn hook(command: &str) -> HookCommand {
-        HookCommand {
-            source: crate::config::HookSource::Inline,
-            env: std::sync::Arc::default(),
-            command: command.to_string(),
-            timeout: Duration::from_secs(5),
-            mode: crate::config::HookMode::Blocking,
-        }
+        HookCommand::shell(command, Duration::from_secs(5))
     }
 
     fn outcome(code: i32, stdout: &str, stderr: &str) -> Outcome {

@@ -12,7 +12,9 @@
 
 pub mod children;
 pub mod config;
+pub mod http;
 pub mod kernel_bash;
+pub mod rule;
 pub mod run;
 mod session;
 pub mod worktree;
