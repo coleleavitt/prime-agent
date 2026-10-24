@@ -834,6 +834,19 @@ const NET_NEW_BUNDLED_SKILLS: &[&str] = &[
     // Claude Code's workflow-authoring reference for the `rlm.workflow`
     // script API (markdown only).
     "workflow-authoring",
+    // Claude Code's bundled prompt commands and skills (2.1.296), each run
+    // by the builtin command of the same name and model-invisible
+    // (`disable-model-invocation`): `/init`, `/security-review`, `/commit`,
+    // `/pr`, `/simplify`, `/run`, `/verify`, `/doctor`, `/statusline`.
+    "init",
+    "security-review",
+    "commit",
+    "pr",
+    "simplify",
+    "run",
+    "verify",
+    "doctor",
+    "statusline",
 ];
 
 #[test]

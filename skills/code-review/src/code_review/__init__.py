@@ -33,6 +33,7 @@ from ._recipes import (
     LEVELS,
     MAX_FINDINGS_CAP,
     PLANS,
+    SIMPLIFY_PLAN,
     VERDICT_SCHEMA,
     Plan,
     _finder_prompt,
@@ -41,8 +42,25 @@ from ._recipes import (
     _sweep_prompt,
     _verifier_prompt,
 )
+from ._security import (
+    FILTER_SCHEMA,
+    MIN_CONFIDENCE,
+    SECURITY_FINDINGS_SCHEMA,
+    SEVERITIES,
+    _filter_prompt,
+)
+from ._security import _finder_prompt as _security_finder_prompt
 
-__all__ = ["Review", "ReviewArgs", "load_review", "report_outcomes", "review"]
+__all__ = [
+    "Review",
+    "ReviewArgs",
+    "load_review",
+    "report_findings",
+    "report_outcomes",
+    "review",
+    "security_review",
+    "simplify",
+]
 
 OUTCOMES = ("fixed", "no_change_needed", "skipped")
 _MAX_FINDINGS = re.compile(r"(^|\s)--max-findings(?:(?:\s*=\s*|\s+)(?!--)(\S+)|\s*=\S*)?(?=\s|$)")
@@ -167,11 +185,15 @@ class Review:
     error: str | None = None
     args: str = ""
     cwd: str = ""
+    # Set for a review that is not `/code-review`'s (`/simplify`,
+    # `/security-review`, `report_findings`): the table's heading.
+    title: str | None = None
 
     def table(self) -> str:
         """The findings as a Markdown table plus one detail entry per finding."""
         with_outcomes = any(finding.get("outcome") for finding in self.findings)
-        header = f"Code review ({self.level} effort): {_plural(len(self.findings), 'finding')}"
+        heading = self.title or f"Code review ({self.level} effort)"
+        header = f"{heading}: {_plural(len(self.findings), 'finding')}"
         extra = []
         if self.candidates:
             extra.append(f"{_plural(self.candidates, 'candidate')} considered")
@@ -184,14 +206,18 @@ class Review:
             lines.append(f"The review {self.status}: {self.error}")
         if not self.findings:
             return "\n".join(lines)
-        columns = ["#", "Location", "Category", "Verdict", "Finding"] + (["Outcome"] if with_outcomes else [])
+        # Security findings carry a severity where the verify pass's verdict goes.
+        rated = any(finding.get("severity") for finding in self.findings)
+        columns = ["#", "Location", "Category", "Severity" if rated else "Verdict", "Finding"] + (
+            ["Outcome"] if with_outcomes else []
+        )
         lines += ["", "| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
         for finding in self.findings:
             cells = [
                 str(finding["index"]),
                 f"{finding.get('file', '?')}:{finding.get('line', '?')}",
                 finding.get("category") or "correctness",
-                finding.get("verdict") or "-",
+                (finding.get("severity") if rated else finding.get("verdict")) or "-",
                 finding.get("short_summary") or finding.get("summary", ""),
             ]
             if with_outcomes:
@@ -204,6 +230,8 @@ class Review:
             )
             if finding.get("failure_scenario"):
                 lines.append(f"   Scenario: {finding['failure_scenario']}")
+            if finding.get("recommendation"):
+                lines.append(f"   Fix: {finding['recommendation']}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
@@ -230,6 +258,7 @@ class Review:
             "error": self.error,
             "args": self.args,
             "cwd": self.cwd,
+            "title": self.title,
         }
 
     @classmethod
@@ -249,6 +278,7 @@ class Review:
             error=data.get("error"),
             args=data.get("args", ""),
             cwd=data.get("cwd", ""),
+            title=data.get("title"),
         )
 
     def save(self) -> Path:
@@ -457,7 +487,9 @@ def _review_script(plan: Plan, scope: str):
         )
         wf.log(f"{_plural(len(candidates), 'candidate')} after dedup")
         verified: list[dict[str, Any]] = []
-        if candidates:
+        if candidates and plan.verify is None:
+            verified = candidates
+        elif candidates:
             wf.phase("Verify")
             verdicts = await wf.parallel(
                 [
@@ -662,5 +694,199 @@ async def review(
     current.dropped = max(0, len(findings) - cap)
     current.findings = [{**finding, "index": index} for index, finding in enumerate(findings[:cap], 1)]
     current.next_steps = _next_steps(parsed, current.findings)
+    current.save()
+    return current
+
+
+# --- /simplify, /security-review and ReportFindings -----------------------
+
+
+def _prepare(prefix: str, title: str, target: str, cwd: str | None) -> tuple[Review, str]:
+    """A fresh titled review over the target's diff, its diff saved beside it."""
+    workdir = cwd or os.getcwd()
+    review_id = prefix + secrets.token_hex(6)
+    directory = _reviews_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    diff, scope_description = _gather_diff(workdir, target.strip())
+    diff_path = directory / f"{review_id}.diff"
+    diff_path.write_text(diff, encoding="utf-8")
+    current = Review(
+        review_id=review_id,
+        level=prefix.rstrip("_"),
+        target=target.strip(),
+        scope=scope_description,
+        args=target,
+        cwd=workdir,
+        title=title,
+    )
+    if not diff.strip():
+        current.notices.append(f"Nothing to review: the diff ({scope_description}) is empty.")
+    return current, _scope_text(str(diff_path), diff, _INLINE_DIFF_CHARS, workdir)
+
+
+def _finish(current: Review, outcome: Any, findings: list[dict[str, Any]], candidates: int) -> Review:
+    current.run_id = outcome.run_id
+    if outcome.status != "completed":
+        current.status, current.error = outcome.status, outcome.error
+        current.save()
+        return current
+    current.candidates = candidates
+    current.dropped = max(0, len(findings) - MAX_FINDINGS_CAP)
+    current.findings = [
+        {**finding, "index": index} for index, finding in enumerate(findings[:MAX_FINDINGS_CAP], 1)
+    ]
+    return current
+
+
+async def simplify(target: str = "", *, cwd: str | None = None, backend: Any = None) -> Review:
+    """``/simplify``: four cleanup agents (reuse, simplification, efficiency,
+    altitude) over the diff, no verify pass; the caller applies the findings."""
+    from rlm import workflow
+
+    current, scope = _prepare("sim_", "Simplify (reuse, simplification, efficiency, altitude)", target, cwd)
+    if current.notices:
+        current.save()
+        return current
+    outcome = await workflow.run(_review_script(SIMPLIFY_PLAN, scope), name="simplify", backend=backend)
+    result = outcome.result or {}
+    current = _finish(current, outcome, _dedupe(result.get("findings", [])), result.get("candidates", 0))
+    if current.status == "completed":
+        current.next_steps = [
+            "Apply the fixes: dedup findings that point at the same line or mechanism, and fix each "
+            "remaining one directly. Skip any finding whose fix would change intended behavior, require "
+            "changes well outside the reviewed diff, or that you judge to be a false positive - note the "
+            "skip rather than arguing with it. Then call `code_review.report_outcomes({<#>: 'fixed' | "
+            "'no_change_needed' | 'skipped', ...})` with every finding and finish with a brief summary of "
+            "what was fixed and what was skipped (or confirm the code was already clean)."
+            if current.findings
+            else "No cleanups found: say the changed code is already clean."
+        ]
+    current.save()
+    return current
+
+
+def _security_finding(item: dict[str, Any]) -> dict[str, Any]:
+    severity = str(item.get("severity", "")).upper()
+    description = " ".join(str(item.get("description", "")).split())
+    category = str(item.get("category") or "security")
+    short = f"{category}: {description}"
+    return {
+        "file": str(item.get("file", "")),
+        "line": item.get("line", 0),
+        "summary": description,
+        "short_summary": short if len(short) <= 60 else short[:57].rstrip() + "...",
+        "failure_scenario": str(item.get("exploit_scenario", "")),
+        "recommendation": str(item.get("recommendation", "")),
+        "category": category,
+        "severity": severity if severity in SEVERITIES else "MEDIUM",
+    }
+
+
+def _security_script(scope: str):
+    async def main(wf):
+        wf.phase("Find")
+        answer = await wf.agent(
+            _security_finder_prompt(scope), label="find:security", phase="Find", schema=SECURITY_FINDINGS_SCHEMA
+        )
+        candidates = _dedupe([_security_finding(item) for item in (answer or {}).get("findings", [])])
+        wf.log(f"{_plural(len(candidates), 'candidate')} after dedup")
+        if not candidates:
+            return {"findings": [], "candidates": 0}
+        wf.phase("Filter")
+        scores = await wf.parallel(
+            [
+                lambda candidate=candidate: wf.agent(
+                    _filter_prompt(
+                        {
+                            **candidate,
+                            "description": candidate["summary"],
+                            "exploit_scenario": candidate["failure_scenario"],
+                        },
+                        scope,
+                    ),
+                    label=f"filter:{candidate['file']}:{candidate['line']}",
+                    phase="Filter",
+                    schema=FILTER_SCHEMA,
+                )
+                for candidate in candidates
+            ]
+        )
+        kept = [
+            {**candidate, "confidence": score["confidence"]}
+            for candidate, score in zip(candidates, scores)
+            if score is not None and score.get("confidence", 0) >= MIN_CONFIDENCE
+        ]
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            wf.log(f"{dropped} candidate(s) below confidence {MIN_CONFIDENCE} dropped")
+        return {"findings": kept, "candidates": len(candidates)}
+
+    main.meta = {"name": "security-review", "description": "security review of the pending changes"}
+    return main
+
+
+def _rank_by_severity(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order = {severity: rank for rank, severity in enumerate(SEVERITIES)}
+    return sorted(
+        findings,
+        key=lambda finding: (order.get(finding.get("severity") or "", len(order)), -(finding.get("confidence") or 0)),
+    )
+
+
+async def security_review(target: str = "", *, cwd: str | None = None, backend: Any = None) -> Review:
+    """``/security-review``: Claude Code's security brief as one finder agent,
+    then one false-positive filter agent per candidate (kept at confidence 8+)."""
+    from rlm import workflow
+
+    current, scope = _prepare("sec_", "Security review", target, cwd)
+    if current.notices:
+        current.save()
+        return current
+    outcome = await workflow.run(_security_script(scope), name="security-review", backend=backend)
+    result = outcome.result or {}
+    current = _finish(current, outcome, _rank_by_severity(result.get("findings", [])), result.get("candidates", 0))
+    if current.status == "completed" and current.findings:
+        current.next_steps = [
+            "Report the findings above as they are; the user decides what to fix. If they ask you to fix "
+            "some, call `code_review.report_outcomes(...)` after the fixes land."
+        ]
+    current.save()
+    return current
+
+
+def report_findings(
+    findings: list[dict[str, Any]],
+    *,
+    title: str = "Review",
+    target: str = "",
+    cwd: str | None = None,
+) -> Review:
+    """Render findings a review produced as the ranked table (Claude Code's
+    ``ReportFindings``): each finding a dict with ``file``, ``line`` and
+    ``summary``, optionally ``failure_scenario``, ``category``, ``severity``,
+    ``verdict`` and ``recommendation``. The review is saved, so
+    ``report_outcomes`` works on it."""
+    normalized = []
+    for item in findings:
+        finding = _normalize(item, str(item.get("category") or "correctness"))
+        for key in ("verdict", "recommendation"):
+            if item.get(key):
+                finding[key] = str(item[key])
+        if item.get("severity"):
+            finding["severity"] = str(item["severity"]).upper()
+        normalized.append(finding)
+    ranked = (
+        _rank_by_severity(normalized) if any(f.get("severity") for f in normalized) else _rank(normalized)
+    )
+    current = Review(
+        review_id="rf_" + secrets.token_hex(6),
+        level="reported",
+        target=target,
+        scope=target,
+        cwd=cwd or os.getcwd(),
+        title=title,
+    )
+    current.dropped = max(0, len(ranked) - MAX_FINDINGS_CAP)
+    current.findings = [{**finding, "index": index} for index, finding in enumerate(ranked[:MAX_FINDINGS_CAP], 1)]
     current.save()
     return current

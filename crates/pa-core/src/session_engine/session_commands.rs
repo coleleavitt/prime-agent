@@ -258,6 +258,7 @@ pub async fn execute_session_command(
         "memory" => execute_memory(engine, command, &mut execution),
         "loop" => execute_loop(engine, command, &mut execution),
         "workflows" => execute_workflows(engine, command, &mut execution).await,
+        "skill-doctor" => execute_skill_doctor(engine, command, &mut execution).await,
         HARNESS_COMMAND => execute_harness(engine, params, command, &mut execution).await,
         other => execute_feature_command(engine, command, &mut execution)
             .await
@@ -374,9 +375,44 @@ fn execute_memory(
     execution: &mut SessionCommandExecution,
 ) -> Result<(), String> {
     if !command.args.trim().is_empty() {
-        return Err("Usage: /memory".to_string());
+        return Err(
+            "Usage: /memory (the interactive client adds /memory edit and /memory auto on|off)"
+                .to_string(),
+        );
     }
     let text = super::memory_command::memory_report(&engine.instructions);
+    execution.push_message(slash_command_result(
+        command, text, true, "info", None, true,
+    ));
+    Ok(())
+}
+
+/// `/skill-doctor`: which loaded skills are unused and costing context
+/// ([`super::skill_doctor`]); display-only. The session files are read off
+/// the async runtime.
+async fn execute_skill_doctor(
+    engine: &SessionEngine,
+    command: &SessionSlashCommand,
+    execution: &mut SessionCommandExecution,
+) -> Result<(), String> {
+    if !command.args.trim().is_empty() {
+        return Err("Usage: /skill-doctor".to_string());
+    }
+    let session_dir = engine
+        .session
+        .shared_persistence()
+        .lock()
+        .await
+        .get_session_dir()
+        .to_path_buf();
+    let skills = engine.skills.clone();
+    let text = tokio::task::spawn_blocking(move || {
+        let now = std::time::SystemTime::now();
+        let rows = super::skill_doctor::skill_usage(&skills, &session_dir, now);
+        super::skill_doctor::skill_doctor_report(&rows, now)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     execution.push_message(slash_command_result(
         command, text, true, "info", None, true,
     ));

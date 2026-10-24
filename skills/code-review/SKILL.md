@@ -62,3 +62,19 @@ hold at most 15 findings; `--max-findings <n>` raises or lowers that (up to
   returned review's table gains an Outcome column.
 - `code_review.load_review(review_id=None)` — a saved review (the latest by
   default). Reviews are saved under `$RLM_SESSION_DIR/code-review/`.
+
+## Cleanup, security and reported findings
+
+- `await code_review.simplify(target="", *, cwd=None)` — `/simplify`'s
+  review: the reuse, simplification, efficiency and altitude angles as four
+  parallel agents, no verify pass. Apply the findings it returns.
+- `await code_review.security_review(target="", *, cwd=None)` — the
+  `/security-review` workflow: one finder agent with the security brief,
+  then one false-positive filter agent per candidate; candidates scored
+  below 8 of 10 drop. Findings carry `severity` and `recommendation`.
+- `code_review.report_findings(findings, *, title="Review", target="",
+  cwd=None)` — render findings you produced yourself (dicts with `file`,
+  `line`, `summary`, optionally `failure_scenario`, `category`, `severity`,
+  `verdict`, `recommendation`) as the ranked table and save them, so
+  `report_outcomes` works on them. Use it when review instructions ask for
+  findings as a typed list instead of printing them as text.

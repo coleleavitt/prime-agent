@@ -188,6 +188,19 @@ _FIVE_PLUS_FIVE = (
     CONVENTIONS,
 )
 
+# `/simplify` (CC 2.1.296 `dr`): the four cleanup agents, no verify pass; the
+# caller applies what survives.
+SIMPLIFY_PLAN = Plan(
+    "simplify",
+    (REUSE, SIMPLIFICATION, EFFICIENCY, ALTITUDE),
+    8,
+    None,
+    False,
+    "You are improving the quality of the changed code, not hunting for bugs. Review it for reuse, "
+    "simplification, efficiency, and altitude issues. Do not look for correctness bugs - that is what "
+    "`/code-review` is for.",
+)
+
 PLANS = {
     "low": Plan("low", (), 0, None, False, "low effort: one diff pass, no verify"),
     "medium": Plan(

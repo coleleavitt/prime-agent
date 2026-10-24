@@ -373,6 +373,17 @@ impl SettingsManager {
         self.settings().auto_memory_enabled.unwrap_or(true)
     }
 
+    /// Persists `autoMemoryEnabled` to the global scope (`/memory auto`);
+    /// new top-level sessions follow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global settings scope cannot be saved.
+    pub fn set_auto_memory_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.global_mut().auto_memory_enabled = Some(enabled);
+        self.save_global_scope(&["autoMemoryEnabled"])
+    }
+
     /// `claudeCodeUserInstructions`: unset is off.
     #[must_use]
     pub fn get_claude_code_user_instructions(&self) -> bool {

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 15] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 16] = [
     "compact",
     "refine",
     "goal",
@@ -21,13 +21,27 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 15] = [
     "memory",
     "loop",
     "workflows",
+    "skill-doctor",
 ];
 
 /// Builtin commands that run the bundled skill of the same name: the
 /// submission expands like `/skill:<name> <args>` (Claude Code's
 /// `/code-review`, alias `/review`), so the model receives the skill's
 /// instructions with the typed arguments.
-pub const SKILL_SLASH_COMMAND_NAMES: [&str; 1] = ["code-review"];
+pub const SKILL_SLASH_COMMAND_NAMES: [&str; 10] = [
+    "code-review",
+    // Claude Code's bundled prompt commands and skills (2.1.296), each a
+    // bundled skill of the same name.
+    "init",
+    "security-review",
+    "commit",
+    "pr",
+    "simplify",
+    "run",
+    "verify",
+    "doctor",
+    "statusline",
+];
 
 /// The bundled skill a typed command name (or alias) runs, if it is one of
 /// [`SKILL_SLASH_COMMAND_NAMES`].
@@ -137,11 +151,11 @@ pub struct BuiltinSlashCommand {
 const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         name: "settings",
-        description: "Open settings menu",
+        description: "Open settings menu; /settings <key>=<value> sets one setting",
         execution: SlashCommandExecution::Client,
-        argument_hint: None,
-        aliases: &[],
-        takes_argument: false,
+        argument_hint: Some("[key=value]"),
+        aliases: &["config"],
+        takes_argument: true,
     },
     BuiltinSlashCommand {
         name: "model",
@@ -185,7 +199,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "export",
-        description: "Export session (HTML default, or specify path: .html/.jsonl)",
+        description: "Export session (HTML default, or specify path: .html/.jsonl/.txt/.md); /export clipboard copies the conversation as text",
         execution: SlashCommandExecution::Client,
         argument_hint: Some("[path]"),
         aliases: &[],
@@ -209,11 +223,11 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "copy",
-        description: "Copy last agent message to clipboard",
+        description: "Copy last agent message to clipboard (or /copy N for the Nth-latest)",
         execution: SlashCommandExecution::Client,
-        argument_hint: None,
+        argument_hint: Some("[N]"),
         aliases: &[],
-        takes_argument: false,
+        takes_argument: true,
     },
     BuiltinSlashCommand {
         name: "btw",
@@ -236,7 +250,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         description: "Change this session's working directory (kernel, subagents, path completion)",
         execution: SlashCommandExecution::Client,
         argument_hint: Some("[path]"),
-        aliases: &[],
+        aliases: &["cd"],
         takes_argument: true,
     },
     BuiltinSlashCommand {
@@ -281,10 +295,10 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "context",
-        description: "Show token, cost, and context usage for agent and sub-agents",
+        description: "Show context usage by category, and token, cost, and context usage for agent and sub-agents",
         execution: SlashCommandExecution::Client,
-        argument_hint: None,
-        aliases: &["usage"],
+        argument_hint: Some("[all]"),
+        aliases: &[],
         takes_argument: false,
     },
     BuiltinSlashCommand {
@@ -300,7 +314,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         description: "Show changelog entries",
         execution: SlashCommandExecution::Client,
         argument_hint: None,
-        aliases: &[],
+        aliases: &["release-notes"],
         takes_argument: false,
     },
     BuiltinSlashCommand {
@@ -517,11 +531,11 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "memory",
-        description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded",
+        description: "List the instruction files (AGENTS.md, CLAUDE.md, rules) and the auto-memory directory this session loaded; /memory edit opens one in $EDITOR, /memory auto on|off toggles auto memory",
         execution: SlashCommandExecution::Session,
-        argument_hint: None,
+        argument_hint: Some("[edit [user|project|local|<path>] | auto [on|off]]"),
         aliases: &[],
-        takes_argument: false,
+        takes_argument: true,
     },
     BuiltinSlashCommand {
         name: "workflows",
@@ -586,6 +600,145 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         description: "Toggle footer readout of model output tok/sec (latest response and session average)",
         execution: SlashCommandExecution::Client,
         argument_hint: Some("[on|off]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    // Claude Code parity (2.1.296): usage and status reports, skill
+    // housekeeping, session look, and the commands that run bundled skills
+    // (`SKILL_SLASH_COMMAND_NAMES`).
+    BuiltinSlashCommand {
+        name: "usage",
+        description: "Show session cost, token usage by model, and plan usage",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &["cost", "stats"],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "status",
+        description: "Show Prime Agent status including version, model, provider, session, working directory, and MCP and tool statuses",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "skill-doctor",
+        description: "Show which loaded skills are unused and costing context",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "theme",
+        description: "Change the theme",
+        execution: SlashCommandExecution::Client,
+        argument_hint: Some("[name]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "color",
+        description: "Set the prompt bar color for this session",
+        execution: SlashCommandExecution::Client,
+        argument_hint: Some("[red|blue|green|yellow|purple|orange|pink|cyan|default]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "focus",
+        description: "Toggle focus view: just your prompt and the response (tool calls and thinking hidden)",
+        execution: SlashCommandExecution::Client,
+        argument_hint: Some("[on|off]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "bug",
+        description: "Report a bug: open a prefilled GitHub issue and point at the incident bundle",
+        execution: SlashCommandExecution::Client,
+        argument_hint: Some("[report]"),
+        aliases: &["feedback"],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "terminal-setup",
+        description: "Check terminal setup for Shift+Enter newlines and show how to enable it",
+        execution: SlashCommandExecution::Client,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: false,
+    },
+    BuiltinSlashCommand {
+        name: "init",
+        description: "Initialize an AGENTS.md file with codebase documentation",
+        execution: SlashCommandExecution::Session,
+        argument_hint: None,
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "security-review",
+        description: "Complete a security review of the pending changes on the current branch",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[<pr#>|<branch>|<path>]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "commit",
+        description: "Create a git commit",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[guidance]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "pr",
+        description: "Create a pull request",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[guidance]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "simplify",
+        description: "Clean up the changed code without changing behavior",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[<target>]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "run",
+        description: "Launch this project's app to see your change working",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[what to run]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "verify",
+        description: "Verify a change end-to-end by running the app and observing it",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[what to verify]"),
+        aliases: &[],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "doctor",
+        description: "Health-check your setup and fix issues: installation, unused skills and MCP servers, duplicated or bloated instruction files, slow hooks, updates",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[instructions]"),
+        aliases: &["checkup"],
+        takes_argument: true,
+    },
+    BuiltinSlashCommand {
+        name: "statusline",
+        description: "Set up the status line under the prompt",
+        execution: SlashCommandExecution::Session,
+        argument_hint: Some("[instructions]"),
         aliases: &[],
         takes_argument: true,
     },
@@ -777,7 +930,14 @@ mod tests {
         let registry = SlashCommandRegistry::builtin();
         assert_eq!(registry.resolve_name("clear"), Some("new"));
         assert_eq!(registry.resolve_name("thinking"), Some("effort"));
-        assert_eq!(registry.resolve_name("usage"), Some("context"));
+        assert_eq!(registry.resolve_name("usage"), Some("usage"));
+        assert_eq!(registry.resolve_name("cost"), Some("usage"));
+        assert_eq!(registry.resolve_name("stats"), Some("usage"));
+        assert_eq!(registry.resolve_name("config"), Some("settings"));
+        assert_eq!(registry.resolve_name("cd"), Some("cwd"));
+        assert_eq!(registry.resolve_name("release-notes"), Some("changelog"));
+        assert_eq!(registry.resolve_name("checkup"), Some("doctor"));
+        assert_eq!(registry.resolve_name("feedback"), Some("bug"));
         assert_eq!(registry.resolve_name("rename"), Some("name"));
         assert_eq!(registry.resolve_name("side"), Some("btw"));
         assert!(registry.is_builtin("model"));
@@ -860,6 +1020,22 @@ mod tests {
         assert_eq!(skill_slash_command("model"), None);
         assert_eq!(skill_slash_command("skill:code-review"), None);
         assert_eq!(skill_slash_command("nope"), None);
+        // Claude Code's bundled skill commands, aliases included.
+        for name in [
+            "init",
+            "security-review",
+            "commit",
+            "pr",
+            "simplify",
+            "run",
+            "verify",
+            "doctor",
+            "statusline",
+        ] {
+            assert_eq!(skill_slash_command(name), Some(name));
+            assert!(!is_session_slash_command_name(name));
+        }
+        assert_eq!(skill_slash_command("checkup"), Some("doctor"));
         // A skill command is not a session-engine command: it reaches the
         // model as the expanded skill.
         assert!(!is_session_slash_command_name("code-review"));
