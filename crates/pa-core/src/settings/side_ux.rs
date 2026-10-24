@@ -49,7 +49,11 @@ pub struct SideUxSettings {
 impl Default for SideUxSettings {
     fn default() -> Self {
         Self {
-            session_titles: true,
+            // Opt-in (off by default): generating a title continues on the
+            // session's own model when no sideUxModel/auxiliaryModel is set,
+            // so leaving it on adds a model call to every new session's first
+            // prompt. Enable with `sessionTitlesEnabled` / PRIME_AGENT_SESSION_TITLES.
+            session_titles: false,
             away_summary: true,
             prompt_suggestions: false,
             model: None,
@@ -133,12 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn defaults_follow_claude_code() {
+    fn defaults_are_opt_in_for_titles() {
         assert_eq!(resolve(&json!({}), &[]), SideUxSettings::default());
+        // Session titles are off by default (opt-in): leaving them on adds a
+        // model call to every new session's first prompt when no dedicated
+        // side model is configured. The recap away-summary stays on.
         assert_eq!(
             SideUxSettings::default(),
             SideUxSettings {
-                session_titles: true,
+                session_titles: false,
                 away_summary: true,
                 prompt_suggestions: false,
                 model: None,
