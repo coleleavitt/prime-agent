@@ -42,6 +42,7 @@ pub mod output_limit_recovery;
 pub mod plan_file;
 pub mod plan_host;
 pub mod plan_mode;
+pub(crate) mod pr_link_gate;
 pub mod presented_artifact;
 pub mod provider_adapter;
 pub mod provider_failover;

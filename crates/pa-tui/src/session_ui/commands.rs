@@ -172,6 +172,7 @@ impl SessionUi {
             "resume" => {
                 if resolved.args.is_empty() {
                     self.open_agents_view = true;
+                    self.agents_view_resume_picker = true;
                     self.exit_requested = true;
                 } else {
                     let (selection, lookup) = self.resolve_resume_selector(&resolved.args);

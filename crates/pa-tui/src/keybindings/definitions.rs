@@ -437,7 +437,17 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "app.agents.toggleScope",
-        def!(&["ctrl+f"], "Filter saved sessions to the current project"),
+        def!(
+            &["ctrl+a", "ctrl+f"],
+            "Show saved sessions of all projects or the current project"
+        ),
+    ),
+    (
+        "app.agents.worktreeFilter",
+        def!(
+            &["ctrl+w"],
+            "Show saved sessions of every worktree or the current worktree"
+        ),
     ),
     (
         "app.agents.branchFilter",

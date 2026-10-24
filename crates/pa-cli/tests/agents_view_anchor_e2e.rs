@@ -184,6 +184,8 @@ async fn entry_anchor_selects_the_left_session() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![
@@ -268,6 +270,8 @@ async fn continue_recent_view_preselects_the_candidate_and_renders_the_notice() 
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![
@@ -337,6 +341,8 @@ async fn rename_saved_session_renames_the_row_and_the_file() {
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     };
     let plan = AgentsHeadlessPlan {
         steps: vec![

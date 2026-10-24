@@ -892,6 +892,7 @@ impl SessionUi {
         if view.editor.keybindings().matches(&id, "app.session.resume") {
             if self.return_to_agents_view {
                 self.open_agents_view = true;
+                self.agents_view_resume_picker = true;
                 self.exit_requested = true;
             } else {
                 self.note(

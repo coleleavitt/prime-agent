@@ -212,6 +212,9 @@ pub struct Args {
     /// Claude Code's flags (headless formats, SDK switches, permission and
     /// configuration flags; `crate::args_cc`).
     pub cc: crate::args_cc::CcFlags,
+    /// `--from-pr [n|url|term]` (Claude Code's flag): open the resume picker on the sessions
+    /// linked to a pull request; `Some("")` when given without a value.
+    pub from_pr: Option<String>,
 }
 
 impl Args {
@@ -373,6 +376,14 @@ pub fn parse_args(args: &[String]) -> Args {
                 }
             }
             "--fork" => result.fork = Some(require_value!(arg)),
+            // The value is optional, like `--resume`'s.
+            "--from-pr" => match args.get(i + 1) {
+                Some(next) if !next.starts_with('-') && !next.starts_with('@') => {
+                    result.from_pr = Some(next.clone());
+                    i += 1;
+                }
+                _ => result.from_pr = Some(String::new()),
+            },
             "--session-dir" => result.session_dir = Some(require_value!(arg)),
             "--models" => {
                 let value = require_value!(arg);
@@ -537,6 +548,9 @@ pub fn parse_args(args: &[String]) -> Args {
                             .join(", ")
                     )));
                 }
+            }
+            _ if arg.starts_with("--from-pr=") => {
+                result.from_pr = Some(arg["--from-pr=".len()..].to_string());
             }
             _ if arg.starts_with("--resume=") => {
                 let value = &arg["--resume=".len()..];
@@ -766,6 +780,13 @@ mod tests {
         assert!(parse(&["--resume", "--verbose"]).resume_bare);
         assert_eq!(parse(&["--resume=abc"]).resume.as_deref(), Some("abc"));
         assert!(parse(&["--resume="]).resume_bare);
+        assert_eq!(parse(&["--from-pr"]).from_pr.as_deref(), Some(""));
+        assert_eq!(parse(&["--from-pr", "42"]).from_pr.as_deref(), Some("42"));
+        assert_eq!(parse(&["--from-pr=42"]).from_pr.as_deref(), Some("42"));
+        assert_eq!(
+            parse(&["--from-pr", "--verbose"]).from_pr.as_deref(),
+            Some("")
+        );
         // A selector starting with - or @ stays bare.
         assert!(parse(&["-r", "-x"]).resume_bare);
     }

@@ -708,10 +708,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         }
         None => feature_gate,
     };
-    // A coordinator refuses worker capabilities before either.
-    if let Some(gate) = session_modes.gate(gate) {
-        handlers.set_gate(gate);
-    }
+    // A coordinator refuses worker capabilities before either. Outermost, the pull-request
+    // link observer records the pull request a `gh pr create` of the session's opens (Claude
+    // Code's `pr-link` entry, the resume picker's PR column and `--from-pr`).
+    handlers.set_gate(super::pr_link_gate::pr_link_gate(
+        wiring.session.clone(),
+        session_modes.gate(gate),
+    ));
     // The `system_router.run` host handler the bundled system-router skill
     // reaches through `rlm.host_request` (#2484).
     super::system_router_host::register_system_router_handlers(

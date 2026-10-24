@@ -109,6 +109,8 @@ fn view_options(socket: &Path, session_dir: &Path, notice: Option<String>) -> Ag
         show_hardware_cursor: false,
         incident_notice_state: None,
         create_config: serde_json::json!({}),
+        resume_picker: false,
+        pr_filter: None,
     }
 }
 

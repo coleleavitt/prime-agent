@@ -80,6 +80,8 @@ pub struct CatalogSessionRow {
     pub git_branch: Option<String>,
     /// The generated session title (Claude Code's `aiTitle`).
     pub ai_title: Option<String>,
+    /// The pull request the session last linked.
+    pub pr_link: Option<super::pr_link::SessionPrLink>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,

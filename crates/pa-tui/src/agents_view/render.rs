@@ -12,6 +12,7 @@ use super::{
     Result,
     RowKind,
     RowLayout,
+    SavedScope,
     Section,
     Theme,
     ThemeColor,
@@ -308,12 +309,22 @@ impl AgentsViewMode {
             return Vec::new();
         }
         if self.rows.is_empty() {
-            let text = if self.query.trim().is_empty() {
-                "No sessions yet."
+            let text = if !self.query.trim().is_empty() {
+                "No sessions match your search.".to_string()
+            } else if self.saved_scope == SavedScope::CurrentProject {
+                // Claude Code's resume picker says so and offers the all-projects key instead of
+                // widening on its own.
+                match self.keybindings.first_key("app.agents.toggleScope") {
+                    Some(key) => format!(
+                        "No conversations found in this project. {} to show all projects.",
+                        crate::keybindings::format_key_text(&key)
+                    ),
+                    None => "No conversations found in this project.".to_string(),
+                }
             } else {
-                "No sessions match your search."
+                "No sessions yet.".to_string()
             };
-            return vec![vec![self.theme.fg(ThemeColor::Dim, text.to_string())]];
+            return vec![vec![self.theme.fg(ThemeColor::Dim, text)]];
         }
         let layout = build_layout(&self.rows, width);
         let mut note_details = self
@@ -571,11 +582,16 @@ impl AgentsViewMode {
                 let zone = layout.name_width
                     + 2
                     + layout.model_width
-                    + [layout.host_width, layout.cwd_width, layout.branch_width]
-                        .into_iter()
-                        .filter(|width| *width > 0)
-                        .map(|width| width + 2)
-                        .sum::<usize>();
+                    + [
+                        layout.host_width,
+                        layout.cwd_width,
+                        layout.branch_width,
+                        layout.pr_width,
+                    ]
+                    .into_iter()
+                    .filter(|width| *width > 0)
+                    .map(|width| width + 2)
+                    .sum::<usize>();
                 let title = crate::agents_view_state::truncate_text(&text, zone);
                 let pad = zone.saturating_sub(str_width(&title));
                 let line: Line = vec![
@@ -728,6 +744,17 @@ impl AgentsViewMode {
                 .get(&row.identity)
                 .map_or("", String::as_str);
             line.push(theme.fg(ThemeColor::Muted, cell(branch, layout.branch_width)));
+            line.push(crate::Span::styled(
+                "  ".to_string(),
+                ratatui::style::Style::default(),
+            ));
+        }
+        if layout.pr_width > 0 {
+            let pr = layout
+                .pr_cells
+                .get(&row.identity)
+                .map_or("", String::as_str);
+            line.push(theme.fg(ThemeColor::Muted, cell(pr, layout.pr_width)));
             line.push(crate::Span::styled(
                 "  ".to_string(),
                 ratatui::style::Style::default(),
@@ -975,6 +1002,13 @@ impl AgentsViewMode {
         if self.query.is_empty() {
             if let Some(toggle) = first("app.agents.toggleScope") {
                 segments.push(format!("{toggle} saved:{}", self.saved_scope.hint_word()));
+            }
+            // The worktree slot (Claude Code's `Ctrl+W`) only exists with several worktrees.
+            if self.project.several() {
+                if let Some(toggle) = first("app.agents.worktreeFilter") {
+                    let word = if self.all_worktrees { "all" } else { "current" };
+                    segments.push(format!("{toggle} worktree:{word}"));
+                }
             }
         }
         // The branch filter's slot names the branch it narrows to; the preview's slot shows

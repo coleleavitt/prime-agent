@@ -7,7 +7,8 @@
 //!
 //! This crate adds keys the TS reader ignores: `foldVersion` on every
 //! line (the native fold's version the row was derived under), and
-//! `info.thinkingLevel`, `info.gitBranch` and `info.aiTitle` (fields the TS row does not have). A line without
+//! `info.thinkingLevel`, `info.gitBranch`, `info.aiTitle` and `info.prLink` (fields the TS row does
+//! not have). A line without
 //! `foldVersion` was written by the TS product, whose fold differs from the
 //! native one (its `created` is re-serialized, its usage rules predate the
 //! native ones), so it is never served: the file is folded once and its line
@@ -16,6 +17,7 @@
 use std::collections::HashMap;
 
 use pa_core::session::catalog_cache::{CatalogEntry, CatalogSessionRow, CatalogUsage};
+use pa_core::session::pr_link::SessionPrLink;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
@@ -117,6 +119,7 @@ struct InfoOut<'a> {
     git_branch: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ai_title: Option<&'a str>,
+    pr_link: Option<&'a SessionPrLink>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +148,7 @@ struct InfoIn {
     git_branch: Option<String>,
     #[serde(default)]
     ai_title: Option<String>,
+    pr_link: Option<SessionPrLink>,
 }
 
 #[derive(Serialize)]
@@ -256,6 +260,7 @@ fn info_out(row: &CatalogSessionRow) -> InfoOut<'_> {
         thinking_level: row.thinking_level.as_deref(),
         git_branch: row.git_branch.as_deref(),
         ai_title: row.ai_title.as_deref(),
+        pr_link: row.pr_link.as_ref(),
     }
 }
 
@@ -276,6 +281,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         thinking_level,
         git_branch,
         ai_title,
+        pr_link,
     } = info;
     CatalogSessionRow {
         id,
@@ -286,6 +292,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         thinking_level,
         git_branch,
         ai_title,
+        pr_link,
         parent_session_path,
         rlm_depth,
         created,
@@ -372,6 +379,7 @@ mod tests {
             model: Some(("anthropic".to_string(), "claude-opus-4-5".to_string())),
             git_branch: None,
             ai_title: None,
+            pr_link: None,
             thinking_level: Some("high".to_string()),
             parent_session_path: None,
             rlm_depth: 0,
@@ -411,6 +419,23 @@ mod tests {
             ("b.jsonl".to_string(), foreign),
         ]);
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn a_pull_request_link_survives_the_round_trip() {
+        let mut row = row();
+        row.pr_link = Some(SessionPrLink {
+            number: 42,
+            url: "https://github.com/acme/app/pull/42".to_string(),
+            repository: "acme/app".to_string(),
+        });
+        let session = indexed(CatalogEntry::Session(Box::new(row)));
+        let (metadata, search) = render([("a.jsonl", &session)]);
+        assert!(metadata.contains(r#""prLink":{"prNumber":42,"#));
+        assert_eq!(
+            parse(&metadata, &search),
+            HashMap::from([("a.jsonl".to_string(), session)])
+        );
     }
 
     #[test]

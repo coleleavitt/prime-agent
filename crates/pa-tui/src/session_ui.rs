@@ -312,6 +312,9 @@ pub(crate) struct SessionUi {
     update_in_flight: bool,
     pub(crate) exit_requested: bool,
     pub(crate) open_agents_view: bool,
+    /// The agents view opens as the resume picker (`/resume` without an argument): the saved
+    /// sessions start on the current project.
+    pub(crate) agents_view_resume_picker: bool,
     pub(crate) scoped_agents_view: Option<crate::agents_view::AgentsViewScope>,
     roster: Vec<Value>,
     heartbeat_catalog: Vec<HeartbeatEntry>,

@@ -483,6 +483,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "Open the agents view, or resume a saved session",
             ),
             (
+                "--from-pr [n|url]",
+                "Resume a session linked to a pull request, or pick one",
+            ),
+            (
                 "--fork <path|id>",
                 "Fork a saved session into a new session",
             ),

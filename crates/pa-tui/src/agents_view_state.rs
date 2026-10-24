@@ -189,6 +189,18 @@ pub(crate) fn prepare_saved_search_text(row: &mut Value) {
     }
 }
 
+/// The pull-request search target (Claude Code's `pr #<n> <repo>`), empty without a link.
+fn pr_search_text(summary: &Value) -> String {
+    summary
+        .get("prNumber")
+        .and_then(Value::as_u64)
+        .map(|number| {
+            let repository = get_str(summary, "prRepository").unwrap_or_default();
+            format!("pr #{number} {repository}").trim_end().to_string()
+        })
+        .unwrap_or_default()
+}
+
 /// The picker targets of one unified record: the SESSION column's own title as the name target,
 /// the durable session id, the cwd, the git branch, the first message, and the saved transcript
 /// corpus. Daemon data wins; a saved row fills the gaps.
@@ -220,6 +232,7 @@ pub(crate) fn record_search_text(record: &UnifiedRecord) -> SessionSearchText<'_
         branch: get_str(&summary, "gitBranch")
             .unwrap_or_default()
             .to_string(),
+        pr: pr_search_text(&summary),
         first_message: get_str(&summary, "firstMessage")
             .filter(|text| *text != "(no messages)")
             .map(|text| text.chars().take(FIRST_MESSAGE_SEARCH_MAX_CHARS).collect())
@@ -393,6 +406,9 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
             // the model does, so a row that lost its level keeps rendering "model:level".
             enrich(&mut merged, "thinkingLevel", saved);
             enrich(&mut merged, "gitBranch", saved);
+            // The pull request the session linked (Claude Code's PR tag): durable, saved-only.
+            enrich(&mut merged, "prNumber", saved);
+            enrich(&mut merged, "prRepository", saved);
         }
         merged
     } else {
@@ -427,11 +443,13 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
             "model": json_model(saved.get("model").unwrap_or(&Value::Null)),
             "thinkingLevel": saved.get("thinkingLevel").cloned().unwrap_or(Value::Null),
             "gitBranch": saved.get("gitBranch").cloned().unwrap_or(Value::Null),
+            "prNumber": saved.get("prNumber").cloned().unwrap_or(Value::Null),
+            "prRepository": saved.get("prRepository").cloned().unwrap_or(Value::Null),
         });
-        // A saved row without a persisted level (or branch) stays key-absent, like the
-        // daemon's saved-session summary rows.
+        // A saved row without a persisted level (or branch, or pull request) stays key-absent,
+        // like the daemon's saved-session summary rows.
         if let Some(object) = summary.as_object_mut() {
-            for key in ["thinkingLevel", "gitBranch"] {
+            for key in ["thinkingLevel", "gitBranch", "prNumber", "prRepository"] {
                 if object.get(key).is_some_and(Value::is_null) {
                     object.remove(key);
                 }
@@ -690,6 +708,11 @@ pub struct RowLayout {
     pub branch_width: usize,
     /// Each row's Branch cell, by row identity.
     pub branch_cells: HashMap<String, String>,
+    /// The PR column's width (Claude Code's `#<n>` pull-request tag); `0` when no row links a
+    /// pull request or the pane is too narrow.
+    pub pr_width: usize,
+    /// Each row's PR cell, by row identity.
+    pub pr_cells: HashMap<String, String>,
 }
 
 fn table_cell(value: &str, width: usize) -> String {
@@ -729,17 +752,19 @@ fn pad_start(value: &str, width: usize) -> String {
 }
 
 /// The optional columns (upstream #2526), in the order a narrow terminal drops them: the token
-/// pair first, then Context, then Cwd.
+/// pair first, then PR, Branch, Context, then Cwd.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OptionalColumn {
     Tokens,
+    Pr,
     Branch,
     Context,
     Cwd,
 }
 
-const OPTIONAL_COLUMN_DROP_ORDER: [OptionalColumn; 4] = [
+const OPTIONAL_COLUMN_DROP_ORDER: [OptionalColumn; 5] = [
     OptionalColumn::Tokens,
+    OptionalColumn::Pr,
     OptionalColumn::Branch,
     OptionalColumn::Context,
     OptionalColumn::Cwd,
@@ -755,6 +780,7 @@ const CWD_MAX_CELLS: usize = 20;
 struct RowCells {
     cwd: String,
     branch: String,
+    pr: String,
     input: String,
     output: String,
     context: String,
@@ -811,9 +837,17 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
                 .filter(|_| session_row)
                 .map(|branch| truncate_with_ellipsis(branch, BRANCH_MAX_CELLS))
                 .unwrap_or_default();
+            let pr = row
+                .summary
+                .get("prNumber")
+                .and_then(Value::as_u64)
+                .filter(|_| session_row)
+                .map(|number| format!("#{number}"))
+                .unwrap_or_default();
             RowCells {
                 cwd,
                 branch,
+                pr,
                 input: crate::chrome::format_token_count(row.tokens.input),
                 output: crate::chrome::format_token_count(row.tokens.output),
                 context,
@@ -834,6 +868,11 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     // keeps its layout).
     let branch_width = if cells.iter().any(|cells| !cells.branch.is_empty()) {
         column_width("Branch", |cells| &cells.branch)
+    } else {
+        0
+    };
+    let pr_width = if cells.iter().any(|cells| !cells.pr.is_empty()) {
+        column_width("PR", |cells| &cells.pr)
     } else {
         0
     };
@@ -873,6 +912,8 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
                 OptionalColumn::Tokens => input_width + 2 + output_width + 2,
                 OptionalColumn::Branch if branch_width > 0 => branch_width + 2,
                 OptionalColumn::Branch => 0,
+                OptionalColumn::Pr if pr_width > 0 => pr_width + 2,
+                OptionalColumn::Pr => 0,
                 OptionalColumn::Context => context_width + 2,
                 OptionalColumn::Cwd => cwd_width + 2,
             })
@@ -898,6 +939,11 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     };
     let branch_width = if shown.contains(&OptionalColumn::Branch) {
         branch_width
+    } else {
+        0
+    };
+    let pr_width = if shown.contains(&OptionalColumn::Pr) {
+        pr_width
     } else {
         0
     };
@@ -927,6 +973,9 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
     if branch_width > 0 {
         headings.push(table_cell("Branch", branch_width));
     }
+    if pr_width > 0 {
+        headings.push(table_cell("PR", pr_width));
+    }
     headings.push(detail_line("Input", "Output", "Context", "Cost", "Age"));
     let details = rows
         .iter()
@@ -944,16 +993,14 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             )
         })
         .collect();
-    let (cwd_cells, branch_cells) = rows
-        .iter()
-        .zip(cells)
-        .map(|(row, cells)| {
-            (
-                (row.identity.clone(), cells.cwd),
-                (row.identity.clone(), cells.branch),
-            )
-        })
-        .unzip();
+    let mut cwd_cells = HashMap::new();
+    let mut branch_cells = HashMap::new();
+    let mut pr_cells = HashMap::new();
+    for (row, cells) in rows.iter().zip(cells) {
+        cwd_cells.insert(row.identity.clone(), cells.cwd);
+        branch_cells.insert(row.identity.clone(), cells.branch);
+        pr_cells.insert(row.identity.clone(), cells.pr);
+    }
     RowLayout {
         legend: table_cell(&headings.join("  "), width),
         name_width,
@@ -964,6 +1011,8 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         cwd_cells,
         branch_width,
         branch_cells,
+        pr_width,
+        pr_cells,
     }
 }
 

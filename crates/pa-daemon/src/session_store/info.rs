@@ -38,6 +38,9 @@ pub struct SessionInfo {
     /// `ai_title` custom row's. A user's own `name` wins over it wherever a
     /// title is shown.
     pub ai_title: Option<String>,
+    /// The pull request the session last linked (the newest `pr_link` custom entry, Claude
+    /// Code's `pr-link`).
+    pub pr_link: Option<pa_core::session::pr_link::SessionPrLink>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,
@@ -239,6 +242,7 @@ pub(super) struct SessionScanAccumulator {
     git_branch: Option<String>,
     #[serde(default)]
     ai_title: Option<String>,
+    pr_link: Option<pa_core::session::pr_link::SessionPrLink>,
     pub(super) message_count: usize,
     pub(super) first_message: String,
     pub(super) all_messages_text: String,
@@ -294,6 +298,7 @@ impl SessionScanState {
                 thinking_level: self.acc.thinking_level.clone(),
                 git_branch: self.acc.git_branch.clone(),
                 ai_title: self.acc.ai_title.clone(),
+                pr_link: self.acc.pr_link.clone(),
                 message_count: self.acc.message_count,
                 first_message: self.acc.first_message.clone(),
                 all_messages_text: self.acc.all_messages_text.clone(),
@@ -424,9 +429,10 @@ pub(super) struct SessionInfoEntry<'a> {
     /// `git_state`: the repository context (its `branch`).
     #[serde(default, borrow)]
     pub(super) git: Option<&'a serde_json::value::RawValue>,
-    /// `custom`: the row's kind (`ai_title` carries the generated title).
+    /// `custom`: the row's tag (`ai_title` carries the generated title, a
+    /// `pr_link` carries its pull request in `data`).
     #[serde(default, borrow)]
-    pub(super) custom_type: Option<&'a serde_json::value::RawValue>,
+    pub(super) custom_type: Option<Cow<'a, str>>,
     /// `custom`: the row's payload.
     #[serde(default, borrow)]
     pub(super) data: Option<&'a serde_json::value::RawValue>,
@@ -620,6 +626,7 @@ impl SessionScanState {
             thinking_level: acc.thinking_level.clone(),
             git_branch: acc.git_branch.clone(),
             ai_title: acc.ai_title.clone(),
+            pr_link: acc.pr_link.clone(),
             parent_session_path: header.parent_session.clone(),
             rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
             created: header.timestamp.clone(),
@@ -698,6 +705,17 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 acc.git_branch = Some(branch);
             }
         }
+        "custom"
+            if entry.custom_type.as_deref()
+                == Some(pa_core::session::pr_link::PR_LINK_CUSTOM_TYPE) =>
+        {
+            if let Some(link) = entry
+                .data
+                .and_then(|raw| serde_json::from_str(raw.get()).ok())
+            {
+                acc.pr_link = Some(link);
+            }
+        }
         "session_info" => {
             acc.name = raw_string(entry.name)
                 .as_deref()
@@ -706,7 +724,7 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 .map(str::to_string);
         }
         "custom" => {
-            if raw_string(entry.custom_type).as_deref() == Some(AI_TITLE_CUSTOM_TYPE) {
+            if entry.custom_type.as_deref() == Some(AI_TITLE_CUSTOM_TYPE) {
                 if let Some(title) = entry
                     .data
                     .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
