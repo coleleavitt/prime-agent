@@ -289,4 +289,16 @@ impl AgentSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+
+    /// Install the cache-prefix compaction seam: summaries continue the live
+    /// conversation through `seam` while `compaction.cachePrefix` is on.
+    pub fn set_compaction_cache_prefix(
+        &self,
+        seam: crate::session_engine::compaction_cache_prefix::CachePrefixSeam,
+    ) {
+        *self
+            .compaction_cache_prefix
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(seam);
+    }
 }

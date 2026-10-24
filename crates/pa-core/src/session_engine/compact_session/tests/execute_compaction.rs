@@ -27,6 +27,7 @@ async fn execute_compaction_persists_and_rebuilds() {
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: None,
         },
     )
@@ -119,6 +120,7 @@ async fn rebuilt_live_context_prevents_repeat_auto_compaction_until_new_usage() 
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: None,
         },
     )
@@ -205,6 +207,7 @@ async fn execute_compaction_streams_summary_deltas_to_the_sink() {
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: Some(sink),
         },
     )
@@ -311,6 +314,7 @@ async fn split_turn_compaction_streams_in_final_order_and_converges() {
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: Some(sink),
         },
     )
@@ -423,6 +427,7 @@ async fn execute_compaction_attaches_harness_digest_snapshot() {
             harness_digest: Some(inputs),
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: None,
         },
     )
@@ -536,6 +541,7 @@ async fn execute_compaction_fails_on_an_error_summarizer_response() {
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: None,
         },
     )
@@ -578,6 +584,7 @@ async fn durable_compaction_row_carries_the_ts_record() {
             harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
+            cache_prefix: None,
             summary_delta: None,
         },
     )

@@ -265,6 +265,8 @@ impl AgentSession {
             auxiliary: self.auxiliary_model.as_ref(),
             summary_delta,
             semantic_edges: self.semantic_edges(),
+            // Resolved per attempt in `compaction_attempts`.
+            cache_prefix: None,
         };
         // The flight spans the attempts, the rebuilt-context replace, and
         // the kernel-state notice: every path here REPLACES the live loop
@@ -350,6 +352,9 @@ impl AgentSession {
             }
             let digest_inputs = self.harness_digest_inputs().await;
             compaction_trace::trace("compact.digest_captured", &serde_json::Value::Null);
+            // The live conversation THIS attempt summarizes (a conflict retry
+            // continues the newer one).
+            let cache_prefix = self.cache_prefix_request(options).await;
             let attempt_options = crate::session_engine::compact_session::CompactOptions {
                 model: options.model.clone(),
                 api_key: options.api_key.clone(),
@@ -360,6 +365,7 @@ impl AgentSession {
                 auxiliary: options.auxiliary,
                 summary_delta: options.summary_delta.clone(),
                 semantic_edges: options.semantic_edges.clone(),
+                cache_prefix,
             };
             let mut prepared = crate::session_engine::compact_session::summarize_attempt(
                 &attempt,
@@ -395,6 +401,65 @@ impl AgentSession {
         Err(anyhow::anyhow!(
             "compaction retried {MAX_COMPACTION_ATTEMPTS} times while the branch kept changing; try again"
         ))
+    }
+
+    /// The cache-prefix summary request over the live loop context, when
+    /// it applies: `compaction.cachePrefix` is on, the engine wired the
+    /// seam, no `auxiliaryModel` routes summaries elsewhere, no image route
+    /// is armed, and the live context plus the summary fits the window
+    /// (an overflow compaction never resends what overflowed).
+    async fn cache_prefix_request(
+        &self,
+        options: &crate::session_engine::compact_session::CompactOptions<'_>,
+    ) -> Option<std::sync::Arc<super::compaction_cache_prefix::CachePrefixRequest>> {
+        if !options.settings.cache_prefix || self.agent.model_override().is_some() {
+            return None;
+        }
+        let seam = self.compaction_cache_prefix.lock_or_recover().clone()?;
+        if let Some(context) = options.auxiliary {
+            let context = context.clone();
+            let routed_elsewhere = tokio::task::spawn_blocking(move || {
+                crate::settings::SettingsManager::create(&context.cwd, &context.agent_dir)
+                    .get_auxiliary_model()
+                    .is_some_and(|selector| !selector.trim().is_empty())
+            })
+            .await
+            .unwrap_or(true);
+            if routed_elsewhere {
+                return None;
+            }
+        }
+        let state = self.agent.state().await;
+        let messages: Vec<SessionAgentMessage> = state
+            .messages
+            .iter()
+            .filter_map(|message| serde_json::to_value(message).ok())
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect();
+        let window = options.model.context_window;
+        let needed = compaction::estimate_context_tokens(&messages)
+            .tokens
+            .saturating_add(
+                crate::session_engine::compact_session::summary_completion_budget(
+                    options.settings.reserve_tokens,
+                ),
+            )
+            .saturating_add(
+                (super::compaction_cache_prefix::summary_turn_text(options.custom_instructions)
+                    .len() as u64)
+                    .div_ceil(4),
+            );
+        if window > 0 && needed > window {
+            compaction_trace::trace(
+                "compact.cache_prefix_skipped",
+                &serde_json::json!({ "needed": needed, "window": window }),
+            );
+            return None;
+        }
+        super::compaction_cache_prefix::CachePrefixRequest::from_live(&seam, &state)
+            .await
+            .ok()
+            .map(std::sync::Arc::new)
     }
 
     /// Record an unsuccessful compaction outcome: append the durable

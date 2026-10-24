@@ -111,6 +111,10 @@ pub struct CompactionSettings {
     /// (`compaction.maxContextTokens`; no default).
     pub max_context_tokens: Option<u64>,
     pub agent_callable: Option<bool>,
+    /// `compaction.cachePrefix`: the summary request continues the live
+    /// conversation so its prefix is a prompt-cache read (Claude Code's
+    /// `tengu_compact_cache_prefix`); on unless set to `false`.
+    pub cache_prefix: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

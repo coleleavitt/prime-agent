@@ -12,6 +12,7 @@ pub mod branch_summarization;
 pub mod brief_mode;
 pub mod compact_session;
 pub mod compaction;
+pub mod compaction_cache_prefix;
 pub mod compaction_exec;
 pub mod compaction_trace;
 pub mod compaction_utils;
@@ -29,6 +30,7 @@ pub mod goal_driver;
 pub mod goal_evaluator;
 pub mod goal_proposal;
 pub mod harness_digest;
+pub mod instruction_size_notice;
 pub mod headless;
 pub mod host_requests;
 pub mod image_model_routing;
@@ -236,6 +238,10 @@ pub struct AgentSession {
     /// a side question on an unwired session fails with the model-selection
     /// error (no fallback to the agent's id-carrying fn).
     side_question_stream_fn: std::sync::Mutex<Option<pa_agent::stream::StreamFn>>,
+    /// The cache-prefix compaction seam (the pre-semantic stream fn and the
+    /// loop's message conversion); `None` until the engine wires it, which
+    /// keeps every compaction on the serialized summarizer request.
+    compaction_cache_prefix: std::sync::Mutex<Option<compaction_cache_prefix::CachePrefixSeam>>,
     /// The session's agent dir (the settings root): the refine flow
     /// resolves the `factory.enabled` opt-in from its settings.json on
     /// every run, immediately before the plan applies, mirroring the
@@ -366,6 +372,7 @@ impl AgentSession {
             compaction_summary_sink: std::sync::Mutex::new(None),
             semantic_edges: std::sync::Mutex::new(None),
             side_question_stream_fn: std::sync::Mutex::new(None),
+            compaction_cache_prefix: std::sync::Mutex::new(None),
             agent_dir: None,
             refinement_gate: None,
             auto_refine_policy: None,
