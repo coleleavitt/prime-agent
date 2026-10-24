@@ -229,5 +229,86 @@ class ReviewTests(ReviewTestCase):
         self.assertEqual(resumed.review_id, first.review_id)
 
 
+class SecurityBackend:
+    """Answers the security finder and the false-positive filters."""
+
+    def __init__(self, scores: dict[int, int]) -> None:
+        self.scores = scores
+        self.prompts: list[str] = []
+
+    async def run(self, request: ws.AgentRequest) -> ws.AgentOutcome:
+        prompt = request.prompt
+        self.prompts.append(prompt)
+        if "You filter one candidate vulnerability" in prompt:
+            line = next(line for line in self.scores if f"- line: {line}\n" in prompt)
+            body = {"confidence": self.scores[line], "reason": "read the code"}
+        else:
+            body = {
+                "findings": [
+                    {
+                        "file": "app.py",
+                        "line": line,
+                        "severity": severity,
+                        "category": "command_injection",
+                        "description": f"issue on line {line}",
+                        "exploit_scenario": "attacker passes `; rm -rf ~`",
+                        "recommendation": "use an argument list",
+                        "confidence": 0.9,
+                    }
+                    for line, severity in ((2, "MEDIUM"), (3, "HIGH"), (4, "LOW"))
+                ]
+            }
+        return ws.AgentOutcome(text=f"```json\n{json.dumps(body)}\n```", agent_id="child")
+
+
+class SimplifySecurityAndReportTests(ReviewTestCase):
+    async def test_simplify_runs_the_four_cleanup_angles_without_verify(self) -> None:
+        backend = ReviewBackend()
+        result = await code_review.simplify(cwd=str(self.repo), backend=backend)
+        self.assertEqual(len(backend.prompts), 4)
+        self.assertTrue(all("not hunting for bugs" in prompt for prompt in backend.prompts))
+        self.assertEqual([(f["line"], f["category"]) for f in result.findings], [(7, "simplification")])
+        self.assertIsNone(result.findings[0].get("verdict"))
+        self.assertIn("Simplify (reuse, simplification, efficiency, altitude): 1 finding", repr(result))
+        self.assertIn("Apply the fixes", repr(result))
+        updated = code_review.report_outcomes({1: "fixed"})
+        self.assertEqual(updated.findings[0]["outcome"], "fixed")
+
+    async def test_security_review_filters_below_confidence_eight_and_ranks_by_severity(self) -> None:
+        backend = SecurityBackend({2: 9, 3: 8, 4: 3})
+        result = await code_review.security_review(cwd=str(self.repo), backend=backend)
+        self.assertEqual(len(backend.prompts), 1 + 3)
+        self.assertIn("senior security engineer", backend.prompts[0])
+        self.assertIn("HARD EXCLUSIONS", backend.prompts[1])
+        self.assertEqual([(f["line"], f["severity"]) for f in result.findings], [(3, "HIGH"), (2, "MEDIUM")])
+        self.assertEqual(result.candidates, 3)
+        table = result.table()
+        self.assertIn("Security review: 2 findings (3 candidates considered)", table)
+        self.assertIn("| # | Location | Category | Severity | Finding |", table)
+        self.assertIn("| 1 | app.py:3 | command_injection | HIGH |", table)
+        self.assertIn("   Fix: use an argument list", table)
+        self.assertEqual(code_review.load_review().title, "Security review")
+
+    async def test_security_review_of_an_empty_diff_runs_nothing(self) -> None:
+        self.git("checkout", "--", "app.py")
+        backend = SecurityBackend({})
+        result = await code_review.security_review(cwd=str(self.repo), backend=backend)
+        self.assertEqual(backend.prompts, [])
+        self.assertIn("Nothing to review", repr(result))
+
+    def test_report_findings_renders_and_saves_a_review(self) -> None:
+        result = code_review.report_findings(
+            [
+                {"file": "b.py", "line": 9, "summary": "duplicated helper", "category": "reuse"},
+                {"file": "a.py", "line": 1, "summary": "off by one", "verdict": "CONFIRMED"},
+            ],
+            title="Custom review",
+        )
+        self.assertEqual([f["file"] for f in result.findings], ["a.py", "b.py"])
+        self.assertIn("Custom review: 2 findings", repr(result))
+        self.assertIn("| 1 | a.py:1 | correctness | CONFIRMED | off by one |", repr(result))
+        self.assertEqual(code_review.report_outcomes({2: "skipped"}).findings[1]["outcome"], "skipped")
+
+
 if __name__ == "__main__":
     unittest.main()

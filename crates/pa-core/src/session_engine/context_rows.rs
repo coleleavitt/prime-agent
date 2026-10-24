@@ -228,6 +228,13 @@ impl SessionContextRows {
         &self.reminders
     }
 
+    /// The session context as the source reads it now (`/context`'s
+    /// category breakdown measures its parts). Blocking.
+    #[must_use]
+    pub fn current_context(&self) -> SessionContext {
+        (self.source)()
+    }
+
     /// The full context a fresh conversation's first turn carries (the
     /// `session_context` row's text). Blocking.
     #[must_use]

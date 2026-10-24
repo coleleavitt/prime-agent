@@ -126,6 +126,9 @@ The following programmatic tools are available in the REPL for a2a communication
 - `code_review.review(args: str = "", *, cwd: str | None = None, resume_from: str | None = None) -> Review`: pass the command's arguments verbatim; the repr is the findings table to show the user
 - `code_review.report_outcomes(outcomes: dict[int, str], *, review_id: str | None = None) -> Review`: synchronous; after fixing, each finding's outcome by its `#` (`fixed`, `no_change_needed`, `skipped`)
 - `code_review.load_review(review_id: str | None = None) -> Review`: synchronous; a saved review, the latest by default
+- `code_review.simplify(target: str = "", *, cwd: str | None = None) -> Review`: `/simplify`'s cleanup-only review (reuse, simplification, efficiency, altitude), no verify pass; apply what it finds
+- `code_review.security_review(target: str = "", *, cwd: str | None = None) -> Review`: `/security-review`'s finder plus per-candidate false-positive filters; findings carry `severity` and `recommendation`
+- `code_review.report_findings(findings: list[dict], *, title: str = "Review") -> Review`: synchronous; render and save findings you produced (`file`, `line`, `summary`, ...) as the ranked table
 
 ## Continual Harness
 
