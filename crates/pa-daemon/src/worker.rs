@@ -64,6 +64,7 @@ pub use queue::{Lane, QueuePriority};
 
 mod create;
 mod idle_compaction;
+mod side_ux;
 mod turn;
 
 use create::{active_session_id_of, worker_server_capabilities};

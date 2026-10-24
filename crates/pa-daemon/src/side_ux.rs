@@ -21,10 +21,9 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use pa_core::session_engine::side_ux::TITLE_MIN_CHARS;
-use pa_types::sync::MutexExt;
 use serde_json::{Map, Value, json};
 
-use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
+use crate::engine::{SideUxOutcome, SideUxRequest};
 use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::worker::Worker;
 
@@ -52,7 +51,11 @@ pub(crate) fn blocked_on(feature_status: &Map<String, Value>) -> Option<String> 
         .and_then(|first| first.get("action"))
         .and_then(Value::as_str);
     if let Some(action) = action {
-        let line = action.lines().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
+        let line = action
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim();
         let mut clipped: String = line.chars().take(BLOCKED_ACTION_MAX_CHARS).collect();
         if line.chars().count() > BLOCKED_ACTION_MAX_CHARS {
             clipped.push('\u{2026}');
@@ -97,128 +100,12 @@ pub(crate) fn title_candidate(
 /// Sessions whose title was asked for in this process: one attempt per
 /// session (a failed call is forgotten so the next prompt retries, like
 /// Claude Code's).
-fn title_attempts() -> &'static Mutex<HashSet<String>> {
+pub(crate) fn title_attempts() -> &'static Mutex<HashSet<String>> {
     static ATTEMPTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     ATTEMPTS.get_or_init(Mutex::default)
 }
 
 impl Worker {
-    /// Ask for the session title when `message` is the session's first
-    /// titleable prompt and the session has no name or title yet.
-    pub(crate) fn maybe_generate_title(
-        &self,
-        engine: &Arc<dyn SessionEngine>,
-        message: &str,
-        custom_message: Option<&Value>,
-        agent_message: Option<&str>,
-    ) {
-        let Some(text) = title_candidate(message, custom_message, agent_message) else {
-            return;
-        };
-        let session_id = {
-            let core = self.core.lock_or_recover();
-            let Some(store) = core.store.as_ref() else {
-                return;
-            };
-            if store.path.as_os_str().is_empty()
-                || store.session_name().is_some()
-                || store.ai_title().is_some()
-            {
-                return;
-            }
-            store.session_id().to_string()
-        };
-        if !title_attempts().lock_or_recover().insert(session_id.clone()) {
-            return;
-        }
-        let engine = Arc::clone(engine);
-        let core = Arc::clone(&self.core);
-        let roster = self.roster_pushes.clone();
-        tokio::spawn(async move {
-            let request = SideUxRequest::SessionTitle {
-                first_message: text,
-            };
-            let outcome = tokio::task::spawn_blocking(move || engine.run_side_ux(request))
-                .await
-                .unwrap_or_else(|error| SideUxOutcome::Failed(error.to_string()));
-            let title = match outcome {
-                SideUxOutcome::Text(title) => title,
-                SideUxOutcome::Failed(error) => {
-                    eprintln!("pa-daemon: session title generation failed: {error}");
-                    title_attempts().lock_or_recover().remove(&session_id);
-                    return;
-                }
-                SideUxOutcome::Nothing | SideUxOutcome::Disabled | SideUxOutcome::Unsupported => {
-                    return;
-                }
-            };
-            let recorded = {
-                let mut core = core.lock_or_recover();
-                match core.store.as_mut() {
-                    // The user's own name (or a title that landed meanwhile)
-                    // wins; a replaced session never takes this one's title.
-                    Some(store)
-                        if store.session_id() == session_id
-                            && store.session_name().is_none()
-                            && store.ai_title().is_none() =>
-                    {
-                        store
-                            .persist_entry(
-                                "custom",
-                                json!({
-                                    "customType": crate::session_store::AI_TITLE_CUSTOM_TYPE,
-                                    "data": { "title": title },
-                                }),
-                            )
-                            .is_ok()
-                    }
-                    _ => false,
-                }
-            };
-            if recorded {
-                roster.push();
-            }
-        });
-    }
-
-    /// Predict the next prompt after a run's true end; the suggestion
-    /// reaches the clients only while the session is still idle.
-    pub(crate) fn maybe_suggest_prompt(&self, engine: &Arc<dyn SessionEngine>) {
-        let session_id = {
-            let core = self.core.lock_or_recover();
-            if core.attached_client_ids.is_empty()
-                || blocked_on(&core.feature_status).is_some()
-                || core.has_ongoing_work()
-            {
-                return;
-            }
-            core.active_session_id.clone()
-        };
-        let engine = Arc::clone(engine);
-        let core = Arc::clone(&self.core);
-        let events = Arc::clone(&self.events);
-        tokio::spawn(async move {
-            let outcome =
-                tokio::task::spawn_blocking(move || engine.run_side_ux(SideUxRequest::PromptSuggestion))
-                    .await
-                    .unwrap_or(SideUxOutcome::Nothing);
-            let SideUxOutcome::Text(text) = outcome else {
-                return;
-            };
-            {
-                let core = core.lock_or_recover();
-                if core.active_session_id != session_id || core.has_ongoing_work() {
-                    return;
-                }
-            }
-            crate::worker::emit_worker_event_with(
-                &core,
-                &events,
-                json!({ "type": PROMPT_SUGGESTION_EVENT, "text": text }),
-            );
-        });
-    }
-
     /// `session_recap`: the away summary now (`/recap`).
     pub(crate) async fn handle_session_recap(&self) -> DaemonResponse {
         if let Err(response) = self.require_created(SESSION_RECAP) {
@@ -309,7 +196,8 @@ mod tests {
     #[test]
     fn a_cleared_confirmation_or_none_leaves_the_session_unblocked() {
         assert_eq!(blocked_on(&Map::new()), None);
-        let cleared = json!({ "confirmation": { "line": null, "status": { "confirmations": [] } } });
+        let cleared =
+            json!({ "confirmation": { "line": null, "status": { "confirmations": [] } } });
         assert_eq!(blocked_on(cleared.as_object().unwrap()), None);
     }
 

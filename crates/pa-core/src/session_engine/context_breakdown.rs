@@ -190,7 +190,15 @@ impl super::engine::SessionEngine {
                 .collect(),
             context: &context,
         });
-        let estimate = super::compaction::estimate_context_tokens(&state.messages);
+        // The live agent messages as session rows (serde round-trip, the
+        // compaction path's conversion) for the token estimate.
+        let messages: Vec<pa_types::session::AgentMessage> = state
+            .messages
+            .iter()
+            .filter_map(|message| serde_json::to_value(message).ok())
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect();
+        let estimate = super::compaction::estimate_context_tokens(&messages);
         // Without a provider usage the message estimate leaves out the
         // request's fixed parts.
         let estimated_total = match estimate.last_usage_index {
@@ -199,17 +207,16 @@ impl super::engine::SessionEngine {
                 estimate.tokens
                     + fixed
                         .iter()
-                        .filter(|category| {
-                            matches!(category.name, SYSTEM_PROMPT | SYSTEM_TOOLS)
-                        })
+                        .filter(|category| matches!(category.name, SYSTEM_PROMPT | SYSTEM_TOOLS))
                         .map(|category| category.tokens)
                         .sum::<u64>()
             }
         };
         let thinking = super::provider_adapter::model_thinking_level(state.thinking_level);
+        let model = super::provider_adapter::agent_model_to_ai_model(&state.model);
         let status = self.session.context_limit_status(
-            &state.model,
-            super::compaction::request_output_budget(&state.model, thinking),
+            &model,
+            super::compaction::request_output_budget(&model, thinking),
         );
         ContextBreakdown {
             fixed,
