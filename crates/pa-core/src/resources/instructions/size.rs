@@ -56,7 +56,10 @@ pub fn compact_count(count: usize) -> String {
 #[must_use]
 pub fn size_warnings(files: &[InstructionFile], context_window: Option<u64>) -> Vec<String> {
     let (file_limit, total_limit) = limits(context_window);
-    let sizes: Vec<usize> = files.iter().map(|file| file.content.chars().count()).collect();
+    let sizes: Vec<usize> = files
+        .iter()
+        .map(|file| file.content.chars().count())
+        .collect();
     let mut warnings = Vec::new();
     // `NVt`: the files that are each within the limit, summed.
     let total: usize = sizes.iter().filter(|size| **size <= file_limit).sum();
@@ -136,9 +139,12 @@ mod tests {
 
     #[test]
     fn many_files_within_the_limit_still_warn_on_their_total() {
-        let files = vec![file("a.md", 39_000), file("b.md", 39_000), file("c.md", 39_000), file(
-            "d.md", 39_000,
-        )];
+        let files = vec![
+            file("a.md", 39_000),
+            file("b.md", 39_000),
+            file("c.md", 39_000),
+            file("d.md", 39_000),
+        ];
         assert_eq!(
             size_warnings(&files, None),
             vec![
@@ -151,12 +157,15 @@ mod tests {
     #[test]
     fn a_file_cut_at_the_read_cap_is_reported() {
         let mut cut = file("/repo/AGENTS.md", 10);
-        cut.content
-            .push_str(&format!("\n\n{TRUNCATION_NOTE_PREFIX} larger than 262144 bytes]"));
+        cut.content.push_str(&format!(
+            "\n\n{TRUNCATION_NOTE_PREFIX} larger than 262144 bytes]"
+        ));
         assert_eq!(
             size_warnings(&[cut], None),
-            vec!["/repo/AGENTS.md is larger than 256 KiB; only its first 256 KiB is loaded"
-                .to_string()]
+            vec![
+                "/repo/AGENTS.md is larger than 256 KiB; only its first 256 KiB is loaded"
+                    .to_string()
+            ]
         );
     }
 }

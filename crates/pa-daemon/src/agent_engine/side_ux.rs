@@ -28,7 +28,8 @@ impl AgentSessionEngine {
         if model.api == FAUX_API {
             return SideUxOutcome::Unsupported;
         }
-        let settings = pa_core::settings::SettingsManager::create(self.cwd(), &self.config.agent_dir);
+        let settings =
+            pa_core::settings::SettingsManager::create(self.cwd(), &self.config.agent_dir);
         let switches = settings.side_ux();
         let enabled = match &request {
             SideUxRequest::SessionTitle { .. } => switches.session_titles,

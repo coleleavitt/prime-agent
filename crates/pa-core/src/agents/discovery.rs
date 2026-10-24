@@ -113,7 +113,10 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
 #[must_use]
 pub fn discover_agents(search: &AgentSearch) -> AgentCatalog {
     let launch = crate::settings::launch::LaunchSettings::current();
-    discover_agents_with(search, launch.as_ref().and_then(|launch| launch.agents.as_ref()))
+    discover_agents_with(
+        search,
+        launch.as_ref().and_then(|launch| launch.agents.as_ref()),
+    )
 }
 
 /// [`discover_agents`] with explicit `--agents` definitions.
@@ -323,8 +326,17 @@ mod tests {
             (alpha.description.as_str(), alpha.source),
             ("from flag", AgentSource::CliArg)
         );
-        assert!(catalog.diagnostics.iter().any(|line| line.starts_with("--agents: ")));
-        assert!(catalog.diagnostics.iter().any(|line| line.contains("shadowed")));
+        assert!(
+            catalog
+                .diagnostics
+                .iter()
+                .any(|line| line.starts_with("--agents: "))
+        );
+        assert!(
+            catalog
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("shadowed"))
+        );
     }
 }
-

@@ -113,7 +113,11 @@ mod tests {
         assert!(!prefix.matches("Bash", &bash("npm runner")));
         let any = ToolRule::parse("Bash").unwrap();
         assert!(any.matches("Bash", &bash("anything")));
-        assert!(ToolRule::parse("Bash(*)").unwrap().matches("Bash", &json!({})));
+        assert!(
+            ToolRule::parse("Bash(*)")
+                .unwrap()
+                .matches("Bash", &json!({}))
+        );
         let mcp = ToolRule::parse("mcp__github__*").unwrap();
         assert!(mcp.matches("mcp__github__search", &json!({})));
         assert!(!mcp.matches("mcp__gitlab__search", &json!({})));

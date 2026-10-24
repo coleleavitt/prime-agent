@@ -298,7 +298,10 @@ pub(crate) async fn summarize_attempt(
                     "compact.cache_prefix_fallback",
                     &serde_json::json!({ "reason": reason }),
                 );
-                tracing::debug!(reason, "cache-prefix compaction fell back to the serialized summary");
+                tracing::debug!(
+                    reason,
+                    "cache-prefix compaction fell back to the serialized summary"
+                );
             }
         }
     }

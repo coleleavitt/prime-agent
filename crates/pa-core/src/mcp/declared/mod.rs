@@ -385,13 +385,18 @@ impl DeclaredServers {
             declared.issues.extend(parsed.issues);
             declared
                 .servers
-                .extend(parsed.servers.into_iter().map(|(name, config)| DeclaredServer {
-                    name,
-                    config,
-                    scope: McpServerScope::Dynamic,
-                    source: PathBuf::new(),
-                    approval: None,
-                }));
+                .extend(
+                    parsed
+                        .servers
+                        .into_iter()
+                        .map(|(name, config)| DeclaredServer {
+                            name,
+                            config,
+                            scope: McpServerScope::Dynamic,
+                            source: PathBuf::new(),
+                            approval: None,
+                        }),
+                );
         }
         if !launch.strict_mcp_config {
             declared.load_settings_servers(inputs);

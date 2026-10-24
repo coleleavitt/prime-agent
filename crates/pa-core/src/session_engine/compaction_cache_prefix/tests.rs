@@ -20,7 +20,9 @@ fn faux_reply(text: &str) -> pa_ai::faux::FauxResponseStep {
     ))
 }
 
-fn register(responses: Vec<pa_ai::faux::FauxResponseStep>) -> pa_ai::faux::FauxProviderRegistration {
+fn register(
+    responses: Vec<pa_ai::faux::FauxResponseStep>,
+) -> pa_ai::faux::FauxProviderRegistration {
     let api = format!("faux-cache-prefix-{:?}", std::time::SystemTime::now());
     let registration =
         pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
@@ -75,7 +77,9 @@ async fn session_after_a_turn(
         manager
             .append_message(SessionAgentMessage::Assistant(
                 pa_ai::faux::faux_assistant_text_message(
-                    &format!("module {i} parses the config, validates paths and writes the cache file"),
+                    &format!(
+                        "module {i} parses the config, validates paths and writes the cache file"
+                    ),
                     pa_ai::faux::FauxAssistantMessageOptions::default(),
                 ),
             ))
@@ -144,7 +148,10 @@ async fn the_summary_continuing_the_live_request_reads_its_prefix_from_the_cache
     assert_eq!(calls, 2);
     assert_eq!(serialized.cache_read, 0, "{serialized:?}");
     // The serialized request pays its whole prompt as uncached input.
-    assert!(serialized.input > cached.input, "{serialized:?} vs {cached:?}");
+    assert!(
+        serialized.input > cached.input,
+        "{serialized:?} vs {cached:?}"
+    );
 }
 
 #[tokio::test]
@@ -152,7 +159,11 @@ async fn a_reply_without_text_falls_back_to_the_serialized_request() {
     let registration = register(vec![
         faux_reply("module 12 renders the report"),
         pa_ai::faux::FauxResponseStep::Message(pa_ai::faux::faux_assistant_message(
-            vec![pa_ai::faux::faux_tool_call("python_repl", &serde_json::json!({"code": "1"}), None)],
+            vec![pa_ai::faux::faux_tool_call(
+                "python_repl",
+                &serde_json::json!({"code": "1"}),
+                None,
+            )],
             pa_ai::faux::FauxAssistantMessageOptions::default(),
         )),
         faux_reply("## Goal\nthe serialized summary"),
@@ -163,7 +174,11 @@ async fn a_reply_without_text_falls_back_to_the_serialized_request() {
         panic!("the compaction ran");
     };
     assert_eq!(registration.call_count(), 3);
-    assert!(run.result.summary.starts_with("## Goal\nthe serialized summary"));
+    assert!(
+        run.result
+            .summary
+            .starts_with("## Goal\nthe serialized summary")
+    );
 }
 
 #[test]

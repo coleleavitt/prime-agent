@@ -51,8 +51,7 @@ pub struct Outcome {
 fn process(hook: &HookCommand) -> tokio::process::Command {
     let shell = match &hook.kind {
         HookKind::Command {
-            args: Some(args),
-            ..
+            args: Some(args), ..
         } => {
             let mut process = tokio::process::Command::new(&hook.command);
             process.args(args);
@@ -241,7 +240,10 @@ pub fn output(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookOu
         .filter(|_| matches!(event, HookEvent::Elicitation | HookEvent::ElicitationResult))
         .map(|action| pa_core::features::ElicitationResponse {
             action,
-            content: specific.get("content").filter(|content| content.is_object()).cloned(),
+            content: specific
+                .get("content")
+                .filter(|content| content.is_object())
+                .cloned(),
         });
     HookOutput {
         answer,
@@ -327,7 +329,10 @@ pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAn
         );
     }
     // A `PermissionRequest` hook decides for the user.
-    if let Some(decision) = specific.get("decision").filter(|_| event == HookEvent::PermissionRequest) {
+    if let Some(decision) = specific
+        .get("decision")
+        .filter(|_| event == HookEvent::PermissionRequest)
+    {
         match decision.get("behavior").and_then(Value::as_str) {
             Some("allow") => return HookAnswer::Allow { context },
             Some("deny") => {

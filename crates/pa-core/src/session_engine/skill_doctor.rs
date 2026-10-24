@@ -248,9 +248,11 @@ mod tests {
         );
         // A week later nothing is in the window.
         let later = now + WINDOW + Duration::from_secs(60);
-        assert!(skill_usage(&skills, &sessions, later)
-            .iter()
-            .all(|row| row.uses == 0));
+        assert!(
+            skill_usage(&skills, &sessions, later)
+                .iter()
+                .all(|row| row.uses == 0)
+        );
 
         let report = skill_doctor_report(&rows, now);
         assert!(report.starts_with("Skills loaded this session\n\n  skill"));

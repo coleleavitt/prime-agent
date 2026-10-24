@@ -41,17 +41,19 @@ mod tests {
 
     #[test]
     fn the_row_lists_each_warning_and_never_reaches_the_model() {
-        let row = notice_message(&["Large /r/CLAUDE.md will impact performance (45.0k chars > 40.0k)".to_string()])
-            .expect("a row");
+        let row = notice_message(&[
+            "Large /r/CLAUDE.md will impact performance (45.0k chars > 40.0k)".to_string(),
+        ])
+        .expect("a row");
         assert_eq!(row.custom_type, INSTRUCTION_SIZE_WARNING_CUSTOM_TYPE);
         assert!(row.display);
-        assert!(row
-            .content
-            .text()
-            .contains("- Large /r/CLAUDE.md will impact performance (45.0k chars > 40.0k)"));
-        let converted = super::super::messages::convert_to_llm(&[
-            pa_types::session::AgentMessage::Custom(row),
-        ]);
+        assert!(
+            row.content
+                .text()
+                .contains("- Large /r/CLAUDE.md will impact performance (45.0k chars > 40.0k)")
+        );
+        let converted =
+            super::super::messages::convert_to_llm(&[pa_types::session::AgentMessage::Custom(row)]);
         assert!(converted.is_empty());
     }
 }

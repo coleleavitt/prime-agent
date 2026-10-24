@@ -117,13 +117,15 @@ pub async fn summarize(
     sink: Option<&SummaryDeltaSink>,
 ) -> anyhow::Result<SummarySlice> {
     let mut context = request.context.clone();
-    context.messages.push(Message::User(pa_agent::types::UserMessage {
-        content: UserContent::Parts(vec![UserPart::Text(TextContent {
-            text: summary_turn_text(custom_instructions),
-            text_signature: None,
-        })]),
-        timestamp: pa_agent::now_ms(),
-    }));
+    context
+        .messages
+        .push(Message::User(pa_agent::types::UserMessage {
+            content: UserContent::Parts(vec![UserPart::Text(TextContent {
+                text: summary_turn_text(custom_instructions),
+                text_signature: None,
+            })]),
+            timestamp: pa_agent::now_ms(),
+        }));
     let signal = abort.cloned().unwrap_or_default();
     let options = StreamRequestOptions {
         temperature: None,

@@ -90,14 +90,8 @@ pub const EVENTS_WITHOUT_TRIGGER: [(&str, &str); 9] = [
         "UserPromptExpansion",
         "slash commands expand inside the session engine without a feature seam yet",
     ),
-    (
-        "PreModelSwitch",
-        "model switches have no feature seam yet",
-    ),
-    (
-        "PostModelSwitch",
-        "model switches have no feature seam yet",
-    ),
+    ("PreModelSwitch", "model switches have no feature seam yet"),
+    ("PostModelSwitch", "model switches have no feature seam yet"),
     (
         "TeammateIdle",
         "Prime Agent has no agent teams (children and siblings are not teammates)",
@@ -751,7 +745,9 @@ impl HooksConfig {
                     match raw.into_hook(event, source, &self.env, &self.http) {
                         Ok(Some(hook)) => commands.push(hook),
                         Ok(None) => {}
-                        Err(problem) => self.problems.push(format!("{scope} hooks.{key}: {problem}")),
+                        Err(problem) => self
+                            .problems
+                            .push(format!("{scope} hooks.{key}: {problem}")),
                     }
                 }
                 self.groups.push((event, Group { matcher, commands }));
@@ -953,7 +949,8 @@ mod tests {
             config
                 .problems
                 .iter()
-                .any(|problem| problem.contains("prompt-type hooks are not supported for SessionStart")),
+                .any(|problem| problem
+                    .contains("prompt-type hooks are not supported for SessionStart")),
             "{:?}",
             config.problems
         );
@@ -1012,7 +1009,12 @@ mod tests {
             "PermissionRequest": [{ "hooks": [{ "type": "agent", "prompt": "x" }, { "type": "prompt", "prompt": "y" }] }],
         }));
         assert_eq!(config.problems.len(), 1, "{:?}", config.problems);
-        assert_eq!(config.commands(HookEvent::PermissionRequest, Some("Bash")).len(), 1);
+        assert_eq!(
+            config
+                .commands(HookEvent::PermissionRequest, Some("Bash"))
+                .len(),
+            1
+        );
     }
 }
 

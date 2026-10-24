@@ -295,7 +295,11 @@ mod tests {
         assert!(!none.url_allowed("https://hooks.example.com/pre"));
         let mut merged = HttpPolicy::default();
         merged.merge(json!({ "allowedHttpHookUrls": ["a"] }).as_object().unwrap());
-        merged.merge(json!({ "allowedHttpHookUrls": ["b"], "httpHookAllowedEnvVars": ["T"] }).as_object().unwrap());
+        merged.merge(
+            json!({ "allowedHttpHookUrls": ["b"], "httpHookAllowedEnvVars": ["T"] })
+                .as_object()
+                .unwrap(),
+        );
         assert_eq!(
             merged,
             HttpPolicy {
@@ -314,16 +318,34 @@ mod tests {
             "Bearer <TOKEN> and <TOKEN>"
         );
         assert_eq!(interpolate("x $SECRET y", &allowed, &lookup), "x  y");
-        assert_eq!(interpolate("$5 and $ and ${", &allowed, &lookup), "$5 and $ and ${");
+        assert_eq!(
+            interpolate("$5 and $ and ${", &allowed, &lookup),
+            "$5 and $ and ${"
+        );
         assert_eq!(interpolate("a\r\nb\0", &allowed, &lookup), "ab");
     }
 
     #[test]
     fn private_addresses_are_refused_and_loopback_is_not() {
-        for private in ["10.0.0.1", "192.168.1.1", "172.16.0.1", "169.254.169.254", "100.64.0.1", "fd00::1", "fe80::1", "::ffff:10.0.0.1"] {
+        for private in [
+            "10.0.0.1",
+            "192.168.1.1",
+            "172.16.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
             assert!(is_private(private.parse().unwrap()), "{private}");
         }
-        for public in ["127.0.0.1", "::1", "8.8.8.8", "2606:4700::1111", "::ffff:127.0.0.1"] {
+        for public in [
+            "127.0.0.1",
+            "::1",
+            "8.8.8.8",
+            "2606:4700::1111",
+            "::ffff:127.0.0.1",
+        ] {
             assert!(!is_private(public.parse().unwrap()), "{public}");
         }
     }
@@ -405,15 +427,23 @@ mod tests {
         let request = server.await.unwrap();
         assert!(request.starts_with("POST /hook HTTP/1.1"), "{request}");
         let lower = request.to_ascii_lowercase();
-        assert!(lower.contains("content-type: application/json"), "{request}");
+        assert!(
+            lower.contains("content-type: application/json"),
+            "{request}"
+        );
         assert!(lower.contains("x-token: t0k"), "{request}");
-        assert!(request.ends_with(r#"{"hook_event_name":"PreToolUse"}"#), "{request}");
+        assert!(
+            request.ends_with(r#"{"hook_event_name":"PreToolUse"}"#),
+            "{request}"
+        );
     }
 
     #[tokio::test]
     async fn an_error_status_or_a_blocked_url_is_a_failure() {
-        let (url, server) =
-            serve_once("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        let (url, server) = serve_once(
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+        .await;
         let outcome = post(&http_hook(&url, HttpPolicy::default()), &json!({})).await;
         assert_eq!(outcome.code, None);
         assert_eq!(outcome.stderr, format!("HTTP 500 from {url}"));
@@ -431,7 +461,9 @@ mod tests {
         .await;
         assert_eq!(blocked.code, None);
         assert!(
-            blocked.stderr.contains("does not match any pattern in allowedHttpHookUrls"),
+            blocked
+                .stderr
+                .contains("does not match any pattern in allowedHttpHookUrls"),
             "{blocked:?}"
         );
     }

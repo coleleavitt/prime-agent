@@ -301,9 +301,9 @@ pub fn parse_cc_flag(
             if let Some(text) = value(args, i, arg, diagnostics) {
                 match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(schema @ serde_json::Value::Object(_)) => flags.json_schema = Some(schema),
-                    Ok(_) => diagnostics.push(Diagnostic::error(
-                        "--json-schema must be a JSON object",
-                    )),
+                    Ok(_) => {
+                        diagnostics.push(Diagnostic::error("--json-schema must be a JSON object"))
+                    }
                     Err(error) => diagnostics.push(Diagnostic::error(format!(
                         "--json-schema is not valid JSON: {error}"
                     ))),
@@ -314,9 +314,8 @@ pub fn parse_cc_flag(
             if let Some(text) = value(args, i, arg, diagnostics) {
                 match text.trim().parse::<u32>() {
                     Ok(turns) if turns > 0 => flags.max_turns = Some(turns),
-                    _ => diagnostics.push(Diagnostic::error(
-                        "--max-turns must be a positive integer",
-                    )),
+                    _ => diagnostics
+                        .push(Diagnostic::error("--max-turns must be a positive integer")),
                 }
             }
         }
@@ -426,12 +425,7 @@ const PERMISSION_MODES: [&str; 5] = [
 ];
 
 /// Claude Code's combination rules, its wording (`Error: ` is the CLI's).
-pub fn validate(
-    flags: &CcFlags,
-    print: bool,
-    worktree: bool,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+pub fn validate(flags: &CcFlags, print: bool, worktree: bool, diagnostics: &mut Vec<Diagnostic>) {
     let output = flags.output_format.unwrap_or(OutputFormat::Text);
     // A headless format is a print run whether or not `-p` was given (the
     // Agent SDK spawns the CLI with the formats alone).
@@ -501,13 +495,15 @@ pub fn validate(
 /// parsed (Claude Code's wording where it has one).
 pub fn launch_settings(flags: &CcFlags, cwd: &std::path::Path) -> Result<LaunchSettings, String> {
     let mut flag_settings = match &flags.settings {
-        Some(value) => Some(read_json_object_arg("--settings", value, cwd).map_err(|problem| {
-            if problem.contains("invalid JSON") && value.trim().starts_with('{') {
-                "Invalid JSON provided to --settings".to_string()
-            } else {
-                problem
-            }
-        })?),
+        Some(value) => Some(
+            read_json_object_arg("--settings", value, cwd).map_err(|problem| {
+                if problem.contains("invalid JSON") && value.trim().starts_with('{') {
+                    "Invalid JSON provided to --settings".to_string()
+                } else {
+                    problem
+                }
+            })?,
+        ),
         None => None,
     };
     if let Some(models) = &flags.fallback_model {
@@ -638,17 +634,30 @@ mod tests {
             vec!["--input-format=stream-json requires output-format=stream-json."]
         );
         assert_eq!(
-            errors(&parse(&["--include-partial-messages", "--output-format", "json", "hi"])),
+            errors(&parse(&[
+                "--include-partial-messages",
+                "--output-format",
+                "json",
+                "hi"
+            ])),
             vec!["--include-partial-messages requires --print and --output-format=stream-json."]
         );
         assert_eq!(
-            errors(&parse(&["-p", "--output-format", "stream-json", "--replay-user-messages"])),
+            errors(&parse(&[
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--replay-user-messages"
+            ])),
             vec![
                 "--replay-user-messages requires both --input-format=stream-json and \
                  --output-format=stream-json."
             ]
         );
-        assert_eq!(errors(&parse(&["--tmux"])), vec!["--tmux requires --worktree"]);
+        assert_eq!(
+            errors(&parse(&["--tmux"])),
+            vec!["--tmux requires --worktree"]
+        );
         assert_eq!(
             errors(&parse(&["--permission-mode", "auto"])),
             vec![
@@ -692,7 +701,10 @@ mod tests {
             "go",
         ]);
         assert_eq!(errors(&parsed), Vec::<String>::new());
-        assert_eq!(parsed.cc.allowed_tools, vec!["Bash(git log *)", "Edit", "Read"]);
+        assert_eq!(
+            parsed.cc.allowed_tools,
+            vec!["Bash(git log *)", "Edit", "Read"]
+        );
         assert_eq!(parsed.cc.disallowed_tools, vec!["WebFetch"]);
         assert_eq!(parsed.cc.tools, Some(Vec::new()));
         assert_eq!(parsed.messages, vec!["go"]);

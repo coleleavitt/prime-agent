@@ -5,12 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::request_hooks::{
-    install_request_hooks,
-    OutgoingRequest,
-    ProviderRequestHooks,
-};
 use pa_refusal::RefusalGuard;
+
+use crate::request_hooks::{OutgoingRequest, ProviderRequestHooks, install_request_hooks};
 
 /// Request hooks that guard outbound requests against predicted refusals.
 pub struct RefusalHooks {

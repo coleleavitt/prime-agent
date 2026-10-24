@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 use crate::filter::FilterSummary;
 
-
 /// Log directory. `REFUSAL_LOG_DIR` overrides it for test isolation.
 pub fn log_dir() -> PathBuf {
     std::env::var("REFUSAL_LOG_DIR")
@@ -171,10 +170,7 @@ impl FeedbackEvent {
 /// Write feedback events to `feedback-events.jsonl`.
 pub fn log_feedback_event(event: &FeedbackEvent) -> Result<(), Box<dyn std::error::Error>> {
     let path = log_dir().join("feedback-events.jsonl");
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
 
     let json = serde_json::to_string(event)?;
     let mut writer = BufWriter::new(file);
@@ -183,7 +179,11 @@ pub fn log_feedback_event(event: &FeedbackEvent) -> Result<(), Box<dyn std::erro
 }
 
 /// Save a gzipped refused request body.
-pub fn save_refused_body(body: &serde_json::Value, session_id: &str, _model: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn save_refused_body(
+    body: &serde_json::Value,
+    session_id: &str,
+    _model: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let dir = refused_bodies_dir();
     fs::create_dir_all(&dir).ok();
 
@@ -203,7 +203,10 @@ pub fn save_refused_body(body: &serde_json::Value, session_id: &str, _model: &st
 fn rotate_log(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let bak = path.with_extension("jsonl.bak");
     fs::rename(path, &bak)?;
-    fs::OpenOptions::new().create(true).truncate(true).open(path)?;
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     Ok(())
 }
 
@@ -233,8 +236,8 @@ fn sweep_bodies(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn gzip_compress(data: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data.as_bytes())?;
@@ -244,6 +247,7 @@ fn gzip_compress(data: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+
     use super::*;
 
     #[test]
@@ -251,7 +255,9 @@ mod tests {
         let original = r#"{"messages": [{"role": "user", "content": "test"}]}"#;
         let compressed = gzip_compress(original).unwrap();
         let mut decompressed = String::new();
-        flate2::read::GzDecoder::new(&compressed[..]).read_to_string(&mut decompressed).unwrap();
+        flate2::read::GzDecoder::new(&compressed[..])
+            .read_to_string(&mut decompressed)
+            .unwrap();
         assert_eq!(original, decompressed);
     }
 }

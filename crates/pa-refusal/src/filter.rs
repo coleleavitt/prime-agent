@@ -30,10 +30,11 @@
 //! found and their weights — for logging false-positive debugging.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::Hasher;
-use std::collections::hash_map::DefaultHasher;
+use std::path::Path;
+
 use tracing::debug;
 
 // ========== TYPES ==========
@@ -235,14 +236,20 @@ impl TermDict {
         rewrite_rules.push(("cve".into(), "CVE".into()));
         rewrite_rules.push(("security assessment".into(), "review".into()));
         rewrite_rules.push(("security analysis".into(), "review".into()));
-        rewrite_rules.push(("confirmed vulnerabilities".into(), "confirmed issues".into()));
+        rewrite_rules.push((
+            "confirmed vulnerabilities".into(),
+            "confirmed issues".into(),
+        ));
         rewrite_rules.push(("attack surface".into(), "exposure".into()));
         rewrite_rules.push(("sql injection".into(), "data injection".into()));
         rewrite_rules.push(("xss".into(), "cross-site scripting".into()));
         rewrite_rules.push(("csrf".into(), "cross-site request".into()));
         rewrite_rules.push(("ssrf".into(), "server-side request".into()));
         rewrite_rules.push(("rce".into(), "remote code execution".into()));
-        rewrite_rules.push(("remote code execution".into(), "remote code execution".into()));
+        rewrite_rules.push((
+            "remote code execution".into(),
+            "remote code execution".into(),
+        ));
         rewrite_rules.push(("brute force".into(), "exhaustive search".into()));
         rewrite_rules.push(("authentication bypass".into(), "login bypass".into()));
         rewrite_rules.push(("privilege escalation".into(), "elevated access".into()));
@@ -261,9 +268,15 @@ impl TermDict {
         rewrite_rules.push(("analyze".into(), "examine".into()));
 
         Self {
-            bio, chem, nuclear, cyber, security,
-            frontier_llm, reasoning_extraction,
-            strip_patterns, rewrite_rules,
+            bio,
+            chem,
+            nuclear,
+            cyber,
+            security,
+            frontier_llm,
+            reasoning_extraction,
+            strip_patterns,
+            rewrite_rules,
         }
     }
 
@@ -271,7 +284,11 @@ impl TermDict {
     /// Returns the legacy default if the file is missing or malformed.
     pub fn from_jsonc(path: &Path) -> Self {
         let content = fs::read_to_string(path).unwrap_or_else(|e| {
-            debug!("config.jsonc not found at {}: {}; using built-in defaults", path.display(), e);
+            debug!(
+                "config.jsonc not found at {}: {}; using built-in defaults",
+                path.display(),
+                e
+            );
             String::new()
         });
         if content.trim().is_empty() {
@@ -399,18 +416,27 @@ impl TermDict {
 
         // Parse the JSONC manually (strip // and /* */ comments, then parse as JSON).
         let json = strip_comments(&content);
-        let parsed: serde_json::Value = serde_json::from_str(&json)
-            .unwrap_or_else(|e| {
-                debug!("Failed to parse config.jsonc: {e}");
-                serde_json::Value::Null
-            });
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or_else(|e| {
+            debug!("Failed to parse config.jsonc: {e}");
+            serde_json::Value::Null
+        });
 
         // --- thresholds ---
-        let _rewrite_t = parsed["thresholds"]["rewrite"].as_f64().unwrap_or(DEFAULT_REWRITE_THRESHOLD);
-        let _block_t = parsed["thresholds"]["block"].as_f64().unwrap_or(DEFAULT_BLOCK_THRESHOLD);
-        let _dtsm = parsed["thresholds"]["dynamic_threshold_scale_max"].as_f64().unwrap_or(DEFAULT_DYNAMIC_THRESHOLD_SCALE_MAX);
-        let _mtm = parsed["thresholds"]["min_threshold_multiplier"].as_f64().unwrap_or(DEFAULT_MIN_THRESHOLD_MULTIPLIER);
-        let _mbc = parsed["thresholds"]["max_block_contribution"].as_f64().unwrap_or(DEFAULT_MAX_BLOCK_CONTRIBUTION);
+        let _rewrite_t = parsed["thresholds"]["rewrite"]
+            .as_f64()
+            .unwrap_or(DEFAULT_REWRITE_THRESHOLD);
+        let _block_t = parsed["thresholds"]["block"]
+            .as_f64()
+            .unwrap_or(DEFAULT_BLOCK_THRESHOLD);
+        let _dtsm = parsed["thresholds"]["dynamic_threshold_scale_max"]
+            .as_f64()
+            .unwrap_or(DEFAULT_DYNAMIC_THRESHOLD_SCALE_MAX);
+        let _mtm = parsed["thresholds"]["min_threshold_multiplier"]
+            .as_f64()
+            .unwrap_or(DEFAULT_MIN_THRESHOLD_MULTIPLIER);
+        let _mbc = parsed["thresholds"]["max_block_contribution"]
+            .as_f64()
+            .unwrap_or(DEFAULT_MAX_BLOCK_CONTRIBUTION);
 
         // Load rewrite_rules from config (pattern -> replacement)
         // Category weights are kept from TermDict::default().
@@ -431,15 +457,26 @@ impl TermDict {
 
         debug!(
             "Loaded config: {} terms across 7 categories, {} rewrite rules",
-            bio.len() + chem.len() + nuclear.len() + cyber.len()
-                + security.len() + frontier_llm.len() + reasoning_extraction.len(),
+            bio.len()
+                + chem.len()
+                + nuclear.len()
+                + cyber.len()
+                + security.len()
+                + frontier_llm.len()
+                + reasoning_extraction.len(),
             rewrite_rules.len(),
         );
 
         Self {
-            bio, chem, nuclear, cyber, security,
-            frontier_llm, reasoning_extraction,
-            strip_patterns, rewrite_rules,
+            bio,
+            chem,
+            nuclear,
+            cyber,
+            security,
+            frontier_llm,
+            reasoning_extraction,
+            strip_patterns,
+            rewrite_rules,
         }
     }
 }
@@ -478,8 +515,16 @@ pub fn strip_comments(s: &str) -> String {
             result.push(c);
             loop {
                 match chars.next() {
-                    Some('"') => { result.push('"'); break; }
-                    Some('\\') => { result.push('\\'); if let Some(n) = chars.next() { result.push(n); } }
+                    Some('"') => {
+                        result.push('"');
+                        break;
+                    }
+                    Some('\\') => {
+                        result.push('\\');
+                        if let Some(n) = chars.next() {
+                            result.push(n);
+                        }
+                    }
                     Some(x) => result.push(x),
                     None => break,
                 }
@@ -623,14 +668,18 @@ impl ContentFilter {
         scores.insert("strip".to_string(), strip_score);
 
         // Total score (capped)
-        let total_score: f64 = scores.values().sum::<f64>().min(self.max_block_contribution);
+        let total_score: f64 = scores
+            .values()
+            .sum::<f64>()
+            .min(self.max_block_contribution);
 
         // Dynamic threshold scaling
         let threshold_multiplier = if total_score > self.dynamic_threshold_scale_max {
             self.min_threshold_multiplier
                 + (1.0 - self.min_threshold_multiplier)
-                    * (1.0 - (total_score - self.dynamic_threshold_scale_max)
-                        / self.dynamic_threshold_scale_max)
+                    * (1.0
+                        - (total_score - self.dynamic_threshold_scale_max)
+                            / self.dynamic_threshold_scale_max)
         } else {
             1.0
         };
@@ -647,7 +696,9 @@ impl ContentFilter {
         };
 
         let category = if !scores.is_empty() {
-            scores.iter().max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            scores
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(k, _)| k.clone())
         } else {
             None
@@ -688,8 +739,9 @@ impl ContentFilter {
         if cumulative_score > self.dynamic_threshold_scale_max {
             self.min_threshold_multiplier
                 + (1.0 - self.min_threshold_multiplier)
-                    * (1.0 - (cumulative_score - self.dynamic_threshold_scale_max)
-                        / self.dynamic_threshold_scale_max)
+                    * (1.0
+                        - (cumulative_score - self.dynamic_threshold_scale_max)
+                            / self.dynamic_threshold_scale_max)
         } else {
             1.0
         }
@@ -700,7 +752,10 @@ impl ContentFilter {
         let text = Self::extract_body_text(body);
         let classification = self.classify(&text);
 
-        let (rewritten, rewrites_applied) = if matches!(classification.recommendation, Recommendation::Rewrite | Recommendation::Block) {
+        let (rewritten, rewrites_applied) = if matches!(
+            classification.recommendation,
+            Recommendation::Rewrite | Recommendation::Block
+        ) {
             let mut result = body.clone();
             let mut changes: Vec<String> = Vec::new();
 
@@ -723,16 +778,22 @@ impl ContentFilter {
                                     if let Some(b) = block.as_object_mut() {
                                         for key in &["text", "thinking", "content"] {
                                             if let Some(val) = b.get_mut(*key)
-                                                && let Some(s) = val.as_str() {
-                                                    let mut new = s.to_string();
-                                                    for (pattern, replacement) in &self.terms.rewrite_rules {
-                                                        if s.contains(pattern) {
-                                                            new = new.replace(pattern, replacement);
-                                                            changes.push(format!("{} -> {}", pattern, replacement));
-                                                        }
+                                                && let Some(s) = val.as_str()
+                                            {
+                                                let mut new = s.to_string();
+                                                for (pattern, replacement) in
+                                                    &self.terms.rewrite_rules
+                                                {
+                                                    if s.contains(pattern) {
+                                                        new = new.replace(pattern, replacement);
+                                                        changes.push(format!(
+                                                            "{} -> {}",
+                                                            pattern, replacement
+                                                        ));
                                                     }
-                                                    *val = serde_json::Value::String(new);
                                                 }
+                                                *val = serde_json::Value::String(new);
+                                            }
                                         }
                                     }
                                 }
@@ -878,7 +939,11 @@ impl ContentFilter {
         }
     }
     /// Returns the modified body with the highest-scoring category's message evicted.
-    pub fn category_aware_evict(&self, body: &serde_json::Value, floor_chars: usize) -> Option<EvictResult> {
+    pub fn category_aware_evict(
+        &self,
+        body: &serde_json::Value,
+        floor_chars: usize,
+    ) -> Option<EvictResult> {
         let text = Self::extract_body_text(body);
         let text_lower = text.to_lowercase();
 
@@ -900,12 +965,10 @@ impl ContentFilter {
 
             for (term, weight) in dict {
                 if text_lower.contains(term.to_lowercase().as_str()) {
-
                     cat_score += weight;
                     cat_terms.push(term.clone());
                 }
             }
-
 
             if cat_score > 0.0 {
                 best_cat = Some(CategoryScore {
@@ -927,9 +990,7 @@ impl ContentFilter {
 
             let mut to_remove: Vec<usize> = Vec::new();
             for (idx, msg) in messages.iter().enumerate() {
-                let msg_text = msg.get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                let msg_text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                 let msg_lower = msg_text.to_lowercase();
 
                 let mut contains_term = false;
@@ -963,9 +1024,7 @@ impl ContentFilter {
 
         if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
             for (idx, msg) in messages.iter().enumerate() {
-                let text = msg.get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                 let text_lower = text.to_lowercase();
 
                 let mut turn_score = 0.0f64;
@@ -1018,8 +1077,10 @@ impl ContentFilter {
                 }
             }
         }
-        parts.join("
-")
+        parts.join(
+            "
+",
+        )
     }
 
     /// Per-turn filter: scores each turn independently and evicts only the
@@ -1051,9 +1112,7 @@ impl ContentFilter {
         if let Some(messages) = result.get_mut("messages").and_then(|m| m.as_array_mut()) {
             if evict_idx < messages.len() {
                 let msg = messages[evict_idx].clone();
-                let msg_text = msg.get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                let msg_text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
                 // Apply rewrite rules to the evicted message's content
                 if !msg_text.is_empty() {
@@ -1090,7 +1149,10 @@ impl ContentFilter {
     ///
     /// Re-reads `config.jsonc` and updates category weights, rewrite_rules,
     /// strip_patterns, and thresholds. Useful for hot-reloading at runtime.
-    pub fn reload_from(&mut self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn reload_from(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let new_terms = TermDict::from_jsonc(path);
 
         self.terms.bio = new_terms.bio;
@@ -1104,7 +1166,7 @@ impl ContentFilter {
         self.terms.rewrite_rules = new_terms.rewrite_rules;
 
         Ok(())
-}
+    }
 }
 
 /// Per-category score for category-aware eviction.
@@ -1155,8 +1217,6 @@ pub struct FilterSummary {
 
 // ========== TESTS ==========
 
-
-
 #[cfg(test)]
 #[expect(
     clippy::items_after_test_module,
@@ -1177,8 +1237,21 @@ mod tests {
     fn test_classify_rewrite() {
         let filter = ContentFilter::default();
         let result = filter.classify("shellcode buffer overflow exploit rootkit backdoor malware");
-        debug!("classify result: score={}, rec={:?}, matched={}", result.score, result.recommendation, result.matched_terms_with_score.len());
-        assert!(matches!(result.recommendation, Recommendation::Rewrite | Recommendation::Block), "score={}, matched_terms={:?}", result.score, result.matched_terms_with_score);
+        debug!(
+            "classify result: score={}, rec={:?}, matched={}",
+            result.score,
+            result.recommendation,
+            result.matched_terms_with_score.len()
+        );
+        assert!(
+            matches!(
+                result.recommendation,
+                Recommendation::Rewrite | Recommendation::Block
+            ),
+            "score={}, matched_terms={:?}",
+            result.score,
+            result.matched_terms_with_score
+        );
         assert!(result.score > 0.0);
         // Audit trail should contain matched terms
         assert!(!result.matched_terms_with_score.is_empty());
@@ -1189,7 +1262,10 @@ mod tests {
         let filter = ContentFilter::default();
         let result = filter.rewrite("weaponize the biological agent");
         assert!(!result.contains("weaponize"));
-        assert!(result.contains("biological agent"), "Expected 'biological agent' but got: {result}");
+        assert!(
+            result.contains("biological agent"),
+            "Expected 'biological agent' but got: {result}"
+        );
     }
 
     #[test]
@@ -1220,10 +1296,14 @@ impl ContentFilter {
         let dtsm = t["dynamic_threshold_scale_max"].as_f64().unwrap_or(100.0);
         let mtm = t["min_threshold_multiplier"].as_f64().unwrap_or(0.2);
         let mbc = t["max_block_contribution"].as_f64().unwrap_or(5.0);
-        Self { terms, rewrite_threshold: rewrite, block_threshold: block,
-               dynamic_threshold_scale_max: dtsm, min_threshold_multiplier: mtm,
-               max_block_contribution: mbc,
-               cache: std::sync::Mutex::new(HashMap::with_capacity(CACHE_CAPACITY)),
+        Self {
+            terms,
+            rewrite_threshold: rewrite,
+            block_threshold: block,
+            dynamic_threshold_scale_max: dtsm,
+            min_threshold_multiplier: mtm,
+            max_block_contribution: mbc,
+            cache: std::sync::Mutex::new(HashMap::with_capacity(CACHE_CAPACITY)),
         }
     }
 }

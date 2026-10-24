@@ -574,11 +574,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             session_dir,
             // A worktree launch pins its directory like `--cwd` does.
             cwd_from_flag: parsed.cwd.is_some() || launched_worktree.is_some(),
-            session_id: parsed
-                .cc
-                .session_id
-                .clone()
-                .filter(|_| parsed.no_session),
+            session_id: parsed.cc.session_id.clone().filter(|_| parsed.no_session),
         },
         messages: cli_messages,
         initial_message,

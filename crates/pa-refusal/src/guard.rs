@@ -22,7 +22,9 @@ fn load_floor_ladder() -> Vec<usize> {
     let json = crate::filter::strip_comments(&content);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
     if let Some(arr) = v["eviction_floor_ladder"].as_array() {
-        arr.iter().filter_map(|v| v.as_u64().map(|u| u as usize)).collect()
+        arr.iter()
+            .filter_map(|v| v.as_u64().map(|u| u as usize))
+            .collect()
     } else {
         DEFAULT_FLOOR_LADDER.to_vec()
     }
@@ -129,11 +131,18 @@ impl RefusalGuard {
     }
 
     /// Filter a request body with optional eviction floor override.
-    fn filter_request_body(&self, body: &serde_json::Value, _override_floor: Option<usize>) -> FilterResult {
+    fn filter_request_body(
+        &self,
+        body: &serde_json::Value,
+        _override_floor: Option<usize>,
+    ) -> FilterResult {
         let text = Self::extract_body_text(body);
         let classification = self.filter.classify(&text);
 
-        let (rewritten, rewrites_applied) = if matches!(classification.recommendation, Recommendation::Rewrite | Recommendation::Block) {
+        let (rewritten, rewrites_applied) = if matches!(
+            classification.recommendation,
+            Recommendation::Rewrite | Recommendation::Block
+        ) {
             let mut result = body.clone();
             let mut changes = Vec::new();
 
@@ -156,16 +165,22 @@ impl RefusalGuard {
                                     if let Some(b) = block.as_object_mut() {
                                         for key in &["text", "thinking", "content"] {
                                             if let Some(val) = b.get_mut(*key)
-                                                && let Some(s) = val.as_str() {
-                                                    let mut new = s.to_string();
-                                                    for (pattern, replacement) in &self.filter.terms.rewrite_rules {
-                                                        if s.contains(pattern) {
-                                                            new = new.replace(pattern, replacement);
-                                                            changes.push(format!("{} -> {}", pattern, replacement));
-                                                        }
+                                                && let Some(s) = val.as_str()
+                                            {
+                                                let mut new = s.to_string();
+                                                for (pattern, replacement) in
+                                                    &self.filter.terms.rewrite_rules
+                                                {
+                                                    if s.contains(pattern) {
+                                                        new = new.replace(pattern, replacement);
+                                                        changes.push(format!(
+                                                            "{} -> {}",
+                                                            pattern, replacement
+                                                        ));
                                                     }
-                                                    *val = serde_json::Value::String(new);
                                                 }
+                                                *val = serde_json::Value::String(new);
+                                            }
                                         }
                                     }
                                 }
@@ -214,7 +229,9 @@ impl RefusalGuard {
                                 }
                                 if let Some(s) = b.get("content").and_then(|t| t.as_str()) {
                                     parts.push(s.to_string());
-                                } else if let Some(content_arr) = b.get("content").and_then(|t| t.as_array()) {
+                                } else if let Some(content_arr) =
+                                    b.get("content").and_then(|t| t.as_array())
+                                {
                                     for part in content_arr {
                                         if let Some(s) = part.as_str() {
                                             parts.push(s.to_string());
@@ -222,9 +239,10 @@ impl RefusalGuard {
                                     }
                                 }
                                 if b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                                        && let Some(input) = b.get("input") {
-                                        parts.push(serde_json::to_string(input).unwrap_or_default());
-                                    }
+                                    && let Some(input) = b.get("input")
+                                {
+                                    parts.push(serde_json::to_string(input).unwrap_or_default());
+                                }
                             }
                         }
                     }
@@ -261,6 +279,9 @@ mod tests {
         });
         let result = guard.guard(&body);
         // Should have some escalations for a very long repetitive body
-        assert!(result.escalations > 0 || !result.danger, "guard should either escalate or report no danger");
+        assert!(
+            result.escalations > 0 || !result.danger,
+            "guard should either escalate or report no danger"
+        );
     }
 }
