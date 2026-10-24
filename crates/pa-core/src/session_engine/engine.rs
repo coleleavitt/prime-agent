@@ -1614,7 +1614,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // Project over global by the settings merge; a session
         // `/context-limit` override layers on top (`compaction_settings()`).
         max_context_tokens: compaction_settings.max_context_tokens,
-        cache_prefix: compaction_settings.cache_prefix.unwrap_or(true),
+        cache_prefix: compaction_settings.cache_prefix.unwrap_or(false),
     });
     session.set_context_limit_settings_source(context_cap_source);
     session.restore_context_limit_from_branch().await;

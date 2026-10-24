@@ -47,7 +47,10 @@ pub fn compact_count(count: usize) -> String {
     } else {
         (value / 1e3, "k")
     };
-    format!("{scaled:.1}{suffix}")
+    // Round half away from zero, like Claude Code's `Intl` compact notation
+    // (Rust's `{:.1}` would round half to even: 45.25 -> 45.2, not 45.3).
+    let rounded = (scaled * 10.0).round() / 10.0;
+    format!("{rounded:.1}{suffix}")
 }
 
 /// The warnings for `files` under `context_window`, in Claude Code's words:

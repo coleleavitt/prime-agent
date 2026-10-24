@@ -119,6 +119,7 @@ struct InfoOut<'a> {
     git_branch: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ai_title: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pr_link: Option<&'a SessionPrLink>,
 }
 

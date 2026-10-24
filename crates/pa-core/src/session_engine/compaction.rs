@@ -49,7 +49,7 @@ impl Default for CompactionSettings {
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
             max_context_tokens: None,
-            cache_prefix: true,
+            cache_prefix: false,
         }
     }
 }

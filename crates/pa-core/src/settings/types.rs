@@ -113,7 +113,8 @@ pub struct CompactionSettings {
     pub agent_callable: Option<bool>,
     /// `compaction.cachePrefix`: the summary request continues the live
     /// conversation so its prefix is a prompt-cache read (Claude Code's
-    /// `tengu_compact_cache_prefix`); on unless set to `false`.
+    /// `tengu_compact_cache_prefix`). Opt-in (off unless set to `true`)
+    /// pending validation against a live provider's prompt cache.
     pub cache_prefix: Option<bool>,
 }
 

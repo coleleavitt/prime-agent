@@ -581,6 +581,8 @@ fn known_command_types_match_the_ts_list() {
                     | "rewind"
                     | "list_external_sessions"
                     | "import_external_session"
+                    | "session_recap"
+                    | "generate_session_name"
             ),
             "unexpected non-TS command type: {extra}"
         );

@@ -439,7 +439,13 @@ fn setup(name: &str) -> (tempfile::TempDir, DelayedMock, Supervisor, Client, Str
         .to_string(),
     )
     .expect("write models.json");
-    std::fs::write(agent_dir.join("settings.json"), "{}").expect("write settings.json");
+    // Disable the side-model session title so it does not add a model call to
+    // the lane-ordering count (this test exercises queue delivery, not titles).
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        r#"{"sessionTitlesEnabled":false}"#,
+    )
+    .expect("write settings.json");
     let socket = dir.path().join(format!("{name}.sock"));
     let supervisor = spawn_supervisor(&socket, &agent_dir);
     let mut client = Client::connect(&socket);

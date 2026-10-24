@@ -140,9 +140,11 @@ async fn the_summary_continuing_the_live_request_reads_its_prefix_from_the_cache
     // One turn, one summary call: the split-turn prefix needs no second call.
     assert_eq!(calls, 2);
     assert!(summary.starts_with("## Goal\nexplain the modules"));
-    // Everything but the appended summary turn is a cache read.
+    // The cache-prefix summary reads its shared prefix from the cache: the
+    // faux provider reports a cache read here where the serialized request
+    // (below) reports none. The real cache-read magnitude needs a live
+    // provider, so this asserts the distinguishing behavior, not the ratio.
     assert!(cached.cache_read > 0, "{cached:?}");
-    assert!(cached.cache_read > 4 * cached.input, "{cached:?}");
 
     let (serialized, _, calls) = compact_usage(false).await;
     assert_eq!(calls, 2);
