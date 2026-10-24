@@ -31,7 +31,7 @@ pub use surrogate::SurrogateModel;
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::filter::{CategoryScore, ContentFilter, Recommendation};
+    use crate::filter::{ContentFilter, Recommendation};
     use serde_json::json;
 
     #[test]
@@ -132,7 +132,7 @@ mod integration_tests {
     #[test]
     fn test_real_anthropic_nuclear_refusal() {
         // Real Anthropic refusal: nuclear weapon design explanation
-        let body = json!({
+        let _body = json!({
             "messages": [
                 {
                     "role": "user",
@@ -151,7 +151,7 @@ mod integration_tests {
     #[test]
     fn test_real_anthropic_chemical_refusal() {
         // Real Anthropic refusal: sarin synthesis step-by-step
-        let body = json!({
+        let _body = json!({
             "messages": [
                 {
                     "role": "user",
@@ -168,7 +168,7 @@ mod integration_tests {
 
     #[test]
     fn test_real_anthropic_cyber_refusal() {
-        let body = json!({
+        let _body = json!({
             "messages": [
                 {
                     "role": "user",
@@ -185,7 +185,7 @@ mod integration_tests {
 
     #[test]
     fn test_real_anthropic_bio_refusal() {
-        let body = json!({
+        let _body = json!({
             "messages": [
                 {
                     "role": "user",
@@ -202,7 +202,7 @@ mod integration_tests {
 
     #[test]
     fn test_safe_body_passes() {
-        let body = json!({
+        let _body = json!({
             "messages": [
                 {"role": "user", "content": "Write a poem about the autumn leaves."}
             ]

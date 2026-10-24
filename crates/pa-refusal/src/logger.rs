@@ -130,6 +130,10 @@ pub struct FeedbackEvent {
 }
 
 impl FeedbackEvent {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the feedback record's fields one-to-one"
+    )]
     pub fn new(
         timestamp: String,
         session_id: Option<String>,

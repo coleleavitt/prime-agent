@@ -105,7 +105,7 @@ impl SurrogateModel {
         }
 
         // Apply gradient descent with L2 regularization.
-        for (w, g) in self.weights.iter_mut().zip(grads.into_iter()) {
+        for (w, g) in self.weights.iter_mut().zip(grads) {
             *w += lr * (g - reg * (*w));
         }
 
