@@ -171,7 +171,7 @@ async fn model_info_reports_the_bound_model() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: ModelInfo {
@@ -225,7 +225,7 @@ async fn compact_run_validates_and_reports_no_active_turn() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
@@ -271,14 +271,19 @@ async fn compact_run_prepare_skips_report_the_ts_reasons() {
             ..Default::default()
         }));
         requests.bind(TurnBoundaryRuntime {
-            agent,
+            agent: Arc::downgrade(&agent),
             session,
             context_window: Some(100_000),
             model_info: model_info(),
         });
         // The empty-history case: strip the conversation entries (the
         // handler sees them through the bound session).
-        let agent = requests.bound().expect("bound").agent.clone();
+        let agent = requests
+            .bound()
+            .expect("bound")
+            .agent
+            .upgrade()
+            .expect("agent still bound");
         agent.prompt("run the probe tool").await.unwrap();
         agent.wait_for_idle().await;
         let response = probe.result().await;
@@ -314,12 +319,17 @@ async fn compact_run_schedules_inside_a_tool_call_and_status_sees_it() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
     });
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run the probe tool").await.unwrap();
     agent.wait_for_idle().await;
 
@@ -374,7 +384,7 @@ async fn refine_run_and_status_round_trip_inside_a_tool_call() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
@@ -387,7 +397,12 @@ async fn refine_run_and_status_round_trip_inside_a_tool_call() {
     assert_eq!(status["pending"], false);
     assert_eq!(status["in_flight"], false);
 
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run the probe tool").await.unwrap();
     agent.wait_for_idle().await;
 
@@ -463,12 +478,17 @@ async fn a_feature_request_keeps_its_trigger_when_refine_run_joins_it() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
     });
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run the probe").await.unwrap();
     agent.wait_for_idle().await;
     assert_eq!(probe.result().await["scheduled"], true);
@@ -521,7 +541,7 @@ async fn disabled_refine_run_reports_refusal_and_does_not_schedule() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent: Arc::clone(&agent),
+        agent: Arc::downgrade(&agent),
         session: Arc::new(Mutex::new(session_with_history(false))),
         context_window: Some(100_000),
         model_info: model_info(),
@@ -605,12 +625,17 @@ async fn refine_run_validates_and_merges_into_a_pending_request() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
     });
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run both probes").await.unwrap();
     agent.wait_for_idle().await;
     assert_eq!(probe.result().await["scheduled"], true);
@@ -652,12 +677,17 @@ async fn clear_pending_drops_scheduled_requests() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
     });
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run the probe tool").await.unwrap();
     agent.wait_for_idle().await;
     assert_eq!(probe.result().await["scheduled"], true);
@@ -695,12 +725,17 @@ async fn compact_run_merges_instructions_into_a_pending_request() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
     });
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.prompt("run both probes").await.unwrap();
     agent.wait_for_idle().await;
     assert_eq!(probe.result().await["scheduled"], true);
@@ -944,7 +979,7 @@ async fn refine_preview_holds_a_plan_that_refine_run_pins() {
         ..Default::default()
     }));
     requests.bind(TurnBoundaryRuntime {
-        agent,
+        agent: Arc::downgrade(&agent),
         session,
         context_window: Some(100_000),
         model_info: model_info(),
@@ -1010,7 +1045,12 @@ async fn refine_preview_holds_a_plan_that_refine_run_pins() {
         "refine.run",
         json!({ "plan_id": plan_id, "instructions": "ignored: the plan carries its own" }),
     );
-    let agent = requests.bound().expect("bound").agent.clone();
+    let agent = requests
+        .bound()
+        .expect("bound")
+        .agent
+        .upgrade()
+        .expect("agent still bound");
     agent.set_tools(vec![probe.tool.clone()]).await;
     agent.prompt("run the probe tool").await.unwrap();
     agent.wait_for_idle().await;

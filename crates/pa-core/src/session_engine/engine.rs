@@ -1705,7 +1705,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
 
     turn_boundary.set_package_harness(std::sync::Arc::new(resources.package_harness.state.clone()));
     turn_boundary.bind(super::turn_boundary::TurnBoundaryRuntime {
-        agent,
+        agent: std::sync::Arc::downgrade(&agent),
         session: wiring.session.clone(),
         context_window: (model_context_window > 0).then_some(model_context_window),
         model_info,

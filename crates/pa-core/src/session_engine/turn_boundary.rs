@@ -145,7 +145,13 @@ pub struct ModelInfo {
 /// The runtime the handlers read once the session is assembled;
 /// `create_session` binds this before returning.
 pub struct TurnBoundaryRuntime {
-    pub agent: Arc<Agent>,
+    /// Weak: the boundary runtime is a read-hook into the agent, not its
+    /// owner. A strong ref here closed the cycle Agent -> ipython tool ->
+    /// provisioner -> host handlers -> TurnBoundaryRequests -> runtime ->
+    /// Agent, so a dropped (not explicitly disposed) session never released
+    /// its kernel process -- the "teardown gap". The agent's other hooks
+    /// (admissions, the end-callback) already hold weak refs.
+    pub agent: std::sync::Weak<Agent>,
     pub session: Arc<Mutex<SessionManager>>,
     /// The resolved model's context window; `None` when unknown (compact
     /// status answers null tokens then).
@@ -261,7 +267,7 @@ impl TurnBoundaryRequests {
             return;
         };
         let updated = TurnBoundaryRuntime {
-            agent: Arc::clone(&current.agent),
+            agent: current.agent.clone(),
             session: Arc::clone(&current.session),
             context_window,
             model_info,
@@ -497,7 +503,10 @@ impl TurnBoundaryRequests {
                             "no active turn; compaction can only be requested while a turn is running",
                         ));
                     };
-                    let state = runtime.agent.state().await;
+                    let Some(agent) = runtime.agent.upgrade() else {
+                        return Ok(no_active_turn("no active turn; the session is ending"));
+                    };
+                    let state = agent.state().await;
                     if !state.is_streaming {
                         return Ok(no_active_turn(
                             "no active turn; compaction can only be requested while a turn is running",
@@ -585,7 +594,10 @@ impl TurnBoundaryRequests {
                             "no active turn; refine can only be requested while a turn is running",
                         ));
                     };
-                    let state = runtime.agent.state().await;
+                    let Some(agent) = runtime.agent.upgrade() else {
+                        return Ok(no_active_turn("no active turn; the session is ending"));
+                    };
+                    let state = agent.state().await;
                     if !state.is_streaming {
                         return Ok(no_active_turn(
                             "no active turn; refine can only be requested while a turn is running",
