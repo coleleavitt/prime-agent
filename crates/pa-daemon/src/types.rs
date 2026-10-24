@@ -163,6 +163,17 @@ pub struct SessionSummary {
     /// compaction with no post-compaction usage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_percent: Option<f64>,
+    /// The generated session title (Claude Code's `aiTitle`); a set
+    /// `sessionName` wins over it wherever a title shows. Additive: older
+    /// clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_title: Option<String>,
+    /// What the session waits on the user for (Claude Code's `blocked`
+    /// status detail, "Waiting on permission: <action>"): set while a
+    /// confirmation is pending or a feature status declares a `blockedOn`;
+    /// absent otherwise. Additive: older clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_on: Option<String>,
 }
 
 /// The session action snapshot (TS `SessionActionSnapshot`).

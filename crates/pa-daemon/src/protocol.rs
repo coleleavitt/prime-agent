@@ -192,6 +192,10 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     // `/rewind` (capability `rewind`), fork-native.
     "get_rewind_checkpoints",
     "rewind",
+    // `/recap` and `/rename` without a name (capability `side_ux`),
+    // fork-native.
+    "session_recap",
+    "generate_session_name",
     // Other products' sessions (capability `external_sessions`), fork-native.
     "list_external_sessions",
     "import_external_session",
@@ -396,6 +400,10 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 // `get_rewind_checkpoints` + `rewind`: `/rewind` restores code
                 // (file checkpoints) and/or the conversation.
                 "rewind",
+                // Side-model session UX: `session_recap`, `generate_session_name`,
+                // the `prompt_suggestion` event, and the summaries' `aiTitle` /
+                // `blockedOn`.
+                SIDE_UX_CAPABILITY,
             ]
             .iter()
             .map(std::string::ToString::to_string),
@@ -408,6 +416,12 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
         )
         .collect()
 }
+
+/// The server capability behind the side-model session UX: the
+/// `session_recap` and `generate_session_name` commands, the
+/// `prompt_suggestion` worker event, and the summaries' `aiTitle` and
+/// `blockedOn` fields.
+pub const SIDE_UX_CAPABILITY: &str = "side_ux";
 
 /// The server capability behind `list_external_sessions` and
 /// `import_external_session`.
@@ -903,6 +917,12 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::GetRewindCheckpoints {
             active_session_id, ..
         }
+        | DaemonCommand::SessionRecap {
+            active_session_id, ..
+        }
+        | DaemonCommand::GenerateSessionName {
+            active_session_id, ..
+        }
         | DaemonCommand::Rewind {
             active_session_id, ..
         }
@@ -1113,6 +1133,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::ForkExport { .. } => "fork_export",
         DaemonCommand::NavigateTree { .. } => "navigate_tree",
         DaemonCommand::GetRewindCheckpoints { .. } => "get_rewind_checkpoints",
+        DaemonCommand::SessionRecap { .. } => "session_recap",
+        DaemonCommand::GenerateSessionName { .. } => "generate_session_name",
         DaemonCommand::Rewind { .. } => "rewind",
         DaemonCommand::ImportJsonl { .. } => "import_jsonl",
         DaemonCommand::ExportHtml { .. } => "export_html",

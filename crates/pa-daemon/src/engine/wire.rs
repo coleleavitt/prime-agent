@@ -425,6 +425,37 @@ pub enum SideQuestionOutcome {
     Failed { answer: String, error: String },
 }
 
+/// One side-model UX call (Claude Code's generated session title,
+/// `/rename` name, away summary, prompt suggestion).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SideUxRequest {
+    /// Name the session from its first real prompt.
+    SessionTitle { first_message: String },
+    /// A kebab-case name for `/rename` without an argument.
+    SessionName,
+    /// The away summary (`/recap`).
+    Recap,
+    /// The predicted next prompt.
+    PromptSuggestion,
+}
+
+/// How one side-model UX call ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SideUxOutcome {
+    /// The generated text.
+    Text(String),
+    /// The call ran (or was skipped by its own gate) and produced nothing to
+    /// show: a too-short prompt, no model turn to recap, a suppressed
+    /// suggestion.
+    Nothing,
+    /// The behavior's setting is off.
+    Disabled,
+    /// This engine has no model behind it (a scripted session).
+    Unsupported,
+    /// The model call failed; the user-facing error.
+    Failed(String),
+}
+
 /// Wire form of one side-question status.
 pub const SIDE_QUESTION_STATUS_RUNNING: &str = "running";
 pub const SIDE_QUESTION_STATUS_COMPLETE: &str = "complete";

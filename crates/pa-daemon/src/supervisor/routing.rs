@@ -110,6 +110,9 @@ pub(crate) fn client_route_timeout(command: &DaemonCommand) -> u64 {
             | DaemonCommand::NavigateTree { .. }
             // So may a rewind's "Summarize from here".
             | DaemonCommand::Rewind { .. }
+            // A recap or a generated name is one side-model call.
+            | DaemonCommand::SessionRecap { .. }
+            | DaemonCommand::GenerateSessionName { .. }
     ) {
         WORKER_REQUEST_TIMEOUT_MS
     } else {

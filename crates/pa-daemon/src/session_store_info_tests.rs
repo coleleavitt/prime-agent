@@ -11,6 +11,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut model = None;
     let mut thinking_level = None;
     let mut git_branch: Option<String> = None;
+    let mut ai_title: Option<String> = None;
     let mut message_count = 0usize;
     let mut first_message = String::new();
     let mut all_messages_text = String::new();
@@ -41,6 +42,21 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                     .filter(|branch| !branch.is_empty())
                 {
                     git_branch = Some(branch.to_string());
+                }
+            }
+            "custom"
+                if entry.fields.get("customType").and_then(Value::as_str)
+                    == Some(AI_TITLE_CUSTOM_TYPE) =>
+            {
+                if let Some(title) = entry
+                    .fields
+                    .get("data")
+                    .and_then(|data| data.get("title"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                {
+                    ai_title = Some(title.to_string());
                 }
             }
             "session_info" => {
@@ -181,6 +197,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         model,
         thinking_level,
         git_branch,
+        ai_title,
         parent_session_path: header.parent_session,
         rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
         created: header.timestamp,
@@ -417,6 +434,33 @@ fn a_same_size_rewrite_rescans_from_the_top() {
         "a same-size rewrite must rescan"
     );
     assert_fold_matches(&path);
+}
+
+#[test]
+fn the_ai_title_is_the_newest_ai_title_row_and_other_custom_rows_leave_it() {
+    let dir = test_dir();
+    let path = dir.join("titled.jsonl");
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"t","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            json!({"type":"message","id":"m1","timestamp":"2026-09-23T00:00:00.000Z","message":{"role":"user","content":"why do roster deltas reorder?","timestamp":1}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(read_session_info(&path).unwrap().ai_title, None);
+    append_rows(
+        &path,
+        &[
+            json!({"type":"custom","id":"c1","parentId":"m1","timestamp":"2026-09-23T00:01:00.000Z","customType":"ai_title","data":{"title":"Roster delta ordering"}}),
+            json!({"type":"custom","id":"c2","parentId":"c1","timestamp":"2026-09-23T00:02:00.000Z","customType":"thread_goal_state","data":{"title":"not a title"}}),
+            json!({"type":"custom","id":"c3","parentId":"c2","timestamp":"2026-09-23T00:03:00.000Z","customType":"ai_title","data":{"title":"  "}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    let info = read_session_info(&path).unwrap();
+    assert_eq!(info.ai_title.as_deref(), Some("Roster delta ordering"));
+    assert_eq!(info.name, None, "a generated title never becomes the name");
 }
 
 #[test]

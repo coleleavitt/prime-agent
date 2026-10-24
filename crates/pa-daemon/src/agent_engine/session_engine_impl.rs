@@ -1035,6 +1035,10 @@ impl SessionEngine for AgentSessionEngine {
         }
     }
 
+    fn run_side_ux(&self, request: crate::engine::SideUxRequest) -> crate::engine::SideUxOutcome {
+        self.side_ux(request)
+    }
+
     fn rlm_child_snapshots(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Value>> + Send + '_>> {

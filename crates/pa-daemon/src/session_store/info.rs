@@ -34,6 +34,10 @@ pub struct SessionInfo {
     /// The git branch the session last worked on: the newest `git_state` entry's, else the
     /// header's.
     pub git_branch: Option<String>,
+    /// The generated session title (Claude Code's `aiTitle`): the newest
+    /// `ai_title` custom row's. A user's own `name` wins over it wherever a
+    /// title is shown.
+    pub ai_title: Option<String>,
     pub parent_session_path: Option<String>,
     pub rlm_depth: u32,
     pub created: String,
@@ -53,6 +57,10 @@ pub struct SessionInfo {
 }
 
 pub const SESSION_LIST_SEARCH_TEXT_MAX_CHARS: usize = 64 * 1024;
+
+/// The `custom` row kind a generated session title is recorded under:
+/// `{"type":"custom","customType":"ai_title","data":{"title":"..."}}`.
+pub const AI_TITLE_CUSTOM_TYPE: &str = "ai_title";
 
 /// The scan's read-buffer size: one 64 KiB fill reads the typical session in
 /// a single syscall; only the syscall chunking changes.
@@ -229,6 +237,8 @@ pub(super) struct SessionScanAccumulator {
     thinking_level: Option<String>,
     #[serde(default)]
     git_branch: Option<String>,
+    #[serde(default)]
+    ai_title: Option<String>,
     pub(super) message_count: usize,
     pub(super) first_message: String,
     pub(super) all_messages_text: String,
@@ -283,6 +293,7 @@ impl SessionScanState {
                 model: self.acc.model.clone(),
                 thinking_level: self.acc.thinking_level.clone(),
                 git_branch: self.acc.git_branch.clone(),
+                ai_title: self.acc.ai_title.clone(),
                 message_count: self.acc.message_count,
                 first_message: self.acc.first_message.clone(),
                 all_messages_text: self.acc.all_messages_text.clone(),
@@ -413,6 +424,12 @@ pub(super) struct SessionInfoEntry<'a> {
     /// `git_state`: the repository context (its `branch`).
     #[serde(default, borrow)]
     pub(super) git: Option<&'a serde_json::value::RawValue>,
+    /// `custom`: the row's kind (`ai_title` carries the generated title).
+    #[serde(default, borrow)]
+    pub(super) custom_type: Option<&'a serde_json::value::RawValue>,
+    /// `custom`: the row's payload.
+    #[serde(default, borrow)]
+    pub(super) data: Option<&'a serde_json::value::RawValue>,
     /// `child_usage_attributed`: the parent entry the aggregate folds into.
     #[serde(borrow, default)]
     pub(super) target_id: Option<Cow<'a, str>>,
@@ -602,6 +619,7 @@ impl SessionScanState {
             model: acc.model.clone(),
             thinking_level: acc.thinking_level.clone(),
             git_branch: acc.git_branch.clone(),
+            ai_title: acc.ai_title.clone(),
             parent_session_path: header.parent_session.clone(),
             rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
             created: header.timestamp.clone(),
@@ -686,6 +704,21 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 .map(str::trim)
                 .filter(|n| !n.is_empty())
                 .map(str::to_string);
+        }
+        "custom" => {
+            if raw_string(entry.custom_type).as_deref() == Some(AI_TITLE_CUSTOM_TYPE) {
+                if let Some(title) = entry
+                    .data
+                    .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
+                    .as_ref()
+                    .and_then(|data| data.get("title"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                {
+                    acc.ai_title = Some(title.to_string());
+                }
+            }
         }
         "session_state" => {
             if let Some(status) = entry

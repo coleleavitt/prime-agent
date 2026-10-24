@@ -87,6 +87,8 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "navigate_tree"
         | "get_rewind_checkpoints"
         | "rewind"
+        | "session_recap"
+        | "generate_session_name"
         | "import_jsonl"
         | "export_html"
         | "export_jsonl"

@@ -7,7 +7,7 @@
 //!
 //! This crate adds keys the TS reader ignores: `foldVersion` on every
 //! line (the native fold's version the row was derived under), and
-//! `info.thinkingLevel` and `info.gitBranch` (fields the TS row does not have). A line without
+//! `info.thinkingLevel`, `info.gitBranch` and `info.aiTitle` (fields the TS row does not have). A line without
 //! `foldVersion` was written by the TS product, whose fold differs from the
 //! native one (its `created` is re-serialized, its usage rules predate the
 //! native ones), so it is never served: the file is folded once and its line
@@ -115,6 +115,8 @@ struct InfoOut<'a> {
     thinking_level: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     git_branch: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_title: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -141,6 +143,8 @@ struct InfoIn {
     thinking_level: Option<String>,
     #[serde(default)]
     git_branch: Option<String>,
+    #[serde(default)]
+    ai_title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -251,6 +255,7 @@ fn info_out(row: &CatalogSessionRow) -> InfoOut<'_> {
         modified: &row.modified,
         thinking_level: row.thinking_level.as_deref(),
         git_branch: row.git_branch.as_deref(),
+        ai_title: row.ai_title.as_deref(),
     }
 }
 
@@ -270,6 +275,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         modified,
         thinking_level,
         git_branch,
+        ai_title,
     } = info;
     CatalogSessionRow {
         id,
@@ -279,6 +285,7 @@ fn row_in(info: InfoIn, all_messages_text: String) -> CatalogSessionRow {
         model: model.map(|model| (model.provider, model.model_id)),
         thinking_level,
         git_branch,
+        ai_title,
         parent_session_path,
         rlm_depth,
         created,
@@ -364,6 +371,7 @@ mod tests {
             state: Some("active".to_string()),
             model: Some(("anthropic".to_string(), "claude-opus-4-5".to_string())),
             git_branch: None,
+            ai_title: None,
             thinking_level: Some("high".to_string()),
             parent_session_path: None,
             rlm_depth: 0,

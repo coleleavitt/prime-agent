@@ -261,6 +261,25 @@ impl SessionFile {
             .filter(|name| !name.is_empty())
     }
 
+    /// The generated session title from the latest `ai_title` custom row
+    /// (Claude Code's `aiTitle`); a user's [`Self::session_name`] wins over
+    /// it wherever a title is shown.
+    pub fn ai_title(&self) -> Option<&str> {
+        self.entries()
+            .iter()
+            .rev()
+            .filter(|entry| entry.type_ == "custom")
+            .find(|entry| {
+                entry.fields.get("customType").and_then(Value::as_str)
+                    == Some(super::AI_TITLE_CUSTOM_TYPE)
+            })
+            .and_then(|entry| entry.fields.get("data"))
+            .and_then(|data| data.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+    }
+
     /// Lifecycle state from the latest `session_state` entry.
     pub fn state(&self) -> Option<String> {
         self.entries()

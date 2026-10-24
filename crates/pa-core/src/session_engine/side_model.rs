@@ -265,6 +265,73 @@ impl SideModel {
     }
 }
 
+/// Ask once over the parent session's own conversation (Claude Code's
+/// forked side call: `cacheSafeParams`, one turn, tools denied): the
+/// parent's system prompt, its messages, its tool definitions (so the
+/// request shares the conversation's prompt-cache prefix), then `prompt`
+/// as one more user message. The reply's text; a tool call the model
+/// makes anyway is ignored, never run. The parent agent is not touched.
+///
+/// # Errors
+///
+/// No model is selected, the provider call fails, or the timeout passes.
+pub async fn complete_forked(
+    parent: &pa_agent::agent::Agent,
+    stream_fn: &StreamFn,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    let state = parent.state().await;
+    if state.model == pa_agent::types::Model::unknown() {
+        anyhow::bail!("Select a model first");
+    }
+    let mut messages = state.messages;
+    messages.push(pa_agent::types::AgentMessage::Standard(Message::User(
+        pa_agent::types::UserMessage {
+            content: pa_agent::types::UserContent::Text(prompt.to_string()),
+            timestamp: pa_agent::now_ms(),
+        },
+    )));
+    let context = LlmContext {
+        system_prompt: Some(state.system_prompt),
+        messages: super::messages::loop_convert_to_llm(messages),
+        tools: state
+            .tools
+            .iter()
+            .map(|tool| pa_agent::stream::ToolDefinition {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                parameters: tool.parameters().clone(),
+            })
+            .collect(),
+    };
+    let call = async {
+        let mut stream = stream_fn(
+            state.model.clone(),
+            context,
+            StreamRequestOptions::default(),
+        )
+        .await?;
+        while stream.next_event().await.is_some() {}
+        let message = stream.result().await?;
+        if message.stop_reason == StopReason::Error {
+            anyhow::bail!(
+                "{}",
+                message
+                    .error_message
+                    .unwrap_or_else(|| "the model call failed".to_string())
+            );
+        }
+        Ok(reply_text(&message.content))
+    };
+    match tokio::time::timeout(SIDE_MODEL_TIMEOUT, call).await {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!(
+            "the side model call timed out after {}s",
+            SIDE_MODEL_TIMEOUT.as_secs()
+        ),
+    }
+}
+
 type Resolved = (
     pa_types::ai::Model,
     Option<String>,

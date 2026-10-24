@@ -190,6 +190,8 @@ impl Worker {
             "set_session_entry_label" => self.tree_navigation.set_session_entry_label(payload),
             "navigate_tree" => self.handle_navigate_tree(payload).await,
             "get_rewind_checkpoints" => self.handle_get_rewind_checkpoints().await,
+            "session_recap" => self.handle_session_recap().await,
+            "generate_session_name" => self.handle_generate_session_name().await,
             "rewind" => self.handle_rewind(payload).await,
             "fork" => self.handle_fork(payload).await,
             "fork_export" => self.handle_fork_export(payload).await,
