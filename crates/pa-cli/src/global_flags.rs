@@ -91,6 +91,7 @@ fn consumes_following_token(args: &[String], index: usize) -> bool {
     arg.starts_with("--")
         && !arg.contains('=')
         && !GLOBAL_BOOLEAN_FLAGS.contains(&arg)
+        && !crate::args_cc::CC_BOOLEAN_FLAGS.contains(&arg)
         && !next.starts_with('-')
         && !next.starts_with('@')
 }

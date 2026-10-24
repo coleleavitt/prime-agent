@@ -16,6 +16,7 @@
 // Internal ported modules are crate-private: the only public API is the
 // runtime boundary below (see crates/pa-cli/README.md).
 pub(crate) mod args;
+pub(crate) mod args_cc;
 pub(crate) mod cli_command_telemetry;
 pub(crate) mod client_settings;
 pub(crate) mod client_traces;
@@ -353,6 +354,11 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     let agent_dir = crate::config::get_agent_dir();
+    // Claude Code's session-wide flags become the launch layer every session
+    // of this run reads (in-process or in a daemon worker, which receives it
+    // with this client's launch env).
+    let mut parsed = parsed;
+    publish_launch_layer(&mut parsed, &cwd)?;
     // `-w, --worktree [name]`: the session runs in a managed worktree, made
     // (or reused) before anything else reads the directory.
     let (cwd, launched_worktree) = if parsed.worktree {
@@ -420,7 +426,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         );
         return deleted;
     }
-    let mut parsed = parsed;
     if let Some(name) = parsed.name.clone() {
         let mut conflicting_flags: Vec<&str> = Vec::new();
         if parsed.continue_ {
@@ -464,6 +469,21 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             false,
         );
         parsed.resume = Some(opened.path.to_string_lossy().to_string());
+    }
+    // `--session-id <uuid>`: a persisted session is created up front under
+    // that id and opened like `--resume` (`--no-session` keeps it in memory).
+    if let Some(id) = parsed.cc.session_id.clone() {
+        if parsed.continue_ || parsed.has_resume() || parsed.fork.is_some() || parsed.name.is_some()
+        {
+            return Err(
+                "--session-id cannot be combined with --continue, --resume, --fork or --name"
+                    .to_string(),
+            );
+        }
+        if !parsed.no_session {
+            let path = create_session_with_id(&named_session_dir(), &cwd, &id)?;
+            parsed.resume = Some(path.to_string_lossy().to_string());
+        }
     }
     // Workspace trust: project configuration that can run code or change
     // the prompt loads only in a trusted workspace. The interactive client
@@ -541,6 +561,11 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             session_dir,
             // A worktree launch pins its directory like `--cwd` does.
             cwd_from_flag: parsed.cwd.is_some() || launched_worktree.is_some(),
+            session_id: parsed
+                .cc
+                .session_id
+                .clone()
+                .filter(|_| parsed.no_session),
         },
         messages: cli_messages,
         initial_message,
@@ -555,12 +580,57 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         agents_view_requested: public_command.explicit_agents_view,
         attach_agent: public_command.attach_agent,
         worktree: launched_worktree,
+        cc: parsed.cc.clone(),
     };
 
     match runtime.run(&options) {
         Ok(exit_code) => Ok(exit_code),
         Err(missing) => Err(missing.error_message()),
     }
+}
+
+/// Publish the launch layer the parsed Claude Code flags make (an empty one
+/// clears any inherited copy) and apply `--bare`'s local parts: no
+/// instruction-file discovery and no auto memory (hooks, LSP and plugins
+/// read the layer themselves).
+fn publish_launch_layer(parsed: &mut args::Args, cwd: &std::path::Path) -> Result<(), String> {
+    let launch = args_cc::launch_settings(&parsed.cc, cwd)?;
+    if launch.bare {
+        parsed.no_context_files = true;
+        // Travels to daemon workers with the launch env.
+        std::env::set_var("PRIME_AGENT_DISABLE_AUTO_MEMORY", "1");
+    }
+    launch.publish();
+    Ok(())
+}
+
+/// Create a persisted session named by `id` (Claude Code's `--session-id`)
+/// and return its file; an id already in use is refused.
+fn create_session_with_id(
+    session_dir: &std::path::Path,
+    cwd: &std::path::Path,
+    id: &str,
+) -> Result<std::path::PathBuf, String> {
+    let taken = pa_daemon::session_store::list_sessions(session_dir)
+        .iter()
+        .any(|info| info.id == id)
+        || session_dir
+            .join(pa_daemon::session_store::session_file_name(id))
+            .exists();
+    if taken {
+        return Err(format!("Session ID {id} is already in use."));
+    }
+    let mut manager = pa_core::session::manager::SessionManager::persisted(cwd, session_dir);
+    let path = manager
+        .new_session(&pa_core::session::manager::NewSessionOptions {
+            id: Some(id.to_string()),
+            ..Default::default()
+        })
+        .ok_or_else(|| format!("Cannot create session {id}"))?;
+    manager
+        .flush_now()
+        .map_err(|error| format!("Cannot create session {id}: {error}"))?;
+    Ok(path)
 }
 
 /// The hidden flag a Python process outside a kernel uses to reach the host

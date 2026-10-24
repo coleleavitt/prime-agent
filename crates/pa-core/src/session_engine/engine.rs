@@ -279,6 +279,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let (settings, trace_consent) =
         crate::agent_traces::ContinuousTraceUpload::load_settings(&cwd, &config.agent_dir);
+    // `--agent` (or the `agent` setting): a top-level session runs as that
+    // agent definition, as a spawned child runs as its own.
+    if config.agent_definition.is_none() && config.rlm_depth.unwrap_or(0) == 0 {
+        config.agent_definition =
+            crate::agents::main_session_agent(&cwd, &config.agent_dir, &settings);
+    }
     // Resolve the kernel shell once, before any side effects: an invalid
     // `shellPath` must fail session creation with a clear config error
     // naming the setting, not every kernel `bash()` call later.

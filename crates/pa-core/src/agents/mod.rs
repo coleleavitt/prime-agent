@@ -25,8 +25,16 @@ pub use definition::{
     AgentSource,
     is_valid_agent_name,
     parse_agent_definition,
+    parse_agent_json,
 };
-pub use discovery::{AgentCatalog, AgentSearch, PROJECT_AGENT_DIRS, discover_agents};
+pub use discovery::{
+    AgentCatalog,
+    AgentSearch,
+    PROJECT_AGENT_DIRS,
+    discover_agents,
+    discover_agents_with,
+    main_session_agent,
+};
 pub use memory::{
     AGENT_MEMORY_TITLE,
     AgentMemory,

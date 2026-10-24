@@ -9,6 +9,10 @@
 //! | `local` | `~/.claude.json`'s `projects[<project>].mcpServers` (opt-in) | none |
 //! | `project` | every `.mcp.json` from the filesystem root down to the working directory | required |
 //! | `user` | `~/.claude.json`'s `mcpServers` (opt-in) | none |
+//! | `dynamic` | `--mcp-config` on the command line (the launch layer) | none |
+//!
+//! `--mcp-config` servers come first, and `--strict-mcp-config` makes them
+//! the only ones.
 //!
 //! A name declared in several scopes takes the first one in that order
 //! (Claude Code's local > project > user, under this product's own
@@ -59,6 +63,8 @@ pub const MCP_JSON_FILE: &str = ".mcp.json";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpServerScope {
+    /// `--mcp-config` on the command line (Claude Code's `dynamic` scope).
+    Dynamic,
     /// The Prime Agent settings' `mcpServers`.
     Settings,
     /// `~/.claude.json`, this project's entry.
@@ -71,7 +77,8 @@ pub enum McpServerScope {
 
 impl McpServerScope {
     /// The precedence order, first wins.
-    const ORDER: [McpServerScope; 4] = [
+    const ORDER: [McpServerScope; 5] = [
+        McpServerScope::Dynamic,
         McpServerScope::Settings,
         McpServerScope::Local,
         McpServerScope::Project,
@@ -82,6 +89,7 @@ impl McpServerScope {
     #[must_use]
     pub fn wire_name(self) -> &'static str {
         match self {
+            McpServerScope::Dynamic => "dynamic",
             McpServerScope::Settings => "settings",
             McpServerScope::Local => "local",
             McpServerScope::Project => "project",
@@ -94,6 +102,7 @@ impl McpServerScope {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
+            McpServerScope::Dynamic => "Dynamic config (from command line)",
             McpServerScope::Settings => "Prime Agent settings",
             McpServerScope::Local => "Local config (private to you in this project)",
             McpServerScope::Project => "Project config (shared via .mcp.json)",
@@ -247,6 +256,9 @@ pub struct LoadInputs<'a> {
     /// The farthest directory whose `.mcp.json` is read; `None` walks up
     /// to (not including) the filesystem root, Claude Code's walk.
     pub walk_stop: Option<&'a Path>,
+    /// The command line's `--mcp-config` / `--strict-mcp-config` (the
+    /// launch layer; `None`: none).
+    pub launch: Option<&'a crate::settings::launch::LaunchSettings>,
 }
 
 /// Every declared server of a workspace, with its approval, and the
@@ -337,6 +349,7 @@ impl DeclaredServers {
                 None
             }
         };
+        let launch = crate::settings::launch::LaunchSettings::current();
         Self::load_with(&LoadInputs {
             cwd,
             agent_dir,
@@ -346,6 +359,7 @@ impl DeclaredServers {
                 .flatten(),
             env: &env,
             walk_stop: None,
+            launch: launch.as_ref(),
         })
     }
 
@@ -365,10 +379,26 @@ impl DeclaredServers {
             servers: Vec::new(),
             issues: Vec::new(),
         };
-        declared.load_settings_servers(inputs);
-        declared.load_project_files(inputs.cwd, inputs.walk_stop, &env);
-        if let Some(files) = &inputs.claude_code {
-            declared.load_claude_config(&files.global_config, inputs.cwd, &env);
+        let launch = inputs.launch.cloned().unwrap_or_default();
+        if let Some(servers) = &launch.mcp_servers {
+            let parsed = mcp_json::parse_servers(servers, None, &env);
+            declared.issues.extend(parsed.issues);
+            declared
+                .servers
+                .extend(parsed.servers.into_iter().map(|(name, config)| DeclaredServer {
+                    name,
+                    config,
+                    scope: McpServerScope::Dynamic,
+                    source: PathBuf::new(),
+                    approval: None,
+                }));
+        }
+        if !launch.strict_mcp_config {
+            declared.load_settings_servers(inputs);
+            declared.load_project_files(inputs.cwd, inputs.walk_stop, &env);
+            if let Some(files) = &inputs.claude_code {
+                declared.load_claude_config(&files.global_config, inputs.cwd, &env);
+            }
         }
         let approvals = approval::Approvals::collect(
             inputs.settings,

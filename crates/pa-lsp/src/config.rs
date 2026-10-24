@@ -229,6 +229,10 @@ impl LspConfig {
     /// `.lsp.json`. Reads files: call it off the async runtime.
     #[must_use]
     pub fn load(cwd: &Path, agent_dir: &Path) -> Self {
+        // `--bare` runs without language servers (Claude Code's minimal mode).
+        if pa_core::settings::launch::bare() {
+            return Self::from_parts(None, None, None);
+        }
         let settings = pa_core::settings::SettingsManager::create(cwd, agent_dir);
         let extra = &settings.settings().extra;
         let project = if pa_core::workspace_trust::evaluate(cwd, agent_dir).is_trusted() {

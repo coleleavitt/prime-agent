@@ -71,7 +71,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    fn error(message: impl Into<String>) -> Self {
+    pub(crate) fn error(message: impl Into<String>) -> Self {
         Diagnostic {
             is_error: true,
             message: message.into(),
@@ -209,6 +209,9 @@ pub struct Args {
     pub worktree: bool,
     /// The worktree's name (`None`: a generated one).
     pub worktree_name: Option<String>,
+    /// Claude Code's flags (headless formats, SDK switches, permission and
+    /// configuration flags; `crate::args_cc`).
+    pub cc: crate::args_cc::CcFlags,
 }
 
 impl Args {
@@ -247,6 +250,7 @@ fn parse_positive_u64(value: &str, flag: &str, diagnostics: &mut Vec<Diagnostic>
 }
 
 pub fn parse_args(args: &[String]) -> Args {
+    let args = &crate::args_cc::split_equals(args);
     let mut result = Args::default();
     let internal_runtime_command =
         args.first().map(String::as_str) == Some(INTERNAL_RUNTIME_COMMAND_MARKER);
@@ -283,6 +287,10 @@ pub fn parse_args(args: &[String]) -> Args {
             };
         }
 
+        if crate::args_cc::parse_cc_flag(args, &mut i, &mut result.cc, &mut result.diagnostics) {
+            i += 1;
+            continue;
+        }
         match arg {
             "--help" | "-h" => result.help = true,
             "--version" | "-v" => result.version = true,
@@ -561,6 +569,12 @@ pub fn parse_args(args: &[String]) -> Args {
         i += 1;
     }
 
+    crate::args_cc::validate(
+        &result.cc,
+        result.print,
+        result.worktree,
+        &mut result.diagnostics,
+    );
     if result.goal_token_budget.is_some() && result.goal.is_none() {
         result
             .diagnostics

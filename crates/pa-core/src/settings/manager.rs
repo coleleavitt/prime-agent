@@ -256,6 +256,9 @@ impl SettingsManager {
     /// Code's files (with the opt-in) can set it.
     #[must_use]
     pub fn disable_all_hooks(&self) -> Option<&'static str> {
+        if super::launch::bare() {
+            return Some("--bare");
+        }
         let own = |settings: &Settings| {
             settings.extra.get("disableAllHooks") == Some(&serde_json::Value::Bool(true))
         };

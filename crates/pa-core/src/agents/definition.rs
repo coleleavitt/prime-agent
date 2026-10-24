@@ -21,6 +21,8 @@ pub enum AgentSource {
     Project,
     /// `<agent dir>/agents` or `~/.claude/agents`.
     User,
+    /// `--agents` on the command line (Claude Code's `flagSettings`).
+    CliArg,
 }
 
 impl AgentSource {
@@ -29,6 +31,7 @@ impl AgentSource {
         match self {
             Self::Project => "project",
             Self::User => "user",
+            Self::CliArg => "cliArg",
         }
     }
 }
@@ -147,15 +150,49 @@ pub fn parse_agent_definition(
     {
         return Err("missing YAML frontmatter".to_string());
     }
-    let name = string_key(&frontmatter, "name")
+    definition_from_fields(&frontmatter, &body, path, source)
+}
+
+/// One `--agents` entry (Claude Code's JSON shape: `description`, `prompt`,
+/// and the frontmatter keys) named `name`.
+///
+/// # Errors
+///
+/// The entry is not an object, or lacks `description` or `prompt`.
+pub fn parse_agent_json(name: &str, value: &Value) -> Result<AgentDefinition, String> {
+    let Some(entry) = value.as_object() else {
+        return Err(format!("agent {name:?} must be an object"));
+    };
+    let prompt = entry
+        .get("prompt")
+        .and_then(Value::as_str)
+        .filter(|prompt| !prompt.trim().is_empty())
+        .ok_or_else(|| format!("agent {name:?}: missing required field \"prompt\""))?;
+    let mut fields = entry.clone();
+    fields.insert("name".into(), Value::String(name.to_string()));
+    definition_from_fields(
+        &Value::Object(fields),
+        prompt,
+        Path::new("--agents"),
+        AgentSource::CliArg,
+    )
+}
+
+fn definition_from_fields(
+    frontmatter: &Value,
+    body: &str,
+    path: &Path,
+    source: AgentSource,
+) -> Result<AgentDefinition, String> {
+    let name = string_key(frontmatter, "name")
         .ok_or_else(|| "missing required field \"name\"".to_string())?;
     if !is_valid_agent_name(&name) {
         return Err(format!("invalid agent name {name:?}"));
     }
-    let description = string_key(&frontmatter, "description")
+    let description = string_key(frontmatter, "description")
         .ok_or_else(|| "missing required field \"description\"".to_string())?;
-    let model = string_key(&frontmatter, "model").filter(|model| model != "inherit");
-    let isolation = match string_key(&frontmatter, "isolation") {
+    let model = string_key(frontmatter, "model").filter(|model| model != "inherit");
+    let isolation = match string_key(frontmatter, "isolation") {
         None => None,
         Some(value) => Some(
             AgentIsolation::parse(&value)
@@ -174,14 +211,14 @@ pub fn parse_agent_definition(
         tools: string_list(frontmatter.get("tools")),
         disallowed_tools: string_list(frontmatter.get("disallowedTools")).unwrap_or_default(),
         model,
-        effort: string_key(&frontmatter, "effort").map(|effort| effort.to_lowercase()),
-        color: string_key(&frontmatter, "color"),
+        effort: string_key(frontmatter, "effort").map(|effort| effort.to_lowercase()),
+        color: string_key(frontmatter, "color"),
         isolation,
-        memory: string_key(&frontmatter, "memory"),
+        memory: string_key(frontmatter, "memory"),
         skills: string_list(frontmatter.get("skills")).unwrap_or_default(),
         max_turns,
         background: frontmatter.get("background").and_then(Value::as_bool) == Some(true),
-        initial_prompt: string_key(&frontmatter, "initialPrompt"),
+        initial_prompt: string_key(frontmatter, "initialPrompt"),
         source,
         path: path.to_path_buf(),
     })
@@ -221,6 +258,42 @@ mod tests {
                 path: PathBuf::from("/r/reviewer.md"),
             }
         );
+    }
+
+    /// An `--agents` entry: Claude Code's JSON keys, the prompt as the body.
+    #[test]
+    fn a_json_entry_parses_like_a_file() {
+        let parsed = parse_agent_json(
+            "reviewer",
+            &serde_json::json!({
+                "description": "Reviews code",
+                "prompt": " You review. ",
+                "tools": ["Read", "Grep"],
+                "model": "inherit",
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                parsed.name.as_str(),
+                parsed.prompt.as_str(),
+                parsed.tools,
+                parsed.model,
+                parsed.source,
+            ),
+            (
+                "reviewer",
+                "You review.",
+                Some(vec!["Read".to_string(), "Grep".to_string()]),
+                None,
+                AgentSource::CliArg,
+            )
+        );
+        assert_eq!(
+            parse_agent_json("x", &serde_json::json!({"description": "d"})),
+            Err("agent \"x\": missing required field \"prompt\"".to_string())
+        );
+        assert!(parse_agent_json("x", &serde_json::json!("nope")).is_err());
     }
 
     #[test]
