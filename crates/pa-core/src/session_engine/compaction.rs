@@ -35,6 +35,10 @@ pub struct CompactionSettings {
     /// tokens auto-compaction lets accumulate, below the window-derived
     /// threshold on long-window models (see [`resolve_context_cap`]).
     pub max_context_tokens: Option<u64>,
+    /// `compaction.cachePrefix`: summaries continue the live conversation
+    /// on the session model (a prompt-cache read) when the session wires
+    /// the seam; off runs the serialized summarizer request.
+    pub cache_prefix: bool,
 }
 
 impl Default for CompactionSettings {
@@ -45,6 +49,7 @@ impl Default for CompactionSettings {
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_tokens: DEFAULT_KEEP_RECENT_TOKENS,
             max_context_tokens: None,
+            cache_prefix: true,
         }
     }
 }
@@ -673,6 +678,7 @@ mod tests {
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
             max_context_tokens: None,
+            cache_prefix: true,
         };
         let messages = vec![
             user_message("f14 auto seed turn", 1),
@@ -692,6 +698,7 @@ mod tests {
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
             max_context_tokens: None,
+            cache_prefix: true,
         };
         assert!(!threshold_compaction_due(&messages, 128_000, 0, &disabled));
         assert!(!threshold_compaction_due(&messages, 0, 0, &settings));
@@ -761,6 +768,7 @@ mod tests {
             reserve_tokens: 1,
             keep_recent_tokens: 10,
             max_context_tokens: None,
+            cache_prefix: true,
         };
         assert_eq!(compaction_threshold(131_072, 32_768, &settings), 94_208);
         // An output budget that cannot fit any context disables the
@@ -785,6 +793,7 @@ mod tests {
             reserve_tokens: 127_500,
             keep_recent_tokens: 10,
             max_context_tokens: None,
+            cache_prefix: true,
         };
         let messages = vec![
             compaction_summary(10),

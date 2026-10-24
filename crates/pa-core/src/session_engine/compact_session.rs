@@ -67,6 +67,15 @@ pub struct CompactOptions<'a> {
     /// request id, and the compaction's terminal event lands before the
     /// compaction entry persists. `None` records nothing.
     pub semantic_edges: Option<std::sync::Arc<super::semantic_edges::SemanticEdgeRecorder>>,
+    /// The live conversation the summary continues on the session model
+    /// (cache-prefix compaction); `None` runs the serialized request.
+    pub cache_prefix: Option<std::sync::Arc<super::compaction_cache_prefix::CachePrefixRequest>>,
+}
+
+/// The completion budget of a history summary (the cache-prefix request's
+/// too) under `reserve_tokens`.
+pub(crate) fn summary_completion_budget(reserve_tokens: u64) -> u64 {
+    history_summary_completion_budget(reserve_tokens)
 }
 
 /// Whether a custom row is ambient context the summarizer never reads.
@@ -251,6 +260,49 @@ pub(crate) async fn summarize_attempt(
     // A run aborted before the summarizer request never starts one.
     pa_agent::abort::throw_if_aborted_signal(options.abort)?;
 
+    // Cache-prefix compaction: one summary call continuing the live
+    // conversation (its prefix is a cache read), which also covers a split
+    // turn's prefix; any non-abort failure falls back to the serialized
+    // request below.
+    if let Some(cache_prefix) = options.cache_prefix.as_deref() {
+        let max_tokens = history_summary_completion_budget(options.settings.reserve_tokens);
+        let outcome = super::semantic_edges::summary_slice_call(
+            attempt.semantic_compaction.as_ref(),
+            None,
+            |headers| {
+                super::compaction_cache_prefix::summarize(
+                    cache_prefix,
+                    options.custom_instructions,
+                    max_tokens,
+                    headers,
+                    options.abort,
+                    options.summary_delta.as_ref(),
+                )
+            },
+        )
+        .await;
+        match outcome {
+            Ok(slice) => {
+                super::compaction_trace::trace(
+                    "compact.cache_prefix_summary",
+                    &serde_json::json!({ "summaryBytes": slice.summary.len() }),
+                );
+                return finish_attempt(attempt, options, slice, None);
+            }
+            Err(error) if pa_agent::abort::is_abort_error(&error) => return Err(error),
+            Err(error) => {
+                let reason = error
+                    .downcast_ref::<super::compaction_cache_prefix::CachePrefixFallback>()
+                    .map_or("error", |fallback| fallback.0);
+                super::compaction_trace::trace(
+                    "compact.cache_prefix_fallback",
+                    &serde_json::json!({ "reason": reason }),
+                );
+                tracing::debug!(reason, "cache-prefix compaction fell back to the serialized summary");
+            }
+        }
+    }
+
     // A split-turn cut runs TWO summarizer calls concurrently — the history
     // summary and the turn-prefix summary; a non-split cut makes the single
     // history call. A split with no summarizable history stands in "No prior history.".
@@ -383,8 +435,18 @@ pub(crate) async fn summarize_attempt(
         Ok(Some(slice))
     };
     let (history_slice, turn_prefix_slice) = tokio::join!(history_call, turn_prefix_call);
-    let history_slice = history_slice?;
-    let turn_prefix_slice = turn_prefix_slice?;
+    finish_attempt(attempt, options, history_slice?, turn_prefix_slice?)
+}
+
+/// The resolved summary slices into the prepared compaction: the abort
+/// check, the live block's remainder, the joined summary with its
+/// file-operations block, and the digest snapshot.
+fn finish_attempt(
+    attempt: &CompactionAttempt,
+    options: &CompactOptions<'_>,
+    history_slice: SummarySlice,
+    turn_prefix_slice: Option<SummarySlice>,
+) -> anyhow::Result<PreparedCompaction> {
     super::compaction_trace::trace(
         "compact.summarizer_resolved",
         &serde_json::json!({

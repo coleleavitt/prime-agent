@@ -749,6 +749,8 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                         | super::brief_mode::USER_MESSAGE_CUSTOM_TYPE
                         | super::brief_mode::BRIEF_MODE_CHANGE_CUSTOM_TYPE
                         | crate::prompts::model_prompts::MODEL_PROMPT_ERROR_CUSTOM_TYPE
+                        // The user's notice about large instruction files.
+                        | super::instruction_size_notice::INSTRUCTION_SIZE_WARNING_CUSTOM_TYPE
                 ) {
                     continue;
                 }

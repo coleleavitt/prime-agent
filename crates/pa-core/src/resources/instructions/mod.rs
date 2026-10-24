@@ -29,6 +29,7 @@
 
 pub mod imports;
 pub mod rules;
+pub mod size;
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -39,6 +40,9 @@ use self::rules::RuleMatcher;
 
 /// The most bytes read from one instruction file; the rest is cut with a note.
 pub const MAX_INSTRUCTION_FILE_BYTES: usize = 256 * 1024;
+
+/// How the cut note at the end of a capped file begins ([`size`] reports it).
+pub const TRUNCATION_NOTE_PREFIX: &str = "[truncated: the file is";
 
 const AGENTS_FAMILY: [&str; 2] = ["AGENTS.md", "AGENTS.MD"];
 const CLAUDE_FAMILY: [&str; 2] = ["CLAUDE.md", "CLAUDE.MD"];
@@ -654,7 +658,7 @@ fn read_instruction_text(path: &Path) -> Option<String> {
     if truncated {
         let _ = write!(
             text,
-            "\n\n[truncated: the file is larger than {MAX_INSTRUCTION_FILE_BYTES} bytes]"
+            "\n\n{TRUNCATION_NOTE_PREFIX} larger than {MAX_INSTRUCTION_FILE_BYTES} bytes]"
         );
     }
     Some(text)

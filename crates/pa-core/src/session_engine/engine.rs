@@ -991,6 +991,19 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         Some(&prompt_model_selector),
         &config.agent_dir,
     );
+    // Claude Code's large-instruction-file diagnostics: the user learns
+    // which loaded files cost prompt space on every request.
+    if let Some(row) = super::instruction_size_notice::notice_message(
+        &crate::resources::instructions::size::size_warnings(
+            &resources.instruction_files,
+            Some(model_context_window),
+        ),
+    ) {
+        boot_notice_rows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(row);
+    }
     if !model_prompts.errors.is_empty() {
         boot_notice_rows
             .lock()
@@ -1258,6 +1271,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let steering_probe = config.queued_steering_probe.clone();
     // What the boundary needs to fold queued steers; set once the agent is built.
     let fold_admission: super::steering_fold::FoldAdmissionSlot = std::sync::Arc::default();
+    let cache_prefix_convert = super::refinement_gate::convert_to_llm(refinement_settings.reopen());
     let agent = Agent::new(AgentOptions {
         initial_state: AgentInitialState {
             system_prompt: Some(system_prompt.clone()),
@@ -1521,6 +1535,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // Project over global by the settings merge; a session
         // `/context-limit` override layers on top (`compaction_settings()`).
         max_context_tokens: compaction_settings.max_context_tokens,
+        cache_prefix: compaction_settings.cache_prefix.unwrap_or(true),
     });
     session.set_context_limit_settings_source(context_cap_source);
     session.restore_context_limit_from_branch().await;
@@ -1549,7 +1564,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // park read the recorder; the side question keeps the pre-semantic
     // fn so its calls carry no id.
     session.set_semantic_edges(semantic_recorder);
-    session.set_side_question_stream_fn(side_question_stream_fn);
+    session.set_side_question_stream_fn(std::sync::Arc::clone(&side_question_stream_fn));
+    // Cache-prefix compaction continues the live request: the same
+    // pre-semantic stream and the loop's own conversion (uninstrumented, so
+    // a summary request records no turn timing).
+    session.set_compaction_cache_prefix(
+        crate::session_engine::compaction_cache_prefix::CachePrefixSeam {
+            stream_fn: side_question_stream_fn,
+            convert_to_llm: cache_prefix_convert,
+        },
+    );
     // The armed image route never outlives the run that armed it (TS
     // `_clearModelOverrideWhenIdle`: the override drops once the turn is
     // idle, so a picker switch between turns is live immediately — the
