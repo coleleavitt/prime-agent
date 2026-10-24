@@ -71,7 +71,7 @@ pub(super) fn question(server: &DeclaredServer) -> (String, String) {
 }
 
 /// The choice an answer records; `None` leaves the server pending.
-pub(super) fn choice_of(answer: ConfirmationAnswer) -> Option<ProjectChoice> {
+pub(super) fn choice_of(answer: &ConfirmationAnswer) -> Option<ProjectChoice> {
     match answer {
         ConfirmationAnswer::Allowed => Some(ProjectChoice::Approve),
         ConfirmationAnswer::AllowedAlways => Some(ProjectChoice::ApproveAll),
@@ -121,7 +121,7 @@ pub async fn ask_pending_project_servers(session_id: String, manager: Arc<Mutex<
             CONFIRMATION_TIMEOUT,
         )
         .await;
-        let Some(choice) = choice_of(answer) else {
+        let Some(choice) = choice_of(&answer) else {
             // Unanswered: it stays pending, and so do the rest (the user
             // is not there to ask).
             return;

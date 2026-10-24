@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 use crate::skills::Skill;
 
 /// The usage window (Claude Code's "7d").
-pub const WINDOW: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+pub const WINDOW: Duration = Duration::from_hours(7 * 24);
 
 /// One skill's row.
 #[derive(Debug, Clone, PartialEq, Eq)]

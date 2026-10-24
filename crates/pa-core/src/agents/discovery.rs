@@ -315,7 +315,7 @@ mod tests {
         });
         let catalog = discover_agents_with(
             &AgentSearch {
-                cwd: cwd.clone(),
+                cwd,
                 agent_dir: root.path().join("agent"),
                 home: None,
             },

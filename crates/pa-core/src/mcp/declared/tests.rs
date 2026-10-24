@@ -796,20 +796,20 @@ fn the_manager_dispatches_approved_servers_and_explains_pending_ones() {
 fn answers_map_to_claude_codes_choices() {
     use crate::features::ConfirmationAnswer;
     assert_eq!(
-        ask::choice_of(ConfirmationAnswer::Allowed),
+        ask::choice_of(&ConfirmationAnswer::Allowed),
         Some(ProjectChoice::Approve)
     );
     assert_eq!(
-        ask::choice_of(ConfirmationAnswer::AllowedAlways),
+        ask::choice_of(&ConfirmationAnswer::AllowedAlways),
         Some(ProjectChoice::ApproveAll)
     );
     assert_eq!(
-        ask::choice_of(ConfirmationAnswer::Denied),
+        ask::choice_of(&ConfirmationAnswer::Denied),
         Some(ProjectChoice::Reject)
     );
-    assert_eq!(ask::choice_of(ConfirmationAnswer::Unavailable), None);
+    assert_eq!(ask::choice_of(&ConfirmationAnswer::Unavailable), None);
     assert_eq!(
-        ask::choice_of(ConfirmationAnswer::TimedOut(std::time::Duration::ZERO)),
+        ask::choice_of(&ConfirmationAnswer::TimedOut(std::time::Duration::ZERO)),
         None
     );
 }

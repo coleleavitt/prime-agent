@@ -122,10 +122,6 @@ impl CliPermissions {
 /// What the command line set for this run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent command-line switches, not a state machine"
-)]
 pub struct LaunchSettings {
     /// `--settings`: one settings document layered over every file.
     #[serde(skip_serializing_if = "Option::is_none")]

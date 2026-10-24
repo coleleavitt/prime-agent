@@ -1969,7 +1969,7 @@ mod tests {
         )
         .unwrap();
         let mut manager = SettingsManager::from_storage(Arc::new(
-            super::super::storage::FileSettingsStorage::new(cwd.clone(), agent_dir.clone()),
+            super::super::storage::FileSettingsStorage::new(cwd, agent_dir),
         ));
         let read = |manager: &SettingsManager| {
             (

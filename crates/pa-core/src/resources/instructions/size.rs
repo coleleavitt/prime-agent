@@ -157,9 +157,9 @@ mod tests {
     #[test]
     fn a_file_cut_at_the_read_cap_is_reported() {
         let mut cut = file("/repo/AGENTS.md", 10);
-        cut.content.push_str(&format!(
-            "\n\n{TRUNCATION_NOTE_PREFIX} larger than 262144 bytes]"
-        ));
+        cut.content.push_str("\n\n");
+        cut.content.push_str(TRUNCATION_NOTE_PREFIX);
+        cut.content.push_str(" larger than 262144 bytes]");
         assert_eq!(
             size_warnings(&[cut], None),
             vec![

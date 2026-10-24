@@ -911,9 +911,8 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
             .map(|column| match column {
                 OptionalColumn::Tokens => input_width + 2 + output_width + 2,
                 OptionalColumn::Branch if branch_width > 0 => branch_width + 2,
-                OptionalColumn::Branch => 0,
                 OptionalColumn::Pr if pr_width > 0 => pr_width + 2,
-                OptionalColumn::Pr => 0,
+                OptionalColumn::Branch | OptionalColumn::Pr => 0,
                 OptionalColumn::Context => context_width + 2,
                 OptionalColumn::Cwd => cwd_width + 2,
             })

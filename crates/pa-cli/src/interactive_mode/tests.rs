@@ -70,7 +70,7 @@ fn run_options_for_continue(dir: &std::path::Path) -> RunOptions {
         agents_view_requested: false,
         attach_agent: None,
         worktree: None,
-        cc: Default::default(),
+        cc: crate::args_cc::CcFlags::default(),
     }
 }
 
@@ -247,7 +247,7 @@ fn onboarding_gate_follows_settings_and_auth() {
             agents_view_requested: false,
             attach_agent: None,
             worktree: None,
-            cc: Default::default(),
+            cc: crate::args_cc::CcFlags::default(),
         }
     }
 
@@ -501,7 +501,7 @@ fn build_tui_options_reads_code_block_indent_settings() {
             agents_view_requested: false,
             attach_agent: None,
             worktree: None,
-            cc: Default::default(),
+            cc: crate::args_cc::CcFlags::default(),
         }
     }
 

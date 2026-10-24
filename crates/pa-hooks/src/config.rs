@@ -269,7 +269,7 @@ pub enum HookKind {
         args: Option<Vec<String>>,
         shell: CommandShell,
     },
-    /// `http`: the input is POSTed to `url`.
+    /// `http`: the input is posted to `url`.
     Http {
         headers: Vec<(String, String)>,
         /// The variables header values may interpolate.
@@ -427,6 +427,10 @@ struct RawGroup {
 }
 
 #[derive(Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "deserialized hook config: independent switches, not a state machine"
+)]
 struct RawCommand {
     #[serde(rename = "type", default)]
     kind: Option<String>,

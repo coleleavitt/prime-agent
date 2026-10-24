@@ -150,15 +150,16 @@ pub async fn summarize(
         Ok(Ok(stream)) => stream,
         Ok(Err(_)) => return Err(CachePrefixFallback("stream_open_failed").into()),
     };
-    while let Some(_event) =
+    loop {
         match pa_agent::abort::race_with_abort(stream.next_event(), &signal).await {
-            Ok(event) => event,
+            Ok(Some(_)) => {}
+            Ok(None) => break,
             Err(_) => {
                 stream.close();
                 return Err(pa_agent::abort::aborted_error());
             }
         }
-    {}
+    }
     let assistant = match stream.result().await {
         Ok(assistant) => assistant,
         Err(_) if signal.is_aborted() => return Err(pa_agent::abort::aborted_error()),

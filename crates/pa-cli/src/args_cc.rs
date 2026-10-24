@@ -302,7 +302,7 @@ pub fn parse_cc_flag(
                 match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(schema @ serde_json::Value::Object(_)) => flags.json_schema = Some(schema),
                     Ok(_) => {
-                        diagnostics.push(Diagnostic::error("--json-schema must be a JSON object"))
+                        diagnostics.push(Diagnostic::error("--json-schema must be a JSON object"));
                     }
                     Err(error) => diagnostics.push(Diagnostic::error(format!(
                         "--json-schema is not valid JSON: {error}"

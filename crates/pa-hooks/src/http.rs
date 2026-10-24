@@ -1,4 +1,4 @@
-//! `http` hooks (Claude Code's): the event's input is POSTed as JSON to the
+//! `http` hooks (Claude Code's): the event's input is posted as JSON to the
 //! hook's `url`, and a 2xx response's body is read like a command hook's
 //! stdout (an empty body is a plain success). Any other status, a transport
 //! error or the timeout is a non-blocking failure (`onFailure: "block"`
@@ -136,16 +136,17 @@ fn is_private(address: IpAddr) -> bool {
                 // Shared address space (carrier-grade NAT).
                 || (a == 100 && (64..128).contains(&b))
         }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => !v4.is_loopback() && is_private(IpAddr::V4(v4)),
-            None => {
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                !v4.is_loopback() && is_private(IpAddr::V4(v4))
+            } else {
                 let first = v6.segments()[0];
                 v6.is_unspecified()
                     // Unique local (fc00::/7) and link-local (fe80::/10).
                     || (first & 0xfe00) == 0xfc00
                     || (first & 0xffc0) == 0xfe80
             }
-        },
+        }
     }
 }
 

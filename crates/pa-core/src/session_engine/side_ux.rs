@@ -153,15 +153,14 @@ fn one_line(text: &str) -> String {
 /// else a plain one-line reply; `None` when empty.
 #[must_use]
 pub fn parse_title(reply: &str) -> Option<String> {
-    let raw = match reply_json(reply) {
-        Some(object) => object.get("title")?.as_str()?.to_string(),
-        None => {
-            let line = reply.lines().find(|line| !line.trim().is_empty())?;
-            if line.trim_start().starts_with('{') {
-                return None;
-            }
-            line.to_string()
+    let raw = if let Some(object) = reply_json(reply) {
+        object.get("title")?.as_str()?.to_string()
+    } else {
+        let line = reply.lines().find(|line| !line.trim().is_empty())?;
+        if line.trim_start().starts_with('{') {
+            return None;
         }
+        line.to_string()
     };
     let title = one_line(&raw);
     if title.is_empty() {

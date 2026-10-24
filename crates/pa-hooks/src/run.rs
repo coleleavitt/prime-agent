@@ -256,6 +256,10 @@ pub fn output(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookOu
 
 /// Read one outcome as `event`'s answer; a non-blocking error is logged.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one match over the hook-event kinds; splitting would scatter the outcome mapping"
+)]
 pub fn answer(event: HookEvent, hook: &HookCommand, outcome: &Outcome) -> HookAnswer {
     match outcome.code {
         Some(0) => {}

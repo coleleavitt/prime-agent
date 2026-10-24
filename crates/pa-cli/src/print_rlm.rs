@@ -1249,7 +1249,7 @@ mod tests {
             agents_view_requested: false,
             attach_agent: None,
             worktree: None,
-            cc: Default::default(),
+            cc: crate::args_cc::CcFlags::default(),
         }
     }
 

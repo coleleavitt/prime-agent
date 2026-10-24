@@ -46,7 +46,7 @@ pub fn creates_pull_request(command: &str) -> bool {
 pub fn find_pr_link(text: &str) -> Option<SessionPrLink> {
     text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '(' | ')'))
         .filter_map(parse_pr_url)
-        .last()
+        .next_back()
 }
 
 fn parse_pr_url(token: &str) -> Option<SessionPrLink> {

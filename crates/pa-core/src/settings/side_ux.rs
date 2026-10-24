@@ -119,7 +119,7 @@ mod tests {
 
     use super::*;
 
-    fn resolve(document: Value, env: &[(&str, &str)]) -> SideUxSettings {
+    fn resolve(document: &Value, env: &[(&str, &str)]) -> SideUxSettings {
         let extra = document.as_object().cloned().unwrap_or_default();
         let env: Vec<(String, String)> = env
             .iter()
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn defaults_follow_claude_code() {
-        assert_eq!(resolve(json!({}), &[]), SideUxSettings::default());
+        assert_eq!(resolve(&json!({}), &[]), SideUxSettings::default());
         assert_eq!(
             SideUxSettings::default(),
             SideUxSettings {
@@ -155,7 +155,7 @@ mod tests {
             "sideUxModel": " anthropic/claude-haiku-4-5 ",
         });
         assert_eq!(
-            resolve(document.clone(), &[]),
+            resolve(&document, &[]),
             SideUxSettings {
                 session_titles: false,
                 away_summary: false,
@@ -164,7 +164,7 @@ mod tests {
             }
         );
         let overridden = resolve(
-            document,
+            &document,
             &[
                 (SESSION_TITLES_ENV, "on"),
                 (AWAY_SUMMARY_ENV, "1"),
@@ -179,7 +179,7 @@ mod tests {
     fn wrong_types_read_as_unset() {
         assert_eq!(
             resolve(
-                json!({ "awaySummaryEnabled": "no", "sideUxModel": 3, "sessionTitlesEnabled": 0 }),
+                &json!({ "awaySummaryEnabled": "no", "sideUxModel": 3, "sessionTitlesEnabled": 0 }),
                 &[(PROMPT_SUGGESTION_ENV, "maybe")],
             ),
             SideUxSettings::default()
