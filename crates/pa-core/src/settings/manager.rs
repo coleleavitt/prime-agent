@@ -143,17 +143,44 @@ impl SettingsManager {
     /// The effective settings: the project scope over the global one, over
     /// the Claude Code layer (only the keys neither scope sets; see
     /// [`super::claude_code::ClaudeLayer`]).
+    ///
+    /// The launch layer ([`super::launch`]) applies last: the scopes
+    /// `--setting-sources` leaves out are not read, and the `--settings`
+    /// document wins over every file.
     fn rederive_merged(&mut self) {
-        let own = deep_merge(&self.global, &self.project);
+        let launch = super::launch::LaunchSettings::current().unwrap_or_default();
+        self.rederive_merged_with(&launch);
+    }
+
+    fn rederive_merged_with(&mut self, launch: &super::launch::LaunchSettings) {
+        let empty = Settings::default();
+        let global = if launch.reads_source(super::launch::SettingSource::User) {
+            &self.global
+        } else {
+            &empty
+        };
+        let project = if launch.reads_source(super::launch::SettingSource::Project) {
+            &self.project
+        } else {
+            &empty
+        };
+        let own = deep_merge(global, project);
         self.claude_layer = self
             .claude_code
             .as_ref()
             .map(|claude| super::claude_code::ClaudeLayer::derive(claude, &own))
             .unwrap_or_default();
-        self.merged = if self.claude_layer.is_empty() {
+        let files = if self.claude_layer.is_empty() {
             own
         } else {
             deep_merge(&self.claude_layer.settings, &own)
+        };
+        self.merged = match &launch.flag_settings {
+            Some(flag) => deep_merge(
+                &files,
+                &from_value_lenient(&serde_json::Value::Object(flag.clone())),
+            ),
+            None => files,
         };
     }
 
@@ -229,6 +256,9 @@ impl SettingsManager {
     /// Code's files (with the opt-in) can set it.
     #[must_use]
     pub fn disable_all_hooks(&self) -> Option<&'static str> {
+        if super::launch::bare() {
+            return Some("--bare");
+        }
         let own = |settings: &Settings| {
             settings.extra.get("disableAllHooks") == Some(&serde_json::Value::Bool(true))
         };
@@ -1917,6 +1947,68 @@ mod tests {
         assert_eq!(manager.get_session_archive_policy().max_sessions, None);
         manager.global.session_archive_max_sessions = Some(serde_json::json!(50));
         assert_eq!(manager.get_session_archive_policy().max_sessions, Some(50));
+    }
+
+    /// The launch layer: `--setting-sources` drops the scopes it leaves
+    /// out, and the `--settings` document wins over every file.
+    #[test]
+    fn the_launch_layer_selects_scopes_and_overrides_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("work");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"defaultModel": "user-model", "fallbackModels": ["a/b"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join(".prime/agent/settings.json"),
+            r#"{"defaultProvider": "project-provider"}"#,
+        )
+        .unwrap();
+        let mut manager = SettingsManager::from_storage(Arc::new(
+            super::super::storage::FileSettingsStorage::new(cwd.clone(), agent_dir.clone()),
+        ));
+        let read = |manager: &SettingsManager| {
+            (
+                manager.get_default_model().map(str::to_string),
+                manager.get_default_provider().map(str::to_string),
+                manager.get_fallback_models(),
+            )
+        };
+        assert_eq!(
+            read(&manager),
+            (
+                Some("user-model".into()),
+                Some("project-provider".into()),
+                vec!["a/b".to_string()]
+            )
+        );
+        manager.rederive_merged_with(&super::super::launch::LaunchSettings {
+            setting_sources: Some(vec![super::super::launch::SettingSource::Project]),
+            flag_settings: Some(
+                serde_json::json!({"fallbackModels": ["x/y", "z/w"]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            ..Default::default()
+        });
+        assert_eq!(
+            read(&manager),
+            (
+                None,
+                Some("project-provider".into()),
+                vec!["x/y".to_string(), "z/w".to_string()]
+            )
+        );
+        manager.rederive_merged_with(&super::super::launch::LaunchSettings {
+            setting_sources: Some(Vec::new()),
+            ..Default::default()
+        });
+        assert_eq!(read(&manager), (None, None, Vec::<String>::new()));
     }
 
     #[test]

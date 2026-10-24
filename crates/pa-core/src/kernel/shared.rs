@@ -618,6 +618,9 @@ impl KernelEnvironment {
         !DAEMON_WORKER_IDENTITY_ENV_PREFIXES
             .iter()
             .any(|prefix| key.starts_with(prefix))
+            // The command line's launch layer is the CLI's: a `prime-agent`
+            // a cell starts must not inherit its permission flags.
+            && key != crate::settings::launch::LAUNCH_SETTINGS_ENV
             && self.inherits(key)
     }
 

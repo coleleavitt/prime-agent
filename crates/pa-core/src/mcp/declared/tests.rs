@@ -28,6 +28,7 @@ struct Fixture {
     claude: ClaudeCodeFiles,
     env: HashMap<String, String>,
     opt_in: bool,
+    launch: Option<crate::settings::launch::LaunchSettings>,
 }
 
 impl Fixture {
@@ -57,6 +58,7 @@ impl Fixture {
                 ("ANTHROPIC_API_KEY".to_string(), "sk-secret".to_string()),
             ]),
             opt_in: false,
+            launch: None,
         }
     }
 
@@ -88,6 +90,7 @@ impl Fixture {
             claude_code: self.opt_in.then(|| self.claude.clone()),
             env: &env,
             walk_stop: Some(&self.root),
+            launch: self.launch.as_ref(),
         })
     }
 
@@ -735,6 +738,7 @@ fn manager_over(fixture: &Fixture) -> Arc<Mutex<McpManager>> {
             claude_code: None,
             env: &lookup,
             walk_stop: Some(&root),
+            launch: None,
         })
     }));
     Arc::new(Mutex::new(manager))
@@ -900,4 +904,47 @@ fn the_opt_in_is_the_permission_rules_one_in_the_user_settings() {
     fixture.project_settings(&json!({ "permissions": { "claudeCodeSettings": true } }));
     fixture.trust();
     assert!(!opted_in());
+}
+
+/// `--mcp-config` servers are the `dynamic` scope, first in precedence;
+/// `--strict-mcp-config` makes them the only ones.
+#[test]
+fn command_line_servers_come_first_and_strict_keeps_only_them() {
+    let mut fixture = Fixture::new();
+    fs::write(
+        fixture.cwd.join(MCP_JSON_FILE),
+        r#"{"mcpServers": {"shared": {"command": "from-project"}, "proj": {"command": "p"}}}"#,
+    )
+    .unwrap();
+    let servers = serde_json::json!({
+        "shared": {"command": "from-flag", "args": ["${PA_TEST_TOKEN}"]},
+        "bad": {"url": "https://x"},
+    });
+    fixture.launch = Some(crate::settings::launch::LaunchSettings {
+        mcp_servers: servers.as_object().cloned(),
+        ..Default::default()
+    });
+    let declared = fixture.load();
+    let shared = declared.get("shared").unwrap();
+    assert_eq!(
+        (shared.scope, &shared.config),
+        (McpServerScope::Dynamic, &stdio("from-flag", &["tok"], &[]))
+    );
+    assert!(declared.get("proj").is_some());
+    assert!(
+        declared
+            .issues()
+            .iter()
+            .any(|issue| issue.server.as_deref() == Some("bad")),
+        "{:?}",
+        declared.issues()
+    );
+    fixture.launch.as_mut().unwrap().strict_mcp_config = true;
+    let strict = fixture.load();
+    let names: Vec<&str> = strict
+        .all()
+        .iter()
+        .map(|server| server.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["shared"]);
 }

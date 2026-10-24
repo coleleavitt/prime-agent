@@ -26,7 +26,7 @@ impl AppMode {
             Some(Mode::Acp) => AppMode::Acp,
             Some(Mode::Json) => AppMode::Json,
             _ => {
-                if parsed.print || !stdin_is_tty {
+                if parsed.print || parsed.cc.headless() || !stdin_is_tty {
                     AppMode::Print
                 } else {
                     AppMode::Interactive
@@ -125,6 +125,9 @@ pub struct SessionOptions {
     /// True when `--cwd` selected the working directory; resumed
     /// sessions then use that directory instead of the header cwd.
     pub cwd_from_flag: bool,
+    /// `--session-id` with `--no-session`: the in-memory session's id (a
+    /// persisted one is created up front and resumed by path).
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +156,9 @@ pub struct RunOptions {
     /// The managed worktree `--worktree` launched into (the interactive exit
     /// offers to remove it when clean).
     pub worktree: Option<pa_core::worktree::Worktree>,
+    /// Claude Code's flags: the headless formats and limits the print
+    /// runtime reads (the session-wide ones ride the launch layer).
+    pub cc: crate::args_cc::CcFlags,
 }
 
 /// A missing runtime subsystem, reported as a typed error instead of faked

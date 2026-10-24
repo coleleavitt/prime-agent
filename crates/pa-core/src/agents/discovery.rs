@@ -17,6 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use super::definition::{AgentDefinition, AgentSource, parse_agent_definition};
+use crate::settings::SettingsManager;
 
 /// The project-relative definition directories, in precedence order.
 pub const PROJECT_AGENT_DIRS: [&str; 2] = [".prime/agents", ".claude/agents"];
@@ -107,10 +108,27 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Discover every definition `search` reaches.
+/// Discover every definition `search` reaches, after the command line's
+/// `--agents` ones (the launch layer), which win a name collision.
 #[must_use]
 pub fn discover_agents(search: &AgentSearch) -> AgentCatalog {
+    let launch = crate::settings::launch::LaunchSettings::current();
+    discover_agents_with(search, launch.as_ref().and_then(|launch| launch.agents.as_ref()))
+}
+
+/// [`discover_agents`] with explicit `--agents` definitions.
+#[must_use]
+pub fn discover_agents_with(
+    search: &AgentSearch,
+    cli_agents: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> AgentCatalog {
     let mut catalog = AgentCatalog::default();
+    for (name, value) in cli_agents.into_iter().flatten() {
+        match super::definition::parse_agent_json(name, value) {
+            Ok(definition) => catalog.agents.push(definition),
+            Err(reason) => catalog.diagnostics.push(format!("--agents: {reason}")),
+        }
+    }
     let mut seen_dirs: Vec<PathBuf> = Vec::new();
     for (dir, source) in search.directories() {
         let canonical = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
@@ -149,6 +167,35 @@ pub fn discover_agents(search: &AgentSearch) -> AgentCatalog {
     }
     catalog.agents.sort_by(|a, b| a.name.cmp(&b.name));
     catalog
+}
+
+/// The agent a top-level session runs as: `--agent`, else the `agent`
+/// setting (Claude Code's), resolved against the definitions; `None` when
+/// neither names one or the name is unknown (logged).
+#[must_use]
+pub fn main_session_agent(
+    cwd: &Path,
+    agent_dir: &Path,
+    settings: &SettingsManager,
+) -> Option<AgentDefinition> {
+    let launch = crate::settings::launch::LaunchSettings::current().unwrap_or_default();
+    let name = launch.agent.clone().or_else(|| {
+        settings
+            .settings()
+            .extra
+            .get("agent")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    })?;
+    let catalog = discover_agents_with(
+        &AgentSearch::for_session(cwd, agent_dir),
+        launch.agents.as_ref(),
+    );
+    let found = catalog.get(&name).cloned();
+    if found.is_none() {
+        tracing::warn!(target: "pa_core::agents", agent = name, "the session's agent is not defined");
+    }
+    found
 }
 
 #[cfg(test)]
@@ -252,4 +299,32 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["here".to_string()]);
     }
+
+    /// `--agents` definitions win a name collision with the files.
+    #[test]
+    fn command_line_agents_shadow_files() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("w");
+        write(&cwd.join(".claude/agents/a.md"), "alpha", "from file");
+        let cli = serde_json::json!({
+            "alpha": {"description": "from flag", "prompt": "p"},
+            "broken": {"description": "no prompt"},
+        });
+        let catalog = discover_agents_with(
+            &AgentSearch {
+                cwd: cwd.clone(),
+                agent_dir: root.path().join("agent"),
+                home: None,
+            },
+            cli.as_object(),
+        );
+        let alpha = catalog.get("alpha").unwrap();
+        assert_eq!(
+            (alpha.description.as_str(), alpha.source),
+            ("from flag", AgentSource::CliArg)
+        );
+        assert!(catalog.diagnostics.iter().any(|line| line.starts_with("--agents: ")));
+        assert!(catalog.diagnostics.iter().any(|line| line.contains("shadowed")));
+    }
 }
+

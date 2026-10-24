@@ -69,6 +69,10 @@ pub const COMMAND: &str = "wasm";
 /// name order; only `*.wasm` files count.
 #[must_use]
 pub fn plugin_files(agent_dir: &Path, cwd: &Path) -> Vec<PathBuf> {
+    // `--bare` loads no plugins (Claude Code's minimal mode).
+    if pa_core::settings::launch::bare() {
+        return Vec::new();
+    }
     let mut dirs = vec![agent_dir.join(PLUGINS_DIR)];
     let project = cwd
         .join(pa_core::settings::CONFIG_DIR_NAME)
