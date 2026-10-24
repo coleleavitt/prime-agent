@@ -591,11 +591,14 @@ pub enum AgentEvent {
 }
 
 /// Result returned from `beforeToolCall`: `block: true` prevents execution and
-/// the loop emits an error tool result with `reason` instead.
+/// the loop emits an error tool result with `reason` instead; `args` (when not
+/// blocked) replaces the call's arguments, validated against the tool's
+/// schema like the model's own.
 #[derive(Debug, Clone, Default)]
 pub struct BeforeToolCallResult {
     pub block: bool,
     pub reason: Option<String>,
+    pub args: Option<serde_json::Value>,
 }
 
 /// Partial override returned from `afterToolCall` (field-by-field merge, no

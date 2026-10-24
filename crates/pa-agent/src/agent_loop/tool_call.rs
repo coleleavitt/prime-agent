@@ -113,12 +113,13 @@ async fn prepare_tool_call_inner(
         },
         None => tool_call.clone(),
     };
-    let validated_args = crate::validation::validate_tool_arguments(
+    let mut validated_args = crate::validation::validate_tool_arguments(
         tool_call.name.as_str(),
         tool.parameters(),
         &prepared_tool_call.arguments,
     )
     .map_err(anyhow::Error::msg)?;
+    let mut tool_call = tool_call.clone();
 
     if let Some(before_tool_call) = config.before_tool_call.as_ref() {
         let before_result = race_with_abort(
@@ -143,10 +144,20 @@ async fn prepare_tool_call_inner(
                 is_error: true,
             });
         }
+        // A hook's rewrite of the arguments is validated like the model's.
+        if let Some(args) = before_result.and_then(|r| r.args) {
+            validated_args = crate::validation::validate_tool_arguments(
+                tool_call.name.as_str(),
+                tool.parameters(),
+                &args,
+            )
+            .map_err(anyhow::Error::msg)?;
+            tool_call.arguments = args;
+        }
     }
 
     Ok(Preparation::Prepared(PreparedToolCall {
-        tool_call: tool_call.clone(),
+        tool_call,
         tool: Arc::clone(tool),
         args: validated_args,
     }))

@@ -176,6 +176,95 @@ impl SideModel {
     }
 }
 
+impl SideModel {
+    /// One model turn with `tools` offered: the assistant message as the
+    /// model answered it (its tool calls included), for a caller running its
+    /// own short tool loop (an agent hook). A failed call is an error; the
+    /// caller bounds the loop and its time.
+    ///
+    /// # Errors
+    ///
+    /// Returns the provider's failure, a missing credential, or a message
+    /// that does not convert between the wire shapes.
+    pub async fn respond(
+        &self,
+        request: SideRequest,
+        tools: Vec<pa_agent::stream::ToolDefinition>,
+    ) -> anyhow::Result<pa_agent::types::AssistantMessage> {
+        let message = match self {
+            SideModel::Session { stream_fn, model } => {
+                let context = LlmContext {
+                    system_prompt: Some(request.system_prompt),
+                    messages: request.messages,
+                    tools,
+                };
+                let mut stream =
+                    stream_fn(model.clone(), context, StreamRequestOptions::default()).await?;
+                while stream.next_event().await.is_some() {}
+                stream.result().await?
+            }
+            SideModel::Selector {
+                selector,
+                agent_dir,
+                cwd,
+            } => {
+                let (model, api_key, headers) = {
+                    let selector = selector.clone();
+                    let agent_dir = agent_dir.clone();
+                    let cwd = cwd.clone();
+                    tokio::task::spawn_blocking(move || resolve(&selector, &agent_dir, cwd))
+                        .await??
+                };
+                let messages = request
+                    .messages
+                    .iter()
+                    .map(|message| {
+                        super::provider_adapter::json_round_trip::<_, pa_types::ai::Message>(
+                            message,
+                        )
+                        .ok_or_else(|| anyhow::anyhow!("a side message failed the wire conversion"))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let tools = tools
+                    .into_iter()
+                    .map(|tool| pa_types::ai::Tool {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters,
+                    })
+                    .collect::<Vec<_>>();
+                let context = pa_types::ai::Context {
+                    system_prompt: Some(request.system_prompt),
+                    messages,
+                    tools: (!tools.is_empty()).then_some(tools),
+                };
+                let options =
+                    pa_ai::types::SimpleStreamOptions::from_base(pa_ai::types::StreamOptions {
+                        api_key,
+                        headers: headers.map(|headers| headers.into_iter().collect()),
+                        ..Default::default()
+                    });
+                let reply = pa_ai::complete_simple(&model, &context, Some(options))
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                super::provider_adapter::json_round_trip::<_, pa_agent::types::AssistantMessage>(
+                    &reply,
+                )
+                .ok_or_else(|| anyhow::anyhow!("a side reply failed the wire conversion"))?
+            }
+        };
+        if message.stop_reason == StopReason::Error {
+            anyhow::bail!(
+                "{}",
+                message
+                    .error_message
+                    .unwrap_or_else(|| "the model call failed".to_string())
+            );
+        }
+        Ok(message)
+    }
+}
+
 type Resolved = (
     pa_types::ai::Model,
     Option<String>,

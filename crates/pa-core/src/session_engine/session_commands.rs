@@ -536,6 +536,12 @@ async fn execute_add_dir(
             Some(serde_json::json!({ "directories": directories })),
         )
         .map_err(|error| error.to_string())?;
+    crate::features::observe_directory_added(
+        crate::features::installed(),
+        &engine.feature_context,
+        &added,
+        crate::features::DirectoryAddedSource::SlashCommand,
+    );
     // The model learns of it from the session context's environment update
     // on the next turn (`prompts::session_context`), like a `/cwd` move.
     execution.push_message(slash_command_result(

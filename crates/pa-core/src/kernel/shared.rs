@@ -426,6 +426,24 @@ pub trait HostRequestPolicy: Send + Sync {
         data: &Value,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>;
 
+    /// [`Self::review`], optionally rewriting the request: `Err(reason)`
+    /// refuses it, `Ok(Some(data))` dispatches `data` instead (its `type`
+    /// is kept), `Ok(None)` dispatches it as sent. The default rewrites
+    /// nothing.
+    fn review_updating(
+        &self,
+        request_type: &str,
+        data: &Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Value>, String>> + Send>> {
+        let review = self.review(request_type, data);
+        Box::pin(async move {
+            match review.await {
+                Some(reason) => Err(reason),
+                None => Ok(None),
+            }
+        })
+    }
+
     /// Observe a dispatched request's outcome: its handler's answer, or the
     /// error the kernel will raise.
     fn after(

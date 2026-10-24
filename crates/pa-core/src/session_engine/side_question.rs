@@ -191,6 +191,7 @@ pub async fn run_side_question(
             Ok(Some(pa_agent::types::BeforeToolCallResult {
                 block: true,
                 reason: Some(SIDE_QUESTION_TOOL_BLOCKED.to_string()),
+                args: None,
             }))
         })
     });

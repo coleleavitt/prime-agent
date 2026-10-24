@@ -20,7 +20,9 @@ use pa_agent::types::{
 use serde_json::Value;
 
 use super::confirm::{CONFIRMATION_TIMEOUT, ConfirmationAnswer, confirm};
+use super::permission_request::{ConfirmationSubject, with_confirmation_subject};
 use super::{
+    FeatureReview,
     FeatureVerdict,
     HostRequestObservation,
     PromptDecision,
@@ -99,6 +101,21 @@ fn describe_host_request(request: &HostRequestObservation) -> String {
     )
 }
 
+/// The reviews' verdicts, and the first rewrite in installation order.
+fn split_reviews(reviews: Vec<FeatureReview>) -> (Vec<FeatureVerdict>, Option<Value>) {
+    let mut updated = None;
+    let verdicts = reviews
+        .into_iter()
+        .map(|review| {
+            if updated.is_none() {
+                updated = review.updated_input;
+            }
+            review.verdict
+        })
+        .collect();
+    (verdicts, updated)
+}
+
 /// Settle the features' verdicts on one action, given in installation
 /// order: the first `Block` refuses it; otherwise any `Ask` puts `action`
 /// to the user, and only their allow lets it run. `None` lets it run;
@@ -128,6 +145,7 @@ async fn settle(session_id: &str, action: &str, verdicts: Vec<FeatureVerdict>) -
             "{reason} (the user did not answer within {}s)",
             after.as_secs()
         )),
+        ConfirmationAnswer::Refused(refusal) => Some(refusal),
     }
 }
 
@@ -158,26 +176,39 @@ pub(crate) fn tool_call_hooks(
                 .collect();
             let reviews: Vec<_> = features
                 .iter()
-                .map(|feature| feature.review_tool_call(&context, &observation))
+                .map(|feature| feature.revise_tool_call(&context, &observation))
                 .collect();
             let context = Arc::clone(&context);
-            Box::pin(async move {
-                let (_, verdicts) = futures::future::join(
+            let subject = ConfirmationSubject::ToolCall {
+                tool_name: observation.tool_name.clone(),
+                args: observation.args.clone(),
+            };
+            Box::pin(with_confirmation_subject(subject, async move {
+                let (_, reviews) = futures::future::join(
                     futures::future::join_all(observers),
                     futures::future::join_all(reviews),
                 )
                 .await;
+                let (verdicts, updated_input) = split_reviews(reviews);
                 let action = describe_tool_call(&observation);
                 // An aborted run stops waiting for the user.
                 let refusal = tokio::select! {
                     refusal = settle(&context.session_id, &action, verdicts) => refusal,
                     () = signal.aborted() => Some("the run was aborted".to_string()),
                 };
-                Ok(refusal.map(|reason| BeforeToolCallResult {
-                    block: true,
-                    reason: Some(reason),
-                }))
-            })
+                Ok(match refusal {
+                    Some(reason) => Some(BeforeToolCallResult {
+                        block: true,
+                        reason: Some(reason),
+                        args: None,
+                    }),
+                    None => updated_input.map(|args| BeforeToolCallResult {
+                        block: false,
+                        reason: None,
+                        args: Some(args),
+                    }),
+                })
+            }))
         })
     };
     let after: AfterToolCallFn = {
@@ -264,14 +295,23 @@ type PolicyFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 impl HostRequestPolicy for FeaturePolicy {
     fn review(&self, request_type: &str, data: &Value) -> PolicyFuture<Option<String>> {
+        let review = self.review_updating(request_type, data);
+        Box::pin(async move { review.await.err() })
+    }
+
+    fn review_updating(
+        &self,
+        request_type: &str,
+        data: &Value,
+    ) -> PolicyFuture<Result<Option<Value>, String>> {
         if !is_reviewed_host_request(request_type) {
-            return Box::pin(async { None });
+            return Box::pin(async { Ok(None) });
         }
         if let Some(command) = bash_run_command(request_type, data) {
             let mut resends = self.resends.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(index) = resends.iter().position(|allowed| *allowed == command) {
                 resends.remove(index);
-                return Box::pin(async { None });
+                return Box::pin(async { Ok(None) });
             }
         }
         let observation = HostRequestObservation {
@@ -281,14 +321,21 @@ impl HostRequestPolicy for FeaturePolicy {
         let reviews: Vec<_> = self
             .features
             .iter()
-            .map(|feature| feature.review_host_request(&self.context, &observation))
+            .map(|feature| feature.revise_host_request(&self.context, &observation))
             .collect();
         let context = Arc::clone(&self.context);
-        Box::pin(async move {
-            let verdicts = futures::future::join_all(reviews).await;
+        let subject = ConfirmationSubject::HostRequest {
+            request_type: observation.request_type.clone(),
+            data: observation.data.clone(),
+        };
+        Box::pin(with_confirmation_subject(subject, async move {
+            let (verdicts, updated) = split_reviews(futures::future::join_all(reviews).await);
             let action = describe_host_request(&observation);
-            settle(&context.session_id, &action, verdicts).await
-        })
+            match settle(&context.session_id, &action, verdicts).await {
+                Some(reason) => Err(reason),
+                None => Ok(updated),
+            }
+        }))
     }
 
     fn after(

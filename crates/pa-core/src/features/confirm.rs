@@ -54,7 +54,7 @@ pub struct ConfirmationRequest {
 }
 
 /// How a confirmation ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmationAnswer {
     Allowed,
     /// Allowed, and the user took the question's offer to remember it
@@ -67,6 +67,10 @@ pub enum ConfirmationAnswer {
     Unavailable,
     /// Nobody answered within the timeout.
     TimedOut(Duration),
+    /// A feature answered for the user and refused it (a permission
+    /// request reviewer, see [`super::register_permission_reviewer`]), with
+    /// the reason the model reads.
+    Refused(String),
 }
 
 /// The user's answer to one pending item.
@@ -289,6 +293,13 @@ pub async fn confirm_offering(
     remember: Option<&str>,
     timeout: Duration,
 ) -> ConfirmationAnswer {
+    // A tool call's or host request's question may be answered by the
+    // session's permission reviewer before the user is asked.
+    match super::permission_request::review(session_id, action, reason, remember).await {
+        Some(super::PermissionReview::Allow) => return ConfirmationAnswer::Allowed,
+        Some(super::PermissionReview::Deny(reason)) => return ConfirmationAnswer::Refused(reason),
+        None => {}
+    }
     let request = PendingRequest::Confirmation(ConfirmationRequest {
         id: next_pending_id("confirm"),
         action: action.to_string(),
