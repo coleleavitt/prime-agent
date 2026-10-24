@@ -1078,6 +1078,27 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// `/recap` and the away summary (capability `side_ux`): a one-line
+    /// recap of the session (Claude Code's `away_summary` prompt) over the
+    /// session's own conversation; answers `{ text }`. Never enters the
+    /// session history.
+    SessionRecap {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// `/rename` without a name (capability `side_ux`): a generated
+    /// kebab-case name for the conversation; answers `{ name }` (the client
+    /// applies it with `set_session_name`).
+    GenerateSessionName {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     /// `/rewind`'s picker (capability `rewind`): the user prompts on the
     /// active branch, oldest first, each with what restoring the code to
     /// before it would change: `{ codeRestore, checkpoints: [{ entryId, text,

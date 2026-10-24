@@ -46,6 +46,8 @@ pub use wire::{
     SessionInputProbe,
     SideQuestionOutcome,
     SideQuestionRequest,
+    SideUxOutcome,
+    SideUxRequest,
     empty_resource_snapshot,
     side_question_event_value,
 };
@@ -173,6 +175,15 @@ pub trait SessionEngine: Send + Sync {
         signal: &AbortSignal,
         sink: &SideQuestionSink,
     ) -> SideQuestionOutcome;
+
+    /// Run one side-model UX call (a generated session title, a `/rename`
+    /// name, the away summary, a prompt suggestion): blocking, never
+    /// touching the session history. Engines without a model answer
+    /// [`SideUxOutcome::Unsupported`].
+    fn run_side_ux(&self, request: SideUxRequest) -> SideUxOutcome {
+        let _ = request;
+        SideUxOutcome::Unsupported
+    }
 
     /// Run one compaction (`compact` command): summarize the pre-cut
     /// history. The engine owns the model call; `signal` aborts the run.

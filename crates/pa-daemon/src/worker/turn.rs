@@ -373,6 +373,14 @@ impl TurnRunner {
         };
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
+        // Claude Code's generated session title: the session's first real
+        // prompt names it on a side call, beside the turn.
+        self.maybe_generate_title(
+            &engine,
+            &first.message,
+            first.custom_message.as_ref(),
+            first.agent_message.as_deref(),
+        );
         // The pane reporter's run boundary (TS `agent_start`): working.
         self.herdr.lock_or_recover().run_started();
 
@@ -1208,6 +1216,11 @@ impl TurnRunner {
         // The turn is fully unwound: the waiting prompt now resolves, so
         // a client's next request always observes the idle session.
         let settled_outcome = turn_outcome.lock_or_recover().take();
+        // Claude Code's prompt suggestion: a completed run with nothing
+        // queued behind it predicts the user's next prompt.
+        if !more_queued && matches!(settled_outcome, Some(TurnSettle::Completed)) {
+            self.maybe_suggest_prompt(&settle_engine);
+        }
         if let Some(result) = settled_outcome {
             for done in items_done.into_iter().chain(folded_done) {
                 let _ = done.send(result.clone());

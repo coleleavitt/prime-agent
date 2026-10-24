@@ -78,6 +78,7 @@ mod info_sidecar;
 
 pub(crate) use info::read_session_info_from;
 pub use info::{
+    AI_TITLE_CUSTOM_TYPE,
     SESSION_LIST_SEARCH_TEXT_MAX_CHARS,
     SessionInfo,
     find_most_recent_session_for_cwd,

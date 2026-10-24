@@ -128,6 +128,9 @@ pub struct DaemonSavedSessionInfo {
     /// The git branch the session last worked on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
+    /// The generated session title (Claude Code's `aiTitle`); `name` wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

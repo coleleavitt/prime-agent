@@ -631,6 +631,8 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         context_percent: store.and_then(|store| {
             crate::session_stats::store_context_percent(store, inputs.model_context_window)
         }),
+        ai_title: store.and_then(|s| s.ai_title().map(str::to_string)),
+        blocked_on: crate::side_ux::blocked_on(&core.feature_status),
     }
 }
 

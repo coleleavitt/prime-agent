@@ -20,7 +20,7 @@ use super::info::{SessionScanState, session_info_cache};
 /// [`SessionScanAccumulator`](super::info::SessionScanAccumulator) or
 /// [`UsageScan`](crate::session_usage::UsageScan) - the persisted fold's
 /// fields or semantics.
-const INFO_SIDECAR_VERSION: u32 = 3;
+const INFO_SIDECAR_VERSION: u32 = 4;
 
 /// The on-disk envelope: the version gate plus the scan state.
 #[derive(Serialize, Deserialize)]

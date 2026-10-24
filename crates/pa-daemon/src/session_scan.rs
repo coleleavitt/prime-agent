@@ -30,7 +30,7 @@ use crate::session_usage::SessionUsageSummary;
 /// file's content (the scan fold and the row build). A catalog cache serves
 /// only rows recorded under this exact version: bump it on any change to
 /// what a file lists as, or cached rows keep the old rules.
-const SESSION_ROW_VERSION: u32 = 2;
+const SESSION_ROW_VERSION: u32 = 3;
 
 /// The bounded header read's verdict for one roster file.
 enum HeaderGate {
@@ -193,6 +193,7 @@ fn row_from_info(info: &SessionInfo) -> CatalogSessionRow {
         model: info.model.clone(),
         thinking_level: info.thinking_level.clone(),
         git_branch: info.git_branch.clone(),
+        ai_title: info.ai_title.clone(),
         parent_session_path: info.parent_session_path.clone(),
         rlm_depth: info.rlm_depth,
         created: info.created.clone(),
@@ -217,6 +218,7 @@ fn info_from_row(path: &Path, row: CatalogSessionRow) -> SessionInfo {
         model,
         thinking_level,
         git_branch,
+        ai_title,
         parent_session_path,
         rlm_depth,
         created,
@@ -235,6 +237,7 @@ fn info_from_row(path: &Path, row: CatalogSessionRow) -> SessionInfo {
         model,
         thinking_level,
         git_branch,
+        ai_title,
         parent_session_path,
         rlm_depth,
         created,

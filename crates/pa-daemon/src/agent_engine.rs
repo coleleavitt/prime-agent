@@ -102,6 +102,7 @@ mod vision_read;
 
 mod reload;
 mod session_engine_impl;
+mod side_ux;
 
 mod turn;
 

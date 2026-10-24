@@ -852,6 +852,9 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
     if let Some(branch) = &info.git_branch {
         object.insert("gitBranch".to_string(), json!(branch));
     }
+    if let Some(title) = &info.ai_title {
+        object.insert("aiTitle".to_string(), json!(title));
+    }
     if let Some((provider, model_id)) = &info.model {
         object.insert(
             "model".to_string(),
