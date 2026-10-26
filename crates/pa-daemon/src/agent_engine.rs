@@ -98,6 +98,7 @@ mod image_delegation;
 
 // `vision.read` (#2664): `attach_image` on a text-only session model reads its
 // images through the same image-model child.
+mod persistent_shells_host;
 mod vision_read;
 
 mod reload;

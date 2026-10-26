@@ -287,6 +287,15 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     "bash.killAll",
     "bash.inventory",
     "bash.activity",
+    // The kernel's persistent-shell client: `bash(persistent=True)` and
+    // `rlm.persistent_shells()` spawn/list/tail/kill detached shells that
+    // outlive the session; the model-facing surface is `bash()` +
+    // `persistent_shells()`, documented in the prompt, not these requests.
+    "persistent_shells.spawn",
+    "persistent_shells.list",
+    "persistent_shells.tail",
+    "persistent_shells.output",
+    "persistent_shells.kill",
     // The bundled computer-use skill's client: the model calls the
     // `computer_use` module (documented as a bundled Python skill), whose
     // functions and `App` methods ride these five requests.

@@ -8,7 +8,8 @@ Messages wrapped in `<system-reminder>` tags are harness context too: the sessio
 
 ## Core tools
 
-- `bash(command: str, *, timeout: float | None = None) -> BashHandle`: synchronous, returns immediately and runs the command in the background; `timeout` (seconds, default none) kills the command if it runs longer; when a command is finished outside the calling `python_repl` block, a notification with the end of its output is sent to the agent (between your tool calls if you are still working); each `bash()` call is its own process, so shell state does not persist between calls
+- `bash(command: str, *, timeout: float | None = None, persistent: bool = False) -> BashHandle`: synchronous, returns immediately and runs the command in the background; `timeout` (seconds, default none) kills the command if it runs longer; when a command is finished outside the calling `python_repl` block, a notification with the end of its output is sent to the agent (between your tool calls if you are still working); each `bash()` call is its own process, so shell state does not persist between calls
+  - `persistent=True` (POSIX, saved sessions only): the shell survives kernel, worker, and daemon restarts and its session's delete or archive (a deleted session's shells keep running as orphans); it ends only on its own exit or an explicit kill; use it only when really required (a server or long job that must outlive a restart), never for ordinary commands; after a restart, get the handles back with `from rlm import persistent_shells; persistent_shells()` (a shell that finished while no kernel ran is listed once, finished); completion of a re-attached shell is polled, so its result and notification lag by about a second
   - `BashHandle`:
     - `.pid: int`
     - `.running: bool`

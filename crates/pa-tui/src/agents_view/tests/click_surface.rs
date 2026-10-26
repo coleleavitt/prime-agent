@@ -346,7 +346,6 @@ fn an_orphans_bash_list_consumes_hidden_row_clicks_and_scrolls_its_output() {
 }
 
 #[test]
-#[ignore = "persistent shells deferred in the 2026-10 upstream sync; renders dormant persistent-shell UI"]
 fn unverified_persistent_group_stays_visible_without_an_unsafe_cancel() {
     let (mut mode, _) = mode_with_row("holder", "mock-1");
     mode.saved_catalog_loaded = true;
@@ -370,7 +369,6 @@ fn unverified_persistent_group_stays_visible_without_an_unsafe_cancel() {
 }
 
 #[test]
-#[ignore = "persistent shells deferred in the 2026-10 upstream sync; renders dormant persistent-shell UI"]
 fn shell_rows_render_in_the_session_table_columns() {
     let mut mode = fresh_mode(vec![roster_entry("i", "idle", &parent_summary("i"))]);
     mode.rebuild_rows();

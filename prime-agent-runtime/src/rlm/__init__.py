@@ -14,7 +14,14 @@ from typing import Any, Literal
 # First: a unittest run isolates its environment before anything resolves state.
 from . import _state_guard as _state_guard
 from . import lsp, toolforge, trace
-from .bash import BashHandle, BashResult, active_bash_commands, bash
+from .bash import (
+    BashHandle,
+    BashResult,
+    PersistentShellHandle,
+    active_bash_commands,
+    bash,
+    persistent_shells,
+)
 from .factory import (
     FACTORY_HELP,
     graph_factory,
@@ -1132,6 +1139,7 @@ class _RLMNamespace:
     lsp = lsp
     toolforge = toolforge
     get_harness_state = staticmethod(get_harness_state)
+    persistent_shells = staticmethod(persistent_shells)
 
     async def spawn(
         self,
@@ -1310,6 +1318,7 @@ __all__ = [
     "McpIntegration",
     "McpToolError",
     "NotEnabled",
+    "PersistentShellHandle",
     "RLMAgent",
     "RLMCreateSessionHandle",
     "RLMInterruptResult",
@@ -1330,6 +1339,7 @@ __all__ = [
     "active_bash_commands",
     "ask_user",
     "bash",
+    "persistent_shells",
     "delete_subagent",
     "emit",
     "enter_plan_mode",

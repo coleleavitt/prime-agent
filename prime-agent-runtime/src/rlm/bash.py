@@ -1554,6 +1554,7 @@ def bash(
     command: str,
     *,
     timeout: float | None = None,
+    persistent: bool = False,
     allow_destructive_git: bool = False,
     allow_destructive_chmod: bool = False,
     allow_force_push: bool = False,
@@ -1561,7 +1562,7 @@ def bash(
     allow_pipe_to_shell: bool = False,
     allow_sudo: bool = False,
     allow_self_match: bool = False,
-) -> BashHandle:
+) -> BashHandle | PersistentShellHandle:
     """Start a shell command immediately; await the handle for the result.
 
     `await bash(cmd)` is a one-shot: cancelling the await (e.g. an interrupt)
@@ -1581,6 +1582,14 @@ def bash(
     SIGKILL after a grace period, and the result has `timed_out=True` and an
     output ending "Command timed out after ...". Claude Code's Bash tool
     takes the same bound in milliseconds.
+
+    `persistent=True` (POSIX, saved sessions only) detaches the shell so it
+    survives this kernel, the worker and the daemon, and its session's delete
+    or archive; it ends only on its own exit or an explicit `.kill()`. Use it
+    only for a server or long job that must outlive a restart, never for
+    ordinary commands, and recover the handles in a later session with
+    `from rlm import persistent_shells; persistent_shells()`. `timeout` does
+    not apply to a persistent shell.
 
     Destructive git discard commands (`git checkout -- .`, `git restore .`,
     `git reset --hard`, `git clean` that is not a dry run) are refused while
@@ -1694,6 +1703,31 @@ def bash(
         "sudo": allow_sudo,
         "self_match": allow_self_match,
     }
+    if persistent:
+        # A persistent shell runs detached host-side and outlives the kernel,
+        # worker and daemon; the same guards still apply (a refusal raises
+        # here, before anything spawns). `timeout` does not apply. Recover the
+        # handles in a later session with `persistent_shells()`.
+        _run_kernel_bash_guards(
+            command,
+            script,
+            command_prefix,
+            allow_destructive_git=allow_destructive_git,
+            allow_destructive_chmod=allow_destructive_chmod,
+            allow_force_push=allow_force_push,
+            allow_secret_echo=allow_secret_echo,
+            allow_pipe_to_shell=allow_pipe_to_shell,
+            allow_sudo=allow_sudo,
+            allow_self_match=allow_self_match,
+        )
+        shell = str(_raise_for(_request(_kernel_request("bash.shell", "", "", None)))["shell"])
+        # persistent_shells.* are generic host requests: _request returns the
+        # handler's result directly (and raises on a host error), so there is
+        # no bash-style `status` envelope for _raise_for to read.
+        spawned = _request(
+            _kernel_request("persistent_shells.spawn", command, script, command_prefix, shell=shell)
+        )
+        return PersistentShellHandle(id=str(spawned["id"]), pid=int(spawned["pid"]), command=command)
     # The guards and the spawn are one host request on that one script; a
     # refusal raises here, before any handle (or process) exists.
     launch = _launch(command, script, command_prefix, [key for key, allow in allowed.items() if allow])
@@ -1800,6 +1834,93 @@ def active_bash_commands(limit: int = _ACTIVE_INVENTORY_LIMIT) -> list[dict[str,
             continue
         records.append({"bash.command": handle._span.attrs["bash.command"], **row.get("fields", {})})
     return records
+
+
+class PersistentShellHandle:
+    """A reattachable handle to a ``bash(..., persistent=True)`` shell.
+
+    The shell runs detached host-side under ``<agent dir>/persistent-shells/``
+    and outlives this kernel (and the worker and daemon), so the handle holds
+    no live job: every property resolves the host's record by ``id`` through
+    the ``persistent_shells.*`` requests. It is never registered for the
+    kernel-exit kill -- a persistent shell is meant to survive; end it with
+    :meth:`kill` or let it exit. After a restart, recover the handles with
+    :func:`persistent_shells`.
+    """
+
+    def __init__(self, *, id: str, pid: int, command: str) -> None:
+        self.id = id
+        self.pid = pid
+        self.command = command
+
+    def __repr__(self) -> str:
+        return f"PersistentShellHandle(pid={self.pid}, command={self.command!r})"
+
+    def _row(self) -> dict[str, Any] | None:
+        reply = _request(_kernel_request("persistent_shells.list", "", "", None))
+        return next((row for row in reply.get("shells", ()) if row.get("id") == self.id), None)
+
+    @property
+    def running(self) -> bool:
+        """Whether the shell's process group is still live (host-verified)."""
+        row = self._row()
+        return row is not None and row.get("status") == "running"
+
+    def tail(self, n: int = 50) -> str:
+        """The newest ``n`` lines of the shell's output."""
+        reply = _request(
+            _kernel_request("persistent_shells.tail", "", "", None, id=self.id, lines=int(n))
+        )
+        return reply.get("output") or ""
+
+    def output(self) -> str:
+        """The shell's output so far (the last 64 KiB the host retains), raw."""
+        reply = _request(_kernel_request("persistent_shells.output", "", "", None, id=self.id))
+        return reply.get("output") or ""
+
+    def poll(self) -> "BashResult | None":
+        """The result once the shell has finished, else None while it runs."""
+        row = self._row()
+        if row is None or row.get("status") == "running":
+            return None
+        exit_code = row.get("exitCode")
+        duration = row.get("durationMs")
+        return BashResult(
+            exit_code=int(exit_code) if exit_code is not None else -1,
+            output=self.output(),
+            duration=(float(duration) / 1000.0) if duration is not None else 0.0,
+        )
+
+    def kill(self, sig: int = signal.SIGTERM, grace: float = 5.0) -> None:
+        """End the shell's whole process group (the host's TERM-then-KILL)."""
+        _request(_kernel_request("persistent_shells.kill", "", "", None, id=self.id))
+
+    def __await__(self) -> "Generator[Any, None, BashResult]":
+        async def _wait() -> BashResult:
+            while True:
+                result = self.poll()
+                if result is not None:
+                    return result
+                await asyncio.sleep(0.5)
+
+        return _wait().__await__()
+
+
+def persistent_shells() -> list[PersistentShellHandle]:
+    """Reattach to this session's persistent shells (``bash(..., persistent=True)``).
+
+    Returns a handle per record the session left in the host's persistent-shell
+    home -- running or finished, newest-started last -- so the shells are
+    reachable from a fresh kernel after a kernel, worker or daemon restart.
+    Each handle resolves its state (``running``, ``output()``, ``tail()``,
+    ``poll()``, ``kill()``) through the host by id.
+    """
+    reply = _request(_kernel_request("persistent_shells.list", "", "", None))
+    return [
+        PersistentShellHandle(id=str(row["id"]), pid=int(row["pid"]), command=str(row.get("command", "")))
+        for row in reply.get("shells", ())
+        if "id" in row and "pid" in row
+    ]
 
 
 def _truncate(value: str, limit: int = 200) -> str:

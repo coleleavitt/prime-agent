@@ -179,7 +179,6 @@ fn saved_row(client: &mut Client, id: &str, sessions_dir: &Path, session_id: &st
 }
 
 #[test]
-#[ignore = "persistent shells deferred in the 2026-10 upstream sync; exercises the dropped Python PersistentBashTest"]
 fn persistent_python_unit_regressions() {
     let Some(python) = kernel_python() else {
         assert!(
@@ -283,7 +282,6 @@ fn saved_row_lists_its_live_shells_and_the_machine_wide_list_every_shell() {
 }
 
 #[test]
-#[ignore = "persistent shells deferred in the 2026-10 upstream sync; needs the Python bash(persistent=True) path"]
 fn persistent_shell_survives_daemon_shutdown_is_reattached_and_outlives_session_delete() {
     let Some(kernel_python) = kernel_python() else {
         return;

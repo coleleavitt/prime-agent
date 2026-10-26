@@ -864,10 +864,24 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
                 cwd,
                 branch,
                 pr,
-                input: crate::chrome::format_token_count(row.tokens.input),
-                output: crate::chrome::format_token_count(row.tokens.output),
-                context,
-                // A persistent-shell row bills no cost; it renders "-" like upstream's layout.
+                // A persistent-shell row is not an agent: its token and context
+                // columns render blank (dropped from the line) and its cost is
+                // "-", like upstream's shell layout.
+                input: if row.kind == RowKind::PersistentShell {
+                    String::new()
+                } else {
+                    crate::chrome::format_token_count(row.tokens.input)
+                },
+                output: if row.kind == RowKind::PersistentShell {
+                    String::new()
+                } else {
+                    crate::chrome::format_token_count(row.tokens.output)
+                },
+                context: if row.kind == RowKind::PersistentShell {
+                    String::new()
+                } else {
+                    context
+                },
                 cost: if row.kind == RowKind::PersistentShell {
                     "-".to_string()
                 } else {

@@ -1007,6 +1007,7 @@ impl AgentSessionEngine {
         self.register_messaging_stats_host_handlers(&mut handlers);
         self.register_path_watch_host_handlers(&mut handlers);
         self.register_vision_read_host_handler(&mut handlers);
+        self.register_persistent_shells_host_handlers(&mut handlers);
         Some(handlers)
     }
 

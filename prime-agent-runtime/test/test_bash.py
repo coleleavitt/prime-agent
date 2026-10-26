@@ -678,5 +678,119 @@ class BashHostSkewTest(unittest.TestCase):
         self.assertIn("Reinstall prime-agent", message)
 
 
+class PersistentBashTest(unittest.TestCase):
+    """The Python client for `bash(persistent=True)` / `persistent_shells()`:
+    the host requests it sends and the reattachable handle it returns, against
+    a faked host. The real host integration is the daemon e2e
+    (`persistent_shell_survives_daemon_shutdown_...`)."""
+
+    def _fake_host(self, shells=None):
+        sent: list[dict] = []
+        shells = [] if shells is None else shells
+
+        def reply_for(data, *_args, **_kwargs):
+            sent.append(data)
+            kind = data["type"]
+            if kind == "bash.check":
+                return {"status": "ok"}
+            if kind == "bash.shell":
+                return {"status": "ok", "shell": "/bin/sh"}
+            # persistent_shells.* are generic host requests: _request returns
+            # the handler's result directly, with no bash-style status envelope.
+            if kind == "persistent_shells.spawn":
+                return {
+                    "id": "ps-1",
+                    "pid": 4242,
+                    "outputPath": "/agent/persistent-shells/ps-1.out",
+                    "startedAt": "2026-10-26T00:00:00+00:00",
+                }
+            if kind == "persistent_shells.list":
+                return {"shells": shells}
+            if kind == "persistent_shells.tail":
+                return {"output": "hi"}
+            if kind == "persistent_shells.output":
+                return {"output": "hi"}
+            if kind == "persistent_shells.kill":
+                return {"killed": True}
+            raise AssertionError(f"unexpected request {kind}")
+
+        return sent, reply_for
+
+    def test_persistent_spawn_guards_then_returns_a_detached_handle(self):
+        sent, reply_for = self._fake_host()
+        with mock.patch.object(bash_module, "_request", reply_for):
+            handle = bash("echo hi; sleep 600", persistent=True)
+        self.assertIsInstance(handle, bash_module.PersistentShellHandle)
+        self.assertEqual((handle.id, handle.pid), ("ps-1", 4242))
+        kinds = [data["type"] for data in sent]
+        # The same guards run (a refusal would raise), and a dedicated
+        # persistent request spawns it -- never the ephemeral `bash.run`.
+        self.assertIn("bash.check", kinds)
+        self.assertIn("persistent_shells.spawn", kinds)
+        self.assertNotIn("bash.run", kinds)
+        # A persistent handle is never registered for the kernel-exit kill.
+        self.assertNotIn(handle, bash_module._live_handles)
+
+    def test_persistent_handle_resolves_state_through_the_host(self):
+        shells = [
+            {
+                "id": "ps-1",
+                "pid": 4242,
+                "command": "echo hi; sleep 600",
+                "status": "running",
+                "sessionId": "s1",
+                "persistent": True,
+            }
+        ]
+        sent, reply_for = self._fake_host(shells)
+        with mock.patch.object(bash_module, "_request", reply_for):
+            handle = bash_module.PersistentShellHandle(id="ps-1", pid=4242, command="echo hi")
+            self.assertTrue(handle.running)
+            self.assertEqual(handle.output(), "hi")
+            self.assertEqual(handle.tail(5), "hi")
+            handle.kill()
+        kinds = [data["type"] for data in sent]
+        self.assertIn("persistent_shells.list", kinds)
+        self.assertIn("persistent_shells.tail", kinds)
+        self.assertIn("persistent_shells.kill", kinds)
+
+    def test_persistent_shells_reattaches_the_sessions_records(self):
+        shells = [
+            {"id": "ps-1", "pid": 11, "command": "server", "status": "running", "sessionId": "s1"},
+            {
+                "id": "ps-2",
+                "pid": 22,
+                "command": "job",
+                "status": "finished",
+                "sessionId": "s1",
+                "exitCode": 0,
+            },
+        ]
+        _sent, reply_for = self._fake_host(shells)
+        with mock.patch.object(bash_module, "_request", reply_for):
+            handles = bash_module.persistent_shells()
+        self.assertEqual([(h.id, h.pid) for h in handles], [("ps-1", 11), ("ps-2", 22)])
+        self.assertIsInstance(handles[0], bash_module.PersistentShellHandle)
+
+    def test_persistent_poll_reports_the_finished_result(self):
+        shells = [
+            {
+                "id": "ps-1",
+                "pid": 11,
+                "command": "job",
+                "status": "finished",
+                "sessionId": "s1",
+                "exitCode": 7,
+                "durationMs": 1500,
+            }
+        ]
+        _sent, reply_for = self._fake_host(shells)
+        with mock.patch.object(bash_module, "_request", reply_for):
+            handle = bash_module.PersistentShellHandle(id="ps-1", pid=11, command="job")
+            self.assertFalse(handle.running)
+            result = handle.poll()
+        self.assertEqual((result.exit_code, result.timed_out), (7, False))
+
+
 if __name__ == "__main__":
     unittest.main()

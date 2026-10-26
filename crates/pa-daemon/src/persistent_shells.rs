@@ -161,6 +161,19 @@ pub(crate) fn output_tail(
     Ok(Some(all[all.len().saturating_sub(lines)..].join("\n")))
 }
 
+/// The shell's output as-is (its last [`TAIL_BYTES`], newlines preserved),
+/// for a full `.output()` read; `None` for an unknown shell. Unlike
+/// [`output_tail`], it does not collapse to whole lines, so a trailing
+/// newline survives.
+pub(crate) fn output_raw(agent_dir: &Path, id: &str) -> Result<Option<String>, String> {
+    let Some(shell) = find_shell(agent_dir, id) else {
+        return Ok(None);
+    };
+    let bytes = read_tail(&shell_file(agent_dir, &shell.id, "out"))
+        .map_err(|error| format!("Could not read persistent shell output: {error}"))?;
+    Ok(Some(String::from_utf8_lossy(&bytes).to_string()))
+}
+
 fn read_tail(path: &Path) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
@@ -221,6 +234,123 @@ fn kill_group(shell: &Shell) -> Result<(), String> {
     } else {
         Err("Could not signal persistent shell group".to_string())
     }
+}
+
+/// A fresh persistent-shell id. Opaque: the reader keys on the record's `id`
+/// field, never on a pid-derived name, so a uuid avoids the spawn-time
+/// chicken-and-egg of naming files after a pid we do not have yet.
+#[cfg(unix)]
+fn new_shell_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// Single-quote a value for a POSIX shell (`'…'`, with embedded quotes escaped).
+#[cfg(unix)]
+fn single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Spawn a detached persistent shell assigned to `session_id`: a `setsid`'d
+/// `<shell> -c <script>` whose stdout+stderr go to `<id>.out` and whose own
+/// exit code lands in `<id>.rc`, recorded in `<id>.json`. It is deliberately
+/// neither a kernel bash job nor orphan-journaled, so nothing in the
+/// kernel/worker/daemon lifecycle kills it — only its own exit or
+/// [`kill_shell`]. `script` is the shell body to run; `command` is the
+/// user-facing string kept in the record. Returns the fields the kernel
+/// handle needs (`id`, `pid`, `outputPath`, `startedAt`).
+#[cfg(unix)]
+pub(crate) fn spawn(
+    agent_dir: &Path,
+    session_id: &str,
+    shell: &str,
+    script: &str,
+    command: &str,
+    cwd: &Path,
+    env: &[(String, String)],
+) -> Result<Value, String> {
+    use std::process::{Command, Stdio};
+
+    let home = agent_dir.join(HOME_DIR);
+    std::fs::create_dir_all(&home)
+        .map_err(|error| format!("Could not create the persistent-shell home: {error}"))?;
+    let id = new_shell_id();
+    let out_path = shell_file(agent_dir, &id, "out");
+    let rc_path = shell_file(agent_dir, &id, "rc");
+
+    // The reader treats a missing `.out` as an error, so it must exist before
+    // the record a lister can find (comment on `output_tail`).
+    let out = std::fs::File::create(&out_path)
+        .map_err(|error| format!("Could not create the persistent shell output: {error}"))?;
+    let errout = out
+        .try_clone()
+        .map_err(|error| format!("Could not open the persistent shell output: {error}"))?;
+
+    // The shell records its own exit code so the group's end survives the
+    // worker that spawned it.
+    let wrapped = format!(
+        "{script}\n__pa_rc=$?\nprintf '%s' \"$__pa_rc\" > {rc}\nexit \"$__pa_rc\"\n",
+        rc = single_quote(&rc_path.to_string_lossy()),
+    );
+
+    let mut spawner = Command::new(shell);
+    spawner.arg("-c").arg(&wrapped);
+    spawner.current_dir(cwd);
+    spawner.env_clear();
+    for (key, value) in env {
+        spawner.env(key, value);
+    }
+    spawner.stdin(Stdio::null());
+    spawner.stdout(Stdio::from(out));
+    spawner.stderr(Stdio::from(errout));
+    // setsid: its own session and process group, reparented to init when the
+    // worker exits, so `signal_process_group(pid, …)` reaches the whole group.
+    pa_core::platform::process::set_new_session(&mut spawner);
+
+    let child = spawner
+        .spawn()
+        .map_err(|error| format!("Could not spawn the persistent shell: {error}"))?;
+    let pid = child.id();
+    // Reap the child when it exits (no zombie) without ever killing it; if the
+    // worker dies first the shell reparents to init, which reaps it instead.
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+
+    let start_id = pa_types::platform::process::process_start_id(pid).unwrap_or_default();
+    let started_at = crate::util::now_iso();
+    let record = json!({
+        "id": id,
+        "pid": pid,
+        "startId": start_id,
+        "command": command,
+        "startedAt": started_at,
+        "sessionId": session_id,
+    });
+    std::fs::write(shell_file(agent_dir, &id, "json"), record.to_string())
+        .map_err(|error| format!("Could not write the persistent shell record: {error}"))?;
+
+    Ok(json!({
+        "id": id,
+        "pid": pid,
+        "outputPath": out_path.to_string_lossy(),
+        "startedAt": started_at,
+    }))
+}
+
+/// Persistent shells are POSIX-only (they rely on `setsid` session detachment
+/// and process-group signalling).
+#[cfg(not(unix))]
+pub(crate) fn spawn(
+    _agent_dir: &Path,
+    _session_id: &str,
+    _shell: &str,
+    _script: &str,
+    _command: &str,
+    _cwd: &Path,
+    _env: &[(String, String)],
+) -> Result<Value, String> {
+    Err("Persistent shells are POSIX-only".to_string())
 }
 
 /// One persistent-shell supervisor arm, run off the runtime (file reads and
@@ -521,5 +651,46 @@ mod tests {
         sleeper.kill().unwrap();
         sleeper.wait().unwrap();
         assert!(tail.is_err(), "{tail:?}");
+    }
+
+    #[test]
+    fn spawn_detaches_writes_the_record_and_round_trips_through_the_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let spawned = spawn(
+            root.path(),
+            "s1",
+            "sh",
+            "echo hi; sleep 60",
+            "echo hi; sleep 60",
+            root.path(),
+            &[],
+        )
+        .expect("spawn persistent shell");
+        let id = spawned["id"].as_str().unwrap().to_string();
+        let pid = spawned["pid"].as_u64().unwrap() as u32;
+
+        // The record and output exist; the reader lists it as this session's
+        // running shell and reads its tail — proving the write/read contract.
+        assert!(shell_file(root.path(), &id, "json").exists());
+        assert!(
+            shell_file(root.path(), &id, "out").exists(),
+            "the .out exists before the record"
+        );
+        let mut waited = 0;
+        while output_tail(root.path(), &id, 1) != Ok(Some("hi".to_string())) && waited < 200 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            waited += 1;
+        }
+        let rows = shell_rows(root.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (&rows[0]["status"], &rows[0]["sessionId"]),
+            (&json!("running"), &json!("s1"))
+        );
+        assert_eq!(output_tail(root.path(), &id, 1), Ok(Some("hi".to_string())));
+
+        // It is a real detached group the reader can end.
+        assert!(process_group_exists(pid as i32));
+        assert_eq!(kill_shell(root.path(), &id), Ok(true));
     }
 }
