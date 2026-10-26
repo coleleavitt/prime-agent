@@ -17,8 +17,6 @@ pub use scripted::ScriptedEngine;
 pub(crate) use wire::session_wire_value;
 pub use wire::{
     AssistantSnapshot,
-    BashCompletionNotice,
-    BashCompletionSink,
     BashConsumedNotice,
     BashConsumedSink,
     BranchSummaryOutcome,
@@ -32,6 +30,8 @@ pub use wire::{
     GoalAdmissionSink,
     GoalContinuation,
     GoalTurnEndWork,
+    KernelNotice,
+    KernelNoticeSink,
     MonitorEventSink,
     NoticeRowSink,
     PromptBatchRow,
@@ -289,6 +289,11 @@ pub trait SessionEngine: Send + Sync {
         let _ = path;
     }
 
+    /// Capture the worker-owned durable leaf before the current prompt rows
+    /// persist. Lazy engines restore model context only through this boundary;
+    /// admission supplies the current rows once. This must not build a session.
+    fn set_prompt_context_boundary(&self, _leaf_id: Option<String>) {}
+
     /// A session being revived restores the model its file pins before the
     /// startup chain, so it does not silently land on the startup-chain
     /// default. `saved` skips a second windowed open; `None` reads the file.
@@ -321,6 +326,7 @@ pub trait SessionEngine: Send + Sync {
     fn configure_startup_scope(
         &self,
         _scoped_models: Vec<pa_core::models::ScopedModel>,
+        _patterns: Vec<String>,
         _is_continuing: bool,
     ) {
     }

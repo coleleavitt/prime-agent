@@ -490,6 +490,7 @@ async fn run_agents_view_flow(
         let mut outcome = pa_tui::interactive::run_interactive_agents_view_open(
             session_options,
             UiMode::Terminal,
+            view.panel,
         )
         .await?;
         // The next view run is the plain view unless the session asks for the resume picker

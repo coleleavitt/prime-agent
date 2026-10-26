@@ -414,7 +414,8 @@ async fn observe_child_event(record: &Arc<InProcessChildRecord>, event: AgentEve
         }
         AgentEvent::TurnStart
         | AgentEvent::TurnEnd { .. }
-        | AgentEvent::ToolExecutionUpdate { .. } => {}
+        | AgentEvent::ToolExecutionUpdate { .. }
+        | AgentEvent::ToolExecutionProgress { .. } => {}
     }
 }
 

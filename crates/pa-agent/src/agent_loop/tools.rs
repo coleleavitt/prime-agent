@@ -286,7 +286,8 @@ async fn complete_tool_call(
             is_error,
         },
         Preparation::Prepared(prepared) => {
-            let executed = execute_prepared_tool_call(&prepared, signal, emit).await;
+            let executed =
+                execute_prepared_tool_call(&prepared, config.tool_progress, signal, emit).await;
             finalize_executed_tool_call(
                 current_context,
                 assistant_message,

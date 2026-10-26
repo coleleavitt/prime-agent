@@ -308,6 +308,7 @@ async fn stream_assistant_response_inner(
         max_tokens: config.max_tokens,
         reasoning: config.reasoning,
         session_id: config.session_id.clone(),
+        transport: config.transport,
         service_tier: config.service_tier,
         api_key: resolved_api_key,
         signal: signal.cloned().unwrap_or_default(),

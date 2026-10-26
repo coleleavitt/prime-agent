@@ -413,6 +413,7 @@ impl AgentSessionEngine {
             pa_core::goals::create_goal_context_message(
                 &state,
                 pa_core::goals::GoalContextKind::BudgetLimit,
+                &[],
             )
             .ok()
         })?;

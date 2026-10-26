@@ -93,7 +93,7 @@ async fn run(engine: &SessionEngine, text: &str) -> SessionCommandExecution {
         global_harness_dir: engine.feature_context.agent_dir.join("harness"),
         autonomous: &mut autonomous,
     };
-    execute_session_command(engine, &mut params, &command).await
+    execute_session_command(engine, &mut params, &command, &[]).await
 }
 
 fn result_text(execution: &SessionCommandExecution) -> String {

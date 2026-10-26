@@ -303,6 +303,9 @@ const INTERNAL_HOST_REQUESTS: &[&str] = &[
     // prompt does not document it; the brief-mode section (system prompt
     // or `/brief` reminder) does (`brief_mode::BRIEF_SECTION`).
     "user_message.send",
+    // The factory module reports run milestones; the model never calls it
+    // (upstream's factory run-milestone notices, #0487afe9d).
+    "factory.progress",
 ];
 
 /// Map one registered host-request type to the prompt token that documents
@@ -414,12 +417,17 @@ fn registered_host_requests() -> BTreeSet<String> {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("read source");
-            // Direct registrations: the first string literal after each
-            // `.register(` (the request type comes first in the call).
+            // Direct registrations: the request type is the FIRST
+            // argument of each `.register(` — a literal right at the
+            // call's head counts; anything after a non-literal first
+            // argument is not the request type.
             for remainder in source.split(".register(").skip(1) {
-                if let Some(literal) = first_string_literal(remainder) {
-                    if is_request_type_literal(&literal) {
-                        found.insert(literal);
+                let rest = remainder.trim_start();
+                if rest.starts_with('"') {
+                    if let Some(literal) = first_string_literal(rest) {
+                        if is_request_type_literal(&literal) {
+                            found.insert(literal);
+                        }
                     }
                 }
             }
@@ -563,10 +571,21 @@ fn auth_gated_bundled_skills() -> BTreeSet<String> {
         .collect()
 }
 
+/// Conditionally-available bundled skills: the websearch skill rides with its
+/// credential (an unset `bundledSkills.websearch` resolves with the stored or
+/// ambient Serper key), so keyless installs exclude it — it must never be
+/// documented as static core-tool surface; the dynamic skills inventory
+/// renders it only on installs where it resolves enabled.
+fn settings_gated_bundled_skills() -> BTreeSet<String> {
+    ["websearch".to_string()].into_iter().collect()
+}
+
 /// (import name, public functions) for every bundled Python skill that is
-/// always available (auth-gated integrations excluded).
+/// always available (auth-gated integrations and the conditionally-available
+/// websearch skill excluded).
 fn bundled_python_skills() -> Vec<(String, Vec<String>)> {
     let gated = auth_gated_bundled_skills();
+    let settings_gated = settings_gated_bundled_skills();
     sorted_bundled_skills()
         .into_iter()
         .filter(|skill| {
@@ -575,6 +594,7 @@ fn bundled_python_skills() -> Vec<(String, Vec<String>)> {
                 .as_ref()
                 .is_none_or(|python| !gated.contains(&python.import_name))
         })
+        .filter(|skill| !settings_gated.contains(&skill.name))
         .filter_map(|skill| {
             let python = skill.python?;
             // `package_path` is the install root (where pyproject.toml
@@ -975,4 +995,23 @@ fn every_bash_host_request_is_listed_as_internal() {
         .filter(|request| !INTERNAL_HOST_REQUESTS.contains(request))
         .collect();
     assert_eq!(missing, Vec::<&str>::new());
+}
+
+// Async turn discipline
+
+/// Since #3580 every session kind wakes on bash completion: daemonless runs
+/// get a queued `[bash-done]` turn, so the static usage layer must not carry
+/// the pre-#3580 rule to await commands before ending the turn — the
+/// no-polling rule right below it already ends turns on the done
+/// notification, and an unscoped await rule would contradict that wake.
+#[test]
+fn usage_layer_ends_turns_on_the_done_notification_not_an_await_rule() {
+    assert!(
+        !USAGE_LAYER.contains("await commands before ending the turn"),
+        "every session kind has completion notifications: the await-before-turn-end rule is stale"
+    );
+    assert!(
+        USAGE_LAYER.contains("end the turn and collect the result on the done notification"),
+        "the no-polling rule keeps the collect-on-notice turn-end contract"
+    );
 }

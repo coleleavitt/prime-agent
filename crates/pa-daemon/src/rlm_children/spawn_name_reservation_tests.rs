@@ -152,6 +152,7 @@ async fn sessions_with_gated_supervisor(
             root.clone(),
             /*telemetry_disabled*/ true,
         )),
+        String::new(),
     );
     sessions.set_identity(ParentIdentity {
         model: Some("mock/mock-1".to_string()),

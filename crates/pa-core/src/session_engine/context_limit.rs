@@ -361,6 +361,7 @@ mod tests {
                 autonomous: &mut autonomous,
             },
             &command,
+            &[],
         )
         .await;
         assert_eq!(execution.error, None);
@@ -458,6 +459,7 @@ mod tests {
                     autonomous: &mut autonomous,
                 },
                 &command,
+                &[],
             )
             .await;
             assert_eq!(

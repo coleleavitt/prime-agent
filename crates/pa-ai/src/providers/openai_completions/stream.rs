@@ -25,6 +25,7 @@ use crate::providers::openai_completions::{
     resolve_cache_retention,
 };
 use crate::providers::openai_responses_hooks::apply_service_tier_pricing;
+use crate::providers::transform_messages::repair_unnamed_tool_calls;
 use crate::types::{
     AssistantContent,
     AssistantMessage,
@@ -324,7 +325,11 @@ fn handle_chunk(
     if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
         for tool_call in tool_calls {
             let stream_index = tool_call.get("index").and_then(serde_json::Value::as_u64);
-            let id = tool_call.get("id").and_then(|value| value.as_str());
+            // An empty id counts as absent, as TS's truthiness check treats it.
+            let id = tool_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .filter(|id| !id.is_empty());
             let index = state.ensure_tool_call_block(stream_index, id, writer);
             if let Some(AssistantContent::ToolCall(block)) = state.output.content.get_mut(index) {
                 if block.id.is_empty() {
@@ -663,6 +668,7 @@ async fn run_stream(
                 // calls before the error event carries the message.
                 encode_reasoning_details_signature(&mut state);
                 settle_partial_tool_calls(&mut state);
+                repair_unnamed_tool_calls(&mut state.output);
                 *output = state.output;
                 return Err(error);
             }
@@ -704,6 +710,9 @@ async fn run_stream(
 
     encode_reasoning_details_signature(&mut state);
     finish_blocks(&mut state, writer);
+    // After the `*_end` events, so the content indices already streamed to
+    // the client stay valid; the final message is what the session stores.
+    repair_unnamed_tool_calls(&mut state.output);
     *output = state.output;
 
     if base_options
@@ -790,6 +799,11 @@ mod tests {
     // own child module with this file's test harness.
     #[path = "stream_wire.rs"]
     mod stream_wire;
+
+    // The nameless-tool-call pins (#3742): calls the provider streamed
+    // without a function name.
+    #[path = "stream_tool_call_name.rs"]
+    mod stream_tool_call_name;
 
     /// Serve one SSE response body for the provider's POST and return the
     /// bound address.

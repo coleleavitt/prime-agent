@@ -165,6 +165,7 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
         daemonless: true,
         rlm_token_allowance: None,
         agent_definition: None,
+        bash_notice_wake: None,
     })
     .await
     .unwrap();

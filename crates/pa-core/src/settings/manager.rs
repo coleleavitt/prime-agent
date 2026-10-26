@@ -929,6 +929,16 @@ impl SettingsManager {
         self.merged.recent_models.clone().unwrap_or_default()
     }
 
+    /// The per-cell watchdog budget for user `python_repl` cells, in
+    /// milliseconds (`0` disables; the default is 60s). Daemonless
+    /// sessions never arm the watchdog.
+    #[must_use]
+    pub fn get_python_cell_timeout_ms(&self) -> u64 {
+        self.merged
+            .python_cell_timeout_ms
+            .unwrap_or(crate::settings::types::DEFAULT_PYTHON_CELL_TIMEOUT_MS)
+    }
+
     /// The steering queue's delivery mode: `all` co-delivers every queued message at
     /// the next turn boundary; `one-at-a-time` delivers one per turn.
     #[must_use]
@@ -1606,7 +1616,7 @@ fn load_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::types::MarkdownSettings;
+    use crate::settings::types::{DEFAULT_PYTHON_CELL_TIMEOUT_MS, MarkdownSettings};
 
     #[test]
     fn in_memory_loads_merges_and_saves() {
@@ -1923,30 +1933,23 @@ mod tests {
     }
 
     #[test]
-    fn session_archive_policy_semantics() {
-        let mut manager = SettingsManager::in_memory(&Settings::default());
+    fn python_cell_timeout_reads_setting_or_default() {
+        let manager = SettingsManager::in_memory(&Settings::default());
         assert_eq!(
-            manager.get_session_archive_policy(),
-            SessionArchivePolicy {
-                max_age_days: Some(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS),
-                max_sessions: Some(DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS),
-            }
+            manager.get_python_cell_timeout_ms(),
+            DEFAULT_PYTHON_CELL_TIMEOUT_MS
         );
-        manager.global.session_archive_max_age_days = Some(serde_json::json!("off"));
-        assert_eq!(manager.get_session_archive_policy().max_age_days, None);
-        manager.global.session_archive_max_age_days = Some(serde_json::json!(0));
-        assert_eq!(
-            manager.get_session_archive_policy().max_age_days,
-            Some(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS)
-        );
-        manager.global.session_archive_max_age_days = Some(serde_json::json!(14));
-        assert_eq!(manager.get_session_archive_policy().max_age_days, Some(14));
-        manager.global.session_archive_max_sessions = Some(serde_json::json!("none"));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, None);
-        manager.global.session_archive_max_sessions = Some(serde_json::json!(0));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, None);
-        manager.global.session_archive_max_sessions = Some(serde_json::json!(50));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, Some(50));
+        let manager = SettingsManager::in_memory(&Settings {
+            python_cell_timeout_ms: Some(90_000),
+            ..Settings::default()
+        });
+        assert_eq!(manager.get_python_cell_timeout_ms(), 90_000);
+        // Zero is the explicit disable, not the default.
+        let manager = SettingsManager::in_memory(&Settings {
+            python_cell_timeout_ms: Some(0),
+            ..Settings::default()
+        });
+        assert_eq!(manager.get_python_cell_timeout_ms(), 0);
     }
 
     /// The launch layer: `--setting-sources` drops the scopes it leaves

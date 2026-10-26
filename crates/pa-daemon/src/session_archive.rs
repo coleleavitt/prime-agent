@@ -123,6 +123,19 @@ pub fn sweep_sessions(
 
 /// Restore an archived session into the sessions directory (the resume
 /// path): returns the restored file path.
+///
+/// Retained as the archive module's restore API. The saved-session catalog
+/// (`session_catalog::resolve_saved_session`) now lazily restores an archived
+/// match inline (upstream's temp-staged, no-replace publish), so this helper
+/// has no production caller today; its behavior stays covered by the unit tests
+/// below.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "archive restore API kept per the fork's session-archive feature; the catalog restores inline"
+    )
+)]
 pub fn restore_session(
     archive_dir: &Path,
     sessions_dir: &Path,

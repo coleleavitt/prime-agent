@@ -180,6 +180,20 @@ fn bootstrap_lock_path(venv: &Path) -> PathBuf {
     ))
 }
 
+/// Whether the bootstrap lock could not be created because the venv's directory
+/// denies writes to this user (`EACCES`/`EROFS` on the lock candidate).
+pub(crate) fn lock_creation_denied(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io_error| {
+            matches!(
+                io_error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+            )
+        })
+}
+
 /// A held bootstrap lock; dropping it releases the lock.
 pub(crate) struct BootstrapLock(PathBuf);
 

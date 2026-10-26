@@ -12,6 +12,7 @@ pub use thinking_levels::{
     SUPPORTED_THINKING_LEVELS,
     clamp_thinking_level,
     get_supported_thinking_levels,
+    minimum_reasoning,
     models_are_equal,
     supports_thinking,
     thinking_level_from_str,

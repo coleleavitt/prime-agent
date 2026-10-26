@@ -16,6 +16,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut message_count = 0usize;
     let mut first_message = String::new();
     let mut all_messages_text = String::new();
+    let mut search_text_chars = 0usize;
     let mut usage_scan = crate::session_usage::UsageScan::default();
     let mut last_activity_ms: Option<u64> = None;
     for line in content.lines() {
@@ -157,26 +158,20 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                             last_activity_ms = Some(last_activity_ms.unwrap_or(0).max(timestamp));
                         }
                     }
-                    if role == Some("user") && first_message.is_empty() {
+                    if (role == Some("user") && first_message.is_empty())
+                        || (matches!(role, Some("user" | "assistant"))
+                            && search_text_chars < SESSION_LIST_SEARCH_TEXT_MAX_CHARS)
+                    {
                         let text = message_text(message);
-                        if !text.is_empty() {
-                            first_message = text;
+                        if role == Some("user") && first_message.is_empty() && !text.is_empty() {
+                            first_message.clone_from(&text);
                         }
-                    }
-                    // User and assistant text content feeds the search; the
-                    // reference inlines the append, staying independent of the reshape.
-                    if matches!(role, Some("user" | "assistant")) {
-                        let text = message_text(message);
-                        if !text.is_empty() {
-                            let used = all_messages_text.chars().count();
-                            if used < SESSION_LIST_SEARCH_TEXT_MAX_CHARS {
-                                if used > 0 {
-                                    all_messages_text.push(' ');
-                                }
-                                let remaining = SESSION_LIST_SEARCH_TEXT_MAX_CHARS
-                                    - all_messages_text.chars().count();
-                                all_messages_text.extend(text.chars().take(remaining));
-                            }
+                        if matches!(role, Some("user" | "assistant")) {
+                            search_text_chars = info::append_capped_search_text(
+                                &mut all_messages_text,
+                                &text,
+                                search_text_chars,
+                            );
                         }
                     }
                 }
@@ -412,7 +407,7 @@ fn a_torn_trailing_line_folds_once_completed() {
     assert_fold_matches(&path);
     let completed = read_session_info(&path).unwrap();
     assert_eq!(completed.message_count, 1);
-    assert!(completed.all_messages_text.contains("torn text"));
+    assert_eq!(completed.first_message, "torn text");
 }
 
 #[test]
@@ -598,7 +593,12 @@ fn a_failed_prefix_check_rescans_from_byte_zero() {
     let file = fs::File::open(&path).unwrap();
     let _ = file.set_modified(past);
     drop(file);
-    let second = read_session_info(&path).unwrap();
+    let mut file = fs::File::open(&path).unwrap();
+    let (second, sidecar_behind) = read_session_info_from(&mut file, &path).unwrap();
+    assert!(
+        sidecar_behind,
+        "a rejected prefix must mark the fresh scan for sidecar backfill"
+    );
     assert_eq!(
         second.name.as_deref(),
         Some("after!"),
@@ -1077,33 +1077,18 @@ fn content_borrow_matches_full_parse_across_content_matrix() {
         assert_eq!(borrowed, reference, "differential: {line}");
     }
 
-    // Fold-level differential with cap-cut appends around the matrix:
-    // a multibyte boundary cut, then past the cap.
+    // Fold-level differential over the matrix rows.
     let dir = test_dir();
     let path = dir.join("session.jsonl");
     append_rows(&path, std::slice::from_ref(&header));
     for (entry, _) in &messages {
         append_rows(&path, std::slice::from_ref(entry));
     }
-    append_rows(
-        &path,
-        &[
-            row(
-                "cap0",
-                json!({"role":"assistant","content":"x".repeat(SESSION_LIST_SEARCH_TEXT_MAX_CHARS)}),
-            ),
-            row("cap1", json!({"role":"assistant","content":"past the cap"})),
-            row("cap2", json!({"role":"user","content":"past the cap user"})),
-        ],
-    );
     assert_fold_matches(&path);
 
-    // First-message pick: the first NON-EMPTY user text wins (m0); the corpus
-    // holds every user/assistant text under the cap in fold order.
+    // First-message pick: the first NON-EMPTY user text wins (m0).
     let info = read_session_info(&path).unwrap();
     assert_eq!(info.first_message, "hello");
-    assert!(info.all_messages_text.starts_with("hello line1"));
-    assert!(info.all_messages_text.chars().count() <= SESSION_LIST_SEARCH_TEXT_MAX_CHARS);
 
     // A session whose only user text is empty keeps the no-message label.
     let empty_dir = test_dir();
@@ -1331,7 +1316,6 @@ fn borrowed_metadata_reads_match_full_parse_across_shape_matrix() {
     // and missing-message rows.
     assert_eq!(info.message_count, 12);
     assert_eq!(info.first_message, "ts float");
-    assert!(info.all_messages_text.contains("escaped role matches"));
     assert_eq!(info.modified, crate::util::iso_from_unix_ms(456));
 
     // The abort rows kill the whole file's row on both paths.
@@ -1350,5 +1334,28 @@ fn borrowed_metadata_reads_match_full_parse_across_shape_matrix() {
         fs::remove_dir_all(abort_dir).unwrap();
     }
 
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// The single-writer premise: a fold by a process that does not hold the
+/// file's lease (the daemon catalog's cold read) never persists a sidecar.
+#[test]
+fn a_non_holder_fold_writes_no_sidecar() {
+    let dir = test_dir();
+    let path = dir.join("unleased.jsonl");
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"sc","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            json!({"type":"message","id":"u1","timestamp":"2026-09-23T00:00:00.000Z",
+                "message":{"role":"user","content":"hi","timestamp":1_790_110_000_000_u64}}),
+        ],
+    );
+    let info = read_session_info(&path).unwrap();
+    assert_eq!(info.message_count, 1);
+    assert!(
+        !path.with_extension("info-cache.json").exists(),
+        "only the lease holder's release writes a sidecar"
+    );
     fs::remove_dir_all(dir).unwrap();
 }

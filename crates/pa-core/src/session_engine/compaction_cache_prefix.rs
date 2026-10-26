@@ -132,6 +132,7 @@ pub async fn summarize(
         max_tokens: Some(max_tokens),
         reasoning: request.reasoning,
         session_id: None,
+        transport: None,
         service_tier: None,
         api_key: None,
         signal: signal.clone(),
@@ -189,6 +190,7 @@ pub async fn summarize(
     Ok(SummarySlice {
         summary,
         usage: super::provider_adapter::json_round_trip(&assistant.usage),
+        truncated: assistant.stop_reason == StopReason::Length,
     })
 }
 

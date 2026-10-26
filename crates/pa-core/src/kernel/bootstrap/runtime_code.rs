@@ -33,12 +33,15 @@ pub fn parse_unavailable_python_skills(stdout: &str) -> Option<UnavailablePython
 const RLM_BOOTSTRAP_HEADER_CODE: &str =
     "import asyncio\nimport os as _prime_agent_os\n\n_prime_agent_os.environ[\"NO_COLOR\"] = \"1\"";
 
-const RLM_BOOTSTRAP_RUNTIME_CODE: &str = r#"
+const RLM_BOOTSTRAP_RUNTIME_HEAD_CODE: &str = "
 try:
     import rlm as _prime_agent_rlm_module
     rlm = _prime_agent_rlm_module.rlm
     bash = _prime_agent_rlm_module.bash
     import rlm.mcp as mcp
+";
+
+const RLM_BOOTSTRAP_RUNTIME_TAIL_CODE: &str = r#"
 except Exception as _prime_agent_rlm_error:
     _PRIME_AGENT_RLM_IMPORT_ERROR = str(_prime_agent_rlm_error)
 
@@ -71,7 +74,7 @@ except Exception as _prime_agent_rlm_error:
 
     rlm = _PrimeAgentMissingRlm()
 
-    def bash(command):
+    def bash(command, *args, **kwargs):
         rlm._raise_missing()
 "#;
 
@@ -79,7 +82,9 @@ except Exception as _prime_agent_rlm_error:
 /// surfaces, imports every Python skill.
 #[must_use]
 pub fn build_rlm_bootstrap_code(python_skills: &[KernelPythonSkill]) -> String {
-    let base_code = format!("{RLM_BOOTSTRAP_HEADER_CODE}\n\n{RLM_BOOTSTRAP_RUNTIME_CODE}");
+    let mut runtime_code = String::from(RLM_BOOTSTRAP_RUNTIME_HEAD_CODE);
+    runtime_code.push_str(RLM_BOOTSTRAP_RUNTIME_TAIL_CODE);
+    let base_code = format!("{RLM_BOOTSTRAP_HEADER_CODE}\n\n{runtime_code}");
     // TS: `[...new Set(pythonSkills.map(...))]` — first-seen order, so the pre-import loop follows
     // the session's skill discovery order.
     let mut import_names: Vec<&str> = Vec::new();

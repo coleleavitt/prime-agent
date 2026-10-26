@@ -133,6 +133,8 @@ fn http(url: &str, headers: &[(&str, &str)], oauth: bool) -> McpServerConfig {
         disabled_tools: None,
         startup_timeout_ms: None,
         call_timeout_ms: None,
+        client_id: None,
+        callback_port: None,
     }
 }
 

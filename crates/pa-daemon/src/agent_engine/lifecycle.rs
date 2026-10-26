@@ -17,6 +17,7 @@ use super::{
     Model,
     OverflowRecovery,
     ProducerUsageSink,
+    PromptContextBoundary,
     ProviderTarget,
     QuotaParkState,
     SessionCommandExecution,
@@ -71,6 +72,7 @@ impl AgentSessionEngine {
                 config.agent_dir.clone(),
                 link_config.active_session_id.clone(),
                 std::sync::Arc::clone(&model_refusal_telemetry),
+                link_config.worker_token.clone(),
             ))
         });
         let autonomous_driver = std::sync::RwLock::new(std::sync::Arc::new(
@@ -163,7 +165,7 @@ impl AgentSessionEngine {
             goal_budget_crossed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             goal_input_probe: std::sync::Mutex::new(None),
             goal_admission_sink: std::sync::Mutex::new(None),
-            bash_completion_sink: std::sync::Mutex::new(None),
+            kernel_notice_sink: std::sync::Mutex::new(None),
             digest_inbox_seams: std::sync::Mutex::new(None),
             watch_notice_sink: std::sync::Mutex::new(None),
             agent_watches: std::sync::Mutex::new(
@@ -196,6 +198,7 @@ impl AgentSessionEngine {
             )),
             session_build: tokio::sync::Mutex::new(()),
             pending_branch: std::sync::Mutex::new(None),
+            prompt_context_boundary: std::sync::Mutex::new(None),
             provider_target: std::sync::Arc::new(std::sync::RwLock::new(None)),
             image_route: std::sync::Mutex::new(None),
             reload_lock: std::sync::Mutex::new(()),
@@ -527,6 +530,92 @@ impl AgentSessionEngine {
         if let Some(enabled) = plan_mode {
             built.restore_plan_mode(enabled).await?;
         }
+        // The worker persisted accepted rows while this lazy session built.
+        // Keep its whole durable window, but seed the loop only through the
+        // stable pre-admission leaf. Content/timestamps are never deduplicated.
+        let prompt_context_boundary = self
+            .prompt_context_boundary
+            .lock()
+            .expect("prompt context boundary lock")
+            .clone();
+        let entries = pending_branch
+            .as_deref()
+            .or_else(|| {
+                shared_window
+                    .as_ref()
+                    .map(pa_core::session::window::WindowedSessionStore::entries)
+            })
+            .or(shared_branch.as_deref());
+        let mut admitted_user_ids = Vec::new();
+        if std::env::var_os("PA_COMPACTION_TRACE").is_some() {
+            pa_core::session_engine::compaction_trace::trace(
+                "daemon.lazy_restore_boundary",
+                &serde_json::json!({
+                    "kind": match &prompt_context_boundary {
+                        Some(PromptContextBoundary::Empty) => "empty",
+                        Some(PromptContextBoundary::Leaf(_)) => "leaf",
+                        None => "unset",
+                    },
+                    "retainedUserRows": entries.map_or(0, |entries| entries.iter().filter(|entry|
+                        matches!(entry, pa_types::session::FileEntry::Message {
+                            message: pa_types::session::AgentMessage::User(_), ..
+                        })).count()),
+                }),
+            );
+        }
+        let prompt_context = match prompt_context_boundary.as_ref() {
+            Some(boundary) => {
+                let mut after_boundary = matches!(boundary, PromptContextBoundary::Empty);
+                if let Some(entries) = entries {
+                    for entry in entries {
+                        if after_boundary {
+                            if let Some(id) = entry.id().filter(|_| {
+                                matches!(
+                                    entry,
+                                    pa_types::session::FileEntry::Message {
+                                        message: pa_types::session::AgentMessage::User(_),
+                                        ..
+                                    }
+                                )
+                            }) {
+                                admitted_user_ids.push(id.to_string());
+                            }
+                        } else if matches!(boundary, PromptContextBoundary::Leaf(leaf)
+                            if entry.id() == Some(leaf.as_str()))
+                        {
+                            after_boundary = true;
+                        }
+                    }
+                }
+                match boundary {
+                    PromptContextBoundary::Leaf(leaf) => {
+                        anyhow::ensure!(
+                            after_boundary,
+                            "prompt context boundary {leaf} is absent from the retained transcript"
+                        );
+                        Some(
+                            pa_core::session::build_session_context(
+                                entries.expect("a found boundary has entries"),
+                                Some(leaf),
+                            )
+                            .messages,
+                        )
+                    }
+                    PromptContextBoundary::Empty => Some(Vec::new()),
+                }
+            }
+            None => None,
+        };
+        if std::env::var_os("PA_COMPACTION_TRACE").is_some() {
+            pa_core::session_engine::compaction_trace::trace(
+                "daemon.lazy_restore_context",
+                &serde_json::json!({
+                    "priorUserRows": prompt_context.as_ref().map(|messages| messages.iter().filter(|message|
+                        matches!(message, pa_types::session::AgentMessage::User(_))).count()),
+                    "replayedUserRows": admitted_user_ids.len(),
+                }),
+            );
+        }
         if let Some(state) = seed {
             // The restore-resurrection guard: an active seed whose
             // trailing turn settled as a terminal provider failure adopts
@@ -581,10 +670,24 @@ impl AgentSessionEngine {
         }
         if let Some(entries) = pending_branch {
             built.session.rebuild_branch_context(entries).await?;
+            built
+                .session
+                .shared_persistence()
+                .lock()
+                .await
+                .replay_admitted_user_rows(admitted_user_ids)?;
+            if let Some(messages) = prompt_context {
+                built
+                    .session
+                    .agent()
+                    .set_messages(messages.iter().filter_map(json_round_trip).collect())
+                    .await;
+            }
             // A moved branch restores its own park (the early return would leave the previous
             // branch's park armed).
             self.restore_quota_park(built).await;
             self.flush_pending_stale_goal_terminal().await;
+            self.finish_prompt_context_adoption(prompt_context_boundary.as_ref());
             return Ok(());
         }
         // Restore the retained context and certified metadata without loading discarded bodies.
@@ -604,11 +707,37 @@ impl AgentSessionEngine {
             built.session.rebuild_branch_context(entries).await?;
             self.flush_pending_stale_goal_terminal().await;
         }
+        built
+            .session
+            .shared_persistence()
+            .lock()
+            .await
+            .replay_admitted_user_rows(admitted_user_ids)?;
+        if let Some(messages) = prompt_context {
+            built
+                .session
+                .agent()
+                .set_messages(messages.iter().filter_map(json_round_trip).collect())
+                .await;
+        }
         self.restore_quota_park(built).await;
         // The walk and replay allocated transient trees several times the
         // retained size: release the freed heap.
         pa_types::memory_release::trim_freed_heap();
+        self.finish_prompt_context_adoption(prompt_context_boundary.as_ref());
         Ok(())
+    }
+
+    /// Clear only the boundary this completed adoption observed. A failed
+    /// build keeps it for the demand retry, and a newer captured leaf survives.
+    fn finish_prompt_context_adoption(&self, adopted: Option<&PromptContextBoundary>) {
+        let mut current = self
+            .prompt_context_boundary
+            .lock()
+            .expect("prompt context boundary lock");
+        if current.as_ref() == adopted {
+            *current = None;
+        }
     }
 
     /// Scan the branch entries for the park this branch ended on and re-arm the live park state.
@@ -677,6 +806,10 @@ impl AgentSessionEngine {
     pub(crate) async fn retire_session_runtime(&self) {
         let _build = self.session_build.lock().await;
         let built = self.session.lock().await.take();
+        *self
+            .prompt_context_boundary
+            .lock()
+            .expect("prompt context boundary lock") = None;
         *self
             .quota_park
             .lock()
@@ -812,6 +945,7 @@ impl AgentSessionEngine {
     pub(crate) fn execute_session_command(
         &self,
         command: &pa_core::session_engine::slash_commands::SessionSlashCommand,
+        images: &[pa_agent::types::ImageContent],
     ) -> anyhow::Result<SessionCommandExecution> {
         let model = self.session_model()?;
         self.ensure_core_session(&model)?;
@@ -832,7 +966,7 @@ impl AgentSessionEngine {
             .expect("session built by ensure_core_session");
         Ok(self
             .runtime
-            .block_on(async { execute_session_command(&core, &mut params, command).await }))
+            .block_on(async { execute_session_command(&core, &mut params, command, images).await }))
     }
 
     /// The current explicit selection (create-config flags over the
@@ -862,7 +996,7 @@ impl AgentSessionEngine {
         let mut handlers = HostRequestHandlers::default();
         register_agent_message_host_handlers(sender, &mut handlers);
         register_agent_observe_host_handlers(observer, &mut handlers);
-        self.register_bash_notice_host_handlers(&mut handlers);
+        self.register_kernel_notice_host_handlers(&mut handlers);
         self.register_monitor_host_handler(&mut handlers);
         self.register_cell_completed_host_handler(&mut handlers);
         self.register_worktree_host_handlers(&mut handlers);
@@ -986,7 +1120,7 @@ impl AgentSessionEngine {
         // The engine session stays non-persisted (the worker owns the
         // durable file); the configured session dir leads, the file's
         // parent is the fallback.
-        let session_manager = match self
+        let mut session_manager = match self
             .config
             .session_dir
             .as_deref()
@@ -1000,6 +1134,19 @@ impl AgentSessionEngine {
             }
             None => pa_core::session::manager::SessionManager::in_memory(&cwd),
         };
+        // The in-memory manager takes the durable file's header id, as TS's engine opened the
+        // durable file: provider requests key prompt caching, Codex socket reuse, and session
+        // headers on it, so it must survive a resume in a new worker, a replacement build, and
+        // a daemon restart. A pathless session keeps the manager's own id.
+        if let Some(header) = session_file
+            .as_deref()
+            .and_then(pa_core::session::manager::read_session_header)
+        {
+            session_manager.new_session(&pa_core::session::manager::NewSessionOptions {
+                id: Some(header.id),
+                ..Default::default()
+            });
+        }
         if let Some(children) = &self.children {
             children.set_model(format!("{}/{}", model.provider, model.id));
         }
@@ -1094,6 +1241,7 @@ impl AgentSessionEngine {
             // Prewarm; the depth gate keeps subagent workers lazy.
             prewarm_ipython_kernel: Some(true),
             on_background_work_settled,
+            bash_notice_wake: None,
             // The worker-installed purge withdraws queued minted continuations.
             queued_goal_context_purge,
             // The steering lane owns the stop hooks (a queued steer cuts the next turn).
@@ -1181,12 +1329,18 @@ impl AgentSessionEngine {
                         let daemon = weak.upgrade()?;
                         let model = daemon.session_model().ok()?;
                         let api_key = daemon.resolve_request_api_key(&model);
+                        let session_id = daemon
+                            .config
+                            .supervisor_link
+                            .as_ref()
+                            .map(|link| link.active_session_id.clone())
+                            .unwrap_or_default();
                         Some(
                             pa_core::session_engine::turn_boundary::RefinePlanningContext {
                                 model,
                                 global_harness_dir: daemon.config.global_harness_dir(),
                                 refine_call: pa_core::session_engine::refine::default_refiner_call(
-                                    api_key,
+                                    api_key, session_id,
                                 ),
                             },
                         )

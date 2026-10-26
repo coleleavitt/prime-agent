@@ -199,6 +199,10 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     // Other products' sessions (capability `external_sessions`), fork-native.
     "list_external_sessions",
     "import_external_session",
+    // Persistent bash() shells (capability `persistent_shells`).
+    "list_persistent_shells",
+    "tail_persistent_shell",
+    "kill_persistent_shell",
 ];
 
 /// Parsed client command envelope.
@@ -373,6 +377,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 // `detach_running_cell`: send-now moves the running cell to
                 // the background instead of interrupting it.
                 "cell_detach",
+                "persistent_shells",
                 "factory_activity",
                 // `answer_feature_confirmation`: a hook's or plugin's `ask`
                 // is put to the user.
@@ -1023,6 +1028,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::PrepareUpdateRestart { .. }
         | DaemonCommand::CommitUpdateRestart { .. }
         | DaemonCommand::UpdateRestoreStatus { .. }
+        | DaemonCommand::ListPersistentShells { .. }
+        | DaemonCommand::TailPersistentShell { .. }
+        | DaemonCommand::KillPersistentShell { .. }
         | DaemonCommand::Restart { .. }
         | DaemonCommand::Shutdown { .. } => None,
     }
@@ -1074,6 +1082,9 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::TailKernelBash { .. } => "tail_kernel_bash",
         DaemonCommand::KillKernelBash { .. } => "kill_kernel_bash",
         DaemonCommand::DetachRunningCell { .. } => "detach_running_cell",
+        DaemonCommand::ListPersistentShells { .. } => "list_persistent_shells",
+        DaemonCommand::TailPersistentShell { .. } => "tail_persistent_shell",
+        DaemonCommand::KillPersistentShell { .. } => "kill_persistent_shell",
         DaemonCommand::CancelRlmChild { .. } => "cancel_rlm_child",
         DaemonCommand::FactoryActivity { .. } => "factory_activity",
         DaemonCommand::AnswerFeatureConfirmation { .. } => "answer_feature_confirmation",

@@ -495,15 +495,16 @@ pub fn is_punctuation_char(c: char) -> bool {
 
 /// Normalize text for terminal output without changing logical content: Thai/Lao AM vowels
 /// decompose to compatibility forms (same width, no stale cells); tabs expand to three spaces.
-/// Control characters and embedded escape sequences are dropped: layout already measures
-/// them at zero width, and a raw one reaches the terminal as a command (a backspace from a
-/// binary's string table moves the cursor back, shifting the rest of the row and leaving
-/// stale cells the differential paint never revisits).
+/// Control characters, bidirectional controls and embedded escape sequences are dropped: layout
+/// already measures them at zero width, and a raw one reaches the terminal as a command (a
+/// backspace from a binary's string table moves the cursor back, shifting the rest of the row and
+/// leaving stale cells the differential paint never revisits). The soft hyphen measures zero
+/// columns but terminals give it zero or one, so it drops too.
 #[must_use]
 pub fn normalize_terminal_output(s: &str) -> String {
-    let needs_work = s
-        .chars()
-        .any(|c| matches!(c, '\u{0e33}' | '\u{0eb3}') || c.is_control() || is_bidi_control(c));
+    let needs_work = s.chars().any(|c| {
+        matches!(c, '\u{0e33}' | '\u{0eb3}' | '\u{ad}') || c.is_control() || is_bidi_control(c)
+    });
     if !needs_work {
         return s.to_string();
     }
@@ -520,7 +521,8 @@ pub fn normalize_terminal_output(s: &str) -> String {
             '\u{0e33}' => out.push_str("\u{0e4d}\u{0e32}"),
             '\u{0eb3}' => out.push_str("\u{0ecd}\u{0eb2}"),
             '\t' => out.push_str("   "),
-            c if c.is_control() || is_bidi_control(c) => {}
+            // The soft hyphen measures zero columns, but terminals give it zero or one.
+            c if c.is_control() || is_bidi_control(c) || c == '\u{ad}' => {}
             c => out.push(c),
         }
         rest = &rest[c.len_utf8()..];

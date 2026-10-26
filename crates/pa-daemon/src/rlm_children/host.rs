@@ -7,6 +7,7 @@ use pa_types::sync::MutexExt;
 use super::{
     Arc,
     ChildCloseReason,
+    ChildObservationSource,
     ChildRecord,
     Context,
     DaemonCommand,
@@ -234,10 +235,16 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     answer_captured: false,
                     replied_since_task: false,
                     interrupted: false,
+                    progress_note: None,
+                    tool_use_count: None,
+                    live_observation: None,
+                    direct_observation: Arc::new(Mutex::new(())),
                     notice_delivered: false,
                     prompt_admitted: false,
                     error: None,
                     closed_by_parent: false,
+                    retiring: false,
+                    return_recorded: false,
                     retirement_finished: false,
                     retirement_notified: false,
                     retirement_roster_emitted: false,
@@ -312,7 +319,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 if watcher_record.lock().await.closed_by_parent {
                     return;
                 }
-                watcher_record.lock().await.prompt_admitted = true;
                 // A child spawned during plan mode starts in it: the session
                 // command queues ahead of the task prompt (durable in the
                 // child's file, and its kernel guard arms first). A child
@@ -329,7 +335,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                             .settle_failed(
                                 &watcher_record,
                                 format!("could not start the child in plan mode: {error:#}"),
-                                super::lifecycle::FailedArm::Prompt,
                             )
                             .await;
                         return;
@@ -372,15 +377,14 @@ impl RlmSubagentHost for SupervisorChildSessions {
                             .kill_child(&child_active_session_id, ChildCloseReason::Killed)
                             .await;
                         watcher_this
-                            .settle_failed(
-                                &watcher_record,
-                                format!("{retry_error:#}"),
-                                super::lifecycle::FailedArm::Prompt,
-                            )
+                            .settle_failed(&watcher_record, format!("{retry_error:#}"))
                             .await;
                         return;
                     }
                 }
+                // The worker accepted the task: from here an idle read is a
+                // finished run, never the pre-prompt idle worker.
+                watcher_record.lock().await.prompt_admitted = true;
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
             Ok(RlmSpawnHandle {
@@ -463,10 +467,49 @@ impl RlmSubagentHost for SupervisorChildSessions {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
             let records = this.children.lock().await.clone();
+            // The children's live note and tool count join from the
+            // supervisor's pushed roster: one in-memory read, never a busy
+            // child worker round trip. A failed read keeps the last values
+            // each record observed; the settle watcher owns worker refreshes.
+            let request_order = this
+                .observation_requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(peers) = this.child_roster_rows(&records).await {
+                for record in &records {
+                    let (rlm_child_id, active_session_id) = {
+                        let record = record.lock().await;
+                        (
+                            record.rlm_child_id.clone(),
+                            record.active_session_id.clone(),
+                        )
+                    };
+                    let live = peers
+                        .iter()
+                        .find(|row| {
+                            row.get("rlmChildId").and_then(Value::as_str)
+                                == Some(rlm_child_id.as_str())
+                        })
+                        .or_else(|| {
+                            peers.iter().find(|row| {
+                                row.get("activeSessionId").and_then(Value::as_str)
+                                    == Some(active_session_id.as_str())
+                            })
+                        });
+                    if let Some(live) = live {
+                        this.observe_live_state(
+                            record,
+                            live,
+                            request_order,
+                            ChildObservationSource::Roster,
+                        )
+                        .await;
+                    }
+                }
+            }
             let mut entries = Vec::with_capacity(records.len());
             for record in &records {
-                // The settle watcher owns worker refreshes. A roster read is a
-                // snapshot and must not queue behind a long supervisor request.
+                // A roster read is a snapshot: the rows serve the records'
+                // last observed state without another round trip.
                 let record = record.lock().await;
                 entries.push(SupervisorChildSessions::entry(&record));
             }
@@ -609,16 +652,39 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 ]),
             };
             drop(record_guard);
-            let was_running = record.lock().await.settled_status.is_none();
+            let was_running = {
+                // A delete of a LIVE run must not let a settle watcher that
+                // wakes inside the kill window append a clean
+                // `child_returned` beside the cancel line. The gate is this
+                // mark, not a fake settle: a fake settle would make the
+                // watcher treat the live run as finished and exit, which a
+                // failed kill would then strand (a live, unwatched child).
+                // A settled child's delete records no cancel line, so it
+                // leaves its return alone.
+                let mut row = record.lock().await;
+                let was_running = row.settled_status.is_none();
+                if was_running {
+                    row.retiring = true;
+                }
+                was_running
+            };
             // Capture before the kill: a deleted running child's durable
             // rows are its last observable spend on the parent side.
             if !already_terminated {
                 this.emit_child_usage(&record).await;
                 // Use remaining time from the shared deadline instead of
                 // an independent timeout to avoid nested timeout mismatch.
-                this.command_by(&command, deadline, 1_000)
+                if let Err(error) = this
+                    .command_by(&command, deadline, 1_000)
                     .await
-                    .with_context(|| format!("kill RLM child \"{target}\""))?;
+                    .with_context(|| format!("kill RLM child \"{target}\""))
+                {
+                    // The kill never landed: clear the mark so the
+                    // still-live child stays watchable and a later cancel
+                    // can still record the parent -> child edge.
+                    record.lock().await.retiring = false;
+                    return Err(error);
+                }
                 this.retain_retired_usage(&record, super::RetirementIntent::Delete { was_running });
                 // Observe any rows that landed before the acknowledged kill.
                 this.emit_child_usage(&record).await;
@@ -777,6 +843,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         let may = busy_again && collect_grace_may_reclear(&record);
                         if may {
                             record.settled_status = None;
+                            // A follow-up turn is running: a re-settle owes a
+                            // fresh return on the parent's ledger.
+                            record.return_recorded = false;
                         }
                         may
                     };

@@ -1,6 +1,7 @@
 //! `/compact` execution: resolve the cut over session entries, run the
 //! summarizer, persist the compaction entry, and rebuild the agent context.
 
+use pa_types::ai::{TextContent, UserContent, UserContentBlock};
 use pa_types::session::{AgentMessage, FileEntry};
 
 use super::compaction::{CutPointResult, estimate_context_tokens, find_cut_point};
@@ -10,6 +11,7 @@ use super::compaction_exec::{
     NO_PRIOR_HISTORY,
     SummaryDeltaSink,
     SummarySlice,
+    add_assistant_usage,
     build_summarization_request,
     build_turn_prefix_request,
     compaction_entry_for,
@@ -100,7 +102,10 @@ fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
             // Ambient context is not conversation: the harness digest, and
             // the session context and reminder rows (the context rows
             // announce the full context again once a compaction drops it).
-            if is_ambient_context_row(&payload.custom_type) {
+            // Upstream also drops the kernel namespace snapshot notice.
+            if is_ambient_context_row(&payload.custom_type)
+                || payload.custom_type == super::ipython_state::IPYTHON_STATE_CUSTOM_TYPE
+            {
                 return None;
             }
             Some(AgentMessage::Custom(pa_types::session::CustomMessage {
@@ -155,6 +160,7 @@ pub enum CompactOutcome {
 }
 
 pub(crate) struct CompactionAttempt {
+    session_id: String,
     /// The session leaf at prepare: the commit is valid while the active
     /// branch still grows through it with no compaction between.
     prefix_leaf: Option<String>,
@@ -239,6 +245,7 @@ pub(crate) fn prepare_attempt(
     let details: CompactionDetails =
         details_for(&file_op_messages, &entries, prev_compaction_index);
     Ok(CompactionAttempt {
+        session_id: session.get_session_id().to_string(),
         prefix_leaf,
         cut,
         previous_summary,
@@ -249,6 +256,89 @@ pub(crate) fn prepare_attempt(
         details,
         first_kept_entry,
         semantic_compaction,
+    })
+}
+
+/// One summary wire call with the length-capped retry — the shared
+/// `complete_summary_call` wrapper for both the history and the turn-prefix
+/// calls. Each attempt carries its own request id under the compaction's
+/// ledger guard (`semantic_edges::summary_slice_call`; TS `summaryCall`: the
+/// id's headers merge over the routed model's). A reply the output cap cut
+/// off retries ONCE with the shorter-summary instruction appended as one
+/// more text block on the request — no loop, no counter. A twice-capped
+/// retry still commits (the alternative is the amnesiac transcript), with
+/// the truncation marker line in front. The retry never streams live: the
+/// live block is transient, and the committed row replaces it.
+///
+/// # Errors
+///
+/// Returns an error when either wire call fails; `complete_summary_call`
+/// labels the unusable replies.
+#[allow(clippy::too_many_arguments)] // the call mirrors complete_summary_call's shape
+async fn summary_call_with_retry(
+    compaction: Option<&super::semantic_edges::SemanticCompaction>,
+    summary_headers: Option<std::collections::BTreeMap<String, String>>,
+    model: &pa_types::ai::Model,
+    session_id: &str,
+    api_key: Option<String>,
+    max_tokens: u64,
+    mut request: Vec<AgentMessage>,
+    on_delta: Option<SummaryDeltaSink>,
+    failure: &'static str,
+) -> anyhow::Result<SummarySlice> {
+    let first =
+        super::semantic_edges::summary_slice_call(compaction, summary_headers.clone(), |headers| {
+            complete_summary_call(
+                model,
+                session_id,
+                api_key.clone(),
+                headers,
+                max_tokens,
+                request.clone(),
+                on_delta.clone(),
+                failure,
+            )
+        })
+        .await?;
+    if !first.truncated {
+        return Ok(first);
+    }
+    super::compaction_trace::trace("compact.summarizer_retry", &serde_json::Value::Null);
+    // The retry request: the same single-user-message request with the
+    // shorter-summary instruction as one more text block.
+    if let Some(AgentMessage::User(user)) = request.first_mut() {
+        if let UserContent::Blocks(blocks) = &mut user.content {
+            blocks.push(UserContentBlock::Text(TextContent {
+                text: super::compaction::SHORTER_SUMMARY_INSTRUCTION.to_string(),
+                text_signature: None,
+                rest: serde_json::Map::default(),
+            }));
+        }
+    }
+    let retry = super::semantic_edges::summary_slice_call(compaction, summary_headers, |headers| {
+        complete_summary_call(
+            model, session_id, api_key, headers, max_tokens, request, None, failure,
+        )
+    })
+    .await?;
+    // Both attempts are wire calls, so both bill: the slice's usage is their sum.
+    let mut usage = first.usage.unwrap_or_default();
+    if let Some(retry_usage) = &retry.usage {
+        add_assistant_usage(&mut usage, retry_usage);
+    }
+    let summary = if retry.truncated {
+        format!(
+            "{}\n\n{}",
+            super::compaction::SUMMARY_TRUNCATED_MARKER,
+            retry.summary
+        )
+    } else {
+        retry.summary
+    };
+    Ok(SummarySlice {
+        summary,
+        usage: Some(usage),
+        truncated: retry.truncated,
     })
 }
 
@@ -378,6 +468,7 @@ pub(crate) async fn summarize_attempt(
             return Ok(SummarySlice {
                 summary: NO_PRIOR_HISTORY.to_string(),
                 usage: None,
+                truncated: false,
             });
         }
         let request = build_summarization_request(
@@ -387,23 +478,16 @@ pub(crate) async fn summarize_attempt(
             attempt.recent_state_anchor.as_deref(),
             options.settings.reserve_tokens,
         );
-        // Each summary wire call carries its own request id under the
-        // compaction's guard (TS `summaryCall`): the id's headers merge
-        // over the routed model's.
-        super::semantic_edges::summary_slice_call(
+        summary_call_with_retry(
             attempt.semantic_compaction.as_ref(),
             summary_headers.clone(),
-            |headers| {
-                complete_summary_call(
-                    &model,
-                    api_key.clone(),
-                    headers,
-                    history_max_tokens,
-                    request,
-                    options.summary_delta.clone(),
-                    "Summarization failed",
-                )
-            },
+            &model,
+            &attempt.session_id,
+            api_key.clone(),
+            history_max_tokens,
+            request,
+            options.summary_delta.clone(),
+            "Summarization failed",
         )
         .await
     };
@@ -412,27 +496,22 @@ pub(crate) async fn summarize_attempt(
             return Ok::<Option<SummarySlice>, anyhow::Error>(None);
         }
         let request = build_turn_prefix_request(&attempt.turn_prefix_messages);
-        let slice = super::semantic_edges::summary_slice_call(
+        // The turn-prefix call never streams live: the split join runs it
+        // concurrently with the history call, and its chunks interleaved
+        // into the live sink would land out of the final order (the
+        // committed summary is history, split marker, prefix). The
+        // completed prefix flushes through the sink after the join, so
+        // the live block converges to the exact committed summary.
+        let slice = summary_call_with_retry(
             attempt.semantic_compaction.as_ref(),
             summary_headers.clone(),
-            |headers| {
-                complete_summary_call(
-                    &model,
-                    api_key.clone(),
-                    headers,
-                    turn_prefix_max_tokens,
-                    request,
-                    // The turn-prefix call never streams live: the split join
-                    // runs it concurrently with the history call, and its chunks
-                    // interleaved into the live sink would land out of the
-                    // final order (the committed summary is history, split
-                    // marker, prefix). The completed prefix flushes through the
-                    // sink after the join, so the live block converges to the
-                    // exact committed summary.
-                    None,
-                    "Turn prefix summarization failed",
-                )
-            },
+            &model,
+            &attempt.session_id,
+            api_key.clone(),
+            turn_prefix_max_tokens,
+            request,
+            None,
+            "Turn prefix summarization failed",
         )
         .await?;
         Ok(Some(slice))

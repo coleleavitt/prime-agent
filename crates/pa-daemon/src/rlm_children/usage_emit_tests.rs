@@ -60,10 +60,16 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
         answer_captured: false,
         replied_since_task: false,
         interrupted: false,
+        progress_note: None,
+        tool_use_count: None,
+        live_observation: None,
+        direct_observation: Arc::new(Mutex::new(())),
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
         closed_by_parent: false,
+        retiring: false,
+        return_recorded: false,
         retirement_finished: false,
         retirement_notified: false,
         retirement_roster_emitted: false,
@@ -91,6 +97,7 @@ fn registry(agent_dir: &Path) -> SupervisorChildSessions {
             agent_dir.to_path_buf(),
             /*telemetry_disabled*/ true,
         )),
+        String::new(),
     )
 }
 
@@ -634,6 +641,7 @@ async fn retirement_registry(
             dir.to_path_buf(),
             /*telemetry_disabled*/ true,
         )),
+        String::new(),
     );
     (registry, kills, commands, task)
 }

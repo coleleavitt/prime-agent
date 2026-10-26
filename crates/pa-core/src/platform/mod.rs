@@ -41,6 +41,7 @@ pub use process::{
     kill_pid,
     kill_process_group,
     kill_process_group_or_pid,
+    normalized_exit_code,
     pid_exists,
     process_group_exists,
     set_new_process_group,

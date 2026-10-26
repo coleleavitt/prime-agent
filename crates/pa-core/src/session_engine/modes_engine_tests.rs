@@ -75,7 +75,7 @@ async fn run_command(engine: &SessionEngine, text: &str) -> SessionCommandExecut
         global_harness_dir: global_harness.path().to_path_buf(),
         autonomous: &mut autonomous,
     };
-    execute_session_command(engine, &mut params, &command).await
+    execute_session_command(engine, &mut params, &command, &[]).await
 }
 
 async fn prompt(engine: &SessionEngine, text: &str) {

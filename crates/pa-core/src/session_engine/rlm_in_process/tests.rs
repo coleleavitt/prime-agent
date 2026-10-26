@@ -1303,7 +1303,8 @@ async fn the_parent_reaches_and_observes_its_children() {
     assert_eq!(family[0].id, handle.rlm_child_id);
     assert_eq!(family[0].name.as_deref(), Some("solo"));
     // The observe roster: the parent (current) plus the child.
-    let agents = controller.list_agents().await.unwrap();
+    let list = controller.list_agents().await.unwrap();
+    let agents: Vec<_> = std::iter::once(list.current).chain(list.agents).collect();
     assert_eq!(agents.len(), 2);
     assert!(agents.iter().any(|agent| agent.is_current));
     let parent_session_id = rig.engine.session.session_id().await;
@@ -1354,7 +1355,7 @@ async fn the_parent_reaches_and_observes_its_children() {
         .recent_messages(&child_row.session_id, 10, 800)
         .await
         .unwrap();
-    assert!(!recent.is_empty());
+    assert!(!recent.messages.is_empty());
 }
 
 #[tokio::test]
@@ -1471,7 +1472,8 @@ async fn the_child_session_name_lands_in_the_session_file() {
             child_id: handle.rlm_child_id.clone(),
         },
     );
-    let agents = controller.list_agents().await.unwrap();
+    let list = controller.list_agents().await.unwrap();
+    let agents: Vec<_> = std::iter::once(list.current).chain(list.agents).collect();
     let self_row = agents
         .iter()
         .find(|agent| agent.is_current)
@@ -1503,9 +1505,14 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
                 is_streaming: false,
                 is_compacting: false,
                 attached_clients: 0,
+                message_count: None,
                 queued_count: 0,
                 is_session_active: true,
                 cwd: None,
+                parent_active_session_id: None,
+                parent_session_id: None,
+                rlm_child_id: None,
+                first_message: None,
                 pending_tool_calls:
                     crate::session_engine::agent_messaging::AgentObservePendingToolCalls::default(),
             }
@@ -1611,7 +1618,8 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
     );
     // The seam's observe rows ride the roster, and a remote row resolves
     // through get_agent.
-    let agents = controller.list_agents().await.unwrap();
+    let list = controller.list_agents().await.unwrap();
+    let agents: Vec<_> = std::iter::once(list.current).chain(list.agents).collect();
     let remote_row = agents
         .iter()
         .find(|agent| agent.session_id == "cloud-parent")
@@ -1620,7 +1628,8 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
     let fetched = controller.get_agent("cloud-parent").await.unwrap();
     assert!(fetched.is_some_and(|agent| agent.session_id == "cloud-parent"));
     // The composed root kind surfaces on the root's own observe row.
-    let agents = controller.list_agents().await.unwrap();
+    let list = controller.list_agents().await.unwrap();
+    let agents: Vec<_> = std::iter::once(list.current).chain(list.agents).collect();
     let self_row = agents
         .iter()
         .find(|agent| agent.is_current)

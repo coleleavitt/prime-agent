@@ -575,29 +575,24 @@ pub(crate) fn admit_goal_follow_up(
     work_notify.notify_one();
 }
 
-/// Admit one detached kernel bash completion notice: the row queues on the
-/// steering lane (busy sessions keep a visible steer row, idle sessions wake
-/// into it); a crash before the delivery revives with the row replaying.
-pub(crate) fn admit_bash_completion_notice(
+/// Admit one kernel notice (a detached bash completion or a factory run
+/// milestone): the row queues on the steering lane (busy sessions keep a
+/// visible steer row, idle sessions wake into it); a crash before the
+/// delivery revives with the row replaying.
+pub(crate) fn admit_kernel_notice(
     recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
     core: &Arc<Mutex<SessionCore>>,
     work_notify: &Arc<Notify>,
-    notice: &crate::engine::BashCompletionNotice,
+    notice: crate::engine::KernelNotice,
     session_is_closed: impl Fn() -> bool,
 ) {
-    let row = pa_core::session_engine::messages::create_async_bash_completion_message_with_output(
-        notice.pid,
-        &notice.command,
-        notice.exit_code,
-        notice.output.as_ref(),
-        crate::util::now_ms(),
-    );
+    let crate::engine::KernelNotice { row, preview_label } = notice;
     admit_injected_notice_row(
         recovery,
         core,
         work_notify,
         &row,
-        pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_PREVIEW_LABEL,
+        preview_label,
         session_is_closed,
     );
 }

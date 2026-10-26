@@ -402,9 +402,17 @@ fn with_usage_estimate(
                 cache_read = estimate_tokens(&cached_prefix);
                 let remaining: String = prompt_text.chars().skip(cached_chars).collect();
                 cache_write = estimate_tokens(&remaining);
-                input = prompt_tokens.saturating_sub(cache_read);
+                // input, cache_read and cache_write are disjoint parts of the
+                // prompt (as real Anthropic reports them): the cached prefix
+                // (cache_read) plus the freshly-written remainder (cache_write)
+                // already cover the whole prompt, so nothing is left as raw
+                // input. Summing all three must equal the prompt, not double it.
+                input = prompt_tokens
+                    .saturating_sub(cache_read)
+                    .saturating_sub(cache_write);
             } else {
                 cache_write = prompt_tokens;
+                input = prompt_tokens.saturating_sub(cache_write);
             }
             cache.insert(session_id, prompt_text);
         }

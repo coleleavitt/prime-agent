@@ -169,7 +169,7 @@ pub(crate) fn store_context_percent(
 }
 
 /// `toolCall` content blocks on one assistant message.
-fn tool_call_count(message: &Value) -> u64 {
+pub(crate) fn tool_call_count(message: &Value) -> u64 {
     message
         .get("content")
         .and_then(Value::as_array)

@@ -149,9 +149,13 @@ async fn the_summary_continuing_the_live_request_reads_its_prefix_from_the_cache
     let (serialized, _, calls) = compact_usage(false).await;
     assert_eq!(calls, 2);
     assert_eq!(serialized.cache_read, 0, "{serialized:?}");
-    // The serialized request pays its whole prompt as uncached input.
+    // The serialized request pays its whole prompt as a fresh cache write;
+    // the cache-prefix continuation reads its shared prefix instead and
+    // writes only the delta, so it writes less. (Under the disjoint
+    // accounting both report zero raw input, so the saving shows in the
+    // write.)
     assert!(
-        serialized.input > cached.input,
+        serialized.cache_write > cached.cache_write,
         "{serialized:?} vs {cached:?}"
     );
 }

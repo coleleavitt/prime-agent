@@ -153,6 +153,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         daemonless: true,
         rlm_token_allowance: None,
         agent_definition: None,
+        bash_notice_wake: None,
     })
     .await
     .expect("create_session");

@@ -211,6 +211,8 @@ async fn saved_session_rows(
             cwd: None,
             session_dir: None,
             scope: json!("all"),
+            limit: None,
+            cursor: None,
             rest: Map::default(),
         })
         .await?;
@@ -445,7 +447,7 @@ async fn fetch_messages(
         .request(DaemonCommand::GetMessages {
             id: None,
             active_session_id: daemon_session_id.to_string(),
-            before: None,
+            page: None,
             capabilities: None,
             rest: Map::default(),
         })

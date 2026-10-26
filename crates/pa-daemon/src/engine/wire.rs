@@ -56,6 +56,9 @@ pub struct EngineModelSelection {
 /// emit callback cancels the prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
+    /// A session model transition: the worker owns the durable `model_change`
+    /// row; this internal event adds no client-facing protocol frame.
+    ModelChange(pa_types::session::ModelChangeEntry),
     /// The user message that was accepted (recorded into the session store).
     UserMessage(Value),
     /// An assistant message update (streaming): the loop's shared
@@ -238,21 +241,6 @@ pub enum GoalTurnEndWork {
 /// held suspension owns the next turn boundary, so the goal mint defers.
 pub type SessionInputProbe = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// One detached kernel bash completion (the `bash.completed` host
-/// request): the finished command's identity and exit code.
-#[derive(Debug, Clone)]
-pub struct BashCompletionNotice {
-    pub pid: u32,
-    pub command: String,
-    pub exit_code: i64,
-    /// The end of the output (a kernel before the tail sends none).
-    pub output: Option<pa_core::session_engine::messages::BashCompletionOutput>,
-}
-
-/// The queue-admission seam for one completion notice (the worker's
-/// steering lane + runner wake + recovery busy-evidence).
-pub type BashCompletionSink = std::sync::Arc<dyn Fn(BashCompletionNotice) + Send + Sync>;
-
 /// The queue-admission seam for one prebuilt host notice row (a finished
 /// background cell's `cell.completed`): the worker's steering lane.
 pub type NoticeRowSink = std::sync::Arc<dyn Fn(pa_types::session::CustomMessage) + Send + Sync>;
@@ -262,16 +250,15 @@ pub type NoticeRowSink = std::sync::Arc<dyn Fn(pa_types::session::CustomMessage)
 pub type MonitorEventSink =
     std::sync::Arc<dyn Fn(pa_core::session_engine::messages::MonitorEvent) + Send + Sync>;
 
-/// The kernel read a finished command's result before its notice
-/// delivered (the `bash.consumed` host request): the queued notice is stale.
-#[derive(Debug, Clone)]
-pub struct BashConsumedNotice {
-    pub pid: u32,
-    pub command: String,
-}
-
-/// The queue-withdrawal seam for a consumed notice.
-pub type BashConsumedSink = std::sync::Arc<dyn Fn(BashConsumedNotice) + Send + Sync>;
+// The kernel-notice plumbing lives in pa-core
+// (`session_engine::bash_notices`); the re-export keeps the
+// `crate::engine::*` paths the worker's queue lanes compile against.
+pub use pa_core::session_engine::bash_notices::{
+    BashConsumedNotice,
+    BashConsumedSink,
+    KernelNotice,
+    KernelNoticeSink,
+};
 
 /// The worker's goal admission sink: the queue lanes admit a minted goal
 /// follow-up, the `goal_update` surfaces, and the runner wakes.
@@ -379,6 +366,9 @@ pub struct BranchSummaryRequest {
     pub custom_instructions: Option<String>,
     /// Replace the default prompt instead of appending the custom focus.
     pub replace_instructions: bool,
+    /// The session's durable id: the summary call carries it like the main requests
+    /// (opencode rejects a request without `x-opencode-session`).
+    pub session_id: String,
 }
 
 /// One completed branch summary: the final summary text, the summarizer

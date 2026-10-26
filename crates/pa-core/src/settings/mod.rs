@@ -37,7 +37,6 @@ pub use types::{
     AutoRefineSettings,
     AutonomousSettings,
     CompactionSettings,
-    McpServerConfig,
     QueueModeSetting,
     SandboxSettings,
     Settings,

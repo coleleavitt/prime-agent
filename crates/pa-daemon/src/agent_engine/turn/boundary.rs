@@ -194,6 +194,13 @@ impl AgentSessionEngine {
         }
         match consumption.refinement {
             Some(Ok(refinement)) => {
+                let outcome =
+                    pa_core::session_engine::refine::create_refinement_outcome_message(&refinement);
+                if !emit(EngineEvent::CustomMessage(
+                    crate::session_commands::custom_message_value(&outcome),
+                )) {
+                    return BoundaryRun::Cancelled;
+                }
                 if refinement.applied_edits.iter().any(|edit| edit.applied) {
                     let notice = pa_core::session_engine::refine::create_refinement_notice_message(
                         &refinement,
@@ -242,7 +249,8 @@ impl AgentSessionEngine {
                     args: format!("mode {mode}"),
                     text: format!("/permissions mode {mode}"),
                 };
-                if crate::session_commands::run_session_command(self, &command, emit).is_none() {
+                if crate::session_commands::run_session_command(self, &command, &[], emit).is_none()
+                {
                     return BoundaryRun::Cancelled;
                 }
             }
@@ -252,5 +260,75 @@ impl AgentSessionEngine {
         } else {
             BoundaryRun::Proceed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pa_core::session_engine::turn_boundary::PendingRefine;
+    use serde_json::json;
+
+    use super::*;
+    use crate::agent_engine::FAUX_TEST_LOCK;
+    use crate::agent_engine::tests::{admit, faux_engine_with_settings};
+
+    #[test]
+    fn requested_refinement_emits_its_durable_outcome_before_completion() {
+        let _faux = FAUX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut engine, dir) = faux_engine_with_settings(
+            &json!({"responses": [
+                {"text": "seed reply"},
+                {"text": json!({
+                    "summary": "No durable change justified",
+                    "rationale": "Fixture only",
+                    "expectedOutcome": "No change",
+                    "edits": []
+                }).to_string()}
+            ]}),
+            1,
+        );
+        engine.config.session_dir = Some(dir.path().join("sessions"));
+        admit(&engine, "seed turn".to_string(), &mut Vec::new());
+        {
+            let guard = engine.session.blocking_lock();
+            let session = guard.as_ref().expect("built session");
+            engine
+                .runtime
+                .block_on(session.turn_boundary.schedule_refine(PendingRefine {
+                    instructions: Some("Verify the completed outcome".to_string()),
+                    global: false,
+                    trigger: None,
+                    plan_id: None,
+                }));
+        }
+        let mut events = Vec::new();
+        let boundary = engine.run_turn_boundary(&mut |event| {
+            events.push(event);
+            true
+        });
+        assert!(matches!(boundary, BoundaryRun::Proceed));
+        let outcomes: Vec<_> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                matches!(event, EngineEvent::CustomMessage(row) if row["customType"] == "refinement_outcome")
+            })
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "one durable outcome, including a no-op refinement"
+        );
+        let completed = events
+            .iter()
+            .position(|event| matches!(event, EngineEvent::RefineComplete { .. }))
+            .expect("refinement completed");
+        assert!(
+            outcomes[0] < completed,
+            "persist the outcome before announcing completion"
+        );
     }
 }

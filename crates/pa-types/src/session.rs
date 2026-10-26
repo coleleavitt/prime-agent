@@ -305,6 +305,27 @@ pub struct GitStateEntry {
     pub git: GitContext,
 }
 
+/// `type: "tool_started"`: a tool call issued to a tool (call id, tool name,
+/// the call arguments) written when the call starts, so the trace shows an
+/// in-flight call before its result row exists.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStartedEntry {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: Value,
+}
+
+/// `type: "tool_progress"`: heartbeat row for a still-running tool call
+/// (`elapsedMs` since the call started); quiet for short calls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProgressEntry {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub elapsed_ms: u64,
+}
+
 /// `type: "custom_message"`: a custom message preserved verbatim for replay
 /// (content/details/display round-trip through session restore).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -339,6 +360,18 @@ pub enum FileEntry {
     },
     Message {
         message: AgentMessage,
+        #[serde(flatten)]
+        base: EntryBase,
+    },
+    ToolStarted {
+        #[serde(flatten)]
+        payload: ToolStartedEntry,
+        #[serde(flatten)]
+        base: EntryBase,
+    },
+    ToolProgress {
+        #[serde(flatten)]
+        payload: ToolProgressEntry,
         #[serde(flatten)]
         base: EntryBase,
     },
@@ -441,6 +474,18 @@ enum KnownFileEntry {
         #[serde(flatten)]
         base: EntryBase,
     },
+    ToolStarted {
+        #[serde(flatten)]
+        payload: ToolStartedEntry,
+        #[serde(flatten)]
+        base: EntryBase,
+    },
+    ToolProgress {
+        #[serde(flatten)]
+        payload: ToolProgressEntry,
+        #[serde(flatten)]
+        base: EntryBase,
+    },
     ThinkingLevelChange {
         #[serde(flatten)]
         payload: ThinkingLevelChangeEntry,
@@ -520,6 +565,8 @@ impl From<KnownFileEntry> for FileEntry {
         match entry {
             KnownFileEntry::Header { header } => Self::Header { header },
             KnownFileEntry::Message { message, base } => Self::Message { message, base },
+            KnownFileEntry::ToolStarted { payload, base } => Self::ToolStarted { payload, base },
+            KnownFileEntry::ToolProgress { payload, base } => Self::ToolProgress { payload, base },
             KnownFileEntry::ThinkingLevelChange { payload, base } => {
                 Self::ThinkingLevelChange { payload, base }
             }
@@ -568,6 +615,8 @@ impl FileEntry {
         match self {
             FileEntry::Header { .. } | FileEntry::Unknown { .. } => None,
             FileEntry::Message { base, .. }
+            | FileEntry::ToolStarted { base, .. }
+            | FileEntry::ToolProgress { base, .. }
             | FileEntry::ThinkingLevelChange { base, .. }
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
@@ -612,6 +661,8 @@ impl FileEntry {
                 return rest.get("id").and_then(|v| v.as_str());
             }
             FileEntry::Message { base, .. }
+            | FileEntry::ToolStarted { base, .. }
+            | FileEntry::ToolProgress { base, .. }
             | FileEntry::ThinkingLevelChange { base, .. }
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
@@ -637,6 +688,8 @@ impl FileEntry {
                 return rest.get("parentId").and_then(|v| v.as_str());
             }
             FileEntry::Message { base, .. }
+            | FileEntry::ToolStarted { base, .. }
+            | FileEntry::ToolProgress { base, .. }
             | FileEntry::ThinkingLevelChange { base, .. }
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
@@ -665,6 +718,8 @@ impl FileEntry {
                     .unwrap_or_default();
             }
             FileEntry::Message { base, .. }
+            | FileEntry::ToolStarted { base, .. }
+            | FileEntry::ToolProgress { base, .. }
             | FileEntry::ThinkingLevelChange { base, .. }
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }

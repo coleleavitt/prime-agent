@@ -60,7 +60,7 @@ async fn run_command(engine: &SessionEngine, text: &str) -> Vec<String> {
         global_harness_dir: global_harness.path().to_path_buf(),
         autonomous: &mut autonomous,
     };
-    let execution = execute_session_command(engine, &mut params, &command).await;
+    let execution = execute_session_command(engine, &mut params, &command, &[]).await;
     assert_eq!(execution.error, None);
     execution
         .messages

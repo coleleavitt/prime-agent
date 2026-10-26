@@ -478,6 +478,8 @@ fn expand_entry(
                     disabled_tools: None,
                     startup_timeout_ms: None,
                     call_timeout_ms: None,
+                    client_id: None,
+                    callback_port: None,
                 },
                 emptied,
             )

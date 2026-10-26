@@ -1,8 +1,6 @@
 //! Event dispatch: kernel protocol events routed to streams, display updates,
 //! and background output buffers.
 
-use std::fmt::Write as _;
-
 use super::{
     AGENT_MESSAGE_DISPLAY_MIME,
     ATTACHMENT_DISPLAY_MIME,
@@ -193,30 +191,9 @@ impl Inner {
             return;
         };
         let mut buffers = lock(&execution.buffers);
-        let ExecBuffers {
-            stdout,
-            stdout_chars,
-            stdout_truncated,
-            stderr,
-            stderr_chars,
-            stderr_truncated,
-            ..
-        } = &mut *buffers;
         match stream {
-            StreamName::Stdout => append_truncated(
-                stdout,
-                stdout_truncated,
-                stdout_chars,
-                text,
-                execution.max_chars,
-            ),
-            StreamName::Stderr => append_truncated(
-                stderr,
-                stderr_truncated,
-                stderr_chars,
-                text,
-                execution.max_chars,
-            ),
+            StreamName::Stdout => buffers.stdout.push(text, execution.max_chars),
+            StreamName::Stderr => buffers.stderr.push(text, execution.max_chars),
         }
         drop(buffers);
         if let Some(on_stream) = &execution.opts.on_stream {
@@ -255,13 +232,14 @@ impl Inner {
             Some(Err(_)) => {
                 buffers.attachment_oversized = true;
                 if !buffers.stderr.is_empty() {
-                    buffers.stderr.push('\n');
+                    buffers.stderr.push("\n", execution.max_chars);
                 }
-                let _ = write!(
-                    buffers.stderr,
-                    "attachment dropped: exceeds {MAX_ATTACHMENT_DATA_CHARS} base64 chars"
+                buffers.stderr.push(
+                    &format!(
+                        "attachment dropped: exceeds {MAX_ATTACHMENT_DATA_CHARS} base64 chars"
+                    ),
+                    execution.max_chars,
                 );
-                buffers.stderr_chars = buffers.stderr.chars().count();
                 buffers.status = ExecuteStatus::Error;
             }
             Some(Ok(attachment)) => buffers.attachments.push(attachment),

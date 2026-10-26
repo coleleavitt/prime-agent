@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pa_core::session_engine::agent_messaging::{
+    AGENT_OBSERVE_PREVIEW_MAX_CHARS,
     AgentFamilyMember,
     AgentFamilyRelationship,
     AgentFamilyStatus,
@@ -15,8 +16,10 @@ use pa_core::session_engine::agent_messaging::{
     AgentMessageSendInput,
     AgentObserveActivity,
     AgentObserveController,
+    AgentObserveListResult,
     AgentObserveMessagePreview,
     AgentObservePendingToolCalls,
+    AgentObserveRecentMessagesResult,
     AgentObserveSummary,
 };
 use serde_json::{Value, json};

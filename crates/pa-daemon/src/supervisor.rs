@@ -27,6 +27,8 @@ use signals_shutdown::daemon_closing_shutdown_event;
 mod supervision;
 mod tcp;
 
+#[cfg(all(test, unix))]
+mod dead_child_delete_tests;
 #[cfg(test)]
 mod handshake_tests;
 #[cfg(test)]

@@ -84,7 +84,9 @@ pub struct Reconstructed {
     /// The session's OS sandbox status label (`state.sandbox`); `None`
     /// while the sandbox is off.
     pub sandbox: Option<String>,
-    pub history_before: usize,
+    pub model_fallback_message: Option<String>,
+    /// The tail's oldest row when older history exists (the page cursor).
+    pub history_before_entry_id: Option<String>,
     pub(crate) backfill_seam: BackfillSeam,
 }
 
@@ -191,39 +193,6 @@ struct OrphanResult {
     view: crate::chat::ToolResultView,
 }
 
-/// The wire context is summary-first for the model, but the transcript
-/// presents the compaction summary at its chronological boundary — after
-/// the retained messages (`retainedMessageCount`). A missing count falls
-/// back to the timestamp split (pre-count summaries).
-fn order_messages_for_transcript(messages: &[Value]) -> Vec<&Value> {
-    let Some(summary_index) = messages.iter().position(|message| {
-        message.get("role").and_then(Value::as_str) == Some("compactionSummary")
-    }) else {
-        return messages.iter().collect();
-    };
-    let summary = &messages[summary_index];
-    let mut rest: Vec<&Value> = messages
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != summary_index)
-        .map(|(_, message)| message)
-        .collect();
-    let boundary = if let Some(retained) =
-        summary.get("retainedMessageCount").and_then(Value::as_u64)
-    {
-        (retained as usize).min(rest.len())
-    } else {
-        let summary_timestamp = summary.get("timestamp").and_then(Value::as_f64);
-        let retained = rest
-            .iter()
-            .filter(|message| message.get("timestamp").and_then(Value::as_f64) < summary_timestamp)
-            .count();
-        retained.min(rest.len())
-    };
-    rest.insert(boundary, summary);
-    rest
-}
-
 /// Replay a whole transcript, folding `toolResult` messages onto their
 /// pending cards; one id-to-index map keeps the fold linear.
 #[must_use]
@@ -238,12 +207,11 @@ pub(crate) enum BackfillSeam {
     RetryOutcome,
 }
 
-fn transcript_with_backfill_seam(messages: &[Value]) -> (Vec<ChatEntry>, BackfillSeam) {
-    let ordered = order_messages_for_transcript(messages);
+pub(crate) fn transcript_with_backfill_seam(messages: &[Value]) -> (Vec<ChatEntry>, BackfillSeam) {
     let mut seam = BackfillSeam::Preserve;
     let mut chat: Vec<ChatEntry> = Vec::new();
     let mut card_index: HashMap<String, Vec<usize>> = HashMap::new();
-    for message in ordered {
+    for message in messages {
         if let Some(result) = tool_result_message_view(message) {
             let tool_call_id = result.tool_call_id.clone();
             if let Some(result) = settle_last_pending(
@@ -342,10 +310,20 @@ fn pop_superseded_attempts(chat: &mut Vec<ChatEntry>) {
     }
 }
 
-pub(crate) fn join_backfilled_entries(head: &mut Vec<ChatEntry>, seam: BackfillSeam) {
-    if matches!(seam, BackfillSeam::RetryOutcome) {
-        pop_superseded_attempts(head);
+/// How many rows at the end of `head` the rows after it supersede.
+pub(crate) fn superseded_by_seam(head: &[ChatEntry], seam: BackfillSeam) -> usize {
+    match seam {
+        BackfillSeam::Preserve => 0,
+        BackfillSeam::RetryOutcome => head
+            .iter()
+            .rev()
+            .take_while(|entry| is_superseded_attempt_row(entry))
+            .count(),
     }
+}
+
+pub(crate) fn join_backfilled_entries(head: &mut Vec<ChatEntry>, seam: BackfillSeam) {
+    head.truncate(head.len() - superseded_by_seam(head, seam));
 }
 
 pub fn reconstruct(attach: &AttachData) -> Reconstructed {
@@ -424,10 +402,15 @@ pub fn reconstruct(attach: &AttachData) -> Reconstructed {
         .and_then(|state| state.get("sandbox"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    let history_before = snapshot
-        .get("historyBefore")
-        .and_then(Value::as_u64)
-        .map_or(0, |history| history as usize);
+    let model_fallback_message = snapshot
+        .get("summary")
+        .and_then(|summary| summary.get("modelFallbackMessage"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let history_before_entry_id = snapshot
+        .get("historyBeforeEntryId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let last_user_prompt_ms = snapshot
         .get("messages")
         .and_then(Value::as_array)
@@ -439,9 +422,9 @@ pub fn reconstruct(attach: &AttachData) -> Reconstructed {
             })
         })
         .or_else(|| {
-            (history_before > 0)
-                .then(|| snapshot.get("lastUserPromptMs").and_then(Value::as_u64))
-                .flatten()
+            history_before_entry_id
+                .as_ref()
+                .and_then(|_| snapshot.get("lastUserPromptMs").and_then(Value::as_u64))
         });
     Reconstructed {
         chat: messages,
@@ -458,8 +441,9 @@ pub fn reconstruct(attach: &AttachData) -> Reconstructed {
         queued,
         service_tier,
         sandbox,
+        model_fallback_message,
         last_user_prompt_ms,
-        history_before,
+        history_before_entry_id,
         backfill_seam,
     }
 }

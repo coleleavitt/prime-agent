@@ -15,6 +15,7 @@ use crate::factory_view::{
     FactoryView,
     FactoryViewAction,
     factory_reply_lists_runs,
+    live_run_count,
     parse_factory_runs,
 };
 use crate::session_ui::{UI_REQUEST_TIMEOUT_MS, picker_viewport_rows};
@@ -107,6 +108,7 @@ impl super::SessionUi {
                 self.factory_selected_run = None;
                 self.factory_view_session = None;
                 view.factory_view = None;
+                self.close_panel_to_agents_view();
                 self.dirty = true;
             }
             Some(FactoryViewAction::Stop { run_id }) => {
@@ -213,12 +215,7 @@ impl super::SessionUi {
         if !factory_reply_lists_runs(&reply) {
             return None;
         }
-        Some(
-            parse_factory_runs(&reply)
-                .iter()
-                .filter(|run| run.is_live())
-                .count(),
-        )
+        Some(live_run_count(&reply))
     }
 
     /// The refresh cadence (the run's collect cycle): a bounded watch on

@@ -18,6 +18,7 @@ use super::{
     EngineEvent,
     EngineModelSelection,
     ParentIdentity,
+    PromptContextBoundary,
     PromptRequest,
     ProviderTarget,
     SessionEngine,
@@ -287,6 +288,28 @@ impl SessionEngine for AgentSessionEngine {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(path);
     }
 
+    fn set_prompt_context_boundary(&self, leaf_id: Option<String>) {
+        let boundary = match leaf_id {
+            Some(leaf) => PromptContextBoundary::Leaf(leaf),
+            None => PromptContextBoundary::Empty,
+        };
+        if std::env::var_os("PA_COMPACTION_TRACE").is_some() {
+            pa_core::session_engine::compaction_trace::trace(
+                "daemon.prompt_boundary",
+                &json!({
+                    "kind": match &boundary {
+                        PromptContextBoundary::Empty => "empty",
+                        PromptContextBoundary::Leaf(_) => "leaf",
+                    },
+                }),
+            );
+        }
+        *self
+            .prompt_context_boundary
+            .lock()
+            .expect("prompt context boundary lock") = Some(boundary);
+    }
+
     /// Restore through the bounded readiness wait. An explicit create flag
     /// wins; a failed restore is never silent
     /// ([`Self::model_fallback_message`]).
@@ -312,7 +335,8 @@ impl SessionEngine for AgentSessionEngine {
             .session_file
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()?;
+            .clone()
+            .unwrap_or_default();
         if decision.session_file != current {
             return None;
         }
@@ -522,8 +546,12 @@ impl SessionEngine for AgentSessionEngine {
         Box::pin(async move {
             let model = self.resolve_model().ok()?;
             self.ensure_core_session_async(&model).await.ok()?;
-            let session = self.session.try_lock().ok()?;
-            let state = session.as_deref()?.session.agent().state().await;
+            // Clone the built engine out from under the lock (the pattern the
+            // other engine reads use). A non-blocking `try_lock` dropped the
+            // whole tools section whenever the session lock was transiently
+            // held by a background task, which flaked the export under load.
+            let core = self.session.lock().await.clone()?;
+            let state = core.session.agent().state().await;
             Some(pa_core::export_html::tools_section(&state.tools))
         })
     }
@@ -537,8 +565,10 @@ impl SessionEngine for AgentSessionEngine {
         Box::pin(async move {
             let model = self.resolve_model().ok()?;
             self.ensure_core_session_async(&model).await.ok()?;
-            let session = self.session.try_lock().ok()?;
-            let state = session.as_deref()?.session.agent().state().await;
+            // Same lock discipline as `export_tools`: a transiently-held
+            // session lock must not silently drop the pre-render.
+            let core = self.session.lock().await.clone()?;
+            let state = core.session.agent().state().await;
             let renderer = crate::session_export::ExportToolRenderer {
                 tools: &state.tools,
             };
@@ -549,10 +579,12 @@ impl SessionEngine for AgentSessionEngine {
     fn configure_startup_scope(
         &self,
         scoped_models: Vec<pa_core::models::ScopedModel>,
+        patterns: Vec<String>,
         is_continuing: bool,
     ) {
         *self.startup_scope.lock_or_recover() = Some(StartupScope {
             scoped_models,
+            patterns,
             is_continuing,
         });
         // The scope changed the startup decisions: drop the stale level; the
@@ -721,6 +753,7 @@ impl SessionEngine for AgentSessionEngine {
         let entries = request.entries;
         let custom_instructions = request.custom_instructions;
         let replace_instructions = request.replace_instructions;
+        let session_id = request.session_id;
         // TS #2411: the branch summary resolves its model through the
         // `auxiliaryModel` setting, keeping its one-off prompt off the
         // prompt-cache prefix.
@@ -738,6 +771,7 @@ impl SessionEngine for AgentSessionEngine {
                     replace_instructions,
                     reserve_tokens,
                     auxiliary: Some(&auxiliary),
+                    session_id: Some(&session_id),
                 },
             )
             .await
@@ -953,6 +987,21 @@ impl SessionEngine for AgentSessionEngine {
 
     /// The worker's turn completed: release child prompt tasks waiting on the boundary.
     fn on_turn_done(&self) {
+        *self
+            .prompt_context_boundary
+            .lock()
+            .expect("prompt context boundary lock") = None;
+        self.runtime.block_on(async {
+            let core = self.session.lock().await.clone();
+            if let Some(core) = core {
+                core.session
+                    .shared_persistence()
+                    .lock()
+                    .await
+                    .replay_admitted_user_rows(Vec::new())
+                    .expect("clearing admitted rows cannot fail");
+            }
+        });
         if let Some(children) = &self.children {
             children.notify_turn_done();
         }
@@ -1351,9 +1400,12 @@ impl SessionEngine for AgentSessionEngine {
         if let Some(command) =
             crate::session_commands::parse_prompt_session_command(&request.message)
         {
-            let Some(execution) =
-                crate::session_commands::run_session_command(self, &command, &mut emit)
-            else {
+            let Some(execution) = crate::session_commands::run_session_command(
+                self,
+                &command,
+                &request.images,
+                &mut emit,
+            ) else {
                 return;
             };
             if let Some(error) = &execution.error {

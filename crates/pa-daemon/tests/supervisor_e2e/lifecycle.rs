@@ -54,6 +54,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "transient_bash",
             "kernel_bash_activity",
             "cell_detach",
+            "persistent_shells",
             "feature_confirmation",
             "feature_questions",
             "session_input_admission",

@@ -153,3 +153,17 @@ Outside the window `ESC _` is upstream's Alt+`_`. Pinned by
 `graphics_replies_conclude_the_watch_and_never_queue` (scratch-copy run, see above; the copy
 also needs the `[[example]]` tables removed), and end to end by pa-cli's
 `image_graphics_query_e2e`.
+
+# Every readiness token of a poll is handled (2026-10-21)
+
+`src/event/source/unix/mio.rs` `try_read` returned on the first token that produced an event and
+dropped the rest of that poll's tokens. mio registers edge-triggered, so when a resize and a
+keystroke landed in the same poll, one of them was lost (the
+`scripts/check_private_default_frames.py` flake). Now tty input and the resize queue in token order,
+a wake still returns `Interrupted` with the input kept queued, and the blocking tty read is
+unchanged. Upstream crossterm has the same code.
+
+The test is an inline `#[cfg(test)]` module because only it can reach the private
+`UnixInternalEventSource::try_read`; cargo does not test a non-member crate in place, so run it from
+a copy of `vendor/crossterm` without the `[[example]]` entries (the examples are not vendored):
+`TERM=xterm-256color cargo test --features event-stream --lib -- a_keystroke_in_the_same_poll`.

@@ -178,6 +178,7 @@ pub(crate) async fn bootstrap_venv(
         &uv,
         venv,
         &python,
+        &source_dir,
         &runtime_identity,
         python_skills,
         options,
@@ -218,6 +219,7 @@ pub(crate) async fn sync_python_skills(
     uv: &str,
     venv: &Path,
     python: &Path,
+    source_dir: &Path,
     runtime_identity: &str,
     python_skills: &[BootstrapPythonSkill],
     options: &EnsureKernelPythonOptions,
@@ -255,6 +257,9 @@ pub(crate) async fn sync_python_skills(
             "install".to_string(),
             "--python".to_string(),
             python_str.clone(),
+            // Skills may depend on the runtime too. Keep their resolver
+            // pinned to the same local source, including per-skill retries.
+            source_dir.to_string_lossy().to_string(),
         ];
         for skill in &missing {
             install_args.push("--editable".to_string());
@@ -274,6 +279,7 @@ pub(crate) async fn sync_python_skills(
                         "install".to_string(),
                         "--python".to_string(),
                         python_str.clone(),
+                        source_dir.to_string_lossy().to_string(),
                         "--editable".to_string(),
                         skill.package_path.clone(),
                     ],

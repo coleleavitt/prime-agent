@@ -61,11 +61,6 @@ pub use prime_inference::{
     is_private_prime_inference_model_id,
     private_prime_inference_models,
 };
-pub use prime_inference_catalog::{
-    PrimeInferenceCatalogEntry,
-    build_prime_inference_models,
-    parse_prime_inference_model_catalog,
-};
 pub use resolver::{
     InitialModelOptions,
     PRIME_INFERENCE_DEFAULT_MODEL_ID,
@@ -79,8 +74,10 @@ pub use resolver::{
     resolve_cli_model,
     resolve_fallback_models,
     resolve_model_scope_from_models,
+    scope_patterns_select_reference,
 };
 pub use session_restore::{
     SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
     find_session_model_with_readiness_wait,
+    resolve_model_scope_from_models_with_readiness,
 };

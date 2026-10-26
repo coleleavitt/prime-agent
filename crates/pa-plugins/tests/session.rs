@@ -80,7 +80,7 @@ async fn run_command(engine: &SessionEngine, text: &str) -> Result<String, Strin
         global_harness_dir: global_harness.path().to_path_buf(),
         autonomous: &mut autonomous,
     };
-    let execution = execute_session_command(engine, &mut params, &command).await;
+    let execution = execute_session_command(engine, &mut params, &command, &[]).await;
     if let Some(error) = execution.error {
         return Err(error);
     }

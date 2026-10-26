@@ -3,9 +3,12 @@
 //! file, while an unparseable or blank first line leaves the fold to decide
 //! (TS never invalidates on a parse failure).
 
+use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use pa_core::session::catalog_cache::{
     self,
@@ -21,6 +24,7 @@ use crate::session_store::{
     SESSION_LIST_HEADER_READ_MAX_BYTES,
     SessionInfo,
     parse_session_header_line,
+    persist_info_sidecar,
     read_first_line_bounded_from,
     read_session_info_from,
 };
@@ -74,13 +78,107 @@ fn bounded_header_gate(file: &mut fs::File) -> HeaderGate {
 
 /// One file's roster row: `None` when the file produces none. One open serves
 /// the gate and the fold, pinning both to the same inode (a rename racing two
-/// handles could judge one file and fold another).
+/// handles could judge one file and fold another). A fold the sidecar did not
+/// cover backfills it, so the next cold process loads this row cheaply.
 fn roster_session_info(path: &Path) -> Option<SessionInfo> {
     let mut file = fs::File::open(path).ok()?;
     match bounded_header_gate(&mut file) {
         HeaderGate::NotAHeader => None,
-        HeaderGate::Header | HeaderGate::Unjudged => read_session_info_from(&mut file, path),
+        HeaderGate::Header | HeaderGate::Unjudged => {
+            let (info, sidecar_behind) = read_session_info_from(&mut file, path)?;
+            if sidecar_behind {
+                persist_info_sidecar(path);
+            }
+            Some(info)
+        }
     }
+}
+
+/// One walk over the store: the folded rows, the files after the walk, and
+/// the cursor that resumes after the last walked file (`None` at the end).
+pub struct SessionPage {
+    pub infos: Vec<SessionInfo>,
+    pub remaining: usize,
+    pub next_cursor: Option<String>,
+}
+
+/// The walk order's key: newest mtime first, the file name breaking ties, so
+/// the initial snapshot order is total.
+type WalkKey = (Reverse<u128>, String);
+
+struct WalkSnapshot {
+    session_dir: PathBuf,
+    files: Arc<Vec<PathBuf>>,
+    last_used: Instant,
+}
+
+fn walk_snapshots() -> &'static Mutex<HashMap<String, WalkSnapshot>> {
+    static SNAPSHOTS: OnceLock<Mutex<HashMap<String, WalkSnapshot>>> = OnceLock::new();
+    SNAPSHOTS.get_or_init(Default::default)
+}
+
+fn snapshot_files(session_dir: &Path, cursor: Option<&str>) -> (String, Arc<Vec<PathBuf>>, usize) {
+    if let Some((id, offset)) = cursor
+        .and_then(|cursor| cursor.strip_prefix("snapshot:"))
+        .and_then(|cursor| cursor.split_once(':'))
+        .and_then(|(id, offset)| offset.parse::<usize>().ok().map(|offset| (id, offset)))
+    {
+        let mut snapshots = walk_snapshots()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        snapshots.retain(|_, snapshot| snapshot.last_used.elapsed() < Duration::from_secs(300));
+        if let Some(snapshot) = snapshots.get_mut(id) {
+            if snapshot.session_dir == session_dir && offset <= snapshot.files.len() {
+                snapshot.last_used = Instant::now();
+                return (id.to_string(), Arc::clone(&snapshot.files), offset);
+            }
+        }
+    }
+    let mut files: Vec<(WalkKey, PathBuf)> = fs::read_dir(session_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        .filter_map(|path| {
+            let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            let modified_ns = modified
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos());
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(((Reverse(modified_ns), name), path))
+        })
+        .collect();
+    files.sort_unstable();
+    (
+        uuid::Uuid::new_v4().to_string(),
+        Arc::new(files.into_iter().map(|(_, path)| path).collect()),
+        0,
+    )
+}
+
+fn retain_snapshot(id: String, session_dir: &Path, files: Arc<Vec<PathBuf>>) {
+    let mut snapshots = walk_snapshots()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    snapshots.retain(|_, snapshot| snapshot.last_used.elapsed() < Duration::from_secs(300));
+    if !snapshots.contains_key(&id) && snapshots.len() >= 32 {
+        if let Some(oldest) = snapshots
+            .iter()
+            .min_by_key(|(_, snapshot)| snapshot.last_used)
+            .map(|(id, _)| id.clone())
+        {
+            snapshots.remove(&oldest);
+        }
+    }
+    snapshots.insert(
+        id,
+        WalkSnapshot {
+            session_dir: session_dir.to_path_buf(),
+            files,
+            last_used: Instant::now(),
+        },
+    );
 }
 
 /// List every valid session file in a directory, most recently modified first.
@@ -88,73 +186,95 @@ fn roster_session_info(path: &Path) -> Option<SessionInfo> {
 /// cross-core cacheline/futex costs on a loaded box (425ms vs 137ms over 1412 files).
 #[must_use]
 pub fn list_sessions(session_dir: &Path) -> Vec<SessionInfo> {
-    list_sessions_with(session_dir, |_, _, _| true)
+    list_sessions_with(session_dir, None, None, |_, _, _| true).infos
 }
 
-/// [`list_sessions`] with the saved-catalog stream's per-file callback:
-/// `on_row` receives rows as each fold completes, so rows reach the client
-/// DURING the scan; the metadata pass runs first, so the first row is the
-/// newest session. `false` stops the scan.
+/// [`list_sessions`] as a page with the saved-catalog stream's per-file
+/// callback. The first request snapshots the names in mtime order; continuations retain that
+/// file order even when sessions change. Expired cursors restart the walk; the TUI deduplicates
+/// repeated paths. At most 32 snapshots are kept, expiring after five idle minutes.
+/// The fold walks only the files after `cursor`, at most `limit` of
+/// them. `on_row` receives rows as each fold completes, so rows reach the
+/// client DURING the scan, newest first. `false` stops the scan.
 pub fn list_sessions_with(
     session_dir: &Path,
+    cursor: Option<&str>,
+    limit: Option<usize>,
     on_row: impl FnMut(usize, usize, &SessionInfo) -> bool,
-) -> Vec<SessionInfo> {
-    list_sessions_through(session_dir, catalog_cache::installed(), on_row)
+) -> SessionPage {
+    list_sessions_through(
+        session_dir,
+        cursor,
+        limit,
+        catalog_cache::installed(),
+        on_row,
+    )
 }
 
 /// [`list_sessions_with`] over an explicit catalog cache (`None` folds every
 /// file).
 fn list_sessions_through(
     session_dir: &Path,
+    cursor: Option<&str>,
+    limit: Option<usize>,
     cache: Option<&dyn SessionCatalogCache>,
     mut on_row: impl FnMut(usize, usize, &SessionInfo) -> bool,
-) -> Vec<SessionInfo> {
-    let Ok(read) = fs::read_dir(session_dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<(PathBuf, SystemTime, Option<CatalogFileKey>)> = read
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
-        .filter_map(|path| {
-            let metadata = fs::metadata(&path).ok()?;
-            let modified = metadata.modified().ok()?;
-            Some((path, modified, CatalogFileKey::from_metadata(&metadata)))
-        })
-        .collect();
-    files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
-    let total = files.len();
-    let listed: Vec<PathBuf> = match cache {
-        Some(_) => files.iter().map(|(path, _, _)| path.clone()).collect(),
-        None => Vec::new(),
-    };
+) -> SessionPage {
+    let (snapshot_id, snapshot, start) = snapshot_files(session_dir, cursor);
+    let files = &snapshot[start..];
+    let walk = limit.map_or(files.len(), |limit| limit.max(1).min(files.len()));
     let mut infos = Vec::new();
-    for (index, (path, _, key)) in files.into_iter().enumerate() {
-        let info = match (cache, key) {
-            (Some(cache), Some(key)) => cached_roster_session_info(
-                cache,
-                &CatalogFile {
-                    session_dir,
-                    path: &path,
-                    key,
-                    fold_version: SESSION_ROW_VERSION,
-                },
-            ),
-            (None, _) | (Some(_), None) => roster_session_info(&path),
+    let mut walked = 0;
+    let mut stopped = false;
+    for (index, path) in files[..walk].iter().enumerate() {
+        walked = index + 1;
+        let info = match cache {
+            Some(cache) => match fs::metadata(path)
+                .ok()
+                .and_then(|metadata| CatalogFileKey::from_metadata(&metadata))
+            {
+                Some(key) => cached_roster_session_info(
+                    cache,
+                    &CatalogFile {
+                        session_dir,
+                        path: path.as_path(),
+                        key,
+                        fold_version: SESSION_ROW_VERSION,
+                    },
+                ),
+                None => roster_session_info(path),
+            },
+            None => roster_session_info(path),
         };
         if let Some(info) = info {
             // `false` stops the scan: the consumer is gone, so the remaining
             // folds serve nobody — the scan returns the rows it has.
-            if !on_row(index, total, &info) {
-                return infos;
+            if !on_row(index, walk, &info) {
+                stopped = true;
+                break;
             }
             infos.push(info);
         }
     }
+    // The snapshot is the whole directory listing, so a cache sweep evicts
+    // only rows for files that are gone - safe even on a partial page. A
+    // stopped scan (the consumer went away) never reports a finished scan.
     if let Some(cache) = cache {
-        cache.scan_finished(session_dir, &listed);
+        if !stopped {
+            cache.scan_finished(session_dir, snapshot.as_slice());
+        }
     }
-    infos
+    let remaining = files.len() - walked;
+    let next_cursor = (remaining > 0).then(|| {
+        let cursor = format!("snapshot:{snapshot_id}:{}", start + walked);
+        retain_snapshot(snapshot_id, session_dir, Arc::clone(&snapshot));
+        cursor
+    });
+    SessionPage {
+        infos,
+        remaining,
+        next_cursor,
+    }
 }
 
 /// One file's row through the catalog cache: a hit is served without the
@@ -260,7 +380,7 @@ fn info_from_row(path: &Path, row: CatalogSessionRow) -> SessionInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::time::SystemTime;
 
     use serde_json::json;
 
@@ -435,10 +555,11 @@ mod tests {
                 .unwrap();
         }
         let mut seen: Vec<(usize, usize, Option<String>)> = Vec::new();
-        let rows = list_sessions_with(&dir, |index, total, info| {
+        let rows = list_sessions_with(&dir, None, None, |index, total, info| {
             seen.push((index, total, info.name.clone()));
             true
-        });
+        })
+        .infos;
         assert_eq!(rows.len(), 3);
         assert_eq!(seen.len(), 3, "every row emitted as its fold completes");
         assert_eq!(
@@ -471,10 +592,11 @@ mod tests {
         write_session(&dir, "/repo/b", Some("second"), 1);
         write_session(&dir, "/repo/c", Some("third"), 1);
         let mut emitted = 0usize;
-        let rows = list_sessions_with(&dir, |_, _, _| {
+        let rows = list_sessions_with(&dir, None, None, |_, _, _| {
             emitted += 1;
             emitted < 2
-        });
+        })
+        .infos;
         assert_eq!(emitted, 2, "the scan stops at the consumer's false");
         assert_eq!(rows.len(), 1, "only the emitted row returns: {rows:?}");
     }
@@ -521,8 +643,8 @@ mod tests {
         let foreign = dir.join("foreign.jsonl");
         fs::write(&foreign, "{\"type\":\"message\"}\n").unwrap();
         let cache = StubCache::default();
-        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| true);
-        let native = list_sessions_through(&dir, None, |_, _, _| true);
+        let rows = list_sessions_through(&dir, None, None, Some(&cache), |_, _, _| true).infos;
+        let native = list_sessions_through(&dir, None, None, None, |_, _, _| true).infos;
         assert_eq!(
             rows, native,
             "a miss lists exactly what the native scan lists"
@@ -567,7 +689,7 @@ mod tests {
             CatalogEntry::Session(Box::new(row.clone())),
         );
         cache.served.insert(hidden, CatalogEntry::NotASession);
-        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| true);
+        let rows = list_sessions_through(&dir, None, None, Some(&cache), |_, _, _| true).infos;
         assert_eq!(rows, vec![info_from_row(&session, row)]);
         assert!(cache.recorded.into_inner().unwrap().is_empty());
     }
@@ -578,7 +700,7 @@ mod tests {
         write_session(&dir, "/repo/a", Some("first"), 1);
         write_session(&dir, "/repo/b", Some("second"), 1);
         let cache = StubCache::default();
-        let rows = list_sessions_through(&dir, Some(&cache), |_, _, _| false);
+        let rows = list_sessions_through(&dir, None, None, Some(&cache), |_, _, _| false).infos;
         assert!(rows.is_empty());
         assert!(cache.finished.into_inner().unwrap().is_empty());
     }
@@ -589,5 +711,77 @@ mod tests {
         let path = write_session(&dir, "/repo/a", Some("alpha"), 3);
         let info = read_session_info(&path).unwrap();
         assert_eq!(info_from_row(&path, row_from_info(&info)), info);
+    }
+
+    #[test]
+    fn a_page_cursor_resumes_after_its_file_even_once_that_file_is_deleted() {
+        let dir = temp_dir();
+        let base = SystemTime::now() - std::time::Duration::from_hours(1);
+        let paths: Vec<PathBuf> = (0..5)
+            .map(|index| {
+                let path = write_session(&dir, "/repo/x", Some(&format!("row {index}")), 1);
+                let file = fs::File::options().write(true).open(&path).unwrap();
+                let modified = base + std::time::Duration::from_secs(60 * index);
+                file.set_times(std::fs::FileTimes::new().set_modified(modified))
+                    .unwrap();
+                path
+            })
+            .collect();
+        let names = |page: &SessionPage| {
+            page.infos
+                .iter()
+                .map(|info| info.name.clone().unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        let first = list_sessions_with(&dir, None, Some(2), |_, _, _| true);
+        assert_eq!(names(&first), ["row 4", "row 3"]);
+        assert_eq!(first.remaining, 3);
+        fs::remove_file(&paths[3]).unwrap();
+        let second =
+            list_sessions_with(&dir, first.next_cursor.as_deref(), Some(2), |_, _, _| true);
+        assert_eq!(names(&second), ["row 2", "row 1"], "no file skipped");
+        assert_eq!(second.remaining, 1);
+    }
+    #[test]
+    fn a_session_modified_between_pages_is_not_skipped() {
+        let dir = temp_dir();
+        let base = SystemTime::now() - Duration::from_secs(3600);
+        let paths: Vec<_> = (0..3)
+            .map(|index| {
+                let path = write_session(&dir, "/repo/x", Some(&format!("row {index}")), 1);
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(base + Duration::from_secs(index))
+                    .unwrap();
+                path
+            })
+            .collect();
+        let first = list_sessions_with(&dir, None, Some(1), |_, _, _| true);
+        assert_eq!(first.infos[0].name.as_deref(), Some("row 2"));
+        fs::File::options()
+            .write(true)
+            .open(&paths[0])
+            .unwrap()
+            .set_modified(SystemTime::now())
+            .unwrap();
+        let second =
+            list_sessions_with(&dir, first.next_cursor.as_deref(), Some(2), |_, _, _| true);
+        assert_eq!(
+            second
+                .infos
+                .iter()
+                .map(|info| info.name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("row 1"), Some("row 0")]
+        );
+        assert!(second.next_cursor.is_none());
+        let replay =
+            list_sessions_with(&dir, first.next_cursor.as_deref(), Some(2), |_, _, _| true);
+        assert_eq!(
+            replay.infos, second.infos,
+            "retrying a cursor reads the same file slice"
+        );
     }
 }

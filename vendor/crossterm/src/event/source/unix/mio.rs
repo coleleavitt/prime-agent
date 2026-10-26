@@ -1,17 +1,18 @@
-use std::{collections::VecDeque, io, time::Duration};
+use std::collections::VecDeque;
+use std::io;
+use std::time::Duration;
 
-use mio::{unix::SourceFd, Events, Interest, Poll, Token};
+use mio::unix::SourceFd;
+use mio::{Events, Interest, Poll, Token};
 use signal_hook_mio::v1_0::Signals;
 
+use crate::event::source::EventSource;
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
-use crate::event::{
-    source::EventSource,
-    sys::unix::parse::{parse_event, KittyPrintableTwin},
-    timeout::PollTimeout,
-    Event, InternalEvent,
-};
-use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
+use crate::event::sys::unix::parse::{KittyPrintableTwin, parse_event};
+use crate::event::timeout::PollTimeout;
+use crate::event::{Event, InternalEvent};
+use crate::terminal::sys::file_descriptor::{FileDesc, tty_fd};
 
 // Tokens to identify file descriptor
 const TTY_TOKEN: Token = Token(0);
@@ -92,6 +93,9 @@ impl EventSource for UnixInternalEventSource {
                 return Ok(None);
             }
 
+            // mio registers edge-triggered: every token of this poll is handled before returning.
+            #[cfg(feature = "event-stream")]
+            let mut woken = false;
             for token in self.events.iter().map(|x| x.token()) {
                 match token {
                     TTY_TOKEN => {
@@ -117,8 +121,8 @@ impl EventSource for UnixInternalEventSource {
                                 }
                             };
 
-                            if let Some(event) = self.parser.next() {
-                                return Ok(Some(event));
+                            if !self.parser.internal_events.is_empty() {
+                                break;
                             }
                         }
                     }
@@ -132,20 +136,26 @@ impl EventSource for UnixInternalEventSource {
                             // it's a really long time from the mio, async-std/tokio executor, ...
                             // point of view.
                             let new_size = crate::terminal::size()?;
-                            return Ok(Some(InternalEvent::Event(Event::Resize(
-                                new_size.0, new_size.1,
-                            ))));
+                            self.parser.internal_events.push_back(InternalEvent::Event(
+                                Event::Resize(new_size.0, new_size.1),
+                            ));
                         }
                     }
                     #[cfg(feature = "event-stream")]
-                    WAKE_TOKEN => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "Poll operation was woken up by `Waker::wake`",
-                        ));
-                    }
+                    WAKE_TOKEN => woken = true,
                     _ => unreachable!("Synchronize Evented handle registration & token handling"),
                 }
+            }
+
+            #[cfg(feature = "event-stream")]
+            if woken {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Poll operation was woken up by `Waker::wake`",
+                ));
+            }
+            if let Some(event) = self.parser.next() {
+                return Ok(Some(event));
             }
 
             // Processing above can take some time, check if timeout expired
@@ -235,5 +245,46 @@ impl Iterator for Parser {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.internal_events.pop_front()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    use super::UnixInternalEventSource;
+    use crate::event::source::EventSource;
+    use crate::event::{Event, InternalEvent, KeyCode};
+    use crate::terminal::sys::file_descriptor::FileDesc;
+
+    /// The resize reads the terminal size: run on a tty, or with `TERM` set for the tput fallback.
+    #[test]
+    fn a_keystroke_in_the_same_poll_as_a_resize_arrives() {
+        let (input, mut keyboard) = UnixStream::pair().unwrap();
+        let mut source =
+            UnixInternalEventSource::from_file_descriptor(FileDesc::Owned(input.into())).unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGWINCH).unwrap();
+        keyboard.write_all(b"ab").unwrap();
+
+        let mut events = Vec::new();
+        while let Some(event) = source.try_read(Some(Duration::from_millis(200))).unwrap() {
+            if let InternalEvent::Event(event) = event {
+                events.push(event);
+            }
+        }
+        assert!(
+            matches!(events.first(), Some(Event::Resize(..))),
+            "{events:?}"
+        );
+        let keys: Vec<KeyCode> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Key(key) => Some(key.code),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, [KeyCode::Char('a'), KeyCode::Char('b')], "{events:?}");
     }
 }

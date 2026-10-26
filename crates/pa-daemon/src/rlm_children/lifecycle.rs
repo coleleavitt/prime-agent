@@ -1,6 +1,7 @@
 //! The child-lifecycle concern: session creation (create/launch), the
 //! prompt/kill/close routing, settle watching with its notices, and the
 //! spawn-admission outbox types (`CreatedSessionIds`, `CreatedChild`).
+use pa_core::session_engine::semantic_edges::ChildCancelledReason;
 use pa_types::sync::MutexExt;
 
 use super::{
@@ -8,6 +9,7 @@ use super::{
     Arc,
     CREATE_TIMEOUT_MS,
     ChildCloseReason,
+    ChildObservationSource,
     ChildRecord,
     Context,
     CustomMessage,
@@ -417,26 +419,24 @@ impl SupervisorChildSessionsInner {
         Ok(())
     }
 
-    /// Whether the child worker still has work in flight (streaming,
-    /// queued, or its own children still running - so a child stays
-    /// running while any descendant does). `Err` means the child cannot be
-    /// reached right now.
-    pub(super) async fn child_busy(&self, active_session_id: &str) -> Result<bool> {
+    /// The child's live session summary (`get_state`): the busy verdict,
+    /// the note, and the tool count read one round trip.
+    pub(super) async fn child_state(&self, active_session_id: &str) -> Result<Value> {
         let command = DaemonCommand::GetState {
             id: None,
             active_session_id: active_session_id.to_string(),
             rest: Map::default(),
         };
-        let state = self.command(&command, STATE_TIMEOUT_MS).await?;
-        let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
-        Ok(flag("isStreaming")
-            || flag("hasRunningSubagents")
-            || state
-                .get("sessionActions")
-                .and_then(|actions| actions.get("queuedCount"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                > 0)
+        self.command(&command, STATE_TIMEOUT_MS).await
+    }
+
+    /// Whether the child worker still has work in flight (streaming,
+    /// queued, or its own children still running - so a child stays
+    /// running while any descendant does). `Err` means the child cannot be
+    /// reached right now.
+    pub(super) async fn child_busy(&self, active_session_id: &str) -> Result<bool> {
+        let state = self.child_state(active_session_id).await?;
+        Ok(child_busy_flags(&state))
     }
 
     /// One `GetLastAssistantText` round trip: the raw text the roster
@@ -481,7 +481,8 @@ impl SupervisorChildSessionsInner {
     }
 
     /// Refresh one record against its worker: settle a child whose worker ran out of work and
-    /// capture its answer once; an unreachable child keeps its last known state.
+    /// capture its answer once; an unreachable child keeps its last known state. The same
+    /// round trip observes the child's live note and tool count onto the record.
     pub(super) async fn refresh_record(&self, record: &Arc<Mutex<ChildRecord>>) {
         {
             let record = record.lock().await;
@@ -489,9 +490,38 @@ impl SupervisorChildSessionsInner {
                 return;
             }
         }
-        let active_session_id = record.lock().await.active_session_id.clone();
-        let busy = self.child_busy(&active_session_id).await;
-        if !matches!(busy, Ok(false)) {
+        let (active_session_id, direct_observation, unsettled_session_file) = {
+            let record = record.lock().await;
+            (
+                record.active_session_id.clone(),
+                Arc::clone(&record.direct_observation),
+                record
+                    .settled_status
+                    .is_none()
+                    .then(|| record.session_file.clone())
+                    .flatten()
+                    .filter(|path| !path.is_empty()),
+            )
+        };
+        let state = {
+            let _direct = direct_observation.lock().await;
+            let request_order = self
+                .observation_requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let state = self.child_state(&active_session_id).await;
+            if let Ok(state) = &state {
+                self.observe_live_state(
+                    record,
+                    state,
+                    request_order,
+                    ChildObservationSource::Direct,
+                )
+                .await;
+            }
+            state
+        };
+        let idle = matches!(&state, Ok(state) if !child_busy_flags(state));
+        if !idle {
             return;
         }
         // Capture the answer before taking the record lock (the capture is
@@ -503,6 +533,22 @@ impl SupervisorChildSessionsInner {
             .await
             .ok()
             .flatten();
+        // How the run's final turn ended (#3366): a run whose last model
+        // call failed (a provider error, after its retries if it had any)
+        // settles `error` with that text instead of a `done` with no
+        // answer. The worker persists every row before it reads idle,
+        // so its durable file holds the final turn; the read stays off
+        // the async workers.
+        let final_turn_error = match unsettled_session_file {
+            Some(path) => tokio::task::spawn_blocking(move || final_turn_error_from_file(&path))
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        }
+        // A provider error can carry a whole raw response body (a gateway's
+        // HTML error page); the text reaches the parent's context.
+        .map(|error| compact_rlm_text(&error));
         let answer = raw_answer.as_deref().map(compact_rlm_text);
         let answer_text = raw_answer
             .as_deref()
@@ -518,7 +564,13 @@ impl SupervisorChildSessionsInner {
         // no answer yet, so a settled preview is still never overwritten
         // with a later miss.
         if record.settled_status.is_none() {
-            record.settled_status = Some("done");
+            match final_turn_error {
+                Some(error) => {
+                    record.settled_status = Some("error");
+                    record.error = Some(error);
+                }
+                None => record.settled_status = Some("done"),
+            }
         }
         if (!record.answer_captured || record.answer_preview.is_none()) && answer.is_some() {
             record.answer_preview = answer;
@@ -528,7 +580,8 @@ impl SupervisorChildSessionsInner {
     }
 
     /// Watch one admitted child until its run settles, then deliver the parent's terminal notice
-    /// when the child never replied; the watcher stops as soon as the record is removed.
+    /// (the failure row or the no-reply notice) when the child has not replied since its task;
+    /// the watcher stops as soon as the record is removed.
     pub(super) async fn watch_child_settle(&self, record: &Arc<Mutex<ChildRecord>>) {
         let mut unreachable_polls: u32 = 0;
         loop {
@@ -551,6 +604,22 @@ impl SupervisorChildSessionsInner {
             self.refresh_record(record).await;
             let settled = record.lock().await.settled_status.is_some();
             if settled {
+                // A delete in flight (`retiring`) owns this run's terminal
+                // edge: the watcher must not run the settle tail into the
+                // delete's kill window. The tail would record nothing
+                // (`record_child_return` holds the mark), deliver the
+                // terminal notice and exit, so a failed kill would strand
+                // a settled row with no watcher and no ledger line, and a
+                // confirmed kill would race its cancel line with the
+                // notice, the goal hook and the display flip. Park
+                // instead: a failed kill clears the mark and the loop
+                // settles the run normally, and a confirmed kill closes
+                // the record (`closed_by_parent` ends the watch at the
+                // loop top).
+                if record.lock().await.retiring {
+                    tokio::time::sleep(Duration::from_millis(WATCH_POLL_INTERVAL_MS)).await;
+                    continue;
+                }
                 // Stability re-check: a prompt admitted to an idle worker
                 // can read idle once between the admission and the turn
                 // pop (the queue snapshot and the busy flag change under
@@ -559,9 +628,34 @@ impl SupervisorChildSessionsInner {
                 // (a queued continuation) keeps watching. An unreachable
                 // worker (an idle passivation, a crash) leaves the settled
                 // verdict standing, as in `refresh_record`.
+                //
+                // The re-check wipes only a WATCHER-set settle (the
+                // premature `done` of the admission race, or a refresh's
+                // final-turn `error`, which claimed no notice yet): a
+                // registry-set `cancelled` (a user abort or a parent kill
+                // in flight, `cancel_child_run`/`close_children_inner`)
+                // stands — wiping it would let this watcher refresh the
+                // still-live run back to `done` and record a clean
+                // `child_returned` beside the cancel line, so the row
+                // keeps its registry settle and this loop keeps watching
+                // until the abort lands (the cancel path owns the
+                // terminal handling).
                 tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
                 if matches!(self.child_busy(&active_session_id).await, Ok(true)) {
-                    record.lock().await.settled_status = None;
+                    let mut record = record.lock().await;
+                    let refresh_verdict = match record.settled_status {
+                        Some("done") => true,
+                        Some("error") => !record.notice_delivered,
+                        _ => false,
+                    };
+                    if refresh_verdict {
+                        record.settled_status = None;
+                        record.error = None;
+                        // The run is live again (a queued continuation): a
+                        // re-settle owes a fresh return.
+                        record.return_recorded = false;
+                    }
+                    drop(record);
                     continue;
                 }
                 self.refresh_record(record).await;
@@ -587,11 +681,7 @@ impl SupervisorChildSessionsInner {
                     // holds; capture them before the terminal notice.
                     self.emit_final_child_usage(record).await;
                     if self
-                        .settle_failed(
-                            record,
-                            "Child worker unreachable".to_string(),
-                            FailedArm::Unreachable,
-                        )
+                        .settle_failed(record, "Child worker unreachable".to_string())
                         .await
                     {
                         return;
@@ -686,20 +776,34 @@ impl SupervisorChildSessionsInner {
     /// committed request, read from the child's own ledger file (the
     /// cross-process form of TS's in-process
     /// `child.semanticEdges.lastCommittedRequestId`). Only a `done` or
-    /// `error` settle returns — TS never records a cancelled run (its done
-    /// arm throws on `run.error` and the record gates on `status ===
-    /// "error"`). A child without a durable session id, or a parent
-    /// without a recorder, records nothing.
-    async fn record_child_return(&self, record: &Arc<Mutex<ChildRecord>>) {
-        let recorder = self.semantic_edges.lock_or_recover().clone();
-        let Some(recorder) = recorder else {
+    /// `error` settle returns — a cancelled run never returns (it is the
+    /// parent's action, so it records through
+    /// [`Self::record_child_cancelled`] instead, nano-rlm #202) — and a
+    /// delete in flight ([`ChildRecord::retiring`]) returns nothing either.
+    /// A child without a durable session id, or a parent without a
+    /// recorder, records nothing.
+    pub(super) async fn record_child_return(&self, record: &Arc<Mutex<ChildRecord>>) {
+        let Some(recorder) = self.semantic_edges.lock_or_recover().clone() else {
             return;
         };
         let (child_session_id, child_dir) = {
-            let record = record.lock().await;
-            if !matches!(record.settled_status, Some("done" | "error")) {
+            let mut record = record.lock().await;
+            // Only a run that actually settled (`done`/`error`) owes a return.
+            // An unsettled child returns nothing (a delete in flight records its
+            // cancel line instead); a child that already settled still records
+            // its return even when a delete is now in flight — deleting a
+            // settled child cancels nothing.
+            //
+            // The watcher's settle tail and a settled child's delete
+            // (`finish_retirement`, which discards the ephemeral child dir the
+            // ledger read below needs) both reach here, and
+            // `record_child_returned` is not idempotent: claim the return under
+            // the lock so the first caller reads the child ledger and records
+            // while the dir still stands, and the other skips.
+            if record.return_recorded || !matches!(record.settled_status, Some("done" | "error")) {
                 return;
             }
+            record.return_recorded = true;
             (record.session_id.clone(), record.session_dir.clone())
         };
         let Some(child_session_id) = child_session_id else {
@@ -722,16 +826,45 @@ impl SupervisorChildSessionsInner {
         recorder.record_child_returned(&child_session_id, last_committed);
     }
 
-    /// Deliver the no-reply terminal notice for a settled child that never
-    /// sent an agent message to the parent. Exactly-once: the record's
-    /// notice claim collapses the races between the watcher, a natural
-    /// settle during `delete_subagent`, and the delete path itself.
+    /// Record a parent-cancelled child in the parent's semantic-edge
+    /// ledger (nano-rlm #202's `recordSubagentCancel`): the cancel twin
+    /// of a spawn — an action the PARENT took, anchored to the parent's
+    /// in-flight (cancelling) request, never a passive child return.
+    /// `reason` names the parent-side action (a delete, a user cancel,
+    /// the session-kill close walk) on the line; a daemon lifecycle
+    /// close never reaches here. A child without a durable session id,
+    /// or a parent without a recorder, records nothing.
+    pub(super) async fn record_child_cancelled(
+        &self,
+        record: &Arc<Mutex<ChildRecord>>,
+        reason: ChildCancelledReason,
+    ) {
+        let recorder = self
+            .semantic_edges
+            .lock()
+            .expect("semantic edges lock")
+            .clone();
+        let Some(recorder) = recorder else {
+            return;
+        };
+        let child_session_id = record.lock().await.session_id.clone();
+        let Some(child_session_id) = child_session_id else {
+            return;
+        };
+        recorder.record_child_cancelled(&child_session_id, reason);
+    }
+
+    /// Deliver the settled child's terminal notice when it has not replied
+    /// since its task: the failure row for a run whose final turn ended in
+    /// an error, else the no-reply notice. A child that already replied
+    /// gets neither (its answer is the parent's notice; the roster and
+    /// collect still report the error). Exactly-once: the record's notice
+    /// claim collapses the races between the watcher, a natural settle
+    /// during `delete_subagent`, and the delete path itself.
     ///
     /// The claim is the settle tail's commit, and a verdict a collect's
     /// grace re-cleared while the tail ran its round trips (the child went
-    /// busy again: a follow-up turn) has nothing to commit: claiming it
-    /// would deliver a completion notice for a running child and let the
-    /// funnel retire the watcher on a record nobody owns. Returns whether
+    /// busy again: a follow-up turn) has nothing to commit. Returns whether
     /// the tail may retire (`false`: the watcher keeps watching the run).
     pub(super) async fn deliver_settle_notice(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
         let message = {
@@ -745,12 +878,26 @@ impl SupervisorChildSessionsInner {
                 return true;
             }
             record.notice_delivered = true;
-            let notice = RlmChildTerminalNotice::CompletedWithoutReply {
-                child_id: record.rlm_child_id.clone(),
-                session_name: record.session_name.clone(),
-                last_assistant_text_preview: record.answer_preview.clone(),
+            let failure = match (record.settled_status, &record.error) {
+                (Some("error"), Some(error)) => Some(error.clone()),
+                _ => None,
             };
-            create_rlm_child_terminal_notice_with(&notice, &record.notice_extras(), now_ms())
+            if let Some(error) = failure {
+                create_rlm_child_failure_message_with(
+                    &record.rlm_child_id,
+                    &record.session_name,
+                    &error,
+                    &record.notice_extras(),
+                    now_ms(),
+                )
+            } else {
+                let notice = RlmChildTerminalNotice::CompletedWithoutReply {
+                    child_id: record.rlm_child_id.clone(),
+                    session_name: record.session_name.clone(),
+                    last_assistant_text_preview: record.answer_preview.clone(),
+                };
+                create_rlm_child_terminal_notice_with(&notice, &record.notice_extras(), now_ms())
+            }
         };
         self.deliver_terminal_notice(message).await;
         true
@@ -760,24 +907,16 @@ impl SupervisorChildSessionsInner {
     /// settles `error` with its failure text and the parent receives the
     /// `rlm_child_failure` row — whether or not the child replied — then
     /// the settle funnel fires like TS's `finally` resume. Exactly-once:
-    /// the claim is split by arm. The unreachable arm keeps
-    /// `should_mark_unreachable_error` — an already-settled child keeps
-    /// its verdict (#3104's passivation semantics: a verdict a reader's
-    /// refresh lands inside the give-up keeps standing, and the claim
-    /// reports the loss so the watcher runs that verdict's settle tail).
-    /// The prompt arm bails only on a REAL terminal verdict:
-    /// a task turn that provably never started cannot have genuinely
-    /// completed, so a `done` visible inside the prompt-failure window is
-    /// `refresh_record`'s admission-window misread of an alive-but-idle
-    /// worker, not a settle verdict — the failure row must still land
-    /// (and, since #3171, the run must still mark settled, or the
-    /// quiescence barrier parks forever). Returns whether this call
-    /// claimed the settle.
+    /// a child that already holds a verdict keeps it
+    /// (`should_mark_error`; #3104's passivation semantics: a verdict a
+    /// reader's refresh lands inside the unreachable give-up keeps
+    /// standing, and the claim reports the loss so the watcher runs that
+    /// verdict's settle tail). Returns whether this call claimed the
+    /// settle.
     pub(super) async fn settle_failed(
         &self,
         record: &Arc<Mutex<ChildRecord>>,
         error: String,
-        arm: FailedArm,
     ) -> bool {
         // The exit capture (the M4 seam): a child that dies without
         // reporting still said something — the live worker's last
@@ -823,15 +962,7 @@ impl SupervisorChildSessionsInner {
         };
         let message = {
             let mut record = record.lock().await;
-            let keep_verdict = match arm {
-                FailedArm::Unreachable => !should_mark_unreachable_error(&record),
-                FailedArm::Prompt => {
-                    record.closed_by_parent
-                        || record.notice_delivered
-                        || matches!(record.settled_status, Some("error" | "cancelled"))
-                }
-            };
-            if keep_verdict {
+            if !should_mark_error(&record) {
                 return false;
             }
             record.settled_status = Some("error");
@@ -911,24 +1042,14 @@ impl SupervisorChildSessionsInner {
     }
 }
 
-/// Which failure arm is claiming the settle: the two arms bail on
-/// different evidence (see `settle_failed`).
-pub(super) enum FailedArm {
-    /// The task-prompt admission failed and its retry failed.
-    Prompt,
-    /// The unreachable-poller's give-up (`WATCH_MAX_UNREACHABLE_POLLS`
-    /// consecutive dead polls).
-    Unreachable,
-}
-
-/// Whether a child may still settle as an error (the unreachable
-/// give-up's claim): a parent-closed child, a noticed child, or an
+/// Whether a child may still settle as an error (the failed task prompt's
+/// or the unreachable give-up's claim): a parent-closed child, a noticed child, or an
 /// ALREADY-SETTLED child keeps its POSITIVE verdict — its worker leaving
 /// afterward (the idle passivation's graceful stop, a crash after
 /// settle, or a give-up) is residency churn, not a settle verdict
 /// change. The settle state is durable and the passive roster row
 /// stays the representation.
-pub(super) fn should_mark_unreachable_error(state: &ChildRecord) -> bool {
+pub(super) fn should_mark_error(state: &ChildRecord) -> bool {
     !(state.closed_by_parent || state.notice_delivered || state.settled_status.is_some())
 }
 
@@ -986,12 +1107,113 @@ fn inherit_resource_exclusions(
     }
 }
 
+/// The error a child's final turn ended in, read from its durable session
+/// file (#3366), scanning back from the newest row. A failed
+/// `provider_retry_outcome` row (the retry episode's one durable outcome)
+/// answers its text, and an assistant row that stopped on `error` answers
+/// its error message. The scan answers `None` at the first other row that
+/// bounds the final turn: any other message row (a successful or aborted
+/// assistant reply, a tool result, a user prompt) or an `agent_message`
+/// row (a task delivered after an older failure). A missing file answers
+/// `None`. Non-message entries and other custom rows (notices, a recovered
+/// retry's outcome) are skipped.
+pub(super) fn final_turn_error_from_file(session_file: &str) -> Option<String> {
+    use pa_types::session::{AgentMessage, FileEntry};
+    let content = std::fs::read_to_string(session_file).ok()?;
+    for line in content.lines().rev() {
+        let Ok(entry) = serde_json::from_str::<FileEntry>(line.trim()) else {
+            continue;
+        };
+        match entry {
+            FileEntry::CustomMessage { payload, .. } => {
+                if payload.custom_type
+                    == pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE
+                {
+                    return None;
+                }
+                if payload.custom_type
+                    != pa_core::session_engine::messages::PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE
+                {
+                    continue;
+                }
+                let failed = payload
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("success"))
+                    .and_then(Value::as_bool)
+                    == Some(false);
+                if !failed {
+                    continue;
+                }
+                // The outcome row always carries the exhausted-retry text.
+                if let pa_types::ai::UserContent::Text(text) = payload.content {
+                    return Some(text);
+                }
+            }
+            FileEntry::Message {
+                message: AgentMessage::Assistant(assistant),
+                ..
+            } => {
+                if assistant.stop_reason != pa_types::ai::StopReason::Error {
+                    return None;
+                }
+                let error = assistant
+                    .error_message
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or_else(|| "The final model call failed".to_string());
+                return Some(format!("Error: {error}"));
+            }
+            FileEntry::Message { .. } => return None,
+            FileEntry::Header { .. }
+            | FileEntry::ToolStarted { .. }
+            | FileEntry::ToolProgress { .. }
+            | FileEntry::ThinkingLevelChange { .. }
+            | FileEntry::ServiceTierChange { .. }
+            | FileEntry::ModelChange { .. }
+            | FileEntry::Compaction { .. }
+            | FileEntry::BranchSummary { .. }
+            | FileEntry::Custom { .. }
+            | FileEntry::ChildUsageAttributed { .. }
+            | FileEntry::Label { .. }
+            | FileEntry::SessionInfo { .. }
+            | FileEntry::SessionState { .. }
+            | FileEntry::GitState { .. }
+            | FileEntry::Unknown { .. } => {}
+        }
+    }
+    None
+}
+
+/// The busy flags of one child `get_state` summary (streaming, its own
+/// descendants, or queued work in flight).
+fn child_busy_flags(state: &Value) -> bool {
+    let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
+    flag("isStreaming")
+        || flag("hasRunningSubagents")
+        || state
+            .get("sessionActions")
+            .and_then(|actions| actions.get("queuedCount"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+}
+
 #[cfg(test)]
-mod exit_capture_tests {
+pub(super) mod exit_capture_tests {
     use super::*;
 
     /// One serialized assistant row with the given text.
     fn assistant_row(text: &str) -> String {
+        assistant_row_ending(text, pa_types::ai::StopReason::Stop, None)
+    }
+
+    /// One serialized assistant row with the given text, stop reason and
+    /// error message (a failed model call's row).
+    pub(crate) fn assistant_row_ending(
+        text: &str,
+        stop_reason: pa_types::ai::StopReason,
+        error_message: Option<&str>,
+    ) -> String {
         let message = pa_types::session::AgentMessage::Assistant(pa_types::ai::AssistantMessage {
             content: vec![pa_types::ai::AssistantContentBlock::Text(
                 pa_types::ai::TextContent {
@@ -1007,9 +1229,9 @@ mod exit_capture_tests {
             response_id: None,
             diagnostics: None,
             usage: pa_types::ai::Usage::default(),
-            stop_reason: pa_types::ai::StopReason::Stop,
+            stop_reason,
             stop_reason_raw: None,
-            error_message: None,
+            error_message: error_message.map(str::to_string),
             timestamp: 2,
             rest: Map::default(),
             discarded_usage: None,
@@ -1057,5 +1279,123 @@ mod exit_capture_tests {
         assert_eq!(last_assistant_text_from_file(&bare.to_string_lossy()), None);
         let _ = std::fs::remove_file(&file);
         let _ = std::fs::remove_file(&bare);
+    }
+
+    /// The retry episode's durable outcome row, as the worker persists it.
+    pub(crate) fn retry_outcome_row(success: bool) -> String {
+        let outcome = pa_core::session_engine::messages::create_provider_retry_outcome_message(
+            success,
+            3,
+            "429 Provider returned error",
+        );
+        let pa_types::ai::UserContent::Text(content) = outcome.content else {
+            unreachable!("the outcome row carries text content");
+        };
+        json!({
+            "type": "custom_message",
+            "id": "row-outcome",
+            "parentId": null,
+            "customType": outcome.custom_type,
+            "content": content,
+            "display": true,
+            "details": outcome.details,
+        })
+        .to_string()
+    }
+
+    /// A stored row of `kind` (`message` or `custom_message`) with `fields`,
+    /// in the shape the session file holds.
+    fn stored_row(kind: &str, fields: &Value) -> String {
+        let mut row = json!({"type": kind, "id": "row-0", "parentId": null});
+        row.as_object_mut()
+            .expect("row object")
+            .extend(fields.as_object().expect("fields object").clone());
+        row.to_string()
+    }
+
+    /// A user prompt row.
+    fn user_row(text: &str) -> String {
+        stored_row(
+            "message",
+            &json!({"message": {"role": "user", "content": text, "timestamp": 1}}),
+        )
+    }
+
+    /// An `rlm.spawn` task row: an `agent_message` custom row.
+    fn task_row() -> String {
+        stored_row(
+            "custom_message",
+            &json!({
+                "customType": pa_core::session_engine::agent_messaging::AGENT_MESSAGE_CUSTOM_TYPE,
+                "content": "the task",
+                "display": true,
+                "details": {},
+            }),
+        )
+    }
+
+    fn final_turn_error_of(rows: &[String]) -> Option<String> {
+        let file = std::env::temp_dir().join(format!(
+            "pa-rlm-final-turn-{}.jsonl",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&file, format!("{}\n{}\n", task_row(), rows.join("\n")))
+            .expect("write the session file");
+        let error = final_turn_error_from_file(&file.to_string_lossy());
+        let _ = std::fs::remove_file(&file);
+        error
+    }
+
+    /// #3366: a run whose model calls all failed reads as failed, with the
+    /// provider error text; a run whose last turn answered reads clean, and
+    /// a failure older than a later turn-bounding row does not stand.
+    #[test]
+    fn the_final_turn_reader_reports_how_the_run_ended() {
+        use pa_types::ai::StopReason;
+        let failed_call =
+            assistant_row_ending("", StopReason::Error, Some("429 Provider returned error"));
+        let failed_run = [failed_call.clone(), retry_outcome_row(false)];
+        let with_later = |later: String| {
+            let mut rows = failed_run.to_vec();
+            rows.push(later);
+            final_turn_error_of(&rows)
+        };
+        assert_eq!(
+            [
+                final_turn_error_of(&failed_run),
+                final_turn_error_of(std::slice::from_ref(&failed_call)),
+                final_turn_error_of(&[assistant_row_ending("", StopReason::Aborted, None)]),
+                // An earlier failure the run recovered from does not stand.
+                final_turn_error_of(&[
+                    failed_call.clone(),
+                    retry_outcome_row(true),
+                    assistant_row("the final say"),
+                ]),
+                final_turn_error_of(&[assistant_row("the final say"), retry_outcome_row(true)]),
+                final_turn_error_of(&[]),
+                // An older failure, then a later row that bounds the turn.
+                with_later(user_row("try again")),
+                with_later(task_row()),
+                with_later(assistant_row("the final say")),
+            ],
+            [
+                Some(
+                    "\u{26a0} Error: Retry failed after 3 attempts: 429 Provider returned error"
+                        .to_string()
+                ),
+                Some("Error: 429 Provider returned error".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        );
+        assert_eq!(
+            final_turn_error_from_file("/nonexistent/pa-rlm-final-turn.jsonl"),
+            None
+        );
     }
 }

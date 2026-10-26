@@ -5,11 +5,13 @@
 
 use super::*;
 
+mod activity_lines;
 mod click_surface;
 mod cost_aggregates;
 mod delete_stop;
 mod drill_down;
 mod edge_jumps;
+mod empty_sessions;
 mod entry_anchor;
 mod external_sessions;
 mod heartbeat_badge;
@@ -25,8 +27,10 @@ mod resume_parity;
 mod resume_scope;
 mod running_lines;
 mod saved_catalog;
+mod saved_pages;
 mod search_selection;
 mod selection_churn;
+mod shell_enter;
 mod status_lines;
 
 /// One idle row under test plus a holder row that keeps the selection, with the given title

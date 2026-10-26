@@ -147,7 +147,7 @@ pub struct ModelInfo {
 pub struct TurnBoundaryRuntime {
     /// Weak: the boundary runtime is a read-hook into the agent, not its
     /// owner. A strong ref here closed the cycle Agent -> ipython tool ->
-    /// provisioner -> host handlers -> TurnBoundaryRequests -> runtime ->
+    /// provisioner -> host handlers -> `TurnBoundaryRequests` -> runtime ->
     /// Agent, so a dropped (not explicitly disposed) session never released
     /// its kernel process -- the "teardown gap". The agent's other hooks
     /// (admissions, the end-callback) already hold weak refs.

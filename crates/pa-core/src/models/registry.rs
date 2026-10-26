@@ -369,7 +369,7 @@ impl ModelRegistry {
         let Some(PrivatePrimeAuthorizationCache {
             fingerprint: cached_fingerprint,
             models,
-            refreshed_at: _,
+            ..
         }) = read_private_prime_authorization_cache(&models_json_path)
         else {
             return;
@@ -687,6 +687,7 @@ impl ModelRegistry {
                 fingerprint: cached_fingerprint,
                 models,
                 refreshed_at,
+                ..
             }) = cached
             {
                 if cached_fingerprint == fingerprint {
@@ -725,9 +726,14 @@ impl ModelRegistry {
             PRIVATE_MODEL_TIMEOUT_MS,
         )
         .await;
-        if let Ok(models) = fetched {
-            self.authorized_private_ids = models.iter().map(|model| model.id.clone()).collect();
-            self.authorized_private_models.clone_from(&models);
+        if let Ok(authorized) = fetched {
+            self.authorized_private_ids = authorized
+                .models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect();
+            self.authorized_private_models
+                .clone_from(&authorized.models);
             self.authorized_team_id = Some(team_id);
             self.load_models();
             if let Some(cache_path) = self.models_json_path.clone() {
@@ -735,7 +741,8 @@ impl ModelRegistry {
                     &cache_path,
                     &PrivatePrimeAuthorizationCache {
                         fingerprint,
-                        models,
+                        items: authorized.items,
+                        models: authorized.models,
                         refreshed_at: now_millis(),
                     },
                 );
@@ -758,7 +765,7 @@ impl ModelRegistry {
         cache_path: PathBuf,
     ) {
         let public_ids = self.public_prime_inference_ids();
-        let Ok(models) = fetch_authorized_private_prime_inference_models(
+        let Ok(authorized) = fetch_authorized_private_prime_inference_models(
             self.catalog.prime_inference_base_url(),
             &api_key,
             &team_headers,
@@ -773,15 +780,21 @@ impl ModelRegistry {
         if private_prime_authorization_fingerprint(&api_key, &team_id) != fingerprint {
             return;
         }
-        self.authorized_private_ids = models.iter().map(|model| model.id.clone()).collect();
-        self.authorized_private_models.clone_from(&models);
+        self.authorized_private_ids = authorized
+            .models
+            .iter()
+            .map(|model| model.id.clone())
+            .collect();
+        self.authorized_private_models
+            .clone_from(&authorized.models);
         self.authorized_team_id = Some(team_id);
         self.load_models();
         write_private_prime_authorization_cache(
             &cache_path,
             &PrivatePrimeAuthorizationCache {
                 fingerprint,
-                models,
+                items: authorized.items,
+                models: authorized.models,
                 refreshed_at: now_millis(),
             },
         );

@@ -194,6 +194,7 @@ async fn the_kernel_harness_api_is_served_by_the_host_store() {
         daemonless: true,
         rlm_token_allowance: None,
         agent_definition: None,
+        bash_notice_wake: None,
     })
     .await
     .expect("create_session");

@@ -72,7 +72,7 @@ fn harness_command_edits_the_canonical_global_store() {
         "/harness disable reviewer",
     )
     .unwrap();
-    let execution = engine.execute_session_command(&command).unwrap();
+    let execution = engine.execute_session_command(&command, &[]).unwrap();
 
     assert_eq!(execution.error, None);
     assert_eq!(

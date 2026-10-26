@@ -550,8 +550,11 @@ impl AgentSession {
             options,
             source,
             model,
-            refine::default_refiner_call(api_key.clone()),
-            Some(refine::default_refiner_call(api_key)),
+            refine::default_refiner_call(api_key.clone(), self.session_id().await),
+            Some(refine::default_refiner_call(
+                api_key,
+                self.session_id().await,
+            )),
             global_harness_dir,
         )
         .await

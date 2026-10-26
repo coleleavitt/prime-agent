@@ -44,6 +44,7 @@ path = "src/bin/pa-tui-replay.rs"
 tempfile = "3"
 tokio = { version = "1", features = ["test-util"] }
 proptest = { workspace = true }
+vt100 = "0.15"
 
 [lints]
 workspace = true

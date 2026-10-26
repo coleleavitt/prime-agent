@@ -7,12 +7,12 @@ use super::{
     Span,
     Theme,
     ThemeColor,
-    default_heartbeat_name,
     fill_row,
     hug_row,
     human_schedule,
     next_run_label,
     plain_cell,
+    row_primary,
     session_label,
     single_line,
     source_label,
@@ -28,7 +28,7 @@ const INTERVAL_CAP: usize = 18;
 const LABEL_CAP: usize = 32;
 /// The next-run column's fixed cell: wide enough for its header and every
 /// countdown the schedule can produce (the next run is bounded within a
-/// year, so at most "in 365d").
+/// year, so at most "365d").
 const NEXT_RUN_CELL: usize = 8;
 
 /// The delivery word (TS: `follow_up` renders `follow-up`).
@@ -106,23 +106,6 @@ pub(super) fn detail_block_lines(
             )
         })
         .collect()
-}
-
-/// The row's primary text (TS `primary`): the label, else the prompt, else
-/// the default name.
-fn row_primary(entry: &HeartbeatEntry) -> String {
-    entry
-        .job
-        .label
-        .as_deref()
-        .map(str::trim)
-        .filter(|label| !label.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            let prompt = single_line(&entry.job.prompt);
-            (!prompt.is_empty()).then_some(prompt)
-        })
-        .unwrap_or_else(|| default_heartbeat_name(entry).to_string())
 }
 
 /// The table's column geometry: the interval, label, next-run, and status

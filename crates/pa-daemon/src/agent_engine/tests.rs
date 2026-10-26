@@ -12,6 +12,7 @@ mod abort;
 mod autonomous;
 mod compaction;
 mod digest_host;
+mod failover_facts;
 mod goal;
 mod harness_dir;
 mod model_resolution;

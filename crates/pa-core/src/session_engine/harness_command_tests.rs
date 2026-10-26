@@ -81,7 +81,7 @@ async fn run(
         global_harness_dir: global.to_path_buf(),
         autonomous: &mut autonomous,
     };
-    execute_session_command(engine, &mut params, &command).await
+    execute_session_command(engine, &mut params, &command, &[]).await
 }
 
 #[tokio::test]

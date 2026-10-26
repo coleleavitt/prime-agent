@@ -24,8 +24,9 @@ use crate::session_engine::agent_messaging::{
     AgentMessageSendInput,
     AgentObserveActivity,
     AgentObserveController,
-    AgentObserveMessagePreview,
+    AgentObserveListResult,
     AgentObservePendingToolCalls,
+    AgentObserveRecentMessagesResult,
     AgentObserveSummary,
     AgentSessionMessageRowPayload,
     DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
@@ -327,9 +328,14 @@ impl InProcessFamilyController {
             is_streaming: state.is_streaming,
             is_compacting: false,
             attached_clients: 0,
+            message_count: None,
             queued_count,
             is_session_active: true,
             cwd: Some(cwd),
+            parent_active_session_id: None,
+            parent_session_id: None,
+            rlm_child_id: None,
+            first_message: None,
             pending_tool_calls: AgentObservePendingToolCalls::measure(
                 state.pending_tool_calls.len(),
                 state
@@ -522,7 +528,7 @@ impl InProcessFamilyController {
 }
 
 impl AgentObserveController for InProcessFamilyController {
-    async fn list_agents(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
+    async fn list_agents(&self) -> anyhow::Result<AgentObserveListResult> {
         let mut summaries = Vec::new();
         if let Some(engine) = self.self_engine() {
             let session_name = engine
@@ -551,15 +557,30 @@ impl AgentObserveController for InProcessFamilyController {
         if let Some(remote) = self.host.remote_family() {
             summaries.extend(remote.observe_summaries().await?);
         }
-        Ok(summaries)
+        // Upstream `AgentObserveListResult` splits the caller's own row out of
+        // the roster: the self summary is the only `is_current` entry (pushed
+        // first above when `self_engine()` resolves).
+        let current = match summaries.iter().position(|summary| summary.is_current) {
+            Some(at) => summaries.remove(at),
+            None => {
+                anyhow::bail!("Agent observe state is not ready for this session yet")
+            }
+        };
+        Ok(AgentObserveListResult {
+            current,
+            agents: summaries,
+        })
     }
 
     async fn get_agent(&self, target: &str) -> anyhow::Result<Option<AgentObserveSummary>> {
-        Ok(self.list_agents().await?.into_iter().find(|summary| {
-            summary.active_session_id.as_deref() == Some(target)
-                || summary.session_id == target
-                || summary.session_name.as_deref() == Some(target)
-        }))
+        let list = self.list_agents().await?;
+        Ok(std::iter::once(list.current)
+            .chain(list.agents)
+            .find(|summary| {
+                summary.active_session_id.as_deref() == Some(target)
+                    || summary.session_id == target
+                    || summary.session_name.as_deref() == Some(target)
+            }))
     }
 
     async fn recent_messages(
@@ -567,7 +588,10 @@ impl AgentObserveController for InProcessFamilyController {
         target: &str,
         limit: usize,
         max_chars: usize,
-    ) -> anyhow::Result<Vec<AgentObserveMessagePreview>> {
+    ) -> anyhow::Result<AgentObserveRecentMessagesResult> {
+        let agent = self.get_agent(target).await?.ok_or_else(|| {
+            anyhow::anyhow!("No agent matches \"{target}\" in the current family")
+        })?;
         let Some(engine) = self.engine_for(target).await else {
             anyhow::bail!("No agent matches \"{target}\" in the current family");
         };
@@ -593,6 +617,12 @@ impl AgentObserveController for InProcessFamilyController {
                 ),
             );
         }
-        Ok(previews)
+        Ok(AgentObserveRecentMessagesResult {
+            agent,
+            messages: previews,
+            limit,
+            max_chars,
+            truncated: start > 0,
+        })
     }
 }

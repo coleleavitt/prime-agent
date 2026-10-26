@@ -91,10 +91,7 @@ use info::{
     SessionInfoEntry,
     SessionInfoGeneration,
     SessionInfoScanCache,
-    SessionScanAccumulator,
     SessionScanState,
-    append_capped_search_text,
-    fold_scan_entry,
     message_content_text,
     raw_string,
     raw_u64,
@@ -126,11 +123,15 @@ pub struct SessionEntry {
     pub fields: Value,
 }
 
+/// One display-transcript page ([`SessionFile::transcript_page`]).
 #[derive(Debug, Clone)]
-pub struct WindowedTranscript {
+pub struct TranscriptPageRows {
     pub messages: Vec<Value>,
-    pub omitted: usize,
-    pub last_user_prompt_ms: Option<u64>,
+    pub first_entry_id: Option<String>,
+    pub last_entry_id: Option<String>,
+    /// Rows exist past the page's far side: older ones for an end page, newer
+    /// ones before `until` for a start page.
+    pub more: bool,
 }
 
 /// The windowed sequence's summary scalars (newest timestamp, message count),
@@ -150,6 +151,8 @@ pub struct SessionFile {
     pub header: SessionHeader,
     pub(crate) entries: Vec<SessionEntry>,
     pub(crate) by_id: HashMap<String, usize>,
+    /// Parallel to `entries`: each entry's parent-chain link (maintained with `by_id`).
+    chain: Vec<index::ChainLink>,
     pub(crate) leaf_id: Option<String>,
     pub(crate) window: Option<SessionWindow>,
     pub(crate) trace_upload: Option<std::sync::Arc<pa_core::agent_traces::ContinuousTraceUpload>>,

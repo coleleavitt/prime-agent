@@ -139,6 +139,7 @@ pub use command::{
     ForkPosition,
     PromptInput,
     StreamingBehavior,
+    TranscriptPage,
 };
 pub use outbound::{
     DaemonClosingReason,

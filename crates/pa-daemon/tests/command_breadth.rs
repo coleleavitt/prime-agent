@@ -548,6 +548,18 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "import_external_session",
         r#"{"type": "import_external_session", "source": "claude-code", "externalId": "x"}"#,
     ),
+    (
+        "list_persistent_shells",
+        r#"{"type": "list_persistent_shells"}"#,
+    ),
+    (
+        "tail_persistent_shell",
+        r#"{"type": "tail_persistent_shell", "shellId": "s", "lines": 50}"#,
+    ),
+    (
+        "kill_persistent_shell",
+        r#"{"type": "kill_persistent_shell", "shellId": "s"}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -583,6 +595,9 @@ fn known_command_types_match_the_ts_list() {
                     | "import_external_session"
                     | "session_recap"
                     | "generate_session_name"
+                    | "list_persistent_shells"
+                    | "tail_persistent_shell"
+                    | "kill_persistent_shell"
             ),
             "unexpected non-TS command type: {extra}"
         );

@@ -228,9 +228,8 @@ pub(super) const SESSION_SCAN_RESUME_TAIL_BYTES: usize = 16;
 /// Clone is the snapshot fold's copy (TS `snapshotSessionInfo`). Serialize is
 /// the persisted sidecar's form ([`super::info_sidecar`]): a released lease
 /// holder writes it, a cold process loads it and folds only the tail.
-/// Persisted in `<stem>.info-cache.json`: any change to this fold's semantics
-/// or fields must bump `info_sidecar::INFO_SIDECAR_VERSION`, or old sessions
-/// keep the old build's prefix fold.
+/// Persisted in `<stem>.info-cache.json`: see
+/// `info_sidecar::INFO_SIDECAR_VERSION` for the version-bump rule.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct SessionScanAccumulator {
     header: Option<SessionHeader>,
@@ -453,12 +452,18 @@ pub(super) struct SessionInfoEntry<'a> {
 #[must_use]
 pub fn read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut file = fs::File::open(path).ok()?;
-    read_session_info_from(&mut file, path)
+    read_session_info_from(&mut file, path).map(|(info, _)| info)
 }
 
 /// [`read_session_info`] over an already-open handle: the roster gate shares
 /// one open with the fold (the gate reads the first line, the fold rewinds).
-pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option<SessionInfo> {
+/// The flag is true when no in-process state served and the persisted sidecar
+/// did not cover the whole file (absent, unloadable, or behind): the fold read
+/// bytes a sidecar would have spared.
+pub(crate) fn read_session_info_from(
+    file: &mut fs::File,
+    path: &Path,
+) -> Option<(SessionInfo, bool)> {
     let generation = SessionInfoGeneration::from_metadata(&file.metadata().ok()?);
 
     // The unchanged case answers from the cache; the grown case resumes.
@@ -468,7 +473,7 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
             Some(cached) if cached.generation == generation => {
                 let info = cached.info.clone();
                 cache.touch(path);
-                return info;
+                return info.map(|info| (info, false));
             }
             Some(cached)
                 if cached.same_file_identity(&generation)
@@ -477,7 +482,7 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
                 if cached.prefix_intact(file) {
                     Some(cached.clone_for_resume())
                 } else {
-                    Some(SessionScanState::fresh(generation))
+                    None
                 }
             }
             // No in-process state serves (absent or invalidated): the
@@ -486,8 +491,8 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
             _ => None,
         }
     };
-    let mut state = match state {
-        Some(state) => state,
+    let (mut state, sidecar_behind) = match state {
+        Some(state) => (state, false),
         None => {
             // A previous lease holder's certified fold state, loaded from
             // the sidecar. It passes the same validation ladder a cached
@@ -497,15 +502,15 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
             // intact prefix folds its appended entries, and anything
             // else is the cold scan the sidecar-less path always ran.
             match info_sidecar::load(path) {
-                Some(cached) if cached.generation == generation => cached,
+                Some(cached) if cached.generation == generation => (cached, false),
                 Some(cached)
                     if cached.same_file_identity(&generation)
                         && generation.len > cached.generation.len
                         && cached.prefix_intact(file) =>
                 {
-                    cached
+                    (cached, true)
                 }
-                _ => SessionScanState::fresh(generation),
+                _ => (SessionScanState::fresh(generation), true),
             }
         }
     };
@@ -546,7 +551,7 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
             cache.store_state(path, state);
         }
     }
-    Some(info)
+    Some((info, sidecar_behind))
 }
 
 impl SessionScanState {

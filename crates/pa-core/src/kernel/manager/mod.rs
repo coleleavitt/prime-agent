@@ -109,15 +109,10 @@ struct ExitInfo {
 
 /// Fields of a settled execution shared with the stdout reader task.
 #[derive(Default)]
-// The mirrored TS API shape is deliberate (the booleans are the product's own surface).
 #[allow(clippy::struct_excessive_bools)]
 struct ExecBuffers {
-    stdout: String,
-    stderr: String,
-    stdout_chars: usize,
-    stderr_chars: usize,
-    stdout_truncated: bool,
-    stderr_truncated: bool,
+    stdout: HeadTailBuffer,
+    stderr: HeadTailBuffer,
     result: Option<String>,
     diffs: Vec<KernelDiffDisplay>,
     attachments: Vec<KernelAttachment>,
@@ -149,6 +144,9 @@ pub(crate) struct ActiveExecution {
     restores_namespace: bool,
     buffers: Mutex<ExecBuffers>,
     result_tx: Mutex<Option<oneshot::Sender<anyhow::Result<InternalExecuteResult>>>>,
+    /// When the request frame went on the wire: the cell's own wall-clock start,
+    /// excluding queue wait and kernel boot. `None` until the write begins.
+    cell_started: Mutex<Option<Instant>>,
 }
 
 /// `ExecuteResult` plus the raw fields of the request's `done` event (state ops).
@@ -481,7 +479,7 @@ mod snapshot;
 mod startup;
 mod teardown;
 
-use requests::{Signal, append_truncated, describe_failure};
+use requests::{HeadTailBuffer, Signal, append_truncated, describe_failure};
 
 // Public API
 
@@ -804,6 +802,9 @@ impl ReplKernelManager {
         let result = self
             .enqueue_execute(code, opts, execution_timeout_ms)
             .await?;
+        // A watchdog-noted cell stayed ok in the kernel and committed its
+        // namespace changes: the auto-snapshot applies exactly as for any ok
+        // cell, or a crash would revive a namespace missing the cell.
         if result.result.status == ExecuteStatus::Ok {
             self.schedule_snapshot();
         }
