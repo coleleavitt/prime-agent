@@ -37,6 +37,37 @@ use serde_json::Value;
 /// The default per-command timeout (Claude Code's).
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The most hook commands one skill's SKILL.md `hooks` block may declare before
+/// it is rejected whole ([`HooksConfig::add_skill_hooks`], Claude Code's
+/// `skillHooksDoNotFit` bound). A skill rides with the model's prompt, so its
+/// hooks stay a small, session-scoped addition rather than a second settings
+/// layer.
+pub const MAX_SKILL_HOOK_COMMANDS: usize = 20;
+
+/// Count the hook commands declared by a `hooks` block of the settings shape
+/// (`{ event: [{ matcher?, hooks: [...] }] }`), ignoring malformed parts (the
+/// parser reports those). Used to bound a skill's block before it is added.
+fn skill_hook_command_count(value: &Value) -> usize {
+    value.as_object().map_or(0, |events| {
+        events
+            .values()
+            .map(|groups| {
+                groups.as_array().map_or(0, |groups| {
+                    groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .get("hooks")
+                                .and_then(Value::as_array)
+                                .map_or(0, Vec::len)
+                        })
+                        .sum()
+                })
+            })
+            .sum()
+    })
+}
+
 /// The events this crate fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookEvent {
@@ -344,6 +375,8 @@ pub enum HookSource {
     ClaudeCode(ClaudeScope),
     /// A `hooks` value parsed directly ([`HooksConfig::from_value`]).
     Inline,
+    /// A skill's SKILL.md `hooks` block ([`HooksConfig::add_skill_hooks`]).
+    Skill,
 }
 
 impl HookSource {
@@ -355,6 +388,7 @@ impl HookSource {
             HookSource::Project => "project settings",
             HookSource::ClaudeCode(scope) => scope.label(),
             HookSource::Inline => "settings",
+            HookSource::Skill => "skill",
         }
     }
 }
@@ -700,6 +734,24 @@ impl HooksConfig {
         config
     }
 
+    /// Add a skill's SKILL.md `hooks` block (same shape as settings `hooks`),
+    /// bounds-checked: a block declaring more than [`MAX_SKILL_HOOK_COMMANDS`]
+    /// commands is rejected whole (recorded in `problems`, Claude Code's
+    /// `skillHooksDoNotFit` bound). The caller trust-gates the skill. Returns
+    /// whether the block was registered.
+    pub fn add_skill_hooks(&mut self, skill: &str, value: &Value) -> bool {
+        let count = skill_hook_command_count(value);
+        if count > MAX_SKILL_HOOK_COMMANDS {
+            self.problems.push(format!(
+                "skill '{skill}' declares hooks that do not fit: {count} commands exceed the \
+                 {MAX_SKILL_HOOK_COMMANDS} limit"
+            ));
+            return false;
+        }
+        self.add(Some(value), HookSource::Skill);
+        true
+    }
+
     fn add(&mut self, value: Option<&Value>, source: HookSource) {
         let scope = source.label();
         let Some(value) = value else {
@@ -838,6 +890,67 @@ mod tests {
         );
         assert!(config.has(HookEvent::UserPromptSubmit));
         assert!(!config.has(HookEvent::Stop));
+    }
+
+    #[test]
+    fn skill_hooks_register_under_the_skill_source() {
+        let mut config = HooksConfig::default();
+        assert!(config.add_skill_hooks(
+            "deploy",
+            &json!({
+                "PreToolUse": [
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "guard" }] }
+                ],
+            })
+        ));
+        assert!(config.problems.is_empty(), "{:?}", config.problems);
+        assert!(config.has(HookEvent::PreToolUse));
+        let commands = config.commands(HookEvent::PreToolUse, Some("Bash"));
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command, "guard");
+        assert_eq!(commands[0].source, HookSource::Skill);
+        // A skill's hooks do not fire for an unrelated tool.
+        assert!(
+            config
+                .commands(HookEvent::PreToolUse, Some("Read"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn skill_hooks_over_the_command_bound_are_rejected_whole() {
+        let commands: Vec<Value> = (0..=MAX_SKILL_HOOK_COMMANDS)
+            .map(|n| json!({ "type": "command", "command": format!("cmd{n}") }))
+            .collect();
+        let mut config = HooksConfig::default();
+        assert!(!config.add_skill_hooks(
+            "huge",
+            &json!({ "PreToolUse": [{ "matcher": "Bash", "hooks": commands }] })
+        ));
+        assert!(!config.has(HookEvent::PreToolUse));
+        assert!(
+            config
+                .problems
+                .iter()
+                .any(|problem| problem.contains("huge") && problem.contains("do not fit")),
+            "{:?}",
+            config.problems
+        );
+    }
+
+    #[test]
+    fn malformed_skill_hooks_are_reported_under_the_skill_scope() {
+        let mut config = HooksConfig::default();
+        // Within the command bound, so added; the unknown event is reported.
+        assert!(config.add_skill_hooks("bad", &json!({ "NotAnEvent": [] })));
+        assert!(
+            config
+                .problems
+                .iter()
+                .any(|problem| problem.starts_with("skill hooks:")),
+            "{:?}",
+            config.problems
+        );
     }
 
     #[test]

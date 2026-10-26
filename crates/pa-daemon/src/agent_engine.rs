@@ -382,6 +382,11 @@ pub struct AgentSessionEngine {
     /// Turn-boundary runs register their controller here;
     /// [`SessionEngine::abort_auto_compaction`] aborts whatever holds it.
     pub(crate) auto_compaction_abort: std::sync::Mutex<Option<std::sync::Arc<AbortController>>>,
+    /// The user declined the last autocompact offer (Claude Code 2.1.310): the
+    /// threshold compaction is suppressed until the context drops below the
+    /// threshold again (an overflow or manual compaction clears it), so the
+    /// offer is not re-asked every turn. Only ever set while the offer is on.
+    pub(crate) autocompact_offer_suppressed: std::sync::atomic::AtomicBool,
     /// The model-allowlist refusal telemetry, shared with the RLM children
     /// host (one lazily-built client per worker).
     pub(crate) model_refusal_telemetry:

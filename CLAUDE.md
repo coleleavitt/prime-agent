@@ -137,7 +137,10 @@ Claude Code parity port (branch `cc-parity`; no kernel or daemon protocol bump; 
 - Other flag-gated Claude Code behaviors under `experimental` (`pa-core::settings::experimental`, `PRIME_AGENT_*`
   overrides; side calls via `session_engine::side_model`). On: output-limit recovery (up to 3 hidden resume nudges;
   `PRIME_AGENT_OUTPUT_LIMIT_RECOVERY=0`). Off: `usageLimitWrapUp`, `goalEvaluator`, `modelProposedGoals`
-  (`goal.propose`), `idleCompaction`, and the feature crates `pa-observer` (`observer`: per-turn digests to a
+  (`goal.propose`), `idleCompaction`, `autocompactOffer` (CC 2.1.310: a threshold compaction asks on the
+  confirmation surface first — `session_engine::autocompact_offer`, `SessionEngine::offer_autocompaction`, daemon
+  `run_auto_compaction`; a declined offer is suppressed until the context drops, a surfaceless session compacts
+  silently, overflow never asks), and the feature crates `pa-observer` (`observer`: per-turn digests to a
   background observer, reports as notices) and `pa-advisor` (`advisorModel`: the `advisor` skill's `advisor.ask`).
 - Web (`crates/pa-web`, feature `web`): `rlm.web_search` / `rlm.web_fetch` (`web.search` / `web.fetch`). Search via
   Anthropic's server-side `web_search_20250305` on the session's Anthropic login (through the generic

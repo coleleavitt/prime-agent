@@ -111,12 +111,65 @@ fn loads_a_skill_directory_with_claude_codes_frontmatter() {
             model: Some("sonnet".to_string()),
             shell: ShellExpansion::Disabled,
             bare_command: true,
+            hooks: None,
         })
     );
     // Claude Code's description fallbacks: the first line's heading text, else "Skill".
     assert_eq!(load.skills[2].description, "Untitled helper");
     assert_eq!(load.skills[1].description, "Skill");
     assert!(load.skills[1].user_invocable && !load.skills[1].disable_model_invocation);
+}
+
+#[test]
+fn a_skill_hooks_block_is_parsed_into_the_claude_options() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skills_dir = tmp.path().join("skills");
+    write_skill(
+        &skills_dir,
+        "guarded",
+        "---\nname: guarded\ndescription: Guard bash\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: guard.sh\n---\nBody.",
+    );
+    let load = load_claude_skills(&ClaudeSkillRoots {
+        user_dir: None,
+        project_dirs: vec![skills_dir],
+        shell: ShellExpansion::Disabled,
+    });
+    assert_eq!(load.diagnostics, Vec::new());
+    let hooks = load.skills[0]
+        .claude
+        .as_ref()
+        .expect("claude options")
+        .hooks
+        .as_ref()
+        .expect("hooks block");
+    assert_eq!(
+        hooks,
+        &serde_json::json!({
+            "PreToolUse": [
+                { "matcher": "Bash", "hooks": [{ "type": "command", "command": "guard.sh" }] }
+            ]
+        })
+    );
+    // A skill without a `hooks` block records none.
+    let plain_dir = tmp.path().join("plain-skills");
+    write_skill(
+        &plain_dir,
+        "plain",
+        "---\nname: plain\ndescription: No hooks\n---\nBody.",
+    );
+    let plain = load_claude_skills(&ClaudeSkillRoots {
+        user_dir: None,
+        project_dirs: vec![plain_dir],
+        shell: ShellExpansion::Disabled,
+    });
+    assert!(
+        plain.skills[0]
+            .claude
+            .as_ref()
+            .expect("claude options")
+            .hooks
+            .is_none()
+    );
 }
 
 #[test]

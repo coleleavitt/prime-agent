@@ -59,30 +59,53 @@ impl AgentSessionEngine {
         let run_model = self
             .armed_image_route()
             .map_or_else(|| model.clone(), |route| route.target.model);
-        let (due, clamp_notice) = {
+        let due = {
             let guard = self.session.blocking_lock();
             match guard.as_deref() {
-                Some(engine) => {
-                    let due = self
-                        .runtime
-                        .block_on(async { engine.session.auto_compaction_due(&run_model).await });
-                    // A capped compaction about to run discloses, once per
-                    // session, that its configured cap was raised to the
-                    // anti-thrash floor (#2100).
-                    (
-                        due,
-                        due.then(|| engine.session.take_context_cap_clamp_notice())
-                            .flatten(),
-                    )
-                }
+                Some(engine) => self
+                    .runtime
+                    .block_on(async { engine.session.auto_compaction_due(&run_model).await }),
                 // No built session: the live context is empty, matching the
                 // TS pre-turn check on a fresh session.
-                None => (false, None),
+                None => false,
             }
         };
         if !due {
+            // Below the threshold again (an overflow or manual compaction reset
+            // the context): a future crossing may offer afresh.
+            self.autocompact_offer_suppressed
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             return AutoCompactionRun::NotDue;
         }
+        // Claude Code 2.1.310's autocompact offer: when it is on, a threshold
+        // (not overflow) compaction asks the user first, on the session's
+        // confirmation surface. A prior decline suppresses it until the context
+        // drops below the threshold again, so the offer is not re-asked every
+        // turn; a session with no surface (headless, unwatched) is never asked.
+        if self
+            .autocompact_offer_suppressed
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return AutoCompactionRun::NotDue;
+        }
+        let core = self.session.blocking_lock().clone();
+        if let Some(core) = core {
+            if !self.runtime.block_on(core.offer_autocompaction()) {
+                self.autocompact_offer_suppressed
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return AutoCompactionRun::NotDue;
+            }
+        }
+        // A capped compaction about to run discloses, once per session, that
+        // its configured cap was raised to the anti-thrash floor (#2100); taken
+        // here (after the offer is accepted) so a declined offer does not
+        // consume the one-time notice.
+        let clamp_notice = {
+            let guard = self.session.blocking_lock();
+            guard
+                .as_deref()
+                .and_then(|engine| engine.session.take_context_cap_clamp_notice())
+        };
         // The display-only row persists with its event; `convert_to_llm`
         // keeps it out of model context.
         if let Some(notice) = clamp_notice {

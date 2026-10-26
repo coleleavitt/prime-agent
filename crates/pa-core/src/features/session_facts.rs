@@ -16,6 +16,9 @@ const MAX_SESSIONS: usize = 256;
 struct Facts {
     transcript_path: Option<PathBuf>,
     permission_mode: Option<String>,
+    /// The `hooks` blocks the session's model-visible Claude Code skills
+    /// declared, as `(skill name, hooks value)`; empty when none did.
+    skill_hooks: Vec<(String, serde_json::Value)>,
 }
 
 #[derive(Default)]
@@ -79,6 +82,26 @@ pub fn session_permission_mode(session_id: &str) -> String {
         .unwrap_or_else(|| "default".to_string())
 }
 
+/// Record the `hooks` blocks declared by session `session_id`'s model-visible
+/// Claude Code skills, as `(skill name, hooks value)` pairs. The session engine
+/// records these once it has resolved the visible skills (trust and shadowing
+/// already applied); the hooks feature reads them when it builds the session's
+/// hooks and bounds-checks each block.
+pub fn set_session_skill_hooks(session_id: &str, hooks: Vec<(String, serde_json::Value)>) {
+    update(session_id, |facts| facts.skill_hooks = hooks);
+}
+
+/// The `hooks` blocks session `session_id`'s model-visible skills declared;
+/// empty when none did or the session recorded none.
+#[must_use]
+pub fn session_skill_hooks(session_id: &str) -> Vec<(String, serde_json::Value)> {
+    registry()
+        .facts
+        .get(session_id)
+        .map(|facts| facts.skill_hooks.clone())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +123,17 @@ mod tests {
         }
         assert_eq!(session_permission_mode("facts-a"), "default");
         assert!(registry().facts.len() <= MAX_SESSIONS);
+    }
+
+    #[test]
+    fn skill_hooks_are_recorded_per_session() {
+        assert!(session_skill_hooks("sh-a").is_empty());
+        let hooks = vec![(
+            "deploy".to_string(),
+            serde_json::json!({ "PreToolUse": [] }),
+        )];
+        set_session_skill_hooks("sh-a", hooks.clone());
+        assert_eq!(session_skill_hooks("sh-a"), hooks);
+        assert!(session_skill_hooks("sh-b").is_empty());
     }
 }

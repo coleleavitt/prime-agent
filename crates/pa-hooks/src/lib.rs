@@ -159,7 +159,15 @@ impl HooksFeature {
             sessions
                 .entry(context.session_id.clone())
                 .or_insert_with(|| {
-                    let config = HooksConfig::load(&context.cwd, &context.agent_dir);
+                    let mut config = HooksConfig::load(&context.cwd, &context.agent_dir);
+                    // Claude Code skill hooks: the engine recorded the `hooks`
+                    // blocks of this session's model-visible skills (trust and
+                    // shadowing already applied); register each, bounds-checked.
+                    for (skill, hooks) in
+                        pa_core::features::session_skill_hooks(&context.session_id)
+                    {
+                        config.add_skill_hooks(&skill, &hooks);
+                    }
                     for problem in &config.problems {
                         tracing::warn!(target: "pa_hooks", "{problem}");
                     }

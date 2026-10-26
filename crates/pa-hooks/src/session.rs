@@ -50,7 +50,7 @@ pub(crate) struct SessionHooks {
 fn rewake_text(event: HookEvent, source: HookSource, stderr: &str) -> String {
     let stderr = stderr.trim();
     let from = match source {
-        HookSource::ClaudeCode(_) => format!(" from {}", source.label()),
+        HookSource::ClaudeCode(_) | HookSource::Skill => format!(" from {}", source.label()),
         HookSource::User | HookSource::Project | HookSource::Inline => String::new(),
     };
     if stderr.is_empty() {

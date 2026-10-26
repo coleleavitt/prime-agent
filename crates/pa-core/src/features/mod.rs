@@ -107,8 +107,10 @@ pub use question::{
 };
 pub use session_facts::{
     session_permission_mode,
+    session_skill_hooks,
     session_transcript_path,
     set_session_permission_mode,
+    set_session_skill_hooks,
     set_session_transcript_path,
 };
 pub use status::{

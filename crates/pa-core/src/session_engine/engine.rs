@@ -698,6 +698,20 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .iter()
         .map(|skill| skill.import_name.clone())
         .collect();
+    // Claude Code skill hooks: a model-visible `.claude/skills` SKILL.md may
+    // declare a `hooks` block (Claude Code 2.1.310, same shape as settings
+    // `hooks`). Record them for the hooks feature, which registers each
+    // bounds-checked; `visible_skills` has already applied trust and shadowing.
+    crate::features::set_session_skill_hooks(
+        &session_id,
+        visible_skills
+            .iter()
+            .filter_map(|skill| {
+                let hooks = skill.claude.as_ref()?.hooks.clone()?;
+                Some((skill.name.clone(), hooks))
+            })
+            .collect(),
+    );
     let feature_context = Arc::new(feature_context);
     // Notes features return after the kernel's host requests, waiting for
     // the next tool result or admitted prompt.
@@ -1911,6 +1925,25 @@ impl SessionEngine {
             );
         }
         *slot = Some(sink);
+    }
+
+    /// Claude Code 2.1.310's autocompact offer: ask the user, on the session's
+    /// confirmation surface ([`Self::set_feature_status_sink`]), before a
+    /// *threshold* compaction runs. Returns whether to compact: `false` only
+    /// when the user explicitly declines; no surface, a timeout, or an answer
+    /// made for the user all return `true`, so an unwatched, headless or
+    /// reviewer-gated session still stays healthy. The caller gates this on
+    /// `experimental.autocompactOffer` and on not having been declined already
+    /// this round; overflow (ceiling) compaction never asks. The setting is
+    /// resolved on demand (only when a compaction is already due, so rare), the
+    /// same way idle compaction reads its window.
+    pub async fn offer_autocompaction(&self) -> bool {
+        super::autocompact_offer::offer_autocompaction(
+            &self.feature_context.session_id,
+            &self.feature_context.cwd,
+            &self.feature_context.agent_dir,
+        )
+        .await
     }
 
     /// Ask the user, through the confirmation surface

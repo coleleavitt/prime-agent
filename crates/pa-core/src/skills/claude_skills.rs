@@ -60,6 +60,11 @@ pub struct ClaudeSkillOptions {
     /// Whether `/<name>` invokes the skill besides `/skill:<name>`: off when the name belongs to
     /// a builtin command or a Prime Agent prompt template.
     pub bare_command: bool,
+    /// `hooks` (Claude Code 2.1.310): a hooks block in the skill's SKILL.md,
+    /// the same shape as settings.json `hooks`. Registered (bounds-checked and
+    /// trust-gated) while the skill contributes to the session; `None` when the
+    /// manifest declares none. Kept as the raw value for `pa_hooks` to parse.
+    pub hooks: Option<serde_json::Value>,
 }
 
 /// Where Claude Code skills load from.
@@ -287,6 +292,7 @@ fn load_skill(
         model,
         shell,
         bare_command: true,
+        hooks: frontmatter.get("hooks").cloned(),
     };
     Some(Skill {
         name,

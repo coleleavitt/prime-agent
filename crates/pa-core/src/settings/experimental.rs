@@ -17,7 +17,7 @@
 //!   "coordinatorMode": true, "coordinatorExtraTools": ["Bash"],
 //!   "coordinatorForceWorkerInheritModel": true, "coordinatorPropagateNestedMemory": true,
 //!   "coordinatorSkillGuidance": true,
-//!   "briefMode": true
+//!   "briefMode": true, "autocompactOffer": true
 //! }
 //! ```
 //!
@@ -72,6 +72,9 @@ pub const COORDINATOR_PROPAGATE_NESTED_MEMORY_ENV: &str =
 pub const COORDINATOR_SKILL_GUIDANCE_ENV: &str = "PRIME_AGENT_COORDINATOR_SKILL_GUIDANCE";
 /// Starts sessions in brief mode (Claude Code's `CLAUDE_CODE_BRIEF`).
 pub const BRIEF_MODE_ENV: &str = "PRIME_AGENT_BRIEF";
+/// Offers a threshold compaction to the user instead of running it silently
+/// (Claude Code 2.1.310's autocompact offer).
+pub const AUTOCOMPACT_OFFER_ENV: &str = "PRIME_AGENT_AUTOCOMPACT_OFFER";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -125,6 +128,12 @@ pub struct ExperimentalSettings {
     /// Sessions start in brief mode: replies go through
     /// `rlm.send_user_message` (`/brief` toggles it per session).
     pub brief_mode: bool,
+    /// A threshold (not overflow) auto-compaction asks the user first, through
+    /// the session's confirmation surface (Claude Code 2.1.310's autocompact
+    /// offer); a declined offer is suppressed until the next compaction. Off
+    /// leaves threshold compaction silent, and a session with no surface
+    /// (print, headless, unwatched) compacts without asking.
+    pub autocompact_offer: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -148,6 +157,7 @@ impl Default for ExperimentalSettings {
             coordinator_propagate_nested_memory: false,
             coordinator_skill_guidance: false,
             brief_mode: false,
+            autocompact_offer: false,
         }
     }
 }
@@ -260,6 +270,7 @@ impl ExperimentalSettings {
                 COORDINATOR_SKILL_GUIDANCE_ENV,
             ),
             brief_mode: flag("briefMode", BRIEF_MODE_ENV),
+            autocompact_offer: flag("autocompactOffer", AUTOCOMPACT_OFFER_ENV),
         }
     }
 }
@@ -369,6 +380,7 @@ mod tests {
             "coordinatorPropagateNestedMemory": true,
             "coordinatorSkillGuidance": true,
             "briefMode": true,
+            "autocompactOffer": true,
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -395,6 +407,7 @@ mod tests {
                 coordinator_propagate_nested_memory: true,
                 coordinator_skill_guidance: true,
                 brief_mode: true,
+                autocompact_offer: true,
             }
         );
     }
