@@ -21,6 +21,15 @@ ignore = [
   # no vulnerable code path). Reviewed 2026-09-17; revisit when ratatui
   # drops the dep.
   { id = "RUSTSEC-2024-0436", reason = "unmaintained proc-macro via ratatui, build-time only (reviewed 2026-09-17)" },
+  # The zvariant / zbus_names / zvariant_derive standalone crates were merged
+  # into zbus 6.0.0; atspi 0.14 still depends on zbus 5.x, which pulls the
+  # standalone crates, so there is no safe upgrade until atspi migrates to zbus
+  # 6. Unmaintained-only (no vulnerability), reached only through
+  # pa-computer-use's Linux AT-SPI backend. Reviewed 2026-10-26; drop when
+  # atspi ships a zbus-6 release.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); atspi 0.14 pins zbus 5, no upgrade path, via pa-computer-use (reviewed 2026-10-26)" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); atspi 0.14 pins zbus 5, no upgrade path, via pa-computer-use (reviewed 2026-10-26)" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); atspi 0.14 pins zbus 5, no upgrade path, via pa-computer-use (reviewed 2026-10-26)" },
 ]
 
 [licenses]
