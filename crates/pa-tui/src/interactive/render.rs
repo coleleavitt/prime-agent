@@ -384,9 +384,9 @@ impl Renderer {
     /// Leave the alternate screen and paint the accumulated inline layout onto the main screen:
     /// the inline repaint flushes the fullscreen-era transcript into native scrollback, keeping
     /// the exit frame — and the resume hint printed below it — visible after the process exits.
-    /// The kill-switch `PRIME_AGENT_TUI_EXIT_FLUSH=0` skips the paint (the alt screen is still
-    /// left): the flush writes into the user's scrollback, so it can be disabled without a
-    /// release if it misbehaves.
+    /// The transcript replay is OFF by default (a long session would otherwise scroll its whole
+    /// transcript through the viewport on exit); `PRIME_AGENT_TUI_EXIT_FLUSH=1` opts back in. The
+    /// alternate screen is left either way.
     fn flush_to_main_screen(&mut self, view: &mut AgentView) -> Result<()> {
         use std::io::Write;
         // Only the terminal renderer owns a real screen to flush; headless runs keep their plain
@@ -571,7 +571,11 @@ pub(crate) fn write_flush_rows(buffer: &mut String, rows: &[crate::Line]) {
     }
 }
 
-/// The main-screen exit flush is on unless `PRIME_AGENT_TUI_EXIT_FLUSH=0` opts out.
+/// The main-screen exit flush (replaying the transcript into native scrollback) is OFF by
+/// default: like vim, less and Claude Code, leaving the alternate screen just restores the
+/// primary screen, instead of streaming the whole conversation through the viewport on exit
+/// (a long session otherwise "scrolls from the top to the bottom" as the transcript replays).
+/// Opt back in with `PRIME_AGENT_TUI_EXIT_FLUSH=1` to keep the transcript in native scrollback.
 fn exit_flush_enabled() -> bool {
-    std::env::var_os("PRIME_AGENT_TUI_EXIT_FLUSH").is_none_or(|value| value != "0")
+    std::env::var_os("PRIME_AGENT_TUI_EXIT_FLUSH").is_some_and(|value| value != "0")
 }
