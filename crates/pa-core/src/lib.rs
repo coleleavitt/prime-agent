@@ -21,24 +21,6 @@
 
 pub(crate) mod tools;
 
-// Tool-definition contract.
-// bash tool: definition + local/remote execution seam.
-pub use tools::bash::{
-    BashOperations,
-    BashSpawnContext,
-    BashSpawnHook,
-    BashToolOptions,
-    LocalBashOperations,
-    create_bash_tool_definition,
-    create_bash_tool_definition_with_options,
-};
-// edit tool: definition + filesystem operations seam.
-pub use tools::edit::{
-    EditOperations,
-    LocalEditOperations,
-    create_edit_tool_definition,
-    prepare_edit_arguments,
-};
 // ipython tool: definition + kernel lifecycle seam (RLM bootstrap included).
 pub use tools::ipython::{
     ExecuteResult,
@@ -55,12 +37,13 @@ pub use tools::ipython::{
     create_ipython_tool_definition,
     sent_agent_message_json,
 };
-// Path-resolution helper the CLI's `@file` expansion shares with the
-// tools (cwd-relative resolve with the macOS filename variants).
+// Path-resolution helper for the CLI's `@file` expansion (cwd-relative
+// resolve with the macOS filename variants).
 pub use tools::path_utils::resolve_read_path;
 // Result-rendering helpers: the image metadata pair the daemon's snapshot
 // elision consumes alongside the tool renderers (narrow re-export).
 pub use tools::render_utils::{IMAGE_DIMENSIONS_PREFIX_BYTES, get_image_dimensions_prefix};
+// Tool-definition contract.
 pub use tools::tool_definition::{
     AbortSignal,
     ExecuteFn,
@@ -72,7 +55,6 @@ pub use tools::tool_definition::{
     ToolDefinition,
     ToolExecutionResult,
     ToolUpdate,
-    WrappedTool,
 };
 // RLM kernel subsystem: persistent IPython kernel lifecycle.
 pub mod agent_traces;

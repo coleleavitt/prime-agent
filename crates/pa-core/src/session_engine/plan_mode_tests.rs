@@ -44,6 +44,36 @@ fn wire_model() -> pa_types::ai::Model {
     .unwrap()
 }
 
+/// A tool named `edit` that applies its `edits` to `path` under `cwd`: the
+/// name plan mode refuses, with a visible effect when it runs.
+fn edit_tool(cwd: &std::path::Path) -> crate::ToolDefinition {
+    let cwd = cwd.to_path_buf();
+    crate::ToolDefinition {
+        name: "edit".to_string(),
+        label: "Edit".to_string(),
+        description: "Replace text in a file".to_string(),
+        prompt_snippet: String::new(),
+        parameters: serde_json::json!({ "type": "object" }),
+        execution_mode: None,
+        prepare_arguments: None,
+        execute: Arc::new(move |_id, params, _signal, _on_update| {
+            let path = cwd.join(params["path"].as_str().unwrap_or_default());
+            Box::pin(async move {
+                let mut text = std::fs::read_to_string(&path)?;
+                for edit in params["edits"].as_array().into_iter().flatten() {
+                    text = text.replacen(
+                        edit["oldText"].as_str().unwrap_or_default(),
+                        edit["newText"].as_str().unwrap_or_default(),
+                        1,
+                    );
+                }
+                std::fs::write(&path, text)?;
+                Ok(crate::ToolExecutionResult::text("edited"))
+            })
+        }),
+    }
+}
+
 async fn engine(
     cwd: &std::path::Path,
     agent_dir: &std::path::Path,
@@ -56,9 +86,7 @@ async fn engine(
         agent_dir: agent_dir.to_path_buf(),
         model: Some(model()),
         stream_fn: Some(provider.stream_fn()),
-        tools: vec![bridge_tool(
-            crate::tools::edit::create_edit_tool_definition(&cwd.to_string_lossy()),
-        )],
+        tools: vec![bridge_tool(edit_tool(cwd))],
         session_manager: Some(session_manager),
         plan_mode,
         ..Default::default()

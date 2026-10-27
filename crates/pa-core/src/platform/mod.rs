@@ -31,7 +31,6 @@ pub use perms::{
     is_executable,
     is_executable_by_process,
     is_owned_by_current_user,
-    is_readable_writable,
     restrict_dir,
     restrict_file,
     set_private_mode,
