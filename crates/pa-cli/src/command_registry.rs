@@ -287,6 +287,11 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "session export <file> [output]",
         "Export a saved session to HTML",
     ),
+    CommandSpec::new(
+        &["prune"],
+        "prune <session> [list|<index>…|biggest N|restore]",
+        "Prune oversized entries (pasted images, giant text) from a saved session",
+    ),
     CommandSpec::new(&["config"], "config", "Configure package resources"),
     CommandSpec::new(
         &["trust"],

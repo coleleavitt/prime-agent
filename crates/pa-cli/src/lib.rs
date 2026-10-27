@@ -54,6 +54,7 @@ pub(crate) mod package_command;
 pub(crate) mod prime_inference_login;
 pub(crate) mod prompt_command;
 pub(crate) mod provider_login;
+pub(crate) mod prune_command;
 pub(crate) mod public_command;
 pub(crate) mod resume_selector;
 pub(crate) mod self_update;

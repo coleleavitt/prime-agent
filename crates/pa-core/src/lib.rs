@@ -96,6 +96,7 @@ pub mod packages;
 pub mod platform;
 pub mod prompt_history;
 pub mod prompts;
+pub mod prune;
 pub mod refinement;
 pub mod resources;
 pub mod session;

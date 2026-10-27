@@ -207,6 +207,7 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
         "model" => rewrite_nested_command("model", "list", "--list-models", &rest),
         "session" => rewrite_nested_command("session", "export", "--export", &rest),
         "prompt" => handled_with_exit(crate::prompt_command::run_prompt_command(&rest)),
+        "prune" => handled_with_exit(crate::prune_command::run(&rest)),
         "trust" => handled_with_exit(crate::workspace_trust_gate::run_trust_command(&rest)),
         "untrust" => handled_with_exit(crate::workspace_trust_gate::run_untrust_command(&rest)),
         "factory" => handled_with_exit(crate::factory_command::run_factory_command(&rest)),
