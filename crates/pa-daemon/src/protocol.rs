@@ -113,6 +113,8 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "get_connection_state",
     "get_messages",
     "get_rlm_children",
+    "append_prompt_history",
+    "get_prompt_history",
     "get_session_stats",
     "get_context_tree",
     "get_commands",
@@ -405,6 +407,11 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 // `get_rewind_checkpoints` + `rewind`: `/rewind` restores code
                 // (file checkpoints) and/or the conversation.
                 "rewind",
+                // `append_prompt_history` + `get_prompt_history`: the daemon
+                // owns a per-project prompt-history log for up-arrow recall
+                // that survives restarts and resume (Claude Code's
+                // `history.jsonl`, per project rather than one global file).
+                PROMPT_HISTORY_CAPABILITY,
                 // Side-model session UX: `session_recap`, `generate_session_name`,
                 // the `prompt_suggestion` event, and the summaries' `aiTitle` /
                 // `blockedOn`.
@@ -431,6 +438,10 @@ pub const SIDE_UX_CAPABILITY: &str = "side_ux";
 /// The server capability behind `list_external_sessions` and
 /// `import_external_session`.
 pub const EXTERNAL_SESSIONS_CAPABILITY: &str = "external_sessions";
+
+/// The server capability behind `append_prompt_history` and
+/// `get_prompt_history`: the daemon-owned, per-project prompt-history log.
+pub const PROMPT_HISTORY_CAPABILITY: &str = "prompt_history";
 
 /// Parse a client command line the way the TS supervisor does: only
 /// `type: "command"` envelopes are accepted; bare commands fail with the
@@ -787,6 +798,12 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::GetRlmChildren {
             active_session_id, ..
         }
+        | DaemonCommand::AppendPromptHistory {
+            active_session_id, ..
+        }
+        | DaemonCommand::GetPromptHistory {
+            active_session_id, ..
+        }
         | DaemonCommand::GetSessionStats {
             active_session_id, ..
         }
@@ -1096,6 +1113,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::GetConnectionState { .. } => "get_connection_state",
         DaemonCommand::GetMessages { .. } => "get_messages",
         DaemonCommand::GetRlmChildren { .. } => "get_rlm_children",
+        DaemonCommand::AppendPromptHistory { .. } => "append_prompt_history",
+        DaemonCommand::GetPromptHistory { .. } => "get_prompt_history",
         DaemonCommand::GetSessionStats { .. } => "get_session_stats",
         DaemonCommand::GetContextTree { .. } => "get_context_tree",
         DaemonCommand::GetCommands { .. } => "get_commands",

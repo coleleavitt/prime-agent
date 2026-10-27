@@ -48,6 +48,8 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "get_connection_state"
         | "get_messages"
         | "get_rlm_children"
+        | "append_prompt_history"
+        | "get_prompt_history"
         | "get_session_stats"
         | "get_context_tree"
         | "get_commands"
@@ -138,6 +140,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "get_connection_state",
     "get_messages",
     "get_rlm_children",
+    "get_prompt_history",
     "get_session_stats",
     "get_context_tree",
     "get_commands",

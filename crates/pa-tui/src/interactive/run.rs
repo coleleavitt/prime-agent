@@ -758,6 +758,13 @@ async fn run_interactive_surface(
     // open path does not block on a stats fetch.
     session.spawn_model_catalog_refresh();
     session.rebuild_view(&mut view, &crate::session_ui::RebuildKind::Rebind);
+    // Seed the editor's up-arrow ring from the project's persisted prompt
+    // history, so a freshly opened or resumed session recalls prompts from
+    // every earlier session here. Interactive only; scripted/headless runs stay
+    // deterministic. Best effort: a miss leaves recall empty.
+    if !headless {
+        session.seed_prompt_history(&mut view).await;
+    }
     // The cross-view layout handoff's adopt (view::handoff): a re-entry whose attach cursor exactly
     // matches the previous run's held handoff holds its visible-window packs for the first draw;
     // any chat mutation retires it. A cursor-less re-attach never adopts.

@@ -218,6 +218,7 @@ impl SessionUi {
                 self.emit_queue_edit(if trimmed.is_empty() { "delete" } else { "edit" });
                 if !trimmed.is_empty() {
                     view.editor.add_to_history(trimmed);
+                    self.record_prompt_history(trimmed);
                 }
                 let draft = self.queue_selection.reset();
                 view.editor.set_text(&draft);
@@ -305,6 +306,7 @@ impl SessionUi {
             if !text.trim().is_empty() {
                 view.editor.set_text("");
                 view.editor.add_to_history(&text);
+                self.record_prompt_history(&text);
                 let in_flight = self.prompt_in_flight;
                 self.submit_prompt(&text, super::SubmitBehavior::Steer, view)
                     .await?;

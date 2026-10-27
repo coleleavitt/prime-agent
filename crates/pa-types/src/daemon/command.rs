@@ -743,6 +743,28 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Record one submitted prompt in the project's persistent prompt history
+    /// (fire-and-forget; capability `prompt_history`). The daemon is the sole
+    /// writer; `display` is the prompt exactly as the user typed it.
+    AppendPromptHistory {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        display: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// Load the project's prompt history for up-arrow recall on attach
+    /// (newest-first, de-duplicated, capped; capability `prompt_history`).
+    GetPromptHistory {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u64>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     GetSessionStats {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

@@ -57,13 +57,20 @@ pub fn disabled_by_env() -> bool {
     })
 }
 
-/// The memory directory for a working directory.
+/// The per-project directory under the agent dir, `<agent
+/// dir>/projects/<sanitized project root>`. Auto memory and prompt history
+/// are siblings inside it, so every session of a repository shares one.
 #[must_use]
-pub fn memory_dir(agent_dir: &Path, cwd: &Path) -> PathBuf {
+pub fn project_dir(agent_dir: &Path, cwd: &Path) -> PathBuf {
     agent_dir
         .join("projects")
         .join(sanitize(&project_root(cwd)))
-        .join("memory")
+}
+
+/// The memory directory for a working directory.
+#[must_use]
+pub fn memory_dir(agent_dir: &Path, cwd: &Path) -> PathBuf {
+    project_dir(agent_dir, cwd).join("memory")
 }
 
 /// Load the session's auto memory, creating the directory so the model can

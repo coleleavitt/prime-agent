@@ -160,6 +160,8 @@ impl Worker {
             "set_mcp_static_token" => self.handle_set_mcp_static_token(payload).await,
             "remove_mcp_connection" => self.handle_remove_mcp_connection(payload).await,
             "get_rlm_children" => self.handle_get_rlm_children().await,
+            "append_prompt_history" => self.handle_append_prompt_history(payload),
+            "get_prompt_history" => self.handle_get_prompt_history(payload),
             "get_context_tree" => self.handle_get_context_tree().await,
             "get_commands" => self.handle_get_commands().await,
             "get_resource_snapshot" => self.handle_get_resource_snapshot().await,

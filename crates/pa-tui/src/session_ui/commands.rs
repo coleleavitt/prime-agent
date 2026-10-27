@@ -192,6 +192,7 @@ impl SessionUi {
                 }
                 if let Some(prompt) = options.prompt {
                     view.editor.add_to_history(&prompt);
+                    self.record_prompt_history(&prompt);
                     self.send_prompt(&prompt, SubmitBehavior::Steer, view)?;
                 }
             }

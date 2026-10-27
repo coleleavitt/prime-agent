@@ -19,6 +19,7 @@ mod notes;
 mod panels;
 mod permission_cycle;
 mod prompt;
+mod prompt_history;
 mod queue;
 mod rewind;
 mod search;

@@ -1028,6 +1028,7 @@ impl SessionUi {
                                 .await?;
                         } else {
                             view.editor.add_to_history(&text);
+                            self.record_prompt_history(&text);
                             self.submit_prompt(&text, SubmitBehavior::FollowUp, view)
                                 .await?;
                         }
@@ -1126,6 +1127,7 @@ impl SessionUi {
                             .await?;
                     } else {
                         view.editor.add_to_history(&text);
+                        self.record_prompt_history(&text);
                         self.submit_prompt(&text, SubmitBehavior::Steer, view)
                             .await?;
                     }

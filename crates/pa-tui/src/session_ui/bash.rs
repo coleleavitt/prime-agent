@@ -120,6 +120,7 @@ impl SessionUi {
             self.clear_side_question(true, view);
         }
         view.editor.add_to_history(text);
+        self.record_prompt_history(text);
         // Optimistic running flag: bash_start only fires after the dispatch, and
         // the clear key must already route to abort_bash in that window.
         self.user_bash_running = true;

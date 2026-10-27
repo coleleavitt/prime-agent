@@ -469,6 +469,25 @@ impl Editor {
         self.history_index = -1;
     }
 
+    /// Seed recall from a persisted, newest-first, de-duplicated list (the
+    /// project's prompt history, loaded on attach). In-session entries already
+    /// in the ring stay newest; the seeded entries fill in behind them, so a
+    /// prompt typed before the seed arrives is never displaced, and the whole
+    /// ring stays capped at [`MAX_HISTORY`].
+    pub fn seed_history(&mut self, newest_first: &[String]) {
+        for text in newest_first {
+            if self.history.len() >= MAX_HISTORY {
+                break;
+            }
+            let trimmed = text.trim();
+            if trimmed.is_empty() || self.history.iter().any(|existing| existing == trimmed) {
+                continue;
+            }
+            self.history.push(trimmed.to_string());
+        }
+        self.history_index = -1;
+    }
+
     fn is_editor_empty(&self) -> bool {
         self.lines.len() == 1 && self.lines[0].is_empty()
     }
@@ -1058,6 +1077,37 @@ mod tests {
         e.handle_input("down");
         assert_eq!(e.get_text(), "");
         assert!(!e.is_history_navigation_active());
+    }
+
+    #[test]
+    fn seed_history_fills_behind_in_session_entries_newest_first() {
+        let mut e = ed();
+        // A prompt typed this session before the seed arrives stays newest.
+        e.add_to_history("live prompt");
+        // A persisted, newest-first, de-duplicated list (as the daemon serves).
+        e.seed_history(&[
+            "live prompt".to_string(), // a duplicate of the live entry is skipped
+            "older one".to_string(),
+            "oldest one".to_string(),
+        ]);
+        // Up walks newest -> oldest: live, older, oldest, with no repeat.
+        e.handle_input("up");
+        assert_eq!(e.get_text(), "live prompt");
+        e.handle_input("up");
+        assert_eq!(e.get_text(), "older one");
+        e.handle_input("up");
+        assert_eq!(e.get_text(), "oldest one");
+        e.handle_input("down");
+        assert_eq!(e.get_text(), "older one");
+        assert_eq!(e.get_history().len(), 3);
+    }
+
+    #[test]
+    fn seed_history_caps_at_the_ring_limit() {
+        let mut e = ed();
+        let many: Vec<String> = (0..(MAX_HISTORY + 20)).map(|i| format!("p{i}")).collect();
+        e.seed_history(&many);
+        assert_eq!(e.get_history().len(), MAX_HISTORY);
     }
 
     #[test]

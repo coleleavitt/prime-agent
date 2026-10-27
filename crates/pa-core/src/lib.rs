@@ -94,6 +94,7 @@ pub mod models;
 pub mod os_sandbox;
 pub mod packages;
 pub mod platform;
+pub mod prompt_history;
 pub mod prompts;
 pub mod refinement;
 pub mod resources;

@@ -85,6 +85,7 @@ pub(crate) use summary::{
 use turn::TurnRunner;
 
 mod commands;
+mod prompt_history;
 mod session_cwd;
 mod worktree_seam;
 

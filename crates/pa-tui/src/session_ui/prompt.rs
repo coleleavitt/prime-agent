@@ -471,6 +471,7 @@ impl SessionUi {
                 return Ok(());
             }
             view.editor.add_to_history(text);
+            self.record_prompt_history(text);
             self.start_side_question(text, view).await?;
             return Ok(());
         }
