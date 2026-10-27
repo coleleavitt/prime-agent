@@ -7,9 +7,10 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -47,6 +48,80 @@ impl Default for FetchOptions {
             cache_ttl: Duration::from_mins(15),
         }
     }
+}
+
+/// How `web.fetch` acquires a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FetchBackend {
+    /// A plain HTTP GET, retried through the headless browser when the site
+    /// bot-blocks the GET (HTTP 403/503 or a reset connection).
+    #[default]
+    Auto,
+    /// A plain HTTP GET only; never launch the browser.
+    Http,
+    /// The headless browser always, falling back to a plain GET only when the
+    /// browser cannot run.
+    Camoufox,
+}
+
+impl FetchBackend {
+    /// Parse a configured name; `None` for an unknown one.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Some(Self::Auto),
+            "http" => Some(Self::Http),
+            "camoufox" | "browser" => Some(Self::Camoufox),
+            _ => None,
+        }
+    }
+}
+
+/// The headless-browser fetch settings, resolved per request.
+#[derive(Debug, Clone)]
+pub struct BrowserFetch {
+    pub backend: FetchBackend,
+    /// The Python interpreter that has `camoufox` installed.
+    pub python: String,
+}
+
+impl Default for BrowserFetch {
+    fn default() -> Self {
+        Self {
+            backend: FetchBackend::default(),
+            python: crate::search::camoufox::DEFAULT_PYTHON.to_string(),
+        }
+    }
+}
+
+/// A bot-block status worth retrying through the headless browser: Cloudflare
+/// and friends answer a plain GET with 403, or 503 for the "under attack"
+/// interstitial. A 429 (rate limit, with `Retry-After`) and origin 5xx are not
+/// bot-blocks, so they are left alone.
+#[must_use]
+pub fn is_block_status(status: u16) -> bool {
+    matches!(status, 403 | 503)
+}
+
+/// Whether an HTTP outcome should be retried through the browser (`Auto`).
+#[must_use]
+fn outcome_is_blocked(outcome: &FetchOutcome) -> bool {
+    matches!(outcome, FetchOutcome::HttpError { status, .. } if is_block_status(*status))
+}
+
+/// The bundled headless-browser fetch script, written to a temp file on first
+/// use. See [`Fetcher::fetch_via_browser`].
+const FETCH_SCRIPT: &str = include_str!("camoufox_fetch.py");
+
+/// Write the bundled browser-fetch script to a stable per-process temp path once.
+fn browser_script_path() -> Result<&'static std::path::Path, String> {
+    static PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let path = std::env::temp_dir().join("prime-agent-camoufox-fetch.py");
+        std::fs::write(&path, FETCH_SCRIPT).ok().map(|()| path)
+    })
+    .as_deref()
+    .ok_or_else(|| "could not write the camoufox fetch script".to_string())
 }
 
 /// What a fetched body is.
@@ -411,8 +486,8 @@ impl Fetcher {
         }
     }
 
-    /// Fetch `raw`: from the cache when a fresh copy exists, else over the
-    /// network within the deadline.
+    /// Fetch `raw`: from the cache when a fresh copy exists, else through the
+    /// configured [`BrowserFetch`] backend within the deadline.
     ///
     /// # Errors
     ///
@@ -420,6 +495,7 @@ impl Fetcher {
     pub async fn fetch(
         &self,
         raw: &str,
+        browser: &BrowserFetch,
         cancel: CancellationToken,
     ) -> Result<FetchOutcome, FetchError> {
         let url = validate_url(raw, &self.options)?;
@@ -427,16 +503,156 @@ impl Fetcher {
         if let Some(page) = self.cached(&key) {
             return Ok(FetchOutcome::Page { page, cached: true });
         }
-        let deadline = self.options.timeout;
-        let outcome = tokio::select! {
-            () = cancel.cancelled() => return Err(FetchError::Cancelled),
-            () = tokio::time::sleep(deadline) => return Err(FetchError::Timeout(deadline)),
-            outcome = self.fetch_uncached(url) => outcome?,
-        };
+        let outcome = self.fetch_with_backend(url, browser, cancel).await?;
         if let FetchOutcome::Page { page, .. } = &outcome {
             self.store(key, Arc::clone(page));
         }
         Ok(outcome)
+    }
+
+    /// Run the configured backend: the browser first for `Camoufox`, else an
+    /// HTTP GET retried through the browser on a bot-block for `Auto`.
+    async fn fetch_with_backend(
+        &self,
+        url: Url,
+        browser: &BrowserFetch,
+        cancel: CancellationToken,
+    ) -> Result<FetchOutcome, FetchError> {
+        // Browser-first: fall back to HTTP only when the browser cannot run.
+        if browser.backend == FetchBackend::Camoufox {
+            match self.fetch_via_browser(&url, browser, cancel.clone()).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(error) => {
+                    tracing::warn!(%error, "camoufox fetch failed; falling back to HTTP");
+                }
+            }
+        }
+        let http = self.fetch_http(url.clone(), cancel.clone()).await;
+        // Auto: retry a bot-blocked GET (or a reset connection) through the browser.
+        if browser.backend == FetchBackend::Auto {
+            let blocked = match &http {
+                Ok(outcome) => outcome_is_blocked(outcome),
+                Err(FetchError::Transport(_)) => true,
+                Err(_) => false,
+            };
+            if blocked {
+                if let Ok(outcome) = self.fetch_via_browser(&url, browser, cancel).await {
+                    return Ok(outcome);
+                }
+            }
+        }
+        http
+    }
+
+    /// One HTTP GET (redirects followed within the host), bounded by the
+    /// deadline and the cancellation token.
+    async fn fetch_http(
+        &self,
+        url: Url,
+        cancel: CancellationToken,
+    ) -> Result<FetchOutcome, FetchError> {
+        let deadline = self.options.timeout;
+        tokio::select! {
+            () = cancel.cancelled() => Err(FetchError::Cancelled),
+            () = tokio::time::sleep(deadline) => Err(FetchError::Timeout(deadline)),
+            outcome = self.fetch_uncached(url) => outcome,
+        }
+    }
+
+    /// Fetch `url` through a headless Camoufox: a bundled Python script
+    /// navigates the page, waits out any bot-check interstitial, and returns
+    /// the rendered HTML, which is converted to Markdown like an HTTP page.
+    async fn fetch_via_browser(
+        &self,
+        url: &Url,
+        browser: &BrowserFetch,
+        cancel: CancellationToken,
+    ) -> Result<FetchOutcome, FetchError> {
+        let script = browser_script_path().map_err(FetchError::Transport)?;
+        let deadline = self.options.timeout;
+        let payload = serde_json::json!({
+            "url": url.as_str(),
+            "timeout_ms": u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX),
+        })
+        .to_string();
+        let child = tokio::process::Command::new(&browser.python)
+            .arg(script)
+            .arg(&payload)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| {
+                FetchError::Transport(format!(
+                    "camoufox fetch could not start `{}`: {error}",
+                    browser.python
+                ))
+            })?;
+        // Give the browser a little slack past its in-script navigation deadline;
+        // on cancel or timeout the child drops and `kill_on_drop` tears it down.
+        let output = tokio::select! {
+            () = cancel.cancelled() => return Err(FetchError::Cancelled),
+            result = tokio::time::timeout(deadline + Duration::from_secs(15), child.wait_with_output()) => result
+                .map_err(|_| FetchError::Timeout(deadline))?
+                .map_err(|error| FetchError::Transport(format!("camoufox fetch failed: {error}")))?,
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let body: Value = serde_json::from_str(stdout.trim()).map_err(|error| {
+            FetchError::Transport(format!("camoufox fetch returned malformed output: {error}"))
+        })?;
+        if let Some(message) = body.get("error").and_then(Value::as_str) {
+            return Err(FetchError::Transport(format!("camoufox fetch: {message}")));
+        }
+        let html_body = body.get("html").and_then(Value::as_str).unwrap_or_default();
+        if html_body.trim().is_empty() {
+            return Err(FetchError::Transport(
+                "camoufox fetch returned no content".into(),
+            ));
+        }
+        // The browser follows redirects itself (cross-host included), so the
+        // final URL is re-validated: a redirect to a private or loopback host is
+        // refused exactly as the HTTP leg would refuse it (an SSRF guard).
+        let final_raw = body
+            .get("final_url")
+            .and_then(Value::as_str)
+            .unwrap_or(url.as_str());
+        let final_url = validate_url(final_raw, &self.options)?;
+        let content_type = body
+            .get("content_type")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("text/html")
+            .to_string();
+        let bytes = html_body.len();
+        let kind = classify(&content_type, html_body.as_bytes());
+        let content = match kind {
+            ContentKind::Html => {
+                let text = html_body.to_string();
+                tokio::task::spawn_blocking(move || html::to_markdown(&text))
+                    .await
+                    .map_err(|error| {
+                        FetchError::Transport(format!("the HTML conversion failed: {error}"))
+                    })?
+            }
+            ContentKind::Markdown | ContentKind::Text => html_body.to_string(),
+            ContentKind::Binary => String::new(),
+        };
+        // The browser got past the block, so the page is a success regardless of
+        // the interstitial status the first navigation response carried.
+        Ok(FetchOutcome::Page {
+            page: Arc::new(FetchedPage {
+                url: url.to_string(),
+                final_url: final_url.to_string(),
+                status: 200,
+                status_text: "OK".to_string(),
+                content_type,
+                bytes,
+                kind,
+                content,
+            }),
+            cached: false,
+        })
     }
 
     async fn fetch_uncached(&self, url: Url) -> Result<FetchOutcome, FetchError> {
@@ -621,6 +837,52 @@ mod tests {
         assert!(!ok("https://other.com/"));
         assert!(!ok("https://example.com:8443/"));
         assert!(!ok("https://u@example.com/"));
+    }
+
+    #[test]
+    fn the_fetch_backend_parses_and_only_bot_blocks_retry_through_the_browser() {
+        assert_eq!(FetchBackend::parse(""), Some(FetchBackend::Auto));
+        assert_eq!(FetchBackend::parse("AUTO"), Some(FetchBackend::Auto));
+        assert_eq!(FetchBackend::parse(" http "), Some(FetchBackend::Http));
+        assert_eq!(
+            FetchBackend::parse("camoufox"),
+            Some(FetchBackend::Camoufox)
+        );
+        assert_eq!(FetchBackend::parse("browser"), Some(FetchBackend::Camoufox));
+        assert_eq!(FetchBackend::parse("wget"), None);
+        assert_eq!(FetchBackend::default(), FetchBackend::Auto);
+
+        // Cloudflare's bot-block statuses retry; a rate limit, a 404 and origin
+        // 5xx do not.
+        assert!(is_block_status(403));
+        assert!(is_block_status(503));
+        for not_blocked in [200, 404, 429, 500, 502, 520] {
+            assert!(
+                !is_block_status(not_blocked),
+                "{not_blocked} is not a block"
+            );
+        }
+        let blocked = FetchOutcome::HttpError {
+            url: "https://x/".into(),
+            status: 403,
+            status_text: "Forbidden".into(),
+            retry_after: None,
+        };
+        assert!(outcome_is_blocked(&blocked));
+        let rate_limited = FetchOutcome::HttpError {
+            url: "https://x/".into(),
+            status: 429,
+            status_text: "Too Many Requests".into(),
+            retry_after: Some("30".into()),
+        };
+        assert!(!outcome_is_blocked(&rate_limited));
+        let redirect = FetchOutcome::Redirect {
+            url: "https://x/".into(),
+            target: "https://y/".into(),
+            status: 302,
+            status_text: "Found".into(),
+        };
+        assert!(!outcome_is_blocked(&redirect));
     }
 
     #[test]

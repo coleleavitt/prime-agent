@@ -30,6 +30,13 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
   - The reply carries the hits (deduplicated), each search's query and hits, the model's commentary, and `text`:
     Claude Code's tool-result text (`Web search results for query: ...`, `Links: [...]`, the Sources reminder).
 - `web.fetch` (`url`, optional `prompt`, `offset`): Claude Code's WebFetch, minus its server-side domain preflight.
+  - Backend (`fetch::FetchBackend`, `web.fetchBackend`): `auto` (default) does a plain HTTP GET and, when the site
+    bot-blocks it (HTTP 403/503 or a reset connection), retries through a headless Camoufox that navigates the page,
+    waits out any "Just a moment" interstitial, and returns the rendered HTML (converted to Markdown like any page);
+    `http` never launches the browser; `camoufox` always uses the browser (HTTP only when the browser cannot run). The
+    browser follows redirects itself, so its final URL is re-validated against the same host rules (an SSRF guard), and
+    it needs `camoufox` installed in the configured interpreter (shared with search; an ephemeral context, so no
+    profile lock).
   - URL rules (`fetch::validate_url`): http(s) only, at most 2000 characters, no credentials; `http` upgraded to
     `https`; localhost, dotless, `.local`, loopback, private, link-local and CGNAT hosts refused ("use bash() with
     curl"). A hostname that resolves to a private address is not checked.
@@ -51,6 +58,7 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
 ```json
 "web": {
   "searchBackend": "auto",
+  "fetchBackend": "auto",
   "searchModel": "anthropic/claude-haiku-4-5",
   "fetchModel": "anthropic/claude-haiku-4-5",
   "camoufoxPython": "python3"
@@ -58,9 +66,10 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
 ```
 
 `searchBackend` is `auto` (Camoufox when its browser is available, else Anthropic when a model resolves), `anthropic`
-or `camoufox`; `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides it. `camoufoxPython` is the interpreter that has `camoufox`
-installed (default `python3`); `PRIME_AGENT_WEB_CAMOUFOX_PYTHON` stands in when the setting is unset. Every model
-honours the global `allowedModels` pin.
+or `camoufox`; `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides it. `fetchBackend` is `auto` (HTTP, browser on a bot-block),
+`http` or `camoufox`; `PRIME_AGENT_WEB_FETCH_BACKEND` overrides it. `camoufoxPython` is the interpreter that has
+`camoufox` installed (default `python3`, shared by search and fetch); `PRIME_AGENT_WEB_CAMOUFOX_PYTHON` stands in when
+the setting is unset. Every model honours the global `allowedModels` pin.
 
 ## Non-goals
 

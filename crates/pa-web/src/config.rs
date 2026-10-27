@@ -3,23 +3,29 @@
 //! ```json
 //! "web": {
 //!   "searchBackend": "auto",          // "auto" | "anthropic" | "camoufox"
+//!   "fetchBackend": "auto",           // "auto" | "http" | "camoufox"
 //!   "searchModel": "anthropic/claude-haiku-4-5",
 //!   "fetchModel": "anthropic/claude-haiku-4-5",
 //!   "camoufoxPython": "python3"       // interpreter with `camoufox` installed
 //! }
 //! ```
 //!
-//! `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides `searchBackend`;
+//! `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides `searchBackend` and
+//! `PRIME_AGENT_WEB_FETCH_BACKEND` overrides `fetchBackend`;
 //! `PRIME_AGENT_WEB_CAMOUFOX_PYTHON` overrides `camoufoxPython` when the
-//! settings carry none. `web.fetch` prompts fall back to the `auxiliaryModel`
-//! setting when `fetchModel` is unset.
+//! settings carry none (search and fetch share the one interpreter). `web.fetch`
+//! prompts fall back to the `auxiliaryModel` setting when `fetchModel` is unset.
 
 use std::path::Path;
 
 use serde_json::Value;
 
+use crate::fetch::FetchBackend;
+
 /// The environment variable that overrides `web.searchBackend`.
 pub const SEARCH_BACKEND_ENV: &str = "PRIME_AGENT_WEB_SEARCH_BACKEND";
+/// The environment variable that overrides `web.fetchBackend`.
+pub const FETCH_BACKEND_ENV: &str = "PRIME_AGENT_WEB_FETCH_BACKEND";
 /// The environment variable that overrides `web.camoufoxPython`.
 pub const CAMOUFOX_PYTHON_ENV: &str = "PRIME_AGENT_WEB_CAMOUFOX_PYTHON";
 
@@ -53,6 +59,8 @@ pub struct WebSettings {
     pub search_backend: BackendChoice,
     /// A `searchBackend` value that names no backend (reported, then `Auto`).
     pub unknown_backend: Option<String>,
+    /// How `web.fetch` acquires a page (unknown names fall back to `Auto`).
+    pub fetch_backend: FetchBackend,
     /// `provider/id` of the model that runs Anthropic searches.
     pub search_model: Option<String>,
     /// `provider/id` of the model that answers `web.fetch` prompts.
@@ -105,11 +113,16 @@ impl WebSettings {
                 None => (BackendChoice::Auto, Some(name)),
             },
         };
+        let fetch_backend = non_empty(env(FETCH_BACKEND_ENV).as_deref())
+            .or_else(|| field("fetchBackend"))
+            .and_then(|name| FetchBackend::parse(&name))
+            .unwrap_or_default();
         let camoufox_python =
             field("camoufoxPython").or_else(|| non_empty(env(CAMOUFOX_PYTHON_ENV).as_deref()));
         Self {
             search_backend,
             unknown_backend,
+            fetch_backend,
             search_model: field("searchModel"),
             fetch_model: field("fetchModel"),
             auxiliary_model: non_empty(auxiliary_model),
@@ -165,6 +178,7 @@ mod tests {
             WebSettings {
                 search_backend: BackendChoice::Camoufox,
                 unknown_backend: None,
+                fetch_backend: FetchBackend::Auto,
                 search_model: Some("anthropic/claude-haiku-4-5".into()),
                 fetch_model: None,
                 auxiliary_model: Some("anthropic/claude-haiku-4-5".into()),
@@ -188,6 +202,25 @@ mod tests {
         assert_eq!(
             settings.camoufox_python.as_deref(),
             Some("/opt/cf/bin/python")
+        );
+    }
+
+    #[test]
+    fn the_fetch_backend_parses_from_settings_and_the_env_wins() {
+        let web = json!({ "fetchBackend": "camoufox" });
+        let from_settings = WebSettings::from_parts(Some(&web), None, &env_of(&[]));
+        assert_eq!(from_settings.fetch_backend, FetchBackend::Camoufox);
+        // The env override wins over the setting; an unknown name is Auto.
+        let override_http =
+            WebSettings::from_parts(Some(&web), None, &env_of(&[(FETCH_BACKEND_ENV, "http")]));
+        assert_eq!(override_http.fetch_backend, FetchBackend::Http);
+        let unknown = json!({ "fetchBackend": "wget" });
+        let fallback = WebSettings::from_parts(Some(&unknown), None, &env_of(&[]));
+        assert_eq!(fallback.fetch_backend, FetchBackend::Auto);
+        assert_eq!(
+            WebSettings::default().fetch_backend,
+            FetchBackend::Auto,
+            "the default backend is Auto"
         );
     }
 

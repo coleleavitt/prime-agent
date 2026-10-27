@@ -10,10 +10,12 @@
 //!   browser over `DuckDuckGo` (the keyless default), falling back to Anthropic's
 //!   server-side `web_search` tool through the session's Anthropic login or key
 //!   (`config`).
-//! - Fetch is a plain HTTP GET (`fetch`) converted to Markdown (`html`); a
-//!   `prompt` is answered over the page by the configured small model
-//!   (`web.fetchModel`, else `auxiliaryModel`), and without one the page
-//!   text comes back, windowed with a note on how to read on (`render`).
+//! - Fetch (`fetch`) is an HTTP GET converted to Markdown (`html`), retried
+//!   through the same headless Camoufox when a site bot-blocks the GET
+//!   (`fetch::FetchBackend`); a `prompt` is answered over the page by the
+//!   configured small model (`web.fetchModel`, else `auxiliaryModel`), and
+//!   without one the page text comes back, windowed with a note on how to read
+//!   on (`render`).
 //!
 //! The crate plugs into sessions through
 //! [`pa_core::features::SessionFeature`]; see `README.md`.
@@ -41,7 +43,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{BackendChoice, WebSettings};
-use crate::fetch::{FetchOptions, FetchOutcome, Fetcher};
+use crate::fetch::{BrowserFetch, FetchOptions, FetchOutcome, Fetcher};
 use crate::model::{CompletionHooks, ResolvedModel};
 use crate::render::{Answer, PromptHandling};
 use crate::search::anthropic::AnthropicSearch;
@@ -341,6 +343,24 @@ impl SessionWeb {
         }
     }
 
+    /// The headless-browser fetch policy for this session (the `fetchBackend`
+    /// setting and the shared `camoufoxPython` interpreter).
+    async fn browser_fetch(&self) -> BrowserFetch {
+        let agent_dir = self.agent_dir.clone();
+        let cwd = self.cwd.clone();
+        tokio::task::spawn_blocking(move || {
+            let settings = WebSettings::load(&cwd, &agent_dir);
+            BrowserFetch {
+                backend: settings.fetch_backend,
+                python: settings
+                    .camoufox_python
+                    .unwrap_or_else(|| DEFAULT_PYTHON.to_string()),
+            }
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     async fn answer_model(&self) -> Option<ResolvedModel> {
         if let Some(model) = &self.overrides.answer_model {
             return Some(model.clone());
@@ -379,7 +399,8 @@ impl SessionWeb {
             .and_then(Value::as_u64)
             .map_or(0, |offset| usize::try_from(offset).unwrap_or(usize::MAX));
         let fetcher = Arc::clone(&self.clients().map_err(anyhow::Error::msg)?.fetcher);
-        let outcome = match fetcher.fetch(url, cancel.clone()).await {
+        let browser = self.browser_fetch().await;
+        let outcome = match fetcher.fetch(url, &browser, cancel.clone()).await {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.track(
