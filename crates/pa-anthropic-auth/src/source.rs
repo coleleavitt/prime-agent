@@ -526,6 +526,29 @@ impl SharedStoreSource {
         resolved
     }
 
+    /// Resolve the current OAuth bearer for a host-side call to the Anthropic
+    /// API (refreshing an expired token), for features that call the API
+    /// directly rather than through a provider stream — the memory service
+    /// (`/v1/code/local/memory`) is the first. Returns the access-token
+    /// string, or a message when no login can be served.
+    ///
+    /// SENSITIVE: this hands out the live access token. Send it only to
+    /// `api.anthropic.com` over TLS, in an `authorization: Bearer` header;
+    /// never log it or write it to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` with a short message when the store serves no usable
+    /// login: a resolve failure (store unreadable, or no refreshable login)
+    /// or a runtime error resolving the token.
+    pub fn bearer(&self) -> Result<String, String> {
+        match self.resolve() {
+            Ok(Ok(grant)) => Ok(grant.access_token),
+            Ok(Err(error)) => Err(format!("no servable Anthropic login: {:?}", error.kind)),
+            Err(error) => Err(error),
+        }
+    }
+
     /// The served login's stored token while it is live (every login cooling
     /// down or spent).
     fn cooling_down_token(&self) -> Option<AccessGrant> {
