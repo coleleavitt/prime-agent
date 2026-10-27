@@ -87,7 +87,7 @@ flowchart TB
     direction LR
     HS["harness_state.json<br/>entries: memory, skill, subagent, prompt, factory<br/>keys: ravo, failures, trustWindows"]
     LEDGER["Failure ledger (pa-ledger)<br/>fingerprint(kind, source, class, msg)<br/>per session, and global unless<br/>PRIME_AGENT_GLOBAL_LEDGER=0"]
-    TRIG["Refine triggers<br/>turn_interval 25, compact (reviewed, 20 min cooldown)<br/>recurrence, regression (queued by pa-ravo)<br/>manual /refine, refine.run"]
+    TRIG["Refine triggers<br/>compact (reviewed, 20 min cooldown), observer signal, session-end backstop<br/>recurrence, regression (queued by pa-ravo)<br/>manual /refine, refine.run"]
     PROP["plan_refinement<br/>one model call proposes edits"]
     HS --> PROP
     LEDGER --> TRIG --> PROP
@@ -151,7 +151,8 @@ flowchart TB
 Stages: run a turn; the ledger observes every finalized message on its own worker thread and treats each assistant
 message as a turn boundary (`pa-ledger`, through the `on_message_end` hook of `SessionFeature`); a trigger fires (a
 fingerprint entering the recurring set, a claimed fingerprint recurring inside a champion's window, the reviewed
-turn-interval or compaction checkpoint, or a manual `/refine` / `refine.run`); the native planner proposes edits from
+compaction checkpoint, the background observer's per-turn signal, the session-end backstop, or a manual `/refine` /
+`refine.run`); the native planner proposes edits from
 the serialized conversation (`plan_refinement`); the gate evaluates the plan with one model call (the `RefinementGate`
 trait in `pa_core::refinement::gate`, implemented by `pa-ravo`); its verdict (`RefinementGateVerdict`) admits or
 refuses against the target store re-read at apply time; an applied change reaches the running model as an in-context
@@ -186,7 +187,7 @@ flowchart TB
     direction LR
     T1{"recurrence<br/>enters count >= 2 and actionable"}:::gate
     T2{"regression<br/>claimed fp recurs inside<br/>20-observation window on its clock"}:::gate
-    T3{"turn_interval 25 / compact<br/>reviewer model call + 20 min cooldown"}:::gate
+    T3{"compact / observer signal / session-end<br/>reviewer model call + 20 min cooldown"}:::gate
     T4["manual /refine, refine.run()"]:::live
   end
   LED --> T1

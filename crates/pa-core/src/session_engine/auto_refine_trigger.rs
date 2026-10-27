@@ -2,10 +2,38 @@
 //! the one consumption order the servicing surfaces share — gates first,
 //! then the review, and only an approving review runs the refinement.
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 use pa_types::ai::Model;
 use pa_types::sync::MutexExt;
 
 use super::AgentSession;
+
+/// Session-ids for which the background observer flagged notable signal since
+/// the last auto-refine boundary. The observer (`pa-observer`) is a per-turn
+/// background model; when it reports something worth a look, it arms RAVO here
+/// instead of on a hardcoded turn count, and RAVO's review gate makes the
+/// precise "worth persisting" call. Mirrors `features::confirm`'s session-keyed
+/// registry; empty (and never touched) when the observer is off.
+fn observer_refine_signals() -> &'static Mutex<HashSet<String>> {
+    static SIGNALS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SIGNALS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Record that the background observer flagged refine-worthy signal for
+/// `session_id`; the next auto-refine boundary arms one review (subject to the
+/// usual gates and cooldown). Called by the observer feature.
+pub fn signal_observer_refine(session_id: &str) {
+    observer_refine_signals()
+        .lock_or_recover()
+        .insert(session_id.to_string());
+}
+
+/// Take (and clear) the observer's refine signal for `session_id`.
+fn take_observer_refine_signal(session_id: &str) -> bool {
+    observer_refine_signals().lock_or_recover().remove(session_id)
+}
 use super::refine::{AutoRefineRound, now_millis};
 use crate::refinement::RefinementResult;
 use crate::refinement::executor::AutoRefineReview;
@@ -93,9 +121,25 @@ impl AgentSession {
         surface: CompactAutoRefineSurface,
     ) -> anyhow::Result<Option<RefinementResult>> {
         let gates = self.auto_refine_gates();
+        // The background observer's per-turn signal arms a review here: taken once,
+        // it drives one review like a compaction trigger, under the same gates and
+        // cooldown. No-op (and never set) when the observer is off.
+        let observer_signal = take_observer_refine_signal(&self.session_id().await);
         let (retained_review, settled_turns, branch_version) = {
             let mut state = self.compact_auto_refine.lock_or_recover();
-            if !state.pending && state.pending_review.is_none() {
+            // Session-end backstop: a session that never compacted (so nothing
+            // armed the trigger) still runs one fresh review at dispose if it did
+            // real work — this closes the gap where short, non-compacting sessions
+            // contribute no memory. Compaction and the observer signal arm the
+            // trigger sooner; the `enabled`/`compact` gates and the cooldown below
+            // apply to the backstop exactly as to any other trigger.
+            let dispose_backstop = surface == CompactAutoRefineSurface::Dispose
+                && state.settled_turns_since_review > 0;
+            if !state.pending
+                && state.pending_review.is_none()
+                && !dispose_backstop
+                && !observer_signal
+            {
                 return Ok(None);
             }
             // Gate order: the refine surface, then the `enabled` gate, then the
@@ -363,6 +407,59 @@ mod tests {
             Ok(None)
         ));
         assert!(!state(&session).0, "the trigger dropped");
+    }
+
+    #[tokio::test]
+    async fn session_end_backstop_reviews_an_unarmed_session_with_activity() {
+        // No compaction ever armed the trigger, but the session did real work.
+        let session = session(true).await;
+        session.note_settled_turn_since_auto_refine_review();
+        // A declining review proves the backstop actually RAN a review at dispose,
+        // unlike the silent no-op of an unarmed `Checkpoint` consume.
+        let review = r#"{"shouldRefine": false, "rationale": "nothing durable"}"#;
+        let model = faux_model(&[serde_json::json!({"text": review})]);
+        assert!(matches!(
+            consume(&session, &model, CompactAutoRefineSurface::Dispose).await,
+            Ok(None)
+        ));
+        let (_pending, last_review_at, turns) = state(&session);
+        assert!(last_review_at.is_some(), "the backstop ran a review at dispose");
+        assert_eq!(turns, 0, "the review reset the settled-turn counter");
+    }
+
+    #[tokio::test]
+    async fn session_end_backstop_skips_an_idle_session() {
+        // Dispose with no settled turns (no real work) must stay silent — the
+        // backstop only fires when the session produced something worth reviewing.
+        let session = session(true).await;
+        let model = faux_model(&[serde_json::json!({"text": "never served"})]);
+        assert!(matches!(
+            consume(&session, &model, CompactAutoRefineSurface::Dispose).await,
+            Ok(None)
+        ));
+        assert!(
+            state(&session).1.is_none(),
+            "no review ran for an idle session"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_observer_signal_arms_a_review_without_compaction() {
+        // No compaction and no settled turns — only the background observer's
+        // per-turn signal. It must still drive one review (the signal-driven
+        // trigger that replaces a hardcoded turn count).
+        let session = session(true).await;
+        super::signal_observer_refine(&session.session_id().await);
+        let review = r#"{"shouldRefine": false, "rationale": "nothing durable"}"#;
+        let model = faux_model(&[serde_json::json!({"text": review})]);
+        assert!(matches!(
+            consume(&session, &model, CompactAutoRefineSurface::Checkpoint).await,
+            Ok(None)
+        ));
+        assert!(
+            state(&session).1.is_some(),
+            "the observer signal ran a review"
+        );
     }
 
     #[tokio::test]

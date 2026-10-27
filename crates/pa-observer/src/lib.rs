@@ -245,6 +245,12 @@ async fn deliver(session_id: String, observed: Arc<ObservedSession>, digest: Str
     drop(history);
     if let Some(report) = report_of(&reply) {
         observed.tally.reports.fetch_add(1, Ordering::Relaxed);
+        // The observer found something notable this turn — arm RAVO so its review
+        // gate can decide whether it is worth persisting as memory. This is the
+        // signal-driven refine trigger (replacing a hardcoded turn count): the
+        // per-turn background agent drives the gated learning. No-op unless auto
+        // refine is on; bounded by RAVO's cooldown.
+        pa_core::session_engine::auto_refine_trigger::signal_observer_refine(&session_id);
         let delivered = deliver_feature_notice(
             &session_id,
             &FeatureNotice {
