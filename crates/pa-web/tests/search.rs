@@ -1,6 +1,6 @@
 //! `web.search` end to end: the Anthropic backend against a local Messages
-//! endpoint that streams server-tool blocks, the Brave and Exa backends
-//! against local APIs, backend selection from settings, and the handler.
+//! endpoint that streams server-tool blocks, backend selection from settings
+//! (Camoufox default with an Anthropic fallback), and the handler.
 
 mod common;
 
@@ -10,8 +10,6 @@ use common::{Reply, serve, sse};
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_web::config::{BackendChoice, WebSettings};
-use pa_web::search::brave::BraveSearch;
-use pa_web::search::exa::ExaSearch;
 use pa_web::search::{SearchBackend, SearchRequest};
 use pa_web::{SEARCH_REQUEST, WebFeature, WebOverrides, resolve_backend};
 use serde_json::{Value, json};
@@ -46,14 +44,6 @@ fn write_models(dir: &std::path::Path, base_url: &str) {
         .to_string(),
     )
     .unwrap();
-}
-
-fn request(query: &str) -> SearchRequest {
-    SearchRequest {
-        query: query.into(),
-        allowed_domains: Vec::new(),
-        blocked_domains: Vec::new(),
-    }
 }
 
 fn context(dir: &std::path::Path) -> SessionFeatureContext {
@@ -183,141 +173,41 @@ async fn a_failed_anthropic_call_is_the_handlers_error() {
     assert!(invalid.to_string().contains("Missing query"), "{invalid}");
 }
 
-#[tokio::test]
-async fn the_brave_backend_sends_the_key_and_the_site_filter() {
-    let server = serve(|_request| {
-        Reply::ok(
-            "application/json",
-            json!({ "web": { "results": [
-                { "title": "Tokio", "url": "https://tokio.rs/", "description": "An <strong>async</strong> runtime" },
-                { "title": "Blocked", "url": "https://reddit.com/r/rust" },
-            ]}})
-            .to_string(),
-        )
-    })
-    .await;
-    let backend = BraveSearch {
-        api_key: "brave-key".into(),
-        endpoint: format!("{}/res/v1/web/search", server.base),
-        client: reqwest::Client::new(),
-    };
-    let mut wanted = request("tokio runtime");
-    wanted.blocked_domains = vec!["reddit.com".into()];
-    let outcome = backend
-        .search(wanted, CancellationToken::new())
-        .await
-        .unwrap();
-    let response = outcome.to_response("tokio runtime", std::time::Duration::ZERO);
-    assert_eq!(
-        response["results"],
-        json!([{ "title": "Tokio", "url": "https://tokio.rs/", "snippet": "An async runtime" }])
-    );
-    assert_eq!(response["backend"], json!("brave"));
-    let received = &server.requests()[0];
-    assert_eq!(received.header("x-subscription-token"), Some("brave-key"));
-    assert_eq!(
-        received.target,
-        "/res/v1/web/search?q=tokio+runtime+-site%3Areddit.com&count=10"
-    );
-}
-
-#[tokio::test]
-async fn the_exa_backend_sends_the_key_and_its_domain_filters() {
-    let server = serve(|_request| {
-        Reply::ok(
-            "application/json",
-            json!({ "results": [
-                { "title": "Serde", "url": "https://docs.rs/serde", "highlights": ["Serialize things."] },
-            ]})
-            .to_string(),
-        )
-    })
-    .await;
-    let backend = ExaSearch {
-        api_key: "exa-key".into(),
-        endpoint: format!("{}/search", server.base),
-        client: reqwest::Client::new(),
-    };
-    let mut wanted = request("serde");
-    wanted.allowed_domains = vec!["docs.rs".into()];
-    let outcome = backend
-        .search(wanted, CancellationToken::new())
-        .await
-        .unwrap();
-    assert_eq!(
-        outcome.to_response("serde", std::time::Duration::ZERO)["results"],
-        json!([{ "title": "Serde", "url": "https://docs.rs/serde", "snippet": "Serialize things." }])
-    );
-    let received = &server.requests()[0];
-    assert_eq!(received.method, "POST");
-    assert_eq!(received.header("x-api-key"), Some("exa-key"));
-    let body: Value = serde_json::from_str(&received.body).unwrap();
-    assert_eq!(body["includeDomains"], json!(["docs.rs"]));
-    assert_eq!(body["query"], json!("serde"));
-
-    // An API failure names the service and status, never the key.
-    let failing = serve(|_request| Reply::status(401, "Unauthorized")).await;
-    let backend = ExaSearch {
-        api_key: "exa-key".into(),
-        endpoint: format!("{}/search", failing.base),
-        client: reqwest::Client::new(),
-    };
-    let error = backend
-        .search(request("serde"), CancellationToken::new())
-        .await
-        .unwrap_err();
-    assert_eq!(error.0, "Exa returned HTTP 401");
-}
-
 #[test]
 fn explicit_backends_need_their_keys_and_a_searchable_model() {
     let dir = tempfile::tempdir().unwrap();
     write_models(dir.path(), "http://127.0.0.1:9");
-    let client = reqwest::Client::new();
-    let endpoints = ("http://127.0.0.1:9/brave", "http://127.0.0.1:9/exa");
     let resolve = |settings: &WebSettings| {
-        resolve_backend(
-            settings,
-            dir.path(),
-            dir.path(),
-            ("p1", "m1"),
-            &client,
-            endpoints,
-        )
-        .map(|backend| backend.name())
+        resolve_backend(settings, dir.path(), dir.path(), ("p1", "m1")).map(|backend| backend.name())
     };
-    let brave = WebSettings {
-        search_backend: BackendChoice::Brave,
+    // Camoufox is keyless: it always resolves, and Auto defaults to it (the
+    // FallbackSearch reports its primary's name).
+    let camoufox = WebSettings {
+        search_backend: BackendChoice::Camoufox,
         ..WebSettings::default()
     };
-    assert!(resolve(&brave).unwrap_err().contains("BRAVE_API_KEY"));
-    let keyed = WebSettings {
-        brave_api_key: Some("k".into()),
-        ..brave
-    };
-    assert_eq!(resolve(&keyed), Ok("brave"));
-    let exa = WebSettings {
-        search_backend: BackendChoice::Exa,
-        exa_api_key: Some("k".into()),
+    assert_eq!(resolve(&camoufox), Ok("camoufox"));
+    assert_eq!(resolve(&WebSettings::default()), Ok("camoufox"));
+    // Explicit Anthropic needs a searchable model.
+    let anthropic = WebSettings {
+        search_backend: BackendChoice::Anthropic,
         ..WebSettings::default()
     };
-    assert_eq!(resolve(&exa), Ok("exa"));
+    assert!(resolve(&anthropic).unwrap_err().contains("login or key"));
     let configured = WebSettings {
+        search_backend: BackendChoice::Anthropic,
         search_model: Some("mock-anthropic/mock-haiku".into()),
-        brave_api_key: Some("k".into()),
         ..WebSettings::default()
     };
-    assert_eq!(
-        resolve(&configured),
-        Ok("anthropic"),
-        "auto prefers Anthropic"
-    );
+    assert_eq!(resolve(&configured), Ok("anthropic"));
     let unknown = WebSettings {
+        search_backend: BackendChoice::Anthropic,
         search_model: Some("nobody/none".into()),
         ..WebSettings::default()
     };
     assert!(resolve(&unknown).unwrap_err().contains("not registered"));
     let pinned = WebSettings {
+        search_backend: BackendChoice::Anthropic,
         search_model: Some("mock-anthropic/mock-haiku".into()),
         allowed_models: Some(vec!["other/*".into()]),
         ..WebSettings::default()

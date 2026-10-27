@@ -20,10 +20,13 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
     cheapest authenticated first-party Anthropic model (haiku, then sonnet). Credentials resolve through the model
     registry, so the shared account store (`pa-anthropic-auth`), `auth.json` and `ANTHROPIC_API_KEY` all serve, with the
     provider's OAuth identity and request hooks.
-  - **Brave** (`search::brave`): `GET /res/v1/web/search` with `X-Subscription-Token`; the domain filter rides the
-    query as `site:` operators and is applied again to the hits.
-  - **Exa** (`search::exa`): `POST /search` with `x-api-key`, `includeDomains` / `excludeDomains`, a highlight per
-    hit as its snippet.
+  - **Camoufox** (`search::camoufox`): a real, keyless headless browser. A bundled Python script drives a headless
+    Camoufox (Firefox) over DuckDuckGo's HTML endpoint and returns clean result URLs; the domain filter rides the
+    query as `site:` operators and is applied again to the hits. DuckDuckGo, not Google: Google wraps every result
+    link in an opaque `goto?url=` redirect token that does not decode to a real URL, while DuckDuckGo's HTML endpoint
+    exposes the destination (`uddg=`), needs no JavaScript, and does not gate on consent or CAPTCHA. The browser must
+    be installed in the chosen interpreter (`pip install camoufox[geoip] && camoufox fetch`); when it is not, the
+    search errors and `auto` falls back to Anthropic.
   - The reply carries the hits (deduplicated), each search's query and hits, the model's commentary, and `text`:
     Claude Code's tool-result text (`Web search results for query: ...`, `Links: [...]`, the Sources reminder).
 - `web.fetch` (`url`, optional `prompt`, `offset`): Claude Code's WebFetch, minus its server-side domain preflight.
@@ -50,14 +53,14 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
   "searchBackend": "auto",
   "searchModel": "anthropic/claude-haiku-4-5",
   "fetchModel": "anthropic/claude-haiku-4-5",
-  "braveApiKey": "...",
-  "exaApiKey": "..."
+  "camoufoxPython": "python3"
 }
 ```
 
-`searchBackend` is `auto` (Anthropic when a model resolves, else Brave when keyed, else Exa when keyed), `anthropic`,
-`brave` or `exa`; `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides it. `BRAVE_API_KEY` (or `BRAVE_SEARCH_API_KEY`) and
-`EXA_API_KEY` stand in for the keys. Every model honours the global `allowedModels` pin.
+`searchBackend` is `auto` (Camoufox when its browser is available, else Anthropic when a model resolves), `anthropic`
+or `camoufox`; `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides it. `camoufoxPython` is the interpreter that has `camoufox`
+installed (default `python3`); `PRIME_AGENT_WEB_CAMOUFOX_PYTHON` stands in when the setting is unset. Every model
+honours the global `allowedModels` pin.
 
 ## Non-goals
 
@@ -70,7 +73,7 @@ Wired by `pa-cli` behind `feature = "web"` (default on). `--no-default-features`
 
 `WebFeature` (`new`, `with_overrides(WebOverrides)`), `resolve_backend`, the request and event names
 (`SEARCH_REQUEST`, `FETCH_REQUEST`, `SEARCH_EVENT`, `FETCH_EVENT`), and the modules `config`, `fetch`, `html`,
-`model`, `render`, `search` (the `SearchBackend` trait and the three backends).
+`model`, `render`, `search` (the `SearchBackend` trait, the `camoufox` and `anthropic` backends, and `FallbackSearch`).
 
 ## Seams
 

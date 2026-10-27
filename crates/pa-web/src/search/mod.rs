@@ -1,19 +1,20 @@
 //! `web.search`: one query against a pluggable backend.
 //!
-//! [`SearchBackend`] is the seam: [`anthropic::AnthropicSearch`] runs
-//! Anthropic's server-side `web_search` tool through a nested model call
-//! (Claude Code's `WebSearch`), [`brave::BraveSearch`] and [`exa::ExaSearch`]
-//! call those APIs with a key. Every backend answers a [`SearchOutcome`]:
+//! [`SearchBackend`] is the seam: [`camoufox::CamoufoxSearch`] drives a
+//! headless Camoufox (Firefox) browser over `DuckDuckGo` (no API key), and
+//! [`anthropic::AnthropicSearch`] runs Anthropic's server-side `web_search`
+//! tool through a nested model call (Claude Code's `WebSearch`). Every backend
+//! answers a [`SearchOutcome`]:
 //! the searches it ran (each a query and its hits) and any commentary, in
 //! order; [`SearchOutcome::to_response`] renders the kernel's reply,
 //! including Claude Code's tool-result text with its Sources reminder.
 
 pub mod anthropic;
-pub mod brave;
-pub mod exa;
+pub mod camoufox;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -180,6 +181,35 @@ pub trait SearchBackend: Send + Sync {
 
     /// Run `request`; stop promptly when `cancel` fires.
     fn search(&self, request: SearchRequest, cancel: CancellationToken) -> SearchFuture;
+}
+
+/// A backend that serves from `primary` and, when it errors, from `fallback`.
+/// The `Auto` choice wraps the keyless Camoufox default so it degrades to
+/// Anthropic's server-side search instead of failing when the browser is
+/// unavailable.
+pub struct FallbackSearch {
+    pub primary: Arc<dyn SearchBackend>,
+    pub fallback: Option<Arc<dyn SearchBackend>>,
+}
+
+impl SearchBackend for FallbackSearch {
+    fn name(&self) -> &'static str {
+        self.primary.name()
+    }
+
+    fn search(&self, request: SearchRequest, cancel: CancellationToken) -> SearchFuture {
+        let primary = Arc::clone(&self.primary);
+        let fallback = self.fallback.clone();
+        Box::pin(async move {
+            match primary.search(request.clone(), cancel.clone()).await {
+                Ok(outcome) => Ok(outcome),
+                Err(primary_error) => match fallback {
+                    Some(fallback) => fallback.search(request, cancel).await,
+                    None => Err(primary_error),
+                },
+            }
+        })
+    }
 }
 
 impl SearchOutcome {

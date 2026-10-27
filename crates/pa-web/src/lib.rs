@@ -6,9 +6,9 @@
 //! `web.fetch` (`url`, `prompt`, `offset`) host requests; this crate serves
 //! them in the session worker, never on the TUI's paint path.
 //!
-//! - Search runs on a pluggable [`search::SearchBackend`]: Anthropic's
-//!   server-side `web_search` tool through the session's Anthropic login or
-//!   key (the default when one exists), else Brave or Exa with an API key
+//! - Search runs on a pluggable [`search::SearchBackend`]: a headless Camoufox
+//!   browser over `DuckDuckGo` (the keyless default), falling back to Anthropic's
+//!   server-side `web_search` tool through the session's Anthropic login or key
 //!   (`config`).
 //! - Fetch is a plain HTTP GET (`fetch`) converted to Markdown (`html`); a
 //!   `prompt` is answered over the page by the configured small model
@@ -45,9 +45,8 @@ use crate::fetch::{FetchOptions, FetchOutcome, Fetcher};
 use crate::model::{CompletionHooks, ResolvedModel};
 use crate::render::{Answer, PromptHandling};
 use crate::search::anthropic::AnthropicSearch;
-use crate::search::brave::{BRAVE_ENDPOINT, BraveSearch};
-use crate::search::exa::{EXA_ENDPOINT, ExaSearch};
-use crate::search::{SearchBackend, SearchRequest};
+use crate::search::camoufox::{CamoufoxSearch, DEFAULT_PYTHON};
+use crate::search::{FallbackSearch, SearchBackend, SearchRequest};
 
 /// The kernel host request `rlm.web_search` sends.
 pub const SEARCH_REQUEST: &str = "web.search";
@@ -59,11 +58,10 @@ pub const SEARCH_EVENT: &str = "web search";
 pub const FETCH_EVENT: &str = "web fetch";
 /// The most tokens a fetch answer may use.
 pub const ANSWER_MAX_TOKENS: u64 = 4_096;
-/// Deadline of a key-based search API call.
-const SEARCH_HTTP_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// What the setup hint says when no backend can search.
-pub const NO_BACKEND_MESSAGE: &str = "web_search has no backend: log in to Anthropic (/login anthropic) or configure an Anthropic API key, or set BRAVE_API_KEY or EXA_API_KEY (or the web.braveApiKey / web.exaApiKey settings).";
+/// What the setup hint says when the explicit `anthropic` backend cannot
+/// serve. `Auto` always has the keyless Camoufox backend, so it never fails.
+pub const NO_BACKEND_MESSAGE: &str = "web_search has no backend: ensure camoufox is installed (pip install camoufox[geoip] && camoufox fetch), or log in to Anthropic (/login anthropic) / set ANTHROPIC_API_KEY.";
 
 /// Per-build overrides (tests, embedders): fixed backends and fetch
 /// options in place of the configured ones.
@@ -74,17 +72,12 @@ pub struct WebOverrides {
     pub search_backend: Option<Arc<dyn SearchBackend>>,
     /// Answer every fetch prompt with this model.
     pub answer_model: Option<ResolvedModel>,
-    /// The Brave and Exa endpoints (default: the public APIs).
-    pub brave_endpoint: Option<String>,
-    pub exa_endpoint: Option<String>,
 }
 
 /// The HTTP clients, built on the first request (loading TLS roots stays
 /// off process startup).
 struct Clients {
     fetcher: Arc<Fetcher>,
-    /// The key-based search APIs' client.
-    search: reqwest::Client,
 }
 
 type LazyClients = Arc<OnceLock<Result<Clients, String>>>;
@@ -122,14 +115,8 @@ impl WebFeature {
 
 fn build_clients(overrides: &WebOverrides) -> Result<Clients, String> {
     let fetcher = Fetcher::new(overrides.fetch.clone().unwrap_or_default())?;
-    let search = reqwest::Client::builder()
-        .timeout(SEARCH_HTTP_TIMEOUT)
-        .user_agent(fetch::user_agent())
-        .build()
-        .map_err(|error| format!("the web client could not start: {error}"))?;
     Ok(Clients {
         fetcher: Arc::new(fetcher),
-        search,
     })
 }
 
@@ -193,10 +180,7 @@ pub fn resolve_backend(
     agent_dir: &std::path::Path,
     cwd: &std::path::Path,
     session_model: (&str, &str),
-    client: &reqwest::Client,
-    endpoints: (&str, &str),
 ) -> Result<Arc<dyn SearchBackend>, String> {
-    let (brave_endpoint, exa_endpoint) = endpoints;
     let anthropic = || {
         model::resolve_search_model(
             agent_dir,
@@ -209,41 +193,27 @@ pub fn resolve_backend(
             resolved.map(|model| Arc::new(AnthropicSearch { model }) as Arc<dyn SearchBackend>)
         })
     };
-    let brave = || {
-        settings.brave_api_key.as_ref().map(|key| {
-            Arc::new(BraveSearch {
-                api_key: key.clone(),
-                endpoint: brave_endpoint.to_string(),
-                client: client.clone(),
-            }) as Arc<dyn SearchBackend>
-        })
-    };
-    let exa = || {
-        settings.exa_api_key.as_ref().map(|key| {
-            Arc::new(ExaSearch {
-                api_key: key.clone(),
-                endpoint: exa_endpoint.to_string(),
-                client: client.clone(),
-            }) as Arc<dyn SearchBackend>
-        })
+    let camoufox = || {
+        Arc::new(CamoufoxSearch {
+            python: settings
+                .camoufox_python
+                .clone()
+                .unwrap_or_else(|| DEFAULT_PYTHON.to_string()),
+        }) as Arc<dyn SearchBackend>
     };
     match settings.search_backend {
         BackendChoice::Anthropic => anthropic()?.ok_or_else(|| {
             "web.searchBackend is anthropic, but no Anthropic model has a login or key: run /login anthropic or set ANTHROPIC_API_KEY.".to_string()
         }),
-        BackendChoice::Brave => brave().ok_or_else(|| {
-            "web.searchBackend is brave, but no key is set: set BRAVE_API_KEY or the web.braveApiKey setting.".to_string()
-        }),
-        BackendChoice::Exa => exa().ok_or_else(|| {
-            "web.searchBackend is exa, but no key is set: set EXA_API_KEY or the web.exaApiKey setting.".to_string()
-        }),
+        BackendChoice::Camoufox => Ok(camoufox()),
         BackendChoice::Auto => {
-            if let Some(backend) = anthropic()? {
-                return Ok(backend);
-            }
-            brave()
-                .or_else(exa)
-                .ok_or_else(|| NO_BACKEND_MESSAGE.to_string())
+            // Camoufox (a keyless headless browser) is the default; Anthropic's
+            // server-side search is the fallback when camoufox is unavailable
+            // (not installed, launch failure, or a scrape that yields nothing).
+            Ok(Arc::new(FallbackSearch {
+                primary: camoufox(),
+                fallback: anthropic()?,
+            }) as Arc<dyn SearchBackend>)
         }
     }
 }
@@ -280,17 +250,6 @@ impl SessionWeb {
         let agent_dir = self.agent_dir.clone();
         let cwd = self.cwd.clone();
         let session_model = self.session_model.clone();
-        let client = self.clients()?.search.clone();
-        let brave = self
-            .overrides
-            .brave_endpoint
-            .clone()
-            .unwrap_or_else(|| BRAVE_ENDPOINT.to_string());
-        let exa = self
-            .overrides
-            .exa_endpoint
-            .clone()
-            .unwrap_or_else(|| EXA_ENDPOINT.to_string());
         tokio::task::spawn_blocking(move || {
             let settings = WebSettings::load(&cwd, &agent_dir);
             if let Some(unknown) = &settings.unknown_backend {
@@ -301,8 +260,6 @@ impl SessionWeb {
                 &agent_dir,
                 &cwd,
                 (&session_model.0, &session_model.1),
-                &client,
-                (&brave, &exa),
             )
         })
         .await

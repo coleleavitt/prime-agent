@@ -2,18 +2,17 @@
 //!
 //! ```json
 //! "web": {
-//!   "searchBackend": "auto",          // "auto" | "anthropic" | "brave" | "exa"
+//!   "searchBackend": "auto",          // "auto" | "anthropic" | "camoufox"
 //!   "searchModel": "anthropic/claude-haiku-4-5",
 //!   "fetchModel": "anthropic/claude-haiku-4-5",
-//!   "braveApiKey": "...",
-//!   "exaApiKey": "..."
+//!   "camoufoxPython": "python3"       // interpreter with `camoufox` installed
 //! }
 //! ```
 //!
-//! `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides `searchBackend`; `BRAVE_API_KEY`
-//! (or `BRAVE_SEARCH_API_KEY`) and `EXA_API_KEY` stand in for the keys when
-//! the settings carry none. `web.fetch` prompts fall back to the
-//! `auxiliaryModel` setting when `fetchModel` is unset.
+//! `PRIME_AGENT_WEB_SEARCH_BACKEND` overrides `searchBackend`;
+//! `PRIME_AGENT_WEB_CAMOUFOX_PYTHON` overrides `camoufoxPython` when the
+//! settings carry none. `web.fetch` prompts fall back to the `auxiliaryModel`
+//! setting when `fetchModel` is unset.
 
 use std::path::Path;
 
@@ -21,21 +20,18 @@ use serde_json::Value;
 
 /// The environment variable that overrides `web.searchBackend`.
 pub const SEARCH_BACKEND_ENV: &str = "PRIME_AGENT_WEB_SEARCH_BACKEND";
-/// The Brave Search API key variables, in lookup order.
-pub const BRAVE_KEY_ENVS: &[&str] = &["BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"];
-/// The Exa API key variable.
-pub const EXA_KEY_ENV: &str = "EXA_API_KEY";
+/// The environment variable that overrides `web.camoufoxPython`.
+pub const CAMOUFOX_PYTHON_ENV: &str = "PRIME_AGENT_WEB_CAMOUFOX_PYTHON";
 
 /// Which search backend serves `web.search`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendChoice {
-    /// Anthropic when a model resolves, else Brave when keyed, else Exa
-    /// when keyed.
+    /// The headless-Camoufox browser search when it is available, else
+    /// Anthropic's server-side search when a model resolves.
     #[default]
     Auto,
     Anthropic,
-    Brave,
-    Exa,
+    Camoufox,
 }
 
 impl BackendChoice {
@@ -45,8 +41,7 @@ impl BackendChoice {
         match value.trim().to_ascii_lowercase().as_str() {
             "" | "auto" => Some(Self::Auto),
             "anthropic" => Some(Self::Anthropic),
-            "brave" => Some(Self::Brave),
-            "exa" => Some(Self::Exa),
+            "camoufox" => Some(Self::Camoufox),
             _ => None,
         }
     }
@@ -66,8 +61,9 @@ pub struct WebSettings {
     pub auxiliary_model: Option<String>,
     /// The global `allowedModels` pin.
     pub allowed_models: Option<Vec<String>>,
-    pub brave_api_key: Option<String>,
-    pub exa_api_key: Option<String>,
+    /// The Python interpreter that runs the Camoufox search (one with
+    /// `camoufox` installed); `None` uses the backend's default.
+    pub camoufox_python: Option<String>,
 }
 
 fn non_empty(value: Option<&str>) -> Option<String> {
@@ -109,12 +105,8 @@ impl WebSettings {
                 None => (BackendChoice::Auto, Some(name)),
             },
         };
-        let brave_api_key = field("braveApiKey").or_else(|| {
-            BRAVE_KEY_ENVS
-                .iter()
-                .find_map(|name| non_empty(env(name).as_deref()))
-        });
-        let exa_api_key = field("exaApiKey").or_else(|| non_empty(env(EXA_KEY_ENV).as_deref()));
+        let camoufox_python =
+            field("camoufoxPython").or_else(|| non_empty(env(CAMOUFOX_PYTHON_ENV).as_deref()));
         Self {
             search_backend,
             unknown_backend,
@@ -122,8 +114,7 @@ impl WebSettings {
             fetch_model: field("fetchModel"),
             auxiliary_model: non_empty(auxiliary_model),
             allowed_models: None,
-            brave_api_key,
-            exa_api_key,
+            camoufox_python,
         }
     }
 
@@ -152,38 +143,33 @@ mod tests {
     }
 
     #[test]
-    fn nothing_configured_is_auto_with_no_keys() {
+    fn nothing_configured_is_auto_with_no_overrides() {
         let settings = WebSettings::from_parts(None, None, &env_of(&[]));
         assert_eq!(settings, WebSettings::default());
     }
 
     #[test]
-    fn settings_keys_win_over_the_environment_and_the_backend_env_wins_over_settings() {
+    fn settings_win_over_the_environment_and_the_backend_env_wins_over_settings() {
         let web = json!({
-            "searchBackend": "exa",
+            "searchBackend": "anthropic",
             "searchModel": " anthropic/claude-haiku-4-5 ",
-            "braveApiKey": "settings-brave",
+            "camoufoxPython": "settings-python",
         });
         let settings = WebSettings::from_parts(
             Some(&web),
             Some("anthropic/claude-haiku-4-5"),
-            &env_of(&[
-                (SEARCH_BACKEND_ENV, "brave"),
-                ("BRAVE_API_KEY", "env-brave"),
-                ("EXA_API_KEY", "env-exa"),
-            ]),
+            &env_of(&[(SEARCH_BACKEND_ENV, "camoufox")]),
         );
         assert_eq!(
             settings,
             WebSettings {
-                search_backend: BackendChoice::Brave,
+                search_backend: BackendChoice::Camoufox,
                 unknown_backend: None,
                 search_model: Some("anthropic/claude-haiku-4-5".into()),
                 fetch_model: None,
                 auxiliary_model: Some("anthropic/claude-haiku-4-5".into()),
                 allowed_models: None,
-                brave_api_key: Some("settings-brave".into()),
-                exa_api_key: Some("env-exa".into()),
+                camoufox_python: Some("settings-python".into()),
             }
         );
         assert_eq!(
@@ -193,13 +179,24 @@ mod tests {
     }
 
     #[test]
+    fn the_camoufox_python_env_stands_in_when_settings_carry_none() {
+        let settings = WebSettings::from_parts(
+            None,
+            None,
+            &env_of(&[(CAMOUFOX_PYTHON_ENV, "/opt/cf/bin/python")]),
+        );
+        assert_eq!(
+            settings.camoufox_python.as_deref(),
+            Some("/opt/cf/bin/python")
+        );
+    }
+
+    #[test]
     fn an_unknown_backend_is_reported_and_behaves_as_auto() {
         let web = json!({ "searchBackend": "bing" });
-        let settings =
-            WebSettings::from_parts(Some(&web), None, &env_of(&[("BRAVE_SEARCH_API_KEY", "k")]));
+        let settings = WebSettings::from_parts(Some(&web), None, &env_of(&[]));
         assert_eq!(settings.search_backend, BackendChoice::Auto);
         assert_eq!(settings.unknown_backend.as_deref(), Some("bing"));
-        assert_eq!(settings.brave_api_key.as_deref(), Some("k"));
     }
 
     #[test]
