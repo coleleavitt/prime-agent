@@ -46,6 +46,9 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 thiserror = "2"
+# Diagnostic tracing for the credential-resolution and 401-recovery decision
+# points. A no-op without a subscriber, so the "no I/O" base build is unchanged.
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 url = "2"
 unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }

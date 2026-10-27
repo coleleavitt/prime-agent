@@ -36,7 +36,20 @@ impl SharedStoreSource {
     /// its rejection is recovered or reported).
     fn store_token(&self) -> Option<String> {
         let _flight = self.flight.lock_or_recover();
-        let grant = self.resolve().ok()?.ok()?;
+        let grant = match self.resolve() {
+            Ok(Ok(grant)) => grant,
+            Ok(Err(error)) => {
+                tracing::info!(
+                    kind = ?error.kind,
+                    "the shared store could not resolve an access token"
+                );
+                return None;
+            }
+            Err(error) => {
+                tracing::info!(error = %error, "resolving a shared store token failed to run");
+                return None;
+            }
+        };
         self.record(Some(grant.source));
         self.remember(&grant.access_token, &grant.account_id);
         Some(grant.access_token)
@@ -149,6 +162,9 @@ impl SharedStoreSource {
         }
         // The store still holds the rejected token: claim a refresh, and if the
         // login's refresh token is revoked, rotate to another login.
+        tracing::debug!(
+            "a 401 arrived and the store still yields the rejected token; forcing a claimed refresh"
+        );
         let recovery = {
             let _flight = self.flight.lock_or_recover();
             block_on_own_runtime(self.client().recover_unauthorized(
@@ -158,9 +174,24 @@ impl SharedStoreSource {
             ))
         };
         // The refresh could not run (a held store claim, an I/O/runtime error):
-        // re-read once more in case a peer rotated a token in while it ran.
-        let Ok(Ok(recovery)) = recovery else {
-            return self.reread_store_token(rejected);
+        // re-read once more in case a peer rotated a token in while it ran. Each
+        // way of not running is logged so a stuck 401 is never a silent no-op.
+        let recovery = match recovery {
+            Ok(Ok(recovery)) => recovery,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    error = %error,
+                    "a 401 claimed refresh returned an error from the store SDK; re-reading the store"
+                );
+                return self.reread_store_token(rejected);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "a 401 claimed refresh could not run (held claim or runtime error); re-reading the store"
+                );
+                return self.reread_store_token(rejected);
+            }
         };
         if let Some(outcome) = recovery.outcome.filter(|_| recovery.decision.retry) {
             let token = outcome.tokens.access.expose().to_string();
@@ -196,9 +227,15 @@ impl SharedStoreSource {
                     );
                     return Some(next);
                 }
+                tracing::warn!(
+                    reason = recovery.decision.reason.as_str(),
+                    "a 401 login is revoked and no other login can serve the request; re-login is required (run /login anthropic)"
+                );
+                return self.reread_store_token(rejected);
             }
             tracing::warn!(
                 reason = recovery.decision.reason.as_str(),
+                failure = %failure,
                 "the shared store's token was rejected with 401 and could not be refreshed"
             );
             // The refresh failed (a held store claim, a transient error), but a
@@ -206,6 +243,13 @@ impl SharedStoreSource {
             // re-read before giving up.
             return self.reread_store_token(rejected);
         }
+        // The SDK neither refreshed nor reported a failure: it declined to retry
+        // (decision.reason names why - e.g. the refresh returned the same token
+        // version). Surface it so a stuck 401 is never an invisible dead end.
+        tracing::warn!(
+            reason = recovery.decision.reason.as_str(),
+            "a 401 recovery produced no new token and no failure; the request will surface its error"
+        );
         self.reread_store_token(rejected)
     }
 
@@ -213,12 +257,19 @@ impl SharedStoreSource {
     /// store (Claude Code) may have rotated a fresh one in. `Some` only when it
     /// differs from the rejected token - otherwise there is nothing new to try.
     fn reread_store_token(&self, rejected: &str) -> Option<String> {
-        let current = self.store_token()?;
-        (current != rejected).then(|| {
-            self.count(UsageEvent::Recovered);
-            tracing::info!("the shared store's token was rejected with 401; re-read a newer one");
-            current
-        })
+        let Some(current) = self.store_token() else {
+            tracing::info!(
+                "re-reading the store after a 401 produced no token (the store could not resolve one)"
+            );
+            return None;
+        };
+        if current == rejected {
+            tracing::debug!("re-read the store after a 401; it still holds the rejected token");
+            return None;
+        }
+        self.count(UsageEvent::Recovered);
+        tracing::info!("the shared store's token was rejected with 401; re-read a newer one");
+        Some(current)
     }
 }
 
@@ -282,7 +333,16 @@ impl ProviderRequestHooks for SharedStoreSource {
     }
 
     fn rejected(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
+        let kind = match rejected.rejection {
+            Rejection::Unauthorized => "unauthorized",
+            Rejection::RateLimited => "rate-limited",
+        };
         if !self.served(rejected.api_key) {
+            tracing::info!(
+                status = rejected.status,
+                rejection = kind,
+                "a rejection arrived for a token this source did not serve; not recovering"
+            );
             return None;
         }
         self.pi.context1m.observe(
@@ -291,10 +351,18 @@ impl ProviderRequestHooks for SharedStoreSource {
             rejected.status,
             rejected.body,
         );
-        match rejected.rejection {
+        let recovered = match rejected.rejection {
             Rejection::Unauthorized => self.recover_unauthorized(rejected),
             Rejection::RateLimited => self.rotate_after_rate_limit(rejected),
+        };
+        if recovered.is_none() {
+            tracing::warn!(
+                status = rejected.status,
+                rejection = kind,
+                "a shared store rejection was not recovered; the request will surface its error"
+            );
         }
+        recovered
     }
 
     fn observe(&self, _model: &Model, api_key: &str, response: &ProviderResponse) {

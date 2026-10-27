@@ -574,8 +574,22 @@ impl SharedStoreSource {
                 }
             }
         };
-        let Ok(Ok(grant)) = resolved else {
-            return Ok(None);
+        let grant = match resolved {
+            Ok(Ok(grant)) => grant,
+            Ok(Err(error)) => {
+                tracing::debug!(
+                    kind = ?error.kind,
+                    "routing could not resolve a token; the request keeps its current credential"
+                );
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::debug!(
+                    error = %error,
+                    "routing failed to run; the request keeps its current credential"
+                );
+                return Ok(None);
+            }
         };
         self.record(Some(grant.source));
         self.remember(&grant.access_token, &grant.account_id);
