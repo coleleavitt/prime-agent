@@ -86,6 +86,52 @@ pub struct FailureFingerprint {
     pub exception_class: Option<String>,
 }
 
+/// Whether a failure is outside the harness's control, so refining it cannot
+/// prevent it from recurring: a model/provider outage, a transport or network
+/// fault, or a user denial (the classes the RAVO judge is told never to count
+/// as addressed). A tool that is merely unavailable, unregistered, or erroring
+/// is NOT uncontrollable -- the harness can route around it with a skill -- so
+/// those stay eligible to trigger a refine. Kept deliberately narrow: an
+/// unmatched failure is treated as controllable, which at worst leaves current
+/// behaviour (the refine runs and the gate judges it).
+#[must_use]
+pub fn is_uncontrollable_failure(fingerprint: &FailureFingerprint) -> bool {
+    // The message is already normalized (lowercase, collapsed whitespace), so
+    // match on phrases that survive normalization, not status codes (digits are
+    // folded to `#`).
+    const UNCONTROLLABLE_PHRASES: &[&str] = &[
+        // Flaky network / transport.
+        "timed out",
+        "timeout",
+        "connection refused",
+        "connection reset",
+        "connection closed",
+        "network is unreachable",
+        "temporary failure in name resolution",
+        "broken pipe",
+        // Provider outage.
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "overloaded",
+        // User denial (the operator declined a prompt). Kept to explicit
+        // user-scoped phrasing so a fixable filesystem "permission denied" is
+        // still treated as controllable.
+        "denied by the user",
+        "rejected by the user",
+        "user denied the request",
+        "request was denied by the user",
+    ];
+    // A model turn that ended in a provider error is a provider-side outage.
+    if fingerprint.kind == FailureKind::ProviderError {
+        return true;
+    }
+    let message = fingerprint.message.as_str();
+    UNCONTROLLABLE_PHRASES
+        .iter()
+        .any(|phrase| message.contains(phrase))
+}
+
 fn regex(pattern: &str) -> Regex {
     Regex::new(pattern)
         .unwrap_or_else(|error| panic!("invalid built-in pattern {pattern}: {error}"))
@@ -398,6 +444,53 @@ mod tests {
             "[errno #] no such file: ? at <hex> id=<hex> line #"
         );
         assert_eq!(js_len(&normalize_failure_message(&"x".repeat(500))), 200);
+    }
+
+    #[test]
+    fn uncontrollable_failures_are_classified_narrowly() {
+        // A model turn that ended in a provider error is uncontrollable.
+        let provider = fingerprint_failure(FailureKind::ProviderError, None, None, "overloaded");
+        assert!(is_uncontrollable_failure(&provider));
+        // Network / transport faults and provider outages.
+        for message in [
+            "operation timed out",
+            "connection refused",
+            "Service Unavailable",
+        ] {
+            let fp = fingerprint_failure(FailureKind::ToolError, Some("fetch"), None, message);
+            assert!(is_uncontrollable_failure(&fp), "{message}");
+        }
+        // An explicit user denial.
+        let denied = fingerprint_failure(
+            FailureKind::ToolError,
+            Some("bash"),
+            None,
+            "the command was rejected by the user",
+        );
+        assert!(is_uncontrollable_failure(&denied));
+    }
+
+    #[test]
+    fn an_unavailable_or_erroring_tool_stays_controllable() {
+        // The REA/IDA case: routable, so the harness can fix it with a skill,
+        // and must stay eligible to trigger a refine.
+        for message in [
+            "McpToolError capability_unavailable",
+            "ProviderAdapterError: Provider IDA adapter failed during search_strings",
+            "tool returned an error without output",
+            "permission denied",
+        ] {
+            let fp = fingerprint_failure(FailureKind::ToolError, Some("ida"), None, message);
+            assert!(!is_uncontrollable_failure(&fp), "{message}");
+        }
+        // A Python exception is in-harness, always controllable.
+        let py = fingerprint_failure(
+            FailureKind::PythonException,
+            Some("kernel"),
+            Some("KeyError"),
+            "KeyError: 'x'",
+        );
+        assert!(!is_uncontrollable_failure(&py));
     }
 
     #[test]

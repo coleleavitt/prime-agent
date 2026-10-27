@@ -561,7 +561,7 @@ pub fn format_failure_ledger_for_prompt(records: &[FailureRecord], limit: usize)
 pub fn format_recurrence_refine_instructions(records: &[FailureRecord]) -> String {
     [
         "Automatic refine triggered by recurrence: the failure fingerprints below recurred (count >= threshold).",
-        "Your edits must target the cause: fix the skill, prompt note, or memory that lets the failure repeat. The evaluator decides which fingerprints your edits address; a proposal that addresses none of them is rejected.",
+        "Your edits must target the cause so the failure stops recurring. When a tool or command keeps failing, the fix is a behavior change -- a skill (or subagent, or prompt note) that detects the condition and routes around it (an alternative tool, a guard, or a fallback) -- not a memory that only describes the failure. A memory cannot prevent a failure from recurring, so it never counts as addressing one. The evaluator decides which fingerprints your edits address; a proposal that addresses none of them is rejected.",
         "A fingerprint marked replay=verified is re-checked by re-running its replay case when a skill you write imports the module that case probes, and every claimed fix is checked by whether the failure recurs afterwards.",
         "Do not propose unrelated or speculative edits. Do not promote anything global unless explicitly requested.",
         "Recurring failures:",

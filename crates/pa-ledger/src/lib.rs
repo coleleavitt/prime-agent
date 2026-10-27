@@ -39,6 +39,7 @@ pub use fingerprint::{
     failure_opponent_id,
     fingerprint_failure,
     fingerprint_tool_result_text,
+    is_uncontrollable_failure,
     normalize_failure_message,
     parse_python_traceback,
 };

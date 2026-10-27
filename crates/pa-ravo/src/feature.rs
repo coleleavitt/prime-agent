@@ -43,6 +43,7 @@ use pa_ledger::{
     find_provisional_regressions,
     format_recurrence_refine_instructions,
     format_regression_refine_instructions,
+    is_uncontrollable_failure,
     local_harness_state_dir,
     normalize_failure_ledger,
     observation_ordinal,
@@ -1261,6 +1262,11 @@ impl RavoLedgerObserver {
             .filter(|record| {
                 !triggered.contains(&format!("recurrence:{}", record.fingerprint.id))
                     && !muted.contains(&record.fingerprint.id)
+                    // A failure outside the harness's control (a provider
+                    // outage, a flaky network, a user denial) cannot be fixed
+                    // by refining, so it never triggers one -- this is what
+                    // stops the recurring-provider-error refine loop at compact.
+                    && !is_uncontrollable_failure(&record.fingerprint)
             })
             .cloned()
             .collect();

@@ -103,6 +103,8 @@ has not actually stopped costs the proposal the gate. Do not list a fingerprint
 whose failure is outside the harness's control (a provider outage, a user
 denial, a flaky network).
 
+A fix that stops the harness from calling a tool that is unavailable, unregistered, or erroring (by routing to a working alternative) DOES address the fingerprint: the outage is uncontrollable, but the repeated doomed call is not.
+
 "verdict" is your own decision on the deep gate: "pass" if this candidate is at
 least as good a harness state as the current champion, "fail" if it is worse,
 "abstain" if you cannot tell from the evidence given. It is not a summary of
