@@ -124,6 +124,25 @@ impl AgentSession {
         }
     }
 
+    /// Adopt skills a `/reload` re-scanned from the session's roots into the
+    /// dynamic overlay the `skill.load` host request and `/skill:` expansion
+    /// both read ([`crate::skills::dynamic::DynamicSkills::with_known`]), and
+    /// return the ones new to the session so the caller can announce them.
+    /// Additive — Claude Code's `invalidateSkillDirs` re-aggregate for the
+    /// in-session case, minus removals: the loaded set is frozen at start, a
+    /// loaded skill always wins its name, and a session without dynamic
+    /// discovery adopts nothing. The newly installed skill becomes loadable at
+    /// once; its kernel Python import (if any) still needs a fresh session.
+    pub fn adopt_reloaded_skills(
+        &self,
+        fresh: Vec<crate::skills::Skill>,
+    ) -> Vec<crate::skills::Skill> {
+        match &self.dynamic_skills {
+            Some(dynamic) => dynamic.adopt(fresh, &self.skills),
+            None => Vec::new(),
+        }
+    }
+
     /// Expand a user's skill command ([`crate::skills::expand_skill_command`])
     /// with this session's working directory and id; returns the text and
     /// whether a skill expanded.

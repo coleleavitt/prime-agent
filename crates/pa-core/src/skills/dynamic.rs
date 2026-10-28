@@ -101,6 +101,30 @@ impl DynamicSkills {
         found
     }
 
+    /// Adopt skills a `/reload` re-scanned from the session's roots (not the
+    /// touch walk): push each whose name neither `known` (the session's loaded
+    /// list) nor the already-discovered set holds, and return the ones added,
+    /// so the caller can announce them. Additive, like [`Self::touch`]: a
+    /// re-scan that drops or changes a skill is not reflected (the loaded set
+    /// is frozen at session start, and a loaded skill always wins its name).
+    pub fn adopt(&self, skills: Vec<Skill>, known: &[Skill]) -> Vec<Skill> {
+        let mut state = self.state();
+        let mut added = Vec::new();
+        for skill in skills {
+            let taken = known.iter().any(|existing| existing.name == skill.name)
+                || state
+                    .skills
+                    .iter()
+                    .any(|existing| existing.name == skill.name);
+            if taken {
+                continue;
+            }
+            state.skills.push(skill.clone());
+            added.push(skill);
+        }
+        added
+    }
+
     fn load(&self, dir: &Path, known: &[Skill]) -> Option<DiscoveredSkills> {
         let load = load_claude_skills(&ClaudeSkillRoots {
             user_dir: None,
@@ -238,5 +262,35 @@ mod tests {
         write_skill(&outside, "elsewhere");
         let dynamic = DynamicSkills::new(cwd, ShellExpansion::Disabled);
         assert_eq!(dynamic.touch(&[outside.join("x.txt")], &[]), Vec::new());
+    }
+
+    #[test]
+    fn adopt_adds_only_names_the_session_lacks_and_reports_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Two fresh skills on disk; one shares a name with a loaded skill.
+        write_skill(root, "deploy");
+        write_skill(root, "lint");
+        let fresh = load_claude_skills(&ClaudeSkillRoots {
+            user_dir: None,
+            project_dirs: vec![root.join(".claude").join("skills")],
+            shell: ShellExpansion::Disabled,
+        })
+        .skills;
+        let known: Vec<Skill> = fresh
+            .iter()
+            .filter(|s| s.name == "deploy")
+            .cloned()
+            .collect();
+        let dynamic = DynamicSkills::new(root.to_path_buf(), ShellExpansion::Disabled);
+        // `deploy` is already loaded (known); only `lint` is adopted.
+        let added = dynamic.adopt(fresh.clone(), &known);
+        assert_eq!(
+            added.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["lint"]
+        );
+        // The overlay now serves `lint` to `with_known`, and a second adopt is a no-op.
+        assert!(dynamic.with_known(&known).iter().any(|s| s.name == "lint"));
+        assert_eq!(dynamic.adopt(fresh, &known), Vec::new());
     }
 }

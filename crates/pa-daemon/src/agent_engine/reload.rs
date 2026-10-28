@@ -3,6 +3,7 @@
 //! and auth state — the pieces another process (a `/login`, a `/mcp` key
 //! flow) can change under a running session.
 use pa_core::session_engine::provider_adapter::ProviderTarget;
+use pa_types::sync::RwLockExt;
 
 use super::AgentSessionEngine;
 
@@ -117,6 +118,56 @@ impl AgentSessionEngine {
                 }
             }
         }
+        // Re-scan the skill roots so a skill installed since the session
+        // started is loadable without a restart (Claude Code's
+        // `invalidateSkillDirs` re-aggregate for the in-session case).
+        self.reload_skills();
         Ok(())
+    }
+
+    /// Re-scan the session's skill roots and adopt any newly installed skills
+    /// into the running engine's overlay, so `rlm.load_skill` and `/skill:`
+    /// resolve a skill added since the session started. Additive and
+    /// best-effort: a re-scan failure or an engine not yet built leaves the
+    /// loaded set unchanged. The model's prompt inventory still refreshes only
+    /// on a new session, and a newly installed skill's kernel Python import (if
+    /// any) likewise needs one.
+    fn reload_skills(&self) {
+        let Some(engine) = self.session.blocking_lock().clone() else {
+            return;
+        };
+        let create = self.create_resources.read_or_recover().clone();
+        let additional_directories = create
+            .additional_directories
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let loaded =
+            pa_core::resources::load_resources(pa_core::resources::ResourceLoaderOptions {
+                cwd: self.cwd(),
+                agent_dir: self.config.agent_dir.clone(),
+                additional_directories,
+                additional_skill_paths: create.skills.clone(),
+                no_skills: create.resource_exclusions.no_skills,
+                ..Default::default()
+            });
+        let fresh = match loaded {
+            Ok(resources) => resources.skills,
+            Err(error) => {
+                tracing::warn!(%error, "reload could not re-scan skills; keeping the loaded set");
+                return;
+            }
+        };
+        let added = engine.session.adopt_reloaded_skills(fresh);
+        if added.is_empty() {
+            tracing::debug!("reload re-scanned the skill roots; none new to the session");
+            return;
+        }
+        let names: Vec<&str> = added.iter().map(|skill| skill.name.as_str()).collect();
+        tracing::info!(
+            count = added.len(),
+            skills = ?names,
+            "reload adopted newly installed skills; loadable without a restart"
+        );
     }
 }
