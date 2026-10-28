@@ -121,6 +121,58 @@ pub(crate) fn repair_unnamed_tool_calls(output: &mut AssistantMessage) {
 
 type Normalizer<'a> = dyn Fn(&str, &Model, &AssistantMessage) -> Option<String> + 'a;
 
+/// Whether any assistant message carries a thinking (or `redacted_thinking`) block.
+#[must_use]
+pub fn has_thinking_blocks(messages: &[Message]) -> bool {
+    messages.iter().any(|msg| {
+        matches!(msg, Message::Assistant(assistant)
+            if assistant.content.iter().any(|block| matches!(block, AssistantContent::Thinking(_))))
+    })
+}
+
+/// Replace every thinking block with plain text (dropping redacted ones): the
+/// reasoning is preserved so the model does not re-derive it, and no signature
+/// is replayed. This is the recovery when the provider rejects a (stale)
+/// thinking signature — a 400 that the preemptive cross-model transform cannot
+/// always prevent (a same-model signature can still be invalidated). Structural
+/// cleanup (empty turns, synthetic tool results) is left to
+/// [`transform_messages_with_normalizer`], which runs next.
+#[must_use]
+pub fn strip_thinking_blocks(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .map(|msg| match msg {
+            Message::Assistant(assistant) => {
+                let content = assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        AssistantContent::Thinking(thinking) => {
+                            if thinking.redacted.unwrap_or(false)
+                                || thinking.thinking.trim().is_empty()
+                            {
+                                None
+                            } else {
+                                Some(AssistantContent::Text(TextContent {
+                                    text: thinking.thinking.clone(),
+                                    text_signature: None,
+                                    rest: Map::default(),
+                                }))
+                            }
+                        }
+                        other => Some(other.clone()),
+                    })
+                    .collect();
+                Message::Assistant(crate::types::AssistantMessage {
+                    content,
+                    ..assistant.clone()
+                })
+            }
+            other => other.clone(),
+        })
+        .collect()
+}
+
 /// Tool-call ID normalization plus synthetic tool results for unanswered calls, dropping errored
 /// assistant turns (TS `transformMessages`). Unnamed tool calls already stored in a session (written
 /// before the stream dropped them) are stripped here, and their results go with them as orphans, so
@@ -450,6 +502,72 @@ mod tests {
         let transformed =
             transform_messages_with_normalizer(&messages, &test_model(), &|_, _, _| None);
         assert_eq!(transformed.len(), 1);
+    }
+
+    fn assistant_with_thinking(signature: Option<&str>, redacted: bool) -> Message {
+        Message::Assistant(crate::types::AssistantMessage {
+            content: vec![
+                AssistantContent::Thinking(crate::types::ThinkingContent {
+                    thinking: "secret plan".to_string(),
+                    thinking_signature: signature.map(str::to_string),
+                    redacted: redacted.then_some(true),
+                    rest: Map::default(),
+                }),
+                AssistantContent::Text(TextContent {
+                    text: "answer".to_string(),
+                    text_signature: None,
+                    rest: Map::default(),
+                }),
+            ],
+            api: "anthropic-messages".into(),
+            provider: "anthropic".into(),
+            model: "claude-opus-5-5".into(),
+            response_model: None,
+            response_id: None,
+            diagnostics: None,
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            stop_reason_raw: None,
+            error_message: None,
+            timestamp: 0,
+            rest: Map::default(),
+            discarded_usage: None,
+        })
+    }
+
+    #[test]
+    fn strip_thinking_converts_signed_thinking_to_text() {
+        let messages = vec![
+            user("hi"),
+            assistant_with_thinking(Some("stale-sig"), false),
+        ];
+        assert!(has_thinking_blocks(&messages));
+        let stripped = strip_thinking_blocks(&messages);
+        assert!(!has_thinking_blocks(&stripped), "no thinking blocks remain");
+        let Message::Assistant(assistant) = &stripped[1] else {
+            panic!("assistant message expected");
+        };
+        // The reasoning survives as text (so the model does not re-derive it) and
+        // no signature is replayed.
+        assert_eq!(assistant.content.len(), 2);
+        assert!(
+            matches!(&assistant.content[0], AssistantContent::Text(text) if text.text == "secret plan")
+        );
+        assert!(
+            matches!(&assistant.content[1], AssistantContent::Text(text) if text.text == "answer")
+        );
+    }
+
+    #[test]
+    fn strip_thinking_drops_redacted_blocks() {
+        let stripped = strip_thinking_blocks(&[assistant_with_thinking(Some("data"), true)]);
+        let Message::Assistant(assistant) = &stripped[0] else {
+            panic!("assistant message expected");
+        };
+        assert_eq!(assistant.content.len(), 1, "redacted thinking dropped");
+        assert!(
+            matches!(&assistant.content[0], AssistantContent::Text(text) if text.text == "answer")
+        );
     }
 
     #[test]

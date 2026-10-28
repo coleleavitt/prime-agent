@@ -582,3 +582,32 @@ fn a_429_insufficient_quota_is_a_payment_failure_not_a_rate_limit() {
         ]
     );
 }
+
+#[test]
+fn detects_thinking_signature_rejections() {
+    let headers = std::collections::HashMap::new;
+    // The exact 400 body Anthropic returns on a stale thinking signature.
+    let rejected = ProviderError::from_http_status_body(
+        400,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.129.content.27: Invalid `signature` in `thinking` block"}}"#,
+        headers(),
+    );
+    assert!(rejected.is_thinking_signature_rejection());
+    for body in [
+        "invalid data in redacted_thinking block",
+        "thinking block cannot be modified",
+        "`thinking.signature`: field required",
+    ] {
+        assert!(
+            ProviderError::from_http_status_body(400, body, headers())
+                .is_thinking_signature_rejection(),
+            "{body}"
+        );
+    }
+    // Unrelated failures are not matched.
+    assert!(
+        !ProviderError::from_http_status_body(400, "prompt is too long", headers())
+            .is_thinking_signature_rejection()
+    );
+    assert!(!ProviderError::Aborted.is_thinking_signature_rejection());
+}

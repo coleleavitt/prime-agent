@@ -174,7 +174,7 @@ pub fn stream_anthropic(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let mut output = AssistantMessage {
+        let make_output = || AssistantMessage {
             content: Vec::new(),
             api: model.api.clone(),
             provider: model.provider.clone(),
@@ -191,7 +191,32 @@ pub fn stream_anthropic(
             discarded_usage: None,
         };
 
-        let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
+        let mut output = make_output();
+        let mut result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
+
+        // Claude Code's thinking-signature recovery (its `TZr`/`Dcr` -> strip ->
+        // retry): the provider rejected a stale/invalid thinking signature with a
+        // 400 that fires before any content streams (so the retry starts clean).
+        // The preemptive cross-model transform cannot always prevent this -- a
+        // same-model signature can be invalidated after model switches and edits
+        // -- so replay once with thinking stripped to plain text. Guarded on the
+        // context actually carrying thinking, so an unrelated 400 is never retried.
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(ProviderError::is_thinking_signature_rejection)
+            && crate::providers::transform_messages::has_thinking_blocks(&context.messages)
+        {
+            let stripped = Context {
+                messages: crate::providers::transform_messages::strip_thinking_blocks(
+                    &context.messages,
+                ),
+                ..context.clone()
+            };
+            output = make_output();
+            result = run_stream(&model, &stripped, options.as_ref(), &mut output, &writer).await;
+        }
+
         match result {
             Ok(()) => {
                 writer.push(AssistantMessageEvent::Done {

@@ -485,6 +485,32 @@ impl ProviderError {
     }
 }
 
+impl ProviderError {
+    /// Whether this is the provider rejecting a thinking block's signature
+    /// (Claude Code's `TZr`): a stale/invalid `thinking` or `redacted_thinking`
+    /// signature, which the send-now caller recovers from by replaying with
+    /// thinking stripped. Matched on the error text, backticks removed, so it
+    /// survives SDK/body wording differences.
+    #[must_use]
+    pub fn is_thinking_signature_rejection(&self) -> bool {
+        let text = match self {
+            ProviderError::Http(error) => error.body.as_deref().unwrap_or(&error.message),
+            ProviderError::StreamFailure(error) => error.message.as_str(),
+            ProviderError::Message(message) => message.as_str(),
+            ProviderError::Connection(_) | ProviderError::Transport(_) | ProviderError::Aborted => {
+                return false;
+            }
+        };
+        let normalized = text.to_lowercase().replace('`', "");
+        normalized.contains("signature in thinking block")
+            || normalized.contains("invalid data in redacted_thinking block")
+            || (normalized.contains("thinking.signature") && normalized.contains("field required"))
+            || ((normalized.contains("thinking block") || normalized.contains("redacted_thinking"))
+                && (normalized.contains("cannot be modified")
+                    || normalized.contains("invalid signature")))
+    }
+}
+
 impl From<StreamFailureError> for ProviderError {
     fn from(value: StreamFailureError) -> Self {
         ProviderError::StreamFailure(value)
