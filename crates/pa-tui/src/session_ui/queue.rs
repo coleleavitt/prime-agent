@@ -339,7 +339,7 @@ impl SessionUi {
                 .and_then(Value::as_array)
                 .is_some_and(|caps| caps.iter().any(|cap| cap.as_str() == Some(CELL_DETACH)));
         if can_detach {
-            let detached = self
+            let data = self
                 .bounded_request(
                     Duration::from_millis(SEND_NOW_DETACH_TIMEOUT_MS),
                     DaemonCommand::DetachRunningCell {
@@ -349,7 +349,9 @@ impl SessionUi {
                     },
                 )
                 .await
-                .ok()
+                .ok();
+            let detached = data
+                .as_ref()
                 .and_then(|data| data.get("detached").and_then(Value::as_bool))
                 .unwrap_or(false);
             if detached {
@@ -359,6 +361,25 @@ impl SessionUi {
                 );
                 return;
             }
+            // A cell is running but cannot be moved (it blocks the runtime's
+            // loop — synchronous work like a native call). Interrupting it would
+            // destroy in-progress work, which is not what send-now is for: leave
+            // it running. Any queued message rides the next boundary when the
+            // step finishes; Ctrl+C still interrupts if the user wants to cut it.
+            let reason = data
+                .as_ref()
+                .and_then(|data| data.get("reason").and_then(Value::as_str));
+            if reason == Some("blocked") {
+                self.note(
+                    "The current step can't be moved to the background; it keeps running. \
+                     Any message you sent is queued for when it finishes (Ctrl+C to interrupt it).",
+                    view,
+                );
+                return;
+            }
+            // reason == "no_cell" (nothing running, e.g. the model is sampling)
+            // falls through: there is no work to preserve, so interrupting
+            // delivers the message at once.
         }
         self.interrupt_running_work(view);
     }

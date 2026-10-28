@@ -26,7 +26,7 @@ pub use bootstrap::{
     kernel_venv_dir,
 };
 pub use cancellation::AbortSignal;
-pub use manager::ReplKernelManager;
+pub use manager::{DetachOutcome, ReplKernelManager};
 pub use provisioner::IpythonKernelProvisioner;
 pub use rlm_runtime::{
     RlmModelInfo,

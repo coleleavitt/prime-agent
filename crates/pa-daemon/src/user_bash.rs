@@ -187,22 +187,36 @@ impl Worker {
     }
 
     /// `detach_running_cell` (send-now): move the running kernel cell to the
-    /// background so a queued message can join the run without interrupting
-    /// it. Answers `{detached}`; `false` when no cell runs or it could not be
-    /// moved in time (it blocks the runtime's loop), and the client then
-    /// interrupts instead.
+    /// background so a queued message can join the run without interrupting it.
+    /// Answers `{detached, reason?}`: `detached:true` when it moved;
+    /// `detached:false` with `reason:"blocked"` when a cell is running but
+    /// cannot be moved (it blocks the loop — the client must NOT interrupt it),
+    /// or `reason:"no_cell"` when nothing was running (the client may interrupt
+    /// to deliver at once).
     pub(crate) async fn handle_detach_running_cell(&self) -> DaemonResponse {
+        use pa_core::kernel::DetachOutcome;
         const COMMAND: &str = "detach_running_cell";
-        /// How long the kernel gets to answer the cell's execute.
-        const DETACH_WAIT: std::time::Duration = std::time::Duration::from_millis(1_500);
+        /// How long the kernel gets to move the cell. Matches the runtime's
+        /// detach-frame freshness window so a cell that yields within it is
+        /// classified as detached, not blocked.
+        const DETACH_WAIT: std::time::Duration = std::time::Duration::from_millis(2_000);
         if let Err(response) = self.require_created(COMMAND) {
             return response;
         }
+        let no_cell = || json!({ "detached": false, "reason": "no_cell" });
         let Some(engine) = &self.agent_engine else {
-            return response_success(None, COMMAND, Some(json!({ "detached": false })));
+            return response_success(None, COMMAND, Some(no_cell()));
         };
         match engine.detach_running_cell(DETACH_WAIT).await {
-            Ok(detached) => response_success(None, COMMAND, Some(json!({ "detached": detached }))),
+            Ok(DetachOutcome::Detached) => {
+                response_success(None, COMMAND, Some(json!({ "detached": true })))
+            }
+            Ok(DetachOutcome::Blocked) => response_success(
+                None,
+                COMMAND,
+                Some(json!({ "detached": false, "reason": "blocked" })),
+            ),
+            Ok(DetachOutcome::NoCell) => response_success(None, COMMAND, Some(no_cell())),
             Err(error) => response_failure(None, COMMAND, &error.to_string(), None),
         }
     }

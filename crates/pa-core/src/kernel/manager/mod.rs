@@ -87,6 +87,23 @@ pub struct KernelStartOptions {
     pub on_bootstrap_progress: Option<KernelBootstrapProgressHandler>,
 }
 
+/// The outcome of a send-now [`ReplKernelManager::detach_running_cell`]. The
+/// three cases are distinct because the caller treats them differently:
+/// [`Detached`](Self::Detached) backgrounds the cell, [`Blocked`](Self::Blocked)
+/// leaves a running-but-unmovable step alone (never interrupts it on send-now),
+/// and [`NoCell`](Self::NoCell) means nothing was running to move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetachOutcome {
+    /// The running cell was moved to the background; it keeps running.
+    Detached,
+    /// A cell is running but could not be moved within the wait — it blocks the
+    /// runtime's loop (synchronous work). Send-now must not interrupt it.
+    Blocked,
+    /// No execute cell was running to move (e.g. the model is sampling, or the
+    /// cell already finished). Send-now may interrupt to deliver at once.
+    NoCell,
+}
+
 /// Lock a mutex, surviving poisoning: the guarded state is plain data, and a
 /// panicked reader must not cascade into an unusable kernel.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -659,21 +676,23 @@ impl ReplKernelManager {
 
     /// Move the running cell to the background (Claude Code's send-now that
     /// keeps work running): sends the `detach` request for the active execute
-    /// and waits up to `wait` for that execute to settle. `true` when it did
-    /// (the cell's tool call answered "moved to the background", the cell
-    /// still running); `false` when no execute is running or the cell could
-    /// not be moved in time (it blocks the runtime's loop), so the caller
-    /// falls back to an interrupt.
+    /// and waits up to `wait` for that execute to settle.
+    ///
+    /// The three outcomes are distinct on purpose, because the send-now caller
+    /// treats them differently (see [`DetachOutcome`]): a cell that is running
+    /// but cannot be moved ([`DetachOutcome::Blocked`]) must NOT be interrupted
+    /// on send-now, while [`DetachOutcome::NoCell`] (nothing is running, e.g.
+    /// the model is sampling) may be.
     ///
     /// # Errors
     ///
     /// Returns an error when the request cannot be written to the kernel.
-    pub async fn detach_running_cell(&self, wait: Duration) -> anyhow::Result<bool> {
+    pub async fn detach_running_cell(&self, wait: Duration) -> anyhow::Result<DetachOutcome> {
         let request_id = {
             let guarded = lock(&self.inner.guarded);
             match guarded.active_execution.as_ref() {
                 Some(active) if active.request_type == "execute" => active.request_id.clone(),
-                _ => return Ok(false),
+                _ => return Ok(DetachOutcome::NoCell),
             }
         };
         let mut frame = crate::kernel::protocol::Request::Detach.to_json();
@@ -687,11 +706,13 @@ impl ReplKernelManager {
                 Some(active) if active.request_id == request_id
             );
             if settled {
-                return Ok(true);
+                return Ok(DetachOutcome::Detached);
             }
             let now = Instant::now();
             if now >= deadline {
-                return Ok(false);
+                // A cell is running but did not move within `wait`: it blocks the
+                // runtime's loop (synchronous work), so it cannot be backgrounded.
+                return Ok(DetachOutcome::Blocked);
             }
             let _ = tokio::time::timeout(deadline - now, notified).await;
         }

@@ -872,17 +872,21 @@ impl AgentSessionEngine {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Move the session's running cell to the background (send-now): `true`
-    /// when the kernel moved it within `wait`; never builds a session/kernel.
+    /// Move the session's running cell to the background (send-now); never
+    /// builds a session/kernel. See [`pa_core::kernel::DetachOutcome`] for the
+    /// three outcomes the send-now caller distinguishes.
     ///
     /// # Errors
     ///
     /// Returns an error when the request cannot be written to the kernel.
-    pub async fn detach_running_cell(&self, wait: std::time::Duration) -> anyhow::Result<bool> {
+    pub async fn detach_running_cell(
+        &self,
+        wait: std::time::Duration,
+    ) -> anyhow::Result<pa_core::kernel::DetachOutcome> {
         let engine = self.session.lock().await.clone();
         match engine {
             Some(engine) => engine.detach_running_cell(wait).await,
-            None => Ok(false),
+            None => Ok(pa_core::kernel::DetachOutcome::NoCell),
         }
     }
 

@@ -588,6 +588,8 @@ fn known_command_types_match_the_ts_list() {
                     | "tail_kernel_bash"
                     | "kill_kernel_bash"
                     | "detach_running_cell"
+                    | "append_prompt_history"
+                    | "get_prompt_history"
                     | "mark_anthropic_warning_shown"
                     | "get_rewind_checkpoints"
                     | "rewind"
