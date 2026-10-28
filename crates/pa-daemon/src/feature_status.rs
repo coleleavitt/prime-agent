@@ -49,14 +49,17 @@ pub(crate) fn publish(
 /// `feature_questions` capability; `allow: false` declines it). Answers
 /// `{"answered": false}` when it is no longer pending (already answered by
 /// another client, timed out, or the action was aborted).
-pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::DaemonResponse {
+pub(crate) fn answer_feature_confirmation(
+    payload: &Value,
+    durable_session_id: Option<&str>,
+) -> crate::protocol::DaemonResponse {
     const COMMAND: &str = "answer_feature_confirmation";
     let field = |key: &str| payload.get(key).and_then(Value::as_str).unwrap_or_default();
-    let (session_id, confirmation_id) = (field("activeSessionId"), field("confirmationId"));
+    let (active_session_id, confirmation_id) = (field("activeSessionId"), field("confirmationId"));
     let Some(allow) = payload.get("allow").and_then(Value::as_bool) else {
         return crate::protocol::response_failure(None, COMMAND, "allow is required", None);
     };
-    if session_id.is_empty() || confirmation_id.is_empty() {
+    if active_session_id.is_empty() || confirmation_id.is_empty() {
         return crate::protocol::response_failure(
             None,
             COMMAND,
@@ -83,8 +86,36 @@ pub(crate) fn answer_feature_confirmation(payload: &Value) -> crate::protocol::D
             );
         }
     };
-    let answered =
-        pa_core::features::answer_pending(session_id, confirmation_id, allow, remember, answer);
+    // `pa_core::features` keys the pending question/confirmation under the
+    // engine's durable session id (`feature_context.session_id`), but the wire
+    // routes answers by the live-instance `activeSessionId`; the two diverge once
+    // a session is resumed. Resolve against the durable id the worker supplies
+    // (the key the question was registered under), mirroring the inverse
+    // translation the publish path already applies (`emit_session_event_frame`
+    // tags outbound frames with the active id). Without this an answer for a
+    // resumed session matches nothing and the `rlm.ask_user` cell hangs forever.
+    // Fall back to the wire id when no durable id is available, and retry under
+    // the active id when the primary misses, so a session where the two coincide
+    // cannot regress.
+    let primary_session_id = durable_session_id
+        .filter(|id| !id.is_empty())
+        .unwrap_or(active_session_id);
+    let mut answered = pa_core::features::answer_pending(
+        primary_session_id,
+        confirmation_id,
+        allow,
+        remember,
+        answer.clone(),
+    );
+    if !answered && primary_session_id != active_session_id {
+        answered = pa_core::features::answer_pending(
+            active_session_id,
+            confirmation_id,
+            allow,
+            remember,
+            answer,
+        );
+    }
     crate::protocol::response_success(None, COMMAND, Some(json!({ "answered": answered })))
 }
 
@@ -147,17 +178,20 @@ mod tests {
 
     #[tokio::test]
     async fn a_confirmation_answer_is_validated_and_reaches_the_pending_question() {
-        let missing = answer_feature_confirmation(&json!({ "activeSessionId": "s" }));
+        let missing = answer_feature_confirmation(&json!({ "activeSessionId": "s" }), None);
         assert!(!missing.success);
         assert_eq!(missing.error.as_deref(), Some("allow is required"));
-        let unnamed = answer_feature_confirmation(&json!({ "allow": true }));
+        let unnamed = answer_feature_confirmation(&json!({ "allow": true }), None);
         assert_eq!(
             unnamed.error.as_deref(),
             Some("activeSessionId and confirmationId are required")
         );
-        let stale = answer_feature_confirmation(&json!({
-            "activeSessionId": "daemon-confirm", "confirmationId": "confirm-0", "allow": true
-        }));
+        let stale = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": "daemon-confirm", "confirmationId": "confirm-0", "allow": true
+            }),
+            None,
+        );
         assert!(stale.success);
         assert_eq!(stale.data, Some(json!({ "answered": false })));
 
@@ -175,9 +209,12 @@ mod tests {
             }
             tokio::task::yield_now().await;
         };
-        let answered = answer_feature_confirmation(&json!({
-            "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": false
-        }));
+        let answered = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": false
+            }),
+            None,
+        );
         assert_eq!(answered.data, Some(json!({ "answered": true })));
         assert_eq!(
             asking.await.unwrap(),
@@ -199,9 +236,12 @@ mod tests {
             }
             tokio::task::yield_now().await;
         };
-        let remembered = answer_feature_confirmation(&json!({
-            "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": true, "remember": true
-        }));
+        let remembered = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": "daemon-confirm", "confirmationId": id, "allow": true, "remember": true
+            }),
+            None,
+        );
         assert_eq!(remembered.data, Some(json!({ "answered": true })));
         assert_eq!(
             offering.await.unwrap(),
@@ -226,15 +266,74 @@ mod tests {
             }
             tokio::task::yield_now().await;
         };
-        let malformed = answer_feature_confirmation(&json!({
-            "activeSessionId": session, "confirmationId": id, "allow": true, "answer": "A"
-        }));
+        let malformed = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": session, "confirmationId": id, "allow": true, "answer": "A"
+            }),
+            None,
+        );
         assert_eq!(malformed.error.as_deref(), Some("answer must be an object"));
-        let answered = answer_feature_confirmation(&json!({
-            "activeSessionId": session, "confirmationId": id, "allow": true,
-            "answer": { "answers": { "Which?": "A" } }
-        }));
+        let answered = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": session, "confirmationId": id, "allow": true,
+                "answer": { "answers": { "Which?": "A" } }
+            }),
+            None,
+        );
         assert_eq!(answered.data, Some(json!({ "answered": true })));
+        assert_eq!(
+            asking.await.unwrap(),
+            pa_core::features::QuestionAnswer::Answered(json!({ "answers": { "Which?": "A" } }))
+        );
+    }
+
+    /// The wire routes an answer by the live-instance `activeSessionId`, but the
+    /// question is keyed under the engine's durable session id; once a session is
+    /// resumed the two differ. The answer must resolve against the durable id the
+    /// worker supplies, not the wire id. Without the fix the wire id matches
+    /// nothing, the pending question is never answered, and the `rlm.ask_user`
+    /// cell (and every other confirmation on this surface) hangs forever while
+    /// re-rendering on each re-attach.
+    #[tokio::test]
+    async fn an_answer_resolves_under_the_durable_session_id_not_the_wire_id() {
+        // The question is registered under the durable id; the resumed session's
+        // live-instance id (what the client answers with) is a different string.
+        let durable = "durable-resumed-session";
+        let wire = "live-instance-of-resumed-session";
+        let _surface = pa_core::features::register_confirmation_surface(durable);
+        let asking = tokio::spawn(pa_core::features::ask_question(
+            durable,
+            pa_core::features::QUESTION_KIND_ASK_USER,
+            "waiting for your answer",
+            json!({ "questions": [] }),
+            None,
+        ));
+        let id = loop {
+            if let Some(question) = pa_core::features::pending_questions(durable).pop() {
+                break question.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        // The wire id alone (the pre-fix behavior) matches nothing: this is the
+        // regression the cell-hang came from.
+        let wire_only = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": wire, "confirmationId": id, "allow": true,
+                "answer": { "answers": { "Which?": "A" } }
+            }),
+            None,
+        );
+        assert_eq!(wire_only.data, Some(json!({ "answered": false })));
+        // With the worker's durable id supplied, the answer reaches the pending
+        // question and the asking coroutine wakes.
+        let resolved = answer_feature_confirmation(
+            &json!({
+                "activeSessionId": wire, "confirmationId": id, "allow": true,
+                "answer": { "answers": { "Which?": "A" } }
+            }),
+            Some(durable),
+        );
+        assert_eq!(resolved.data, Some(json!({ "answered": true })));
         assert_eq!(
             asking.await.unwrap(),
             pa_core::features::QuestionAnswer::Answered(json!({ "answers": { "Which?": "A" } }))

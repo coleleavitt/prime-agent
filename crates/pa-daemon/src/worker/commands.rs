@@ -211,7 +211,19 @@ impl Worker {
             "resume_queue" => self.handle_resume_queue(),
             "factory_activity" => self.handle_factory_activity(payload).await,
             "answer_feature_confirmation" => {
-                crate::feature_status::answer_feature_confirmation(payload)
+                // The pending question is keyed under this session's durable id
+                // (the engine's `feature_context.session_id`), not the wire
+                // `activeSessionId`; hand the worker's durable id to the resolver.
+                let durable_session_id = self
+                    .core
+                    .lock_or_recover()
+                    .store
+                    .as_ref()
+                    .map(|store| store.header.id.clone());
+                crate::feature_status::answer_feature_confirmation(
+                    payload,
+                    durable_session_id.as_deref(),
+                )
             }
             "execute_bash" => self.handle_execute_bash(payload),
             "execute_bash_and_wait" => self.handle_execute_bash_and_wait(payload).await,
