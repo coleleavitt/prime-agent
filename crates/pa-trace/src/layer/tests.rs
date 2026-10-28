@@ -274,6 +274,31 @@ fn spans_and_events_outside_the_workspace_are_not_recorded() {
 }
 
 #[test]
+fn the_anthropic_auth_sdk_is_recorded_so_a_401_recovery_leaves_a_trace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entries = record(dir.path(), None, || {
+        // The shared OAuth SDK is first-party: its INFO decisions must reach the
+        // record (the revoked-token recovery otherwise leaves no trace at all).
+        tracing::info!(
+            target: "anthropic::refresh",
+            account = "acct-1",
+            "a 401 recovery refreshed the shared-store login"
+        );
+        // Still gated at INFO, exactly like the workspace crates.
+        tracing::debug!(target: "anthropic::refresh", "a claimed refresh");
+    });
+    assert_eq!(
+        entries,
+        vec![object(json!({
+            "account": "acct-1",
+            "level": "info",
+            "component": "anthropic::refresh",
+            "msg": "a 401 recovery refreshed the shared-store login"
+        }))]
+    );
+}
+
+#[test]
 fn a_span_attributes_event_annotates_its_span_and_logs_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let entries = record(dir.path(), None, || {

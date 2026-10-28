@@ -180,10 +180,18 @@ impl TraceLayer {
 }
 
 /// Whether a callsite reaches the recorder at all.
+///
+/// The workspace crates (`pa_*`) and the `anthropic` auth SDK (the shared
+/// OAuth/credential-store crate `pa-anthropic-auth` wraps) are first-party: their
+/// INFO-and-above spans and events are the diagnostic record. Admitting
+/// `anthropic` is what lets the SDK's credential-resolution and 401-recovery
+/// decisions reach `agent.jsonl`; without it those callsites are dropped at
+/// registration and a revoked-token recovery leaves no trace.
 fn recorded(metadata: &Metadata<'_>) -> bool {
     metadata.target() == FORWARDED_RECORD_TARGET
         || metadata.target() == SPAN_ATTRIBUTES_TARGET
-        || (metadata.target().starts_with("pa_") && *metadata.level() <= tracing::Level::INFO)
+        || ((metadata.target().starts_with("pa_") || metadata.target().starts_with("anthropic"))
+            && *metadata.level() <= tracing::Level::INFO)
 }
 
 fn level_of(level: tracing::Level) -> Level {
