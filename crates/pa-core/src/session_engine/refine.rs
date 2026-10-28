@@ -1205,6 +1205,7 @@ impl AgentSession {
             .unwrap_or(&crate::refinement::executor::NativeAutoRefinePolicy)
     }
 
+
     /// The refiner model call on the session model, with the merged request
     /// headers (the Prime team header) the session's own requests send.
     pub(super) async fn refiner_call(
