@@ -744,6 +744,25 @@ impl SessionUi {
                 self.dirty = true;
                 return Ok(());
             }
+            // Running work with a genuine draft in the box: the press clears
+            // the box instead of interrupting, so wiping a half-typed message
+            // mid-turn never stops the turn. The draft lands in the slot Up
+            // restores, the hint stays disarmed, and the next press (empty box
+            // now) falls through to the interrupt. A queue browse, a stashed
+            // draft, or a pure `app.interrupt` binding keep interrupting.
+            let draft = view.editor.get_text();
+            if busy_press_clears_draft(
+                interrupt,
+                self.queue_selection.is_browsing(),
+                self.queue_selection.has_draft(),
+                &draft,
+            ) {
+                self.cleared_draft = Some(draft);
+                view.editor.set_text("");
+                self.clear_ctrl_c_hint();
+                self.dirty = true;
+                return Ok(());
+            }
             self.clear_ctrl_c_hint();
             // A running side question aborts first; the pane stays mounted and renders the
             // cancelled turn when the terminal event streams back.
@@ -1157,6 +1176,21 @@ impl SessionUi {
     }
 }
 
+/// Whether a Ctrl+C that lands on running work should clear a genuine draft
+/// in the input box instead of interrupting the work. The clear only applies
+/// to the `app.clear` press (`interrupt` is false): a user-bound pure
+/// `app.interrupt` key always interrupts. A queue browse or a stashed draft
+/// (the box shows a browsed message, not the user's own draft) and an empty
+/// box both fall through to the interrupt.
+fn busy_press_clears_draft(
+    interrupt: bool,
+    browsing: bool,
+    has_stashed_draft: bool,
+    draft: &str,
+) -> bool {
+    !interrupt && !browsing && !has_stashed_draft && !draft.is_empty()
+}
+
 /// The opening phase's echo gate: whether the post-open key dispatch
 /// ([`SessionUi::handle_key`]'s ladder) would consume this key BEFORE its
 /// editor fallback, in the state a fresh session's opening can be in — no
@@ -1386,6 +1420,61 @@ mod opening_echo_claim_tests {
             &kb,
             "ctrl+t",
             &editor_with("draft")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod ctrl_c_busy_clear_tests {
+    use super::busy_press_clears_draft;
+
+    /// Ctrl+C on running work with a genuine draft clears the box instead of
+    /// interrupting (the behavior the branch adds).
+    #[test]
+    fn a_draft_on_running_work_clears_instead_of_interrupting() {
+        assert!(busy_press_clears_draft(
+            false, /* interrupt */
+            false, /* browsing */
+            false, /* has_stashed_draft */
+            "half-typed"
+        ));
+    }
+
+    /// An empty box on running work interrupts (the box has nothing to clear),
+    /// so the press reaches the interrupt ladder.
+    #[test]
+    fn an_empty_box_on_running_work_interrupts() {
+        assert!(!busy_press_clears_draft(false, false, false, ""));
+    }
+
+    /// Browsing the queue, or holding a stashed draft, shows a browsed message
+    /// rather than the user's own draft: the press interrupts, never clearing
+    /// the browsed text or desyncing the queue selection.
+    #[test]
+    fn a_queue_browse_or_stashed_draft_interrupts() {
+        assert!(!busy_press_clears_draft(
+            false,
+            true, /* browsing */
+            false,
+            "browsed message"
+        ));
+        assert!(!busy_press_clears_draft(
+            false,
+            false,
+            true, /* has_stashed_draft */
+            "browsed message"
+        ));
+    }
+
+    /// A user-bound pure `app.interrupt` key always interrupts, even with a
+    /// draft in the box: it is the escape hatch for the old behavior.
+    #[test]
+    fn a_pure_interrupt_binding_always_interrupts() {
+        assert!(!busy_press_clears_draft(
+            true, /* interrupt */
+            false,
+            false,
+            "half-typed"
         ));
     }
 }
