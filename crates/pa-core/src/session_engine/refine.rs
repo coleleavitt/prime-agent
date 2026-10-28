@@ -876,6 +876,31 @@ impl AgentSession {
             .unwrap_or(&crate::refinement::executor::NativeAutoRefinePolicy)
     }
 
+    /// The refiner model call on the session model, with the merged request
+    /// headers (the Prime team header) the session's own requests send.
+    pub(super) async fn refiner_call(
+        &self,
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+    ) -> anyhow::Result<crate::refinement::executor::RefinerFn> {
+        let (api_key, headers) = match self.auxiliary_model.clone() {
+            Some(context) => {
+                let model = model.clone();
+                let routed = tokio::task::spawn_blocking(move || {
+                    super::auxiliary_model::session_fallback_with_headers(&context, &model, api_key)
+                })
+                .await?;
+                (routed.api_key, routed.headers)
+            }
+            None => (api_key, None),
+        };
+        Ok(default_refiner_call(
+            api_key,
+            headers,
+            self.session_id().await,
+        ))
+    }
+
     /// The compact-trigger review: an LLM call over the conversation, the
     /// merged harness state, and the refinement history. `Ok(None)` is the
     /// decline; `Ok(Some(review))` a fresh approval.
@@ -937,17 +962,39 @@ impl AgentSession {
             reason: AUTO_REFINE_COMPACT_REASON.to_string(),
             turns_since_last_review,
         };
-        let session_id = self.session_id().await;
         // The multi-vote switch (experimental.multiVoteRefine /
         // PRIME_AGENT_MULTI_VOTE_REFINE): with it on, fan out three parallel
         // reviewers and the majority verdict wins (Claude Code's
         // extract-memories verification loop); with it off, the native
-        // single-pass behavior.
+        // single-pass behavior. Every reviewer carries the session's merged
+        // request headers (Prime team billing) via `self.refiner_call`.
         let multi_vote = self.multi_vote_refine_enabled();
         let review = if multi_vote {
-            let api_key = api_key.clone();
-            let session_id = session_id.clone();
-            let make_reviewer = || default_refiner_call(api_key.clone(), session_id.clone());
+            // Resolve the merged request headers (team billing) once, then
+            // build a fresh refiner call per vote synchronously. The `Fn`
+            // bound on `make_reviewer` forbids an async per-call build.
+            let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
+                Some(context) => {
+                    let model = model.clone();
+                    let api_key = api_key.clone();
+                    let routed = tokio::task::spawn_blocking(move || {
+                        super::auxiliary_model::session_fallback_with_headers(
+                            &context, &model, api_key,
+                        )
+                    })
+                    .await?;
+                    (routed.api_key, routed.headers)
+                }
+                None => (api_key.clone(), None),
+            };
+            let session_id = self.session_id().await;
+            let make_reviewer = move || {
+                default_refiner_call(
+                    resolved_key.clone(),
+                    resolved_headers.clone(),
+                    session_id.clone(),
+                )
+            };
             crate::refinement::multi_vote::review_auto_refine_voting(
                 &messages,
                 &merged_state,
@@ -967,7 +1014,7 @@ impl AgentSession {
                 model,
                 &review_context,
                 self.auto_refine_policy(),
-                default_refiner_call(api_key.clone(), session_id),
+                self.refiner_call(model, api_key).await?,
             )
             .await?
         };
@@ -1052,10 +1099,10 @@ impl AgentSession {
 #[must_use]
 pub fn default_refiner_call(
     api_key: Option<String>,
+    headers: Option<std::collections::BTreeMap<String, String>>,
     session_id: String,
 ) -> crate::refinement::executor::RefinerFn {
     Box::new(move |model, system_prompt, prompt| {
-        let api_key = api_key;
         Box::pin(async move {
             let context = pa_types::ai::Context {
                 system_prompt: Some(system_prompt.to_string()),
@@ -1069,6 +1116,7 @@ pub fn default_refiner_call(
             let mut stream_options =
                 pa_ai::types::SimpleStreamOptions::from_base(pa_ai::types::StreamOptions {
                     api_key,
+                    headers: headers.map(|headers| headers.into_iter().collect()),
                     session_id: Some(session_id),
                     // One-off prompts ride SSE: they keep the conversation id (cache key,
                     // opencode routing) but never take or replace the session's Codex
