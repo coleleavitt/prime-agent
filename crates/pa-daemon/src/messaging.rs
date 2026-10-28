@@ -15,7 +15,7 @@ use tokio::time::Instant;
 use crate::backpressure::RouteAdmission;
 use crate::protocol::{DaemonResponse, response_failure, response_success};
 use crate::registry::ResidentWorker;
-use crate::supervisor::Supervisor;
+use crate::supervisor::{RosterFamilySeedOwner, Supervisor};
 
 /// Worker round-trip budget for the sender-summary read and the delivery
 /// route (TS `WORKER_REQUEST_TIMEOUT_MS`). The `send_message` path runs two
@@ -445,7 +445,11 @@ impl Supervisor {
         let launch = tokio::spawn({
             let supervisor = Arc::clone(self);
             let create = create;
-            async move { supervisor.launch_worker(&create, None).await }
+            async move {
+                supervisor
+                    .launch_worker(&create, None, RosterFamilySeedOwner::Registration)
+                    .await
+            }
         });
         let launched = tokio::time::timeout(
             std::time::Duration::from_millis(crate::supervisor::ROUTE_TIMEOUT_MS),
@@ -563,7 +567,11 @@ impl Supervisor {
         let launch = tokio::spawn({
             let supervisor = Arc::clone(self);
             let create = create;
-            async move { supervisor.launch_worker(&create, None).await }
+            async move {
+                supervisor
+                    .launch_worker(&create, None, RosterFamilySeedOwner::Registration)
+                    .await
+            }
         });
         let launched = tokio::time::timeout(
             std::time::Duration::from_millis(crate::supervisor::ROUTE_TIMEOUT_MS),

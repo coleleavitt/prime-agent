@@ -11,6 +11,7 @@ use super::{
     Outbound,
     ResidentWorker,
     Result,
+    RosterFamilySeedOwner,
     RouteAdmission,
     SnapshotPurpose,
     Supervisor,
@@ -1093,7 +1094,11 @@ impl Supervisor {
         let launch = tokio::spawn({
             let supervisor = Arc::clone(self);
             let create = create;
-            async move { supervisor.launch_worker(&create, None).await }
+            async move {
+                supervisor
+                    .launch_worker(&create, None, RosterFamilySeedOwner::Registration)
+                    .await
+            }
         });
         let launched =
             tokio::time::timeout(std::time::Duration::from_millis(ROUTE_TIMEOUT_MS), launch).await;
@@ -1190,8 +1195,6 @@ impl Supervisor {
         };
         // The stopped child's teardown mirrors the resident delete's end state: the usage
         // capture, archived state, and artifact sweep land as a live child's kill leaves them.
-        let sessions_dir = crate::paths::sessions_dir(&self.options.agent_dir)
-            .with_context(|| "resolve the sessions dir for the delete finalize".to_string())?;
         // Live coverage captured AFTER the tombstone append: a wake that registered a resident
         // between the two must be visible here (the archive/sweep skips its tree).
         let live = self.live_session_files().await;
@@ -1206,8 +1209,7 @@ impl Supervisor {
             return Ok(());
         }
         crate::stop_cleanup::finalize_archived_stop(
-            &self.options.agent_dir,
-            &sessions_dir,
+            &ledger,
             std::path::Path::new(&session_file),
             &live,
         );
