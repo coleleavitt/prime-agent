@@ -1,8 +1,8 @@
 //! Factory spec validation, dag compilation, and canonicalization.
 //!
 //! A continual-harness `factory` entry stores a declarative state machine
-//! of subagent states (`arguments["machine"]`): entry states (which declare
-//! no inputs), guarded transitions between states, and bounded re-entry
+//! of subagent states (`arguments["machine"]`): entry states (whose inputs
+//! are all optional), guarded transitions between states, and bounded re-entry
 //! (`max_entries`). The original dag form (`arguments["dag"]`) stays as
 //! sugar: it compiles to machine form (each node becomes a state entered
 //! once; a node's full effective dependency set compiles to ONE join
@@ -613,8 +613,8 @@ fn validate_guard(when: &PyValue, index: usize, src_state: &PyValue, errors: &mu
 
 /// Dry-run validation for a machine-form factory spec: the error sentences
 /// (empty when valid). States are 1..1024 with unique slug ids and at least
-/// one entry state; entry states declare no inputs; resident states declare
-/// no outputs, foreach, or outgoing transitions; transitions reference
+/// one entry state; entry states declare only optional inputs; resident
+/// states declare no outputs, foreach, or outgoing transitions; transitions reference
 /// existing states (self-loops are legal re-entry) and may carry one guard
 /// over the from-state's latest settle output; a list `from` is a join
 /// (guards are single-source only). Cycles are legal.
@@ -747,13 +747,22 @@ pub fn validate_factory_machine(machine: &PyValue) -> Vec<String> {
                 ));
             }
         }
-        if state.get("entry").is_true() && !port_list(state, "inputs").is_empty() {
-            errors.push(format!("entry state {state_id} cannot declare inputs"));
-        }
-        // A REQUIRED self-input can never bind on the state's first entry;
-        // the optional variant is the loop form.
+        // A REQUIRED input can never bind on an entry state's first entry
+        // (admission has no upstream settle) nor on a self-input's first
+        // entry (no settle exists before an entry settles). Optional inputs
+        // are the loop form (the first entry binds the null sentinel, a
+        // later entry binds the real settle), so only the required variants
+        // are rejected.
         for input in port_list(state, "inputs") {
             if !input.is_dict() || input.get("optional").truthy() {
+                continue;
+            }
+            if state.get("entry").is_true() {
+                errors.push(format!(
+                    "entry state {state_id} input {} must be optional: an entry state's \
+                     first entry has no upstream settle to bind",
+                    py_repr(input.get("name"))
+                ));
                 continue;
             }
             if let Some(source) = input.get("from").as_str() {

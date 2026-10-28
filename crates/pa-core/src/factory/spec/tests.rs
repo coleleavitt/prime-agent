@@ -513,6 +513,34 @@ fn self_inputs_must_be_optional() {
     );
 }
 
+// Port of `test_entry_state_inputs_must_be_optional`.
+#[test]
+fn entry_state_inputs_must_be_optional() {
+    let with_inputs = |optional: Option<bool>| {
+        let mut input = json!({ "name": "i", "type": "text", "from": "peer.o" });
+        if let Some(optional) = optional {
+            input["optional"] = Value::Bool(optional);
+        }
+        json!({
+            "states": [
+                { "id": "src", "entry": true, "subagent": "w", "inputs": [input] },
+                { "id": "peer", "subagent": "w", "outputs": [{ "name": "o", "type": "text" }] }
+            ],
+            "transitions": [{ "from": "src", "to": "peer" }, { "from": "peer", "to": "src" }]
+        })
+    };
+    assert_eq!(machine_errors(&with_inputs(Some(true))), Vec::<String>::new());
+    for required in [Some(false), None] {
+        assert_eq!(
+            machine_errors(&with_inputs(required)),
+            [
+                "entry state src input 'i' must be optional: an entry state's first entry has no upstream settle to bind"
+            ],
+            "{required:?}"
+        );
+    }
+}
+
 #[test]
 fn transition_references_and_residents() {
     let machine = json!({ "states": [

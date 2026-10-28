@@ -1152,18 +1152,28 @@ class ValidateFactoryMachineTest(unittest.TestCase):
                 repr(required),
             )
 
-    def test_entry_states_cannot_declare_inputs(self) -> None:
-        with_inputs = {
-            "states": [
-                state("src", entry=True, inputs=[{"name": "i", "type": "text", "from": "peer.o"}]),
-                state("peer", outputs=[{"name": "o", "type": "text"}]),
-            ],
-            "transitions": [{"from": "peer", "to": "src"}],
-        }
-        self.assertEqual(
-            validate_factory_machine(with_inputs),
-            ["entry state src cannot declare inputs"],
-        )
+    def test_entry_state_inputs_must_be_optional(self) -> None:
+        absent = object()  # sentinel: the optional key is omitted entirely
+
+        def with_inputs(optional: Any) -> dict[str, Any]:
+            inp: dict[str, Any] = {"name": "i", "type": "text", "from": "peer.o"}
+            if optional is not absent:
+                inp["optional"] = optional
+            return {
+                "states": [
+                    state("src", entry=True, inputs=[inp]),
+                    state("peer", outputs=[{"name": "o", "type": "text"}]),
+                ],
+                "transitions": [{"from": "src", "to": "peer"}, {"from": "peer", "to": "src"}],
+            }
+
+        self.assertEqual(validate_factory_machine(with_inputs(True)), [])
+        for required in (False, absent):
+            self.assertEqual(
+                validate_factory_machine(with_inputs(required)),
+                ["entry state src input 'i' must be optional: an entry state's first entry has no upstream settle to bind"],
+                repr(required),
+            )
         entry_without_inputs = {"states": [state("a", entry=True)], "transitions": []}
         self.assertEqual(validate_factory_machine(entry_without_inputs), [])
         # Compiled dags only mark dep-free nodes as entry states, so the rule

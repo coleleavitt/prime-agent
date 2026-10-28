@@ -466,6 +466,52 @@ async fn machine_optional_input_binds_null_then_the_real_settle() {
     assert_eq!(status["usage"]["transitions_fired"], 3);
 }
 
+// Port of `test_machine_loop_back_into_entry_state_binds_null_then_the_real_settle`:
+// investigate -> check -> investigate. The entry state's optional input
+// binds null on admission and the checker's objections on the loop-back
+// entry.
+#[tokio::test]
+async fn machine_loop_back_into_entry_state_binds_null_then_the_real_settle() {
+    let case = Case::new();
+    case.host.child_outcome("child-1", done("FINDINGS-1"));
+    case.host.child_outcome(
+        "child-2",
+        done("```json\n{\"verdict\": {\"approved\": false, \"objections\": [\"OBJ-A1\"]}}\n```"),
+    );
+    case.host.child_outcome("child-3", done("FINDINGS-2"));
+    case.host.child_outcome(
+        "child-4",
+        done("```json\n{\"verdict\": {\"approved\": true, \"objections\": []}}\n```"),
+    );
+    case.store_machine(
+        json!({
+            "states": [
+                { "id": "investigate", "entry": true, "subagent": "worker",
+                  "inputs": [{ "name": "verdict", "type": "json", "from": "check.verdict", "optional": true }],
+                  "outputs": [{ "name": "findings", "type": "text" }], "max_entries": 3 },
+                { "id": "check", "subagent": "worker",
+                  "inputs": [{ "name": "findings", "type": "text", "from": "investigate.findings" }],
+                  "outputs": [{ "name": "verdict", "type": "json" }], "max_entries": 3 }
+            ],
+            "transitions": [
+                { "from": "investigate", "to": "check" },
+                { "from": "check", "to": "investigate",
+                  "when": { "output": "verdict", "path": "approved", "op": "eq", "value": false } }
+            ]
+        }),
+        "sw",
+    );
+    let result = case.start().await;
+    let status = case.settle(&result).await;
+    assert_eq!(status["state"], "done");
+    let prompts = case.host.spawn_prompts("investigate");
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[0].contains("null"), "{prompts:?}");
+    assert!(!prompts[0].contains("OBJ-A1"), "{prompts:?}");
+    assert!(prompts[1].contains("OBJ-A1"), "{prompts:?}");
+    assert_eq!(node_status(&status, "check")["entries_used"], 2);
+}
+
 fn optional_foreach_machine() -> Value {
     json!({
         "run": { "failure_policy": "continue", "max_parallel": 4 },

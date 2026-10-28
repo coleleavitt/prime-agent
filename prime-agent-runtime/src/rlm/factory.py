@@ -1,8 +1,8 @@
 """The kernel's ``rlm.factory`` client: factory specs and runs.
 
 A continual-harness ``factory`` entry stores a declarative state machine of
-subagent states in ``arguments["machine"]``: entry states (which declare
-no inputs), guarded transitions between states, and bounded re-entry
+subagent states in ``arguments["machine"]``: entry states (whose inputs
+are all optional), guarded transitions between states, and bounded re-entry
 (``max_entries``). The original DAG form in ``arguments["dag"]`` stays as
 sugar: it compiles to machine form (each node becomes a state entered
 once; a node's full effective dependency set compiles to ONE join
@@ -119,7 +119,7 @@ def validate_factory_machine(machine: Any) -> list[str]:
     Returns a list of human-readable error sentences; an empty list means
     the machine is valid. Rules: states are 1..1024 with unique slug ids and
     at least one entry state; every state requires a subagent and entry
-    states declare no inputs; resident states declare no outputs, foreach,
+    states declare only optional inputs; resident states declare no outputs, foreach,
     or outgoing transitions; wait blocks are rejected (the watch host
     handlers arrive with the communication series); transitions reference
     existing states (self-loops are legal re-entry) and may carry one guard
@@ -1036,8 +1036,10 @@ the cap and fails to bind.
 ## Authoring reference
 
 - **States**: 1 to 1024, unique ids matching `^[a-z0-9][a-z0-9-]{0,63}$`; at
-  least one state carries `"entry": true`, and entry states declare no
-  inputs. A state's `subagent` is a harness subagent entry id or title (its
+  least one state carries `"entry": true`. An entry state's inputs must all
+  be optional: its first entry binds the null sentinel, and a later entry
+  through a transition (a verify loop back into it) binds the real
+  settle. A state's `subagent` is a harness subagent entry id or title (its
   content is the prompt template; `metadata.model`/`metadata.thinking` are
   spawn settings) or an inline `{"prompt": ...}` object with optional
   `name`/`model`/`thinking`. The optional `name` labels the spawned
