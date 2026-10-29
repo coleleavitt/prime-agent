@@ -79,7 +79,9 @@ struct SessionLsp {
     cwd: PathBuf,
     agent_dir: PathBuf,
     loader: ConfigLoader,
-    servers: tokio::sync::OnceCell<Arc<SessionServers>>,
+    /// The servers of the configuration last read; a changed `lspServers`
+    /// setting or `.lsp.json` replaces them on the next request.
+    current: Mutex<Option<(LspConfig, Arc<SessionServers>)>>,
     /// Syncs of written files still running (the boundary waits on them).
     syncs: Mutex<Vec<tokio::task::JoinHandle<Option<Synced>>>>,
     stats: Stats,
@@ -91,26 +93,36 @@ struct SessionLsp {
 
 impl SessionLsp {
     async fn servers(&self) -> Arc<SessionServers> {
-        Arc::clone(
-            self.servers
-                .get_or_init(|| async {
-                    let cwd = self.cwd.clone();
-                    let agent_dir = self.agent_dir.clone();
-                    let loader = Arc::clone(&self.loader);
-                    let config = tokio::task::spawn_blocking(move || loader(&cwd, &agent_dir))
-                        .await
-                        .unwrap_or_default();
+        let cwd = self.cwd.clone();
+        let agent_dir = self.agent_dir.clone();
+        let loader = Arc::clone(&self.loader);
+        let config = tokio::task::spawn_blocking(move || loader(&cwd, &agent_dir))
+            .await
+            .unwrap_or_default();
+        let (servers, replaced) = {
+            let mut current = lock(&self.current);
+            match current.as_ref() {
+                Some((loaded, servers)) if *loaded == config => (Arc::clone(servers), None),
+                _ => {
                     for error in &config.errors {
                         tracing::warn!(target: "pa_lsp", %error, "LSP server configuration");
                     }
-                    Arc::new(SessionServers::new(config, &self.cwd))
-                })
-                .await,
-        )
+                    let servers = Arc::new(SessionServers::new(config.clone(), &self.cwd));
+                    let replaced = current.replace((config, Arc::clone(&servers)));
+                    (servers, replaced.map(|(_, servers)| servers))
+                }
+            }
+        };
+        if let Some(replaced) = replaced {
+            tokio::spawn(async move { replaced.shutdown().await });
+        }
+        servers
     }
 
     fn loaded(&self) -> Option<Arc<SessionServers>> {
-        self.servers.get().cloned()
+        lock(&self.current)
+            .as_ref()
+            .map(|(_, servers)| Arc::clone(servers))
     }
 
     async fn serve(&self, request: &str, data: &Value) -> anyhow::Result<Value> {
@@ -299,7 +311,7 @@ impl LspFeature {
                         cwd: context.cwd.clone(),
                         agent_dir: context.agent_dir.clone(),
                         loader: Arc::clone(&self.loader),
-                        servers: tokio::sync::OnceCell::new(),
+                        current: Mutex::new(None),
                         syncs: Mutex::new(Vec::new()),
                         stats: Stats::default(),
                         telemetry: context.telemetry.clone(),
@@ -452,5 +464,33 @@ mod tests {
             ),
             Vec::<PathBuf>::new()
         );
+    }
+
+    #[tokio::test]
+    async fn a_changed_server_setting_replaces_the_session_servers() {
+        let setting = Arc::new(Mutex::new(None::<Value>));
+        let read = Arc::clone(&setting);
+        let session = SessionLsp {
+            cwd: PathBuf::from("/repo"),
+            agent_dir: PathBuf::from("/agent"),
+            loader: Arc::new(move |_: &Path, _: &Path| {
+                LspConfig::from_parts(lock(&read).as_ref(), None, None)
+            }),
+            current: Mutex::new(None),
+            syncs: Mutex::new(Vec::new()),
+            stats: Stats::default(),
+            telemetry: None,
+            runtime: None,
+        };
+        let before = session.servers().await;
+        assert!(Arc::ptr_eq(&before, &session.servers().await));
+
+        *lock(&setting) = Some(json!({
+            "c": {"command": "clangd", "extensionToLanguage": {".c": "c"}}
+        }));
+        let after = session.servers().await;
+        assert!(!Arc::ptr_eq(&before, &after));
+        assert_eq!(format!("{after:?}"), "SessionServers { servers: 1, .. }");
+        assert!(Arc::ptr_eq(&after, &session.loaded().unwrap()));
     }
 }
