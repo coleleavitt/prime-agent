@@ -385,7 +385,9 @@ mod tests {
         // The quiet window between `tool_execution_start` and the first
         // streamed frame: the card has a start and no result at all, and
         // the live timer is the only timing it shows. The value follows
-        // the execution start (the 80ms repaints recompute it).
+        // the execution start (the 80ms repaints recompute it) — the
+        // headless timer e2e asserts that tracking across frames, so
+        // this test pins only the row's presence.
         let card = ToolCallCard {
             id: "t".into(),
             name: "bash".into(),
@@ -396,21 +398,8 @@ mod tests {
         };
         let rows = render(&card, 3, Detail::Overview, &theme(), 120, true);
         let flat: Vec<String> = rows.iter().map(text_of).collect();
-        assert!(
-            flat.iter().any(|r| r.contains("Elapsed 0.")),
-            "got: {flat:?}"
-        );
+        assert!(flat.iter().any(|r| r.contains("Elapsed ")), "got: {flat:?}");
         assert!(!flat.iter().any(|r| r.contains("Took ")), "got: {flat:?}");
-        let older = ToolCallCard {
-            started_at: Some(started_ms_ago(4000)),
-            ..card
-        };
-        let rows = render(&older, 4, Detail::Overview, &theme(), 120, true);
-        let flat: Vec<String> = rows.iter().map(text_of).collect();
-        assert!(
-            flat.iter().any(|r| r.contains("Elapsed 4.")),
-            "got: {flat:?}"
-        );
     }
 
     #[test]
