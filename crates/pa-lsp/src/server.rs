@@ -399,6 +399,9 @@ impl LspServer {
                     "callHierarchy": {"dynamicRegistration": false},
                 },
                 "general": {"positionEncodings": ["utf-16"]},
+                // Index-backed requests wait for a server's progress to end
+                // (`index_ready`); servers report it only to clients that say so.
+                "window": {"workDoneProgress": true},
             },
         })
     }
