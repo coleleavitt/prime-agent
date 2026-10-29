@@ -1,6 +1,7 @@
 //! The `lsp.*` host requests: one Claude Code LSP operation each, answered
 //! with Claude Code's result text and the structured items beside it.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -115,6 +116,27 @@ fn reply(
         "result_count": result_count,
         "file_count": file_count,
     })
+}
+
+/// The answer's note when its server had not finished indexing.
+fn with_indexing_note(
+    mut formatted: Formatted,
+    server: &LspServer,
+    pending: Option<String>,
+) -> Formatted {
+    if let Some(pending) = pending {
+        let detail = if pending.is_empty() {
+            String::new()
+        } else {
+            format!(" ({pending})")
+        };
+        let _ = write!(
+            formatted.text,
+            "\n\nNote: {} is still indexing{detail}; these results may be incomplete.",
+            server.name()
+        );
+    }
+    formatted
 }
 
 fn unavailable(operation: &str, path: &Path, unserved: &Unserved) -> Value {
@@ -236,6 +258,11 @@ pub async fn locations(
             "textDocument/references"
         }
     };
+    let pending = if method == "textDocument/definition" {
+        None
+    } else {
+        server.index_ready().await
+    };
     let answer = server
         .request(method, params)
         .await
@@ -246,6 +273,7 @@ pub async fn locations(
     } else {
         format::definitions(&found, servers.cwd())
     };
+    let formatted = with_indexing_note(formatted, server, pending);
     Ok(reply(
         operation,
         Some(&at.path),
@@ -355,7 +383,11 @@ pub async fn workspace_symbols(servers: &SessionServers, data: &Value) -> anyhow
     };
     let mut symbols = Vec::new();
     let mut names = Vec::new();
+    let mut pending = Vec::new();
     for server in &targets {
+        if let Some(still) = server.index_ready().await {
+            pending.push((server, still));
+        }
         let answer = server
             .request("workspace/symbol", json!({"query": query}))
             .await
@@ -375,7 +407,10 @@ pub async fn workspace_symbols(servers: &SessionServers, data: &Value) -> anyhow
         kept.iter()
             .any(|location| location.uri == symbol.location.uri)
     });
-    let formatted = format::workspace_symbols(&symbols, servers.cwd());
+    let mut formatted = format::workspace_symbols(&symbols, servers.cwd());
+    for (server, still) in pending {
+        formatted = with_indexing_note(formatted, server, Some(still));
+    }
     Ok(reply(
         WORKSPACE_SYMBOLS,
         path.as_deref(),
@@ -433,11 +468,16 @@ pub async fn call_hierarchy(servers: &SessionServers, data: &Value) -> anyhow::R
                 Direction::Incoming => ("callHierarchy/incomingCalls", "from"),
                 Direction::Outgoing => ("callHierarchy/outgoingCalls", "to"),
             };
+            let pending = server.index_ready().await;
             let answer = server
                 .request(method, json!({"item": first.raw}))
                 .await
                 .map_err(anyhow::Error::msg)?;
-            format::calls(&protocol::calls(&answer, field), direction, servers.cwd())
+            with_indexing_note(
+                format::calls(&protocol::calls(&answer, field), direction, servers.cwd()),
+                server,
+                pending,
+            )
         }
     };
     Ok(reply(

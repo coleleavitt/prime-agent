@@ -29,6 +29,12 @@ use crate::rpc::{
 /// Claude Code's `ContentModified` retries (500 ms, 1 s, 2 s).
 const CONTENT_MODIFIED_RETRIES: u32 = 3;
 const CONTENT_MODIFIED_BACKOFF: Duration = Duration::from_millis(500);
+/// How long a request that reads the server's index waits for its work-done
+/// progress (clangd loading or building its background index) to end.
+const INDEX_WAIT: Duration = Duration::from_secs(20);
+/// A server that just started reports its first progress shortly after
+/// `initialized`; no progress before this is not yet "ready".
+const INDEX_SETTLE: Duration = Duration::from_secs(1);
 
 /// What a server tells its owner.
 pub trait ServerEvents: Send + Sync {
@@ -80,6 +86,77 @@ pub struct LspServer {
     root: PathBuf,
     state: tokio::sync::Mutex<State>,
     events: Arc<dyn ServerEvents>,
+    progress: Arc<Progress>,
+}
+
+/// The work-done progress a running server has begun and not ended, by
+/// token, and when the server started.
+#[derive(Default)]
+struct Progress {
+    /// Token -> (title, latest message).
+    active: std::sync::Mutex<std::collections::BTreeMap<String, (String, String)>>,
+    started: std::sync::Mutex<Option<tokio::time::Instant>>,
+}
+
+impl Progress {
+    fn restart(&self) {
+        lock(&self.active).clear();
+        *lock(&self.started) = Some(tokio::time::Instant::now());
+    }
+
+    /// Apply a `$/progress` notification.
+    fn update(&self, params: &Value) {
+        let token = match &params["token"] {
+            Value::String(token) => token.clone(),
+            other => other.to_string(),
+        };
+        let value = &params["value"];
+        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+        let mut active = lock(&self.active);
+        match value.get("kind").and_then(Value::as_str) {
+            Some("begin") => {
+                active.insert(
+                    token,
+                    (
+                        text("title").unwrap_or_default(),
+                        text("message").unwrap_or_default(),
+                    ),
+                );
+            }
+            Some("report") => {
+                if let (Some(entry), Some(message)) = (active.get_mut(&token), text("message")) {
+                    entry.1 = message;
+                }
+            }
+            Some("end") => {
+                active.remove(&token);
+            }
+            _ => {}
+        }
+    }
+
+    /// What is still in progress, or `None` once the server settled with
+    /// nothing in progress.
+    fn pending(&self) -> Option<String> {
+        let active = lock(&self.active);
+        if !active.is_empty() {
+            let shown: Vec<String> = active
+                .values()
+                .map(|(title, message)| format!("{title} {message}").trim().to_string())
+                .collect();
+            return Some(shown.join("; "));
+        }
+        let started = *lock(&self.started);
+        started
+            .is_some_and(|started| started.elapsed() < INDEX_SETTLE)
+            .then(String::new)
+    }
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl std::fmt::Debug for LspServer {
@@ -123,6 +200,7 @@ impl LspServer {
             root,
             state: tokio::sync::Mutex::new(State::default()),
             events,
+            progress: Arc::default(),
         }
     }
 
@@ -233,9 +311,14 @@ impl LspServer {
 
     fn handlers(&self) -> (NotificationHandler, RequestHandler) {
         let events = Arc::clone(&self.events);
+        let progress = Arc::clone(&self.progress);
         let name = self.name.clone();
-        let on_notification: NotificationHandler =
-            Arc::new(move |method, params| events.notification(&name, method, params));
+        let on_notification: NotificationHandler = Arc::new(move |method, params| {
+            if method == "$/progress" {
+                progress.update(&params);
+            }
+            events.notification(&name, method, params);
+        });
         let settings = self.config.settings.clone();
         let name = self.name.clone();
         let on_request: RequestHandler = Arc::new(move |method, params| match method {
@@ -333,6 +416,7 @@ impl LspServer {
             cwd: self.root.clone(),
         };
         let (on_notification, on_request) = self.handlers();
+        self.progress.restart();
         tracing::debug!(target: "pa_lsp::server", server = %self.name, "starting the language server");
         let client = RpcClient::spawn(&spec, on_notification, on_request).map_err(|error| {
             format!(
@@ -403,6 +487,21 @@ impl LspServer {
         }
     }
 
+    /// Wait (at most [`INDEX_WAIT`]) for the server's work-done progress to
+    /// end, so an answer read from its index (references, calls, symbols)
+    /// is not the partial one of a server still loading or building it.
+    /// Returns what is still in progress when the wait ran out.
+    pub async fn index_ready(&self) -> Option<String> {
+        let deadline = tokio::time::Instant::now() + INDEX_WAIT;
+        loop {
+            let pending = self.progress.pending()?;
+            if tokio::time::Instant::now() >= deadline {
+                return Some(pending);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Send a notification on the running connection.
     ///
     /// # Errors
@@ -434,6 +533,32 @@ impl LspServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_is_pending_from_begin_to_end_and_just_after_a_start() {
+        let progress = Progress::default();
+        assert_eq!(progress.pending(), None);
+        progress.restart();
+        assert_eq!(progress.pending().as_deref(), Some(""));
+        let started = tokio::time::Instant::now()
+            .checked_sub(INDEX_SETTLE)
+            .unwrap();
+        *lock(&progress.started) = Some(started);
+        assert_eq!(progress.pending(), None);
+
+        let token = "backgroundIndexProgress";
+        progress.update(&json!({"token": token, "value": {"kind": "begin", "title": "indexing"}}));
+        progress
+            .update(&json!({"token": token, "value": {"kind": "report", "message": "663/5652"}}));
+        progress.update(&json!({"token": 7, "value": {"kind": "begin", "title": "loading"}}));
+        assert_eq!(
+            progress.pending().as_deref(),
+            Some("loading; indexing 663/5652")
+        );
+        progress.update(&json!({"token": 7, "value": {"kind": "end"}}));
+        progress.update(&json!({"token": token, "value": {"kind": "end"}}));
+        assert_eq!(progress.pending(), None);
+    }
 
     #[test]
     fn configuration_sections_follow_dotted_paths() {

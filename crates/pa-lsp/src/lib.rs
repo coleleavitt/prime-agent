@@ -102,7 +102,7 @@ impl SessionLsp {
         let (servers, replaced) = {
             let mut current = lock(&self.current);
             match current.as_ref() {
-                Some((loaded, servers)) if *loaded == config => (Arc::clone(servers), None),
+                Some((cached, servers)) if *cached == config => (Arc::clone(servers), None),
                 _ => {
                     for error in &config.errors {
                         tracing::warn!(target: "pa_lsp", %error, "LSP server configuration");
