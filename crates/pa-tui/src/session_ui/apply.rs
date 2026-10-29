@@ -34,17 +34,22 @@ pub(crate) struct CompactionAbortNote {
 impl SessionUi {
     /// Abort the active turn off the UI loop: with the schema-29 capability the daemon aborts the
     /// run and the queue keeps flowing behind the settled turn; otherwise the plain abort.
-    fn abort_turn(&self) {
+    /// `send_now`: send-now cut the reply, so the daemon labels the aborted row as that.
+    fn abort_turn(&self, send_now: bool) {
         let client = self.client.clone();
         let active_session_id = self.active_session_id.clone();
         let notes = self.notes.clone();
         tokio::spawn(async move {
             let mut result = if client.supports_server_capability("abort_and_send_queued") {
+                let mut rest = Map::default();
+                if send_now {
+                    rest.insert("sendNow".to_string(), Value::Bool(true));
+                }
                 client
                     .request_ok(DaemonCommand::AbortAndSendQueued {
                         id: None,
                         active_session_id: active_session_id.clone(),
-                        rest: Map::default(),
+                        rest,
                     })
                     .await
             } else {
@@ -726,12 +731,20 @@ impl SessionUi {
         } else if self.turn_active {
             // No transient abort hint: the aborted turn's own assistant row carries
             // the interrupt, so nothing is noted here.
-            self.abort_turn();
+            self.abort_turn(false);
         }
         // A running user-bash command aborts the same way; the settled run
         // reports cancelled through its bash_end.
         if self.user_bash_running {
             self.abort_user_bash();
+        }
+    }
+
+    /// Send-now's cut (Claude Code's promote-to-now): the reply being written stops so the queued
+    /// message goes out at once. A running user bash and a compaction are left alone.
+    pub(super) fn cut_turn_for_send_now(&self) {
+        if self.turn_active {
+            self.abort_turn(true);
         }
     }
 
@@ -854,14 +867,17 @@ impl SessionUi {
         // An aborted run's row text is the client's own — the retry count and the working-elapsed
         // suffix never ride the wire — and every pending tool card settles with the failure text.
         let stop_reason = message.get("stopReason").and_then(Value::as_str);
-        let abort_text = if stop_reason == Some("aborted") {
-            Some(crate::chat::live_abort_text(
-                view.retry.as_ref().map_or(0, |retry| retry.attempt),
-                view.working_since.map(|since| since.elapsed().as_secs()),
-            ))
-        } else {
-            None
-        };
+        let abort_text = (stop_reason == Some("aborted")).then(|| {
+            crate::snapshot::stored_abort_text(message).map_or_else(
+                || {
+                    crate::chat::live_abort_text(
+                        view.retry.as_ref().map_or(0, |retry| retry.attempt),
+                        view.working_since.map(|since| since.elapsed().as_secs()),
+                    )
+                },
+                str::to_string,
+            )
+        });
         if abort_text.is_some() || stop_reason == Some("error") {
             let settle_text = abort_text.clone().unwrap_or_else(|| {
                 message

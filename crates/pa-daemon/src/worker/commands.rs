@@ -123,7 +123,7 @@ impl Worker {
             "steer" => self.handle_queue(payload, Lane::Steering),
             "follow_up" => self.handle_queue(payload, Lane::FollowUp),
             "abort" => self.handle_abort(payload),
-            "abort_and_send_queued" => self.handle_abort_and_send_queued(),
+            "abort_and_send_queued" => self.handle_abort_and_send_queued(payload),
             "start_side_question" => {
                 if let Err(response) = self.require_created("start_side_question") {
                     return response;
@@ -506,11 +506,16 @@ impl Worker {
             let interrupted = self.engine.abort_in_flight_turn();
             return response_success(None, "abort", Some(json!({ "interrupted": interrupted })));
         }
+        self.core.lock_or_recover().send_now_cut = false;
         self.request_abort();
         response_success(None, "abort", None)
     }
 
-    fn handle_abort_and_send_queued(&self) -> DaemonResponse {
+    fn handle_abort_and_send_queued(&self, payload: &Value) -> DaemonResponse {
+        // `sendNow`: send-now cut the reply to deliver the queue, so the
+        // aborted row says so instead of reading as a failure.
+        self.core.lock_or_recover().send_now_cut =
+            payload.get("sendNow").and_then(Value::as_bool) == Some(true);
         // The response acknowledges the abort itself, never the
         // async deliveries the resumed pump runs at the settle.
         self.abort_and_send_queued();

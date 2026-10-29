@@ -7,6 +7,11 @@ use super::QueuedItem;
 use crate::session_store::SessionFile;
 use crate::types::SessionActionSnapshot;
 
+/// The aborted assistant row's text after send-now cut the reply to deliver
+/// the queued message (Claude Code's `sendNowCut`), in place of the generic
+/// "Request was aborted".
+pub(crate) const SEND_NOW_CUT_MESSAGE: &str = "Interrupted to send your message";
+
 /// The live session: store, queue, sequencing; shared by the connection
 /// tasks, the runner, and the compaction manager via the core mutex.
 pub(crate) struct SessionCore {
@@ -25,6 +30,10 @@ pub(crate) struct SessionCore {
     /// `compact`, a branch navigation) swallowed the aborted row in TS, so the
     /// gate's aborted-row exception stays closed while it settles its turn.
     pub(crate) suppress_aborted_row: bool,
+    /// The pending abort is send-now's cut (`abort_and_send_queued` with
+    /// `sendNow`): the aborted assistant row carries
+    /// [`SEND_NOW_CUT_MESSAGE`] instead of the generic abort text.
+    pub(crate) send_now_cut: bool,
     pub(crate) shutdown_requested: bool,
     /// True while a compaction run is in flight (TS `isCompacting`).
     pub(crate) compacting: bool,
@@ -144,6 +153,7 @@ impl SessionCore {
             attached_client_ids: Vec::new(),
             abort_requested: false,
             suppress_aborted_row: false,
+            send_now_cut: false,
             shutdown_requested: false,
             last_activity_ms: 0,
             compacting: false,

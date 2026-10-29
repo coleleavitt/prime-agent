@@ -200,6 +200,11 @@ impl Worker {
         /// detach-frame freshness window so a cell that yields within it is
         /// classified as detached, not blocked.
         const DETACH_WAIT: std::time::Duration = std::time::Duration::from_millis(2_000);
+        /// Claude Code's send-now grace: a tool call the model just wrote
+        /// has no cell yet, so "nothing running" is re-checked this often,
+        /// [`NO_CELL_CHECKS`] times in all, before the client may cut the reply.
+        const NO_CELL_RECHECK: std::time::Duration = std::time::Duration::from_millis(200);
+        const NO_CELL_CHECKS: usize = 3;
         if let Err(response) = self.require_created(COMMAND) {
             return response;
         }
@@ -207,7 +212,15 @@ impl Worker {
         let Some(engine) = &self.agent_engine else {
             return response_success(None, COMMAND, Some(no_cell()));
         };
-        match engine.detach_running_cell(DETACH_WAIT).await {
+        let mut outcome = engine.detach_running_cell(DETACH_WAIT).await;
+        for _ in 1..NO_CELL_CHECKS {
+            if !matches!(outcome, Ok(DetachOutcome::NoCell)) {
+                break;
+            }
+            tokio::time::sleep(NO_CELL_RECHECK).await;
+            outcome = engine.detach_running_cell(DETACH_WAIT).await;
+        }
+        match outcome {
             Ok(DetachOutcome::Detached) => {
                 response_success(None, COMMAND, Some(json!({ "detached": true })))
             }

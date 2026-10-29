@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use pa_types::sync::MutexExt;
 
+use super::session_core::SEND_NOW_CUT_MESSAGE;
 use super::{
     ABORTED_TURN_SETTLE_ERROR,
     AgentMessageDigest,
@@ -103,6 +104,7 @@ impl TurnRunner {
                         .collect();
                     core.busy = true;
                     core.abort_requested = false;
+                    core.send_now_cut = false;
                     core.retry_abort_requested = false;
                     core.running_tool_calls.clear();
                     Some(items)
@@ -114,6 +116,7 @@ impl TurnRunner {
                         .collect();
                     core.busy = true;
                     core.abort_requested = false;
+                    core.send_now_cut = false;
                     core.retry_abort_requested = false;
                     core.running_tool_calls.clear();
                     Some(items)
@@ -678,6 +681,15 @@ impl TurnRunner {
                                 "micros": repin_started.elapsed().as_micros(),
                             }),
                         );
+                    }
+                }
+                // Send-now's cut row says why it stopped, durably and on the
+                // wire alike.
+                if core.send_now_cut {
+                    if let EngineEvent::AssistantMessage(message) = &mut event {
+                        if message.get("stopReason").and_then(Value::as_str) == Some("aborted") {
+                            message["errorMessage"] = json!(SEND_NOW_CUT_MESSAGE);
+                        }
                     }
                 }
                 match &event {

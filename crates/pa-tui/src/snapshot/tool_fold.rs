@@ -139,6 +139,16 @@ pub fn is_superseded_attempt_row(entry: &ChatEntry) -> bool {
     )
 }
 
+/// The reason an aborted message stored in place of the generic abort text
+/// (send-now's cut, say); `None` for a plain abort.
+#[must_use]
+pub fn stored_abort_text(message: &Value) -> Option<&str> {
+    message
+        .get("errorMessage")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty() && *text != "Request was aborted")
+}
+
 /// Decode a failed assistant message's error row (TS `createErrorComponent`
 /// inputs); `None` for settled messages.
 pub fn assistant_error_row(
@@ -148,10 +158,7 @@ pub fn assistant_error_row(
     let stop_reason = message.get("stopReason").and_then(Value::as_str);
     match stop_reason {
         Some("aborted") => Some(AssistantErrorRow {
-            text: message
-                .get("errorMessage")
-                .and_then(Value::as_str)
-                .filter(|text| !text.is_empty() && *text != "Request was aborted")
+            text: stored_abort_text(message)
                 .unwrap_or("Operation aborted")
                 .to_string(),
             aborted: true,

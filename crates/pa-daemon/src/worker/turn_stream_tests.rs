@@ -39,6 +39,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         attached_client_ids: Vec::new(),
         abort_requested: false,
         suppress_aborted_row: false,
+        send_now_cut: false,
         shutdown_requested: false,
         compacting: false,
         auto_compaction_enabled: true,

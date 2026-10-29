@@ -48,12 +48,22 @@ struct MockSupervisor {
     steering: Vec<&'static str>,
     /// The abort after which the running turn ends (`agent_end`).
     aborts_before_end: usize,
-    /// Advertise `cell_detach` and answer `detach_running_cell` as moved.
+    /// Advertise `cell_detach` and answer `detach_running_cell` with `detach`.
     cell_detach: bool,
-    /// When `cell_detach` is set, answer `detach_running_cell` as a running cell
-    /// that cannot be moved (`{detached:false, reason:"blocked"}`) instead of
-    /// moved: the send-now path must then leave the turn alone (no abort).
-    detach_blocked: bool,
+    detach: DetachAnswer,
+}
+
+/// How the mock answers `detach_running_cell`.
+#[derive(Clone, Copy)]
+enum DetachAnswer {
+    /// The cell moved to the background; the run takes the queue and ends.
+    Moved,
+    /// A cell blocks the loop and cannot move; the step runs to its end.
+    Blocked,
+    /// Nothing is running but the reply being written.
+    NoCell,
+    /// The request fails; the run goes on and ends on its own.
+    Fails,
 }
 
 impl MockSupervisor {
@@ -157,7 +167,29 @@ impl MockSupervisor {
                     write_json(&mut writer, &response(json!({})));
                     write_json(&mut writer, &queue_update(&queue));
                 }
-                "detach_running_cell" if self.detach_blocked => {
+                "detach_running_cell" if matches!(self.detach, DetachAnswer::NoCell) => {
+                    write_json(
+                        &mut writer,
+                        &response(json!({ "detached": false, "reason": "no_cell" })),
+                    );
+                }
+                "detach_running_cell" if matches!(self.detach, DetachAnswer::Fails) => {
+                    write_json(
+                        &mut writer,
+                        &json!({
+                            "type": "response",
+                            "id": id,
+                            "command": command_type,
+                            "success": false,
+                            "error": "the kernel did not answer",
+                        }),
+                    );
+                    queue.clear();
+                    write_json(&mut writer, &queue_update(&queue));
+                    write_json(&mut writer, &session_event(&json!({ "type": "turn_end" })));
+                    write_json(&mut writer, &session_event(&json!({ "type": "agent_end" })));
+                }
+                "detach_running_cell" if matches!(self.detach, DetachAnswer::Blocked) => {
                     // A running cell that blocks the loop: it cannot be moved,
                     // and send-now must not interrupt it. The step runs to its
                     // own completion and then the turn takes the queue and ends
@@ -336,7 +368,7 @@ fn run_with(
         steering,
         aborts_before_end,
         cell_detach,
-        false,
+        DetachAnswer::Moved,
         steps,
     )
 }
@@ -346,7 +378,7 @@ fn run_detach(
     steering: Vec<&'static str>,
     aborts_before_end: usize,
     cell_detach: bool,
-    detach_blocked: bool,
+    detach: DetachAnswer,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>, Vec<String>) {
     std::env::remove_var("TMUX");
@@ -360,7 +392,7 @@ fn run_detach(
         steering,
         aborts_before_end,
         cell_detach,
-        detach_blocked,
+        detach,
     };
     let handle = std::thread::spawn(move || supervisor.serve());
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -591,7 +623,7 @@ fn ctrl_enter_leaves_a_blocked_cell_running_instead_of_aborting() {
         vec!["parked"],
         1,
         true,
-        true,
+        DetachAnswer::Blocked,
         vec![
             wait_for("parked"),
             HeadlessStep::Type("right now".to_string()),
@@ -607,6 +639,66 @@ fn ctrl_enter_leaves_a_blocked_cell_running_instead_of_aborting() {
     assert!(
         !kinds.iter().any(|kind| kind.starts_with("abort")),
         "a blocked cell is left running, not interrupted: {kinds:?}"
+    );
+}
+
+/// Ctrl+Enter while the model is writing its reply (no cell to move): the
+/// reply is cut so the queued message goes out (Claude Code's promote-to-now),
+/// and the abort says it is send-now's so the cut row is labeled as such.
+#[test]
+fn ctrl_enter_cuts_a_reply_being_written_as_send_now() {
+    let (_frames, commands, _copies) = run_detach(
+        true,
+        vec!["parked"],
+        1,
+        true,
+        DetachAnswer::NoCell,
+        vec![
+            wait_for("parked"),
+            HeadlessStep::Type("right now".to_string()),
+            key(KeyCode::Enter, KeyModifiers::CONTROL),
+            HeadlessStep::WaitMs(300),
+        ],
+    );
+    let aborts: Vec<&Value> = commands
+        .iter()
+        .filter(|command| {
+            command["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("abort"))
+        })
+        .collect();
+    assert_eq!(
+        aborts
+            .iter()
+            .map(|command| (command["type"].clone(), command["sendNow"].clone()))
+            .collect::<Vec<_>>(),
+        vec![(json!("abort_and_send_queued"), json!(true))]
+    );
+}
+
+/// Ctrl+Enter whose detach request fails: the turn is left running with the
+/// message queued (Claude Code: "Send now isn't available here"), never aborted.
+#[test]
+fn ctrl_enter_never_aborts_when_the_detach_request_fails() {
+    let (_frames, commands, _copies) = run_detach(
+        true,
+        vec!["parked"],
+        1,
+        true,
+        DetachAnswer::Fails,
+        vec![
+            wait_for("parked"),
+            HeadlessStep::Type("right now".to_string()),
+            key(KeyCode::Enter, KeyModifiers::CONTROL),
+            HeadlessStep::WaitMs(300),
+        ],
+    );
+    let kinds = types(&commands);
+    assert!(
+        kinds.iter().any(|kind| kind == "detach_running_cell")
+            && !kinds.iter().any(|kind| kind.starts_with("abort")),
+        "{kinds:?}"
     );
 }
 

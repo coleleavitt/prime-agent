@@ -254,6 +254,77 @@ async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn a_send_now_abort_labels_the_cut_row() {
+    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = crate::test_support::TestDir::new("pa-worker-send-now-cut-");
+    let config = WorkerConfig {
+        socket_path: dir.join("worker.sock"),
+        supervisor_socket_path: PathBuf::new(),
+        token: "token".to_string(),
+        worker_instance_id: String::new(),
+        active_session_id: "send-now-cut-session".to_string(),
+        agent_dir: dir.join("agent"),
+        recovery_journal_path: dir.join("recovery.jsonl"),
+        telemetry_disabled: None,
+        script: Some(json!({
+            "engine": "faux",
+            "responses": [{ "text": "held reply", "delayMs": 60000 }, "steered reply"],
+        })),
+    };
+    let worker = std::sync::Arc::new(Worker::new(config, None));
+    let created = worker
+        .dispatch(
+            "create",
+            &json!({ "noSession": true, "cwd": "/tmp", "name": "send-now-cut" }),
+        )
+        .await;
+    assert!(created.success, "create failed: {created:?}");
+    let mut subscription = worker.events.subscribe();
+    let prompt = worker
+        .dispatch(
+            "prompt",
+            &json!({ "activeSessionId": "send-now-cut-session", "message": "held turn" }),
+        )
+        .await;
+    assert!(prompt.success, "prompt failed: {prompt:?}");
+    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    let steered = worker
+        .dispatch("steer", &json!({ "message": "right now" }))
+        .await;
+    assert!(steered.success, "steer failed: {steered:?}");
+    let aborted = worker
+        .dispatch("abort_and_send_queued", &json!({ "sendNow": true }))
+        .await;
+    assert!(aborted.success, "abort_and_send_queued failed: {aborted:?}");
+    let idle = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        worker.dispatch("wait_for_idle", &json!({})),
+    )
+    .await;
+    assert!(
+        idle.is_ok_and(|idle| idle.success),
+        "the session never went idle"
+    );
+
+    let cut_rows: Vec<Value> = session_events_since(&mut subscription)
+        .into_iter()
+        .filter(|event| {
+            event.get("type").and_then(Value::as_str) == Some("message_end")
+                && event["message"]["stopReason"] == "aborted"
+        })
+        .map(|event| event["message"]["errorMessage"].clone())
+        .collect();
+    assert_eq!(
+        cut_rows,
+        vec![json!(super::super::session_core::SEND_NOW_CUT_MESSAGE)]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn abort_and_send_queued_with_an_empty_queue_is_a_plain_abort() {
     let worker = created_dispatch_worker().await;
     let aborted = worker.dispatch("abort_and_send_queued", &json!({})).await;

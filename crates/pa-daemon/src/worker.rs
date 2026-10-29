@@ -374,6 +374,7 @@ impl Worker {
             attached_client_ids: Vec::new(),
             abort_requested: false,
             suppress_aborted_row: false,
+            send_now_cut: false,
             shutdown_requested: false,
             last_activity_ms: 0,
             compacting: false,

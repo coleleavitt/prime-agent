@@ -572,6 +572,7 @@ pub use tool_fold::{
     assistant_value_to_entries,
     is_superseded_attempt_row,
     settle_pending_tool_cards,
+    stored_abort_text,
 };
 mod tool_fold;
 
