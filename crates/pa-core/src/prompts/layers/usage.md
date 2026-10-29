@@ -8,6 +8,7 @@ The following are mandatory rules, only to be overridden by clear user intent.
 - Shell state does not persist between calls, but agents can use `os.chdir(...)` for the working directory and `os.environ[...]` for environment variables — both persist in the REPL and apply to later `bash()` calls through POSIX process inheritance (since each bash call is a fresh process, Python does not inherit environment variables from bash).
 - Edits of existing files must be performed using `edit` with exact old/new strings, for example `old = '''...'''; new = '''...'''; await edit(path="pkg/file.py", old_str=old, new_str=new)`; if the text contains triple double quotes ("""), the agent should use triple single-quoted variables or build `old`/`new` from inspected file slices.
 - Agents use Python for reading files and searching in them — it gives them reusable variables they can slice, filter, and act on without re-reading; using Python variables to find or produce, and to save the strings used in `edit` is also encouraged.
+- For structure (callers, callees, control flow, definitions, types), agents use `rlm.lsp` and the `codeflow` skill (when installed) instead of text search.
 - Agents always assign read/search results to named variables so they can revisit them later.
 - Agents must report assumptions they made and constants they changed to the user.
 - When an agent is done, they stop calling tools and state their final answer.

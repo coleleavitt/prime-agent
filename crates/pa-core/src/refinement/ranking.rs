@@ -372,7 +372,14 @@ pub fn format_harness_state_for_prompt(
                 reference_text,
                 arguments_text,
                 super::package_harness::package_provenance_text(entry, max_content_length),
-                compact_harness_text(&entry.content, max_content_length)
+                compact_harness_text(
+                    &entry.content,
+                    if entry.kind == RefinementKind::Prompt {
+                        PROMPT_NOTE_CONTENT_LIMIT.max(max_content_length)
+                    } else {
+                        max_content_length
+                    }
+                )
             ));
         }
         let overflow = entries.len().saturating_sub(max_entries_per_kind);
@@ -450,6 +457,10 @@ pub fn format_harness_state_for_prompt(
 /// Bump when the fingerprinted material or its canonical serialization
 /// changes, so fingerprints minted under different versions never compare
 /// equal.
+/// A prompt note is a policy the model must read whole; memories and the
+/// other kinds stay short summaries (`max_content_length`).
+const PROMPT_NOTE_CONTENT_LIMIT: usize = 2_000;
+
 pub const HARNESS_DIGEST_FINGERPRINT_VERSION: u32 = 1;
 
 /// The render flags the digest actually reads: the relevance query terms

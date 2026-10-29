@@ -179,3 +179,25 @@ async fn harness_lists_and_disables_entries_off_the_transcript() {
         Some("Usage: /harness [list | enable <entry> | disable <entry>]")
     );
 }
+
+#[test]
+fn the_digest_shows_a_prompt_note_whole_and_a_memory_as_a_summary() {
+    let text = "Use the structure first. ".repeat(24);
+    let mut state = empty_harness_state();
+    let mut note = subagent("policy", "A policy");
+    note.kind = RefinementKind::Prompt;
+    note.content = text.clone();
+    state.entries.entry(RefinementKind::Prompt).or_default().insert("policy".to_string(), note);
+    let mut memory = subagent("fact", "A fact");
+    memory.kind = RefinementKind::Memory;
+    memory.content = text.clone();
+    state.entries.entry(RefinementKind::Memory).or_default().insert("fact".to_string(), memory);
+
+    let digest = crate::refinement::ranking::format_harness_state_for_prompt(
+        &state,
+        &crate::refinement::ranking::HarnessStatePromptOptions::default(),
+    );
+    let line = |id: &str| digest.lines().find(|line| line.contains(id)).unwrap().to_string();
+    assert!(line(":policy]").ends_with(text.trim()), "{digest}");
+    assert!(line(":fact]").ends_with("..."), "{digest}");
+}
