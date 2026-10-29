@@ -27,7 +27,7 @@ use crate::SharedStoreSource;
 use crate::quota::cooldown_until;
 use crate::routing::RouteRequest;
 use crate::shape::ShapeIdentity;
-use crate::source::{PollWait, UsageEvent, block_on_own_runtime};
+use crate::source::{PollWait, ServedToken, UsageEvent, block_on_own_runtime, token_fingerprint};
 
 impl SharedStoreSource {
     /// The store's token for the request now: the routing order's pick
@@ -51,7 +51,7 @@ impl SharedStoreSource {
             }
         };
         self.record(Some(grant.source));
-        self.remember(&grant.access_token, &grant.account_id);
+        self.remember(&grant.access_token, &grant.account_id, grant.expires_at);
         Some(grant.access_token)
     }
 
@@ -196,7 +196,7 @@ impl SharedStoreSource {
         if let Some(outcome) = recovery.outcome.filter(|_| recovery.decision.retry) {
             let token = outcome.tokens.access.expose().to_string();
             if let Some(account_id) = &outcome.account_id {
-                self.remember(&token, account_id);
+                self.remember(&token, account_id, outcome.tokens.expires_at);
             }
             self.count_refreshed();
             self.count(UsageEvent::Recovered);
@@ -264,11 +264,18 @@ impl SharedStoreSource {
             return None;
         };
         if current == rejected {
-            tracing::debug!("re-read the store after a 401; it still holds the rejected token");
+            tracing::info!(
+                token_fp = token_fingerprint(rejected),
+                "re-read the store after a 401; it still holds the rejected token"
+            );
             return None;
         }
         self.count(UsageEvent::Recovered);
-        tracing::info!("the shared store's token was rejected with 401; re-read a newer one");
+        tracing::info!(
+            rejected_fp = token_fingerprint(rejected),
+            token_fp = token_fingerprint(&current),
+            "the shared store's token was rejected with 401; re-read a newer one"
+        );
         Some(current)
     }
 }
@@ -296,7 +303,9 @@ impl ProviderRequestHooks for SharedStoreSource {
     }
 
     fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        let model = request.model.id.as_str();
         if !self.served(request.api_key) {
+            log_send(model, request.api_key, None, "unserved");
             return Admission::Send;
         }
         self.counts
@@ -309,7 +318,11 @@ impl ProviderRequestHooks for SharedStoreSource {
         });
         let current = match routed {
             Ok(Some(current)) => current,
-            Ok(None) => return Admission::Send,
+            Ok(None) => {
+                let kept = self.served_token(request.api_key);
+                log_send(model, request.api_key, kept.as_ref(), "kept");
+                return Admission::Send;
+            }
             Err(refusal) => return Admission::Refuse(refusal),
         };
         // The request's login is polled for its usage when its reading is
@@ -325,6 +338,12 @@ impl ProviderRequestHooks for SharedStoreSource {
                 self.run_poll(&served.account_id, PollWait::Background);
             }
         }
+        let route = if current == request.api_key {
+            "routed"
+        } else {
+            "swapped"
+        };
+        log_send(model, &current, self.served_token(&current).as_ref(), route);
         if current == request.api_key {
             Admission::Send
         } else {
@@ -337,14 +356,25 @@ impl ProviderRequestHooks for SharedStoreSource {
             Rejection::Unauthorized => "unauthorized",
             Rejection::RateLimited => "rate-limited",
         };
-        if !self.served(rejected.api_key) {
+        let token_fp = token_fingerprint(rejected.api_key);
+        let Some(served) = self.served_token(rejected.api_key) else {
             tracing::info!(
                 status = rejected.status,
                 rejection = kind,
+                token_fp,
                 "a rejection arrived for a token this source did not serve; not recovering"
             );
             return None;
-        }
+        };
+        tracing::info!(
+            status = rejected.status,
+            rejection = kind,
+            account_id = served.account_id.as_str(),
+            token_fp,
+            expires_at = %served.expires_at,
+            expires_in_s = (served.expires_at - chrono::Utc::now()).num_seconds(),
+            "a request with a shared store token was rejected"
+        );
         self.pi.context1m.observe(
             &rejected.model.id,
             rejected.api_key,
@@ -359,6 +389,8 @@ impl ProviderRequestHooks for SharedStoreSource {
             tracing::warn!(
                 status = rejected.status,
                 rejection = kind,
+                account_id = served.account_id.as_str(),
+                token_fp,
                 "a shared store rejection was not recovered; the request will surface its error"
             );
         }
@@ -389,3 +421,42 @@ impl ProviderRequestHooks for SharedStoreSource {
 
 #[cfg(test)]
 mod tests;
+
+/// Log the token a request goes out with (`route`: how admission chose it):
+/// its login, fingerprint and expiry. The store refreshes a token before
+/// serving it, so an expired one is a warning: a stale credential reached
+/// the request.
+fn log_send(model: &str, token: &str, served: Option<&ServedToken>, route: &str) {
+    let token_fp = token_fingerprint(token);
+    let Some(served) = served else {
+        tracing::info!(
+            model,
+            token_fp,
+            route,
+            "an anthropic request carries a token the shared store did not serve; it is sent as it is"
+        );
+        return;
+    };
+    let expires_in_s = (served.expires_at - chrono::Utc::now()).num_seconds();
+    if expires_in_s <= 0 {
+        tracing::warn!(
+            model,
+            account_id = served.account_id.as_str(),
+            token_fp,
+            expires_at = %served.expires_at,
+            expires_in_s,
+            route,
+            "an anthropic request is sending an expired shared store token"
+        );
+    } else {
+        tracing::info!(
+            model,
+            account_id = served.account_id.as_str(),
+            token_fp,
+            expires_at = %served.expires_at,
+            expires_in_s,
+            route,
+            "an anthropic request's shared store token"
+        );
+    }
+}

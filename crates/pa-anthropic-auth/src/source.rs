@@ -50,6 +50,14 @@ use crate::routing::{Route, RouteRequest, RoutingCounts};
 /// The status rows' label for a login the shared store holds.
 pub const STORE_LABEL: &str = "shared account store";
 
+/// `tokenFingerprint`: the first 16 hex digits of the token's SHA-256, the
+/// plugins' log handle for a token. Logs carry this, never the token.
+pub(crate) fn token_fingerprint(token: &str) -> String {
+    let mut hex = format!("{:x}", Sha256::digest(token.as_bytes()));
+    hex.truncate(16);
+    hex
+}
+
 /// Where the source reads and refreshes.
 #[derive(Debug, Clone)]
 pub struct SharedStoreConfig {
@@ -290,6 +298,8 @@ pub(crate) struct ServedToken {
     pub(crate) account_uuid: Option<String>,
     /// The quota the store recorded for the row when the token was served.
     pub(crate) quota: Option<anthropic::account::QuotaObservation>,
+    /// The token's expiry when it was served.
+    pub(crate) expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SharedStoreSource {
@@ -615,15 +625,21 @@ impl SharedStoreSource {
             }
         };
         self.record(Some(grant.source));
-        self.remember(&grant.access_token, &grant.account_id);
+        self.remember(&grant.access_token, &grant.account_id, grant.expires_at);
         Ok(Some(grant.access_token))
     }
 
-    /// Remember a token this source handed out, for the store row
-    /// `account_id` (its account uuid read from the store), and report a
-    /// revoked login its resolution passed over. Blocking: reads the store,
-    /// and the device id the first time.
-    pub(crate) fn remember(&self, token: &str, account_id: &str) {
+    /// Remember a token this source handed out, expiring at `expires_at`,
+    /// for the store row `account_id` (its account uuid read from the
+    /// store), and report a revoked login its resolution passed over. Logs a
+    /// new token for the row and a move to another row. Blocking: reads the
+    /// store, and the device id the first time.
+    pub(crate) fn remember(
+        &self,
+        token: &str,
+        account_id: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) {
         let store = AccountStore::load(&self.config.store_path).ok();
         if let Some(store) = &store {
             self.note_revocations(store, Some(account_id));
@@ -642,18 +658,45 @@ impl SharedStoreSource {
         self.device_id
             .get_or_init(|| crate::device::load_or_create(&self.config.store_path));
         let mut served = self.served.lock_or_recover();
+        let previous = served
+            .iter()
+            .rev()
+            .find(|known| known.account_id == account_id)
+            .map(|known| token_fingerprint(&known.token));
+        let token_fp = token_fingerprint(token);
+        if previous.as_deref() != Some(token_fp.as_str()) {
+            tracing::info!(
+                account_id,
+                token_fp,
+                previous_fp = previous.as_deref().unwrap_or("none"),
+                %expires_at,
+                "the shared store served a new token for a login"
+            );
+        }
         served.retain(|known| known.token != token);
         served.push_back(ServedToken {
             token: token.to_string(),
             account_id: account_id.to_string(),
             account_uuid,
             quota,
+            expires_at,
         });
         while served.len() > SERVED_TOKENS_LIMIT {
             served.pop_front();
         }
         drop(served);
-        *self.last_served.lock_or_recover() = Some(account_id.to_string());
+        let moved_from = self
+            .last_served
+            .lock_or_recover()
+            .replace(account_id.to_string())
+            .filter(|last| last != account_id);
+        if let Some(moved_from) = moved_from {
+            tracing::info!(
+                account_id,
+                moved_from,
+                "requests moved to another shared store login"
+            );
+        }
         self.keepalive.note_served(account_id);
         self.start_keepalive();
     }
@@ -803,7 +846,7 @@ impl ProviderCredentialSource for SharedStoreSource {
         match self.resolve() {
             Ok(Ok(grant)) => {
                 self.record(Some(grant.source));
-                self.remember(&grant.access_token, &grant.account_id);
+                self.remember(&grant.access_token, &grant.account_id, grant.expires_at);
                 Ok(SourcedCredential {
                     api_key: grant.access_token,
                     headers: std::collections::BTreeMap::new(),

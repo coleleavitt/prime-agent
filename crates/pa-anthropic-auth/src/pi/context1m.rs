@@ -16,14 +16,8 @@ use std::sync::Mutex;
 use anthropic::models::model_supports_context_1m;
 use anthropic::retry::is_long_context_credits_required_error;
 use pa_types::sync::MutexExt;
-use sha2::{Digest, Sha256};
 
-/// `tokenFingerprint`: the first 16 hex digits of the token's SHA-256.
-pub(crate) fn token_fingerprint(token: &str) -> String {
-    let mut hex = format!("{:x}", Sha256::digest(token.as_bytes()));
-    hex.truncate(16);
-    hex
-}
+use crate::source::token_fingerprint;
 
 /// The fingerprints of the tokens latched to the standard window.
 #[derive(Debug, Default)]

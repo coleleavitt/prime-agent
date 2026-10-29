@@ -27,6 +27,7 @@ use pa_types::sync::MutexExt;
 
 use crate::SharedStoreConfig;
 use crate::quota::{PollRun, QuotaTracker, StoreWrite, poll_usage};
+use crate::source::token_fingerprint;
 
 /// The least time between two usage polls (the plugins' `API_CALL_GAP_MS`).
 const POLL_GAP: StdDuration = StdDuration::from_secs(1);
@@ -126,11 +127,29 @@ impl KeepAlive {
     pub(crate) async fn tick(&self, client: &OAuthClient, now: DateTime<Utc>) -> KeepAliveTick {
         let path = self.config.store_path.as_path();
         let mut report = KeepAliveTick::default();
+        let before = token_states(path);
         match client
             .keep_alive_once(path, now, &KeepAliveOptions::default())
             .await
         {
             Ok(pass) => {
+                if !pass.refreshed.is_empty() || !pass.adopted.is_empty() {
+                    let after = token_states(path);
+                    for (account_id, reason) in &pass.refreshed {
+                        log_rotation(&before, &after, account_id, &format!("idle {reason:?}"));
+                    }
+                    for account_id in &pass.adopted {
+                        log_rotation(&before, &after, account_id, "adopted a peer's rotation");
+                    }
+                }
+                for failure in &pass.failed {
+                    tracing::warn!(
+                        account_id = failure.account_id.as_str(),
+                        failure = ?failure.failure,
+                        message = failure.message.as_str(),
+                        "the keep-alive could not refresh an idle login"
+                    );
+                }
                 report.idle_refreshed = pass.refreshed.len();
                 report.failed += pass.failed.len();
                 report.lease_held = matches!(
@@ -159,14 +178,21 @@ impl KeepAlive {
             let Some(tokens) = due else {
                 continue;
             };
+            let before = token_states(path);
             match client
                 .refresh_shared(path, &tokens, &SharedRefreshOptions::default())
                 .await
             {
-                Ok(_) => report.ahead_refreshed += 1,
+                Ok(_) => {
+                    report.ahead_refreshed += 1;
+                    log_rotation(&before, &token_states(path), &account_id, "ahead of expiry");
+                }
                 Err(error) => {
                     report.failed += 1;
                     tracing::warn!(
+                        account_id = account_id.as_str(),
+                        token_fp = token_fingerprint(tokens.access.expose()),
+                        expires_at = %tokens.expires_at,
                         error = %anthropic::token::redact_secrets(&error.to_string()),
                         "refreshing a login ahead of its expiry failed"
                     );
@@ -246,6 +272,50 @@ fn jitter_ms() -> u64 {
         .map_or(0, |elapsed| {
             u64::from(elapsed.subsec_nanos()) % TICK_JITTER_MS
         })
+}
+
+/// Each login's access-token fingerprint and expiry in the store at `path`
+/// (empty when it cannot be read).
+fn token_states(path: &std::path::Path) -> HashMap<String, (String, DateTime<Utc>)> {
+    AccountStore::load(path).map_or_default(|store| {
+        store
+            .accounts
+            .iter()
+            .filter_map(|account| {
+                let tokens = account.oauth()?;
+                Some((
+                    account.id.clone(),
+                    (token_fingerprint(tokens.access.expose()), tokens.expires_at),
+                ))
+            })
+            .collect()
+    })
+}
+
+/// Log a keep-alive refresh of `account_id`: its token fingerprint and
+/// expiry before and after.
+fn log_rotation(
+    before: &HashMap<String, (String, DateTime<Utc>)>,
+    after: &HashMap<String, (String, DateTime<Utc>)>,
+    account_id: &str,
+    why: &str,
+) {
+    let fp = |states: &HashMap<String, (String, DateTime<Utc>)>| {
+        states
+            .get(account_id)
+            .map_or("none".to_string(), |(fp, _)| fp.clone())
+    };
+    let expires_at = after
+        .get(account_id)
+        .map_or("unknown".to_string(), |(_, at)| at.to_rfc3339());
+    tracing::info!(
+        account_id,
+        previous_fp = fp(before),
+        token_fp = fp(after),
+        expires_at,
+        why,
+        "the keep-alive refreshed a shared store login"
+    );
 }
 
 #[cfg(test)]
