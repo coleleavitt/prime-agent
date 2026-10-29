@@ -78,7 +78,7 @@ pub fn shared_source() -> Arc<SharedStoreSource> {
 /// I/O.
 pub fn install() {
     pa_core::auth::install_credential_source(PROVIDER_ID, shared_source());
-    pa_ai::request_hooks::install_request_hooks(PROVIDER_ID, shared_source());
+    pa_ai::request_hooks::install_request_hooks(PROVIDER_ID, "anthropic-auth", shared_source());
 }
 
 /// The session feature that reports the store's adoption: once per

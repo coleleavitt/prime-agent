@@ -155,7 +155,7 @@ fn a_request_the_store_did_not_serve_keeps_its_shape() {
         vec![row("foreign-shape", Duration::hours(2))],
         "http://127.0.0.1:9",
     );
-    pa_ai::request_hooks::install_request_hooks(provider, Arc::clone(&source) as _);
+    pa_ai::request_hooks::install_request_hooks(provider, "test", Arc::clone(&source) as _);
     let (base, requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
 
     complete(

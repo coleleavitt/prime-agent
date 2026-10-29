@@ -530,7 +530,7 @@ fn a_kept_session_is_prewarmed_with_the_store_s_current_token() {
         &json!({ "claudeCache": { "enabled": true, "mode": "hybrid" }, "cacheKeep": { "enabled": true, "always": true }, "accounts": [] }),
     );
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     let (base, requests) = messages_endpoint(vec![
         (200, Vec::new(), OK_STREAM),
         (
@@ -611,7 +611,7 @@ fn a_tracked_request_starts_the_scheduler_on_its_own_thread() {
         &json!({ "claudeCache": { "enabled": true, "mode": "hybrid" }, "cacheKeep": { "enabled": true, "always": true }, "accounts": [] }),
     );
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
     let model = model_with_id(provider, &base, "claude-opus-4-8");
     let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())

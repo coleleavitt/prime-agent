@@ -25,7 +25,7 @@ impl RefusalHooks {
 
     /// Install the refusal hooks for the given provider.
     pub fn install(provider_id: &str) {
-        install_request_hooks(provider_id, Arc::new(Self::new()));
+        install_request_hooks(provider_id, "content-filter", Arc::new(Self::new()));
     }
 
     /// Install hooks for all supported providers.

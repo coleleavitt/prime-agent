@@ -15,7 +15,7 @@ use crate::test_support::*;
 /// a provider id of the test's own.
 fn install(provider: &str, source: &Arc<SharedStoreSource>) {
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
 }
 
 fn refresh_token_of(source: &SharedStoreSource, id: &str) -> Option<String> {

@@ -1,5 +1,5 @@
-//! Provider request hooks: a process-wide registry, keyed by provider id,
-//! of participants in the requests a provider sends with the credentials
+//! Provider request hooks: a process-wide registry, keyed by provider id
+//! and slot (one participant per slot, all slots composed), of participants in the requests a provider sends with the credentials
 //! they issued (a credential store outside this process that rotates,
 //! shapes and recovers its own credentials).
 //!
@@ -211,25 +211,112 @@ pub trait ProviderRequestHooks: Send + Sync {
     }
 }
 
-type Registry = RwLock<HashMap<String, Arc<dyn ProviderRequestHooks>>>;
+/// Each provider id's hooks, by slot, in install order.
+type Registry = RwLock<HashMap<String, Vec<(&'static str, Arc<dyn ProviderRequestHooks>)>>>;
 
 fn registry() -> &'static Registry {
     static HOOKS: OnceLock<Registry> = OnceLock::new();
     HOOKS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Install `hooks` for `provider_id`, process-wide, replacing any earlier
-/// ones. Called by the composition root before any request is sent.
-pub fn install_request_hooks(provider_id: &str, hooks: Arc<dyn ProviderRequestHooks>) {
-    registry()
-        .write_or_recover()
-        .insert(provider_id.to_string(), hooks);
+/// Install `hooks` for `provider_id` under `slot`, process-wide. A second
+/// install under the same slot replaces the first; hooks under different
+/// slots all run, in install order (see [`request_hooks`]). Called by the
+/// composition root before any request is sent.
+pub fn install_request_hooks(
+    provider_id: &str,
+    slot: &'static str,
+    hooks: Arc<dyn ProviderRequestHooks>,
+) {
+    let mut registry = registry().write_or_recover();
+    let installed = registry.entry(provider_id.to_string()).or_default();
+    match installed.iter_mut().find(|(name, _)| *name == slot) {
+        Some(entry) => entry.1 = hooks,
+        None => installed.push((slot, hooks)),
+    }
 }
 
-/// The hooks installed for `provider_id`, if any.
+/// The hooks installed for `provider_id`, if any: one slot's hooks as they
+/// are, several slots' as one [`HookChain`].
 #[must_use]
 pub fn request_hooks(provider_id: &str) -> Option<Arc<dyn ProviderRequestHooks>> {
-    registry().read_or_recover().get(provider_id).cloned()
+    match registry().read_or_recover().get(provider_id)?.as_slice() {
+        [] => None,
+        [(_, hooks)] => Some(Arc::clone(hooks)),
+        installed => Some(Arc::new(HookChain(
+            installed
+                .iter()
+                .map(|(_, hooks)| Arc::clone(hooks))
+                .collect(),
+        ))),
+    }
+}
+
+/// Several slots' hooks for one provider, in install order. The credential
+/// passes through each hook's [`ProviderRequestHooks::admit`] in turn (a
+/// refusal ends the chain); the first hook that answers
+/// [`ProviderRequestHooks::current_credential`] or
+/// [`ProviderRequestHooks::rejected`] decides; every hook prepares,
+/// observes, and rewrites each response event in turn.
+struct HookChain(Vec<Arc<dyn ProviderRequestHooks>>);
+
+impl ProviderRequestHooks for HookChain {
+    fn current_credential(&self, model: &Model, api_key: &str) -> Option<String> {
+        self.0
+            .iter()
+            .find_map(|hooks| hooks.current_credential(model, api_key))
+    }
+
+    fn admit(&self, request: &PendingRequest<'_>) -> Admission {
+        let mut api_key = request.api_key.to_string();
+        for hooks in &self.0 {
+            let pending = PendingRequest {
+                model: request.model,
+                api_key: &api_key,
+                context_bytes: request.context_bytes,
+            };
+            match hooks.admit(&pending) {
+                Admission::Send => {}
+                Admission::SendWith(current) => api_key = current,
+                refusal @ Admission::Refuse(_) => return refusal,
+            }
+        }
+        if api_key == request.api_key {
+            Admission::Send
+        } else {
+            Admission::SendWith(api_key)
+        }
+    }
+
+    fn prepare(&self, request: &mut OutgoingRequest<'_>) {
+        for hooks in &self.0 {
+            hooks.prepare(request);
+        }
+    }
+
+    fn observe(&self, model: &Model, api_key: &str, response: &crate::types::ProviderResponse) {
+        for hooks in &self.0 {
+            hooks.observe(model, api_key, response);
+        }
+    }
+
+    fn response_event(
+        &self,
+        model: &Model,
+        api_key: &str,
+        event: serde_json::Value,
+    ) -> Vec<serde_json::Value> {
+        self.0.iter().fold(vec![event], |events, hooks| {
+            events
+                .into_iter()
+                .flat_map(|event| hooks.response_event(model, api_key, event))
+                .collect()
+        })
+    }
+
+    fn rejected(&self, rejected: &RejectedRequest<'_>) -> Option<String> {
+        self.0.iter().find_map(|hooks| hooks.rejected(rejected))
+    }
 }
 
 /// The size of `context` in its JSON form, counted without building it.

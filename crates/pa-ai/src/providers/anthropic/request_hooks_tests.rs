@@ -200,7 +200,7 @@ async fn a_401_is_re_sent_once_with_the_hooks_new_credential() {
     let provider = "hooks-401-then-ok";
     let (base, bearers) = messages_endpoint(vec![(401, UNAUTHORIZED), (200, OK_STREAM)]).await;
     let hooks = StubHooks::issuing(&["sk-ant-oat01-refreshed"]);
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-rejected").await;
 
@@ -235,11 +235,43 @@ async fn a_401_is_re_sent_once_with_the_hooks_new_credential() {
 }
 
 #[tokio::test]
+async fn a_second_slot_keeps_the_first_slots_401_recovery() {
+    let provider = "hooks-two-slots";
+    let (base, bearers) = messages_endpoint(vec![(401, UNAUTHORIZED), (200, OK_STREAM)]).await;
+    let store = StubHooks::issuing(&["sk-ant-oat01-refreshed"]);
+    let filter = StubHooks::issuing(&[]);
+    install_request_hooks(provider, "store", store.clone());
+    install_request_hooks(provider, "filter", filter.clone());
+
+    let message = run(&model(provider, &base), "sk-ant-oat01-rejected").await;
+
+    assert_eq!(
+        (message.stop_reason, text(&message)),
+        (StopReason::Stop, hello())
+    );
+    assert_eq!(
+        *bearers.lock_or_recover(),
+        vec!["sk-ant-oat01-rejected", "sk-ant-oat01-refreshed"]
+    );
+    let sends = vec![
+        "sk-ant-oat01-rejected".to_string(),
+        "sk-ant-oat01-refreshed".to_string(),
+    ];
+    assert_eq!(
+        (
+            store.prepared.lock_or_recover().clone(),
+            filter.prepared.lock_or_recover().clone()
+        ),
+        (sends.clone(), sends)
+    );
+}
+
+#[tokio::test]
 async fn a_second_401_is_reported_not_re_sent() {
     let provider = "hooks-401-twice";
     let (base, bearers) = messages_endpoint(vec![(401, UNAUTHORIZED), (401, UNAUTHORIZED)]).await;
     let hooks = StubHooks::issuing(&["sk-ant-oat01-second", "sk-ant-oat01-third"]);
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-first").await;
 
@@ -261,7 +293,7 @@ async fn a_429_moves_to_each_new_credential_the_hooks_name() {
     ])
     .await;
     let hooks = StubHooks::issuing(&["sk-ant-oat01-b", "sk-ant-oat01-c"]);
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
@@ -297,7 +329,7 @@ async fn a_429_with_no_new_credential_is_reported() {
     let provider = "hooks-429-exhausted";
     let (base, bearers) = messages_endpoint(vec![(429, RATE_LIMITED)]).await;
     let hooks = StubHooks::issuing(&[]);
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
@@ -357,7 +389,7 @@ async fn a_hook_reads_the_callers_request_and_sends_its_own_body() {
     let provider = "hooks-source-body";
     let (base, _bearers, bodies) = messages_endpoint_with_bodies(vec![(200, OK_STREAM)]).await;
     let hooks = Arc::new(SourceHooks::default());
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
     let mut model = model(provider, &base);
     model.reasoning = true;
     let options = crate::types::SimpleStreamOptions {
@@ -412,7 +444,7 @@ async fn a_rejection_carries_the_error_body() {
     let provider = "hooks-rejected-body";
     let (base, _bearers) = messages_endpoint(vec![(429, RATE_LIMITED)]).await;
     let hooks = Arc::new(SourceHooks::default());
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
@@ -454,7 +486,7 @@ impl ProviderRequestHooks for WidgetHooks {
 async fn a_hook_rewrites_the_streamed_events_the_provider_reads() {
     let provider = "hooks-response-event";
     let (base, _bearers) = messages_endpoint(vec![(200, WIDGET_STREAM)]).await;
-    install_request_hooks(provider, Arc::new(WidgetHooks));
+    install_request_hooks(provider, "test", Arc::new(WidgetHooks));
 
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
@@ -508,7 +540,7 @@ async fn an_admission_can_name_another_credential_and_sees_the_context_size() {
         admission: Admission::SendWith("sk-ant-oat01-chosen".to_string()),
         seen: Mutex::new(Vec::new()),
     });
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
     let empty = Context {
         system_prompt: None,
         messages: vec![],
@@ -544,7 +576,7 @@ async fn a_refused_request_is_never_sent_and_fails_with_the_refusal() {
         }),
         seen: Mutex::new(Vec::new()),
     });
-    install_request_hooks(provider, hooks.clone());
+    install_request_hooks(provider, "test", hooks.clone());
 
     let message = run(&model(provider, &base), "sk-ant-oat01-a").await;
 
@@ -562,7 +594,7 @@ async fn a_refused_request_is_never_sent_and_fails_with_the_refusal() {
 async fn the_default_admission_sends_the_hooks_fresher_credential() {
     let provider = "hooks-admit-default";
     let (base, bearers) = messages_endpoint(vec![(200, OK_STREAM), (200, OK_STREAM)]).await;
-    install_request_hooks(provider, Arc::new(FresherHooks));
+    install_request_hooks(provider, "test", Arc::new(FresherHooks));
 
     run(&model(provider, &base), "sk-ant-oat01-stale").await;
     run(&model(provider, &base), "sk-ant-oat01-other").await;

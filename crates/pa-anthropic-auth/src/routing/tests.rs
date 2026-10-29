@@ -44,7 +44,7 @@ fn fixture(provider: &str, ids: &[&str], sidecar_document: &serde_json::Value) -
     AccountStore::mutate(source.store_path(), |store| store.set_current(ids[0]))
         .expect("pin the first login");
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     Fixture {
         _home: home,
         _sidecar_dir: dir,

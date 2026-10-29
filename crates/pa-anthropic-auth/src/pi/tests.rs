@@ -83,7 +83,7 @@ fn send(case: &Case, index: usize, settings: &serde_json::Value) -> (CapturedReq
     );
     write_pi_settings(&source, settings);
     pa_core::auth::install_credential_source(&provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(&provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(&provider, "test", source.clone());
     let (base, requests) = messages_endpoint(vec![(200, Vec::new(), OK_STREAM)]);
     let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
         .expect("the store's token")
@@ -163,7 +163,7 @@ fn stream_response(
         vec![row_with_account(&format!("pi-response-{index}"), None)],
         "http://127.0.0.1:9",
     );
-    pa_ai::request_hooks::install_request_hooks(&provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(&provider, "test", source.clone());
     let (base, _requests) = messages_endpoint(vec![(200, Vec::new(), sse)]);
     let served = pa_core::auth::ProviderCredentialSource::credential(source.as_ref())
         .expect("the store's token")
@@ -231,7 +231,7 @@ fn a_credits_429_moves_the_token_s_later_requests_to_the_standard_window() {
         "http://127.0.0.1:9",
     );
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     let (base, requests) = messages_endpoint(vec![
         (429, Vec::new(), CREDITS_429),
         (200, Vec::new(), OK_STREAM),
@@ -274,7 +274,7 @@ fn claude_fast_turns_fast_mode_on_and_off_for_the_store_s_requests() {
         "http://127.0.0.1:9",
     );
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     let feature = crate::AnthropicAuthFeature::new(source.clone());
     let names: Vec<&str> = feature
         .slash_commands()
@@ -345,7 +345,7 @@ fn a_store_request_without_a_caller_cap_sends_the_model_s_request_budget() {
         "http://127.0.0.1:9",
     );
     pa_core::auth::install_credential_source(provider, source.clone());
-    pa_ai::request_hooks::install_request_hooks(provider, source.clone());
+    pa_ai::request_hooks::install_request_hooks(provider, "test", source.clone());
     let (base, requests) = messages_endpoint(vec![
         (200, Vec::new(), OK_STREAM),
         (200, Vec::new(), OK_STREAM),
