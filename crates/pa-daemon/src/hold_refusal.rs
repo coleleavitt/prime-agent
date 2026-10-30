@@ -78,29 +78,25 @@ fn classify_from(exe: Option<&Path>, own_exe: Option<&Path>) -> HolderFlavor {
     let Some(exe) = exe else {
         return HolderFlavor::AnotherProcess;
     };
+    // Linux `/proc/<pid>/exe` appends " (deleted)" for an unlinked image
+    // (a daemon still running after an update or rebuild replaced its
+    // binary); a procfs artifact, not part of the file name. Stripped
+    // from the path itself so the own-exe comparison and the file-name
+    // checks below see the real name.
+    let exe = exe
+        .to_str()
+        .and_then(|text| text.strip_suffix(" (deleted)"))
+        .map_or_else(|| exe.to_path_buf(), std::path::PathBuf::from);
+    let exe = exe.as_path();
     if let Some(own) = own_exe {
         if exe == own {
             return HolderFlavor::ThisBuild;
         }
     }
-    let mut components: Vec<String> = exe
+    let components: Vec<String> = exe
         .components()
         .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
         .collect();
-    // Linux `/proc/<pid>/exe` appends " (deleted)" for an unlinked image
-    // (a daemon still running from a swept rollback tree); a procfs
-    // artifact, not part of the file name.
-    if components
-        .last()
-        .is_some_and(|last| last.ends_with(" (deleted)"))
-    {
-        let stripped = components
-            .last()
-            .unwrap()
-            .trim_end_matches(" (deleted)")
-            .to_string();
-        *components.last_mut().unwrap() = stripped;
-    }
     if components
         .iter()
         .any(|component| component == "prime-agent-rust")
@@ -696,6 +692,23 @@ Session: ts01ab";
                 Some(own)
             ),
             HolderFlavor::ThisBuild
+        );
+        // An updated install replaces the binary under a running daemon:
+        // the holder reads `<own path> (deleted)` and is still this build.
+        assert_eq!(
+            classify_from(
+                Some(Path::new("/home/k/.local/bin/prime-agent (deleted)")),
+                Some(Path::new("/home/k/.local/bin/prime-agent"))
+            ),
+            HolderFlavor::ThisBuild
+        );
+        // A deleted TS image stays the TS product.
+        assert_eq!(
+            classify_from(
+                Some(Path::new("/usr/local/bin/prime-agent (deleted)")),
+                Some(own)
+            ),
+            HolderFlavor::TypeScriptProduct
         );
         // The TS public-bin symlink shape inside a dir NAMED prime-agent:
         // still the TS product.
