@@ -1513,6 +1513,7 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
                 parent_session_id: None,
                 rlm_child_id: None,
                 first_message: None,
+                session_file: None,
                 pending_tool_calls:
                     crate::session_engine::agent_messaging::AgentObservePendingToolCalls::default(),
             }

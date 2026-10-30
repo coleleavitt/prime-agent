@@ -2843,6 +2843,7 @@ dependencies = [
  "anyhow",
  "filetime",
  "futures",
+ "globset",
  "nix 0.29.0",
  "notify",
  "pa-agent",

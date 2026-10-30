@@ -336,6 +336,7 @@ impl InProcessFamilyController {
             parent_session_id: None,
             rlm_child_id: None,
             first_message: None,
+            session_file: None,
             pending_tool_calls: AgentObservePendingToolCalls::measure(
                 state.pending_tool_calls.len(),
                 state
