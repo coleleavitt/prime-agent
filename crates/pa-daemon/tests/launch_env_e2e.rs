@@ -556,6 +556,7 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
             cwd: None,
             agent: None,
             worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn");

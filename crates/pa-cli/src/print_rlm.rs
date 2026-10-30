@@ -1382,6 +1382,7 @@ mod tests {
             token_budget: None,
             agent: None,
             worktree: None,
+            factory: None,
         });
         std::future::poll_fn(|context| {
             assert!(spawn.as_mut().poll(context).is_pending());

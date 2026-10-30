@@ -267,6 +267,8 @@ mod tests {
                 name: "worker-a".to_string(),
                 deleted: None,
                 deleted_usage: None,
+                deleted_usage_by_model: None,
+                factory: None,
             },
             info,
             metadata: RlmChildMetadata::default(),
@@ -288,6 +290,8 @@ mod tests {
                 name: "worker-b".to_string(),
                 deleted: None,
                 deleted_usage: None,
+                deleted_usage_by_model: None,
+                factory: None,
             },
             info: plain_info,
             metadata: RlmChildMetadata::default(),
@@ -324,6 +328,8 @@ mod tests {
                 name: "worker-c".to_string(),
                 deleted: None,
                 deleted_usage: None,
+                deleted_usage_by_model: None,
+                factory: None,
             },
             info,
             metadata: RlmChildMetadata::default(),
@@ -370,6 +376,7 @@ mod tests {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "w1".into(),
+                factory: None,
             })
             .unwrap();
         ledger
@@ -379,6 +386,7 @@ mod tests {
                 child: grandchild.to_string_lossy().into(),
                 depth: 2,
                 name: "w2".into(),
+                factory: None,
             })
             .unwrap();
         ledger
@@ -388,6 +396,7 @@ mod tests {
                 child: dead.to_string_lossy().into(),
                 depth: 1,
                 name: "gone".into(),
+                factory: None,
             })
             .unwrap();
         // A deleted child tombstones out of the walk.
@@ -461,6 +470,7 @@ mod tests {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "worker".into(),
+                factory: None,
             })
             .unwrap();
         let walked = walk_passive_rlm_children(

@@ -182,6 +182,7 @@ mod tests {
             cwd: None,
             agent: None,
             worktree: None,
+            factory: None,
         }
     }
 

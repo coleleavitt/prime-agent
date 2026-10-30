@@ -242,6 +242,7 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         cwd: None,
         agent: None,
         worktree: None,
+        factory: None,
     }
 }
 

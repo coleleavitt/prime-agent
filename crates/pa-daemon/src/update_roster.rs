@@ -504,6 +504,7 @@ mod tests {
                 child_id: "child-c1".into(),
                 depth: 1,
                 name: "api-reviewer".into(),
+                factory: None,
             })
             .unwrap();
         (ledger, sessions_dir)

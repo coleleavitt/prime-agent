@@ -1095,6 +1095,7 @@ async fn adoption_settles_then_seeds_the_roster_once() {
             child: child_file.to_string_lossy().to_string(),
             depth: 1,
             name: "lane".to_string(),
+            factory: None,
         })
         .unwrap();
     let descriptor = pa_types::daemon::DaemonWorkerDescriptor {
@@ -2094,6 +2095,7 @@ async fn a_ledger_delete_of_a_stopped_child_tombstones_without_a_worker() {
             child: child_file.to_string_lossy().into_owned(),
             depth: 1,
             name: "parked-worker".to_string(),
+            factory: None,
         })
         .expect("the spawn edge appends");
     assert_eq!(ledger.live_edges().expect("edges").len(), 1);
@@ -2260,6 +2262,7 @@ async fn the_stopped_childs_delete_removes_its_row_and_bills_the_parent() {
             child: child_transcript.to_string_lossy().into_owned(),
             depth: 1,
             name: "parked-worker".to_string(),
+            factory: None,
         })
         .expect("the spawn edge appends");
     let mut events = supervisor.events.subscribe();
@@ -2374,6 +2377,7 @@ async fn a_ledger_delete_never_tombstones_an_unrelated_edge_sharing_the_child_id
                 child: child.clone(),
                 depth: 1,
                 name: stem.to_string(),
+                factory: None,
             })
             .expect("the spawn edge appends");
     }
@@ -2446,6 +2450,7 @@ async fn a_ledger_child_wake_joins_an_already_hosting_resident() {
             child: session_file.to_string_lossy().into_owned(),
             depth: 1,
             name: "kid-1".to_string(),
+            factory: None,
         })
         .expect("the spawn edge appends");
     // The concurrent revival's resident already hosting the child's file.

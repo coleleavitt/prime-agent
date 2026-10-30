@@ -224,6 +224,7 @@ fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
         cwd: None,
         agent: None,
         worktree: None,
+        factory: None,
     }
 }
 

@@ -190,6 +190,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 if let Some(definition) = &request.agent {
                     runtime_metadata["agentType"] = json!(definition.name);
                 }
+                // The admission's ledger spawn record reads the run tag back.
+                if let Some(factory) = &request.factory {
+                    runtime_metadata["factory"] = json!(factory);
+                }
                 let created = match this
                     .create_child(
                         &child_id,

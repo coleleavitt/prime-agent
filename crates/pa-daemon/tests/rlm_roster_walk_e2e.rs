@@ -509,6 +509,7 @@ async fn subscribe_after_spawn_then_shutdown_seeds_the_passive_child() {
             cwd: None,
             agent: None,
             worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn child");

@@ -234,6 +234,19 @@ pub struct RlmSpawnRequest {
     /// admission, owned by the host's child record afterwards (removed
     /// with the child when unchanged).
     pub worktree: Option<crate::worktree::Worktree>,
+    /// The factory run that spawned the child; the daemon records it on
+    /// the child's ledger spawn edge.
+    pub factory: Option<RlmFactoryTag>,
+}
+
+/// The factory executor's run tag on a spawned child (`rlm.spawn`'s
+/// private `factory` kwarg, wire shape `{runId, specId, stateId}`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RlmFactoryTag {
+    pub run_id: String,
+    pub spec_id: String,
+    pub state_id: String,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -912,6 +925,7 @@ fn spawn_request_from_payload(
             "agent",
             "isolation",
             "cwd",
+            "factory",
         ],
     )?;
     let agent_args = super::rlm_spawn_agent::SpawnAgentArgs::from_kwargs(&kwargs, OPERATION)?;
@@ -937,6 +951,14 @@ fn spawn_request_from_payload(
             anyhow::anyhow!("{OPERATION} token_budget must be a positive integer")
         })?),
     };
+    let factory = match kwargs.get("factory") {
+        None | Some(Value::Null) => None,
+        Some(tag) => Some(serde_json::from_value(tag.clone()).map_err(|_| {
+            anyhow::anyhow!(
+                "{OPERATION} factory must be an object with string runId, specId, and stateId"
+            )
+        })?),
+    };
     Ok((
         RlmSpawnRequest {
             prompt: prompt.to_string(),
@@ -950,6 +972,7 @@ fn spawn_request_from_payload(
             cwd: None,
             agent: None,
             worktree: None,
+            factory,
         },
         agent_args,
     ))
@@ -1884,7 +1907,10 @@ mod tests {
             json!({
                 "type": "rlm.run",
                 "prompt": "ship the lane",
-                "kwargs": { "name": "worker", "model": "p/m", "thinking": "High" }
+                "kwargs": {
+                    "name": "worker", "model": "p/m", "thinking": "High",
+                    "factory": { "runId": "r1", "specId": "sw", "stateId": "build" },
+                }
             }),
         )
         .await
@@ -1906,6 +1932,14 @@ mod tests {
         assert_eq!(requests[0].thinking.as_deref(), Some("high"));
         // Local regression: an omitted `target` lands as a local placement.
         assert_eq!(requests[0].target, RlmSpawnTarget::Local);
+        assert_eq!(
+            requests[0].factory,
+            Some(RlmFactoryTag {
+                run_id: "r1".to_string(),
+                spec_id: "sw".to_string(),
+                state_id: "build".to_string(),
+            })
+        );
         drop(requests);
 
         // Validation: prompt type, unsupported kwargs, name rules.
