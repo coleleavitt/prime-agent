@@ -2,11 +2,10 @@
 //! the key loop, and the lazy tail window's scroll, load-more, and
 //! retry lifecycle.
 
-use serde_json::json;
-
 use super::*;
 use crate::keybindings::KeybindingsManager;
 use crate::theme::{ColorMode, Theme};
+use serde_json::json;
 
 fn kb() -> KeybindingsManager {
     KeybindingsManager::new()
@@ -108,11 +107,8 @@ fn the_list_renders_columned_rows_and_one_hint() {
         1,
         "the close hint appears once: {text:?}"
     );
-    assert!(text.iter().any(|row| {
-        row.contains(
-            "\u{2191}/\u{2193} move \u{b7} Enter/\u{2192} open \u{b7} \u{2190}/Esc close",
-        )
-    }));
+    assert!(text.iter().any(|row| row
+        .contains("\u{2191}/\u{2193} move \u{b7} Enter/\u{2192} open \u{b7} \u{2190}/Esc close")));
     for line in &frame {
         assert!(crate::width::spans_width(line) <= 70);
     }
@@ -249,6 +245,7 @@ fn the_pane_runs_to_the_bottom() {
             status: "finished".to_string(),
             exit_code: Some(0),
             duration_ms: Some(u64::from(n) * 1_000),
+            persistent: false,
         })
         .collect();
     for viewport in [10usize, 16, 24] {
@@ -399,21 +396,17 @@ fn the_detail_status_color_codes_the_state() {
     view.handle_key("enter", &kb());
     let frame = view.render(&theme(), 70, &kb());
     let metadata = row_text(&frame, "running").expect("the metadata row");
-    assert!(
-        metadata
-            .iter()
-            .any(|span| span.style == theme().fg_style(ThemeColor::Success))
-    );
+    assert!(metadata
+        .iter()
+        .any(|span| span.style == theme().fg_style(ThemeColor::Success)));
 
     let mut view = BashView::new(failed_activities(), 40);
     view.handle_key("enter", &kb());
     let frame = view.render(&theme(), 70, &kb());
     let metadata = row_text(&frame, "exit 2").expect("the failed metadata row");
-    assert!(
-        metadata
-            .iter()
-            .any(|span| span.style == theme().fg_style(ThemeColor::Error))
-    );
+    assert!(metadata
+        .iter()
+        .any(|span| span.style == theme().fg_style(ThemeColor::Error)));
 }
 
 #[test]
@@ -474,10 +467,9 @@ fn a_refresh_keeps_the_surviving_selection() {
     assert_eq!(view.mode, Mode::List);
     let frame = view.render(&theme(), 70, &kb());
     let text = frame_text(&frame);
-    assert!(
-        text.iter()
-            .any(|row| row.contains("No background commands"))
-    );
+    assert!(text
+        .iter()
+        .any(|row| row.contains("No background commands")));
 }
 
 #[test]
@@ -1239,12 +1231,21 @@ fn dropping_the_detail_retires_its_fetch_error() {
     assert!(!text.contains("unavailable"), "{text}");
 }
 
+/// Only running shells count, and the persistent ones among them; a finished persistent shell
+/// counts in neither.
 #[test]
-fn running_shell_count_skips_finished_shells() {
+fn running_shell_counts_skip_finished_shells() {
     let data = json!({"activities": [
-        {"id": "a", "command": "x", "status": "running"},
-        {"id": "b", "command": "y", "status": "done"},
-        {"id": "c", "command": "z", "status": "failed"},
+        {"id": "a", "command": "x", "status": "running", "persistent": true},
+        {"id": "b", "command": "y", "status": "running"},
+        {"id": "c", "command": "z", "status": "done", "persistent": true},
+        {"id": "d", "command": "w", "status": "failed"},
     ]});
-    assert_eq!(running_shell_count(&data), 1);
+    assert_eq!(
+        running_shell_counts(&data),
+        ShellCounts {
+            running: 2,
+            persistent: 1,
+        }
+    );
 }
