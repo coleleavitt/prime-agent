@@ -457,6 +457,7 @@ struct ParsedSendArgs {
     target_active_session_id: String,
     from_active_session_id: Option<String>,
     message: String,
+    delivery_mode: Option<&'static str>,
 }
 
 fn run_send(client: &mut DaemonClient, args: &[String], json: bool) -> Result<()> {
@@ -467,7 +468,7 @@ fn run_send(client: &mut DaemonClient, args: &[String], json: bool) -> Result<()
         message: parsed.message,
         from_active_session_id: parsed.from_active_session_id,
         agent_origin: None,
-        delivery_mode: None,
+        delivery_mode: parsed.delivery_mode.map(Value::from),
         rest: serde_json::Map::new(),
     })?;
     let data = require_success(response)?.unwrap_or(Value::Null);
@@ -509,6 +510,7 @@ fn run_send(client: &mut DaemonClient, args: &[String], json: bool) -> Result<()
 
 fn parse_send_args(args: &[String]) -> Result<ParsedSendArgs> {
     let mut from_active_session_id: Option<String> = None;
+    let mut delivery_mode: Option<&'static str> = None;
     let mut target_active_session_id: Option<String> = None;
     let mut explicit_message: Option<String> = None;
     let mut message_parts: Vec<String> = Vec::new();
@@ -527,6 +529,14 @@ fn parse_send_args(args: &[String]) -> Result<ParsedSendArgs> {
                 .ok_or_else(|| anyhow!("--from requires a session id or name"))?;
             index += 1;
             from_active_session_id = Some(value.clone());
+            continue;
+        }
+        if parse_options && arg == "--steer" {
+            delivery_mode = Some("steer");
+            continue;
+        }
+        if parse_options && arg == "--follow-up" {
+            delivery_mode = Some("follow_up");
             continue;
         }
         if parse_options && arg == "--message" {
@@ -564,6 +574,7 @@ fn parse_send_args(args: &[String]) -> Result<ParsedSendArgs> {
         target_active_session_id: target_active_session_id.expect("checked above"),
         from_active_session_id,
         message,
+        delivery_mode,
     })
 }
 
