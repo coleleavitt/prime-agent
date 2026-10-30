@@ -677,7 +677,7 @@ impl Supervisor {
                 self.shutting_down.store(true, Ordering::SeqCst);
                 self.accept_exit.store(true, Ordering::SeqCst);
                 self.shutdown_notify.notify_waiters();
-                self.log.append("daemon socket lease compromised; relinquishing supervisor ownership");
+                self.log_line("daemon socket lease compromised; relinquishing supervisor ownership");
                 Err(anyhow!("daemon socket lease compromised"))
             }
         };
