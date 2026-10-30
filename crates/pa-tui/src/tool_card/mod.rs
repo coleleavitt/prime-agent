@@ -121,14 +121,16 @@ pub fn working_icon(frame: usize) -> &'static str {
     crate::chat::working_icon_frame(frame)
 }
 
-/// Render one tool-call card through its tool shell. `show_images` (the
-/// `terminal.showImages` setting) renders metadata rows or `[Image: ...]`
-/// placeholders.
+/// Render one tool-call card through its tool shell. `detail` is the card's own level (a click
+/// flips it); `level` is the conversation level, which the python card's sent agent messages
+/// follow. `show_images` (the `terminal.showImages` setting) renders metadata rows or
+/// `[Image: ...]` placeholders.
 #[must_use]
 pub fn render_tool_card(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
@@ -137,6 +139,7 @@ pub fn render_tool_card(
         card,
         frame,
         detail,
+        level,
         theme,
         width,
         show_images,
@@ -147,19 +150,31 @@ pub fn render_tool_card(
 /// [`render_tool_card`] under the `markdown.mermaid` setting, which an installed diagram
 /// renderer ([`crate::diagram`]) honours in the agent messages an ipython cell sent.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(crate) fn render_tool_card_in(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
     mermaid: crate::markdown::MermaidMode,
 ) -> Vec<Line> {
     match card.name.as_str() {
-        name if pa_types::ai::is_python_tool_name(name) => {
-            ipython::render_in(card, frame, detail, theme, width, show_images, mermaid)
-        }
+        name if pa_types::ai::is_python_tool_name(name) => ipython::render_in(
+            card,
+            frame,
+            detail,
+            level,
+            theme,
+            width,
+            show_images,
+            mermaid,
+        ),
         "bash" => bash::render(card, frame, detail, theme, width, show_images),
         _ => generic::render(card, frame, detail, theme, width, show_images),
     }
@@ -398,19 +413,31 @@ fn eligible_images(
 }
 
 /// Exact row geometry for every tool shell without painting output rows.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(crate) fn count_tool_card(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
     mermaid: crate::markdown::MermaidMode,
 ) -> usize {
     match card.name.as_str() {
-        name if pa_types::ai::is_python_tool_name(name) => {
-            ipython::count(card, frame, detail, theme, width, show_images, mermaid)
-        }
+        name if pa_types::ai::is_python_tool_name(name) => ipython::count(
+            card,
+            frame,
+            detail,
+            level,
+            theme,
+            width,
+            show_images,
+            mermaid,
+        ),
         "bash" => bash::count(card, frame, detail, theme, width, show_images),
         _ => generic::count(card, frame, detail, theme, width, show_images),
     }

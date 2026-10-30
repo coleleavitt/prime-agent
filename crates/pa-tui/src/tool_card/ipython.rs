@@ -121,12 +121,14 @@ fn cell_code(card: &ToolCallCard) -> &str {
 }
 
 /// Render the ipython cell card: the fixed summary line, then the expanded
-/// code and output rows when conversation detail is `all`.
+/// code and output rows when the card's `detail` is `all`. The sent agent
+/// messages' bodies follow the conversation `level` instead.
 #[must_use]
 pub fn render(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
@@ -135,6 +137,7 @@ pub fn render(
         card,
         frame,
         detail,
+        level,
         theme,
         width,
         show_images,
@@ -144,10 +147,15 @@ pub fn render(
 
 /// [`render`] under the `markdown.mermaid` setting (sent agent-message bodies).
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(super) fn render_in(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
@@ -157,6 +165,7 @@ pub(super) fn render_in(
     let shell = Shell {
         frame,
         detail,
+        level,
         width,
         show_images,
         mermaid,
@@ -165,10 +174,15 @@ pub(super) fn render_in(
     lines.into_lines()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(super) fn count(
     card: &ToolCallCard,
     frame: usize,
     detail: Detail,
+    level: Detail,
     theme: &Theme,
     width: usize,
     show_images: bool,
@@ -178,6 +192,7 @@ pub(super) fn count(
     let shell = Shell {
         frame,
         detail,
+        level,
         width,
         show_images,
         mermaid,
@@ -191,6 +206,8 @@ pub(super) fn count(
 struct Shell {
     frame: usize,
     detail: Detail,
+    /// The conversation level, which the sent agent messages' bodies follow.
+    level: Detail,
     width: usize,
     show_images: bool,
     /// The `markdown.mermaid` setting, for the sent agent messages' bodies.
@@ -201,6 +218,7 @@ fn layout(card: &ToolCallCard, shell: &Shell, theme: &Theme, lines: &mut RowOutp
     let Shell {
         frame,
         detail,
+        level,
         width,
         show_images,
         mermaid,
@@ -226,16 +244,17 @@ fn layout(card: &ToolCallCard, shell: &Shell, theme: &Theme, lines: &mut RowOutp
             code,
         )
     });
-    // TS renders the sent-message receipt rows even when the cell is
-    // collapsed; the body opens up only when expanded. The transcript-read
-    // row shows either way.
+    // The sent-message receipt rows render even when the cell is collapsed. They are agent
+    // messages of their own, so their bodies follow the conversation level, not a click on
+    // the card. The transcript-read row shows either way.
+    let messages_expanded = level.tool_output_expanded();
     if !detail.tool_output_expanded() {
-        render_sent_agent_messages(lines, &details, false, theme, width, mermaid);
+        render_sent_agent_messages(lines, &details, messages_expanded, theme, width, mermaid);
         render_transcript_reads(lines, &details, false, theme, width);
         return;
     }
     let has_code = render_code(lines, code, theme, width);
-    render_sent_agent_messages(lines, &details, true, theme, width, mermaid);
+    render_sent_agent_messages(lines, &details, messages_expanded, theme, width, mermaid);
     render_transcript_reads(lines, &details, true, theme, width);
     render_output(card, &details, lines, has_code, show_images, theme, width);
     // Image blocks render below the card when shown (TS adds these rows
