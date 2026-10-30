@@ -353,6 +353,7 @@ impl Worker {
                 semantic_spawn: None,
                 // A replacement runtime is a fresh top-level run: no grant.
                 rlm_token_allowance: None,
+                factory_child: false,
             }) {
             Ok(()) => self.reseed_rlm_children().await,
             Err(error) => eprintln!("pa-daemon: replacement identity rebind failed: {error:#}"),

@@ -564,6 +564,8 @@ pub(crate) struct ChildEngineOverrides {
     pub token_budget: Option<u64>,
     /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
     pub agent_definition: Option<pa_core::agents::AgentDefinition>,
+    /// The spawn carried a factory run tag.
+    pub factory_child: bool,
 }
 
 /// A child's model source: a real-provider child carries its resolved
@@ -584,6 +586,7 @@ pub(crate) struct HeadlessEmbeddingFields {
         Option<Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>>,
     pub(crate) extra_host_handlers: Option<pa_core::kernel::shared::HostRequestHandlers>,
     pub(crate) rlm_depth: Option<u32>,
+    pub(crate) factory_child: bool,
     pub(crate) bash_wake: pa_core::session_engine::bash_notices::BashNoticeWake,
     /// The RPC mode's wake handle, carried onto the engine handle so the
     /// queue-pump listener parks on it; `None` outside the RPC embedding.
@@ -636,6 +639,10 @@ pub(crate) fn headless_embedding_fields(embedding: &HeadlessEmbedding) -> Headle
             HeadlessEmbedding::Child(overrides) => Some(overrides.node.depth),
             HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => None,
         },
+        factory_child: matches!(
+            embedding,
+            HeadlessEmbedding::Child(overrides) if overrides.factory_child
+        ),
         bash_wake,
         rpc_bash_wake,
         on_late_sent_agent_message,
@@ -842,6 +849,7 @@ pub(crate) async fn build_headless_engine_with(
         rlm_subagent_host,
         extra_host_handlers,
         rlm_depth,
+        factory_child,
         bash_wake,
         rpc_bash_wake,
         on_late_sent_agent_message,
@@ -928,6 +936,7 @@ pub(crate) async fn build_headless_engine_with(
             progress_note_emit: None,
             factory_notices: None,
             rlm_depth,
+            factory_child,
             daemonless: true,
             model_info: Some(model.clone()),
             // The kernel boots in the background at creation; a spawned

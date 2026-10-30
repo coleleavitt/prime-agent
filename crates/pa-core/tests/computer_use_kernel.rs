@@ -195,6 +195,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
         rlm_depth: None,
+        factory_child: false,
         telemetry: None,
         model_info: None,
         mcp_manager: None,

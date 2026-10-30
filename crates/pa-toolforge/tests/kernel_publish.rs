@@ -140,6 +140,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
         rlm_depth: None,
+        factory_child: false,
         telemetry: None,
         model_info: None,
         mcp_manager: None,

@@ -287,6 +287,9 @@ pub struct RlmSessionIdentity {
     /// The delegation grant funding a subagent create (upstream #1192; the
     /// runtime metadata's `rlmTokenAllowance`). `None` for a root.
     pub rlm_token_allowance: Option<u64>,
+    /// The create's runtime metadata carries a factory run tag: the
+    /// session runs one factory state.
+    pub factory_child: bool,
 }
 
 /// A created session's semantic-edge provenance (TS

@@ -922,6 +922,8 @@ impl SessionEngine for AgentSessionEngine {
         self.rlm_depth
             .store(identity.rlm_depth, std::sync::atomic::Ordering::Relaxed);
         *self.rlm_token_allowance.lock_or_recover() = identity.rlm_token_allowance;
+        self.factory_child
+            .store(identity.factory_child, std::sync::atomic::Ordering::Relaxed);
         if let Some(thinking) = &identity.thinking {
             pa_ai::models::thinking_level_from_str(thinking)
                 .ok_or_else(|| anyhow::anyhow!("unknown thinking level \"{thinking}\""))?;

@@ -203,6 +203,7 @@ impl SupervisorChildSessionsInner {
             live_observation: None,
             direct_observation: Arc::new(Mutex::new(())),
             notice_delivered: false,
+            factory: false,
             prompt_admitted: true,
             error: None,
             closed_by_parent: false,

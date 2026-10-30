@@ -899,7 +899,7 @@ impl SupervisorChildSessionsInner {
                 create_rlm_child_terminal_notice_with(&notice, &record.notice_extras(), now_ms())
             }
         };
-        self.deliver_terminal_notice(message).await;
+        self.deliver_terminal_notice(record, message).await;
         true
     }
 
@@ -989,7 +989,7 @@ impl SupervisorChildSessionsInner {
         // the thrown-run arm): a child that committed requests before
         // failing still returns them; a zero-commit child records nothing.
         self.record_child_return(record).await;
-        self.deliver_terminal_notice(message).await;
+        self.deliver_terminal_notice(record, message).await;
         self.fire_settle_hook(record).await;
         true
     }
@@ -1005,8 +1005,16 @@ impl SupervisorChildSessionsInner {
     /// (`child_status_notices`): the parent's queue admission accepts a
     /// reserved-kind row exclusively with a live mint, and answers
     /// anything a caller sends — with or without a guessed nonce —
-    /// loudly instead.
-    pub(super) async fn deliver_terminal_notice(&self, message: CustomMessage) {
+    /// loudly instead. A factory child's notice is dropped: the factory
+    /// reads the settle through collect and posts its own milestones.
+    pub(super) async fn deliver_terminal_notice(
+        &self,
+        record: &Arc<Mutex<ChildRecord>>,
+        message: CustomMessage,
+    ) {
+        if record.lock().await.factory {
+            return;
+        }
         let Some(content) = custom_message_text(&message) else {
             eprintln!("pa-daemon: RLM child notice carried no text content");
             return;

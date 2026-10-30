@@ -239,6 +239,9 @@ impl Worker {
             .filter(|metadata| metadata.get("kind").and_then(Value::as_str) == Some("subagent"))
             .and_then(|metadata| metadata.get("rlmTokenAllowance"))
             .and_then(Value::as_u64);
+        let factory_child = payload
+            .get("runtimeMetadata")
+            .is_some_and(|metadata| metadata.get("factory").is_some());
         let thinking = payload
             .get("thinking")
             .and_then(Value::as_str)
@@ -683,6 +686,7 @@ impl Worker {
             child_script: child_script.clone(),
             semantic_spawn,
             rlm_token_allowance,
+            factory_child,
         }) {
             return response_failure(None, "create", &error.to_string(), None);
         }

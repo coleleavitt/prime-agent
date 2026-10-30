@@ -175,6 +175,9 @@ impl InlineSessionNode {
 /// One spawned child: its node, engine, driver task, and live state.
 pub(crate) struct InlineChild {
     pub(crate) rlm_child_id: String,
+    /// A factory state's child: the factory reads its settle through
+    /// collect, so no terminal notice reaches the parent.
+    factory: bool,
     pub(crate) node: Arc<InlineSessionNode>,
     pub(crate) engine: Arc<SessionEngine>,
     /// The child's model and request auth (the drive's boundary calls).
@@ -573,7 +576,7 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
         // can observe the settled child before the parent's queue holds its
         // row — the quiescence check reads the child state before the
         // parent's queue and cannot return through the gap.
-        if let (Some(parent), Some(notice)) = (&parent, notice) {
+        if let (Some(parent), Some(notice)) = (&parent, notice.filter(|_| !child.factory)) {
             let delivered = match serde_json::to_value(notice) {
                 Ok(value) => deliver_row(parent, value),
                 Err(error) => Err(anyhow::anyhow!(
@@ -862,6 +865,7 @@ impl RlmSubagentHost for InlineHost {
                 plan_mode: request.plan_mode,
                 token_budget: request.token_budget,
                 agent_definition: request.agent.clone(),
+                factory_child: request.factory.is_some(),
             };
             let headless = crate::print_runtime::build_engine(
                 &recipe.options,
@@ -876,6 +880,7 @@ impl RlmSubagentHost for InlineHost {
             let _ = child_node.engine.set(Arc::downgrade(&engine));
             let child = Arc::new(InlineChild {
                 rlm_child_id: child_id.clone(),
+                factory: request.factory.is_some(),
                 node: Arc::clone(&child_node),
                 engine: Arc::clone(&engine),
                 model: headless.model,

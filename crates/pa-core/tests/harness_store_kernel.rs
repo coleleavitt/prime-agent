@@ -156,6 +156,7 @@ async fn the_kernel_harness_api_is_served_by_the_host_store() {
         plan_mode: None,
         on_late_sent_agent_message: None,
         semantic_edges: None,
+        factory_child: false,
         cron_store: None,
         queued_steering_probe: None,
         steering_fold: None,

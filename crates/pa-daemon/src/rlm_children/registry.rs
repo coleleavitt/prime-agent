@@ -454,6 +454,7 @@ impl SupervisorChildSessionsInner {
             };
             if let Some((notice, extras)) = notice {
                 self.deliver_terminal_notice(
+                    record,
                     pa_core::session_engine::rlm_notices::create_rlm_child_terminal_notice_with(
                         &notice,
                         &extras,
@@ -652,6 +653,9 @@ fn ledger_child_records(
             live_observation: None,
             direct_observation: Arc::new(Mutex::new(())),
             notice_delivered: true,
+            // The fork's ledger edge carries no run tag; a recovered
+            // child's notice is never owed (`notice_delivered`).
+            factory: false,
             prompt_admitted: true,
             error: None,
             closed_by_parent: false,

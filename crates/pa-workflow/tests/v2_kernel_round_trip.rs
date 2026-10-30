@@ -152,6 +152,7 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
         extra_builtin_skill_overrides: Vec::new(),
         rlm_subagent_host: None,
         rlm_depth: None,
+        factory_child: false,
         telemetry: None,
         model_info: None,
         mcp_manager: None,
