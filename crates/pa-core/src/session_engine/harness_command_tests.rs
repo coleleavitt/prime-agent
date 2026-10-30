@@ -187,17 +187,31 @@ fn the_digest_shows_a_prompt_note_whole_and_a_memory_as_a_summary() {
     let mut note = subagent("policy", "A policy");
     note.kind = RefinementKind::Prompt;
     note.content = text.clone();
-    state.entries.entry(RefinementKind::Prompt).or_default().insert("policy".to_string(), note);
+    state
+        .entries
+        .entry(RefinementKind::Prompt)
+        .or_default()
+        .insert("policy".to_string(), note);
     let mut memory = subagent("fact", "A fact");
     memory.kind = RefinementKind::Memory;
     memory.content = text.clone();
-    state.entries.entry(RefinementKind::Memory).or_default().insert("fact".to_string(), memory);
+    state
+        .entries
+        .entry(RefinementKind::Memory)
+        .or_default()
+        .insert("fact".to_string(), memory);
 
     let digest = crate::refinement::ranking::format_harness_state_for_prompt(
         &state,
         &crate::refinement::ranking::HarnessStatePromptOptions::default(),
     );
-    let line = |id: &str| digest.lines().find(|line| line.contains(id)).unwrap().to_string();
+    let line = |id: &str| {
+        digest
+            .lines()
+            .find(|line| line.contains(id))
+            .unwrap()
+            .to_string()
+    };
     assert!(line(":policy]").ends_with(text.trim()), "{digest}");
     assert!(line(":fact]").ends_with("..."), "{digest}");
 }

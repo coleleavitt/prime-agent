@@ -178,7 +178,8 @@ fn explicit_backends_need_their_keys_and_a_searchable_model() {
     let dir = tempfile::tempdir().unwrap();
     write_models(dir.path(), "http://127.0.0.1:9");
     let resolve = |settings: &WebSettings| {
-        resolve_backend(settings, dir.path(), dir.path(), ("p1", "m1")).map(|backend| backend.name())
+        resolve_backend(settings, dir.path(), dir.path(), ("p1", "m1"))
+            .map(|backend| backend.name())
     };
     // Camoufox is keyless: it always resolves, and Auto defaults to it (the
     // FallbackSearch reports its primary's name).

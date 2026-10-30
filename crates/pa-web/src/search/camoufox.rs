@@ -146,7 +146,9 @@ impl SearchBackend for CamoufoxSearch {
             };
             let stdout = String::from_utf8_lossy(&output.stdout);
             let body: Value = serde_json::from_str(stdout.trim()).map_err(|error| {
-                SearchError(format!("camoufox search returned malformed output: {error}"))
+                SearchError(format!(
+                    "camoufox search returned malformed output: {error}"
+                ))
             })?;
             if let Some(message) = body.get("error").and_then(Value::as_str) {
                 return Err(SearchError(format!("camoufox search: {message}")));

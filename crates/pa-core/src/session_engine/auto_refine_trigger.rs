@@ -32,7 +32,9 @@ pub fn signal_observer_refine(session_id: &str) {
 
 /// Take (and clear) the observer's refine signal for `session_id`.
 fn take_observer_refine_signal(session_id: &str) -> bool {
-    observer_refine_signals().lock_or_recover().remove(session_id)
+    observer_refine_signals()
+        .lock_or_recover()
+        .remove(session_id)
 }
 use super::refine::{AutoRefineRound, now_millis};
 use crate::refinement::RefinementResult;
@@ -423,7 +425,10 @@ mod tests {
             Ok(None)
         ));
         let (_pending, last_review_at, turns) = state(&session);
-        assert!(last_review_at.is_some(), "the backstop ran a review at dispose");
+        assert!(
+            last_review_at.is_some(),
+            "the backstop ran a review at dispose"
+        );
         assert_eq!(turns, 0, "the review reset the settled-turn counter");
     }
 
