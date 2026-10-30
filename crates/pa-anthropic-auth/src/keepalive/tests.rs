@@ -147,6 +147,31 @@ fn an_older_or_unreadable_version_keeps_the_floor() {
     assert_eq!(read_version(&version_reader(&failing)), "2.1.280");
 }
 
+#[test]
+fn a_login_whose_refresh_token_expired_is_named_once() {
+    let (token_url, hits) = token_endpoint(200, ROTATED);
+    let mut dead = row("expired", Duration::hours(-1));
+    if let Credential::Oauth(tokens) = &mut dead.credential {
+        tokens.refresh_expires_at = Some(Utc::now() - Duration::days(1));
+    }
+    let (_home, source) = source_over(vec![dead, row("healthy", Duration::hours(2))], &token_url);
+    let warnings = WarningLog::default();
+
+    let first = warnings.capture(|| pass(&source));
+    let second = warnings.capture(|| pass(&source));
+
+    assert_eq!(first, KeepAliveTick::default());
+    assert_eq!(second, KeepAliveTick::default());
+    assert_eq!(
+        warnings.messages(),
+        vec![
+            "this login's refresh token has expired and cannot be renewed; log in again (/login anthropic) account_id=expired"
+                .to_string()
+        ]
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
 /// Hold the store lock on another thread until the returned sender is
 /// dropped or sent to (a peer's store write stalled on a loaded disk).
 fn hold_store_lock(

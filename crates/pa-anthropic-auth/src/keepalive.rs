@@ -15,12 +15,13 @@
 //!   whose access token expires before the next tick is refreshed now
 //!   (claimed through the store), so a request never waits for it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
 use anthropic::claude_version::{ClaudeCodeVersionTracker, fetch_latest_claude_code_version_from};
+use anthropic::keepalive::KeepAliveSkip;
 use anthropic::{AccountStore, KeepAliveOptions, OAuthClient, SharedRefreshOptions};
 use chrono::{DateTime, Duration, Utc};
 use pa_types::sync::MutexExt;
@@ -73,6 +74,8 @@ pub(crate) struct KeepAliveTick {
 pub(crate) struct KeepAlive {
     config: SharedStoreConfig,
     in_use: Mutex<HashMap<String, Instant>>,
+    /// The logins whose expired refresh token this process already named in the log.
+    expired_noted: Mutex<HashSet<String>>,
     /// The live Claude Code version (floored), refreshed on this thread.
     version: Mutex<ClaudeCodeVersionTracker>,
     /// The quota readings the polls land in (shared with the source).
@@ -84,6 +87,7 @@ impl KeepAlive {
         Self {
             config,
             in_use: Mutex::new(HashMap::new()),
+            expired_noted: Mutex::new(HashSet::new()),
             version: Mutex::new(ClaudeCodeVersionTracker::new()),
             quota,
         }
@@ -150,6 +154,25 @@ impl KeepAlive {
                         "the keep-alive could not refresh an idle login"
                     );
                 }
+                // A login whose refresh token is past its own expiry is skipped for good
+                // ("only a re-login helps"), so without this it would look usable forever.
+                let expired: Vec<&str> = pass
+                    .skipped
+                    .iter()
+                    .filter(|(_, skip)| *skip == KeepAliveSkip::RefreshExpired)
+                    .map(|(account_id, _)| account_id.as_str())
+                    .collect();
+                let mut noted = self.expired_noted.lock_or_recover();
+                noted.retain(|account_id| expired.contains(&account_id.as_str()));
+                for account_id in expired {
+                    if noted.insert(account_id.to_string()) {
+                        tracing::warn!(
+                            account_id,
+                            "this login's refresh token has expired and cannot be renewed; log in again (/login anthropic)"
+                        );
+                    }
+                }
+                drop(noted);
                 report.idle_refreshed = pass.refreshed.len();
                 report.failed += pass.failed.len();
                 report.lease_held = matches!(
