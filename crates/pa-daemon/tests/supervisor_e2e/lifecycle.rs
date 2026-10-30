@@ -72,6 +72,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "session_model_selection",
             "fork_export",
             "rewind",
+            "prompt_history",
             "side_ux",
         ])
     );
