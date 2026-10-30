@@ -33,7 +33,7 @@
 //! and the oracle is never vacuous on inode reuse.
 #![cfg(unix)]
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -456,9 +456,25 @@ fn live_supervisor_lease_prevents_rebind_after_external_socket_rename() {
     let mut rival = spawn_supervisor(&socket, &dir.path().join("rival-agent"));
     // TS's lifetime lease queues this startup until the 600x25ms retry
     // budget expires. Rust without a lease binds immediately: fail RED.
-    std::thread::sleep(Duration::from_secs(2));
-    assert!(
-        !socket.exists(),
+    // A sweep that renames the listener away would strand the live supervisor, so the original
+    // binds its own path again; the lease keeps the rival from ever being the one that serves it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the original supervisor never bound its path again"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let stream = UnixStream::connect(&socket).expect("the path serves a supervisor");
+    let mut hello = String::new();
+    BufReader::new(stream)
+        .read_line(&mut hello)
+        .expect("the supervisor's hello");
+    let hello: Value = serde_json::from_str(hello.trim()).expect("hello json");
+    assert_eq!(
+        hello["supervisorPid"].as_u64(),
+        Some(u64::from(original.child.id())),
         "successor bound while original supervisor still held its lease"
     );
     assert!(original.child.try_wait().unwrap().is_none());
