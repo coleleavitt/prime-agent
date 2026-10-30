@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anthropic::access::{AccessErrorKind, AccessRequest, access_candidates};
 use anthropic::killswitch::killswitch_retry_after_secs;
 use anthropic::quota::{QuotaSnapshot, QuotaWindowName};
+use anthropic::routing::refresh_exclusion;
 use anthropic::sticky_routing::{
     RoutingMode,
     StickyPolicy,
@@ -198,6 +199,13 @@ impl SharedStoreSource {
             .unwrap_or_default()
             .into_iter()
             .filter(|account| !account.refresh_token_is_dead())
+            // A login with no live access token and no refresh token to spend (both past their own
+            // expiry) can never answer a request. Left in, it is `main` whenever it comes first in the
+            // store: its token fetch fails on every request and the store's own pick serves instead,
+            // which can be a login the server has already refused.
+            .filter(|account| {
+                account.oauth_credential_is_live(now) || refresh_exclusion(account, now).is_none()
+            })
             .filter(|account| request.exclude != Some(account.id.as_str()))
             .collect()
     }

@@ -11,6 +11,7 @@ use pa_types::sync::MutexExt;
 use serde_json::json;
 
 use crate::SharedStoreSource;
+use crate::routing::{Route, RouteRequest};
 use crate::test_support::*;
 
 const RATE_LIMITED: &str =
@@ -513,4 +514,69 @@ fn a_new_sticky_assignment_prefers_the_login_the_session_s_cache_is_kept_on() {
     let (bearers, _) = fixture.send(provider, "claude-opus-5-5", ok(1), 1);
 
     assert_eq!(bearers, vec![access_of("busy-warm")]);
+}
+
+/// A login whose access and refresh tokens are both spent, with its store row otherwise untouched
+/// (not marked dead: nothing ever tried it).
+fn spent_login(id: &str) -> anthropic::Account {
+    let mut spent = row(id, Duration::hours(-3));
+    if let anthropic::token::Credential::Oauth(tokens) = &mut spent.credential {
+        tokens.refresh_expires_at = Some(Utc::now() - Duration::days(1));
+    }
+    spent
+}
+
+fn request(exclude: Option<&str>) -> RouteRequest<'_> {
+    RouteRequest {
+        model: "claude-opus-5-5",
+        context_bytes: 0,
+        exclude,
+    }
+}
+
+#[test]
+fn a_login_that_can_neither_serve_nor_refresh_is_never_the_main_login() {
+    // Store order puts the spent login first, and nothing is pinned: it used to be `main`, its token
+    // fetch failed on every request, and the store's own pick quietly served instead.
+    let (_home, source) = source_configured(
+        vec![
+            spent_login("spent-first"),
+            row("live-second", Duration::hours(2)),
+        ],
+        |_| {},
+    );
+
+    assert_eq!(
+        source.route(&request(None)),
+        Route::Login("live-second".to_string())
+    );
+}
+
+#[test]
+fn a_revoked_pinned_login_does_not_come_back_through_the_store_pick_after_a_401() {
+    // The 2026-10-30 chain: the spent login is first, so it was `main`; its token fetch failed and the
+    // store's own pick answered - the pinned login whose refresh token had just been revoked (its access
+    // token still unexpired) - which the 401 recovery then had to refuse. The healthy login was never tried.
+    let mut revoked = row("revoked-pinned", Duration::hours(2));
+    if let anthropic::token::Credential::Oauth(tokens) = &revoked.credential {
+        revoked.dead_refresh_fingerprint =
+            Some(anthropic::token::token_fingerprint(tokens.refresh.expose()));
+    }
+    let (_home, source) = source_configured(
+        vec![
+            spent_login("spent-first"),
+            revoked,
+            row("healthy-last", Duration::hours(2)),
+        ],
+        |_| {},
+    );
+    AccountStore::mutate(source.store_path(), |store| {
+        store.set_current("revoked-pinned")
+    })
+    .expect("pin");
+
+    assert_eq!(
+        source.routed_token(&request(None)),
+        Ok(Some(access_of("healthy-last")))
+    );
 }
