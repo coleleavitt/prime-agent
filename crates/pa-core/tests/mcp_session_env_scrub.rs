@@ -63,7 +63,7 @@ async fn fixture_env(python: &Path, environment: KernelEnvironment) -> Value {
     let manager = Arc::new(Mutex::new(McpManager::new(McpManagerOptions {
         auth_storage: pa_core::auth::AuthStorage::create_with_oauth(
             dir.path(),
-            Arc::new(McpOAuth::new()),
+            Arc::new(McpOAuth::new(Arc::new(|| None))),
         ),
         get_user_servers: Box::new(move || Some(servers.clone())),
         begin_login: None,
@@ -134,7 +134,7 @@ async fn a_server_configured_mid_session_dispatches_after_refresh() {
     let manager = Arc::new(Mutex::new(McpManager::new(McpManagerOptions {
         auth_storage: pa_core::auth::AuthStorage::create_with_oauth(
             dir.path(),
-            Arc::new(McpOAuth::new()),
+            Arc::new(McpOAuth::new(Arc::new(|| None))),
         ),
         get_user_servers: Box::new(move || Some(user_servers.lock().unwrap().clone())),
         begin_login: None,

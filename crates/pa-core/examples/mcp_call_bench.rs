@@ -80,7 +80,7 @@ async fn main() {
     let manager = Arc::new(Mutex::new(McpManager::new(McpManagerOptions {
         auth_storage: pa_core::auth::AuthStorage::create_with_oauth(
             &agent_dir,
-            Arc::new(McpOAuth::new()),
+            Arc::new(McpOAuth::new(Arc::new(|| None))),
         ),
         get_user_servers: Box::new(move || Some(servers.clone())),
         begin_login: None,

@@ -80,7 +80,7 @@ impl Harness {
             }),
             Arc::new(tokio::sync::Mutex::new(AuthStorage::in_memory_without_env(
                 auth,
-                Arc::new(crate::mcp::McpOAuth::new()),
+                Arc::new(crate::mcp::McpOAuth::new(Arc::new(|| None))),
             ))),
             None,
             options,

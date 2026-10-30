@@ -30,7 +30,7 @@ fn credentials(entries: Value) -> McpCredentials {
     McpCredentials::new(
         Arc::new(tokio::sync::Mutex::new(AuthStorage::in_memory_without_env(
             &AuthStorageData(map),
-            Arc::new(crate::mcp::McpOAuth::new()),
+            Arc::new(crate::mcp::McpOAuth::new(Arc::new(|| None))),
         ))),
         None,
     )
