@@ -448,21 +448,30 @@ fn machine_contract_lines(spec: &PyValue) -> Result<Vec<String>, Raise> {
         }
         lines.push(label);
         let subagent = state.get("subagent");
-        match subagent {
-            PyValue::Dict(_) => {
-                let name = subagent.get("name");
-                let settings = if name.truthy() {
-                    py_str(name)
-                } else {
-                    match subagent.entry("prompt") {
-                        Some(prompt) => slice_prefix(prompt)?,
-                        None => String::new(),
-                    }
-                };
-                lines.push(format!("  subagent: inline ({settings})"));
+        let python = state.get("python");
+        if python.is_dict() {
+            lines.push(format!(
+                "  python: {}.{}",
+                py_str(python.get("import")),
+                py_str(python.get("callable"))
+            ));
+        } else {
+            match subagent {
+                PyValue::Dict(_) => {
+                    let name = subagent.get("name");
+                    let settings = if name.truthy() {
+                        py_str(name)
+                    } else {
+                        match subagent.entry("prompt") {
+                            Some(prompt) => slice_prefix(prompt)?,
+                            None => String::new(),
+                        }
+                    };
+                    lines.push(format!("  subagent: inline ({settings})"));
+                }
+                PyValue::Str(reference) => lines.push(format!("  subagent: {reference}")),
+                _ => {}
             }
-            PyValue::Str(reference) => lines.push(format!("  subagent: {reference}")),
-            _ => {}
         }
         for input in iter_items(state.get("inputs"))?
             .iter()

@@ -11,6 +11,7 @@ use crate::factory::executor::ports::{
     FactoryClock,
     FactoryNotice,
     FactoryNotices,
+    FactoryPython,
     FactorySpawn,
     PortFuture,
 };
@@ -81,6 +82,9 @@ pub enum SleepMode {
     Gated { entered: Event, release: Event },
     /// `turn_sleep`: a real 10ms wait that never advances the clock.
     Turn,
+    /// A real wait of the asked length that then advances the clock by it
+    /// (python calls run in real time; a cancelled wait advances nothing).
+    Real,
 }
 
 /// The executor's clock seam over the fake clock and a sleep mode.
@@ -107,6 +111,10 @@ impl FactoryClock for TestClock {
                     release.wait().await;
                 }
                 SleepMode::Turn => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+                SleepMode::Real => {
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0))).await;
+                    clock.advance(seconds);
+                }
             }
         })
     }
@@ -208,6 +216,8 @@ pub struct HostState {
     gates: HashMap<(String, usize), (Event, Event)>,
     call_indices: HashMap<String, usize>,
     pub delete_fails: bool,
+    /// Every collect fails (a dead host bridge).
+    pub collect_fails: bool,
     pub dead_notices: bool,
     /// Children whose FIRST collect settles them with no captured answer
     /// (the host-side capture race); later collects carry the answer.
@@ -453,6 +463,9 @@ impl FactoryChildren for FakePorts {
         let host = Arc::clone(&self.0);
         Box::pin(async move {
             host.pass_gate("rlm.collect").await;
+            if host.with(|state| state.collect_fails) {
+                return Err("host failed".to_string());
+            }
             let advance = host.with(|state| {
                 state.calls.push((
                     "rlm.collect".to_string(),
@@ -550,6 +563,20 @@ impl FactoryNotices for FakePorts {
     }
 }
 
+/// Python states run in a real interpreter (`python3` on PATH) in a
+/// per-case working directory, where tests write the modules they import.
+pub struct LocalPython {
+    pub dir: tempfile::TempDir,
+}
+
+impl FactoryPython for LocalPython {
+    fn command(&self) -> PortFuture<Result<std::process::Command, String>> {
+        let mut command = std::process::Command::new("python3");
+        command.current_dir(self.dir.path());
+        Box::pin(async move { Ok(command) })
+    }
+}
+
 /// One harness subagent entry (`create_subagent`).
 pub struct SubagentRow {
     pub id: String,
@@ -565,6 +592,7 @@ pub struct Case {
     pub host: Arc<FakeHost>,
     pub clock: Arc<FakeClock>,
     pub sleeps: Arc<TestClock>,
+    pub python: Arc<LocalPython>,
     pub executor: Arc<FactoryExecutor>,
     pub subagents: Mutex<Vec<SubagentRow>>,
     pub specs: Mutex<HashMap<String, Value>>,
@@ -593,8 +621,12 @@ impl Case {
             sleeps: Mutex::new(Vec::new()),
         });
         let ports = Arc::new(FakePorts(Arc::clone(&host)));
+        let python = Arc::new(LocalPython {
+            dir: tempfile::TempDir::new().expect("python work dir"),
+        });
         let executor = Arc::new(FactoryExecutor::new(FactoryExecutorConfig {
             children: ports.clone(),
+            python: python.clone(),
             notices: ports,
             clock: sleeps.clone(),
             store_dir,
@@ -603,6 +635,7 @@ impl Case {
             host,
             clock,
             sleeps,
+            python,
             executor,
             subagents: Mutex::new(Vec::new()),
             specs: Mutex::new(HashMap::new()),

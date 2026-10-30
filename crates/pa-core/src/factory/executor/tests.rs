@@ -12,5 +12,7 @@ mod machine;
 mod notices;
 mod persist;
 mod policies;
+#[cfg(target_os = "linux")]
+mod python;
 mod recovery;
 mod run;

@@ -51,7 +51,7 @@ pub const BACKOFF_CAP_SECONDS: f64 = 60.0;
 pub const POLL_TIMEOUT_MS: u64 = 2000;
 
 /// One instance's address: state position, entry index, instance position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Slot {
     pub state: usize,
     pub entry: usize,
@@ -60,7 +60,7 @@ pub(super) struct Slot {
 
 /// What one admission attempt did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Admission {
+pub(super) enum Admission {
     Admitted,
     Deferred,
     Failed,
@@ -83,11 +83,11 @@ fn seconds_text(seconds: f64) -> String {
 }
 
 impl FactoryRun {
-    fn slot_instance(&mut self, slot: Slot) -> &mut NodeInstance {
+    pub(super) fn slot_instance(&mut self, slot: Slot) -> &mut NodeInstance {
         &mut self.states[slot.state].entries[slot.entry].instances[slot.instance]
     }
 
-    fn slot_at(&self, slot: Slot) -> EventAt<'_> {
+    pub(super) fn slot_at(&self, slot: Slot) -> EventAt<'_> {
         let state = &self.states[slot.state];
         EventAt {
             node: Some(&state.state_id),
@@ -98,7 +98,7 @@ impl FactoryRun {
     }
 
     /// Record one event addressed at an instance slot.
-    fn record_at(
+    pub(super) fn record_at(
         &mut self,
         event_kind: &str,
         slot: Slot,
@@ -144,7 +144,7 @@ impl FactoryRun {
         );
     }
 
-    fn queue_settle(&mut self, position: usize, entry: usize) {
+    pub(super) fn queue_settle(&mut self, position: usize, entry: usize) {
         let state = &mut self.states[position];
         state.entries[entry].is_settle = true;
         let state_id = state.state_id.clone();
@@ -255,6 +255,9 @@ impl FactoryRun {
             .and_then(|foreach| foreach.get("over"))
             .and_then(Value::as_str);
         let mut values: Vec<(String, String)> = Vec::new();
+        // The raw bound values a python state receives (rendered values
+        // are the prompt form).
+        let mut bound = Map::new();
         let mut items: Option<Vec<Value>> = None;
         let inputs = spec
             .get("inputs")
@@ -338,6 +341,7 @@ impl FactoryRun {
                     }
                     let sentinel = if port_type == "json" { "null" } else { "None" };
                     values.push((name.to_string(), sentinel.to_string()));
+                    bound.insert(name.to_string(), Value::Null);
                     continue;
                 }
                 if latest.is_none() {
@@ -346,7 +350,9 @@ impl FactoryRun {
                 return Err(failure.unwrap_or_default());
             };
             if port_type == "text" {
-                values.push((name.to_string(), text_of(&value)));
+                let text = text_of(&value);
+                bound.insert(name.to_string(), Value::from(text.clone()));
+                values.push((name.to_string(), text));
                 continue;
             }
             if over == Some(name) {
@@ -360,8 +366,17 @@ impl FactoryRun {
                 continue;
             }
             values.push((name.to_string(), py_json_dumps(&value)));
+            bound.insert(name.to_string(), value);
         }
+        let python = self.runs_python(position);
         let state = &mut self.states[position];
+        if python {
+            // One call carrying the raw bound values; re-runs reuse them.
+            let mut instance = NodeInstance::new(state.instance_counter, String::new());
+            instance.inputs = Some(bound);
+            state.instance_counter += 1;
+            return Ok(Some(vec![instance]));
+        }
         let template = state.prompt_template.clone().unwrap_or_default();
         let Some(foreach) = foreach else {
             let instance =
@@ -908,7 +923,7 @@ impl Inner {
             Stop,
             PauseBudget,
             PauseChildren,
-            Admit(Slot),
+            Admit(Slot, bool),
         }
         let mut started: Vec<String> = Vec::new();
         while cell.with(|run| run.loop_alive(generation)) {
@@ -930,10 +945,13 @@ impl Inner {
                 let Some(slot) = run.next_pending_instance() else {
                     return Next::Stop;
                 };
-                if run.children_budget_exceeded() {
+                // A python call is no child: it never counts toward
+                // max_children.
+                let python = run.runs_python(slot.state);
+                if !python && run.children_budget_exceeded() {
                     return Next::PauseChildren;
                 }
-                Next::Admit(slot)
+                Next::Admit(slot, python)
             });
             match next {
                 Next::Stop => break,
@@ -945,9 +963,14 @@ impl Inner {
                     self.pause_for_children(cell).await;
                     break;
                 }
-                Next::Admit(slot) => {
+                Next::Admit(slot, python) => {
                     let state_id = cell.with(|run| run.states[slot.state].state_id.clone());
-                    match self.admit(cell, slot, allow_backoff).await {
+                    let admission = if python {
+                        self.start_python(cell, slot).await
+                    } else {
+                        self.admit(cell, slot, allow_backoff).await
+                    };
+                    match admission {
                         Admission::Admitted => {
                             if !started.contains(&state_id) {
                                 started.push(state_id);
@@ -1426,7 +1449,7 @@ impl Inner {
         });
     }
 
-    async fn apply_instance_failure(
+    pub(super) async fn apply_instance_failure(
         &self,
         cell: &Arc<RunCell>,
         slot: Slot,
@@ -1687,9 +1710,11 @@ impl Inner {
         });
     }
 
-    /// Delete every running child, claiming each instance before its
-    /// delete so a concurrent pass never deletes one child twice.
+    /// Kill every running python call, then delete every running child,
+    /// claiming each instance before its delete so a concurrent pass never
+    /// deletes one child twice.
     async fn cancel_running(&self, cell: &Arc<RunCell>) {
+        self.cancel_python(cell).await;
         loop {
             let claimed = cell.with(|run| {
                 for (state_position, state) in run.states.iter().enumerate() {
@@ -1805,6 +1830,9 @@ impl Inner {
                 })
             });
             if let Some(announce) = announce {
+                // Children stay supervisor-owned; the python calls have no
+                // owner or deadline enforcer once this loop exits.
+                self.cancel_python(cell).await;
                 self.milestone(cell, announce).await;
             }
         }
@@ -1859,14 +1887,26 @@ impl Inner {
                 }
                 slots
             });
+            let python_calls = cell.with(|run| run.python_slots());
             if !in_flight.is_empty() {
                 let targets = in_flight
                     .iter()
                     .map(|(_, child, _)| child.clone())
                     .collect();
+                // A child poll must not postpone a python call's deadline.
+                let nearest = python_calls
+                    .iter()
+                    .map(|(_, deadline)| *deadline)
+                    .fold(f64::INFINITY, f64::min);
+                let until_deadline_ms = ((nearest - self.clock.now()) * 1000.0).ceil().max(0.0);
+                let timeout_ms = if until_deadline_ms < POLL_TIMEOUT_MS as f64 {
+                    until_deadline_ms as u64
+                } else {
+                    POLL_TIMEOUT_MS
+                };
                 let results = self
                     .children
-                    .collect(targets, POLL_TIMEOUT_MS)
+                    .collect(targets, timeout_ms)
                     .await
                     .map_err(LoopError)?;
                 for (slot, child, _) in &in_flight {
@@ -1882,6 +1922,18 @@ impl Inner {
                     {
                         self.apply_settlement(cell, *slot, result).await;
                     }
+                }
+            } else if !python_calls.is_empty() {
+                self.wait_python(cell, &python_calls).await;
+            }
+            for (slot, deadline) in &python_calls {
+                if cell.with(|run| run.loop_generation != generation) {
+                    return Ok(());
+                }
+                // stop() or fail_fast may have claimed the call meanwhile;
+                // the settle re-checks under the run lock.
+                if cell.python.finished(*slot) || self.clock.now() >= *deadline {
+                    self.apply_python_exit(cell, *slot).await;
                 }
             }
             // stop() (or a policy transition) can land during the collect;
@@ -1938,6 +1990,7 @@ impl Inner {
             let resident_only = in_flight.iter().all(|(_, _, resident)| *resident);
             let stall = cell.with(|run| {
                 if (in_flight.is_empty() || resident_only)
+                    && python_calls.is_empty()
                     && started.is_empty()
                     && !run.has_pending_instance()
                     && run.pending_evaluations.is_empty()

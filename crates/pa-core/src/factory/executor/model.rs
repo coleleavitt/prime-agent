@@ -109,6 +109,12 @@ pub struct NodeInstance {
     /// flight; resume deletes it best-effort before re-admitting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interrupted_child: Option<String>,
+    /// A python state's bound inputs (raw values); a re-run reuses them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Map<String, Value>>,
+    /// A running python call's time limit on the executor clock (seconds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<f64>,
 }
 
 impl NodeInstance {
@@ -128,6 +134,8 @@ impl NodeInstance {
             error: None,
             tool_uses: 0,
             interrupted_child: None,
+            inputs: None,
+            deadline: None,
         }
     }
 }
@@ -341,6 +349,8 @@ pub mod kind {
     pub const STATE_ENTRY: &str = "state_entry";
     pub const NODE_READY: &str = "node_ready";
     pub const SPAWNED: &str = "spawned";
+    /// A python state's call started (no child).
+    pub const STARTED: &str = "started";
     pub const SPAWN_BACKOFF: &str = "spawn_backoff";
     pub const SPAWN_DEFERRED: &str = "spawn_deferred";
     pub const SETTLED: &str = "settled";

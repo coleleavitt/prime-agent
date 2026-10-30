@@ -118,10 +118,11 @@ def validate_factory_machine(machine: Any) -> list[str]:
 
     Returns a list of human-readable error sentences; an empty list means
     the machine is valid. Rules: states are 1..1024 with unique slug ids and
-    at least one entry state; every state requires a subagent and entry
-    states declare only optional inputs; resident states declare no outputs, foreach,
-    or outgoing transitions; wait blocks are rejected (the watch host
-    handlers arrive with the communication series); transitions reference
+    at least one entry state; every state requires a subagent or a python
+    callable (not both) and entry states declare only optional inputs;
+    resident states declare no outputs, foreach, or outgoing transitions;
+    wait blocks are rejected (the watch host handlers arrive with the
+    communication series); transitions reference
     existing states (self-loops are legal re-entry) and may carry one guard
     over the from-state's latest settle output; a transition with a LIST of
     from-states is a join that fires once every source settled (guards are
@@ -1039,7 +1040,8 @@ the cap and fails to bind.
   least one state carries `"entry": true`. An entry state's inputs must all
   be optional: its first entry binds the null sentinel, and a later entry
   through a transition (a verify loop back into it) binds the real
-  settle. A state's `subagent` is a harness subagent entry id or title (its
+  settle. A state runs either a `python` callable (see Python states) or
+  a subagent. A state's `subagent` is a harness subagent entry id or title (its
   content is the prompt template; `metadata.model`/`metadata.thinking` are
   spawn settings) or an inline `{"prompt": ...}` object with optional
   `name`/`model`/`thinking`. The optional `name` labels the spawned
@@ -1173,6 +1175,74 @@ rlm.harness.create_factory(
 )
 ```
 
+## Python states
+
+A state can run a Python function instead of spawning a child: it carries
+`"python": {"import": "<module>", "callable": "<function>"}` in place of
+`subagent` (exactly one of the two). Use it for deterministic routing and
+data shaping — listing work items, filtering, reshaping one state's output
+for the next — where a child agent would only spend budget.
+
+- **Contract**: the executor calls `fn(inputs)` with a dict of the state's
+  declared inputs bound to raw values (a `text` input as a string, a `json`
+  input as the parsed value, an optional input with no value as `None`;
+  entry states with no declared inputs get `{}`). The function returns a
+  dict whose keys are exactly the declared output names (a `text` output must be a string);
+  that dict is the settle's outputs, so guards and downstream inputs read
+  it like any other state's. An `async def` function is awaited.
+- **Isolation**: every call runs in a fresh, short-lived Python subprocess
+  (the kernel's interpreter, isolated mode, under the session's OS sandbox
+  like a `bash()` command) in the session's working directory, which is on
+  the import path, so a module next to your work imports. It has no `rlm`,
+  no harness, no kernel globals, and cannot spawn agents. Prints go to
+  stderr; only the returned dict goes to stdout.
+- **Failures**: an exception (its stderr tail is the error), output that is
+  not a dict, or keys that do not match the declared outputs fail the
+  attempt: `retries` re-runs the call with the same inputs, then
+  `failure_policy` applies. A bad import fails at run time the same way.
+- **Time limit**: the state's `budget_ms`, else the run's `budget_ms`, else
+  60 seconds. A call past its limit is killed and fails without a retry.
+  `stop` and `fail_fast` kill running calls.
+- **Pure functions**: calls are re-run on retry and on resume after an
+  escalate pause, so a python state should depend only on its inputs.
+  A running call belongs to its run in the Prime Agent host: a kernel
+  restart does not touch it, and a host restart re-queues it like a lost
+  child, so `resume` runs it again.
+- Python states cannot be `resident` and cannot use `foreach`. A call holds
+  a `max_parallel` slot but is no child: it does not count toward
+  `max_children`.
+
+A python state lists the work, then an agent state fans out over it:
+
+```python
+# my_tools.py in the session's working directory
+def changed_files(inputs):
+    import subprocess
+    out = subprocess.run(["git", "diff", "--name-only", "main"],
+                         capture_output=True, text=True, check=True).stdout
+    return {"files": out.split()[:8]}
+```
+
+```python
+rlm.harness.create_factory(
+    "file-review",
+    "Review each changed file.",
+    id="file-review",
+    machine={
+        "states": [
+            {"id": "files", "entry": True,
+             "python": {"import": "my_tools", "callable": "changed_files"},
+             "outputs": [{"name": "files", "type": "json"}]},
+            {"id": "review",
+             "subagent": {"prompt": "Review {file}; reply one line: `<path>: <problem or clean>`."},
+             "inputs": [{"name": "file", "type": "json", "from": "files.files"}],
+             "foreach": {"over": "file", "max": 8}},
+        ],
+        "transitions": [{"from": "files", "to": "review"}],
+    },
+)
+```
+
 ## Run and steer
 
 ```python
@@ -1272,7 +1342,7 @@ watched = await rlm.factory.watch(result["run_id"], 30)
 
 ## Safety
 
-- Every state spawns real children that spend budget. Bound loops with
+- Every subagent state spawns real children that spend budget. Bound loops with
   `max_entries`, `max_transitions`, and `run.max_children` (total
   admissions); the default `escalate` policy pauses
   instead of failing, so read `status` (or the notice) before resuming.

@@ -1198,6 +1198,44 @@ class ValidateFactoryMachineTest(unittest.TestCase):
                 repr(bad),
             )
 
+    def test_python_states(self) -> None:
+        python = {"import": "tools", "callable": "plan"}
+        machine = {
+            "states": [
+                {"id": "plan", "entry": True, "python": python, "outputs": [{"name": "items", "type": "json"}]},
+                state("work", inputs=[{"name": "items", "type": "json", "from": "plan.items"}]),
+            ],
+            "transitions": [{"from": "plan", "to": "work"}],
+        }
+        self.assertEqual(validate_factory_machine(machine), [])
+        canonical = canonicalize_factory_spec(machine)
+        self.assertEqual(canonical["states"][0]["python"], python)
+        self.assertNotIn("subagent", canonical["states"][0])
+        # The dag form compiles python nodes to python states.
+        dag = {"nodes": [{"id": "plan", "python": python}, node("work", depends_on=["plan"])]}
+        self.assertEqual(canonicalize_factory_spec(dag)["states"][0]["python"], python)
+
+        cases = {
+            "declares both subagent and python": {"python": python, "subagent": "worker"},
+            "python requires non-empty 'import' and 'callable' strings": {"python": {"import": "tools"}},
+            "python state a cannot be resident": {"python": python, "lifecycle": "resident"},
+            "python state a cannot use foreach": {
+                "python": python,
+                "inputs": [{"name": "xs", "type": "json", "from": "b.xs"}],
+                "foreach": {"over": "xs", "max": 2},
+            },
+        }
+        for expected, fields in cases.items():
+            machine = {
+                "states": [
+                    {"id": "a", "entry": not fields.get("inputs"), **fields},
+                    state("b", entry=True, outputs=[{"name": "xs", "type": "json"}]),
+                ],
+                "transitions": [],
+            }
+            errors = validate_factory_machine(machine)
+            self.assertTrue(any(expected in error for error in errors), (expected, errors))
+
     def test_subagent_required(self) -> None:
         missing = {"states": [{"id": "a", "entry": True}], "transitions": []}
         errors = validate_factory_machine(missing)

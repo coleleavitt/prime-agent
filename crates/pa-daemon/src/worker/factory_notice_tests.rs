@@ -104,6 +104,7 @@ fn executor(
 ) -> FactoryExecutor {
     FactoryExecutor::new(FactoryExecutorConfig {
         children,
+        python: Arc::new(pa_core::factory::executor::ports::SessionPython::default()),
         notices,
         clock: Arc::new(SystemClock),
         store_dir,

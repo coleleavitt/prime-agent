@@ -134,7 +134,7 @@ fn subagent_forms() {
     let cases = [
         (
             json!({ "id": "a" }),
-            "node a requires a subagent: a harness subagent id/title string or an inline object with a prompt",
+            "node a requires a subagent: a harness subagent id/title string or an inline object with a prompt (or a python state: {\"python\": {\"import\": \"<module>\", \"callable\": \"<function>\"}})",
         ),
         (
             json!({ "id": "a", "subagent": { "prompt": "  \t " } }),
@@ -167,6 +167,72 @@ fn subagent_forms() {
         spec_errors(&duplicate),
         ["state b subagent name 'w' is already configured by state 'a'"]
     );
+}
+
+// Port of `test_python_states`.
+#[test]
+fn python_states() {
+    let python = json!({ "import": "tools", "callable": "plan" });
+    let machine = json!({
+        "states": [
+            { "id": "plan", "entry": true, "python": python, "outputs": [{ "name": "items", "type": "json" }] },
+            { "id": "work", "subagent": "worker", "inputs": [{ "name": "items", "type": "json", "from": "plan.items" }] }
+        ],
+        "transitions": [{ "from": "plan", "to": "work" }]
+    });
+    assert_eq!(machine_errors(&machine), Vec::<String>::new());
+    let canonical = canonicalize_factory_spec(&py(&machine))
+        .expect("valid")
+        .to_json();
+    assert_eq!(canonical["states"][0]["python"], python);
+    assert_eq!(canonical["states"][0].get("subagent"), None);
+    // The dag form compiles python nodes to python states.
+    let dag = json!({ "nodes": [
+        { "id": "plan", "python": python },
+        { "id": "work", "subagent": "worker", "depends_on": ["plan"] }
+    ] });
+    let compiled = canonicalize_factory_spec(&py(&dag))
+        .expect("valid")
+        .to_json();
+    assert_eq!(compiled["states"][0]["python"], python);
+
+    let cases = [
+        (
+            "declares both subagent and python",
+            json!({ "python": python, "subagent": "worker" }),
+        ),
+        (
+            "python requires non-empty 'import' and 'callable' strings",
+            json!({ "python": { "import": "tools" } }),
+        ),
+        (
+            "python state a cannot be resident",
+            json!({ "python": python, "lifecycle": "resident" }),
+        ),
+        (
+            "python state a cannot use foreach",
+            json!({
+                "python": python,
+                "inputs": [{ "name": "xs", "type": "json", "from": "b.xs" }],
+                "foreach": { "over": "xs", "max": 2 }
+            }),
+        ),
+    ];
+    for (expected, fields) in cases {
+        let entry = fields.get("inputs").is_none();
+        let machine = json!({
+            "states": [
+                with(json!({ "id": "a", "entry": entry }), &fields),
+                { "id": "b", "entry": true, "subagent": "worker", "outputs": [{ "name": "xs", "type": "json" }] }
+            ],
+            "transitions": []
+        });
+        let errors = machine_errors(&machine);
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "{expected}: {errors:?}"
+        );
+    }
 }
 
 #[test]
@@ -529,7 +595,10 @@ fn entry_state_inputs_must_be_optional() {
             "transitions": [{ "from": "src", "to": "peer" }, { "from": "peer", "to": "src" }]
         })
     };
-    assert_eq!(machine_errors(&with_inputs(Some(true))), Vec::<String>::new());
+    assert_eq!(
+        machine_errors(&with_inputs(Some(true))),
+        Vec::<String>::new()
+    );
     for required in [Some(false), None] {
         assert_eq!(
             machine_errors(&with_inputs(required)),

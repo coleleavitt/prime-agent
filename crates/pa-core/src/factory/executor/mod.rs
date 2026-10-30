@@ -21,12 +21,15 @@
 //! out of `max_entries` (`transition_blocked`), and a self-loop or
 //! back-edge re-enters its target with freshly re-bound inputs. A run
 //! completes at quiescence: no entry in flight and no unevaluated settle.
+//! A python state runs a callable in a short-lived subprocess instead of
+//! admitting a child (see [`python`]).
 
 pub mod binding;
 pub(crate) mod engine;
 pub mod model;
 pub mod notice;
 pub mod ports;
+mod python;
 pub mod snapshot;
 pub mod store;
 
@@ -39,7 +42,8 @@ use serde_json::{Map, Value};
 
 pub use self::engine::{BACKOFF_MAX_ATTEMPTS, POLL_TIMEOUT_MS};
 use self::model::{FactoryRun, LibraryOrigin, RunState, StateRun};
-use self::ports::{FactoryChildren, FactoryClock, FactoryNotices};
+use self::ports::{FactoryChildren, FactoryClock, FactoryNotices, FactoryPython};
+use self::python::PythonCalls;
 pub use self::snapshot::{EVENT_WINDOW, GRAPH_EVENTS_TAIL, GRAPH_RUNS_WINDOW, LAST_FIRED_WINDOW};
 use self::store::RunStore;
 use crate::factory::pyvalue::{PyValue, py_repr, py_str_repr, py_strip};
@@ -65,6 +69,9 @@ pub struct RunCell {
     store: Option<RunStore>,
     /// Set while a record write is queued.
     pub(crate) dirty: AtomicBool,
+    /// The run's running python calls (never persisted: a restarted host
+    /// re-queues their instances).
+    python: PythonCalls,
 }
 
 impl RunCell {
@@ -76,6 +83,7 @@ impl RunCell {
             task: Mutex::new(None),
             store,
             dirty: AtomicBool::new(false),
+            python: PythonCalls::default(),
         })
     }
 
@@ -130,6 +138,7 @@ impl RunCell {
 /// The shared executor core the control-loop tasks hold.
 pub(crate) struct Inner {
     children: Arc<dyn FactoryChildren>,
+    python: Arc<dyn FactoryPython>,
     notices: Arc<dyn FactoryNotices>,
     clock: Arc<dyn FactoryClock>,
     store: Option<RunStore>,
@@ -205,6 +214,8 @@ fn interruption_notice(run: &FactoryRun) -> Option<(u64, String)> {
 /// The executor's seams and its record directory.
 pub struct FactoryExecutorConfig {
     pub children: Arc<dyn FactoryChildren>,
+    /// Where python states run.
+    pub python: Arc<dyn FactoryPython>,
     pub notices: Arc<dyn FactoryNotices>,
     pub clock: Arc<dyn FactoryClock>,
     /// Where run records live; `None` keeps runs in memory only (sessions
@@ -279,6 +290,9 @@ fn resolve_subagents(
     let mut errors = Vec::new();
     for state in canonical.get("states").as_list().unwrap_or(&[]) {
         let state_id = state.get("id").as_str().unwrap_or_default().to_string();
+        if state.has("python") {
+            continue; // python states spawn no child
+        }
         let reference = state.get("subagent");
         let (prompt, name, model, thinking) = if reference.is_dict() {
             let name = reference
@@ -353,6 +367,7 @@ impl FactoryExecutor {
         let store = config.store_dir.map(RunStore::open);
         let inner = Arc::new(Inner {
             children: config.children,
+            python: config.python,
             notices: config.notices,
             clock: config.clock,
             store: store.clone(),

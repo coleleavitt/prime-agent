@@ -743,7 +743,7 @@ impl Inner {
 /// read UTF-8 regardless of the active legacy code page, overriding any
 /// provisioner-provided `PYTHONUTF8`) and the owner pid the runtime journals
 /// its process groups under.
-fn kernel_spawn_env(
+pub(super) fn kernel_spawn_env(
     options_env: &HashMap<String, String>,
     environment: crate::kernel::shared::KernelEnvironment,
 ) -> HashMap<std::ffi::OsString, std::ffi::OsString> {

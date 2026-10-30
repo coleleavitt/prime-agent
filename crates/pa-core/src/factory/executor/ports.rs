@@ -1,6 +1,7 @@
 //! The executor's seams: the child-session host it admits children
-//! through, the parent-notice lane milestones ride, and the clock budgets
-//! and backoff measure against.
+//! through, the Python environment python states run in, the
+//! parent-notice lane milestones ride, and the clock budgets and backoff
+//! measure against.
 //!
 //! Boxed futures (not RPITIT): the executor holds every seam as a `dyn`
 //! object, so a production adapter, a test double, and a future host can
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 pub use super::notice::FactoryNotice;
+use crate::kernel::provisioner::IpythonKernelProvisioner;
 use crate::session_engine::rlm_host::{RlmChildResult, RlmFactoryTag, RlmHostBridge};
 
 /// One pending seam call.
@@ -71,6 +73,46 @@ pub trait FactoryNotices: Send + Sync {
 pub trait FactoryClock: Send + Sync {
     fn now(&self) -> f64;
     fn sleep(&self, seconds: f64) -> PortFuture<()>;
+}
+
+/// Where a python state's call runs: the session's Python environment.
+///
+/// `command` answers a `Command` for the session's interpreter, already
+/// carrying its environment, working directory, and OS sandbox (the
+/// executor adds the runner arguments and stdio), or the sentence a
+/// failed start reports when no Python environment is available.
+pub trait FactoryPython: Send + Sync {
+    fn command(&self) -> PortFuture<Result<std::process::Command, String>>;
+}
+
+/// The session's Python kernel as the python states' environment. Bound
+/// once the kernel provisioner exists: the executor is built first, since
+/// the kernel's host handlers carry it. An unbound port refuses every call.
+#[derive(Default)]
+pub struct SessionPython {
+    provisioner: std::sync::OnceLock<std::sync::Weak<IpythonKernelProvisioner>>,
+}
+
+impl SessionPython {
+    /// Point the port at the session's kernel (first binding wins).
+    pub fn bind(&self, provisioner: &Arc<IpythonKernelProvisioner>) {
+        let _ = self.provisioner.set(Arc::downgrade(provisioner));
+    }
+}
+
+impl FactoryPython for SessionPython {
+    fn command(&self) -> PortFuture<Result<std::process::Command, String>> {
+        let provisioner = self.provisioner.get().and_then(std::sync::Weak::upgrade);
+        Box::pin(async move {
+            let provisioner =
+                provisioner.ok_or_else(|| "this session has no Python kernel".to_string())?;
+            let manager = provisioner
+                .ensure(None, None)
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            manager.python_command()
+        })
+    }
 }
 
 /// Wall-clock seconds since the epoch: a persisted run record's times stay

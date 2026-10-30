@@ -64,11 +64,38 @@ pub fn json_repr(value: &Value) -> String {
 #[must_use]
 pub fn py_json_dumps(value: &Value) -> String {
     let mut out = String::new();
-    write_json(value, &mut out);
+    write_json(value, Separators::DEFAULT, &mut out);
     out
 }
 
-fn write_json(value: &Value, out: &mut String) {
+/// Python's `json.dumps(value, separators=(",", ":"))`: the compact text a
+/// python state's outputs are captured as.
+#[must_use]
+pub fn py_json_dumps_compact(value: &Value) -> String {
+    let mut out = String::new();
+    write_json(value, Separators::COMPACT, &mut out);
+    out
+}
+
+/// `json.dumps`'s `(item, key)` separators.
+#[derive(Clone, Copy)]
+struct Separators {
+    item: &'static str,
+    key: &'static str,
+}
+
+impl Separators {
+    const DEFAULT: Self = Self {
+        item: ", ",
+        key: ": ",
+    };
+    const COMPACT: Self = Self {
+        item: ",",
+        key: ":",
+    };
+}
+
+fn write_json(value: &Value, separators: Separators, out: &mut String) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
@@ -79,9 +106,9 @@ fn write_json(value: &Value, out: &mut String) {
             out.push('[');
             for (position, item) in items.iter().enumerate() {
                 if position > 0 {
-                    out.push_str(", ");
+                    out.push_str(separators.item);
                 }
-                write_json(item, out);
+                write_json(item, separators, out);
             }
             out.push(']');
         }
@@ -89,11 +116,11 @@ fn write_json(value: &Value, out: &mut String) {
             out.push('{');
             for (position, (key, item)) in map.iter().enumerate() {
                 if position > 0 {
-                    out.push_str(", ");
+                    out.push_str(separators.item);
                 }
                 write_json_string(key, out);
-                out.push_str(": ");
-                write_json(item, out);
+                out.push_str(separators.key);
+                write_json(item, separators, out);
             }
             out.push('}');
         }

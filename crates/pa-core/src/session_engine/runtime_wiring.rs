@@ -103,6 +103,9 @@ pub struct SessionKernelWiring {
     /// The session's factory executor (kernel `factory.*` requests and the
     /// `/factory` lane).
     pub factory: Arc<crate::factory::executor::FactoryExecutor>,
+    /// Where the executor's python states run: bound to the session's
+    /// kernel provisioner once it exists.
+    pub factory_python: Arc<crate::factory::executor::ports::SessionPython>,
 }
 
 /// Build the session runtime and register the `goal.*`, `rlm.*`, and —
@@ -237,9 +240,11 @@ pub fn wire_session_runtime(
     let factory_children = Arc::new(crate::factory::executor::ports::SessionChildren::new(
         Arc::clone(&rlm_bridge),
     ));
+    let factory_python = Arc::new(crate::factory::executor::ports::SessionPython::default());
     let factory = Arc::new(crate::factory::executor::FactoryExecutor::new(
         crate::factory::executor::FactoryExecutorConfig {
             children: factory_children,
+            python: factory_python.clone(),
             notices: factory_notices
                 .unwrap_or_else(|| Arc::new(crate::factory::executor::ports::NoNoticeLane)),
             clock: Arc::new(crate::factory::executor::ports::SystemClock),
@@ -255,6 +260,7 @@ pub fn wire_session_runtime(
         rlm: rlm_bridge,
         rlm_usage,
         factory,
+        factory_python,
     }
 }
 

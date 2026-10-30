@@ -1051,6 +1051,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         claude_code_env,
         config.kernel_ready_gate.clone(),
     );
+    wiring.factory_python.bind(&provisioner);
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {
         let definition = crate::tools::ipython::create_ipython_tool_definition(

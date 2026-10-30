@@ -502,6 +502,7 @@ mod execution;
 mod host_requests;
 mod line_framer;
 mod plan_guard;
+mod python_call;
 mod repair;
 mod requests;
 mod snapshot;

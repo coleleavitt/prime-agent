@@ -359,7 +359,13 @@ pub fn machine_structure(machine: &Value, resolved: Option<&[SpawnSettings]>) ->
                 )
             });
         let subagent = state.get("subagent").cloned().unwrap_or(Value::Null);
-        if subagent.is_object() {
+        if let Some(python) = state.get("python") {
+            let field = |key: &str| python.get(key).and_then(Value::as_str).unwrap_or_default();
+            row.insert(
+                "python".into(),
+                Value::from(format!("{}.{}", field("import"), field("callable"))),
+            );
+        } else if subagent.is_object() {
             if model.is_none() {
                 model = subagent
                     .get("model")

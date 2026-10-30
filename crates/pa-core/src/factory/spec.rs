@@ -269,7 +269,29 @@ fn validate_state_fields(
     }
 
     let subagent = state.get("subagent");
-    if subagent.is_nonempty_str() {
+    if state.has("python") {
+        // A pure-Python state runs a callable instead of spawning a child.
+        let python = state.get("python");
+        if state.has("subagent") {
+            errors.push(format!(
+                "{noun} {reference} declares both subagent and python; use exactly one"
+            ));
+        }
+        if !(python.is_dict()
+            && python.get("import").is_nonempty_str()
+            && python.get("callable").is_nonempty_str())
+        {
+            errors.push(format!(
+                "{noun} {reference} python requires non-empty 'import' and 'callable' strings"
+            ));
+        }
+        if resident {
+            errors.push(format!("python {noun} {reference} cannot be resident"));
+        }
+        if state.has("foreach") {
+            errors.push(format!("python {noun} {reference} cannot use foreach"));
+        }
+    } else if subagent.is_nonempty_str() {
         // A harness subagent entry id or title; resolved at run time.
     } else if subagent.is_dict() {
         let prompt_ok = subagent
@@ -306,7 +328,8 @@ fn validate_state_fields(
     } else {
         errors.push(format!(
             "{noun} {reference} requires a subagent: a harness subagent id/title string \
-             or an inline object with a prompt"
+             or an inline object with a prompt (or a python state: \
+             {{\"python\": {{\"import\": \"<module>\", \"callable\": \"<function>\"}}}})"
         ));
     }
 
@@ -1033,6 +1056,7 @@ pub fn compile_factory_dag(dag: &PyValue) -> (Option<PyValue>, Vec<String>) {
         ];
         for key in [
             "subagent",
+            "python",
             "lifecycle",
             "budget_ms",
             "retries",
@@ -1148,9 +1172,15 @@ fn canonicalize_machine(machine: &PyValue) -> PyValue {
                 "failure_policy",
                 default("failure_policy", run_policy.clone()),
             ),
-            ("subagent", state.get("subagent").clone()),
         ];
-        for key in ["budget_ms", "inputs", "outputs", "foreach"] {
+        for key in [
+            "subagent",
+            "python",
+            "budget_ms",
+            "inputs",
+            "outputs",
+            "foreach",
+        ] {
             if let Some(value) = state.entry(key) {
                 row.push((key, value.clone()));
             }
