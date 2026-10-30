@@ -40,6 +40,9 @@ use super::{
     write_frame_segments,
 };
 
+/// How often the serve loop checks that its socket file still exists.
+const SOCKET_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthOutcome {
     Authenticated,
@@ -312,6 +315,9 @@ impl Worker {
         // against wake loss: a close request that fires while an accept
         // is being handed off leaves its permit stored, and the next
         // loop iteration consumes it.
+        let mut listener = listener;
+        let mut socket_watch = tokio::time::interval(SOCKET_WATCH_INTERVAL);
+        socket_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let accept_error = loop {
             let stream = tokio::select! {
                 accepted = listener.accept() => match accepted {
@@ -324,6 +330,38 @@ impl Worker {
                     Err(error) => break Some(anyhow!("worker accept: {error}")),
                 },
                 () = self.listener_close_requested.notified() => break None,
+                // A socket file that something outside the product removed
+                // (a /tmp wipe) leaves this worker listening on an unlinked
+                // inode no supervisor can reach by path, and every adoption
+                // of it fails. Only an ABSENT path is rebound: a file that
+                // is present, even a successor's, is never replaced.
+                _ = socket_watch.tick() => {
+                    let path = &self.config.socket_path;
+                    let vanished = cfg!(unix)
+                        && matches!(
+                            std::fs::symlink_metadata(path),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        );
+                    if vanished {
+                        match bind_transport(path).await {
+                            Ok(rebound) => {
+                                listener = rebound;
+                                *self.bound_socket_identity.lock_or_recover() =
+                                    crate::socket::socket_identity(path);
+                                crate::socket::restrict_socket_path(path);
+                                eprintln!(
+                                    "pa-daemon worker: socket file {} vanished; rebound it",
+                                    path.display()
+                                );
+                            }
+                            Err(error) => eprintln!(
+                                "pa-daemon worker: socket file {} vanished and the rebind failed: {error:#}",
+                                path.display()
+                            ),
+                        }
+                    }
+                    continue;
+                }
             };
             let worker = Arc::clone(&self);
             tokio::spawn(async move {
