@@ -303,6 +303,17 @@ fn the_cooldown_follows_the_server() {
             now
         )
         .timestamp(),
+        five_hour_reset
+    );
+    assert_eq!(
+        cooldown_until(
+            &headers(&[(
+                "anthropic-ratelimit-unified-7d-reset",
+                seven_day_reset.to_string()
+            )]),
+            now
+        )
+        .timestamp(),
         seven_day_reset
     );
     assert_eq!(cooldown_until(&[], now), now + Duration::seconds(60));

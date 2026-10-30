@@ -495,8 +495,12 @@ pub(crate) fn cooldown_until(headers: &[(String, String)], now: DateTime<Utc>) -
         Some("seven_day") => reset("7d"),
         _ => None,
     };
+    // No claim names the binding window: the earliest reset ends the hold. A spent 7d
+    // window is not lost by that - the usage poll after the 429 records it and the quota
+    // policy keeps the login skipped - while the later reset would lock a login for days
+    // on a 5h-only or model-only limit.
     binding
-        .or_else(|| reset("5h").into_iter().chain(reset("7d")).max())
+        .or_else(|| reset("5h").into_iter().chain(reset("7d")).min())
         .unwrap_or_else(|| now + Duration::seconds(DEFAULT_COOLDOWN_SECS))
 }
 
