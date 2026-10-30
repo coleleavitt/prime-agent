@@ -38,6 +38,7 @@ mod lifecycle;
 mod read_goldens;
 mod shutdown;
 mod side_questions;
+mod socket_wipe;
 mod tool_results;
 
 struct Daemon {

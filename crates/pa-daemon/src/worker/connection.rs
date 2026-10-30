@@ -343,6 +343,9 @@ impl Worker {
                             Err(error) if error.kind() == std::io::ErrorKind::NotFound
                         );
                     if vanished {
+                        if let Some(parent) = path.parent() {
+                            let _ = crate::paths::ensure_dir(parent);
+                        }
                         match bind_transport(path).await {
                             Ok(rebound) => {
                                 listener = rebound;

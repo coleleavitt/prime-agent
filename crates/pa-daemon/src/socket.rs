@@ -9,6 +9,8 @@ use std::time::Duration;
 use anyhow::Result;
 #[cfg(unix)]
 use anyhow::anyhow;
+#[cfg(unix)]
+use pa_types::sync::MutexExt;
 
 #[cfg(unix)]
 pub use crate::platform::socket_dir;
@@ -72,7 +74,9 @@ pub struct SocketLease {
     socket_path: std::path::PathBuf,
     lock_path: std::path::PathBuf,
     lock_dir: std::fs::File,
-    identity: SocketIdentity,
+    /// The held lock directory's inode: replaced when the refresh thread takes a vanished
+    /// directory again.
+    identity: std::sync::Arc<std::sync::Mutex<SocketIdentity>>,
     compromised: std::sync::Arc<std::sync::atomic::AtomicBool>,
     compromise_tx: tokio::sync::watch::Sender<bool>,
     refresh_stop: std::sync::mpsc::Sender<()>,
@@ -96,20 +100,34 @@ impl SocketLease {
         // If the open fails, ownership is unprovable; leave the artifact to
         // expire instead of risking removal of a racing successor's lock.
         let lock_dir = std::fs::File::open(&lock_path)?;
-        let identity = metadata_identity(&lock_dir.metadata()?);
+        let identity = std::sync::Arc::new(std::sync::Mutex::new(metadata_identity(
+            &lock_dir.metadata()?,
+        )));
         let compromised = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (compromise_tx, _) = tokio::sync::watch::channel(false);
         let task_path = lock_path.clone();
-        let task_dir = lock_dir.try_clone()?;
-        let task_identity = identity.clone();
+        let mut task_dir = lock_dir.try_clone()?;
+        let task_identity = std::sync::Arc::clone(&identity);
         let task_compromised = std::sync::Arc::clone(&compromised);
         let task_tx = compromise_tx.clone();
         let (refresh_stop, stop_rx) = std::sync::mpsc::channel();
         let refresh = std::thread::spawn(move || {
             while stop_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                if !lock_identity_matches(&task_path, &task_identity)
+                let mut held = task_identity.lock_or_recover();
+                // A lock directory that VANISHED (a /tmp wipe) was taken by nobody: take it
+                // again, and the supervisor keeps its place. A different directory at the
+                // path is a successor's, never ours to refresh.
+                if lock_state(&task_path, &held) == LockState::Missing {
+                    if let Ok(dir) = retake_lock_dir(&task_path) {
+                        if let Ok(metadata) = dir.metadata() {
+                            *held = metadata_identity(&metadata);
+                            task_dir = dir;
+                        }
+                    }
+                }
+                if lock_state(&task_path, &held) != LockState::Held
                     || task_dir.set_modified(std::time::SystemTime::now()).is_err()
-                    || !lock_identity_matches(&task_path, &task_identity)
+                    || lock_state(&task_path, &held) != LockState::Held
                 {
                     task_compromised.store(true, std::sync::atomic::Ordering::Release);
                     task_tx.send_replace(true);
@@ -133,7 +151,7 @@ impl SocketLease {
     #[must_use]
     pub fn compromised(&self) -> bool {
         self.compromised.load(std::sync::atomic::Ordering::Acquire)
-            || !lock_identity_matches(&self.lock_path, &self.identity)
+            || lock_state(&self.lock_path, &self.identity.lock_or_recover()) == LockState::Replaced
     }
 
     /// Resolve when this lease loses its lock directory.
@@ -207,11 +225,40 @@ fn metadata_identity(metadata: &std::fs::Metadata) -> SocketIdentity {
     }
 }
 
+/// Where a lease's lock directory stands against the inode the lease pinned.
 #[cfg(unix)]
-fn lock_identity_matches(path: &Path, expected: &SocketIdentity) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
-        metadata.file_type().is_dir() && metadata_identity(&metadata) == *expected
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockState {
+    /// The pinned directory is at the path.
+    Held,
+    /// Nothing is at the path: removed from outside, nobody took it.
+    Missing,
+    /// Another directory (or an unreadable path) is there: a successor owns the lock.
+    Replaced,
+}
+
+#[cfg(unix)]
+fn lock_state(path: &Path, expected: &SocketIdentity) -> LockState {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata)
+            if metadata.file_type().is_dir() && metadata_identity(&metadata) == *expected =>
+        {
+            LockState::Held
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => LockState::Missing,
+        Ok(_) | Err(_) => LockState::Replaced,
+    }
+}
+
+/// Create the vanished lock directory again, and its parent when that vanished too.
+/// `create_dir` is atomic: losing the race to a successor surfaces as an error.
+#[cfg(unix)]
+fn retake_lock_dir(path: &Path) -> std::io::Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        let _ = crate::paths::ensure_dir(parent);
+    }
+    std::fs::create_dir(path)?;
+    std::fs::File::open(path)
 }
 
 /// Remove a stale socket file after verifying nothing is listening.
@@ -477,6 +524,37 @@ mod tests {
             "old lease must not remove successor lock"
         );
         drop(listener);
+    }
+
+    /// A /tmp wipe removes the lock directory and its parent, and nobody takes the lock:
+    /// the lease takes the directory again instead of reporting a compromise.
+    #[tokio::test]
+    async fn a_vanished_lock_dir_is_retaken_not_reported_as_compromise() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let run = dir.path().join("run");
+        let socket = run.join("daemon.sock");
+        let lease = SocketLease::acquire(&socket).await.unwrap();
+        let lock_path = pa_core::platform::LockDir::path_for(&socket);
+        std::fs::remove_dir_all(&run).unwrap();
+        assert!(
+            !lease.compromised(),
+            "a missing directory is not a successor's"
+        );
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !lock_path.is_dir() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the refresh thread retakes the vanished lock directory");
+        assert!(!lease.compromised());
+        lease.assert_held().unwrap();
+        drop(lease);
+        assert!(
+            !lock_path.exists(),
+            "the retaken lock is released with the lease"
+        );
     }
 
     #[tokio::test]

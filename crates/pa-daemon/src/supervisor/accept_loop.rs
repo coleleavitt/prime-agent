@@ -6,9 +6,13 @@
 use std::io::ErrorKind;
 use std::time::Duration;
 
-use pa_types::platform::transport::TransportListener;
+use pa_types::platform::transport::{TransportListener, bind_transport};
+use pa_types::sync::MutexExt;
 
 use super::{Arc, Ordering, Result, Supervisor, anyhow};
+
+/// How often the accept loop checks that the daemon's socket file still exists.
+const SOCKET_WATCH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The backoff before retrying a non-recoverable accept error (Codex
 /// parity: the control-socket acceptor sleeps 1s between retries).
@@ -47,10 +51,12 @@ async fn retry_backoff(supervisor: &Supervisor) {
 /// exhaust the give-up budget; the caller exits, releasing the socket bind.
 pub(super) async fn serve(
     supervisor: &Arc<Supervisor>,
-    listener: Box<dyn TransportListener>,
+    mut listener: Box<dyn TransportListener>,
 ) -> Result<()> {
     let mut consecutive_failures = 0u32;
     let mut recoverable_streak = 0u32;
+    let mut socket_watch = tokio::time::interval(SOCKET_WATCH_INTERVAL);
+    socket_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     while !supervisor.accept_exit.load(Ordering::SeqCst) {
         let stream = tokio::select! {
             accepted = listener.accept() => match accepted {
@@ -94,6 +100,43 @@ pub(super) async fn serve(
             },
             // begin_shutdown fired: loop back and fall out of the loop.
             () = supervisor.shutdown_notify.notified() => continue,
+            // A socket file that something outside the product removed (a /tmp wipe)
+            // leaves the daemon listening on an unlinked inode: no client can connect,
+            // and the roster, the workers' registrations and every `--resume` fail until
+            // the daemon is restarted. Only an ABSENT path this supervisor bound is bound
+            // again; a file that is present, even a successor's, is never replaced.
+            _ = socket_watch.tick() => {
+                let path = &supervisor.options.socket_path;
+                let bound = supervisor.bound_socket_identity.lock_or_recover().is_some();
+                let vanished = cfg!(unix)
+                    && bound
+                    && matches!(
+                        std::fs::symlink_metadata(path),
+                        Err(error) if error.kind() == ErrorKind::NotFound
+                    );
+                if vanished {
+                    if let Some(parent) = path.parent() {
+                        let _ = crate::paths::ensure_dir(parent);
+                    }
+                    match bind_transport(path).await {
+                        Ok(rebound) => {
+                            listener = rebound;
+                            *supervisor.bound_socket_identity.lock_or_recover() =
+                                crate::socket::socket_identity(path);
+                            crate::socket::restrict_socket_path(path);
+                            supervisor.log_line(&format!(
+                                "daemon socket {} vanished; bound it again",
+                                path.display()
+                            ));
+                        }
+                        Err(error) => supervisor.log_line(&format!(
+                            "daemon socket {} vanished and the rebind failed: {error:#}",
+                            path.display()
+                        )),
+                    }
+                }
+                continue;
+            }
         };
         consecutive_failures = 0;
         recoverable_streak = 0;
