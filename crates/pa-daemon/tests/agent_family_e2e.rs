@@ -31,16 +31,14 @@ use std::time::{Duration, Instant};
 
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
 use pa_core::session_engine::agent_messaging::{
-    AgentFamilyRelationship,
-    AgentMessageController,
-    register_agent_message_host_handlers,
+    register_agent_message_host_handlers, register_agent_observe_host_handlers,
+    AgentFamilyRelationship, AgentMessageController,
 };
-use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSpawnTarget, RlmSubagentHost};
-use pa_daemon::agent_messaging::LinkAgentMessageController;
+use pa_core::session_engine::rlm_host::{RlmSpawnRequest, RlmSubagentHost};
+use pa_daemon::agent_messaging::{LinkAgentMessageController, LinkAgentObserveController};
 use pa_daemon::rlm_children::{ParentIdentity, SupervisorChildSessions};
 use pa_daemon::supervisor_link::SupervisorLink;
-use pa_types::platform::test_isolation::TestState;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 struct Daemon {
     child: Child,
@@ -50,7 +48,7 @@ struct Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        pa_core::platform::process_tree::kill_child_tree(&mut self.child);
+        let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
@@ -84,8 +82,7 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Da
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
     let log_file = std::fs::File::create(socket.with_extension("daemon.log")).expect("log file");
     let log_err = log_file.try_clone().expect("clone log file");
-    let child = TestState::for_agent_dir(agent_dir)
-        .apply(&mut Command::new(binary))
+    let child = Command::new(binary)
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -209,7 +206,27 @@ impl Client {
 /// The kernel Python with the runtime installed; the child's reply cell needs it. Skipped (with a
 /// note) without a live install.
 fn kernel_python() -> Option<PathBuf> {
-    pa_types::platform::test_isolation::test_kernel_python("PA_E2E_KERNEL_PYTHON")
+    if let Some(explicit) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
+        let explicit = PathBuf::from(explicit);
+        assert!(
+            explicit.exists(),
+            "PA_E2E_KERNEL_PYTHON {} not found",
+            explicit.display()
+        );
+        return Some(explicit);
+    }
+    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
+        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
+        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
+    ));
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    eprintln!(
+        "kernel python {} not found; skipping live family e2e",
+        candidate.display()
+    );
+    None
 }
 
 /// The child's reply turn; no receiver name: the parent is the only Parent member.
@@ -304,35 +321,6 @@ kernel error record: {}; daemon log tail: {}",
     }
 }
 
-/// A kernel cell's recorded failure (`record_cell`'s `.error` traceback),
-/// once the cell wrote it.
-fn read_error_record(dir: &Path, name: &str) -> String {
-    let path = dir.join(format!("{name}.error"));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if !content.is_empty() {
-                return content;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "error record {name} never appeared in {}: existing: {}; success receipt: {}; \
-daemon log tail: {}",
-            dir.display(),
-            receipt_listing(dir),
-            std::fs::read_to_string(dir.join(format!("{name}.json")))
-                .unwrap_or_else(|_| "<none>".to_string()),
-            daemon_log_tail(dir)
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// The removal error a send still carrying the broadcast `target` gets
-/// (upstream #2150).
-const BROADCAST_REMOVED: &str = "agent_message.send no longer takes a target or broadcast_message; broadcasting was removed. Restart the Python kernel";
-
 async fn send_agent_message(
     handlers: &HostRequestHandlers,
     receiver_name: &str,
@@ -420,8 +408,6 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
         String::new(),
     );
     children.set_identity(ParentIdentity {
-        sandbox: None,
-        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 0,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),
@@ -433,17 +419,12 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
-            plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
             model: None,
             thinking: None,
-            target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
-            token_budget: None,
-            cwd: None,
-            agent: None,
-            worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn the child");
@@ -637,8 +618,7 @@ async fn family_edges_never_cross_families_end_to_end() {
     let receipts_dir = dir.path().join("receipts");
     std::fs::create_dir_all(&receipts_dir).expect("receipts dir");
 
-    // Parent-a's one kernel turn records its roster and the removed broadcast
-    // form's rejection (upstream #2150).
+    // Parent-a's one kernel turn records its roster and broadcast receipts.
     let parent_a_cell = format!(
         "{}\n{}",
         record_cell(r#""agent_observe.list""#, "parent-observe", &receipts_dir),
@@ -685,7 +665,13 @@ async fn family_edges_never_cross_families_end_to_end() {
     ];
     // One scripted turn per cell: the tool-call entry, then the text entry that closes it (a nested
     // array is not a valid script).
-    let mut kid_responses = vec![json!({ "text": "kid spawned" })];
+    let mut kid_responses = vec![
+        json!({ "text": "kid spawned" }),
+        // The parent's broadcast (target=all) drains into this session's steering queue
+        // during the spawn turn; the filler text absorbs that message's turn so the
+        // scripted cells align with the driven turns.
+        json!({ "text": "kid absorbed the broadcast" }),
+    ];
     for cell in &kid_cells {
         let turn = cell_turn(cell);
         kid_responses.push(turn[0].clone());
@@ -752,8 +738,6 @@ async fn family_edges_never_cross_families_end_to_end() {
             String::new(),
         );
         children.set_identity(ParentIdentity {
-            sandbox: None,
-            resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
             rlm_depth: 0,
             rlm_max_depth: 2,
             model: Some("faux/faux-1".to_string()),
@@ -765,17 +749,12 @@ async fn family_edges_never_cross_families_end_to_end() {
         });
         let handle = children
             .spawn(RlmSpawnRequest {
-                plan_mode: false,
                 prompt: "work on the lane".to_string(),
                 name: Some(kid_name.to_string()),
                 model: None,
                 thinking: None,
-                target: RlmSpawnTarget::Local,
                 spawned_by_request_id: None,
-                token_budget: None,
-                cwd: None,
-                agent: None,
-                worktree: None,
+                factory: None,
             })
             .await
             .expect("spawn the child");
@@ -845,8 +824,8 @@ async fn family_edges_never_cross_families_end_to_end() {
 
     // This harness owns the children registry in the TEST process, so the settle notice is
     // minted here while the parent worker's queue admission refuses it; waiting on it
-    // leaves the receipts dir empty. Once the broadcast rejection is recorded the parent's
-    // cell turn ran, so each later drive lands on its own scripted turn.
+    // leaves the receipts dir empty. Once the broadcast receipt exists it is ahead of
+    // every later drive in the FIFO steering lane, so each scripted cell lands on its turn.
     client.send_command(
         "to-parent-a-cells",
         &json!({
@@ -863,7 +842,7 @@ async fn family_edges_never_cross_families_end_to_end() {
         "send to-parent-a-cells failed: {response}"
     );
     client.wait_idle("w-parent-a-cells", parent_a_active);
-    let parent_broadcast = read_error_record(&receipts_dir, "parent-broadcast");
+    let _parent_broadcast = read_recorded(&receipts_dir, "parent-broadcast.json");
 
     let drive_kid_turn = |client: &mut Client, id: &str, message: &str| {
         client.send_command(
@@ -900,8 +879,6 @@ async fn family_edges_never_cross_families_end_to_end() {
         String::new(),
     );
     kid_children.set_identity(ParentIdentity {
-        sandbox: None,
-        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 1,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),
@@ -913,17 +890,12 @@ async fn family_edges_never_cross_families_end_to_end() {
     });
     let grandkid_handle = kid_children
         .spawn(RlmSpawnRequest {
-            plan_mode: false,
             prompt: "grandkid work".to_string(),
             name: Some("grandkid".to_string()),
             model: None,
             thinking: None,
-            target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
-            token_budget: None,
-            cwd: None,
-            agent: None,
-            worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn the grandchild");
@@ -973,16 +945,36 @@ async fn family_edges_never_cross_families_end_to_end() {
         "the parent reply reaches the true parent: {parent_reply}"
     );
     assert_eq!(parent_reply["receiverRole"], "parent", "{parent_reply}");
-    // The removed broadcast form fails with the removal error and delivers
-    // nothing (upstream #2150).
-    let kid_broadcast = read_error_record(&receipts_dir, "kid-broadcast");
+    if let Ok(error) = std::fs::read_to_string(receipts_dir.join("kid-broadcast.error")) {
+        panic!("kid kernel cell failed: {error}");
+    }
+    // The broadcast reaches the family roster; the grandkid's presence depends on
+    // broadcast-versus-spawn interleaving, so pin the isolation, not the exact set.
+    let kid_broadcast = read_recorded(&receipts_dir, "kid-broadcast.json");
+    let kid_targets: Vec<&str> = kid_broadcast["receipts"]
+        .as_array()
+        .expect("receipts")
+        .iter()
+        .map(|receipt| {
+            receipt["target"]["activeSessionId"]
+                .as_str()
+                .or_else(|| receipt["target"].as_str())
+                .expect("receipt target")
+        })
+        .collect();
+    let allowed = [parent_a_active.as_str(), grandkid_active.as_str()];
     assert!(
-        kid_broadcast.contains(BROADCAST_REMOVED),
-        "a broadcast send fails with the removal error: {kid_broadcast}"
+        kid_targets.iter().all(|target| allowed.contains(target)),
+        "the child's broadcast stays inside its own family: {kid_broadcast}"
     );
     assert!(
-        !receipts_dir.join("kid-broadcast.json").exists(),
-        "the rejected broadcast records no receipt"
+        kid_targets.contains(&parent_a_active.as_str()),
+        "the child's broadcast reaches its parent: {kid_broadcast}"
+    );
+    assert!(
+        !kid_targets.contains(&second_kid_active.as_str())
+            && !kid_targets.contains(&sibling_root_active.as_str()),
+        "the child's broadcast never crosses families: {kid_broadcast}"
     );
     if let Ok(error) = std::fs::read_to_string(receipts_dir.join("kid-observe.error")) {
         panic!("kid kernel cell failed: {error}");
@@ -1078,9 +1070,27 @@ async fn family_edges_never_cross_families_end_to_end() {
             .any(|summary| summary["activeSessionId"] == grandkid_active.as_str()),
         "a grandchild never renders top-level in the root's roster: {roster:?}"
     );
-    assert!(
-        parent_broadcast.contains(BROADCAST_REMOVED),
-        "the parent's broadcast send fails with the removal error: {parent_broadcast}"
+    if let Ok(error) = std::fs::read_to_string(receipts_dir.join("parent-broadcast.error")) {
+        panic!("parent kernel cell failed: {error}");
+    }
+    let parent_broadcast = read_recorded(&receipts_dir, "parent-broadcast.json");
+    let mut parent_targets: Vec<&str> = parent_broadcast["receipts"]
+        .as_array()
+        .expect("receipts")
+        .iter()
+        .map(|receipt| {
+            receipt["target"]["activeSessionId"]
+                .as_str()
+                .or_else(|| receipt["target"].as_str())
+                .expect("receipt target")
+        })
+        .collect();
+    parent_targets.sort_unstable();
+    let mut expected = vec![sibling_root_active.as_str(), kid_a_active.as_str()];
+    expected.sort_unstable();
+    assert_eq!(
+        parent_targets, expected,
+        "the parent's broadcast stays inside its nuclear family: {parent_broadcast}"
     );
 
     client.wait_idle("w-child-transcript", kid_a_active);
@@ -1188,8 +1198,6 @@ async fn parent_renames_a_child_end_to_end() {
         String::new(),
     );
     children.set_identity(ParentIdentity {
-        sandbox: None,
-        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
         rlm_depth: 0,
         rlm_max_depth: 2,
         model: Some("faux/faux-1".to_string()),
@@ -1201,17 +1209,12 @@ async fn parent_renames_a_child_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
-            plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
             model: None,
             thinking: None,
-            target: RlmSpawnTarget::Local,
             spawned_by_request_id: None,
-            token_budget: None,
-            cwd: None,
-            agent: None,
-            worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn the child");
@@ -1254,7 +1257,6 @@ async fn parent_renames_a_child_end_to_end() {
             subagent_host: Some(Arc::clone(&children) as Arc<dyn RlmSubagentHost>),
             usage_store: None,
             progress_note_emit: None,
-            factory_notices: None,
         },
         None,
         None,
@@ -1294,4 +1296,215 @@ async fn parent_renames_a_child_end_to_end() {
         .find(|edge| edge.child_id == handle.rlm_child_id)
         .expect("the child's ledger edge");
     assert_eq!(edge.name, "bench-runner", "the ledger rename landed");
+}
+
+/// `agent_observe.recent_messages` on a family member through the real handler.
+async fn recent_member(
+    handlers: &HostRequestHandlers,
+    target: &str,
+    limit: u64,
+) -> anyhow::Result<Value> {
+    let recent = handlers
+        .get("agent_observe.recent")
+        .expect("the recent-messages handler")
+        .clone();
+    recent(HostRequestPayload {
+        data: json!({ "target": target, "limit": limit }),
+    })
+    .await
+}
+
+/// The observe handlers a worker wires, for the session `own_summary` describes.
+fn observe_handlers(
+    link: &Arc<SupervisorLink>,
+    own_summary: Value,
+    children: Option<Arc<SupervisorChildSessions>>,
+) -> HostRequestHandlers {
+    let active_session_id = own_summary["activeSessionId"]
+        .as_str()
+        .expect("own active id")
+        .to_string();
+    let controller = Arc::new(LinkAgentObserveController::new(
+        Arc::clone(link),
+        active_session_id,
+        Arc::new(std::sync::Mutex::new(Some(own_summary))),
+        children,
+    ));
+    let mut handlers = HostRequestHandlers::default();
+    register_agent_observe_host_handlers(controller, &mut handlers);
+    handlers
+}
+
+/// The live residents' durable session ids (`list` without `all`).
+fn resident_session_ids(client: &mut Client, id: &str) -> Vec<String> {
+    client.send_command(id, &json!({ "type": "list" }));
+    let response = client.read_response(id);
+    assert_eq!(response["success"], true, "list failed: {response}");
+    response["data"]["sessions"]
+        .as_array()
+        .expect("sessions")
+        .iter()
+        .filter_map(|row| row["sessionId"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// A parent's `agent_observe.recent_messages` of its child reads the same
+/// previews after the child is passivated: the supervisor reads the child's
+/// session file, and no worker comes back for it.
+#[tokio::test]
+async fn passivated_child_recent_messages_reads_its_file_end_to_end() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let agent_dir = dir.path().join("agent");
+    let sessions_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    // Idle passivation is on, so the test can passivate kid-a.
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({ "idleEvictionMinutes": 1 }).to_string(),
+    )
+    .expect("write settings");
+    let root_script = write_faux_script(dir.path(), "root", &json!([{ "text": "root turn done" }]));
+    let kid_script = write_faux_script(dir.path(), "kid", &json!([{ "text": "kid spawned" }]));
+
+    let _daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python);
+    wait_socket_ready(&socket);
+    let (mut client, hello) = Client::connect(&socket);
+    assert_eq!(hello["type"], "daemon_hello");
+    let link = Arc::new(SupervisorLink::new(socket.clone()));
+
+    client.send_command(
+        "create-parent",
+        &json!({
+            "type": "create",
+            "name": "parent",
+            "config": {
+                "cwd": dir.path().to_string_lossy(),
+                "sessionDir": sessions_dir.to_string_lossy(),
+                "script": root_script.to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("create-parent");
+    assert_eq!(created["success"], true, "create parent failed: {created}");
+    let data = &created["data"];
+    let parent_summary = json!({
+        "activeSessionId": data["activeSessionId"].as_str().or_else(|| data["id"].as_str()),
+        "sessionId": data["sessionId"],
+        "sessionFile": data["sessionFile"],
+        "sessionName": "parent",
+        "runtimeKind": "top-level",
+    });
+    let children = Arc::new(SupervisorChildSessions::new(
+        Arc::clone(&link),
+        agent_dir.clone(),
+        parent_summary["activeSessionId"]
+            .as_str()
+            .expect("active id")
+            .to_string(),
+        std::sync::Arc::new(pa_daemon::model_allowlist::ModelRefusalTelemetry::new(
+            agent_dir.clone(),
+            /*telemetry_disabled*/ true,
+        )),
+        String::new(),
+    ));
+    children.set_identity(ParentIdentity {
+        rlm_depth: 0,
+        rlm_max_depth: 2,
+        model: Some("faux/faux-1".to_string()),
+        cwd: Some(dir.path().to_string_lossy().to_string()),
+        session_id: parent_summary["sessionId"].as_str().map(str::to_string),
+        session_file: parent_summary["sessionFile"].as_str().map(str::to_string),
+        thinking: None,
+        child_script: Some(kid_script.to_string_lossy().to_string()),
+    });
+    children
+        .spawn(RlmSpawnRequest {
+            prompt: "kid-a work".to_string(),
+            name: Some("kid-a".to_string()),
+            model: None,
+            thinking: None,
+            spawned_by_request_id: None,
+            factory: None,
+        })
+        .await
+        .expect("spawn kid-a");
+    children.notify_turn_done();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let kid_a = loop {
+        let rows = children.list_subagents().await.expect("child roster");
+        if let Some(row) = rows.into_iter().find(|row| row.status == "completed") {
+            break row;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "kid-a never settled; daemon log tail: {}",
+            daemon_log_tail(&dir.path().join("receipts"))
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let kid_a_active = kid_a.active_session_id.clone().expect("kid-a active id");
+    let kid_a_session = kid_a.session_id.clone().expect("kid-a session id");
+    let parent_reads = observe_handlers(&link, parent_summary, Some(children));
+
+    // The resident kid-a answers through its worker: everything, then the newest row.
+    let all = recent_member(&parent_reads, "kid-a", 50)
+        .await
+        .expect("kid-a recent messages");
+    let previews = all["messages"].as_array().expect("previews");
+    assert!(
+        previews[0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("kid-a work")),
+        "{all}"
+    );
+    let indexes: Vec<u64> = previews
+        .iter()
+        .map(|preview| preview["index"].as_u64().expect("index"))
+        .collect();
+    assert_eq!(
+        indexes,
+        (0..previews.len() as u64).collect::<Vec<_>>(),
+        "{all}"
+    );
+    assert_eq!(all["truncated"], false, "{all}");
+    let newest = recent_member(&parent_reads, "kid-a", 1)
+        .await
+        .expect("kid-a newest message");
+    assert_eq!(
+        newest["messages"],
+        json!([previews.last().expect("a preview")]),
+        "{newest}"
+    );
+    assert_eq!(newest["truncated"], true, "{newest}");
+
+    // A passivated kid-a reads the same from its file, and no worker comes back for it.
+    client.send_command(
+        "passivate-kid-a",
+        &json!({
+            "type": "worker_idle_passivation",
+            "workerToken": parent_worker_token(&agent_dir, &kid_a_active),
+            "idleMinutes": 1,
+        }),
+    );
+    let passivated = client.read_response("passivate-kid-a");
+    assert_eq!(passivated["success"], true, "passivation: {passivated}");
+    assert!(
+        !resident_session_ids(&mut client, "list-before").contains(&kid_a_session),
+        "the passivation stopped kid-a's worker"
+    );
+    for (limit, resident) in [(50, &all), (1, &newest)] {
+        let saved = recent_member(&parent_reads, "kid-a", limit)
+            .await
+            .expect("recent messages of the passivated kid-a");
+        assert_eq!(saved["messages"], resident["messages"], "{saved}");
+        assert_eq!(saved["truncated"], resident["truncated"], "{saved}");
+    }
+    assert!(
+        !resident_session_ids(&mut client, "list-after").contains(&kid_a_session),
+        "the read never revives kid-a"
+    );
 }
