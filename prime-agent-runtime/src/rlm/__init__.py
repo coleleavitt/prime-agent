@@ -313,6 +313,54 @@ async def spawn(
     return _spawn_handle_from_payload(payload)
 
 
+async def _spawn(
+    prompt: str,
+    *,
+    name: str,
+    model: str | None = None,
+    thinking: str | None = None,
+    cwd: str | None = None,
+    target: str | None = None,
+    token_budget: int | None = None,
+    agent: str | None = None,
+    isolation: str | None = None,
+    factory: dict[str, str] | None = None,
+) -> RLMSpawnHandle:
+    """``spawn`` plus the factory executor's run tag (``{runId, specId,
+    stateId}``), which the host records on the child's ledger spawn edge."""
+    if not isinstance(prompt, str):
+        raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
+    if target is not None and not isinstance(target, str):
+        raise TypeError(f"target must be str, got {type(target).__name__}")
+    if token_budget is not None and (
+        not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget <= 0
+    ):
+        raise TypeError(f"token_budget must be a positive int, got {token_budget!r}")
+    kwargs: dict[str, Any] = {"name": name}
+    if model is not None:
+        kwargs["model"] = model
+    if thinking is not None:
+        kwargs["thinking"] = thinking
+    if cwd is not None:
+        kwargs["cwd"] = cwd
+    if target is not None:
+        kwargs["target"] = target
+    if token_budget is not None:
+        kwargs["token_budget"] = token_budget
+    if agent is not None:
+        if not isinstance(agent, str) or not agent.strip():
+            raise TypeError("agent must be a non-empty str")
+        kwargs["agent"] = agent.strip()
+    if isolation is not None:
+        if isolation != "worktree":
+            raise ValueError('isolation must be "worktree"')
+        kwargs["isolation"] = isolation
+    if factory is not None:
+        kwargs["factory"] = factory
+    payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
+    return _spawn_handle_from_payload(payload)
+
+
 def _model_from_payload(payload: Any) -> RLMModel:
     if not isinstance(payload, dict):
         raise RuntimeError("rlm.find_models returned an invalid model entry")
