@@ -261,7 +261,15 @@ fn running_cell_summary_ticks_live_elapsed() {
             .checked_sub(std::time::Duration::from_millis(1500))
             .expect("the clock is past the start"),
     );
-    let lines = render(&card, 0, Detail::Overview, &theme(), 100, true);
+    let lines = render(
+        &card,
+        0,
+        Detail::Overview,
+        Detail::Overview,
+        &theme(),
+        100,
+        true,
+    );
     let text = text_of(&lines[0]);
     assert!(text.contains("↑ 1 lines"), "got: {text}");
     // The duration slot ticks right after the line counts: the summary's
@@ -290,7 +298,15 @@ fn running_cell_long_preview_keeps_live_duration_visible() {
             .checked_sub(std::time::Duration::from_millis(1500))
             .expect("the clock is past the start"),
     );
-    let lines = render(&card, 0, Detail::Overview, &theme(), 80, true);
+    let lines = render(
+        &card,
+        0,
+        Detail::Overview,
+        Detail::Overview,
+        &theme(),
+        80,
+        true,
+    );
     let text = text_of(&lines[0]);
     // Pre-fix this line is red: the row overflows to 95 columns and the
     // right clip eats the duration slot entirely, so the summary's last
@@ -321,7 +337,7 @@ fn a_started_cell_without_a_result_frame_renders_running() {
         started_at: Some(std::time::Instant::now()),
         ..Default::default()
     };
-    let lines = render(&card, 0, Detail::All, &theme(), 100, true);
+    let lines = render(&card, 0, Detail::All, Detail::All, &theme(), 100, true);
     let flat: Vec<String> = lines.iter().map(text_of).collect();
     let marker = super::super::working_icon(0);
     assert!(
@@ -376,7 +392,15 @@ fn aborted_cell_never_renders_done_from_a_stale_exit_code() {
     });
     let mut card = cell_card(code, details, false, false);
     card.aborted = true;
-    let lines = render(&card, 0, Detail::Overview, &theme(), 100, true);
+    let lines = render(
+        &card,
+        0,
+        Detail::Overview,
+        Detail::Overview,
+        &theme(),
+        100,
+        true,
+    );
     let text = text_of(&lines[0]);
     assert!(text.contains("\u{2717}"), "got: {text}");
     assert!(!text.contains("\u{2713}"), "got: {text}");
@@ -566,8 +590,24 @@ fn an_aborted_cell_freezes_its_duration_from_card_timestamps() {
     card.started_at = now.checked_sub(std::time::Duration::from_secs(4));
     card.ended_at = now.checked_sub(std::time::Duration::from_secs(1));
     card.aborted = true;
-    let first = render(&card, 0, Detail::Overview, &theme(), 100, true);
-    let later = render(&card, 10, Detail::Overview, &theme(), 100, true);
+    let first = render(
+        &card,
+        0,
+        Detail::Overview,
+        Detail::Overview,
+        &theme(),
+        100,
+        true,
+    );
+    let later = render(
+        &card,
+        10,
+        Detail::Overview,
+        Detail::Overview,
+        &theme(),
+        100,
+        true,
+    );
     assert_eq!(
         first, later,
         "a settled timer never repaints a different duration"
