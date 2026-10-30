@@ -58,7 +58,7 @@ mod run;
 use crossterm::event::KeyEvent;
 use crossterm::terminal;
 use ratatui::Terminal;
-pub use run::{run_interactive, run_interactive_agents_view_open};
+pub use run::{run_interactive, run_interactive_agents_view_open, run_interactive_origin_open};
 use tokio::sync::mpsc;
 
 #[cfg(test)]
@@ -82,15 +82,43 @@ pub enum SessionSelection {
     Resume(PathBuf),
 }
 
+impl SessionSelection {
+    /// How a roster summary opens: attach its live runtime
+    /// (`activeSessionId`), else resume its saved file (`sessionFile`);
+    /// `None` when it has neither.
+    pub(crate) fn open_summary(summary: &Value) -> Option<Self> {
+        let field = |name: &str| {
+            summary
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+        };
+        field("activeSessionId")
+            .map(|active| Self::Attach(active.to_string()))
+            .or_else(|| field("sessionFile").map(|file| Self::Resume(PathBuf::from(file))))
+    }
+}
+
 /// The session panel an agents-view activity line mounts when its session opens; the panel's close
 /// returns to the agents view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionPanel {
     /// The Bash panel, on `shell_id`'s row when a persistent shell row opened it.
-    Shells {
-        shell_id: Option<String>,
+    Shells { shell_id: Option<String> },
+    /// The factory page, on `row` when a return from a state's session reopened it.
+    FactoryRuns {
+        row: Option<crate::factory_view::FactoryRow>,
     },
-    FactoryRuns,
+}
+
+/// The page that requested a session (the factory page's state open): leaving the requested
+/// session reopens the requesting session with this panel mounted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionOrigin {
+    pub panel: SessionPanel,
+    /// The panel's close returns to the agents view (an agents-view activity line mounted it),
+    /// not to the chat.
+    pub closes_to_agents_view: bool,
 }
 
 /// Cap on the exit-path telemetry flush (the `tui exit` event's bound):
@@ -550,6 +578,11 @@ pub struct InteractiveOutcome {
     /// such file): an [`SessionSelection::Attach`] the composition root resolves against the
     /// saved sessions (an id prefix, a title) before attaching.
     pub selection_needs_lookup: bool,
+    /// The requested session's RLM depth, when the requester read it from the roster.
+    pub selection_rlm_depth: Option<u32>,
+    /// Where leaving the requested session returns (see [`SelectionOrigin`]); `None` returns to
+    /// the agents view.
+    pub selection_origin: Option<SelectionOrigin>,
     /// Texts copied out by finished mouse selections (headless runs have no terminal for
     /// OSC 52; the verifiers read these).
     pub copies: Vec<String>,

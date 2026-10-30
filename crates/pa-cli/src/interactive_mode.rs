@@ -10,7 +10,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use pa_core::session::discovery::{ResolvedSession, resolve_session_path};
-use pa_tui::interactive::{InteractiveOptions, ModelSelection, SessionSelection, UiMode};
+use pa_tui::interactive::{
+    InteractiveOptions,
+    InteractiveOutcome,
+    ModelSelection,
+    SelectionOrigin,
+    SessionSelection,
+    UiMode,
+};
 
 use crate::config;
 use crate::mode::RunOptions;
@@ -234,22 +241,29 @@ pub(super) fn flush_startup_telemetry(
 /// (ctrl+c/ctrl+d, `/quit`) ends the process. The session and agents-view futures are large state
 /// machines: boxing them keeps this loop's own future small, so a caller on a small stack (a test
 /// thread) does not overflow.
-async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
+async fn run_direct_session(mut base: InteractiveOptions) -> Result<DirectExit> {
     let mut outcome = Box::pin(pa_tui::interactive::run_interactive(
         base.clone(),
         UiMode::Terminal,
     ))
     .await?;
+    // The run consumed the CLI message: no later run replays it.
+    base.initial_message = None;
+    let mut ran_with = base.clone();
+    let mut origin: Option<(InteractiveOptions, SelectionOrigin)> = None;
     loop {
         if let Some(selection) = outcome.selection_request.take() {
             let anchor = (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
             match resolve_selection_request(&base, selection, outcome.selection_needs_lookup) {
                 ResumeLaunch::Open(selection) => {
-                    let mut next = base.clone();
-                    next.session = selection;
-                    outcome =
-                        Box::pin(pa_tui::interactive::run_interactive(next, UiMode::Terminal))
-                            .await?;
+                    origin = request_origin(&ran_with, &mut outcome);
+                    let next = requested_options(&base, selection, &outcome);
+                    outcome = Box::pin(pa_tui::interactive::run_interactive(
+                        next.clone(),
+                        UiMode::Terminal,
+                    ))
+                    .await?;
+                    ran_with = next;
                     continue;
                 }
                 ResumeLaunch::Search { query, notice } => {
@@ -264,6 +278,16 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
                     return Ok(DirectExit::ViaAgentsView);
                 }
             }
+        }
+        if let Some((requester, page)) = take_origin_return(&mut origin, &outcome) {
+            outcome = Box::pin(pa_tui::interactive::run_interactive_origin_open(
+                requester.clone(),
+                UiMode::Terminal,
+                page,
+            ))
+            .await?;
+            ran_with = requester;
+            continue;
         }
         if outcome.return_to_agents_view {
             // A startup attach that fell back to the view has no session identity to anchor
@@ -292,6 +316,47 @@ async fn run_direct_session(base: InteractiveOptions) -> Result<DirectExit> {
             turn_active: outcome.turn_active_at_exit,
         });
     }
+}
+
+/// The options a requested session (`/resume <selector>`, the factory page's state open) runs
+/// with: the base re-targeted at the selection, at the RLM depth the requester read from the
+/// roster.
+fn requested_options(
+    base: &InteractiveOptions,
+    selection: SessionSelection,
+    outcome: &InteractiveOutcome,
+) -> InteractiveOptions {
+    let mut next = base.clone();
+    next.session = selection;
+    next.session_rlm_depth = outcome.selection_rlm_depth;
+    next
+}
+
+/// The page a request carries (the factory page's state open): the requesting session's
+/// options re-targeted at its live runtime, and the page leaving the requested session
+/// reopens. A request without one returns to the agents view.
+fn request_origin(
+    ran_with: &InteractiveOptions,
+    outcome: &mut InteractiveOutcome,
+) -> Option<(InteractiveOptions, SelectionOrigin)> {
+    let page = outcome.selection_origin.take()?;
+    let mut requester = ran_with.clone();
+    requester.session = SessionSelection::Attach(outcome.active_session_id.clone());
+    Some((requester, page))
+}
+
+/// The origin to reopen once the requested session exits back plainly (the agents-back key):
+/// an exit that asked for the resume picker, a search, or a scoped view goes where it asked.
+fn take_origin_return(
+    origin: &mut Option<(InteractiveOptions, SelectionOrigin)>,
+    outcome: &InteractiveOutcome,
+) -> Option<(InteractiveOptions, SelectionOrigin)> {
+    let plain = outcome.return_to_agents_view
+        && outcome.selection_request.is_none()
+        && outcome.agents_view_scope.is_none()
+        && outcome.agents_view_query.is_none()
+        && !outcome.agents_view_resume_picker;
+    if plain { origin.take() } else { None }
 }
 
 /// How a direct session run ended: in the session itself (and whether the
@@ -384,8 +449,11 @@ fn from_pr_opening(value: &str) -> (ViewOpening, Option<String>) {
 
 /// The agents-view loop: open the view, run the session it opens, and return
 /// to the view on agents-back or bare `/resume`; every other exit ends the app.
+/// A session a run requests (`/resume <selector>`, the factory page's state
+/// open) runs next, and leaving it reopens the requesting session's origin
+/// page when the request carried one.
 async fn run_agents_view_flow(
-    base: InteractiveOptions,
+    mut base: InteractiveOptions,
     anchor: Option<String>,
     notice: Option<String>,
     query: Option<String>,
@@ -488,11 +556,17 @@ async fn run_agents_view_flow(
             session_options.cwd = cwd;
         }
         let mut outcome = pa_tui::interactive::run_interactive_agents_view_open(
-            session_options,
+            session_options.clone(),
             UiMode::Terminal,
             view.panel,
         )
         .await?;
+        // The run consumed the CLI message: neither a later open nor a return
+        // to this session replays it.
+        base.initial_message = None;
+        session_options.initial_message = None;
+        let mut ran_with = session_options;
+        let mut origin: Option<(InteractiveOptions, SelectionOrigin)> = None;
         // The next view run is the plain view unless the session asks for the resume picker
         // (`/resume` without an argument, a selector's search fallback); `--from-pr`'s filter
         // belongs to the launch's own picker only.
@@ -505,6 +579,16 @@ async fn run_agents_view_flow(
             }
             if let Some(notice) = &outcome.agents_view_notice {
                 status_message = Some(notice.clone());
+            }
+            if let Some((requester, page)) = take_origin_return(&mut origin, &outcome) {
+                outcome = Box::pin(pa_tui::interactive::run_interactive_origin_open(
+                    requester.clone(),
+                    UiMode::Terminal,
+                    page,
+                ))
+                .await?;
+                ran_with = requester;
+                continue;
             }
             if let Some(search) = outcome.agents_view_query.take() {
                 query = Some(search);
@@ -526,11 +610,14 @@ async fn run_agents_view_flow(
             if let Some(selection) = outcome.selection_request.take() {
                 match resolve_selection_request(&base, selection, outcome.selection_needs_lookup) {
                     ResumeLaunch::Open(selection) => {
-                        let mut next = base.clone();
-                        next.session = selection;
-                        outcome =
-                            Box::pin(pa_tui::interactive::run_interactive(next, UiMode::Terminal))
-                                .await?;
+                        origin = request_origin(&ran_with, &mut outcome);
+                        let next = requested_options(&base, selection, &outcome);
+                        outcome = Box::pin(pa_tui::interactive::run_interactive(
+                            next.clone(),
+                            UiMode::Terminal,
+                        ))
+                        .await?;
+                        ran_with = next;
                         continue;
                     }
                     ResumeLaunch::Search {

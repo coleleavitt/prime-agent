@@ -68,7 +68,8 @@ mod session_activity;
 
 #[cfg(test)]
 use delete::no_effect_summary;
-use delete::{DeleteAction, PendingDelete, spawn_delete_dispatch};
+pub(crate) use delete::{DeleteAction, execute_delete_action};
+use delete::{PendingDelete, spawn_delete_dispatch};
 
 mod rename;
 use rename::{Rename, spawn_rename_dispatch};
@@ -83,7 +84,8 @@ use reply::{
 };
 
 mod status;
-use status::{Status, StatusTone};
+use status::Status;
+pub(crate) use status::StatusTone;
 
 #[derive(Debug, Clone)]
 pub struct AgentsViewOptions {

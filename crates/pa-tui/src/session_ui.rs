@@ -388,6 +388,8 @@ pub(crate) struct SessionUi {
     pub(crate) pending_selection: Option<SessionSelection>,
     /// `pending_selection` is a `/resume <selector>` for the composition root to resolve.
     pub(crate) pending_selection_lookup: bool,
+    pub(crate) pending_selection_rlm_depth: Option<u32>,
+    pub(crate) pending_selection_origin: Option<crate::interactive::SelectionOrigin>,
     /// Whether this run may hand the terminal back to the agents view:
     /// false only for `--no-session` runs.
     pub(crate) return_to_agents_view: bool,
