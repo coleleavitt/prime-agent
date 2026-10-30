@@ -55,8 +55,9 @@ pub(crate) fn start(worker: Arc<Worker>) {
 
 /// The availability-check loop (TS `checkSupervisorAvailability` guard order): a shutdown
 /// in flight or a live supervisor connection disarms, a reachable socket resets the
-/// absence timer, and a socket unreachable for the whole window with no session work
-/// in flight exits the worker.
+/// absence timer unless the supervisor keeps refusing this worker's registration, and a
+/// supervisor unreachable or refusing for the whole window with no session work in flight
+/// exits the worker.
 async fn monitor(worker: Arc<Worker>) {
     let window = Duration::from_millis(lost_exit_ms());
     let mut absent_since: Option<tokio::time::Instant> = None;
@@ -70,7 +71,16 @@ async fn monitor(worker: Arc<Worker>) {
             absent_since = None;
             continue;
         }
-        if supervisor_reachable(&worker.config.supervisor_socket_path).await {
+        // A reachable supervisor that keeps refusing this worker's registration (it cannot
+        // connect the worker's socket, say) has not taken the worker on: no client can
+        // reach the session, and the lease it holds blocks every other daemon's open.
+        let registration_failing = worker
+            .registration
+            .as_ref()
+            .is_some_and(crate::registration::RegistrationHandle::is_failing);
+        if !registration_failing
+            && supervisor_reachable(&worker.config.supervisor_socket_path).await
+        {
             absent_since = None;
             continue;
         }
@@ -100,7 +110,7 @@ async fn monitor(worker: Arc<Worker>) {
 /// destructors, so an undisposed kernel would be orphaned here.
 async fn exit_orphaned(worker: &Worker, absent_since: tokio::time::Instant) {
     eprintln!(
-        "pa-daemon worker: supervisor {} unreachable for {}s; exiting orphaned worker",
+        "pa-daemon worker: supervisor {} unreachable or refusing this worker for {}s; exiting orphaned worker",
         worker.config.supervisor_socket_path.display(),
         absent_since.elapsed().as_secs()
     );

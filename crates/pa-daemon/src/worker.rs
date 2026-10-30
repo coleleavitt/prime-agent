@@ -187,7 +187,7 @@ pub struct Worker {
     /// listener; see [`Worker::listener_close_requested`].
     pub(crate) listener_closed: tokio::sync::Notify,
     /// Supervisor self-registration handle; `None` for standalone workers.
-    registration: Option<RegistrationHandle>,
+    pub(crate) registration: Option<RegistrationHandle>,
     /// Live connections authenticated as the supervisor role; a non-zero
     /// count disarms the supervisor-lost exit monitor.
     pub(crate) supervisor_claims: std::sync::Arc<std::sync::atomic::AtomicUsize>,

@@ -313,7 +313,8 @@ impl Supervisor {
             // so the boot reap needs the same positive owner-death evidence
             // the tombstone probes use (TS `recoverWorker` runs its orphan
             // sweep only once the recorded process identity is gone).
-            if self.recorded_worker_is_gone(&resident).await {
+            let worker_gone = self.recorded_worker_is_gone(&resident).await;
+            if worker_gone {
                 self.reap_dead_worker_orphans(&resident).await;
             }
             let interrupted =
@@ -326,9 +327,16 @@ impl Supervisor {
                 // Dead worker with no durable busy state — and, on an update boot, not
                 // kept: leave it down (the descriptor stays on disk); the session reopens
                 // on the next client create.
-                self.log_line(&format!(
-                    "session worker {worker_id} was idle at exit; not revived (reopens on the next client open)"
-                ));
+                if worker_gone {
+                    self.log_line(&format!(
+                        "session worker {worker_id} was idle at exit; not revived (reopens on the next client open)"
+                    ));
+                } else {
+                    self.log_line(&format!(
+                        "session worker {worker_id} (pid {pid}) is still running but its socket {} does not answer; not adopted here (it re-registers once the socket is back, and retires when it cannot)",
+                        socket_path.display()
+                    ));
+                }
                 return AdoptionOutcome::SkippedIdle;
             }
             // The revival ownership gate: the busy-evidence filter answered "did the journal

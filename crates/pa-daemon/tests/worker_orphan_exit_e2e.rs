@@ -139,6 +139,73 @@ fn worker_with_a_reachable_supervisor_survives_the_lost_window() {
     drop(listener);
 }
 
+/// A supervisor that greets every connection and answers each registration line with
+/// `accept` (a refusal carries a transient reason, never the definitive unknown-worker verdict).
+fn fake_supervisor(socket: &Path, accept: bool) -> std::thread::JoinHandle<()> {
+    use std::io::BufRead as _;
+
+    let listener = UnixListener::bind(socket).expect("bind supervisor socket");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut writer = stream.try_clone().expect("clone stream");
+                let hello = serde_json::json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                });
+                if writeln!(writer, "{hello}").is_err() {
+                    return;
+                }
+                for line in std::io::BufReader::new(stream).lines() {
+                    let Ok(line) = line else { return };
+                    let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
+                        continue;
+                    };
+                    let mut response = serde_json::json!({
+                        "type": "response",
+                        "id": request["id"],
+                        "success": accept,
+                    });
+                    if !accept {
+                        response["error"] = "worker socket does not answer".into();
+                    }
+                    if writeln!(writer, "{response}").is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    })
+}
+
+#[test]
+fn worker_exits_when_a_reachable_supervisor_keeps_refusing_its_registration() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let supervisor_socket = dir.path().join("refusing-supervisor.sock");
+    let _supervisor = fake_supervisor(&supervisor_socket, false);
+    let mut worker = spawn_worker(dir.path(), &supervisor_socket);
+    wait_worker_socket(&dir.path().join("worker.sock"));
+    assert!(
+        wait_exit(&mut worker.child, Duration::from_secs(15)),
+        "a worker no supervisor will take on exits on the lost window"
+    );
+}
+
+#[test]
+fn worker_whose_registration_is_accepted_survives_the_lost_window() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let supervisor_socket = dir.path().join("accepting-supervisor.sock");
+    let _supervisor = fake_supervisor(&supervisor_socket, true);
+    let mut worker = spawn_worker(dir.path(), &supervisor_socket);
+    wait_worker_socket(&dir.path().join("worker.sock"));
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        worker.child.try_wait().expect("poll worker").is_none(),
+        "the worker survived the zero window while its registration was accepted"
+    );
+}
+
 struct WorkerClient {
     stream: std::os::unix::net::UnixStream,
 }

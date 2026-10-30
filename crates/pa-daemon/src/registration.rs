@@ -61,9 +61,18 @@ pub struct RegistrationHandle {
     /// Set when the supervisor definitively rejected this worker's identity: the worker runtime
     /// watches it to retire instead of serving on with no daemon able to reach it.
     retired: Arc<tokio::sync::Notify>,
+    /// True while the last registration attempt failed without a definitive verdict: the
+    /// supervisor answers, or does not, but never took this worker on.
+    failing: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RegistrationHandle {
+    /// Whether the supervisor currently does not accept this worker's registration.
+    #[must_use]
+    pub fn is_failing(&self) -> bool {
+        self.failing.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Record the persisted session id and trigger a re-registration.
     pub fn notify_session_created(&self, session_id: String) {
         *self.session_id.lock_or_recover() = Some(session_id.clone());
@@ -103,12 +112,14 @@ pub fn start(config: &WorkerConfig) -> Option<RegistrationHandle> {
     };
     let session_id = Arc::new(std::sync::Mutex::new(None));
     let retired = Arc::new(tokio::sync::Notify::new());
+    let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (tx, rx) = mpsc::unbounded_channel();
     let task = RegistrationTask {
         supervisor_socket_path: PathBuf::from(&config.supervisor_socket_path),
         identity,
         session_id: Arc::clone(&session_id),
         retired: Arc::clone(&retired),
+        failing: Arc::clone(&failing),
         signals: rx,
     };
     tokio::spawn(async move {
@@ -118,6 +129,7 @@ pub fn start(config: &WorkerConfig) -> Option<RegistrationHandle> {
         session_id,
         tx,
         retired,
+        failing,
     })
 }
 
@@ -128,6 +140,8 @@ struct RegistrationTask {
     /// Shared with the handle: set once the supervisor's rejection of
     /// this identity is definitive, so the worker runtime can retire.
     retired: Arc<tokio::sync::Notify>,
+    /// Shared with the handle: the worker's liveness monitor reads it.
+    failing: Arc<std::sync::atomic::AtomicBool>,
     signals: mpsc::UnboundedReceiver<RegistrationSignal>,
 }
 
@@ -140,11 +154,15 @@ impl RegistrationTask {
     /// long as the worker lives. The one terminal exit: the definitive unknown-worker rejection.
     async fn run(mut self) {
         let mut backoff = BASE_BACKOFF_MS;
+        let mut last_failure: Option<String> = None;
         loop {
             let attempt = self.connect_and_register().await;
             match attempt {
                 Ok((reader, writer)) => {
                     backoff = BASE_BACKOFF_MS;
+                    last_failure = None;
+                    self.failing
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
                     if let Err(error) = self.hold_connection(reader, writer).await {
                         // The in-place `SessionCreated` re-registration
                         // runs on this connection, so its refusal carries
@@ -170,6 +188,17 @@ impl RegistrationTask {
                         ));
                         self.retired.notify_one();
                         return;
+                    }
+                    self.failing
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    // A permanent failure retries for as long as the worker lives: one line
+                    // per distinct reason keeps the worker log readable.
+                    if last_failure.as_deref() != Some(message.as_str()) {
+                        eprintln!(
+                            "pa-daemon worker {}: registration with the supervisor failed: {message}",
+                            std::process::id()
+                        );
+                        last_failure = Some(message.clone());
                     }
                     debug_log(&format!(
                         "registration failed: {message}; retrying in {backoff}ms"
