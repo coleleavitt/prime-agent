@@ -896,6 +896,10 @@ fn classify_journal_line(line: &str) -> ScannedLine {
                 active_session_id: active_session_id.to_string(),
                 steering: parse_snapshot_lane(record.get("steering")),
                 follow_up: parse_snapshot_lane(record.get("follow_up")),
+                suspended: record
+                    .get("suspended")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 recorded_at: record
                     .get("recorded_at")
                     .and_then(Value::as_str)
@@ -1012,6 +1016,14 @@ pub struct WorkerQueueItemRecord {
     /// existed restores as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_message: Option<String>,
+    /// The forced-steering batch flag: a restored forced item keeps its
+    /// one-turn batch semantics. Omitted when unset, so a record written
+    /// before the field existed re-serializes byte-identically (a
+    /// checkpoint transaction's digest covers it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forced_batch: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<pa_agent::types::ImageContent>,
 }
 
 fn queue_visible_default() -> bool {
@@ -1044,8 +1056,18 @@ pub struct WorkerQueueSnapshotRecord {
     pub active_session_id: String,
     pub steering: Vec<WorkerQueueItemRecord>,
     pub follow_up: Vec<WorkerQueueItemRecord>,
+    /// The queued-input suspension at snapshot time: a restored parked
+    /// queue stays parked until an explicit resume site clears it. Omitted
+    /// when unset (the transaction digest stays stable for older records).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suspended: bool,
     pub recorded_at: String,
 }
+
+/// One session's latest queue snapshot as read back for a restore: the
+/// steering and follow-up lanes, and whether queued input was suspended
+/// when they were recorded (a parked queue revives still parked).
+pub type QueueSnapshotLanes = (Vec<WorkerQueueItemRecord>, Vec<WorkerQueueItemRecord>, bool);
 
 /// One request-id-keyed cloud inbox admission: the receipt the receiver
 /// answered when a cross-boundary agent message became visible in this
@@ -1403,6 +1425,7 @@ impl WorkerRecoveryJournal {
         active_session_id: &str,
         steering: &[WorkerQueueItemRecord],
         follow_up: &[WorkerQueueItemRecord],
+        suspended: bool,
     ) -> Result<()> {
         self.require_writable()?;
         let record = WorkerQueueSnapshotRecord {
@@ -1411,6 +1434,7 @@ impl WorkerRecoveryJournal {
             active_session_id: active_session_id.to_string(),
             steering: steering.to_vec(),
             follow_up: follow_up.to_vec(),
+            suspended,
             recorded_at: crate::util::now_iso(),
         };
         append_record(&self.path, &serde_json::to_value(&record)?)?;
@@ -1437,6 +1461,7 @@ impl WorkerRecoveryJournal {
         operation: &str,
         steering: &[WorkerQueueItemRecord],
         follow_up: &[WorkerQueueItemRecord],
+        suspended: bool,
         cloud_admission: Option<(&str, &Value)>,
     ) -> Result<()> {
         self.require_writable()?;
@@ -1446,6 +1471,7 @@ impl WorkerRecoveryJournal {
             active_session_id: active_session_id.to_string(),
             steering: steering.to_vec(),
             follow_up: follow_up.to_vec(),
+            suspended,
             recorded_at: crate::util::now_iso(),
         };
         let verdict_unchanged = self.latest.get(active_session_id).is_some_and(|previous| {
@@ -1528,13 +1554,14 @@ impl WorkerRecoveryJournal {
 
     /// The latest persisted queue rows for `active_session_id`.
     #[must_use]
-    pub fn latest_queue_snapshot(
-        &self,
-        active_session_id: &str,
-    ) -> Option<(Vec<WorkerQueueItemRecord>, Vec<WorkerQueueItemRecord>)> {
-        self.queue_snapshots
-            .get(active_session_id)
-            .map(|record| (record.steering.clone(), record.follow_up.clone()))
+    pub fn latest_queue_snapshot(&self, active_session_id: &str) -> Option<QueueSnapshotLanes> {
+        self.queue_snapshots.get(active_session_id).map(|record| {
+            (
+                record.steering.clone(),
+                record.follow_up.clone(),
+                record.suspended,
+            )
+        })
     }
 
     /// Read the latest queue snapshot for a session straight from a journal
@@ -1547,7 +1574,7 @@ impl WorkerRecoveryJournal {
     pub fn read_queue_snapshot(
         path: &Path,
         active_session_id: &str,
-    ) -> Result<Option<(Vec<WorkerQueueItemRecord>, Vec<WorkerQueueItemRecord>)>> {
+    ) -> Result<Option<QueueSnapshotLanes>> {
         let scan = scan_worker_journal(path)?;
         if scan.corruption == JournalCorruption::MidFile {
             return Err(anyhow::anyhow!(
@@ -1558,7 +1585,7 @@ impl WorkerRecoveryJournal {
         Ok(fold_journal_scan(&scan)
             .queue_snapshots
             .remove(active_session_id)
-            .map(|record| (record.steering, record.follow_up)))
+            .map(|record| (record.steering, record.follow_up, record.suspended)))
     }
 
     fn compact(&self) -> Result<()> {
@@ -1641,6 +1668,8 @@ fn parse_snapshot_lane(value: Option<&Value>) -> Vec<WorkerQueueItemRecord> {
                         queue_visible: true,
                         policy: queue_policy_default(),
                         agent_message: None,
+                        forced_batch: false,
+                        images: Vec::new(),
                     }),
                     Value::Object(_) => serde_json::from_value(entry.clone()).ok(),
                     _ => None,
@@ -1725,18 +1754,29 @@ mod tests {
             queue_visible: true,
             policy: queue_policy_default(),
             agent_message: None,
+            forced_batch: false,
+            images: Vec::new(),
         };
         sequential
-            .record_queue_snapshot("s1", std::slice::from_ref(&item), &[])
+            .record_queue_snapshot(
+                "s1",
+                std::slice::from_ref(&item),
+                &[],
+                /*suspended*/ false,
+            )
             .unwrap();
         sequential
             .record("s1", "sess1", Some("/a.jsonl"), true, "prompt_accepted")
             .unwrap();
-        sequential.record_queue_snapshot("s1", &[], &[]).unwrap();
+        sequential
+            .record_queue_snapshot("s1", &[], &[], /*suspended*/ false)
+            .unwrap();
         sequential
             .record("s1", "sess1", Some("/a.jsonl"), false, "turn_end")
             .unwrap();
-        sequential.record_queue_snapshot("s1", &[], &[]).unwrap();
+        sequential
+            .record_queue_snapshot("s1", &[], &[], /*suspended*/ false)
+            .unwrap();
         sequential
             .record("s1", "sess1", Some("/a.jsonl"), false, "turn_end")
             .unwrap();
@@ -1749,6 +1789,7 @@ mod tests {
                 "prompt_accepted",
                 std::slice::from_ref(&item),
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1761,6 +1802,7 @@ mod tests {
                 "turn_end",
                 &[],
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1773,6 +1815,7 @@ mod tests {
                 "turn_end",
                 &[],
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1803,7 +1846,7 @@ mod tests {
         assert_eq!(latest_a[0].busy, latest_b[0].busy);
         assert_eq!(latest_a[0].operation, latest_b[0].operation);
         let restored = WorkerRecoveryJournal::read_queue_snapshot(&batched_path, "s1").unwrap();
-        assert_eq!(restored, Some((Vec::new(), Vec::new())));
+        assert_eq!(restored, Some((Vec::new(), Vec::new(), false)));
         let _ = fs::remove_dir_all(sequential_path.parent().unwrap());
         let _ = fs::remove_dir_all(batched_path.parent().unwrap());
     }
@@ -1825,6 +1868,7 @@ mod tests {
             "prompt_accepted",
             &[],
             &[],
+            /*suspended*/ false,
             None,
         );
         assert!(result.is_err());
@@ -1887,6 +1931,8 @@ mod tests {
             queue_visible: true,
             policy: queue_policy_default(),
             agent_message: None,
+            forced_batch: false,
+            images: Vec::new(),
         };
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal
@@ -1898,6 +1944,7 @@ mod tests {
                 "prompt_accepted",
                 std::slice::from_ref(&item),
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1910,6 +1957,7 @@ mod tests {
                 "turn_end",
                 &[],
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1923,6 +1971,7 @@ mod tests {
                 "prompt_accepted",
                 std::slice::from_ref(&item),
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1936,6 +1985,7 @@ mod tests {
                 "turn_end",
                 &[],
                 &[],
+                /*suspended*/ false,
                 None,
             )
             .unwrap();
@@ -1970,14 +2020,44 @@ mod tests {
         let path = temp_path("unchanged-nocompact.recovery.jsonl");
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal
-            .record_queue_checkpoint("s1", "sess1", None, true, "prompt_accepted", &[], &[], None)
+            .record_queue_checkpoint(
+                "s1",
+                "sess1",
+                None,
+                true,
+                "prompt_accepted",
+                &[],
+                &[],
+                /*suspended*/ false,
+                None,
+            )
             .unwrap();
         journal
-            .record_queue_checkpoint("s1", "sess1", None, false, "turn_end", &[], &[], None)
+            .record_queue_checkpoint(
+                "s1",
+                "sess1",
+                None,
+                false,
+                "turn_end",
+                &[],
+                &[],
+                /*suspended*/ false,
+                None,
+            )
             .unwrap();
         let lines_after_settle = fs::read_to_string(&path).unwrap().lines().count();
         journal
-            .record_queue_checkpoint("s1", "sess1", None, false, "turn_end", &[], &[], None)
+            .record_queue_checkpoint(
+                "s1",
+                "sess1",
+                None,
+                false,
+                "turn_end",
+                &[],
+                &[],
+                /*suspended*/ false,
+                None,
+            )
             .unwrap();
         let lines_after_unchanged = fs::read_to_string(&path).unwrap().lines().count();
         assert_eq!(lines_after_unchanged, lines_after_settle + 1);
@@ -2028,8 +2108,11 @@ mod tests {
                     queue_visible: true,
                     policy: "injected".to_string(),
                     agent_message: None,
+                    forced_batch: false,
+                    images: Vec::new(),
                 }],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_tx1", &receipt)),
             )
             .unwrap();
@@ -2040,7 +2123,7 @@ mod tests {
             Some(&receipt),
             "the admission replays"
         );
-        let (steering, _) = crate::worker::restore_queue_snapshot(&reloaded, "sess-a");
+        let (steering, _, _) = crate::worker::restore_queue_snapshot(&reloaded, "sess-a");
         assert_eq!(
             steering.len(),
             1,
@@ -2085,6 +2168,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_tx2", &receipt)),
             )
             .unwrap();
@@ -2121,6 +2205,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_tx3", &receipt)),
             )
             .unwrap();
@@ -2153,6 +2238,7 @@ mod tests {
                     "steer_queued",
                     &[],
                     &[],
+                    /*suspended*/ false,
                     Some(("msgreq_sync", &receipt)),
                 )
                 .is_err()
@@ -2207,6 +2293,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_v", &receipt)),
             )
             .unwrap();
@@ -2238,6 +2325,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_v2", &receipt)),
             )
             .unwrap();
@@ -2276,6 +2364,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_private", &serde_json::json!({"id":"receipt"}))),
             )
             .unwrap();
@@ -2312,6 +2401,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some((
                     "msgreq_normal",
                     &serde_json::json!({"id": "receipt-normal"}),
@@ -2442,6 +2532,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_link", &serde_json::json!({"id":"receipt"}))),
             )
             .expect_err("the O_NOFOLLOW open refuses the symlinked parent");
@@ -2479,6 +2570,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_victim", &serde_json::json!({"id":"receipt"}))),
             )
             .expect_err("the keyed establishment refuses the symlinked placement");
@@ -2602,6 +2694,7 @@ mod tests {
                 "steer_queued",
                 &[],
                 &[],
+                /*suspended*/ false,
                 Some(("msgreq_tx4", &receipt)),
             )
             .unwrap();
@@ -2704,5 +2797,86 @@ mod tests {
         drop(successor);
         let reopened = WorkerRecoveryJournal::open(&path).unwrap();
         assert_eq!(reopened.get_latest(), expected);
+    }
+
+    /// A parked queue revives parked, with its forced-batch and image rows
+    /// (the graceful-shutdown continuation's restore).
+    #[test]
+    fn a_suspended_snapshot_restores_parked_with_forced_and_image_rows() {
+        let path = temp_path("suspended-snapshot.recovery.jsonl");
+        let item = WorkerQueueItemRecord {
+            message: "look at this".to_string(),
+            priority: None,
+            preview: None,
+            custom_message: None,
+            queue_key: None,
+            queue_visible: true,
+            policy: queue_policy_default(),
+            agent_message: None,
+            forced_batch: true,
+            images: vec![pa_agent::types::ImageContent {
+                data: "aGk=".to_string(),
+                mime_type: "image/png".to_string(),
+            }],
+        };
+        let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
+        journal
+            .record_queue_snapshot(
+                "s1",
+                std::slice::from_ref(&item),
+                &[],
+                /*suspended*/ true,
+            )
+            .unwrap();
+        drop(journal);
+        assert_eq!(
+            WorkerRecoveryJournal::read_queue_snapshot(&path, "s1").unwrap(),
+            Some((vec![item.clone()], Vec::new(), true))
+        );
+        assert_eq!(
+            WorkerRecoveryJournal::open(&path)
+                .unwrap()
+                .latest_queue_snapshot("s1"),
+            Some((vec![item], Vec::new(), true))
+        );
+    }
+
+    /// The new flags are omitted while unset: a checkpoint transaction
+    /// written before they existed re-serializes to the same canonical
+    /// JSON, so its digest still verifies and it replays.
+    #[test]
+    fn unset_queue_flags_keep_older_transaction_digests_valid() {
+        let item = WorkerQueueItemRecord {
+            message: "m".to_string(),
+            priority: None,
+            preview: None,
+            custom_message: None,
+            queue_key: None,
+            queue_visible: true,
+            policy: queue_policy_default(),
+            agent_message: None,
+            forced_batch: false,
+            images: Vec::new(),
+        };
+        let snapshot = WorkerQueueSnapshotRecord {
+            version: QUEUE_SNAPSHOT_VERSION,
+            r#type: QUEUE_SNAPSHOT_RECORD_TYPE.to_string(),
+            active_session_id: "s1".to_string(),
+            steering: vec![item],
+            follow_up: Vec::new(),
+            suspended: false,
+            recorded_at: "2026-01-01T00:00:00.000Z".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({
+                "version": QUEUE_SNAPSHOT_VERSION,
+                "type": QUEUE_SNAPSHOT_RECORD_TYPE,
+                "active_session_id": "s1",
+                "steering": [{ "message": "m", "queue_visible": true, "policy": "queued" }],
+                "follow_up": [],
+                "recorded_at": "2026-01-01T00:00:00.000Z",
+            })
+        );
     }
 }

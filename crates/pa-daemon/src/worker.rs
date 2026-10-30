@@ -373,6 +373,8 @@ impl Worker {
             created: false,
             attached_client_ids: Vec::new(),
             abort_requested: false,
+            turn_cancelled: false,
+            turn_completed: false,
             suppress_aborted_row: false,
             send_now_cut: false,
             shutdown_requested: false,
@@ -1196,8 +1198,8 @@ impl Worker {
     /// no destructors, so the caller must have settled the close first).
     async fn exit_after_close(&self) -> ! {
         // Shutdown keeps the resume entry and exits the process (TS
-        // `closeKeepsResumeEntry("shutdown")`).
-        let _ = self.record_recovery(false, "shutdown");
+        // `closeKeepsResumeEntry("shutdown")`); `handle_shutdown` already
+        // recorded the recovery verdict.
         self.close_listener_then_cleanup_socket().await;
         std::process::exit(0)
     }
@@ -1209,7 +1211,7 @@ impl Worker {
             "pa-daemon worker {}: registration refused (the supervisor no longer owns this identity); retiring",
             std::process::id()
         );
-        let _ = self.handle_shutdown().await;
+        let _ = self.handle_shutdown(&json!({})).await;
         self.exit_after_close().await;
     }
 }

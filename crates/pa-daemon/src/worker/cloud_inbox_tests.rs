@@ -478,7 +478,7 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
                 .unwrap()
                 .as_mut()
                 .unwrap()
-                .record_queue_snapshot("target-session", &[], &[],)
+                .record_queue_snapshot("target-session", &[], &[], /*suspended*/ false)
                 .is_err()
         );
         assert!(
@@ -496,7 +496,8 @@ async fn failed_fsync_quarantines_until_restart_and_reconciles_both_disk_outcome
                     "turn_end",
                     &[],
                     &[],
-                    None,
+                    /*suspended*/ false,
+                    None
                 )
                 .is_err()
         );

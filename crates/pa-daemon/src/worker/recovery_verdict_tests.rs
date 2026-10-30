@@ -66,7 +66,7 @@ async fn idle_time_injected_admission_is_busy_evidence() {
     );
     let latest = latest_record(&worker);
     assert_eq!(latest.operation, "follow_up_queued");
-    let (steering, follow_up) = WorkerRecoveryJournal::read_queue_snapshot(
+    let (steering, follow_up, _) = WorkerRecoveryJournal::read_queue_snapshot(
         &worker.config.recovery_journal_path,
         "target-session",
     )
@@ -125,7 +125,7 @@ async fn a_bash_completion_notice_admits_the_steering_lane_with_busy_evidence() 
     );
     let latest = latest_record(&worker);
     assert_eq!(latest.operation, "steer_queued");
-    let (steering, _) = WorkerRecoveryJournal::read_queue_snapshot(
+    let (steering, _, _) = WorkerRecoveryJournal::read_queue_snapshot(
         &worker.config.recovery_journal_path,
         "target-session",
     )
@@ -306,7 +306,7 @@ async fn cancelled_admission_drop_settles_the_verdict() {
     );
     let latest = latest_record(&worker);
     assert_eq!(latest.operation, "queue_dropped");
-    let (steering, follow_up) = WorkerRecoveryJournal::read_queue_snapshot(
+    let (steering, follow_up, _) = WorkerRecoveryJournal::read_queue_snapshot(
         &worker.config.recovery_journal_path,
         "target-session",
     )
@@ -333,7 +333,7 @@ async fn mid_turn_withdrawal_keeps_the_in_flight_turn_busy() {
         latest.busy,
         "the in-flight turn keeps the withdrawal's verdict busy"
     );
-    let (steering, follow_up) = WorkerRecoveryJournal::read_queue_snapshot(
+    let (steering, follow_up, _) = WorkerRecoveryJournal::read_queue_snapshot(
         &worker.config.recovery_journal_path,
         "target-session",
     )

@@ -145,7 +145,7 @@ impl Worker {
             "worker_deliver_message" => self.handle_worker_deliver_message(payload),
             "update_snapshot" => self.handle_update_snapshot(),
             "kill" => self.handle_kill(payload).await,
-            "shutdown" => self.handle_shutdown().await,
+            "shutdown" => self.handle_shutdown(payload).await,
             "rename" => self.handle_rename("rename", payload),
             "set_session_name" => self.handle_rename("set_session_name", payload),
             "mark_anthropic_warning_shown" => self.handle_mark_anthropic_warning_shown(),
@@ -426,6 +426,7 @@ impl Worker {
         {
             let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
+            core.turn_cancelled = true;
             // The queue parks and a plain prompt is rejected until a
             // resume site fires.
             core.queued_input_suspended = true;
@@ -815,6 +816,7 @@ impl Worker {
         self.session_tasks.user_abort();
         let mut core = self.core.lock_or_recover();
         core.abort_requested = true;
+        core.turn_cancelled = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.
         core.queued_input_suspended = true;
         drop(core);
@@ -908,6 +910,7 @@ impl Worker {
         let dropped: Vec<crate::agent_message_ingest::DroppedAgentMessage> = {
             let mut core = self.core.lock_or_recover();
             core.abort_requested = true;
+            core.turn_cancelled = true;
             let dropped = core
                 .steering
                 .iter()

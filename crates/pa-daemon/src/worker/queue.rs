@@ -292,7 +292,7 @@ pub(crate) fn record_queue_checkpoint_locked(
 ) -> anyhow::Result<()> {
     // The lanes are read under the recovery lock (a microsecond core hold —
     // never across the journal's fsyncs): no persist interleaves this read.
-    let (active_session_id, session_id, session_file, lanes, turn_in_flight) = {
+    let (active_session_id, session_id, session_file, lanes, turn_in_flight, suspended) = {
         let core = core_lock.lock_or_recover();
         (
             core.active_session_id.clone(),
@@ -305,6 +305,7 @@ pub(crate) fn record_queue_checkpoint_locked(
                 .map(|s| s.path.to_string_lossy().to_string()),
             queue_lanes(&core),
             core.busy,
+            core.queued_input_suspended,
         )
     };
     let (busy, operation) = match checkpoint {
@@ -327,6 +328,7 @@ pub(crate) fn record_queue_checkpoint_locked(
         operation,
         &lanes.steering,
         &lanes.follow_up,
+        suspended,
         cloud_admission,
     )
 }
@@ -343,6 +345,8 @@ pub(crate) fn queue_lanes(core: &SessionCore) -> QueueLanes {
                 queue_visible: item.queue_visible,
                 policy: item.policy.journal_value().to_string(),
                 agent_message: item.agent_message.clone(),
+                forced_batch: item.forced_batch,
+                images: item.images.clone(),
             })
             .collect()
     }
@@ -363,6 +367,10 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     let Some(first) = items.front() else {
         return Vec::new();
     };
+    // Only a real pickup starts a new delivery. Empty or parked lanes retain
+    // the prior delivery's cancellation and successful completion facts.
+    core.turn_cancelled = false;
+    core.turn_completed = false;
     // The armed set forces "all" only when the front item is armed; an un-armed
     // front disarms the batch once no armed item remains queued.
     let forced = lane == Lane::Steering && core.forced_all_steering && first.forced_batch;
@@ -403,20 +411,16 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
 pub(crate) fn restore_queue_snapshot(
     journal: &WorkerRecoveryJournal,
     active_session_id: &str,
-) -> (VecDeque<QueuedItem>, VecDeque<QueuedItem>) {
+) -> (VecDeque<QueuedItem>, VecDeque<QueuedItem>, bool) {
     fn pending(lanes: Vec<crate::journal::WorkerQueueItemRecord>) -> VecDeque<QueuedItem> {
-        // Images on a queued prompt do not survive the worker restart:
-        // the recovery journal stores the delivery rows without the
-        // process-local attachments (the TS command-recovery journal
-        // keeps the same text-only shape for its lanes). Everything the
-        // turn needs to deliver identically — the labeled preview, the
-        // injected custom row, the queue key, the visibility flag, the
-        // agent-message marker — rides the item record, so a restored
-        // queued heartbeat still runs and persists as the
-        // `heartbeat_prompt` component, and a restored queued agent
-        // message still counts as an ingestion turn (`first.agent_message`
-        // at `note_model_step`) and stays removable by
-        // `agent_messages_clear`/`agent_messages_pause`.
+        // The delivery rows ride the item record — the labeled preview,
+        // the injected custom row, the queue key, the visibility flag, the
+        // agent-message marker, the forced-batch flag and the images — so
+        // the turn delivers identically after a restart: a restored queued
+        // heartbeat still runs and persists as the `heartbeat_prompt`
+        // component, and a restored queued agent message still counts as an
+        // ingestion turn (`first.agent_message` at `note_model_step`) and
+        // stays removable by `agent_messages_clear`/`agent_messages_pause`.
         lanes
             .into_iter()
             .map(|record| {
@@ -448,26 +452,23 @@ pub(crate) fn restore_queue_snapshot(
                     agent_message: record.agent_message.or(agent_message),
                     queue_key: record.queue_key,
                     admission_id: None,
-                    images: Vec::new(),
+                    images: record.images,
                     done: None,
                     queue_visible: record.queue_visible,
                     policy,
-                    forced_batch: false,
+                    forced_batch: record.forced_batch,
                     traceparent: None,
                 }
             })
             .collect()
     }
 
-    let mut steering = VecDeque::new();
-    let mut follow_up = VecDeque::new();
-    if let Some((steering_lanes, follow_up_lanes)) =
-        journal.latest_queue_snapshot(active_session_id)
-    {
-        steering = pending(steering_lanes);
-        follow_up = pending(follow_up_lanes);
+    match journal.latest_queue_snapshot(active_session_id) {
+        Some((steering, follow_up, suspended)) => {
+            (pending(steering), pending(follow_up), suspended)
+        }
+        None => (VecDeque::new(), VecDeque::new(), false),
     }
-    (steering, follow_up)
 }
 
 /// Admit one held autonomous continuation through the follow-up lane:
