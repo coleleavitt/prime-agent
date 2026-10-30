@@ -24,6 +24,7 @@ use pa_tui::interactive::{
     run_interactive,
 };
 use pa_types::daemon::DaemonCommand;
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 /// Turns in the fixture; each turn writes a user prompt, a tool-calling assistant
@@ -72,10 +73,11 @@ impl Drop for Supervisor {
 fn spawn_supervisor(dir: &Path) -> Supervisor {
     let socket = dir.join("daemon.sock");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(dir.join("agent")).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(&socket)
-        .env("PRIME_AGENT_CODING_AGENT_DIR", dir.join("agent"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

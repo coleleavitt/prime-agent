@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 /// The kernel Python with prime-agent-runtime installed; set
@@ -55,7 +56,10 @@ impl Drop for Supervisor {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Supervisor {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
+    let child = command
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -66,7 +70,6 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Su
         .stderr(Stdio::null())
         .env("PRIME_AGENT_KERNEL_PYTHON", kernel_python)
         .env_remove("PRIME_API_KEY")
-        .env_remove("PRIME_AGENT_CODING_AGENT_DIR")
         // A supervisor killed at teardown must not leak its session workers
         // into later test binaries: the worker's supervisor-lost exit runs
         // on this short window instead of the 5-minute default.

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 /// The kernel Python with prime-agent-runtime installed; set
@@ -52,20 +53,16 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Daemon {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
+    let child = command
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
         .arg("--agent-dir")
         .arg(agent_dir)
         .env("PRIME_AGENT_KERNEL_PYTHON", kernel_python)
-        // Hermetic agent dir: point every fallback at the test sandbox.
-        .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
-        // Hermetic harness resolution: ambient session/harness dirs would
-        // mask a missing kernel-env export (the regression this test guards).
-        .env_remove("RLM_SESSION_DIR")
-        .env_remove("RLM_HARNESS_STATE_DIR")
-        .env_remove("RLM_GLOBAL_HARNESS_STATE_DIR")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .env(

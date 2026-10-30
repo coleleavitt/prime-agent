@@ -18,6 +18,7 @@ use pa_core::session_engine::semantic_edges::{
     ChildCancelledReason,
     SemanticEdgeLedgerEvent as LedgerEvent,
 };
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 struct Daemon {
@@ -37,16 +38,16 @@ impl Drop for Daemon {
 #[allow(clippy::zombie_processes)]
 fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
-    let child = Command::new(binary)
+    let mut command = Command::new(binary);
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
+    let child = command
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
         .arg("--agent-dir")
         .arg(agent_dir)
         .env("PRIME_AGENT_KERNEL_PYTHON", kernel_python)
-        // Hermetic agent dir: the ambient environment exports a real
-        // agent dir; point every fallback at the test sandbox instead.
-        .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
         .env_remove("PRIME_API_KEY")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

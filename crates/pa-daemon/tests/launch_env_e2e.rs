@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 /// Remove one env var at scope end: a test that must run with a var in
@@ -81,13 +82,14 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: Option<&Path
     let log_file = std::fs::File::create(socket.with_extension("daemon.log")).expect("log file");
     let log_err = log_file.try_clone().expect("clone log file");
     let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
         .arg("--agent-dir")
         .arg(agent_dir)
-        .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
         .env_remove("PRIME_API_KEY")
         .env_remove("PA_MARKER")
         // THE HOSTILE BOOT CONTEXT (audit #9): a supervisor started from

@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use nix::sys::signal::{Signal, kill as signal_pid};
 use nix::unistd::Pid;
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 struct Daemon {
@@ -68,6 +69,8 @@ fn kernel_python() -> Option<PathBuf> {
 fn spawn_daemon(socket: &Path, agent_dir: &Path, kernel_python: Option<&Path>) -> Daemon {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_pa-daemon"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .arg("supervisor")
         .arg("--socket")
@@ -75,7 +78,6 @@ fn spawn_daemon(socket: &Path, agent_dir: &Path, kernel_python: Option<&Path>) -
         .arg("--agent-dir")
         .arg(agent_dir)
         .env_remove("PRIME_API_KEY")
-        .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
         .env(
             pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
             "20000",

@@ -21,6 +21,7 @@ use pa_tui::interactive::{
     SessionSelection,
     UiMode,
 };
+use pa_types::platform::test_isolation::TestState;
 use serde_json::{Value, json};
 
 struct Supervisor {
@@ -62,10 +63,11 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    // The supervisor refuses to start in a test process whose state paths resolve into the real home.
+    TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(&socket)
-        .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
         .env("PRIME_AGENT_KERNEL_PYTHON", kernel_python())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
