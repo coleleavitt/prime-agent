@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::lineage::{ParentBindings, is_subagent_descendant};
 use super::{
+    ActivityCounts,
     AgentsViewRow,
     AgentsViewScope,
     Rollup,
@@ -23,6 +24,7 @@ use crate::agents_view_state::{
     section_rank,
     summary_for_record,
 };
+use crate::bash_view::ShellCounts;
 use crate::factory_view::FactoryRunCounts;
 use crate::subagents::{is_subagent_summary, summary_identity_keys, summary_parent_keys};
 
@@ -58,7 +60,7 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
     expanded: &HashSet<String, S>,
     program_shown: &HashSet<String, S>,
     rollups: &HashMap<String, Rollup, S>,
-    activity: &HashMap<String, SessionActivity, S>,
+    activity: &ActivityCounts,
     anchor: Option<&str>,
 ) -> Vec<AgentsViewRow> {
     let now = now_ms();
@@ -114,12 +116,25 @@ pub(crate) fn build_rows<S: std::hash::BuildHasher + Default>(
         let rollup = rollups.get(&record.identity).copied().unwrap_or_default();
         let model = session_model(&summary);
         let host_label = remote_host_label(&summary);
-        let activity = summary
+        let live = summary
             .get("activeSessionId")
             .and_then(Value::as_str)
-            .and_then(|active| activity.get(active))
+            .and_then(|active| activity.live.get(active))
             .copied()
             .unwrap_or_default();
+        // Persistent shells count from the daemon list only; the kernel adds its other shells.
+        let persistent = summary
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .and_then(|session_id| activity.persistent_shells.get(session_id))
+            .map_or(0, |shells| shells.persistent);
+        let activity = SessionActivity {
+            shells: ShellCounts {
+                running: live.shells.running - live.shells.persistent + persistent,
+                persistent,
+            },
+            factory_runs: live.factory_runs,
+        };
         base.push(BaseRow {
             kind,
             section: record.section,
@@ -420,8 +435,8 @@ fn merged_summary_row(parent: &BaseRow, depth: usize, expanded: bool) -> AgentsV
     }
 }
 
-/// The node's own `$ N shells` and `⚙ N factory runs` lines, each only when its count is nonzero;
-/// paused runs read apart from the running ones (`⚙ 0 factory runs · 1 paused`).
+/// The node's own `$ N shells[ · M persistent]` and `⚙ N factory runs` lines, each only when its
+/// count is nonzero; paused runs read apart from the running ones (`⚙ 0 factory runs · 1 paused`).
 /// Like the summary line they reuse the parent's summary, so the open action resolves the parent.
 fn activity_rows(parent: &BaseRow, depth: usize) -> Vec<AgentsViewRow> {
     let line = |kind: RowKind, prefix: &str, title: String| AgentsViewRow {
@@ -447,11 +462,20 @@ fn activity_rows(parent: &BaseRow, depth: usize) -> Vec<AgentsViewRow> {
         factory_runs,
     } = parent.activity;
     let mut rows = Vec::new();
-    if shells > 0 {
+    if shells.running > 0 {
+        let persistent = if shells.persistent > 0 {
+            format!(" · {} persistent", shells.persistent)
+        } else {
+            String::new()
+        };
         rows.push(line(
             RowKind::Shells,
             super::SHELLS_ROW_PREFIX,
-            format!("$ {shells} shell{}", if shells == 1 { "" } else { "s" }),
+            format!(
+                "$ {} shell{}{persistent}",
+                shells.running,
+                if shells.running == 1 { "" } else { "s" }
+            ),
         ));
     }
     let FactoryRunCounts { running, paused } = factory_runs;

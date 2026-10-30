@@ -18,6 +18,7 @@ use crate::Line;
 pub use crate::agents_view_forest::AgentsViewScope;
 pub use crate::agents_view_forest::SelectionKey as AgentsViewSelectionKey;
 use crate::agents_view_forest::{
+    ActivityCounts,
     AgentsViewRow,
     RowKind,
     ScopeRoot,
@@ -401,7 +402,7 @@ pub struct AgentsViewLink {
     saved: SavedCatalog,
     /// The activity counts the previous run held: a re-entry renders the line the user opened on
     /// its first frame, so the carried selection restores onto it.
-    session_activity: std::collections::HashMap<String, SessionActivity>,
+    session_activity: ActivityCounts,
     /// The persistent shells list the previous run held, for the same first-frame restore of a
     /// shell row.
     persistent_shells: Value,
@@ -423,7 +424,7 @@ impl AgentsViewLink {
             client,
             events,
             saved: SavedCatalog::default(),
-            session_activity: std::collections::HashMap::new(),
+            session_activity: ActivityCounts::default(),
             persistent_shells: Value::Null,
             activity_fetch: None,
             saved_scope: SavedScope::default(),
@@ -607,8 +608,8 @@ struct AgentsViewMode {
     /// The shell whose open waits on the daemon's walk of the rest of the saved store: its
     /// session opens once the walk lists it, the orphan view once the walk ends without it.
     pending_shell_open: Option<String>,
-    /// Each live session's own shells and factory-run counts, keyed by `activeSessionId`.
-    session_activity: std::collections::HashMap<String, SessionActivity>,
+    /// The activity polls' counts behind the shells and factory-run lines.
+    session_activity: ActivityCounts,
 }
 
 /// The saved-catalog project filter (upstream #826): every project's saved sessions (the TS
@@ -788,7 +789,7 @@ impl AgentsViewMode {
             shell_view: None,
             pending_shell_action: None,
             pending_shell_open: None,
-            session_activity: std::collections::HashMap::new(),
+            session_activity: ActivityCounts::default(),
         }
     }
 }
