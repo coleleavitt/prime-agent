@@ -2831,6 +2831,37 @@ class SnapshotSecretsTest(unittest.TestCase):
         self.assertNotIn(b"sk-ant-api03", payload)
 
 
+    def test_a_path_held_by_an_environment_variable_is_not_a_secret_to_scan_for(self):
+        """`PWD` (whose name carries the word `pwd`) and `SSH_AUTH_SOCK` hold the working directory
+        and a socket path. Scanning snapshots for those values dropped every variable that held a
+        path under the home directory, so a restart lost them; a real secret still blocks."""
+        sys.path.insert(0, SRC)
+        self.addCleanup(sys.path.remove, SRC)
+        from rlm.repl import _snapshot_state
+
+        live_key = "live-provider-key-0123456789"
+        with tempfile.TemporaryDirectory() as tmp:
+            sock = os.path.join(tmp, "agent.sock")
+            open(sock, "w").close()
+            ns = {
+                "base": os.path.join(tmp, "repo") + "/",
+                "listing": [os.path.join(tmp, "a.txt"), sock],
+                "copied": "prefix " + live_key,
+            }
+            env = {"PWD": tmp, "SSH_AUTH_SOCK": sock, "EXAMPLE_PROVIDER_API_KEY": live_key}
+            with mock.patch.dict(os.environ, env):
+                result = _snapshot_state(
+                    ns,
+                    os.path.join(tmp, "kernel-state.dill"),
+                    os.path.join(tmp, "kernel-state.json"),
+                    max_bytes=1 << 24,
+                    max_variable_bytes=1 << 22,
+                    prune_oversized=False,
+                )
+        self.assertEqual(sorted(result["saved"]), ["base", "listing"])
+        self.assertEqual([entry["name"] for entry in result["skipped"]], ["copied"])
+
+
 class SnapshotTempCleanupTest(unittest.TestCase):
     def test_keyboard_interrupt_during_payload_write_removes_temp_file(self):
         from unittest import mock as unittest_mock

@@ -97,11 +97,18 @@ def _is_secret_name(name: str) -> bool:
 
 
 def _live_env_secrets() -> list[bytes]:
-    """Values of secret-named environment variables, as they would appear serialized."""
+    """Values of secret-named environment variables, as they would appear serialized.
+
+    A value that is an existing absolute path is a location, not a credential: `PWD` (its name
+    holds the word `pwd`) and `SSH_AUTH_SOCK` would otherwise make every variable holding a path
+    under the home directory look like a leak, and a restart would lose all of them.
+    """
     return [
         value.encode("utf-8", "surrogateescape")
         for key, value in os.environ.items()
-        if len(value) >= _MIN_ENV_SECRET_LEN and _is_secret_name(key)
+        if len(value) >= _MIN_ENV_SECRET_LEN
+        and _is_secret_name(key)
+        and not (os.path.isabs(value) and os.path.exists(value))
     ]
 
 
