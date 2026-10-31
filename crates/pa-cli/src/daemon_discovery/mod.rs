@@ -59,6 +59,8 @@ pub const DISCOVERY_CONTAINMENT_ENV: &str = "PRIME_AGENT_DISCOVERY_CONTAINMENT";
 /// uid-0 twins. These are also the product-default socket dirs for uid
 /// 1000/0, so the list must never apply to the shipped binary.
 pub(crate) const TEST_NEVER_TOUCH_SOCKET_DIRS: &[&str] = &[
+    "/run/user/1000/prime-agent",
+    "/run/user/0/prime-agent",
     "/tmp/prime-agent-1000",
     "/tmp/mission-tmp/prime-agent-1000",
     "/tmp/mission-daemon",
@@ -209,11 +211,11 @@ fn state_root_matches(root: &DaemonStateRoot, socket_path: &Path) -> bool {
     }
     #[cfg(not(windows))]
     {
+        let legacy = pa_daemon::platform::legacy_socket_dir();
         if socket_path == root.default_socket_path
-            || root
-                .socket_dir
-                .as_ref()
-                .is_some_and(|dir| socket_path.parent() == Some(dir))
+            || root.socket_dir.as_ref().is_some_and(|dir| {
+                socket_path.parent() == Some(dir) || socket_path.parent() == Some(legacy.as_path())
+            })
         {
             return true;
         }
@@ -257,10 +259,14 @@ pub(crate) fn is_worker_socket_path(socket_path: &Path, socket_dir: &Path) -> bo
 /// discovery directory: an agent-dir override can contain the shared worker
 /// directory even when the root is pinned elsewhere.
 pub(crate) fn scan_listening_daemons(root: &DaemonStateRoot) -> Vec<DiscoveredDaemonProcess> {
-    let worker_socket_dir = pa_daemon::platform::socket_dir();
+    let worker_socket_dirs = socket_dirs(&pa_daemon::platform::socket_dir());
     scan::scan_all_listening_daemons(config::APP_NAME, root)
         .into_iter()
-        .filter(|daemon| !is_worker_socket_path(&daemon.socket_path, &worker_socket_dir))
+        .filter(|daemon| {
+            !worker_socket_dirs
+                .iter()
+                .any(|dir| is_worker_socket_path(&daemon.socket_path, dir))
+        })
         .collect()
 }
 
@@ -274,6 +280,17 @@ pub(crate) fn is_daemon_process_listening(
     scan_listening_daemons(root)
         .iter()
         .any(|daemon| daemon.pid == pid && daemon.socket_path == socket_path)
+}
+
+/// The current socket dir, then the legacy one a daemon of an earlier build may still sit in
+/// (the same dir off unix, where there is only one).
+fn socket_dirs(current: &Path) -> Vec<PathBuf> {
+    let legacy = pa_daemon::platform::legacy_socket_dir();
+    if legacy == current {
+        vec![current.to_path_buf()]
+    } else {
+        vec![current.to_path_buf(), legacy]
+    }
 }
 
 /// Socket files in the root's socket dir: live daemons and orphaned files
@@ -538,10 +555,14 @@ fn discover_daemons_with(root: &DaemonStateRoot, named_pipes: bool) -> Vec<Daemo
     let orphan_files: Vec<PathBuf> = root
         .socket_dir
         .as_deref()
-        .map(|dir| {
-            scan_socket_dir(root, dir)
-                .into_iter()
-                .filter(|path| !is_worker_socket_path(path, dir))
+        .map(|current| {
+            socket_dirs(current)
+                .iter()
+                .flat_map(|dir| {
+                    scan_socket_dir(root, dir)
+                        .into_iter()
+                        .filter(|path| !is_worker_socket_path(path, dir))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -653,6 +674,14 @@ mod tests {
             &dir.join("worker-a.sock"),
             Path::new("/fixture/other-sockets")
         ));
+    }
+
+    #[test]
+    fn socket_dirs_lists_the_current_dir_then_the_legacy_one() {
+        let legacy = pa_daemon::platform::legacy_socket_dir();
+        assert_eq!(socket_dirs(&legacy), std::slice::from_ref(&legacy));
+        let current = Path::new("/run/user/1000/prime-agent");
+        assert_eq!(socket_dirs(current), [current.to_path_buf(), legacy]);
     }
 
     #[cfg(not(windows))]

@@ -212,6 +212,11 @@ mod tests {
         use std::path::Path;
         let _env = env_lock();
         let _agent_dir = RestoreEnv::new(ENV_AGENT_DIR);
+        // A daemon of an earlier build running in the ambient legacy socket dir would keep the
+        // unkeyed default there while the keyed names resolve to the current dir.
+        let _tmpdir = RestoreEnv::new("TMPDIR");
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", tmp.path());
         let socket_for = |agent_dir: Option<&Path>| {
             match agent_dir {
                 Some(dir) => std::env::set_var(ENV_AGENT_DIR, dir),

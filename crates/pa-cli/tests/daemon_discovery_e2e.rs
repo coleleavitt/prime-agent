@@ -116,6 +116,13 @@ fn run_cli(root: &Path, args: &[&str]) -> Output {
 /// [`run_cli`] with an explicit containment marker; `"0"` (with cargo's
 /// runtime marker removed) is how the shipped binary runs.
 fn run_cli_with_containment(root: &Path, args: &[&str], containment: &str) -> Output {
+    cli_command(root, args, containment)
+        .output()
+        .expect("spawn CLI binary")
+}
+
+/// The command [`run_cli_with_containment`] runs, for a test that adds to its environment.
+fn cli_command(root: &Path, args: &[&str], containment: &str) -> Command {
     let agent_dir = root.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let mut command = Command::new(cli_binary());
@@ -137,7 +144,7 @@ fn run_cli_with_containment(root: &Path, args: &[&str], containment: &str) -> Ou
     // The state root follows this var (the env-pinned root contract), so a
     // root-less invocation must not inherit an ambient pin.
     command.env_remove("PRIME_AGENT_DAEMON_SOCKET");
-    command.output().expect("spawn CLI binary")
+    command
 }
 
 /// The same launcher used before the TUI attaches must create a supervisor
@@ -596,6 +603,61 @@ fn the_shipped_binary_stops_the_daemon_on_its_own_default_socket() {
     wait_until_stopped(&socket, &mut daemon);
 }
 
+#[test]
+fn a_daemon_still_running_in_the_legacy_socket_dir_stays_the_default() {
+    // An earlier build's daemon sits in `<TMPDIR>/prime-agent-<uid>` while the user's runtime
+    // dir exists. Resolving the default to the runtime dir would start a second daemon and hide
+    // this one's sessions from every new client until it is stopped.
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let fixture = tempfile::tempdir().expect("fixture");
+    let uid = {
+        let probe = fixture.path().join("uid-probe");
+        std::fs::write(&probe, b"").expect("uid probe");
+        std::fs::metadata(&probe).expect("uid probe metadata").uid()
+    };
+    let runtime = fixture.path().join("run");
+    std::fs::create_dir(&runtime).expect("runtime dir");
+    std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700))
+        .expect("runtime dir mode");
+    let agent_dir = fixture.path().join("agent");
+    let key = pa_daemon::platform::agent_dir_socket_suffix(&agent_dir, None).expect("keyed");
+    let socket = fixture
+        .path()
+        .join(format!("prime-agent-{uid}"))
+        .join(format!("daemon-{key}.sock"));
+    std::fs::create_dir_all(socket.parent().expect("socket dir")).expect("socket dir");
+    let mut daemon = spawn_daemon(&socket, &agent_dir, fixture.path());
+    let run = |args: &[&str]| {
+        cli_command(fixture.path(), args, "0")
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .output()
+            .expect("spawn CLI binary")
+    };
+
+    let status = run(&["status", "--json"]);
+    assert_eq!(status.status.code(), Some(0), "stderr: {}", stderr(&status));
+    let rows: Value = serde_json::from_str(&stdout(&status)).expect("status json");
+    assert_eq!(
+        rows.as_array()
+            .expect("status rows")
+            .iter()
+            .map(|row| (row["socketPath"].as_str(), row["isDefault"].as_bool()))
+            .collect::<Vec<_>>(),
+        vec![(socket.to_str(), Some(true))]
+    );
+
+    let shutdown = run(&["shutdown", "--force", "--json"]);
+    assert_eq!(
+        shutdown.status.code(),
+        Some(0),
+        "stdout: {} stderr: {}",
+        stdout(&shutdown),
+        stderr(&shutdown)
+    );
+    wait_until_stopped(&socket, &mut daemon);
+}
+
 /// Wait for the daemon's socket to stop accepting connections and its
 /// process to exit, bounded at 10s (a supervisor shutdown handshake is fast;
 /// the bound only guards a stuck test).
@@ -632,6 +694,7 @@ fn run_cli_state_env(
 ) -> Output {
     std::fs::create_dir_all(agent_dir).expect("agent dir");
     let mut command = Command::new(cli_binary());
+    TestState::for_agent_dir(agent_dir).apply(&mut command);
     command
         .args(args)
         .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
@@ -1070,6 +1133,7 @@ fn a_daemon_launched_with_an_inherited_worker_env_comes_up_as_a_supervisor() {
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     std::fs::create_dir_all(&tmp_dir).expect("tmp dir");
     let mut command = Command::new(cli_binary());
+    TestState::for_agent_dir(&agent_dir).apply(&mut command);
     command
         .args(["--mode", "daemon", "--daemon-socket"])
         .arg(&socket)

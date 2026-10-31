@@ -43,6 +43,25 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(unix)]
 const LOCK_RETRIES: u32 = 600;
 
+/// Whether a supervisor holds the lease on `socket` right now: the socket file exists and its
+/// `{socket}.lock` directory was refreshed inside the staleness window (a holder refreshes every
+/// second). It reads two inodes and never connects, so resolving the default socket stays cheap
+/// and never touches a daemon a test process happens to sit beside.
+#[cfg(unix)]
+pub(crate) fn lease_is_live(socket: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    std::fs::symlink_metadata(socket).is_ok_and(|meta| meta.file_type().is_socket())
+        && std::fs::metadata(pa_core::platform::LockDir::path_for(socket))
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|modified| {
+                modified
+                    .elapsed()
+                    .ok()
+                    .is_none_or(|age| age < LOCK_STALE_AFTER)
+            })
+}
+
 /// Acquire the cross-process cleanup lock (proper-lockfile's empty
 /// `{path}.lock` directory): held for the whole probe/unlink sequence, so a
 /// competing startup worker cannot bind a live listener in between.

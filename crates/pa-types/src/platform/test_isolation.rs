@@ -569,6 +569,9 @@ impl TestState {
         env.push(set("CLAUDE_CONFIG_DIR", &self.root.join("claude")));
         env.push(set("PI_AGENT_DIR", &self.root.join("pi-agent")));
         env.push(set("OPENCODE_CONFIG_DIR", &self.root.join("opencode")));
+        // The daemon puts its sockets in `$XDG_RUNTIME_DIR/prime-agent`: a test process must
+        // never share that directory with the user's live daemon.
+        env.push((OsString::from("XDG_RUNTIME_DIR"), None));
         env.push((
             OsString::from("ANTHROPIC_CLAUDE_CREDENTIALS_BACKEND"),
             Some(OsString::from("file")),
@@ -732,6 +735,11 @@ mod tests {
         assert_eq!(value("PI_AGENT_DIR"), Some("/r/pi-agent".into()));
         assert_eq!(value("OPENCODE_CONFIG_DIR"), Some("/r/opencode".into()));
         assert_eq!(value(ISOLATED_ENV), Some("1".into()));
+        assert!(
+            env.iter()
+                .any(|(name, value)| name == "XDG_RUNTIME_DIR" && value.is_none()),
+            "a test process never inherits the user's runtime dir, where the live daemon's sockets are"
+        );
         let home = PathBuf::from(value("HOME").expect("HOME is set"));
         assert!(
             !is_protected_home(&home),

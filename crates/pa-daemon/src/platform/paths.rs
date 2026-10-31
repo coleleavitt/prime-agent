@@ -5,12 +5,50 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::hash_key;
 
-/// Default directory holding daemon socket files (Unix).
+/// Default directory holding daemon socket files (Unix): `$XDG_RUNTIME_DIR/prime-agent` when
+/// the runtime dir is a private directory of this user, else [`legacy_socket_dir`].
+///
+/// `/tmp` is swept by tmpfiles cleaners, tmp wipes and test harnesses; every socket, the
+/// supervisor's lock directory and each worker's endpoint go with it while the processes live
+/// on, unreachable. The runtime dir is per-user, mode 0700 and cleared only at logout.
 #[cfg(unix)]
 pub fn socket_dir() -> PathBuf {
     let uid = pa_core::platform::process::current_user_id();
+    runtime_socket_dir(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from), uid)
+        .unwrap_or_else(legacy_socket_dir)
+}
+
+/// The directory daemons used before the runtime dir was preferred: `<tmpdir>/prime-agent-<uid>`
+/// (the TypeScript daemon's). Discovery still accepts daemons sitting there.
+#[cfg(unix)]
+pub fn legacy_socket_dir() -> PathBuf {
+    let uid = pa_core::platform::process::current_user_id();
     let tmp = std::env::var_os("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
     socket_dir_for(&tmp, uid)
+}
+
+/// `<runtime>/prime-agent` for a runtime dir that is absolute, a real directory (no symlink)
+/// owned by `uid`, and closed to group and others. Anything else would let another user place
+/// or replace the daemon's sockets, so it is not used.
+#[cfg(unix)]
+fn runtime_socket_dir(runtime: Option<PathBuf>, uid: u32) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let runtime = runtime.filter(|dir| dir.is_absolute())?;
+    let metadata = std::fs::symlink_metadata(&runtime).ok()?;
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+        return None;
+    }
+    let dir = runtime.join("prime-agent");
+    #[cfg(not(target_os = "linux"))]
+    if std::os::unix::net::SocketAddr::from_pathname(
+        dir.join("worker-000000000000-000000000000.sock"),
+    )
+    .is_err()
+    {
+        return None;
+    }
+    Some(dir)
 }
 
 /// Reserve the longest generated endpoint before selecting a directory. Linux
@@ -38,16 +76,38 @@ pub fn socket_dir() -> PathBuf {
     std::env::temp_dir().join("prime-agent-user")
 }
 
+/// Off unix there is one socket dir: no earlier location to keep honoring.
+#[cfg(not(unix))]
+#[must_use]
+pub fn legacy_socket_dir() -> PathBuf {
+    socket_dir()
+}
+
 /// Default supervisor endpoint: `daemon.sock` in the socket dir (Unix) or
 /// the per-user daemon pipe name (Windows), keyed by the agent dir when it is
 /// not the product default (see [`agent_dir_socket_suffix`]).
+///
+/// A daemon still running from the legacy socket dir (started by an earlier build) keeps being
+/// the default until it stops: resolving to the new dir meanwhile would start a second daemon
+/// and hide the first one's sessions from every new client.
 #[cfg(unix)]
 #[must_use]
 pub fn default_daemon_socket_path() -> PathBuf {
-    socket_dir().join(match current_agent_dir_socket_suffix() {
+    default_socket_in(&socket_dir(), &legacy_socket_dir())
+}
+
+#[cfg(unix)]
+fn default_socket_in(current: &Path, legacy: &Path) -> PathBuf {
+    let name = match current_agent_dir_socket_suffix() {
         Some(suffix) => format!("daemon-{suffix}.sock"),
         None => "daemon.sock".to_string(),
-    })
+    };
+    let legacy_socket = legacy.join(&name);
+    if legacy != current && crate::socket::lease_is_live(&legacy_socket) {
+        legacy_socket
+    } else {
+        current.join(name)
+    }
 }
 
 #[cfg(not(unix))]
@@ -140,7 +200,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn default_socket_uses_the_same_real_uid_as_the_typescript_daemon() {
+    fn the_legacy_socket_dir_uses_the_same_real_uid_as_the_typescript_daemon() {
         let output = std::process::Command::new("id")
             .arg("-ru")
             .output()
@@ -149,9 +209,87 @@ mod tests {
         let uid = String::from_utf8(output.stdout).unwrap();
         let tmp = std::env::var_os("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
         assert_eq!(
-            socket_dir(),
+            legacy_socket_dir(),
             socket_dir_for(&tmp, uid.trim().parse().unwrap())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_default_socket_follows_a_live_legacy_daemon_and_otherwise_the_current_dir() {
+        let scratch = tempfile::TempDir::new().unwrap();
+        let current = scratch.path().join("run/prime-agent");
+        let legacy = scratch.path().join("tmp/prime-agent-1000");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let name = default_socket_in(&current, &current)
+            .file_name()
+            .unwrap()
+            .to_owned();
+        let legacy_socket = legacy.join(&name);
+
+        assert_eq!(default_socket_in(&current, &legacy), current.join(&name));
+
+        let _listener = std::os::unix::net::UnixListener::bind(&legacy_socket).unwrap();
+        assert_eq!(
+            default_socket_in(&current, &legacy),
+            current.join(&name),
+            "a socket file nobody holds the lease on is a leftover"
+        );
+
+        let lock = pa_core::platform::LockDir::path_for(&legacy_socket);
+        std::fs::create_dir(&lock).unwrap();
+        assert_eq!(default_socket_in(&current, &legacy), legacy_socket);
+
+        std::fs::File::open(&lock)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(
+            default_socket_in(&current, &legacy),
+            current.join(&name),
+            "a lease nobody refreshes is a dead daemon's"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_private_runtime_dir_of_this_user_hosts_the_sockets() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let uid = pa_core::platform::process::current_user_id();
+        let runtime = tempfile::TempDir::new().unwrap();
+        std::fs::set_permissions(runtime.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            runtime_socket_dir(Some(runtime.path().to_path_buf()), uid),
+            Some(runtime.path().join("prime-agent"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_runtime_dir_that_is_open_foreign_relative_or_a_symlink_is_not_used() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let uid = pa_core::platform::process::current_user_id();
+        let scratch = tempfile::TempDir::new().unwrap();
+        let open = scratch.path().join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let private = scratch.path().join("private");
+        std::fs::create_dir(&private).unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = scratch.path().join("link");
+        std::os::unix::fs::symlink(&private, &link).unwrap();
+        for unusable in [
+            (Some(open), uid),
+            (Some(private), uid.wrapping_add(1)),
+            (Some(PathBuf::from("run/user")), uid),
+            (Some(link), uid),
+            (Some(scratch.path().join("missing")), uid),
+            (None, uid),
+        ] {
+            assert_eq!(runtime_socket_dir(unusable.0, unusable.1), None);
+        }
     }
 
     #[cfg(all(unix, not(target_os = "linux")))]
