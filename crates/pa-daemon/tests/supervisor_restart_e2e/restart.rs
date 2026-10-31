@@ -100,7 +100,6 @@ fn supervisor_kill9_restart_sessions_re_register_and_survive() {
 
     // The in-flight turns complete while no supervisor exists (direct
     // worker connections).
-    std::thread::sleep(Duration::from_millis(1600));
     for (descriptor, index) in descriptors.iter().zip(0..3) {
         assert!(
             process_alive(descriptor.pid),
@@ -119,14 +118,21 @@ fn supervisor_kill9_restart_sessions_re_register_and_survive() {
             }),
         );
         assert_eq!(auth["success"], true, "direct auth failed: {auth}");
-        let answer = worker.request(
-            "get_last_assistant_text",
-            &json!({ "activeSessionId": descriptor.worker_id }),
-        );
+        let expected = json!(format!("turn-1-{index}"));
+        let turn_deadline = Instant::now() + Duration::from_secs(15);
+        let answer = loop {
+            let answer = worker.request(
+                "get_last_assistant_text",
+                &json!({ "activeSessionId": descriptor.worker_id }),
+            );
+            if answer["data"]["text"] == expected || Instant::now() >= turn_deadline {
+                break answer;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
         assert_eq!(answer["success"], true, "last text failed: {answer}");
         assert_eq!(
-            answer["data"]["text"],
-            json!(format!("turn-1-{index}")),
+            answer["data"]["text"], expected,
             "in-flight turn completed without a supervisor"
         );
     }

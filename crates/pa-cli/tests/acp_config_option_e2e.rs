@@ -126,7 +126,10 @@ fn shutdown_sandboxed_daemon(socket: &std::path::Path) {
     );
     let _ = stream.write_all(frame.as_bytes());
     let _ = stream.flush();
-    std::thread::sleep(Duration::from_millis(300));
+    let stopped_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while socket.exists() && std::time::Instant::now() < stopped_deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// The models.json fixture: a second faux-provider model the pickers can

@@ -410,8 +410,14 @@ fn supervisor_renews_lifetime_socket_lease_and_reclaims_a_dead_holder() {
     let lock = PathBuf::from(format!("{}.lock", socket.display()));
     assert!(lock.is_dir(), "serving supervisor must hold socket lease");
     let before = std::fs::metadata(&lock).unwrap().modified().unwrap();
-    std::thread::sleep(Duration::from_secs(2));
-    let after = std::fs::metadata(&lock).unwrap().modified().unwrap();
+    let refresh_deadline = Instant::now() + Duration::from_secs(10);
+    let after = loop {
+        let modified = std::fs::metadata(&lock).unwrap().modified().unwrap();
+        if modified > before || Instant::now() >= refresh_deadline {
+            break modified;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert!(
         after > before,
         "live holder must refresh lock directory mtime"

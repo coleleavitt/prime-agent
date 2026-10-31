@@ -563,7 +563,14 @@ fn worker_fd_table_stable_across_client_connection_churn() {
     for _ in 0..2 {
         probe_worker(&worker_socket);
     }
-    std::thread::sleep(Duration::from_millis(300));
+    // The baseline is taken once the warm-up's fds stopped changing.
+    let mut previous = None;
+    wait_until(Duration::from_secs(5), || {
+        let open = fd_snapshot(pid).len();
+        let steady = previous == Some(open);
+        previous = Some(open);
+        steady
+    });
     let baseline = fd_snapshot(pid);
     println!(
         "worker baseline fds {} ({:?})",
@@ -575,9 +582,16 @@ fn worker_fd_table_stable_across_client_connection_churn() {
         probe_worker(&worker_socket);
         std::thread::sleep(Duration::from_millis(20));
     }
-    // Let the worker's read loops observe EOF and the fan-out tasks exit.
-    std::thread::sleep(Duration::from_millis(500));
-    let final_table = fd_snapshot(pid);
+    // The worker's read loops observe EOF and the fan-out tasks exit: poll until the table is
+    // back inside the bound (the assertion below reports it when it never gets there).
+    let settle_deadline = Instant::now() + Duration::from_secs(10);
+    let final_table = loop {
+        let table = fd_snapshot(pid);
+        if table.len() <= baseline.len() + 1 || Instant::now() >= settle_deadline {
+            break table;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     println!(
         "worker fds after {PROBES} connections: {} ({:?})",
         final_table.len(),
@@ -689,19 +703,31 @@ fn supervisor_restart_loop_leaves_no_orphan_workers() {
     });
 
     // No orphan worker survives the loop: each either served or was killed with its relaunch.
-    std::thread::sleep(Duration::from_millis(500));
-    let orphans = child_pids_of(supervisor_pid)
-        .into_iter()
-        .filter(|p| process_alive(*p))
-        .collect::<Vec<_>>();
+    let orphan_deadline = Instant::now() + Duration::from_secs(10);
+    let orphans = loop {
+        let alive = child_pids_of(supervisor_pid)
+            .into_iter()
+            .filter(|p| process_alive(*p))
+            .collect::<Vec<_>>();
+        if alive.is_empty() || Instant::now() >= orphan_deadline {
+            break alive;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert!(
         orphans.is_empty(),
         "orphan worker processes survived the restart loop: {orphans:?}"
     );
 
     // The supervisor's own fd table returns to baseline (each failed relaunch cost one connection).
-    std::thread::sleep(Duration::from_millis(500));
-    let final_fds = fd_snapshot(supervisor_pid);
+    let settle_deadline = Instant::now() + Duration::from_secs(10);
+    let final_fds = loop {
+        let fds = fd_snapshot(supervisor_pid);
+        if fds.len() <= baseline.len() + 1 || Instant::now() >= settle_deadline {
+            break fds;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     println!(
         "restart loop: supervisor fds baseline {}, final {} ({:?})",
         baseline.len(),

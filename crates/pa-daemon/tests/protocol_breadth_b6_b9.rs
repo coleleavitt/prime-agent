@@ -162,6 +162,54 @@ impl Client {
         }
     }
 
+    /// Poll `get_state` until the session stops streaming. `wait_for_idle` blocks by design on a
+    /// paused input queue, so a test that holds a pause polls the state instead.
+    fn wait_until_not_streaming(&mut self, session_id: &str) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            self.send_command(
+                "st-1",
+                &json!({ "type": "get_state", "activeSessionId": session_id }),
+            );
+            let response = self.read_response("st-1");
+            assert_eq!(response["success"], true, "{response}");
+            if response["data"]["isStreaming"] == false {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the turn never settled: {response}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// `cancelOwned` for `admission_id`, with the lines that landed before its reply (the
+    /// cancelled wait's failure may come first). This port registers an admission in the dispatch
+    /// task, so a cancel that beats the registration answers `unknown` and withdraws nothing:
+    /// retry it until the answer changes.
+    fn cancel_owned_admission(
+        &mut self,
+        session_id: &str,
+        admission_id: &str,
+    ) -> (
+        serde_json::Value,
+        std::collections::VecDeque<serde_json::Value>,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.send_command(
+                "c-1",
+                &json!({ "type": "cancel_prompt_admission", "activeSessionId": session_id, "admissionId": admission_id, "cancelOwned": true }),
+            );
+            let (response, lines) = self.read_response_and_lines("c-1");
+            if response["data"] != json!({ "status": "unknown" }) || Instant::now() >= deadline {
+                return (response, lines);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// The first buffered-or-live outbound line of `line_type`; other types stay buffered or are
     /// skipped.
     fn next_line_of_type(
@@ -492,9 +540,8 @@ fn wave_b8_held_pause_gates_queued_input() {
         .expect("pause id")
         .to_string();
 
-    // Wait out the first turn (`wait_for_idle` would block by design on a
-    // paused queue), then check the queue still holds the item.
-    std::thread::sleep(Duration::from_millis(700));
+    // Wait out the first turn through the state, then check the queue still holds the item.
+    client.wait_until_not_streaming(&session_id);
     client.send_command(
         "q-1",
         &json!({ "type": "get_queue", "activeSessionId": session_id }),
@@ -764,19 +811,9 @@ fn wave_b9_prompt_admission_wire_shapes() {
         "p-2",
         &json!({ "type": "prompt_and_wait", "activeSessionId": session_id, "message": "queued behind", "admissionId": "adm-1" }),
     );
-    // Give the admitted prompt's route its start: TS registers an admission at parse
-    // time; this port registers in the dispatch task, so the cancel must not race it.
-    std::thread::sleep(Duration::from_millis(100));
-
     // The queued prompt committed at admission: cancelOwned withdraws
     // that item without aborting the unrelated slow turn.
-    client.send_command(
-        "c-1",
-        &json!({ "type": "cancel_prompt_admission", "activeSessionId": session_id, "admissionId": "adm-1", "cancelOwned": true }),
-    );
-    // The cancelled wait's failure response may land before the cancel's own response
-    // (the dropped queue item settles the wait), so the read buffers instead of dropping.
-    let (response, mut lines) = client.read_response_and_lines("c-1");
+    let (response, mut lines) = client.cancel_owned_admission(&session_id, "adm-1");
     assert_eq!(response["success"], true, "{response}");
     assert_eq!(response["data"], json!({ "status": "owned" }));
     // The cancelled prompt_and_wait fails its wait (the dropped queue item
@@ -790,7 +827,12 @@ fn wave_b9_prompt_admission_wire_shapes() {
     };
     assert_eq!(response["success"], false, "{response}");
 
-    std::thread::sleep(Duration::from_millis(700));
+    client.send_command(
+        "w-1",
+        &json!({ "type": "wait_for_idle", "activeSessionId": session_id }),
+    );
+    let response = client.read_response("w-1");
+    assert_eq!(response["success"], true, "{response}");
     client.send_command(
         "q-1",
         &json!({ "type": "get_queue", "activeSessionId": session_id }),

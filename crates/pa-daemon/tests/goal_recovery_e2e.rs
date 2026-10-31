@@ -463,7 +463,27 @@ fn killed_mid_goal_worker_rehydrates_the_goal_with_counts() {
     let _ = std::process::Command::new("kill")
         .args(["-9", &worker_pid.to_string()])
         .status();
-    std::thread::sleep(Duration::from_secs(3));
+    // The session is served again once a different worker reports for it.
+    let respawn_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        harness.client.send_command(
+            "st-respawn",
+            &json!({ "type": "get_state", "activeSessionId": harness.session_id }),
+        );
+        let state = harness.client.request("st-respawn");
+        if state["success"] == true
+            && state["data"]["workerPid"]
+                .as_u64()
+                .is_some_and(|pid| pid != worker_pid)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < respawn_deadline,
+            "no replacement worker came up: {state}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     // The recovered prompt retries until the new worker serves it (attempts race the
     // respawn backoff).

@@ -441,8 +441,17 @@ fn a_worker_that_fails_to_death_releases_the_session_hold() {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    // Let the give-up settle (nothing live left of the id) before the reopen.
-    std::thread::sleep(Duration::from_secs(2));
+    // The give-up has settled once nothing live is left of the id; reopen only then.
+    let settle_deadline = Instant::now() + Duration::from_secs(30);
+    while child_pids_of(supervisor_pid).into_iter().any(process_alive)
+        || worker_serving(&worker_socket)
+    {
+        assert!(
+            Instant::now() < settle_deadline,
+            "the give-up never cleared the abandoned worker"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     // No resident serves the file (the id was abandoned): the dead holder's
     // lease self-heals through the stale-owner reclaim.
