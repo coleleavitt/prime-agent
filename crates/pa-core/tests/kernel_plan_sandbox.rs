@@ -366,7 +366,11 @@ async fn a_busy_kernel_refuses_the_toggle_and_keeps_running() {
     let _ = running.await;
     // A live background `bash()` job refuses it too: the restart would kill the job.
     fixture.mode.set(false);
-    let job = cell(&fixture, "_h = bash('sleep 60')\n_h.pid > 0").await;
+    let job = cell(
+        &fixture,
+        "_h = bash('sleep 60', allow_sleep=True)\n_h.pid > 0",
+    )
+    .await;
     fixture.mode.set(true);
     let busy_job = fixture.provisioner.sync_plan_mode().await;
     let _ = cell(&fixture, "_h.kill()").await;

@@ -20,13 +20,40 @@ bash_module = sys.modules["rlm.bash"]
 
 
 class BashTest(unittest.IsolatedAsyncioTestCase):
-    async def test_a_timeout_kills_the_command_and_marks_the_result(self):
+    async def test_a_kill_timeout_kills_the_command_and_marks_the_result(self):
         started = asyncio.get_running_loop().time()
-        result = await bash("echo start; sleep 30", timeout=0.5)
+        result = await bash("echo start; sleep 30", timeout=0.5, on_timeout="kill")
         self.assertTrue(result.timed_out)
         self.assertNotEqual(result.exit_code, 0)
         self.assertEqual(result.output, "start\nCommand timed out after 0.5s")
         self.assertLess(asyncio.get_running_loop().time() - started, 20)
+
+    async def test_a_timeout_moves_the_command_to_the_background(self):
+        result = await bash("echo start; sleep 30", timeout=0.5)
+        handle = result.handle
+        try:
+            self.assertEqual((result.exit_code, result.timed_out, result.backgrounded), (None, False, True))
+            self.assertTrue(result.output.startswith("start\n"), result.output)
+            self.assertIn(f"pid {handle.pid}", result.output)
+            self.assertTrue(handle.running)
+        finally:
+            handle.kill()
+        killed = await handle
+        self.assertEqual((killed.backgrounded, killed.timed_out, killed.handle), (False, False, None))
+        self.assertLess(killed.exit_code, 0)
+
+    async def test_awaiting_the_handle_again_waits_for_the_end(self):
+        result = await bash("echo start; sleep 1; echo end", timeout=0.3)
+        self.assertTrue(result.backgrounded)
+        final = await result.handle
+        self.assertEqual(
+            (final.exit_code, final.output, final.backgrounded, final.timed_out),
+            (0, "start\nend\n", False, False),
+        )
+
+    def test_on_timeout_is_background_or_kill(self):
+        with self.assertRaises(ValueError):
+            bash("true", timeout=5, on_timeout="ignore")
 
     async def test_a_command_inside_its_timeout_is_untouched(self):
         result = await bash("echo ok", timeout=30)
@@ -465,7 +492,7 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         handles: list[bash_module.BashHandle] = []
 
         async def run_background():
-            h = bash("sleep 30")
+            h = bash("sleep 30", allow_sleep=True)
             handles.append(h)
             h.pid  # released as a deliberate background handle
             await asyncio.sleep(10)
@@ -483,7 +510,7 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(handle, timeout=5)
 
     async def test_cancelling_await_on_released_handle_does_not_kill(self):
-        handle = bash("sleep 30")
+        handle = bash("sleep 30", allow_sleep=True)
         self.assertTrue(handle.running)  # release as background handle
 
         async def wait_for_it():

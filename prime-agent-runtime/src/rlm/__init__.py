@@ -1239,13 +1239,22 @@ class _RLMNamespace:
 
     async def monitor(
         self,
-        source: str | BashHandle,
+        source: str | BashHandle | None = None,
         *,
+        url: str | None = None,
         description: str | None = None,
         pattern: str | None = None,
         timeout_seconds: float = 300.0,
+        persistent: bool = False,
     ) -> dict[str, Any]:
-        return await monitor(source, description=description, pattern=pattern, timeout_seconds=timeout_seconds)
+        return await monitor(
+            source,
+            url=url,
+            description=description,
+            pattern=pattern,
+            timeout_seconds=timeout_seconds,
+            persistent=persistent,
+        )
 
     def monitor_list(self) -> list[dict[str, Any]]:
         return monitor_list()

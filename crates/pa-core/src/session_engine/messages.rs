@@ -489,8 +489,8 @@ pub struct MonitorEvent {
     pub lines: Vec<String>,
     /// Lines left out: dropped by the rate limit, or past a row's line cap.
     pub dropped: u64,
-    /// The monitor's last event: why it ended (`exited`, `expired`,
-    /// `stopped`, `flooded`, `failed`), the exit code, the totals.
+    /// The monitor's last event: why it ended (`exited`, `closed`, `expired`,
+    /// `stopped`, `flooded`, `failed`), the exit code or close code, the totals.
     pub end: Option<serde_json::Value>,
 }
 
@@ -567,6 +567,10 @@ fn monitor_end_text(end: &serde_json::Value) -> String {
         "exited" => match end.get("exitCode").and_then(serde_json::Value::as_i64) {
             Some(code) => format!("the command exited (code {code})"),
             None => "the command exited".to_string(),
+        },
+        "closed" => match end.get("code").and_then(serde_json::Value::as_i64) {
+            Some(code) => format!("the connection closed (code {code})"),
+            None => "the connection closed".to_string(),
         },
         "expired" => "its timeout passed".to_string(),
         "stopped" => "it was stopped".to_string(),
@@ -1256,6 +1260,32 @@ state
         assert_eq!(
             (flood.lines.len(), flood.dropped),
             (MONITOR_EVENT_MAX_LINES, 5)
+        );
+    }
+
+    #[test]
+    fn a_monitor_row_names_a_closed_connection() {
+        let text = |end: serde_json::Value| {
+            let event = MonitorEvent {
+                monitor_id: "m2".to_string(),
+                description: "ws://localhost:9229".to_string(),
+                lines: Vec::new(),
+                dropped: 0,
+                end: Some(end),
+            };
+            match create_monitor_event_message(&event, 0).content {
+                UserContent::Text(text) => text,
+                UserContent::Blocks(_) => unreachable!("a text row"),
+            }
+        };
+        assert_eq!(
+            text(serde_json::json!({"reason": "closed", "code": 1001, "events": 2, "lines": 5})),
+            "[monitor m2 \"ws://localhost:9229\"] ended: the connection closed (code 1001); 2 \
+             events, 5 lines delivered"
+        );
+        assert_eq!(
+            text(serde_json::json!({"reason": "closed", "code": null})),
+            "[monitor m2 \"ws://localhost:9229\"] ended: the connection closed"
         );
     }
 

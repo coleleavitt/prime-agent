@@ -381,7 +381,7 @@ async fn background_bash_settlement_fires_the_callback_once() {
     let manager = started_manager(options).await;
 
     execute(&manager, "from rlm import bash").await;
-    execute(&manager, "live = bash('sleep 600')").await;
+    execute(&manager, "live = bash('sleep 600', allow_sleep=True)").await;
     assert!(
         manager.has_background_work(),
         "the handle must register on the activity track"
@@ -425,8 +425,8 @@ async fn kernel_teardown_with_live_handles_settles_the_callback_once() {
     let manager = started_manager(options).await;
 
     execute(&manager, "from rlm import bash").await;
-    execute(&manager, "first = bash('sleep 600')").await;
-    execute(&manager, "second = bash('sleep 600')").await;
+    execute(&manager, "first = bash('sleep 600', allow_sleep=True)").await;
+    execute(&manager, "second = bash('sleep 600', allow_sleep=True)").await;
     assert!(manager.has_background_work());
     assert_eq!(settled.load(std::sync::atomic::Ordering::SeqCst), 0);
 

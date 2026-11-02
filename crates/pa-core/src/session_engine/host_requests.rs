@@ -389,7 +389,13 @@ pub fn handle_rlm_heartbeat_host_request(
 /// `error_message`) would turn the bridge into an exfiltration channel
 /// for any kernel-resident code, so the bridge serves the skill-side
 /// adoption vocabulary only and everything else stays host-internal.
-const KERNEL_BRIDGE_EVENTS: &[&str] = &["computer_use_session_started", "computer_use_action"];
+const KERNEL_BRIDGE_EVENTS: &[&str] = &[
+    "computer_use_session_started",
+    "computer_use_action",
+    "bash_sleep_refused",
+    "bash_timeout_backgrounded",
+    "monitor_started",
+];
 
 /// Handle a `telemetry.emit` host request from a Python-backed skill: the
 /// best-effort bridge onto the session's telemetry client, restricted to

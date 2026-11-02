@@ -312,7 +312,11 @@ mod tests {
         let started = Instant::now();
         let reply = handle_cancellable(
             &table,
-            &request("bash.run", command, &json!({"waitMs": 30_000})),
+            &request(
+                "bash.run",
+                command,
+                &json!({"waitMs": 30_000, "allow": ["sleep"]}),
+            ),
             &cancel,
         );
         let elapsed = started.elapsed();

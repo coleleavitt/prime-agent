@@ -483,8 +483,9 @@ running turn takes it at its next boundary, an idle session starts a turn.
 - `monitor.event {monitorId, description, lines, dropped, end?}`: one batch
   of an `rlm.monitor` (lines cut at 500 characters, a batch at 3,000;
   `dropped` counts lines the rate limit left out). `end` marks the last
-  event: `{reason: exited|expired|stopped|flooded|failed, exitCode?, error?,
-  events, lines}`. Batches of a monitor whose row is still queued merge into
+  event: `{reason: exited|closed|expired|stopped|flooded|failed, exitCode?,
+  code?, error?, events, lines}` (`closed`: a `url=` monitor's WebSocket ended,
+  `code` its close code). Batches of a monitor whose row is still queued merge into
   it. The row is `[monitor <id> "<description>"] N new lines`.
 
 ### Computer-use requests

@@ -75,7 +75,7 @@ class BashRunTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bash.follow", counter.types)
 
     async def test_a_live_handle_skips_the_window(self):
-        long = bash("sleep 30")
+        long = bash("sleep 30", allow_sleep=True)
         try:
             with mock.patch.object(bash_module, "_RUN_WINDOW_MS", 10_000):
                 started = time.monotonic()

@@ -30,11 +30,11 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, NoReturn, final, overload
+from typing import Any, Literal, NoReturn, final, overload
 
-from . import plan_guard, trace
+from . import _telemetry, plan_guard, trace
 
 _IS_POSIX = os.name == "posix"
 
@@ -101,6 +101,10 @@ class SelfMatchRefusalError(RuntimeError):
     """A pkill -f / killall pattern that matches the command's own shell was refused."""
 
 
+class SleepRefusalError(RuntimeError):
+    """A command that starts with a long foreground ``sleep`` was refused."""
+
+
 BASH_DESTRUCTIVE_GIT_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_GIT"
 BASH_DESTRUCTIVE_CHMOD_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_CHMOD"
 BASH_FORCE_PUSH_BYPASS_ENV = "PI_BASH_ALLOW_FORCE_PUSH"
@@ -108,6 +112,7 @@ BASH_SECRET_ECHO_BYPASS_ENV = "PI_BASH_ALLOW_SECRET_ECHO"
 BASH_PIPE_TO_SHELL_BYPASS_ENV = "PI_BASH_ALLOW_PIPE_TO_SHELL"
 BASH_SUDO_BYPASS_ENV = "PI_BASH_ALLOW_SUDO"
 BASH_SELF_MATCH_BYPASS_ENV = "PI_BASH_ALLOW_SELF_MATCH"
+BASH_SLEEP_BYPASS_ENV = "PI_BASH_ALLOW_SLEEP"
 
 
 GIT_STATUS_PORCELAIN_COMMAND = "git status --porcelain --untracked-files=all"
@@ -138,6 +143,7 @@ _SECRET_ECHO_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_S
 _PIPE_TO_SHELL_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_PIPE_TO_SHELL_BYPASS_ENV))
 _SUDO_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SUDO_BYPASS_ENV))
 _SELF_MATCH_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SELF_MATCH_BYPASS_ENV))
+_SLEEP_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SLEEP_BYPASS_ENV))
 
 _destructive_chmod_late_bypass_warned = False
 _force_push_late_bypass_warned = False
@@ -145,6 +151,7 @@ _secret_echo_late_bypass_warned = False
 _pipe_to_shell_late_bypass_warned = False
 _sudo_late_bypass_warned = False
 _self_match_late_bypass_warned = False
+_sleep_late_bypass_warned = False
 
 # guard key -> (bash() kwarg, frozen launch flag, warn-once flag, refusal class)
 _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
@@ -185,6 +192,7 @@ _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
         "_self_match_late_bypass_warned",
         SelfMatchRefusalError,
     ),
+    "sleep": ("allow_sleep", "_SLEEP_BYPASS_AT_KERNEL_START", "_sleep_late_bypass_warned", SleepRefusalError),
 }
 _REFUSALS = {error.__name__: (key, error) for key, (_, _, _, error) in _GUARDS.items()}
 _REFUSAL_ERRORS = tuple(error for _, _, _, error in _GUARDS.values())
@@ -228,6 +236,8 @@ def _raise_for(reply: dict[str, Any]) -> dict[str, Any]:
     if status == "refused":
         key, error = _REFUSALS.get(str(reply.get("error")), ("", RuntimeError))
         _warn_once(key, reply.get("warning"))
+        if key == "sleep":
+            _telemetry.emit("bash_sleep_refused")
         raise error(message)
     name = reply.get("error")
     if name == "OSError":
@@ -793,12 +803,18 @@ def _launch(command: str, script: str, command_prefix: str | None, allow: list[s
 
 @dataclass(frozen=True)
 class BashResult:
-    exit_code: int
+    exit_code: int | None
     output: str
     duration: float
-    # The command ran past its `timeout=` and was killed (Claude Code's Bash
-    # timeout); the output ends with a "Command timed out after" line.
+    # The command ran past its `timeout=` with on_timeout="kill" and was
+    # killed; the output ends with a "Command timed out after" line.
     timed_out: bool = False
+    # The command ran past its `timeout=` and was moved to the background
+    # instead of killed (Claude Code's Bash timeout): `exit_code` is None, the
+    # output is what it had written so far plus a note, and `handle` is the
+    # live command (await it for the end, `.kill()` to stop it).
+    backgrounded: bool = False
+    handle: BashHandle | None = field(default=None, repr=False, compare=False)
 
     def __await__(self) -> Generator[Any, None, BashResult]:
         # `h = await bash(cmd)` followed by `await h` is a common slip: awaiting
@@ -916,6 +932,9 @@ class BashHandle:
         self._killed = False
         self._timed_out = False
         self._timeout_seconds: float | None = None
+        self._on_timeout: Literal["background", "kill"] = "kill"
+        self._interim: BashResult | None = None
+        self._interim_callbacks: list[Callable[[], None]] = []
         self._script = script
         completion_context = _current_cell_completion_context()
         self._creating_cell_finished = completion_context[0] if completion_context else None
@@ -1059,9 +1078,10 @@ class BashHandle:
             return
         _request({"type": "bash.kill", "id": self._activity_id, "signal": int(sig), "graceMs": int(grace * 1000)})
 
-    def _arm_timeout(self, seconds: float) -> None:
-        """Kill the command if it is still running ``seconds`` after it started."""
+    def _arm_timeout(self, seconds: float, on_timeout: Literal["background", "kill"]) -> None:
+        """Move the command to the background, or kill it, if it is still running ``seconds`` after it started."""
         self._timeout_seconds = seconds
+        self._on_timeout = on_timeout
         remaining = max(0.0, seconds - (time.monotonic() - self._started))
         timer = threading.Timer(remaining, self._expire)
         timer.daemon = True
@@ -1071,6 +1091,9 @@ class BashHandle:
     def _expire(self) -> None:
         # The timer thread: a command that finished meanwhile is left alone.
         if self._done.is_set() or self._reaped:
+            return
+        if self._on_timeout == "background":
+            self._move_to_background()
             return
         self._timed_out = True
         self._killed = True
@@ -1083,6 +1106,39 @@ class BashHandle:
                     "graceMs": int(_TIMEOUT_TERM_GRACE * 1000),
                 }
             )
+
+    def _move_to_background(self) -> None:
+        """The timer thread: whoever awaits the handle now gets the output so far
+        and the live handle; the command runs on, and its end reaches the model
+        as the usual completion notice (an interim result does not count as
+        reading the final one)."""
+        try:
+            output = self._output_text()
+        except BaseException:  # noqa: BLE001 - the notes below still tell the model what happened
+            output = ""
+        note = (
+            f"Command did not complete within its {_format_seconds(self._timeout_seconds or 0)} timeout and was moved "
+            f"to the background (pid {self._pid}); it was not killed."
+        )
+        if self._output_path is not None:
+            note += f" Output is being written to: {self._output_path}."
+        note += " You will be notified when it finishes; `result.handle` is the live command (await it to wait, `.kill()` to stop it)."
+        text = f"{output}\n{note}" if output and not output.endswith("\n") else f"{output}{note}"
+        with self._callback_lock:
+            if self._done.is_set() or self._interim is not None:
+                return
+            self._interim = BashResult(
+                exit_code=None,
+                output=text,
+                duration=time.monotonic() - self._started,
+                backgrounded=True,
+                handle=self,
+            )
+            self._fields["bash.backgrounded"] = True
+            callbacks, self._interim_callbacks = self._interim_callbacks, []
+        _telemetry.emit("bash_timeout_backgrounded", timeout_seconds=round(self._timeout_seconds or 0))
+        for callback in callbacks:
+            callback()
 
     def _follow(self, cursor: int = 0) -> None:
         """Mirror the host's job events: progress events become trace events,
@@ -1399,13 +1455,35 @@ class BashHandle:
         assert self._result is not None
         return self._result
 
+    async def _wait_foreground(self) -> BashResult:
+        """Wait for the result, or for the timeout that moves the command to the
+        background (the interim result). An await that starts after that move
+        waits for the end."""
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[None] = loop.create_future()
+
+        def _wake() -> None:
+            try:
+                loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result(None))
+            except RuntimeError:
+                pass  # awaiting loop already closed
+
+        with self._callback_lock:
+            if self._interim is None:
+                self._interim_callbacks.append(_wake)
+        self._add_done_callback(_wake)
+        await fut
+        result = self._result if self._done.is_set() else self._interim
+        assert result is not None
+        return result
+
     async def _wait_owned(self) -> BashResult:
         # One-shot `await bash(cmd)` owns the process: a cancelled await (e.g.
         # a kernel interrupt) must not leave the command running. TERM, bounded
         # grace, group KILL, then a bounded confirmed-exit wait before the
         # CancelledError propagates, so no side effect can land after it.
         try:
-            return await self._wait()
+            return await self._wait_foreground()
         except asyncio.CancelledError:
             # Signal synchronously first: even if the cleanup awaits below are
             # re-cancelled, TERM is already delivered and the escalation armed.
@@ -1462,16 +1540,22 @@ class BashHandle:
             current_task = None
         creating_cell_waited = _creating_cell_waits_for(self._creating_cell_task, current_task)
         owned = not self._released
-        wait = self._wait_owned() if owned else self._wait()
+        wait = self._wait_owned() if owned else self._wait_foreground()
         self._released = True
         completed = False
+        backgrounded = False
         try:
             result = yield from wait.__await__()
-            completed = True
+            backgrounded = result.backgrounded
+            completed = not backgrounded
             return result
         finally:
-            if (completed or owned) and (
-                creating_cell_waited or _creating_cell_waits_for(self._creating_cell_task, current_task)
+            # An interim result (the command moved to the background) is not the
+            # command's result: its completion notice must still be sent.
+            if (
+                not backgrounded
+                and (completed or owned)
+                and (creating_cell_waited or _creating_cell_waits_for(self._creating_cell_task, current_task))
             ):
                 self._awaited_by_creating_cell = True
             if completed:
@@ -1499,6 +1583,7 @@ def _run_kernel_bash_guards(
     allow_pipe_to_shell: bool = False,
     allow_sudo: bool = False,
     allow_self_match: bool = False,
+    allow_sleep: bool = False,
 ) -> None:
     """Run every kernel-bash refusal guard on the text the shell will run.
 
@@ -1516,6 +1601,7 @@ def _run_kernel_bash_guards(
         "pipe_to_shell": allow_pipe_to_shell,
         "sudo": allow_sudo,
         "self_match": allow_self_match,
+        "sleep": allow_sleep,
     }
     _raise_for(
         _request(
@@ -1554,6 +1640,7 @@ def bash(
     command: str,
     *,
     timeout: float | None = None,
+    on_timeout: Literal["background", "kill"] = "background",
     persistent: bool = False,
     allow_destructive_git: bool = False,
     allow_destructive_chmod: bool = False,
@@ -1562,6 +1649,7 @@ def bash(
     allow_pipe_to_shell: bool = False,
     allow_sudo: bool = False,
     allow_self_match: bool = False,
+    allow_sleep: bool = False,
 ) -> BashHandle | PersistentShellHandle:
     """Start a shell command immediately; await the handle for the result.
 
@@ -1577,11 +1665,17 @@ def bash(
     background job) is not in BashResult.output but stays visible via
     handle.output()/tail().
 
-    `timeout` (seconds, default None: no limit) bounds the command's run from
-    its start, awaited or not: past it the process group gets SIGTERM, then
-    SIGKILL after a grace period, and the result has `timed_out=True` and an
-    output ending "Command timed out after ...". Claude Code's Bash tool
-    takes the same bound in milliseconds.
+    `timeout` (seconds, default None: no limit) bounds how long an `await` of
+    the command waits, counted from the command's start. A command still
+    running at the limit is moved to the background, not killed (Claude Code's
+    Bash tool does the same): whoever awaits it gets a `BashResult` with
+    `backgrounded=True`, `exit_code=None`, the output so far with a note, and
+    `handle`, the live command (await it to wait for the end, `.kill()` to stop
+    it); its end arrives as the usual completion notice. `on_timeout="kill"`
+    kills it instead: the process group gets SIGTERM, then SIGKILL after a
+    grace period, and the result has `timed_out=True` and an output ending
+    "Command timed out after ...". A handle nobody awaits at the limit just
+    keeps running either way.
 
     `persistent=True` (POSIX, saved sessions only) detaches the shell so it
     survives this kernel, the worker and the daemon, and its session's delete
@@ -1684,10 +1778,20 @@ def bash(
     precisely instead (`pkill -x NAME`, a pid, or the bracket trick `pkill -f
     '[b]urp'`), or retry with allow_self_match=True (or start the kernel with
     PI_BASH_ALLOW_SELF_MATCH=1).
+
+    A command whose first command is `sleep N` with N of 25 or more is refused
+    before any process starts: it holds the turn open for a wait you can be
+    notified about. Wait for a condition with `rlm.monitor` over an until-loop
+    (`until <check>; do sleep 2; done`), or keep a command's handle and end the
+    turn. Loops, groups and later commands in the script do not count.
+    Bypass deliberately with allow_sleep=True, or by starting the kernel with
+    PI_BASH_ALLOW_SLEEP=1.
     """
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
     timeout_seconds = _timeout_seconds(timeout)
+    if on_timeout not in ("background", "kill"):
+        raise ValueError('on_timeout must be "background" or "kill"')
     _install_shutdown_hook()
     # One read of the prefix feeds the guards and the spawn, so a mid-call
     # environment change cannot make the executed script differ from the text
@@ -1702,6 +1806,7 @@ def bash(
         "pipe_to_shell": allow_pipe_to_shell,
         "sudo": allow_sudo,
         "self_match": allow_self_match,
+        "sleep": allow_sleep,
     }
     if persistent:
         # A persistent shell runs detached host-side and outlives the kernel,
@@ -1719,6 +1824,7 @@ def bash(
             allow_pipe_to_shell=allow_pipe_to_shell,
             allow_sudo=allow_sudo,
             allow_self_match=allow_self_match,
+            allow_sleep=allow_sleep,
         )
         shell = str(_raise_for(_request(_kernel_request("bash.shell", "", "", None)))["shell"])
         # persistent_shells.* are generic host requests: _request returns the
@@ -1737,7 +1843,7 @@ def bash(
     finally:
         _handoff.launch = None
     if timeout_seconds is not None:
-        handle._arm_timeout(timeout_seconds)
+        handle._arm_timeout(timeout_seconds, on_timeout)
     from . import repl
 
     repl.emit(

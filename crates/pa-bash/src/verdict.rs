@@ -22,11 +22,13 @@ pub enum GuardKind {
     Sudo,
     /// `pkill -f` / `killall -r` patterns that match the command's own shell.
     SelfMatch,
+    /// A leading foreground `sleep` of 25 seconds or more.
+    Sleep,
 }
 
 impl GuardKind {
     /// Every guard, in pipeline order.
-    pub const ALL: [GuardKind; 7] = [
+    pub const ALL: [GuardKind; 8] = [
         GuardKind::DestructiveGit,
         GuardKind::DestructiveChmod,
         GuardKind::ForcePush,
@@ -34,6 +36,7 @@ impl GuardKind {
         GuardKind::PipeToShell,
         GuardKind::Sudo,
         GuardKind::SelfMatch,
+        GuardKind::Sleep,
     ];
 
     /// The guard's wire name (`destructive_git`, ..., `sudo`): the kernel's
@@ -48,6 +51,7 @@ impl GuardKind {
             GuardKind::PipeToShell => "pipe_to_shell",
             GuardKind::Sudo => "sudo",
             GuardKind::SelfMatch => "self_match",
+            GuardKind::Sleep => "sleep",
         }
     }
 
@@ -69,6 +73,7 @@ impl GuardKind {
             GuardKind::PipeToShell => "PipeToShellRefusalError",
             GuardKind::Sudo => "PrivilegeEscalationRefusalError",
             GuardKind::SelfMatch => "SelfMatchRefusalError",
+            GuardKind::Sleep => "SleepRefusalError",
         }
     }
 
@@ -84,6 +89,7 @@ impl GuardKind {
             GuardKind::PipeToShell => "PI_BASH_ALLOW_PIPE_TO_SHELL",
             GuardKind::Sudo => "PI_BASH_ALLOW_SUDO",
             GuardKind::SelfMatch => "PI_BASH_ALLOW_SELF_MATCH",
+            GuardKind::Sleep => "PI_BASH_ALLOW_SLEEP",
         }
     }
 
@@ -98,6 +104,7 @@ impl GuardKind {
             GuardKind::PipeToShell => "allow_pipe_to_shell",
             GuardKind::Sudo => "allow_sudo",
             GuardKind::SelfMatch => "allow_self_match",
+            GuardKind::Sleep => "allow_sleep",
         }
     }
 }

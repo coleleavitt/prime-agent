@@ -76,6 +76,12 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   `bash.output` `sinceBytes`). Send-now (Ctrl+Enter) moves the running cell to the background (`detach`, protocol 6,
   daemon `detach_running_cell`) and interrupts only what cannot move. Factory runs notify on the follow-up lane
   (`task_notification` rows); the bundled `tasks` skill is the model's task list.
+- Waiting follows Claude Code 2.1.316: pa-bash's `sleep` guard refuses a script whose first command is `sleep N`,
+  N >= 25 (`allow_sleep=True` / `PI_BASH_ALLOW_SLEEP=1`; loops, groups, later sleeps and `sleep N &` pass);
+  `bash(timeout=)` moves a command still running at the limit to the background (`BashResult.backgrounded` and
+  `.handle`, the usual `[bash-done]` notice; `on_timeout="kill"` keeps the kill); `rlm.monitor` takes `url=` (a
+  receive-only WebSocket client in `rlm/_websocket.py`, no dependency) and `persistent=True`. Adoption telemetry
+  schema 7: `bash_sleep_refused`, `bash_timeout_backgrounded`, `monitor_started` (kernel `telemetry.emit` bridge).
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
 - The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the

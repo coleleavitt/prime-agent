@@ -14,6 +14,8 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+import ws_server
+
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 
 _EOF = object()
@@ -1137,7 +1139,7 @@ class ReplTest(unittest.TestCase):
         self.assertEqual(one(events, "result")["text"], "'repl-bash'")
 
         events = self.repl.execute(
-            "sh2", "handle = bash('sleep 600')\nhandle.pid"
+            "sh2", "handle = bash('sleep 600', allow_sleep=True)\nhandle.pid"
         )
         pid = int(one(events, "result")["text"])
         self.assertEqual(self.repl.shutdown(), 0)
@@ -1351,6 +1353,56 @@ class ReplTest(unittest.TestCase):
         self.assertEqual(lines, ["keep 1", "keep 2"])
         self.assertEqual(events[-1]["end"]["reason"], "exited")
 
+    def test_monitor_follows_a_websocket_until_it_closes(self):
+        def script(connection):
+            connection.sendall(ws_server.frame(ws_server.TEXT, b"alpha\nbeta"))
+            connection.sendall(ws_server.frame(ws_server.TEXT, b"gamma"))
+            connection.sendall(ws_server.close_frame(1000))
+            ws_server.read_frame(connection)
+
+        server = ws_server.ScriptedServer(script)
+        self.addCleanup(server.stop)
+        started = self.repl.execute(
+            "monitor-socket",
+            "from rlm import rlm\n"
+            f"m = await rlm.monitor(url='ws://127.0.0.1:{server.port}/', description='feed')\n"
+            "(m['id'], m['pid'], m['persistent'])",
+        )
+        self.assertEqual(one(started, "result")["text"], "('m1', None, False)")
+        events = [data for data in self._monitor_events(started) if data["type"] == "monitor.event"]
+        self.assertEqual([line for data in events for line in data["lines"]], ["alpha", "beta", "gamma"])
+        end = events[-1]["end"]
+        self.assertEqual((end["reason"], end["code"], end["lines"]), ("closed", 1000, 3))
+
+    def test_a_persistent_monitor_outlives_its_timeout(self):
+        started = self.repl.execute(
+            "monitor-persistent",
+            "from rlm import rlm\n"
+            "m = await rlm.monitor('sleep 1; printf done', timeout_seconds=0.2, persistent=True)\n"
+            "(m['timeout_seconds'], m['persistent'], [entry['persistent'] for entry in rlm.monitor_list()])",
+        )
+        self.assertEqual(one(started, "result")["text"], "(None, True, [True])")
+        events = [data for data in self._monitor_events(started) if data["type"] == "monitor.event"]
+        self.assertEqual([line for data in events for line in data["lines"]], ["done"])
+        self.assertEqual(events[-1]["end"]["reason"], "exited")
+
+    def test_monitor_takes_exactly_one_source(self):
+        events = self.repl.execute(
+            "monitor-sources",
+            "from rlm import rlm\n"
+            "errors = []\n"
+            "for kwargs in ({}, {'source': 'true', 'url': 'ws://127.0.0.1:1/'}, {'url': 'http://example.com/'}):\n"
+            "    try:\n"
+            "        await rlm.monitor(**kwargs)\n"
+            "    except ValueError as error:\n"
+            "        errors.append(type(error).__name__)\n"
+            "errors",
+        )
+        self.assertEqual(
+            one(events, "result")["text"],
+            "['ValueError', 'ValueError', 'ValueError']",
+        )
+
     def test_completion_notice_tail_keeps_the_last_lines_within_the_cap(self):
         import importlib
 
@@ -1398,6 +1450,19 @@ class ReplTest(unittest.TestCase):
                 if label == "poll":
                     again = self.repl.execute("withdraw-again", "handle.output()\nhandle.tail(1)")
                     self.assertEqual([e for e in again if e.get("event") in ("error", "host_request")], [])
+
+    def test_a_command_moved_to_the_background_by_its_timeout_still_sends_its_notice(self):
+        started = self.repl.execute(
+            "timeout-background",
+            "from rlm import bash\n"
+            "result = await bash('sleep 0.6; printf done', timeout=0.1)\n"
+            "(result.backgrounded, result.exit_code)",
+        )
+        self.assertEqual(one(started, "result")["text"], "(True, None)")
+        notice = wait_for_host_request(self.repl, started)["data"]
+        self.assertEqual(
+            (notice["type"], notice["exitCode"], notice["outputTail"]), ("bash.completed", 0, "done")
+        )
 
     def test_result_read_before_notice_acceptance_withdraws_at_acceptance(self):
         started = self.repl.execute("early", "from rlm import bash\nhandle = bash('printf early')\nhandle.pid")
@@ -1649,7 +1714,7 @@ class ReplTest(unittest.TestCase):
                 "        threading.Event().wait(10)",
                 "    return stop_at_notice_construction",
                 "sys.settrace(stop_at_notice_construction)",
-                "handle = bash('sleep 30')",
+                "handle = bash('sleep 30', allow_sleep=True)",
             ]
         )
         self.repl.send({"type": "execute", "id": "construct", "code": code})

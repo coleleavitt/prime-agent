@@ -232,7 +232,11 @@ fn dock_line(frame: &str) -> &str {
 async fn stopping_the_attached_session_clears_its_shells_from_the_dock() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let supervisor = spawn_supervisor(dir.path());
-    let active = session_running(&supervisor.socket, dir.path(), "h = bash('sleep 300')");
+    let active = session_running(
+        &supervisor.socket,
+        dir.path(),
+        "h = bash('sleep 300', allow_sleep=True)",
+    );
 
     let (rendered_tx, rendered_rx) = std::sync::mpsc::channel();
     let kill_thread = {

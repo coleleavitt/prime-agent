@@ -19,6 +19,7 @@ mod opaque;
 mod pipe_to_shell;
 mod secret_echo;
 mod self_match;
+mod sleep;
 mod sudo;
 
 #[cfg(test)]
@@ -79,6 +80,7 @@ pub(crate) fn judge(guard: GuardKind, check: &Check<'_>) -> Verdict {
         GuardKind::PipeToShell => verdict::<pipe_to_shell::PipeToShell>(check),
         GuardKind::Sudo => verdict::<sudo::Sudo>(check),
         GuardKind::SelfMatch => verdict::<self_match::SelfMatch>(check),
+        GuardKind::Sleep => verdict::<sleep::Sleep>(check),
     }
 }
 

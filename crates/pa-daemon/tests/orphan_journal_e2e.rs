@@ -109,7 +109,7 @@ fn spawn_daemon(socket: &Path, agent_dir: &Path, kernel_python: Option<&Path>) -
 fn orphaning_cell() -> String {
     // The e2e kernel namespace does not preload `os`, so the cell imports
     // it before printing the ids the test kills and probes by.
-    let code = "h = bash(\"sleep 600\")\nimport os\nprint(f'ORPHAN_PGID={h.pid} KERNEL_PID={os.getpid()}')";
+    let code = "h = bash(\"sleep 600\", allow_sleep=True)\nimport os\nprint(f'ORPHAN_PGID={h.pid} KERNEL_PID={os.getpid()}')";
     serde_json::to_string(&json!({ "code": code })).expect("serialize cell")
 }
 

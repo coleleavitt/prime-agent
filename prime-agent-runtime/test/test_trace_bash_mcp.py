@@ -165,7 +165,7 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertEqual(attrs["error"], "killed by SIGKILL")
 
     async def test_terminated_process_records_sigterm(self):
-        handle = bash("sleep 30")
+        handle = bash("sleep 30", allow_sleep=True)
         handle.kill(grace=5.0)
         result = await asyncio.wait_for(handle, timeout=10)
         self.assertNotEqual(result.exit_code, 0)
@@ -186,7 +186,7 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertEqual(span["attrs"]["bash.exit_code"], 0)
 
     async def test_kernel_shutdown_ends_running_span_once(self):
-        handle = bash("sleep 30")
+        handle = bash("sleep 30", allow_sleep=True)
         self.assertTrue(handle.running)
         bash_module._kill_live_handles()
         result = await asyncio.wait_for(handle, timeout=10)
@@ -215,7 +215,7 @@ class BashCommandSpanTest(_SpanCapture):
         self.assertNotIn("bash.pid", span["attrs"])
 
     async def test_concurrent_worker_threads_end_span_exactly_once(self):
-        handle = bash("sleep 30")
+        handle = bash("sleep 30", allow_sleep=True)
         barrier = threading.Barrier(3)
         threads = [
             threading.Thread(target=lambda: (barrier.wait(), handle._end_span(error="race")))

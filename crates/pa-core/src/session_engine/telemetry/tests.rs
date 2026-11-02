@@ -298,7 +298,7 @@ async fn emits_aggregate_metrics_without_content() {
         serde_json::json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a")
     );
     assert_eq!(run["execution_mode"], serde_json::json!("interactive"));
-    assert_eq!(run["schema_version"], serde_json::json!(6));
+    assert_eq!(run["schema_version"], serde_json::json!(7));
 
     // Privacy: no private prompt/tool/assistant text anywhere.
     let all = serde_json::to_string(&fixture.mock.events()).unwrap();
@@ -1580,6 +1580,57 @@ async fn kernel_telemetry_bridge_round_trips_through_the_registry() {
     assert_eq!(response, serde_json::json!({ "emitted": false }));
     wiring.client.flush().await.unwrap();
     assert_eq!(mock.events().len(), 1, "nothing else emitted");
+}
+
+/// The wait-handling events (`bash_sleep_refused`,
+/// `bash_timeout_backgrounded`, `monitor_started`) ride the kernel bridge
+/// with their catalogued properties.
+#[tokio::test]
+async fn the_wait_handling_events_ride_the_kernel_bridge() {
+    let mock = std::sync::Arc::new(MockSink::new());
+    let wiring = TelemetryWiring {
+        client: client_for(&mock),
+        execution_mode: None,
+        now: None,
+        telemetry_enabled: None,
+    };
+    let mut handlers = HostRequestHandlers::default();
+    wiring.register_kernel_bridge(&mut handlers);
+    let emit = handlers.get("telemetry.emit").expect("registered").clone();
+    for (name, properties) in [
+        ("bash_sleep_refused", serde_json::json!({})),
+        (
+            "bash_timeout_backgrounded",
+            serde_json::json!({ "timeout_seconds": 600 }),
+        ),
+        (
+            "monitor_started",
+            serde_json::json!({ "source": "websocket", "persistent": true }),
+        ),
+    ] {
+        let response = emit(HostRequestPayload {
+            data: serde_json::json!({
+                "type": "telemetry.emit", "name": name, "properties": properties
+            }),
+        })
+        .await
+        .unwrap();
+        assert_eq!(response, serde_json::json!({ "emitted": true }), "{name}");
+    }
+    wiring.client.flush().await.unwrap();
+    let names: Vec<String> = mock
+        .events()
+        .iter()
+        .map(|event| event.name.clone())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "bash_sleep_refused",
+            "bash_timeout_backgrounded",
+            "monitor_started"
+        ]
+    );
 }
 
 /// The runtime behaviours count per run and per session: a backup on

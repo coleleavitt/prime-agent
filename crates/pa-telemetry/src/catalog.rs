@@ -19,7 +19,9 @@
 //! (`custom_command_use_count` and the session context row counts on
 //! `agent session ended`, `tui_vim_mode` and
 //! `tui_status_line` on `tui exit`); schema version 6 adds the round-two
-//! parity features' events (`lsp_session`): new-event
+//! parity features' events (`lsp_session`); schema version 7 adds the
+//! wait-handling events (`bash_sleep_refused`, `bash_timeout_backgrounded`,
+//! `monitor_started`): new-event
 //! vocabulary bumps the version,
 //! additive property changes do not.
 //!
@@ -41,10 +43,12 @@ use crate::properties::Properties;
 /// to 4 when the feature crates' adoption events (`dream_run`,
 /// `toolforge publish`, `workflow_run_agent`) landed, and to 5 when the Claude
 /// Code parity features' events (`permissions_session`, `observer_session`,
-/// `advisor_ask`) landed, and to 6 when `lsp_session` landed — new-event
+/// `advisor_ask`) landed, to 6 when `lsp_session` landed, and to 7 when
+/// the wait-handling events (`bash_sleep_refused`,
+/// `bash_timeout_backgrounded`, `monitor_started`) landed — new-event
 /// vocabulary bumps the version (the #2117 precedent); additive property
 /// changes alone do not.
-pub const SCHEMA_VERSION: u64 = 6;
+pub const SCHEMA_VERSION: u64 = 7;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -1494,6 +1498,43 @@ const LSP_SESSION: EventRule = EventRule {
     ],
 };
 
+/// `bash_sleep_refused` (v7): the `sleep` guard refused a command that
+/// starts with a long foreground sleep, sent through the `telemetry.emit`
+/// kernel bridge. No properties — never the command or the sleep's length.
+const BASH_SLEEP_REFUSED: EventRule = EventRule {
+    name: "bash_sleep_refused",
+    since: 7,
+    properties: &[],
+};
+
+/// `bash_timeout_backgrounded` (v7): a command passed its `timeout` and was
+/// moved to the background instead of killed, sent through the
+/// `telemetry.emit` kernel bridge. The limit in seconds only — never the
+/// command or its output.
+const BASH_TIMEOUT_BACKGROUNDED: EventRule = EventRule {
+    name: "bash_timeout_backgrounded",
+    since: 7,
+    properties: &[("timeout_seconds", required(count()))],
+};
+
+/// `monitor_started` (v7): one `rlm.monitor` armed, sent through the
+/// `telemetry.emit` kernel bridge. What it follows and whether it has no
+/// timeout — never the command, the URL, the pattern or the description.
+const MONITOR_STARTED: EventRule = EventRule {
+    name: "monitor_started",
+    since: 7,
+    properties: &[
+        (
+            "source",
+            required(enum_rule(
+                &["command", "handle", "websocket", "unknown"],
+                "unknown",
+            )),
+        ),
+        ("persistent", required(boolean())),
+    ],
+};
+
 /// `workflow_run_agent` (v4): one Workflow V1 `workflow.run_agent` kernel
 /// host request settled by the host (the fork's `pa-workflow` feature).
 /// Terminal classification, timing, and token totals only — never the
@@ -2178,6 +2219,9 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &OBSERVER_SESSION,
         &ADVISOR_ASK,
         &LSP_SESSION,
+        &BASH_SLEEP_REFUSED,
+        &BASH_TIMEOUT_BACKGROUNDED,
+        &MONITOR_STARTED,
         &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
         &WORKFLOW_V2_REQUEST,
@@ -2313,7 +2357,14 @@ mod tests {
         // vocabulary landed at v2, the kernel telemetry bridge's skill
         // events at v3, the feature crates' adoption events at v4, the
         // Claude Code parity features' events at v5, the round-two ones at v6.
-        assert_eq!(SCHEMA_VERSION, 6);
+        assert_eq!(SCHEMA_VERSION, 7);
+        for name in [
+            "bash_sleep_refused",
+            "bash_timeout_backgrounded",
+            "monitor_started",
+        ] {
+            assert_eq!(lookup(name).map(|rule| rule.since), Some(7), "{name}");
+        }
         assert_eq!(lookup("lsp_session").map(|rule| rule.since), Some(6));
         for name in ["permissions_session", "observer_session", "advisor_ask"] {
             assert_eq!(lookup(name).map(|rule| rule.since), Some(5), "{name}");

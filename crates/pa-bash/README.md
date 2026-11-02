@@ -28,8 +28,9 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   dirty tree (`destructive_git`), recursive chmod/chown escaping the workspace
   (`destructive_chmod`), force-pushes to protected targets (`force_push`),
   secret echoes (`secret_echo`), downloads run by a shell (`pipe_to_shell`),
-  sudo/doas (`sudo`), and kills whose pattern matches the command's own shell
-  (`self_match`). `pipeline` builds the model once and runs them in that
+  sudo/doas (`sudo`), kills whose pattern matches the command's own shell
+  (`self_match`), and a leading foreground `sleep` of 25 seconds or more
+  (`sleep`). `pipeline` builds the model once and runs them in that
   order; the first refusal wins (`Refusal`: guard, message, one-time
   late-bypass warning).
 - `probe`: the guards' read-only shell probes (`git status`, the upstream of

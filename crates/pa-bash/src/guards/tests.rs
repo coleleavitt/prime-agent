@@ -739,6 +739,66 @@ fn kills_that_match_their_own_shell_are_refused() {
 }
 
 #[test]
+fn long_leading_sleeps_are_refused() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            "sleep 25",
+            "sleep 150",
+            "sleep 30.5",
+            "sleep 30.",
+            "sleep 150 && echo retry",
+            "sleep 30; echo done",
+            "sleep 30 | cat",
+            "sleep 30 > /dev/null",
+            "sleep 60\ncurl https://example.com",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            "sleep 5",
+            "sleep 24",
+            "sleep 24.9",
+            "sleep 24 && sleep 24",
+            "echo start; sleep 30",
+            "until test -f /tmp/ready; do sleep 2; done",
+            "for i in 1 2; do sleep 30; done",
+            "(sleep 30)",
+            "{ sleep 30; }",
+            "sleep 60 &",
+            "! sleep 30",
+            "FOO=1 sleep 30",
+            "/bin/sleep 30",
+            "sleep 30s",
+            "sleep '30'",
+            "sleep 1e3",
+            "sleep 30 40",
+            "sleep",
+        ],
+    );
+    let standalone = fixture
+        .refusal(GuardKind::Sleep, "sleep 150")
+        .expect("refused");
+    assert!(standalone.contains("standalone sleep 150"), "{standalone}");
+    assert!(
+        standalone.contains("until <check>; do sleep 2; done"),
+        "{standalone}"
+    );
+    assert!(standalone.contains("allow_sleep=True"), "{standalone}");
+    let chained = fixture
+        .refusal(GuardKind::Sleep, "sleep 50 && echo retry")
+        .expect("refused");
+    assert!(
+        chained.contains("sleep 50 followed by other commands"),
+        "{chained}"
+    );
+}
+
+#[test]
 fn discards_on_a_dirty_tree_are_refused() {
     let fixture = Fixture::new();
     let repo = fixture.repo("app", "main", false);
