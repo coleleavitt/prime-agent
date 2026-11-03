@@ -41,6 +41,7 @@ pub mod ipython_state;
 pub mod late_sent_messages;
 pub mod messages;
 pub mod messaging_stats;
+pub mod model_usage;
 pub mod output_limit_recovery;
 pub mod plan_file;
 pub mod plan_host;
@@ -283,6 +284,10 @@ pub struct AgentSession {
     /// the resumed transcript's user-message count so a resumed session
     /// cannot re-extract the history it already saw.
     per_turn_memory_marker: std::sync::Mutex<u32>,
+    /// Where the session's own model calls outside the agent loop record
+    /// their `model_usage` rows: the session file unless the host binds
+    /// its durable store (the daemon worker's).
+    usage_store: std::sync::Arc<dyn rlm_usage::RlmChildUsageStore>,
     #[cfg(test)]
     terminal_test_gate: terminal_inbox::TerminalGateSlot,
 }
@@ -339,6 +344,7 @@ impl AgentSession {
             Arc::new(std::sync::RwLock::new(None));
         #[cfg(test)]
         let subscriber_test_gate = Arc::clone(&terminal_test_gate);
+        let usage_store = std::sync::Arc::new(rlm_usage::SessionUsageStore(session.clone()));
         agent
             .subscribe(move |event, _signal| {
                 let persistence = persistence.clone();
@@ -400,6 +406,7 @@ impl AgentSession {
             #[cfg(test)]
             terminal_test_gate,
             compaction_flight: tokio::sync::Mutex::new(()),
+            usage_store,
         };
         this.ensure_harness_digest_context().await?;
         Ok(this)

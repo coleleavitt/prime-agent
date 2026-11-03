@@ -8,6 +8,7 @@ use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
 use serde_json::json;
 
 use super::AgentSession;
+use super::model_usage::ModelUsage;
 use crate::refinement::executor::{
     AutoRefineReview,
     AutoRefineReviewContext,
@@ -1205,7 +1206,6 @@ impl AgentSession {
             .unwrap_or(&crate::refinement::executor::NativeAutoRefinePolicy)
     }
 
-
     /// The refiner model call on the session model, with the merged request
     /// headers (the Prime team header) the session's own requests send.
     pub(super) async fn refiner_call(
@@ -1231,6 +1231,86 @@ impl AgentSession {
         ))
     }
 
+    /// The automatic-refine review over `review_context`: one reviewer, or
+    /// with the multi-vote switch (experimental.multiVoteRefine /
+    /// PRIME_AGENT_MULTI_VOTE_REFINE) on, three parallel reviewers whose
+    /// majority verdict wins (Claude Code's extract-memories verification
+    /// loop). Every reviewer carries the session's merged request headers
+    /// (Prime team billing), and each reviewer's billed call lands as its
+    /// own `refine_review` model_usage row, a failed review's calls included.
+    async fn run_auto_refine_review(
+        &self,
+        messages: &[AgentMessage],
+        merged_state: &crate::refinement::HarnessState,
+        history: &[crate::refinement::RefinementResult],
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+        review_context: &AutoRefineReviewContext,
+    ) -> anyhow::Result<AutoRefineReview> {
+        if !self.multi_vote_refine_enabled() {
+            let (review_call, billed) =
+                billed_refiner_call(self.refiner_call(model, api_key).await?, "refine_review");
+            let review = review_auto_refine(
+                messages,
+                merged_state,
+                history,
+                model,
+                review_context,
+                self.auto_refine_policy(),
+                review_call,
+            )
+            .await;
+            let billed = billed.lock().expect("billed refiner call lock").take();
+            self.record_model_usage(billed).await;
+            return review;
+        }
+        // Resolve the merged request headers once, then build a fresh
+        // refiner call per vote synchronously: the `Fn` bound on
+        // `make_reviewer` forbids an async per-call build.
+        let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
+            Some(context) => {
+                let model = model.clone();
+                let routed = tokio::task::spawn_blocking(move || {
+                    super::auxiliary_model::session_fallback_with_headers(&context, &model, api_key)
+                })
+                .await?;
+                (routed.api_key, routed.headers)
+            }
+            None => (api_key, None),
+        };
+        let session_id = self.session_id().await;
+        let vote_bills = std::sync::Mutex::new(Vec::new());
+        let make_reviewer = || {
+            let (call, billed) = billed_refiner_call(
+                default_refiner_call(
+                    resolved_key.clone(),
+                    resolved_headers.clone(),
+                    session_id.clone(),
+                ),
+                "refine_review",
+            );
+            vote_bills.lock().expect("vote bills lock").push(billed);
+            call
+        };
+        let review = crate::refinement::multi_vote::review_auto_refine_voting(
+            messages,
+            merged_state,
+            history,
+            model,
+            review_context,
+            self.auto_refine_policy(),
+            make_reviewer,
+            crate::refinement::multi_vote::MultiVoteConfig::default(),
+        )
+        .await;
+        let bills = vote_bills.into_inner().expect("vote bills lock");
+        for billed in bills {
+            let billed = billed.lock().expect("billed refiner call lock").take();
+            self.record_model_usage(billed).await;
+        }
+        review
+    }
+
     /// The compact-trigger review: an LLM call over the conversation, the
     /// merged harness state, and the refinement history. `Ok(None)` is the
     /// decline; `Ok(Some(review))` a fresh approval.
@@ -1239,6 +1319,10 @@ impl AgentSession {
     ///
     /// Returns an error when the conversation history cannot be read or
     /// when the review request fails; a decline is `Ok(None)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the billed-call slot's mutex is poisoned.
     pub async fn review_compact_auto_refine(
         &self,
         model: &pa_types::ai::Model,
@@ -1328,62 +1412,16 @@ impl AgentSession {
             reason: AUTO_REFINE_COMPACT_REASON.to_string(),
             turns_since_last_review,
         };
-        // The multi-vote switch (experimental.multiVoteRefine /
-        // PRIME_AGENT_MULTI_VOTE_REFINE): with it on, fan out three parallel
-        // reviewers and the majority verdict wins (Claude Code's
-        // extract-memories verification loop); with it off, the native
-        // single-pass behavior. Every reviewer carries the session's merged
-        // request headers (Prime team billing) via `self.refiner_call`.
-        let multi_vote = self.multi_vote_refine_enabled();
-        let review = if multi_vote {
-            // Resolve the merged request headers (team billing) once, then
-            // build a fresh refiner call per vote synchronously. The `Fn`
-            // bound on `make_reviewer` forbids an async per-call build.
-            let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
-                Some(context) => {
-                    let model = model.clone();
-                    let api_key = api_key.clone();
-                    let routed = tokio::task::spawn_blocking(move || {
-                        super::auxiliary_model::session_fallback_with_headers(
-                            &context, &model, api_key,
-                        )
-                    })
-                    .await?;
-                    (routed.api_key, routed.headers)
-                }
-                None => (api_key.clone(), None),
-            };
-            let session_id = self.session_id().await;
-            let make_reviewer = move || {
-                default_refiner_call(
-                    resolved_key.clone(),
-                    resolved_headers.clone(),
-                    session_id.clone(),
-                )
-            };
-            crate::refinement::multi_vote::review_auto_refine_voting(
+        let review = self
+            .run_auto_refine_review(
                 &messages,
                 &merged_state,
                 &history,
                 model,
+                api_key,
                 &review_context,
-                self.auto_refine_policy(),
-                make_reviewer,
-                crate::refinement::multi_vote::MultiVoteConfig::default(),
             )
-            .await?
-        } else {
-            review_auto_refine(
-                &messages,
-                &merged_state,
-                &history,
-                model,
-                &review_context,
-                self.auto_refine_policy(),
-                self.refiner_call(model, api_key).await?,
-            )
-            .await?
-        };
+            .await?;
         if !review.should_refine {
             return Ok(None);
         }
@@ -1517,53 +1555,16 @@ impl AgentSession {
             reason: AUTO_REFINE_PER_TURN_REASON.to_string(),
             turns_since_last_review: 0,
         };
-        let multi_vote = self.multi_vote_refine_enabled();
-        let review = if multi_vote {
-            let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
-                Some(context) => {
-                    let model = model.clone();
-                    let api_key = api_key.clone();
-                    let routed = tokio::task::spawn_blocking(move || {
-                        super::auxiliary_model::session_fallback_with_headers(
-                            &context, &model, api_key,
-                        )
-                    })
-                    .await?;
-                    (routed.api_key, routed.headers)
-                }
-                None => (api_key.clone(), None),
-            };
-            let session_id = self.session_id().await;
-            let make_reviewer = move || {
-                default_refiner_call(
-                    resolved_key.clone(),
-                    resolved_headers.clone(),
-                    session_id.clone(),
-                )
-            };
-            crate::refinement::multi_vote::review_auto_refine_voting(
+        let review = self
+            .run_auto_refine_review(
                 &messages,
                 &merged_state,
                 &history,
                 model,
+                api_key,
                 &review_context,
-                self.auto_refine_policy(),
-                make_reviewer,
-                crate::refinement::multi_vote::MultiVoteConfig::default(),
             )
-            .await?
-        } else {
-            review_auto_refine(
-                &messages,
-                &merged_state,
-                &history,
-                model,
-                &review_context,
-                self.auto_refine_policy(),
-                self.refiner_call(model, api_key).await?,
-            )
-            .await?
-        };
+            .await?;
         // Advance the marker whether the review approved or declined, so a
         // declined call doesn't fire again against identical prose.
         *self
@@ -1711,6 +1712,29 @@ impl AgentSession {
         )
         .await
     }
+}
+
+/// The refiner seam plus the slot its reply's billed call lands in. The
+/// caller records the call once the refinement released the session lock:
+/// the session-file usage store appends through that same lock.
+pub(crate) fn billed_refiner_call(
+    call: crate::refinement::executor::RefinerFn,
+    source: &'static str,
+) -> (
+    crate::refinement::executor::RefinerFn,
+    std::sync::Arc<std::sync::Mutex<Option<ModelUsage>>>,
+) {
+    let billed = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let slot = std::sync::Arc::clone(&billed);
+    let seam: crate::refinement::executor::RefinerFn = Box::new(move |model, system, prompt| {
+        let reply = call(model, system, prompt);
+        Box::pin(async move {
+            let reply = reply.await?;
+            *slot.lock().expect("billed refiner call lock") = ModelUsage::of_reply(source, &reply);
+            Ok(reply)
+        })
+    });
+    (seam, billed)
 }
 
 /// The default model seam over pa-ai completion.

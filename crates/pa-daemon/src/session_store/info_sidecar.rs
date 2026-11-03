@@ -27,7 +27,7 @@ use super::info::{SessionScanState, session_info_cache};
 /// would have written, so the store stays warm. The fork's scan state
 /// carries extra fields (transcript search text, git branch, AI title), so
 /// its sidecar version stays distinct from upstream's.
-const INFO_SIDECAR_VERSION: u32 = 4;
+const INFO_SIDECAR_VERSION: u32 = 5;
 
 /// The on-disk envelope: the version gate plus the scan state.
 #[derive(Serialize, Deserialize)]

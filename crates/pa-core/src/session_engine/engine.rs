@@ -1237,7 +1237,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             &feature_context,
         ),
         package_state: Some(std::sync::Arc::new(resources.package_harness.state.clone())),
-        rerank_hook: config.reranker.as_ref().map(super::super::refinement::retrieval::RerankerHandle::as_rerank_hook),
+        rerank_hook: config
+            .reranker
+            .as_ref()
+            .map(super::super::refinement::retrieval::RerankerHandle::as_rerank_hook),
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
@@ -1668,6 +1671,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         crate::features::installed(),
         &feature_context,
     ));
+    session.set_usage_store(wiring.rlm_usage.store());
     // Keep the context descriptor even while disabled, so re-enabling can load it.
     session.harness_digest = Some(digest_context);
     session.refinement_settings = Some(refinement_settings);
