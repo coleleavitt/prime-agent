@@ -644,6 +644,7 @@ fn convert_execute_result(
         kernel_unresponsive: result.kernel_unresponsive,
         auto_backgrounded: result.auto_backgrounded,
         ended_turn: result.ended_turn,
+        transcript_reads: result.transcript_reads.unwrap_or_default(),
         timed_out_after_ms: result.timed_out_after_ms,
     }
 }

@@ -326,7 +326,7 @@ impl SessionFile {
             });
             if let Err(error) = rewritten {
                 self.unindex_last();
-                self.leaf_id = previous_leaf;
+                self.set_leaf(previous_leaf);
                 return Err(error);
             }
             self.fold_attribution_id(&id);

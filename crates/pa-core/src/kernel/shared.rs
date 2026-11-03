@@ -54,6 +54,8 @@ pub const AGENT_MESSAGE_DISPLAY_MIME: &str = "application/vnd.prime-agent.agent-
 pub const BASH_ACTIVITY_DISPLAY_MIME: &str = "application/vnd.prime-agent.bash-activity+json";
 /// One `bash()` call's command text (capped) and non-blank line count.
 pub const BASH_COMMAND_DISPLAY_MIME: &str = "application/vnd.prime-agent.bash-command+json";
+/// One `rlm.session.messages` read: `{returned, first, total, roles}`.
+pub const TRANSCRIPT_READ_DISPLAY_MIME: &str = "application/vnd.prime-agent.transcript-read+json";
 /// The kernel host request that reports a background bash completion
 /// (the `[bash-done]` lane). The daemon registers the handler
 /// (`bash_notices`), and the provisioner keys the bounded-await bootstrap
@@ -373,6 +375,8 @@ pub struct ExecuteResult {
     /// The files the cell opened through Python (the `done` frame's
     /// `fileAccess`).
     pub file_access: KernelFileAccess,
+    /// The cell's `rlm.session.messages` reads, one display record each.
+    pub transcript_reads: Option<Vec<Value>>,
     /// Output that arrived without this cell's id (user threads, other cells' leftovers, raw fd writes).
     pub background_output: Option<String>,
     /// The cell called the sanctioned `rlm.end_turn()`: the host marked

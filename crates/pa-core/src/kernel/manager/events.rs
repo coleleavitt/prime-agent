@@ -18,6 +18,7 @@ use super::{
     MAX_ATTACHMENT_DATA_CHARS,
     MAX_BACKGROUND_OUTPUT_CHARS,
     StreamName,
+    TRANSCRIPT_READ_DISPLAY_MIME,
     Value,
     append_truncated,
     lock,
@@ -249,6 +250,9 @@ impl Inner {
             if let Some(message) = parse_sent_agent_message(payload) {
                 buffers.sent_agent_messages.push(message);
             }
+        }
+        if let Some(read) = data.get(TRANSCRIPT_READ_DISPLAY_MIME) {
+            buffers.transcript_reads.push(read.clone());
         }
         if let Some(payload) = data.get(BASH_COMMAND_DISPLAY_MIME) {
             if let (Some(command), Some(lines)) = (

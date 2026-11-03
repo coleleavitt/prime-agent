@@ -601,7 +601,7 @@ impl Worker {
             Some(_) => {
                 return response_failure(None, "get_messages", "History branch changed", None);
             }
-            None => store.leaf_id.clone().unwrap_or_default(),
+            None => store.leaf_id().unwrap_or_default().to_string(),
         };
         let Some(mut rows) = store.transcript_page(&page) else {
             return response_failure(None, "get_messages", "History branch changed", None);
@@ -646,13 +646,14 @@ impl Worker {
             Err(error) => return response_failure(None, NAME, &error.to_string(), None),
         };
         let read = || {
-            let core = self.core.lock_or_recover();
+            let mut core = self.core.lock_or_recover();
+            let core = &mut *core;
             // The fork keys each running call to its start time; the read needs the ids.
             let running: std::collections::HashSet<String> =
                 core.running_tool_calls.keys().cloned().collect();
             let slice = core
                 .store
-                .as_ref()
+                .as_mut()
                 .and_then(|store| query.read(store, &running));
             slice
         };

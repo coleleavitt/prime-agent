@@ -345,6 +345,7 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
             "plan.exit" => "rlm.exit_plan_mode",
             // `rlm.lsp.*` (the pa-lsp feature crate's request table).
             lsp if lsp.starts_with("lsp.") => "rlm.lsp",
+            "agent_observe.session_messages" => "rlm.session.messages",
             other => other,
         }
         .to_string(),

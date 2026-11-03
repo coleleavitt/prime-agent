@@ -30,6 +30,7 @@ use super::{
     RlmSpawnRequest,
     RlmSubagentEntry,
     RlmSubagentHost,
+    STATE_TIMEOUT_MS,
     SpawnNameReservationGuard,
     SupervisorChildSessions,
     SupervisorChildSessionsInner,
@@ -985,6 +986,23 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 record.lock().await.session_name = name.clone();
             }
             Ok(name)
+        })
+    }
+
+    /// The session's own worker answers, image payloads left out.
+    fn session_messages(&self, start: i64, limit: u64, roles: Vec<String>) -> RlmHostFuture<Value> {
+        let this = Arc::clone(&self.inner);
+        Box::pin(async move {
+            let command = DaemonCommand::GetSessionMessages {
+                id: None,
+                active_session_id: this.parent_active_session_id.clone(),
+                start,
+                limit,
+                roles,
+                session_file: None,
+                rest: serde_json::Map::default(),
+            };
+            this.command(&command, STATE_TIMEOUT_MS).await
         })
     }
 }

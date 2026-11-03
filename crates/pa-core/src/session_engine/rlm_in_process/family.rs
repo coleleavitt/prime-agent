@@ -626,4 +626,18 @@ impl AgentObserveController for InProcessFamilyController {
             truncated: start > 0,
         })
     }
+
+    /// Only the daemon keeps the display transcript `rlm.session.messages`
+    /// reads; an in-process family answers like a daemonless session's own read.
+    fn session_messages(
+        &self,
+        _target: &str,
+        _start: i64,
+        _limit: u64,
+        _roles: Vec<String>,
+    ) -> impl std::future::Future<Output = anyhow::Result<serde_json::Value>> + Send {
+        std::future::ready(Err(anyhow::anyhow!(
+            "rlm.session.messages requires a daemon-backed session"
+        )))
+    }
 }
