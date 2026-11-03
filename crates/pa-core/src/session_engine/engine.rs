@@ -420,7 +420,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let router_allowed_models = factory_allowed_models.clone();
     let router_retry_policy = settings.get_provider_retry_policy();
     // Captured before `settings` moves into the resource loader: the
-    // per-cell watchdog budget (default 60s, `0` disables).
+    // default cell time limit (default 60s, `0` disables).
     let python_cell_timeout_ms = settings.get_python_cell_timeout_ms();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
         mcp_gating(&settings, &cwd, config.agent_dir.clone()).await?;
@@ -1021,9 +1021,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .map(|dir| dir.join("tasks.json"));
     // `${CLAUDE_SESSION_ID}` in a folded Claude Code skill command.
     let fold_session_id = session_id.clone();
-    // The per-cell watchdog: daemon-backed sessions arm the settings budget
-    // (default 60s, `0` disables); daemonless sessions keep `await bash()`
-    // unbounded by design (#3523), so their cells are never annotated.
+    // The cell time limit: daemon-backed sessions arm the settings default
+    // (60s, `0` disables); daemonless sessions keep `await bash()`
+    // unbounded by design (#3523), so their cells are never interrupted.
     let cell_timeout_ms =
         super::runtime_wiring::arm_cell_timeout_ms(config.daemonless, python_cell_timeout_ms);
     let provisioner = super::runtime_wiring::kernel_provisioner(

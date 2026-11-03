@@ -284,7 +284,12 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
                 .to_string()
         });
     }
-    if !has_ipython {
+    if has_ipython {
+        lines.push(
+            "Do not run long blocking work in a cell; start long Python work as an asyncio task and check on it in later cells."
+                .to_string(),
+        );
+    } else {
         lines.push(
             "This session has no Python REPL (`python_repl` tool): the programmatic tools described above are unavailable here."
                 .to_string(),

@@ -565,6 +565,7 @@ async fn golden_ipython_group_matches_ts() {
             None,
             None,
             None,
+            None,
         )
         .await;
         let recorded = &case["result"];

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::settings::types::DEFAULT_PYTHON_CELL_TIMEOUT_MS;
 use crate::tools::tool_definition::{
     AbortSignal,
     ExecutionMode,
@@ -88,6 +89,8 @@ pub struct ExecuteResult {
     /// the host marked the execution, and this result terminates the tool
     /// batch (the "turn ended" note on the tool-result text).
     pub ended_turn: bool,
+    /// The time limit that interrupted this cell, if one did.
+    pub timed_out_after_ms: Option<u64>,
 }
 
 /// The wire form of one sent agent message (TS `KernelSentAgentMessage`):
@@ -194,6 +197,9 @@ pub struct KernelExecuteOptions<'a> {
     /// Interrupt the cell after this many milliseconds of kernel time
     /// (time spent waiting on host requests such as sub-agent runs does not
     /// count). `None` runs unbounded.
+    pub execution_timeout_ms: Option<u64>,
+    /// The model's per-call `timeout`, clamped to the allowed range; `None`
+    /// keeps the session's default limit.
     pub timeout_ms: Option<u64>,
     /// Wall-clock budget after which an async cell is moved to the
     /// background by writing a `detach` frame (Claude Code's `fHe`
@@ -364,7 +370,11 @@ pub fn image_blocks_from_attachments(attachments: &[KernelAttachment]) -> Vec<To
         .collect()
 }
 
-fn format_execute_text(result: &ExecuteResult, background_output: Option<&str>) -> String {
+fn format_execute_text(
+    result: &ExecuteResult,
+    background_output: Option<&str>,
+    kernel_restarted: bool,
+) -> String {
     let mut text = result.stdout.clone();
     if !result.stderr.is_empty() {
         text.push_str(if text.is_empty() { "" } else { "\n" });
@@ -374,7 +384,11 @@ fn format_execute_text(result: &ExecuteResult, background_output: Option<&str>) 
         text.push_str(if text.is_empty() { "" } else { "\n" });
         text.push_str(result_text);
     }
-    if result.status == ExecuteStatus::Error {
+    if let Some(limit_ms) = result.timed_out_after_ms {
+        // Replaces the KeyboardInterrupt traceback, which only says where the cell was.
+        text.push_str(if text.is_empty() { "" } else { "\n" });
+        text.push_str(&cell_timeout_message(limit_ms, kernel_restarted));
+    } else if result.status == ExecuteStatus::Error {
         if let Some(error) = &result.error {
             text.push_str(if text.is_empty() { "" } else { "\n" });
             text.push_str(&error.traceback.join("\n"));
@@ -388,6 +402,34 @@ fn format_execute_text(result: &ExecuteResult, background_output: Option<&str>) 
         );
     }
     text
+}
+
+/// The model-facing cause and fix for a cell interrupted at its time limit.
+fn cell_timeout_message(limit_ms: u64, kernel_restarted: bool) -> String {
+    let mut message = format!(
+        "This cell was interrupted after {}: long blocking work stops the session. Make it \
+non-blocking: start the work as a task (`task = asyncio.create_task(...)`; wrap blocking libraries \
+with `asyncio.to_thread`) and check `task.done()` / `task.result()` in later cells. Run shell \
+commands with `bash()`. A cell that legitimately needs longer can pass a larger `timeout` (max \
+{PYTHON_REPL_TIMEOUT_MAX_S} s), but long work belongs in tasks.",
+        humanize_ms(limit_ms)
+    );
+    if kernel_restarted {
+        message.push_str(" The cell did not stop on the interrupt, so the kernel was restarted.");
+    }
+    message
+}
+
+/// Milliseconds as one plain reading: whole seconds when the value divides,
+/// a decimal otherwise, raw milliseconds under one second.
+fn humanize_ms(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms.is_multiple_of(1000) {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}.{:03}s", ms / 1000, ms % 1000)
+    }
 }
 
 async fn execute_with_busy_kernel_choice(
@@ -412,6 +454,7 @@ async fn execute_with_busy_kernel_choice(
                 code,
                 KernelExecuteOptions {
                     signal: execute.signal.clone(),
+                    execution_timeout_ms: execute.execution_timeout_ms,
                     timeout_ms: execute.timeout_ms,
                     auto_background_ms: execute.auto_background_ms,
                     on_stream: execute.on_stream,
@@ -420,7 +463,15 @@ async fn execute_with_busy_kernel_choice(
             )
             .await;
         match result {
-            Ok(result) => return Ok(result),
+            Ok(result) => {
+                if result.timed_out_after_ms.is_some() && result.status == ExecuteStatus::Aborted {
+                    // The cell outlived its limit and ignored the interrupt:
+                    // no one is there to choose, so take the Kill choice.
+                    provisioner.kill().await;
+                    *kernel_restarted = true;
+                }
+                return Ok(result);
+            }
             Err(err) => {
                 let aborted = execute
                     .signal
@@ -484,9 +535,26 @@ pub fn ipython_tool_schema() -> serde_json::Value {
             "code": {
                 "type": "string",
                 "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
+            },
+            "timeout": {
+                "type": "integer",
+                "description": format!(
+                    "Seconds before this cell is interrupted (default {} unless the user configured otherwise, max {PYTHON_REPL_TIMEOUT_MAX_S}).",
+                    DEFAULT_PYTHON_CELL_TIMEOUT_MS / 1000
+                )
             }
         }
     })
+}
+
+/// The largest per-call `timeout` the model may pass, in seconds.
+pub const PYTHON_REPL_TIMEOUT_MAX_S: u64 = 180;
+
+/// The model's `timeout` argument as a cell limit in milliseconds, clamped to
+/// 1..=[`PYTHON_REPL_TIMEOUT_MAX_S`] seconds.
+fn timeout_arg_ms(params: &serde_json::Value) -> Option<u64> {
+    let seconds = params.get("timeout")?.as_f64()?;
+    Some((seconds as u64).clamp(1, PYTHON_REPL_TIMEOUT_MAX_S) * 1000)
 }
 
 pub fn ipython_tool_description() -> &'static str {
@@ -502,6 +570,7 @@ pub fn ipython_tool_description() -> &'static str {
 pub async fn execute_ipython(
     options: &IpythonToolOptions,
     code: &str,
+    timeout_ms: Option<u64>,
     signal: Option<AbortSignal>,
     on_update: Option<OnUpdate>,
     on_late_sent_agent_message: Option<crate::kernel::shared::LateSentAgentMessageCallback>,
@@ -547,7 +616,8 @@ pub async fn execute_ipython(
         code,
         KernelExecuteOptions {
             signal,
-            timeout_ms: options.cell_timeout_ms,
+            execution_timeout_ms: options.cell_timeout_ms,
+            timeout_ms,
             auto_background_ms: options.auto_background_ms,
             on_stream: Some(&stream_update),
             on_late_sent_agent_message,
@@ -576,12 +646,15 @@ pub async fn execute_ipython(
     // Escalate past an ignored interrupt: a wedged kernel would answer every
     // later call with busy-after-interrupt. A timeout always escalates (no
     // one chose to wait); a cancel escalates when no UI offers the
-    // wait/kill choice (TS #2135).
-    let kill_unresponsive = r.kernel_unresponsive && (r.timed_out || options.ui.is_none());
+    // wait/kill choice (TS #2135). A cell past its time limit was already
+    // replaced in `execute_with_busy_kernel_choice`.
+    let kill_unresponsive = r.kernel_unresponsive
+        && r.timed_out_after_ms.is_none()
+        && (r.timed_out || options.ui.is_none());
     if kill_unresponsive {
         options.provisioner.kill().await;
     }
-    let mut text = format_execute_text(&r, r.background_output.as_deref());
+    let mut text = format_execute_text(&r, r.background_output.as_deref(), kernel_restarted);
     let escalation_notice = if r.timed_out {
         options
             .cell_timeout_ms
@@ -624,12 +697,15 @@ pub async fn execute_ipython(
     let mut content = vec![ToolContentBlock::text(text)];
     content.extend(image_blocks);
 
+    // A timed-out cell is an error even when it had to be force-aborted:
+    // nobody aborted it.
+    let status = match r.status {
+        ExecuteStatus::Ok => "ok",
+        ExecuteStatus::Aborted if r.timed_out_after_ms.is_none() => "aborted",
+        ExecuteStatus::Error | ExecuteStatus::Aborted => "error",
+    };
     let mut details = json!({
-        "status": match r.status {
-            ExecuteStatus::Ok => "ok",
-            ExecuteStatus::Error => "error",
-            ExecuteStatus::Aborted => "aborted",
-        },
+        "status": status,
         "kernelRestarted": kernel_restarted,
     });
     if r.timed_out {
@@ -785,6 +861,7 @@ pub fn create_ipython_tool_definition(cwd: &str, options: IpythonToolOptions) ->
                 let mut result = execute_ipython(
                     &options,
                     &code,
+                    timeout_arg_ms(&params),
                     signal,
                     on_update,
                     on_late_sent_agent_message,
@@ -893,6 +970,27 @@ mod tests {
     }
 
     #[test]
+    fn timeout_arg_is_clamped_to_the_allowed_range() {
+        assert_eq!(timeout_arg_ms(&json!({ "code": "" })), None);
+        assert_eq!(timeout_arg_ms(&json!({ "timeout": 5 })), Some(5_000));
+        assert_eq!(timeout_arg_ms(&json!({ "timeout": 0 })), Some(1_000));
+        assert_eq!(
+            timeout_arg_ms(&json!({ "timeout": 3600 })),
+            Some(PYTHON_REPL_TIMEOUT_MAX_S * 1000)
+        );
+    }
+
+    #[test]
+    fn humanize_ms_pads_the_millisecond_remainder() {
+        assert_eq!(humanize_ms(500), "500ms");
+        assert_eq!(humanize_ms(2000), "2s");
+        assert_eq!(humanize_ms(60_000), "60s");
+        assert_eq!(humanize_ms(1500), "1.500s");
+        // A sub-100ms remainder must not read as tenths: 60.005s, not 60.5s.
+        assert_eq!(humanize_ms(60_005), "60.005s");
+    }
+
+    #[test]
     fn sent_agent_message_json_matches_ts_wire_shape() {
         let sent = crate::kernel::shared::KernelSentAgentMessage {
             id: "agentmsg_1".to_string(),
@@ -955,8 +1053,7 @@ mod tests {
         // Claude Code's `fHe` setTimeout default is 120_000 ms; a cleared
         // env or a garbled value keeps the default, `0` opts out.
         assert_eq!(
-            [None, Some("45000"), Some(" 0 "), Some("nope")]
-                .map(resolve_cell_auto_background_ms),
+            [None, Some("45000"), Some(" 0 "), Some("nope")].map(resolve_cell_auto_background_ms),
             [Some(120_000), Some(45_000), None, Some(120_000)]
         );
     }
@@ -1046,7 +1143,7 @@ mod tests {
             auto_background_ms: None,
         };
 
-        let crashed = execute_ipython(&options, "import os; os._exit(7)", None, None, None)
+        let crashed = execute_ipython(&options, "import os; os._exit(7)", None, None, None, None)
             .await
             .unwrap();
         let mut details = crashed.details.clone().unwrap();
@@ -1073,7 +1170,7 @@ mod tests {
             )
         );
 
-        let after = execute_ipython(&options, "print('after')", None, None, None)
+        let after = execute_ipython(&options, "print('after')", None, None, None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -1085,7 +1182,7 @@ mod tests {
         );
 
         // One time only.
-        let again = execute_ipython(&options, "print('again')", None, None, None)
+        let again = execute_ipython(&options, "print('again')", None, None, None, None)
             .await
             .unwrap();
         assert_eq!(

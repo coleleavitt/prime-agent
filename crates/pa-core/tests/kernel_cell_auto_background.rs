@@ -229,3 +229,82 @@ async fn disabled_budget_lets_an_async_cell_run_to_natural_end() {
         .await
         .expect("shutdown");
 }
+
+/// The two timers together: a cell the auto-background timer moves first has
+/// settled, so the later time limit never reaches it and the background body
+/// runs to its end (the limit bounds how long a cell blocks the session).
+#[tokio::test]
+async fn a_detached_cell_outlives_the_time_limit() {
+    let Some(manager) = started_manager("cell-auto-bg-limit-async").await else {
+        return;
+    };
+
+    let result = manager
+        .execute(
+            "import asyncio\nfinished = False\nawait asyncio.sleep(2)\nfinished = True",
+            ExecuteOptions {
+                auto_background_ms: Some(300),
+                cell_timeout_ms: Some(1_000),
+                ..ExecuteOptions::default()
+            },
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(result.status, ExecuteStatus::Ok);
+    assert!(
+        result
+            .result
+            .as_deref()
+            .is_some_and(|text| text.starts_with("[Still running.")),
+        "the cell moved before its limit: {result:?}"
+    );
+    assert_eq!(result.timed_out_after_ms, None);
+
+    // Wait for the background body itself, then read what it left behind.
+    let settled = manager
+        .execute(
+            "import asyncio\nimport rlm.repl as _repl\nawait asyncio.gather(*_repl._detached_bodies.values(), return_exceptions=True)\nfinished",
+            ExecuteOptions::default(),
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(
+        (settled.status, settled.result.as_deref()),
+        (ExecuteStatus::Ok, Some("True")),
+        "the time limit interrupted a cell that was already in the background: {settled:?}"
+    );
+
+    manager
+        .shutdown(pa_core::kernel::shared::KernelShutdownOptions::default())
+        .await
+        .expect("shutdown");
+}
+
+/// A synchronous cell cannot move: the auto-background timer fires first, its
+/// detach is a no-op, and the time limit then interrupts the cell.
+#[tokio::test]
+async fn a_cell_that_cannot_move_is_interrupted_at_its_time_limit() {
+    let Some(manager) = started_manager("cell-auto-bg-limit-sync").await else {
+        return;
+    };
+
+    let result = manager
+        .execute(
+            "import time\ntime.sleep(30)",
+            ExecuteOptions {
+                auto_background_ms: Some(300),
+                cell_timeout_ms: Some(1_000),
+                ..ExecuteOptions::default()
+            },
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(result.status, ExecuteStatus::Error, "{result:?}");
+    assert!(result.auto_backgrounded, "the detach was tried first");
+    assert_eq!(result.timed_out_after_ms, Some(1_000));
+
+    manager
+        .shutdown(pa_core::kernel::shared::KernelShutdownOptions::default())
+        .await
+        .expect("shutdown");
+}
