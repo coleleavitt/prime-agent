@@ -476,6 +476,13 @@ impl RlmChildUsageStore for Bills {
         self.0.lock().unwrap().push((session_id, usage));
         Box::pin(async { Ok(()) })
     }
+
+    fn observe_billed_rows(
+        &self,
+        _sink: pa_core::session::billed_row::BilledRowSink,
+    ) -> RlmChildUsageFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// Every prompt of a RAVO run bills the session that started it: one

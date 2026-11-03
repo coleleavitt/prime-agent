@@ -6,8 +6,8 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+pub(crate) use pa_core::session::billed_row::{BilledRow, ScanUsage, billed_line};
 use pa_core::session_engine::compaction_exec::{add_assistant_usage, subtract_assistant_usage};
-use pa_core::session_engine::model_usage::MODEL_USAGE_CUSTOM_TYPE;
 use pa_types::JsNumber;
 use pa_types::ai::{Usage, UsageCost};
 use serde::{Deserialize, Serialize};
@@ -95,63 +95,6 @@ impl<'de> Deserialize<'de> for AssistantUsageById {
             map.set(&id, Usage::from(usage));
         }
         Ok(map)
-    }
-}
-
-/// The scan-side wire shape of a usage block. Persisted files carry
-/// partial objects (`{input, output, totalTokens}` without
-/// `cacheRead`/`cacheWrite`/`cost`), and TS `JSON.parse` never rejects
-/// one — the fold keeps the row and every field it does not find
-/// defaults to zero, instead of dropping the message (its count, model,
-/// and search text) with the block.
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ScanUsage {
-    #[serde(default)]
-    input: u64,
-    #[serde(default)]
-    output: u64,
-    #[serde(default)]
-    cache_read: u64,
-    #[serde(default)]
-    cache_write: u64,
-    #[serde(default)]
-    total_tokens: u64,
-    #[serde(default)]
-    cost: ScanUsageCost,
-}
-
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScanUsageCost {
-    #[serde(default)]
-    input: JsNumber,
-    #[serde(default)]
-    output: JsNumber,
-    #[serde(default)]
-    cache_read: JsNumber,
-    #[serde(default)]
-    cache_write: JsNumber,
-    #[serde(default)]
-    total: JsNumber,
-}
-
-impl From<ScanUsage> for Usage {
-    fn from(scan: ScanUsage) -> Usage {
-        Usage {
-            input: scan.input,
-            output: scan.output,
-            cache_read: scan.cache_read,
-            cache_write: scan.cache_write,
-            total_tokens: scan.total_tokens,
-            cost: UsageCost {
-                input: scan.cost.input,
-                output: scan.cost.output,
-                cache_read: scan.cost.cache_read,
-                cache_write: scan.cost.cache_write,
-                total: scan.cost.total,
-            },
-        }
     }
 }
 
@@ -351,88 +294,9 @@ impl UsageScan {
     }
 }
 
-/// One model call a non-message row bills: compactions and branch summaries
-/// (the summarizer's usage on the row) and `model_usage` rows (refinement
-/// planning and review, side questions). `model` is the serving
-/// `(provider, modelId)` when the row records it.
-pub(crate) struct BilledRow {
-    pub(crate) usage: Usage,
-    pub(crate) model: Option<(String, String)>,
-}
-
-/// The fields a billed row keeps its call in.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BilledRowFields {
-    #[serde(default)]
-    custom_type: Option<String>,
-    #[serde(default)]
-    usage: Option<ScanUsage>,
-    #[serde(default)]
-    provider: Option<String>,
-    #[serde(default)]
-    model_id: Option<String>,
-    /// Typed straight away: a custom row with other data fails the parse
-    /// and bills nothing, without building that data in memory.
-    #[serde(default)]
-    data: Option<ModelUsageData>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModelUsageData {
-    usage: ScanUsage,
-    provider: String,
-    model_id: String,
-}
-
-/// The one place that knows which rows besides assistant messages bill a
-/// model call and where each keeps it. `fields` parses the row lazily: only
-/// a candidate row type pays for it.
-fn billed_row(type_: &str, fields: impl FnOnce() -> Option<BilledRowFields>) -> Option<BilledRow> {
-    match type_ {
-        "compaction" | "branch_summary" => {
-            let fields = fields()?;
-            Some(BilledRow::new(
-                fields.usage?,
-                fields.provider.zip(fields.model_id),
-            ))
-        }
-        "custom" => {
-            let fields = fields()?;
-            if fields.custom_type.as_deref() != Some(MODEL_USAGE_CUSTOM_TYPE) {
-                return None;
-            }
-            let data = fields.data?;
-            Some(BilledRow::new(
-                data.usage,
-                Some((data.provider, data.model_id)),
-            ))
-        }
-        _ => None,
-    }
-}
-
-impl BilledRow {
-    fn new(usage: ScanUsage, model: Option<(String, String)>) -> Self {
-        Self {
-            usage: usage.into(),
-            model: model
-                .filter(|(provider, model_id)| !provider.is_empty() && !model_id.is_empty()),
-        }
-    }
-}
-
-/// [`billed_row`] over an in-memory store entry.
+/// [`billed_fields`](pa_core::session::billed_row::billed_fields) over an in-memory store entry.
 pub(crate) fn billed_store_row(entry: &crate::session_store::SessionEntry) -> Option<BilledRow> {
-    billed_row(&entry.type_, || {
-        BilledRowFields::deserialize(&entry.fields).ok()
-    })
-}
-
-/// [`billed_row`] over one raw JSONL line.
-pub(crate) fn billed_line(type_: &str, line: &str) -> Option<BilledRow> {
-    billed_row(type_, || serde_json::from_str(line).ok())
+    pa_core::session::billed_row::billed_fields(&entry.type_, &entry.fields)
 }
 
 /// The standalone scanner's minimal entry parse: only the usage fold's fields.

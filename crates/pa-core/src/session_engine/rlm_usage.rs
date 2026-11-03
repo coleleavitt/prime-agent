@@ -10,6 +10,7 @@ use pa_types::session::ChildUsageOrigin;
 use pa_types::sync::MutexExt;
 
 use super::model_usage::{MODEL_USAGE_CUSTOM_TYPE, ModelUsage};
+use crate::session::billed_row::BilledRowSink;
 use crate::session::manager::SessionManager;
 
 pub fn add_assistant_usage(total: &mut Usage, usage: &Usage) {
@@ -124,6 +125,10 @@ pub trait RlmChildUsageStore: Send + Sync {
         session_id: String,
         usage: ModelUsage,
     ) -> RlmChildUsageFuture<'_, std::io::Result<()>>;
+
+    /// Report every row this store appends from now on that bills a model
+    /// call: the store is the one place each billed row lands exactly once.
+    fn observe_billed_rows(&self, sink: BilledRowSink) -> RlmChildUsageFuture<'_, ()>;
 }
 
 pub(crate) struct SessionUsageStore(pub(crate) std::sync::Arc<tokio::sync::Mutex<SessionManager>>);
@@ -202,6 +207,10 @@ impl RlmChildUsageStore for SessionUsageStore {
                 .append_custom_entry(MODEL_USAGE_CUSTOM_TYPE, Some(data))?;
             Ok(())
         })
+    }
+
+    fn observe_billed_rows(&self, sink: BilledRowSink) -> RlmChildUsageFuture<'_, ()> {
+        Box::pin(async move { self.0.lock().await.on_billed_row(sink) })
     }
 }
 
@@ -951,6 +960,10 @@ mod tests {
         ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
             self.store.append_model_usage(session_id, usage)
         }
+
+        fn observe_billed_rows(&self, sink: BilledRowSink) -> RlmChildUsageFuture<'_, ()> {
+            self.store.observe_billed_rows(sink)
+        }
     }
 
     /// A failed append returns false and writes no row; the retry persists
@@ -1041,6 +1054,10 @@ mod tests {
             usage: ModelUsage,
         ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
             self.store.append_model_usage(session_id, usage)
+        }
+
+        fn observe_billed_rows(&self, sink: BilledRowSink) -> RlmChildUsageFuture<'_, ()> {
+            self.store.observe_billed_rows(sink)
         }
     }
 

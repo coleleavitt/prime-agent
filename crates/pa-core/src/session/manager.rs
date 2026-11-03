@@ -125,6 +125,8 @@ pub struct SessionManager {
     /// touches the file (`set_notice_append_fault`).
     #[cfg(test)]
     notice_append_fault: bool,
+    /// Told about each appended row that bills a model call.
+    billed_row_sink: Option<super::billed_row::BilledRowSink>,
 }
 
 /// The refine transcript's consumed artifacts: the conversation message

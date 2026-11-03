@@ -76,6 +76,13 @@ impl RlmChildUsageStore for BillChannel {
         let _ = self.0.send((session_id, usage));
         Box::pin(async { Ok(()) })
     }
+
+    fn observe_billed_rows(
+        &self,
+        _sink: pa_core::session::billed_row::BilledRowSink,
+    ) -> RlmChildUsageFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// Register a bill channel as `session_id`'s durable store; the store lives

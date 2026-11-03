@@ -159,6 +159,7 @@ impl SessionManager {
             write_poison: None,
             #[cfg(test)]
             notice_append_fault: false,
+            billed_row_sink: None,
         };
         match session_file {
             Some(file) => manager.set_session_file(file, None),

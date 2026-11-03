@@ -91,6 +91,13 @@ impl RlmChildUsageStore for RecordingStore {
         self.0.lock().unwrap().push((session_id, usage));
         Box::pin(async { Ok(()) })
     }
+
+    fn observe_billed_rows(
+        &self,
+        _sink: crate::session::billed_row::BilledRowSink,
+    ) -> super::rlm_usage::RlmChildUsageFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 #[cfg(test)]
