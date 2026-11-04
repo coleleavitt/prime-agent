@@ -83,6 +83,14 @@ The following programmatic tools are available in the REPL for subagent manageme
 - `rlm.cron.list() -> list[dict]`: this session's scheduled tasks and pending `/loop` wakeups (id, cron, schedule, prompt, next fire)
 - `rlm.cron.delete(id: str) -> dict`: cancel one
 - `rlm.schedule_wakeup(delay_seconds: float, prompt: str, reason: str, *, noop: bool | None = None, stop: bool = False) -> dict`: only inside a self-paced `/loop` (its instructions say how): wake this session with `prompt` after `delay_seconds` (clamped to [60, 3600]); `stop=True` ends the loop
+- `rlm.memory`: a per-user memory tree (`<agent dir>/memory/personal/`) the agent reads and writes across projects and sessions. Paths are relative POSIX, NFC-normalized, at most 20 segments and 1024 bytes, no `.` / `..` / control characters; file contents are capped at 100 KiB. Use it for durable notes that outlive the session (what a project is, how the user works, preferences you have been told); the project-scoped `MEMORY.md` the prompt already carries is better for project facts.
+  - `rlm.memory.read(path: str) -> str`: the file at `path`
+  - `rlm.memory.write(path: str, content: str) -> dict`: replace `path` with `content`
+  - `rlm.memory.append(path: str, content: str) -> dict`: append to `path` (creates it)
+  - `rlm.memory.str_replace(path: str, old: str, new: str) -> dict`: replace the single occurrence of `old` with `new`; refused when `old` does not match exactly once (use `read` + `write` for multi-match edits)
+  - `rlm.memory.delete(path: str) -> dict`: remove `path`, and the empty parent directories
+  - `rlm.memory.list(prefix: str | None = None) -> list[dict]`: the entries at or below `prefix` (`{path, size, modified_unix}`); no prefix lists the whole tree
+  - `rlm.memory.search(query: str, *, limit: int | None = None) -> list[dict]`: lines matching `query` (case-sensitive literal, not regex; `{path, line_number, line}`, default 100 hits, max 500)
 - `rlm.watch.path(path: str, *, recursive: bool = False) -> RLMPathWatch`: subscribe this session to an existing file or directory (relative paths resolve against the working directory) to coordinate through shared files — debounced quiet notices list the changed paths (`[watch-path id:... path:...]`), never contents; removal or a watcher failure arrives as `[watch-path-failed ...]` and stops the watch, and recreating the path needs a new registration; at most 64 active watches
 - `rlm.watch.path_list() -> list[RLMPathWatch]`: this session's path watches, finished ones included (status `active`, `completed`, or `failed` with its error)
 - `rlm.watch.path_get(watch_id: str) -> RLMPathWatch`: re-read one path watch

@@ -38,6 +38,7 @@ from .skill_loader import load_skill
 from .worktree import enter_worktree, exit_worktree
 from .toolforge import ToolforgeRejected, ToolforgeSkill
 from .schedule import cron, schedule_wakeup
+from .memory import MemoryError, memory
 from .web import WebFetchResult, WebSearchHit, WebSearchResult, web_fetch, web_search
 
 _NOT_CALLABLE_MESSAGE = "'rlm' is not callable; spawn a child with: handle = await rlm.spawn('sub-task', name='worker')"
@@ -1283,6 +1284,7 @@ class _RLMNamespace:
         return await exit_worktree(action, discard_changes=discard_changes)
 
     cron = cron
+    memory = memory
 
     async def schedule_wakeup(
         self,

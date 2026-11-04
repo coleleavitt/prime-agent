@@ -90,6 +90,7 @@ pub mod git_env;
 pub mod goals;
 pub mod kernel;
 pub mod mcp;
+pub mod memory;
 pub mod models;
 pub mod os_sandbox;
 pub mod packages;

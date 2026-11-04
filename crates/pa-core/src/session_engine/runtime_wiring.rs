@@ -193,6 +193,7 @@ pub fn wire_session_runtime(
     if let Some(tasks) = &session_tasks {
         crate::cron::tasks::host::register_host_handlers(&mut handlers, tasks);
     }
+    crate::memory::register_host_handlers(&mut handlers, crate::memory::personal_dir(agent_dir));
     let model_registry = rlm.model_registry.unwrap_or_else(|| {
         let auth = crate::auth::AuthStorage::create(agent_dir);
         let mut registry =
