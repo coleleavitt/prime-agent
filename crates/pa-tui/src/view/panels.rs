@@ -40,6 +40,27 @@ impl AgentView {
             &self.theme,
             width,
         ));
+        // Claude Code's away summary banner (`maybe_generate_recap`): a
+        // dim one-line recap of where the session is, so the next prompt
+        // starts with context after the user has been away.
+        if let Some(recap) = &self.chrome.away_recap {
+            lines.push(vec![
+                Span::styled(
+                    crate::chrome::AWAY_RECAP_PREFIX.to_string(),
+                    self.theme.fg_style(ThemeColor::Dim),
+                ),
+                Span::styled(
+                    crate::width::truncate_to_width(
+                        recap,
+                        width.saturating_sub(crate::width::str_width(
+                            crate::chrome::AWAY_RECAP_PREFIX,
+                        )),
+                        "\u{2026}",
+                    ),
+                    self.theme.fg_style(ThemeColor::Dim),
+                ),
+            ]);
+        }
         // Vim mode's `-- INSERT --` indicator, then the status line rows
         // (Claude Code's placement: under the prompt).
         if let Some(indicator) = self

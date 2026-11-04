@@ -8,6 +8,9 @@ use crate::theme::{Theme, ThemeBg, ThemeColor};
 use crate::width::str_width;
 use crate::{Line, Span};
 
+/// The dim marker that leads the away-summary banner in the dock.
+pub const AWAY_RECAP_PREFIX: &str = "\u{2190} recap  ";
+
 /// The compact 7-row brand butterfly.
 pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
     "                 \u{2597}\u{2584}\u{2584}\u{2588}\u{2580}\n",
@@ -99,6 +102,15 @@ pub struct ChromeState {
     pub status_line_padding: usize,
     /// `statusLine.hideVimModeIndicator`: the command renders the mode.
     pub vim_indicator_hidden: bool,
+    /// Claude Code's away summary (`/recap`, emitted automatically at
+    /// settled-and-idle by `pa-daemon`'s `maybe_generate_recap`). Shown as
+    /// a dim banner below the editor's feature panel; cleared when the
+    /// next turn starts.
+    pub away_recap: Option<String>,
+    /// Claude Code's predicted next prompt (emitted by
+    /// `maybe_suggest_prompt`). Stored so a later chrome pass can render
+    /// it as an inline composer placeholder; not shown yet.
+    pub prompt_suggestion: Option<String>,
 }
 
 /// Which actionable group owns the dock's selection. Every group is

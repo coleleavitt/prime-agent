@@ -143,6 +143,15 @@ pub enum TurnUpdate {
     /// A `/harness` result (#1118): off the transcript; the open selector
     /// redraws from it, otherwise it surfaces as a note.
     HarnessResult(crate::harness_selector::HarnessResult),
+    /// Claude Code's away summary (`session_recap` worker event): a short
+    /// recap of the session's state generated at the end of every settled
+    /// turn, so the TUI has it ready to show when the user returns. An
+    /// empty string clears the banner.
+    AwayRecap { text: String },
+    /// Claude Code's predicted next prompt (`prompt_suggestion` worker
+    /// event): the next prompt the user might type, generated after a
+    /// run's true end. Stored for a future composer-placeholder pass.
+    PromptSuggestion { text: String },
 }
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).
@@ -245,6 +254,23 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .map(str::to_string),
         }),
         "agent_end" => Some(TurnUpdate::Idle),
+        // Claude Code's away summary and prompt-suggestion worker events
+        // ride the session event stream; the TUI shows the recap and
+        // stores the suggestion for a later composer-placeholder pass.
+        "session_recap" => Some(TurnUpdate::AwayRecap {
+            text: event
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        }),
+        "prompt_suggestion" => Some(TurnUpdate::PromptSuggestion {
+            text: event
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        }),
         "message_start" | "message_update" | "message_end" => {
             let message = event.get("message")?.clone();
             let event_type = event.get("type").and_then(Value::as_str);

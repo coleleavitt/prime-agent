@@ -387,6 +387,13 @@ impl SessionUi {
                 // No card from a previous run settles on this one's failure.
                 self.pending_tools.clear();
                 self.aborted_tools.clear();
+                // The user is back; drop the "while you were away" banner
+                // and the predicted next prompt, matching Claude Code.
+                if view.chrome.away_recap.take().is_some()
+                    || view.chrome.prompt_suggestion.take().is_some()
+                {
+                    self.dirty = true;
+                }
                 self.start_loader(view);
             }
             TurnUpdate::UserMessage(text) => {
@@ -712,6 +719,22 @@ impl SessionUi {
                 self.sync_queue_selection(view);
             }
             TurnUpdate::StatusUpdate => {}
+            TurnUpdate::AwayRecap { text } => {
+                let trimmed = text.trim().to_string();
+                view.chrome.away_recap = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+            }
+            TurnUpdate::PromptSuggestion { text } => {
+                let trimmed = text.trim().to_string();
+                view.chrome.prompt_suggestion = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+            }
         }
         self.dirty = true;
     }

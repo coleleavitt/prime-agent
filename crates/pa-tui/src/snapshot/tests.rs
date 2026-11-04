@@ -916,6 +916,40 @@ fn reconstructs_the_starting_row_from_session_actions() {
 }
 
 #[test]
+fn decodes_session_recap_and_prompt_suggestion_events() {
+    let recap = event_to_update(&json!({
+        "type": "session_recap",
+        "text": "  Fixing roster ordering; next, run the e2e suite.  ",
+    }))
+    .expect("a session_recap update");
+    assert_eq!(
+        recap,
+        TurnUpdate::AwayRecap {
+            text: "  Fixing roster ordering; next, run the e2e suite.  ".to_string(),
+        }
+    );
+    let clearing = event_to_update(&json!({ "type": "session_recap" }))
+        .expect("a session_recap update with no text clears");
+    assert_eq!(
+        clearing,
+        TurnUpdate::AwayRecap {
+            text: String::new(),
+        }
+    );
+    let suggestion = event_to_update(&json!({
+        "type": "prompt_suggestion",
+        "text": "run the tests",
+    }))
+    .expect("a prompt_suggestion update");
+    assert_eq!(
+        suggestion,
+        TurnUpdate::PromptSuggestion {
+            text: "run the tests".to_string(),
+        }
+    );
+}
+
+#[test]
 fn decodes_the_user_bash_event_triple() {
     let start = event_to_update(&json!({
         "type": "bash_start",
