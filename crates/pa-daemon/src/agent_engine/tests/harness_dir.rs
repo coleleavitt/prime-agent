@@ -30,6 +30,7 @@ fn reviewer() -> HarnessEntry {
         created_at: "t0".to_string(),
         updated_at: "t0".to_string(),
         version: 1,
+        targets_fingerprints: Vec::new(),
         extensions: Map::new(),
     }
 }

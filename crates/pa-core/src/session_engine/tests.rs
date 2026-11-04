@@ -271,6 +271,7 @@ async fn resume_dedupes_by_state_fingerprint_and_replaces_stale_digests() {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 1,
+                    targets_fingerprints: Vec::new(),
                     extensions: serde_json::Map::new(),
                 },
             );
@@ -365,6 +366,7 @@ async fn resume_dedupes_by_state_fingerprint_and_replaces_stale_digests() {
                 created_at: String::new(),
                 updated_at: String::new(),
                 version: 1,
+                targets_fingerprints: Vec::new(),
                 extensions: serde_json::Map::new(),
             },
         );

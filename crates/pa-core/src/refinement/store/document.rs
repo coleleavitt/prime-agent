@@ -124,6 +124,16 @@ fn parse_entry(
         created_at: text_or(raw.get("created_at"), ""),
         updated_at: text_or(raw.get("updated_at"), ""),
         version: version_of(raw.get("version")),
+        targets_fingerprints: raw
+            .get("targetsFingerprints")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         extensions: raw
             .iter()
             .filter(|(key, _)| !MODELLED_ENTRY_KEYS.contains(&key.as_str()))
@@ -421,6 +431,7 @@ mod tests {
                 created_at: String::new(),
                 updated_at: String::new(),
                 version: 2,
+                targets_fingerprints: Vec::new(),
                 extensions,
             }
         );
@@ -435,6 +446,62 @@ mod tests {
                 created_at: String::new(),
                 reason: None,
             }]
+        );
+    }
+
+    #[test]
+    fn targets_fingerprints_round_trip_through_serde_and_default_empty() {
+        let entry_with_targets = HarnessEntry {
+            id: "e1".to_string(),
+            kind: RefinementKind::Memory,
+            title: "N".to_string(),
+            content: "C".to_string(),
+            path: "general".to_string(),
+            scope: Some(HarnessScope::Local),
+            reference: Map::new(),
+            arguments: Map::new(),
+            metadata: Map::new(),
+            source: "refine".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            targets_fingerprints: vec!["fp-a".to_string(), "fp-b".to_string()],
+            extensions: Map::new(),
+        };
+        let json = serde_json::to_value(&entry_with_targets).unwrap();
+        let round_tripped: HarnessEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(round_tripped, entry_with_targets);
+        assert_eq!(
+            json.get("targetsFingerprints"),
+            Some(&serde_json::json!(["fp-a", "fp-b"])),
+        );
+        // An on-disk entry with no `targetsFingerprints` key is still parsed
+        // as empty — the field is additive, so older harness files remain
+        // readable byte-for-byte.
+        let legacy: HarnessEntry = serde_json::from_value(serde_json::json!({
+            "id": "e2",
+            "kind": "memory",
+            "title": "N",
+            "content": "C",
+            "path": "general",
+            "reference": {},
+            "arguments": {},
+            "metadata": {},
+            "source": "refine",
+            "created_at": "",
+            "updated_at": "",
+            "version": 1,
+        }))
+        .unwrap();
+        assert!(legacy.targets_fingerprints.is_empty());
+        // The empty case must not add the key on save — keeps old files from
+        // churning on a load/save round trip.
+        let json_empty = serde_json::to_value(&legacy).unwrap();
+        assert!(
+            !json_empty
+                .as_object()
+                .unwrap()
+                .contains_key("targetsFingerprints")
         );
     }
 

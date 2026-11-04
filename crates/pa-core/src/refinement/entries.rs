@@ -242,6 +242,7 @@ mod tests {
             created_at: "t0".to_string(),
             updated_at: "t0".to_string(),
             version: 2,
+            targets_fingerprints: Vec::new(),
             extensions: extensions.as_object().cloned().unwrap_or_default(),
         }
     }

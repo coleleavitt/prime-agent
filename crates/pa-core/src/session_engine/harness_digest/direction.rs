@@ -63,6 +63,7 @@ fn direction_memory(id: &str, title: &str, content: &str) -> HarnessEntry {
         created_at: "2026-09-07T00:00:00.000Z".to_string(),
         updated_at: "2026-09-07T00:00:00.000Z".to_string(),
         version: 1,
+        targets_fingerprints: Vec::new(),
         extensions: serde_json::Map::new(),
     }
 }

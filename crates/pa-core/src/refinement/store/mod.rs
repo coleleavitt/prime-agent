@@ -382,6 +382,7 @@ impl Session {
                 created_at: now.clone(),
                 updated_at: now,
                 version: 1,
+                targets_fingerprints: Vec::new(),
                 extensions: Map::new(),
             };
             bucket.insert(entry_id, entry.clone());

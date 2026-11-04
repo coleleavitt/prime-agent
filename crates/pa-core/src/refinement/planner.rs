@@ -578,6 +578,13 @@ pub fn apply_refinement_proposal(
                 .map_or_else(now_iso, |entry| entry.created_at.clone()),
             updated_at: now_iso(),
             version: before.as_ref().map_or(1, |entry| entry.version + 1),
+            // A refine inherits the entry's fingerprint links so a
+            // replacement keeps them. The planner's JSON output schema does
+            // not yet cite fingerprints; follow-up commits teach it to do so.
+            targets_fingerprints: before
+                .as_ref()
+                .map(|entry| entry.targets_fingerprints.clone())
+                .unwrap_or_default(),
             // TS spreads `before` first: a key this function does not model
             // survives an update instead of being dropped by the rewrite.
             extensions: before
@@ -1094,6 +1101,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 1,
+                    targets_fingerprints: Vec::new(),
                     extensions: serde_json::Map::new(),
                 },
             );

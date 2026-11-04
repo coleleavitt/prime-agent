@@ -710,6 +710,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             version: 1,
+            targets_fingerprints: Vec::new(),
             extensions: serde_json::Map::new(),
         }
     }
@@ -853,6 +854,7 @@ mod tests {
                     created_at: String::new(),
                     updated_at: String::new(),
                     version: 0,
+                    targets_fingerprints: Vec::new(),
                     extensions: serde_json::Map::new(),
                 },
             );

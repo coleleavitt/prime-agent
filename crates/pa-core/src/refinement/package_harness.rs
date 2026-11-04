@@ -313,6 +313,7 @@ fn validate_entry(
         created_at: PACKAGE_HARNESS_TIMESTAMP.to_string(),
         updated_at: PACKAGE_HARNESS_TIMESTAMP.to_string(),
         version,
+        targets_fingerprints: Vec::new(),
         extensions: serde_json::Map::new(),
     })
 }

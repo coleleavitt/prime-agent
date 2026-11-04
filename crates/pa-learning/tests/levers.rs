@@ -220,6 +220,7 @@ fn memory(id: &str, title: &str, content: &str) -> HarnessEntry {
         created_at: String::new(),
         updated_at: String::new(),
         version: 1,
+        targets_fingerprints: Vec::new(),
         extensions: serde_json::Map::new(),
     }
 }

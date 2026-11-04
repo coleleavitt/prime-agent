@@ -66,6 +66,13 @@ pub struct HarnessEntry {
     #[serde(rename = "updated_at")]
     pub updated_at: String,
     pub version: u64,
+    /// The failure-ledger fingerprints this entry was meant to prevent
+    /// recurrence of (see `pa-ledger::FailureRecord`). Empty by default, and
+    /// absent on disk until the planner starts citing fingerprints; the
+    /// post-fix recurrence probe reads this field to decide which accepted
+    /// entries to measure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets_fingerprints: Vec<String>,
     /// Keys this crate does not model (another producer's per-entry state,
     /// such as the fork's `trust`), carried through load, refine and save
     /// untouched, after the modelled keys as a TS save writes them.
@@ -661,6 +668,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00.000Z".to_string(),
             updated_at: "2024-01-01T00:00:00.000Z".to_string(),
             version: 1,
+            targets_fingerprints: Vec::new(),
             extensions: serde_json::Map::new(),
         }
     }
