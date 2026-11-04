@@ -1,10 +1,10 @@
 //! Foreground-sleep rules: block waits that hold the turn open for something
 //! the session can be told about (`rlm.monitor` over an `until` loop, a
-//! `bash()` handle's done notice). Two checks:
+//! `bash()` handle's done notice). Three checks:
 //!
 //! 1. A command whose first command is exactly `sleep N` with `N` of 25
 //!    seconds or more is refused, so `sleep 60 && make` becomes
-//!    `rlm.monitor` or `bash(..., run_in_background=True)`.
+//!    `rlm.monitor` or a plain `bash()` handle.
 //! 2. A loop whose body polls with `sleep` is refused when it holds the
 //!    turn open: budget (iterations * seconds) reaches [`BUDGET_SECONDS`]
 //!    when both are literal, the per-iteration sleep reaches
@@ -12,6 +12,11 @@
 //!    the loop's condition is always true. `until`, a backgrounded loop,
 //!    and the standalone `sleep N &` pass; those are the shapes the model
 //!    is supposed to use.
+//! 3. A top-level `watch` call is refused: `watch` repeats its command
+//!    forever (default interval two seconds, `-n` / `--interval` sets the
+//!    delay) and never exits on its own, so it holds the turn open the
+//!    same way a `while :; do …; sleep S; done` would. `watch &` and
+//!    `watch` from inside a subshell that is itself backgrounded pass.
 
 use super::{Check, Rule};
 use crate::syntax::ast::{BranchKind, Command, List, Part, Quoting, SimpleCommand, Word};
@@ -41,6 +46,9 @@ impl Rule for Sleep {
             return Some(refusal_message(&what));
         }
         if let Some(what) = polling_loop(&list) {
+            return Some(refusal_message(&what));
+        }
+        if let Some(what) = top_level_watch(&list) {
             return Some(refusal_message(&what));
         }
         None
@@ -367,6 +375,73 @@ fn seq_command_count(body: &List) -> Option<u64> {
         [lo, hi] if hi >= lo => Some(hi - lo + 1),
         _ => None,
     }
+}
+
+fn top_level_watch(list: &List) -> Option<String> {
+    for item in &list.items {
+        if item.background {
+            continue;
+        }
+        for pipeline in item.pipelines() {
+            for command in &pipeline.commands {
+                if let Some(shape) = find_top_level_watch(command) {
+                    return Some(shape);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_top_level_watch(command: &Command) -> Option<String> {
+    match command {
+        Command::Simple(simple) => watch_command_shape(simple),
+        Command::Subshell(list, _) | Command::Group(list, _) => top_level_watch(list),
+        _ => None,
+    }
+}
+
+const WATCH_DEFAULT_INTERVAL_SECONDS: f64 = 2.0;
+
+fn watch_command_shape(command: &SimpleCommand) -> Option<String> {
+    let program = command.words.first()?.as_static()?;
+    let name = program.rsplit('/').next()?;
+    if name != "watch" {
+        return None;
+    }
+    let interval = watch_interval(&command.words[1..]);
+    match interval {
+        Some(seconds) => Some(format!("`watch` repeating every {seconds} seconds")),
+        None => Some(format!(
+            "`watch` repeating every {WATCH_DEFAULT_INTERVAL_SECONDS} seconds (its default)"
+        )),
+    }
+}
+
+/// `-n S` / `-nS` / `--interval S` / `--interval=S` when `S` is a literal
+/// number; `None` if the flag is missing, its argument is dynamic, or the
+/// argument list breaks with `--`.
+fn watch_interval(args: &[Word]) -> Option<f64> {
+    let mut iter = args.iter();
+    while let Some(word) = iter.next() {
+        let Some(text) = word.as_static() else {
+            continue;
+        };
+        if text == "--" {
+            break;
+        }
+        if text == "-n" || text == "--interval" {
+            let next = iter.next().and_then(Word::as_static)?;
+            return parse_sleep_number(&next);
+        }
+        if let Some(value) = text.strip_prefix("--interval=") {
+            return parse_sleep_number(value);
+        }
+        if let Some(value) = text.strip_prefix("-n").filter(|rest| !rest.is_empty()) {
+            return parse_sleep_number(value);
+        }
+    }
+    None
 }
 
 fn is_always_true(condition: &List) -> bool {

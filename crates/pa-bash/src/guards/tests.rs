@@ -879,6 +879,52 @@ fn polling_loops_with_sleep_are_refused() {
 }
 
 #[test]
+fn top_level_watch_is_refused() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            "watch date",
+            "watch -n 5 ls",
+            "watch -n5 ls",
+            "watch --interval 1 curl http://localhost",
+            "watch --interval=0.5 df",
+            "watch -d -n 10 free",
+            "/usr/bin/watch -n 3 nvidia-smi",
+            "(watch date)",
+            "{ watch date; }",
+            "echo starting && watch date",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            "watch date &",
+            "(watch date) &",
+            "echo watch",
+            "WATCH=1 make",
+            "git watch-file",
+            // A literal non-`watch` program never trips the rule.
+            "ls --watch",
+        ],
+    );
+    let five = fixture
+        .refusal(GuardKind::Sleep, "watch -n 5 ls")
+        .expect("refused");
+    assert!(five.contains("`watch` repeating every 5 seconds"), "{five}");
+    assert!(five.contains("until <check>; do sleep 2; done"), "{five}");
+    let default = fixture
+        .refusal(GuardKind::Sleep, "watch date")
+        .expect("refused");
+    assert!(
+        default.contains("`watch` repeating every 2 seconds (its default)"),
+        "{default}"
+    );
+}
+
+#[test]
 fn discards_on_a_dirty_tree_are_refused() {
     let fixture = Fixture::new();
     let repo = fixture.repo("app", "main", false);
