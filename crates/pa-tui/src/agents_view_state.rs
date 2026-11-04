@@ -1388,6 +1388,29 @@ mod tests {
     }
 
     #[test]
+    fn title_falls_back_to_ai_title_before_first_message() {
+        // The daemon's side-model generator writes `aiTitle`; the row's
+        // `sessionName` is still empty (a user `/name` wins). The row label
+        // picks the generated title over the first message.
+        let generated = json!({
+            "sessionId": "s1",
+            "aiTitle": "Roster delta ordering",
+            "firstMessage": "why do roster deltas arrive out of order?",
+            "cwd": "/a/b",
+        });
+        assert_eq!(session_title(&generated), "Roster delta ordering");
+        // A user name always wins over the generated title.
+        let named_over_generated = json!({
+            "sessionId": "s1",
+            "sessionName": "triage",
+            "aiTitle": "Roster delta ordering",
+            "firstMessage": "why do roster deltas arrive out of order?",
+            "cwd": "/a/b",
+        });
+        assert_eq!(session_title(&named_over_generated), "triage");
+    }
+
+    #[test]
     fn relative_age_buckets() {
         // Base: 2025-01-01T00:00:00Z.
         let base = 1_735_689_600u64;

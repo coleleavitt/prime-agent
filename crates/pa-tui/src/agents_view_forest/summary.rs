@@ -53,6 +53,7 @@ pub fn session_title(summary: &Value) -> String {
     });
     for candidate in [
         get_str(summary, "sessionName"),
+        get_str(summary, "aiTitle"),
         get_str(summary, "firstMessage"),
         cwd_basename.as_deref(),
         get_str(summary, "sessionId"),
