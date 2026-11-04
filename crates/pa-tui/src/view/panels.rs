@@ -7,9 +7,35 @@ use ratatui::style::Style;
 
 use super::click::{ClickAction, DockClickRegion, EditorClickSurface};
 use super::{AgentView, ShareLoader, editor_surface};
-use crate::chrome::{render_prompt_context, render_tray_with_hint};
-use crate::theme::ThemeColor;
+use crate::chrome::{AWAY_RECAP_PREFIX, render_prompt_context, render_tray_with_hint};
+use crate::theme::{Theme, ThemeColor};
+use crate::width::{str_width, wrap_text};
 use crate::{Line, Span};
+
+/// The away-summary banner above the editor: a dim `← recap  <text>` line,
+/// wrapped to width with continuation rows indented under the recap text
+/// so a long summary keeps reading as one block instead of silently
+/// clipping (the previous `truncate_to_width` cut the end off a narrow
+/// terminal).
+fn render_away_recap(recap: &str, theme: &Theme, width: usize) -> Vec<Line> {
+    let prefix_width = str_width(AWAY_RECAP_PREFIX);
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    let indent = " ".repeat(prefix_width);
+    let dim = theme.fg_style(ThemeColor::Dim);
+    wrap_text(recap, content_width)
+        .into_iter()
+        .enumerate()
+        .map(|(index, wrapped)| {
+            let lead = if index == 0 {
+                AWAY_RECAP_PREFIX.to_string()
+            } else {
+                indent.clone()
+            };
+            let text: String = wrapped.into_iter().map(|span| span.content).collect();
+            vec![Span::styled(lead, dim), Span::styled(text, dim)]
+        })
+        .collect()
+}
 
 impl AgentView {
     pub fn render_dock(&mut self, width: usize) -> Vec<Line> {
@@ -26,6 +52,14 @@ impl AgentView {
             &self.theme,
             width,
         ));
+        // Claude Code's away summary banner (`maybe_generate_recap`): a
+        // dim recap of where the session is, sitting ABOVE the editor so
+        // the next prompt starts with context after the user has been
+        // away. It wraps to as many lines as needed; counts into
+        // `context_rows` so the editor's cursor offset stays correct.
+        if let Some(recap) = &self.chrome.away_recap {
+            lines.extend(render_away_recap(recap, &self.theme, width));
+        }
         let context_rows = lines.len();
         let overlay_rows = self.render_autocomplete_overlay(width);
         lines.extend(overlay_rows);
@@ -40,27 +74,6 @@ impl AgentView {
             &self.theme,
             width,
         ));
-        // Claude Code's away summary banner (`maybe_generate_recap`): a
-        // dim one-line recap of where the session is, so the next prompt
-        // starts with context after the user has been away.
-        if let Some(recap) = &self.chrome.away_recap {
-            lines.push(vec![
-                Span::styled(
-                    crate::chrome::AWAY_RECAP_PREFIX.to_string(),
-                    self.theme.fg_style(ThemeColor::Dim),
-                ),
-                Span::styled(
-                    crate::width::truncate_to_width(
-                        recap,
-                        width.saturating_sub(crate::width::str_width(
-                            crate::chrome::AWAY_RECAP_PREFIX,
-                        )),
-                        "\u{2026}",
-                    ),
-                    self.theme.fg_style(ThemeColor::Dim),
-                ),
-            ]);
-        }
         // Vim mode's `-- INSERT --` indicator, then the status line rows
         // (Claude Code's placement: under the prompt).
         if let Some(indicator) = self

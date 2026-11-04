@@ -1740,6 +1740,54 @@ fn enter_over_a_stale_slash_menu_submits_the_typed_command() {
     );
 }
 
+/// The away-summary banner sits ABOVE the editor, wraps at the terminal
+/// width (continuation lines indented to align under the recap text), and
+/// never silently clips with an ellipsis — the preview-footer silent-chop
+/// bug taught this lesson.
+#[test]
+fn the_away_recap_renders_above_the_editor_and_wraps() {
+    let mut v = view();
+    v.editor.set_text("hello there");
+    let long = "We're confirming the deceased agent John Jermyn's New York license \
+        by hand, on the lookout for a missing issue number from the original filing";
+    v.chrome.away_recap = Some(long.to_string());
+    let frame = v.render_dock(80);
+    let texts: Vec<String> = frame.iter().map(text_of).collect();
+    let editor_row = texts
+        .iter()
+        .position(|row| row.contains("hello there"))
+        .expect("the editor row");
+    let prefix_row = texts
+        .iter()
+        .position(|row| row.contains("\u{2190} recap"))
+        .expect("the recap prefix row");
+    assert!(
+        prefix_row < editor_row,
+        "the recap sits above the editor: prefix at {prefix_row}, editor at {editor_row}: {texts:#?}",
+    );
+    // Wrapping, not silent clipping: at width 80 this recap must split
+    // across at least two rows (the continuation carries the trailing
+    // words that don't fit on the first row), and no row ends with the
+    // ellipsis the old code used.
+    let continuation_row = texts
+        .iter()
+        .enumerate()
+        .skip(prefix_row + 1)
+        .take_while(|(index, _)| *index < editor_row)
+        .find(|(_, row)| row.contains("missing issue number"))
+        .map(|(index, _)| index);
+    assert!(
+        continuation_row.is_some(),
+        "the recap continuation should land on its own row above the editor: {texts:#?}",
+    );
+    for row in &texts[prefix_row..editor_row] {
+        assert!(
+            !row.trim_end().ends_with('\u{2026}'),
+            "the recap should never silently clip with a trailing ellipsis: {row:?}",
+        );
+    }
+}
+
 /// The installed features' panel rows sit directly under the editor
 /// surface, above the tray.
 #[test]
