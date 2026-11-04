@@ -136,6 +136,45 @@ async fn a_json_null_output_is_a_captured_value_not_a_failure() {
     assert!(case.host.spawn_prompts("dep")[0].contains("- data: null"));
 }
 
+// Port of `test_a_fenced_json_output_at_the_binding_cap_binds`: the cap
+// sits at the host's collect bound (the daemon's ANSWER_TEXT_MAX_CHARS,
+// 65,536 characters; the literal below, not the constant, so a smaller cap
+// fails). The old 8192 cap cut a valid fenced JSON between the two bounds
+// mid-object before the parse.
+#[tokio::test]
+async fn a_fenced_json_output_at_the_binding_cap_binds() {
+    let fenced = |plan: &str| format!("```json\n{{\"design\": {{\"plan\": \"{plan}\"}}}}\n```");
+    let plan = "p".repeat(1 + 65_536 - fenced("p").chars().count());
+    let long_json = fenced(&plan);
+    assert_eq!(long_json.chars().count(), 65_536);
+    let case = Case::new();
+    case.host.outcome("design", done(&long_json));
+    case.host.outcome("build", done("DONE"));
+    case.store_machine(
+        json!({
+            "run": { "failure_policy": "escalate", "max_parallel": 4 },
+            "states": [
+                { "id": "design", "entry": true, "subagent": "worker",
+                  "outputs": [{ "name": "design", "type": "json" }] },
+                { "id": "build", "subagent": "worker",
+                  "inputs": [{ "name": "design", "type": "json", "from": "design.design" }] }
+            ],
+            "transitions": [{ "from": "design", "to": "build" }]
+        }),
+        "sw",
+    );
+    let result = case.start().await;
+    assert_eq!(case.settle(&result).await["state"], "done");
+    assert_eq!(
+        case.all_events_of(&result, "output_capture_failed"),
+        Vec::<Value>::new()
+    );
+    // The port value bound whole: the dependent's prompt carries the
+    // entire cap-sized design.
+    let expected = format!("- design: {{\"plan\": \"{plan}\"}}");
+    assert!(case.host.spawn_prompts("build")[0].contains(&expected));
+}
+
 #[tokio::test]
 async fn capture_failure_names_the_binding_cap_and_records_the_event() {
     let case = Case::new();

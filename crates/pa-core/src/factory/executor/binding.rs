@@ -17,13 +17,17 @@ use crate::factory::pyvalue::{PyValue, py_float_repr, py_repr};
 /// stay compact (the host's own roster previews cap at 160 characters).
 pub const ANSWER_CAPTURE_CAP: usize = 200;
 
-/// Local cap (characters) on the settle capture's binding lane. Collect
-/// carries the child's full final answer (`answer_text`, host-bounded);
-/// input binding and output capture work on that text, not the roster
-/// preview, so a fenced JSON output longer than the preview binds whole
-/// (upstream #3462's M2 class). A bind failure names this cap when the
-/// capture was cut at it.
-pub const ANSWER_BINDING_CAP: usize = 8192;
+/// Local cap (characters) on the settle capture's binding lane, at parity
+/// with the host's collect bound (the daemon's `ANSWER_TEXT_MAX_CHARS`:
+/// 65,536 characters). Collect carries the child's full final answer
+/// (`answer_text`, host-bounded at that size); input binding and output
+/// capture work on that text, not the roster preview, so a fenced JSON
+/// output longer than the preview binds whole (upstream #3462's M2 class).
+/// The old 8192-character cap cut a valid fenced JSON between the two
+/// bounds mid-object before the parse. The cap still bounds each captured
+/// answer the executor stores, and a bind failure names the stored
+/// answer's length when it reaches the cap.
+pub const ANSWER_BINDING_CAP: usize = 65_536;
 
 const RATE_LIMIT_MARKERS: [&str; 8] = [
     "rate limit",

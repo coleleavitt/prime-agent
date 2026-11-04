@@ -1349,7 +1349,8 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   admissions); the default `escalate` policy pauses
   instead of failing, so read `status` (or the notice) before resuming.
 - Outputs bind from the child's full final answer (the collect envelope
-  carries it; the executor caps its own capture at 8,192 characters): a
+  carries it; the executor caps its own capture at 65,536 characters,
+  the same bound the daemon puts on the envelope's answer text): a
   fenced json output block binds whole as long as it fits that cap, so
   keep declared outputs compact — the rosters and ledger previews stay
   ~160 characters — and let the full answer live in the child's session.
