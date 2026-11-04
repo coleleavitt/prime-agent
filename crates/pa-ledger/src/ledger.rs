@@ -98,6 +98,30 @@ impl FailureLedger {
     pub fn to_value(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
+
+    /// Project the ledger into the shape
+    /// [`pa_core::refinement::recurrence::probe_recurrence`] reads: a map
+    /// from fingerprint id to its latest observation (`last_seen_at` +
+    /// total `count`). The crate dependency runs ledger → core, so the
+    /// converter lives here and callers pass the result to the
+    /// pa-core probe.
+    #[must_use]
+    pub fn fingerprint_observations(
+        &self,
+    ) -> std::collections::HashMap<&str, pa_core::refinement::recurrence::FingerprintState> {
+        self.failures
+            .iter()
+            .map(|(id, record)| {
+                (
+                    id.as_str(),
+                    pa_core::refinement::recurrence::FingerprintState {
+                        last_seen_at: record.last_seen_at.clone(),
+                        count: record.count,
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 /// A provisional champion whose claimed fingerprints recurred inside its

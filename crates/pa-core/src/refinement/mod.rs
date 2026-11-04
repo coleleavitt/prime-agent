@@ -579,6 +579,7 @@ pub mod package_harness;
 pub mod planner;
 pub mod prompt_hook;
 pub mod ranking;
+pub mod recurrence;
 pub mod relocate;
 pub mod store;
 
