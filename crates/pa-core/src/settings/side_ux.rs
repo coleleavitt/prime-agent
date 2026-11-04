@@ -23,6 +23,10 @@ pub const SESSION_TITLES_KEY: &str = "sessionTitlesEnabled";
 pub const AWAY_SUMMARY_KEY: &str = "awaySummaryEnabled";
 /// The predicted next prompt (Claude Code's key).
 pub const PROMPT_SUGGESTION_KEY: &str = "promptSuggestionEnabled";
+/// The tool-use label fast-model call (Claude Code's
+/// `tool_use_summary_generation`, fires per tool batch): off by default
+/// because it is one side-model call per batch.
+pub const TOOL_USE_LABELS_KEY: &str = "toolUseLabelsEnabled";
 /// `provider/model-id` for the session-title and `/rename` calls; unset
 /// uses `auxiliaryModel`, then the session's own model.
 pub const SIDE_UX_MODEL_KEY: &str = "sideUxModel";
@@ -35,13 +39,21 @@ pub const AWAY_SUMMARY_ENV: &str = "PRIME_AGENT_ENABLE_AWAY_SUMMARY";
 /// Turns prompt suggestions on or off (Claude Code's
 /// `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`).
 pub const PROMPT_SUGGESTION_ENV: &str = "PRIME_AGENT_ENABLE_PROMPT_SUGGESTION";
+/// Turns per-batch tool-use labels on or off.
+pub const TOOL_USE_LABELS_ENV: &str = "PRIME_AGENT_TOOL_USE_LABELS";
 
 /// The resolved switches.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent on/off switches, one per side-model UX behavior"
+)]
 pub struct SideUxSettings {
     pub session_titles: bool,
     pub away_summary: bool,
     pub prompt_suggestions: bool,
+    /// The tool-use label fast-model call fires after each tool batch.
+    pub tool_use_labels: bool,
     /// `provider/model-id` the title and name calls use.
     pub model: Option<String>,
 }
@@ -56,6 +68,7 @@ impl Default for SideUxSettings {
             session_titles: false,
             away_summary: true,
             prompt_suggestions: false,
+            tool_use_labels: false,
             model: None,
         }
     }
@@ -87,6 +100,11 @@ impl SideUxSettings {
                 PROMPT_SUGGESTION_KEY,
                 PROMPT_SUGGESTION_ENV,
                 defaults.prompt_suggestions,
+            ),
+            tool_use_labels: flag(
+                TOOL_USE_LABELS_KEY,
+                TOOL_USE_LABELS_ENV,
+                defaults.tool_use_labels,
             ),
             model: extra
                 .get(SIDE_UX_MODEL_KEY)
@@ -148,6 +166,7 @@ mod tests {
                 session_titles: false,
                 away_summary: true,
                 prompt_suggestions: false,
+                tool_use_labels: false,
                 model: None,
             }
         );
@@ -167,6 +186,7 @@ mod tests {
                 session_titles: false,
                 away_summary: false,
                 prompt_suggestions: true,
+                tool_use_labels: false,
                 model: Some("anthropic/claude-haiku-4-5".to_string()),
             }
         );

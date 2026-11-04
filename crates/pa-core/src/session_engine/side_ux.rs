@@ -51,6 +51,21 @@ const TITLE_MAX_CHARS: usize = 100;
 
 /// Claude Code's `/rename` name instruction (`generateSessionName`).
 pub const RENAME_PROMPT: &str = "Generate a short kebab-case name (2-4 words) that captures the main topic of this conversation. Use lowercase words separated by hyphens. Examples: \"fix-login-bug\", \"add-auth-feature\", \"refactor-api-client\", \"debug-test-failures\". Return JSON with a \"name\" field.";
+
+/// Claude Code's tool-use label instruction (`tool_use_summary_generation`,
+/// its function `bl` in chunk-w3ch4xq2.js). The fast model writes a tiny
+/// git-commit-subject-style label after each tool batch so the TUI can show
+/// it next to the running-tools spinner: a past-tense noun subject, no
+/// trailing punctuation, around 30 characters. The prompt follows CC's `Jm`
+/// example set verbatim.
+pub const TOOL_USE_LABEL_SYSTEM_PROMPT: &str = "Write a tiny label naming what just happened in this tool batch, like a git commit subject: past tense, specific noun, no trailing period, at most about 30 characters. Lead with the thing acted on (file, function, service, error, concept), then a verb that genuinely carries information. Skip filler verbs (used, called, invoked, ran); skip generic words (code, files, data) when a specific one is available in the batch. If nothing substantive happened (a read that found nothing, a probe that found what was already known), return an empty label. Examples: \"Searched in auth/\", \"Fixed NPE in UserService\", \"Created signup endpoint\", \"Read config.json\", \"Ran failing tests\". Return JSON with a \"label\" field.";
+/// The longest label kept (a runaway reply is cut at this grapheme budget).
+pub const TOOL_USE_LABEL_MAX_CHARS: usize = 60;
+/// The per-tool-call clip CC passes the fast model (name, input, output each
+/// at this cap).
+pub const TOOL_USE_LABEL_CALL_CLIP: usize = 300;
+/// The last-assistant-text clip the batch rides with (CC's 200).
+pub const TOOL_USE_LABEL_ASSISTANT_CLIP: usize = 200;
 /// The conversation tail `/rename` reads (Claude Code's 1000 characters).
 const RENAME_TRANSCRIPT_CHARS: usize = 1_000;
 
@@ -269,6 +284,89 @@ pub async fn generate_session_name(
         ))
         .await?;
     Ok(parse_session_name(&reply))
+}
+
+/// One tool call the batch carried, as the labelling fast model sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolUseLabelCall {
+    pub tool_name: String,
+    pub input_preview: String,
+    pub output_preview: String,
+}
+
+/// Clip `text` to `max_chars` graphemes (rounded on `char` boundaries, since
+/// `str::chars` already respects them).
+fn clip_chars(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    text.chars().take(max_chars).collect()
+}
+
+/// Build the fast-model user prompt the label call reads: each tool's name,
+/// input, and output clipped to [`TOOL_USE_LABEL_CALL_CLIP`], plus the last
+/// assistant text clipped to [`TOOL_USE_LABEL_ASSISTANT_CLIP`] (CC's shape).
+#[must_use]
+pub fn tool_use_label_user_prompt(calls: &[ToolUseLabelCall], last_assistant_text: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push("<tools>".to_string());
+    for call in calls {
+        parts.push(format!(
+            "<tool name=\"{}\">\n<input>{}</input>\n<output>{}</output>\n</tool>",
+            call.tool_name,
+            clip_chars(&call.input_preview, TOOL_USE_LABEL_CALL_CLIP),
+            clip_chars(&call.output_preview, TOOL_USE_LABEL_CALL_CLIP),
+        ));
+    }
+    parts.push("</tools>".to_string());
+    let assistant = clip_chars(last_assistant_text, TOOL_USE_LABEL_ASSISTANT_CLIP);
+    if !assistant.trim().is_empty() {
+        parts.push(format!(
+            "<last_assistant_text>\n{assistant}\n</last_assistant_text>"
+        ));
+    }
+    parts.join("\n\n")
+}
+
+/// Parse the fast model's JSON reply (`{"label":"..."}`) into a label
+/// clipped to [`TOOL_USE_LABEL_MAX_CHARS`] and without trailing punctuation.
+/// Returns `None` when the label is empty (the model saw nothing substantive).
+#[must_use]
+pub fn parse_tool_use_label(reply: &str) -> Option<String> {
+    let raw = match reply_json(reply) {
+        Some(object) => object.get("label")?.as_str()?.to_string(),
+        None => one_line(reply),
+    };
+    let trimmed = raw.trim().trim_end_matches(['.', '!', '?']).trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(clip_chars(trimmed, TOOL_USE_LABEL_MAX_CHARS))
+}
+
+/// Claude Code's tool-use label (`tool_use_summary_generation`): a tiny
+/// commit-subject-style label the fast model writes after each tool batch.
+/// `Ok(None)` when the batch is empty or the reply had no non-empty label.
+///
+/// # Errors
+///
+/// The side call failed.
+pub async fn generate_tool_use_label(
+    side: &SideModel,
+    calls: &[ToolUseLabelCall],
+    last_assistant_text: &str,
+) -> anyhow::Result<Option<String>> {
+    if calls.is_empty() {
+        return Ok(None);
+    }
+    let reply = side
+        .complete(SideRequest::single(
+            TOOL_USE_LABEL_SYSTEM_PROMPT,
+            tool_use_label_user_prompt(calls, last_assistant_text),
+        ))
+        .await?;
+    Ok(parse_tool_use_label(&reply))
 }
 
 /// A recap's outcome.

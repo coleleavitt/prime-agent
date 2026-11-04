@@ -290,6 +290,90 @@ fn the_cleanup_drops_a_wrapping_tag_and_a_leading_label() {
 }
 
 #[test]
+fn tool_use_label_user_prompt_wraps_each_call_and_clips_previews() {
+    let calls = vec![
+        ToolUseLabelCall {
+            tool_name: "edit".to_string(),
+            input_preview: format!("path={}", "x".repeat(400)),
+            output_preview: "wrote 12 bytes".to_string(),
+        },
+        ToolUseLabelCall {
+            tool_name: "bash".to_string(),
+            input_preview: "pytest -k foo".to_string(),
+            output_preview: "3 passed".to_string(),
+        },
+    ];
+    let prompt = tool_use_label_user_prompt(&calls, "running the tests next");
+    assert!(prompt.contains("<tool name=\"edit\">"));
+    assert!(prompt.contains("<tool name=\"bash\">"));
+    assert!(prompt.contains("pytest -k foo"));
+    assert!(prompt.contains("<last_assistant_text>"));
+    assert!(prompt.contains("running the tests next"));
+    // The oversize input is clipped to TOOL_USE_LABEL_CALL_CLIP graphemes.
+    let input_tag_rendered = prompt
+        .lines()
+        .find(|line| line.starts_with("<input>"))
+        .expect("input tag line");
+    let clipped_payload_len = input_tag_rendered
+        .trim_start_matches("<input>")
+        .trim_end_matches("</input>")
+        .chars()
+        .count();
+    assert!(
+        clipped_payload_len <= TOOL_USE_LABEL_CALL_CLIP,
+        "clipped length {clipped_payload_len} should be within the cap",
+    );
+}
+
+#[test]
+fn tool_use_label_user_prompt_omits_empty_assistant_text() {
+    let prompt = tool_use_label_user_prompt(
+        &[ToolUseLabelCall {
+            tool_name: "read".to_string(),
+            input_preview: "config.json".to_string(),
+            output_preview: "{...}".to_string(),
+        }],
+        "   \n  ",
+    );
+    assert!(!prompt.contains("<last_assistant_text>"));
+}
+
+#[test]
+fn parse_tool_use_label_accepts_json_and_bare_text_and_strips_trailing_punct() {
+    assert_eq!(
+        parse_tool_use_label(r#"{"label":"Fixed NPE in UserService"}"#).as_deref(),
+        Some("Fixed NPE in UserService"),
+    );
+    assert_eq!(
+        parse_tool_use_label(r#"{"label":"Searched auth/."}"#).as_deref(),
+        Some("Searched auth/"),
+    );
+    assert_eq!(
+        parse_tool_use_label("Ran failing tests!").as_deref(),
+        Some("Ran failing tests"),
+    );
+    assert_eq!(parse_tool_use_label(r#"{"label":"   "}"#), None);
+    assert_eq!(parse_tool_use_label(""), None);
+    let long = "A".repeat(200);
+    let kept = parse_tool_use_label(&long).expect("non-empty long label survives");
+    assert_eq!(kept.chars().count(), TOOL_USE_LABEL_MAX_CHARS);
+}
+
+#[tokio::test]
+async fn generate_tool_use_label_returns_none_on_empty_batch_without_a_call() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    let side = SideModel::Session {
+        stream_fn: provider.stream_fn(),
+        model: test_model(),
+    };
+    assert_eq!(
+        generate_tool_use_label(&side, &[], "hi").await.unwrap(),
+        None
+    );
+    assert!(provider.calls().is_empty());
+}
+
+#[test]
 fn the_filter_matches_claude_codes_suppression_reasons() {
     let cases = [
         ("", Some("empty")),
