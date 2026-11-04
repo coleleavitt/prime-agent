@@ -24,7 +24,7 @@ fn collect(list: &List, out: &mut Vec<Vec<String>>) {
                             .collect(),
                     ),
                     Command::Subshell(list, _) | Command::Group(list, _) => collect(list, out),
-                    Command::Branches(lists, _) => {
+                    Command::Branches(_, lists, _) => {
                         for list in lists {
                             collect(list, out);
                         }

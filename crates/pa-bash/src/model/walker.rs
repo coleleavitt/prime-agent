@@ -496,7 +496,7 @@ impl Walker {
                 self.list(list, state);
                 self.pop_redirects(pushed);
             }
-            Command::Branches(lists, redirects) => {
+            Command::Branches(_, lists, redirects) => {
                 let pushed = self.compound_redirects(redirects, state);
                 let before = state.clone();
                 for list in lists {

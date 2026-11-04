@@ -13,6 +13,7 @@ use super::ast::{
     AndOr,
     AssignValue,
     Assignment,
+    BranchKind,
     Command,
     Connector,
     HereDoc,
@@ -337,6 +338,16 @@ impl<'s> Parser<'s> {
         CLOSERS.iter().any(|word| self.at_keyword(word))
     }
 
+    fn at_while_or_until(&self) -> Option<BranchKind> {
+        if self.at_keyword("while") {
+            Some(BranchKind::While)
+        } else if self.at_keyword("until") {
+            Some(BranchKind::Until)
+        } else {
+            None
+        }
+    }
+
     fn at_case_terminator(&self) -> bool {
         self.at(";;") || self.at(";&")
     }
@@ -556,14 +567,14 @@ impl<'s> Parser<'s> {
             self.pos += 2;
             return Some(self.if_command());
         }
-        if self.at_keyword("while") || self.at_keyword("until") {
+        if let Some(kind) = self.at_while_or_until() {
             self.pos += 5;
             let condition = self.nested(Stop::Keyword);
             self.expect_keyword("do");
             let body = self.nested(Stop::Keyword);
             self.expect_keyword("done");
             let redirects = self.trailing_redirects();
-            return Some(Command::Branches(vec![condition, body], redirects));
+            return Some(Command::Branches(kind, vec![condition, body], redirects));
         }
         if self.at_keyword("for") || self.at_keyword("select") {
             self.pos += if self.at("for") { 3 } else { 6 };
@@ -672,7 +683,7 @@ impl<'s> Parser<'s> {
         }
         self.expect_keyword("fi");
         let redirects = self.trailing_redirects();
-        Command::Branches(lists, redirects)
+        Command::Branches(BranchKind::If, lists, redirects)
     }
 
     fn for_command(&mut self) -> Command {
@@ -688,6 +699,7 @@ impl<'s> Parser<'s> {
             let body = self.loop_body();
             let redirects = self.trailing_redirects();
             return Command::Branches(
+                BranchKind::While,
                 vec![
                     List {
                         items: vec![single(Command::Arithmetic(header))],

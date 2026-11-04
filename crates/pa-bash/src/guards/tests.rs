@@ -766,7 +766,6 @@ fn long_leading_sleeps_are_refused() {
             "sleep 24 && sleep 24",
             "echo start; sleep 30",
             "until test -f /tmp/ready; do sleep 2; done",
-            "for i in 1 2; do sleep 30; done",
             "(sleep 30)",
             "{ sleep 30; }",
             "sleep 60 &",
@@ -795,6 +794,87 @@ fn long_leading_sleeps_are_refused() {
     assert!(
         chained.contains("sleep 50 followed by other commands"),
         "{chained}"
+    );
+}
+
+#[test]
+fn polling_loops_with_sleep_are_refused() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            // for-loop + sleep, literal iteration count * sleep >= 60s.
+            "for i in $(seq 1 280); do kill -0 1 || break; sleep 2; done",
+            "for i in {1..60}; do sleep 1; done",
+            "for i in a b c; do sleep 20; done",
+            // while-true: never terminates on its own.
+            "while :; do date; sleep 3; done",
+            "while true; do date; sleep 0.5; done",
+            "while ((1)); do date; sleep 2; done",
+            // while with a test condition: iters unknown, S>=10.
+            "while [ ! -f /tmp/ready ]; do sleep 10; done",
+            "while kill -0 123 2>/dev/null; do sleep 15; done",
+            // Nested: outer is harmless, inner is the hang.
+            "for host in a b; do while :; do curl $host; sleep 5; done; done",
+            // Sleep reachable through an if inside the loop body.
+            "for i in $(seq 1 100); do if true; then sleep 1; fi; done",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            // until-loop: the shape we want the model to use.
+            "until test -f /tmp/ready; do sleep 2; done",
+            "until grep -q ready /tmp/log; do sleep 10; done",
+            // Backgrounded poll watchdog.
+            "(while :; do nvidia-smi; sleep 3; done) &",
+            "while true; do date; sleep 10; done &",
+            // Bounded loop under the budget.
+            "for i in 1 2 3; do sleep 2; done",
+            "for i in {1..5}; do sleep 10; done",
+            "for i in $(seq 1 5); do sleep 11; done", // 55s, under 60s budget.
+            // Loop without any sleep.
+            "for file in *.txt; do cat $file; done",
+            "while read line; do echo $line; done < input",
+            // Short sleep in a bounded loop: not a hang.
+            "for host in a b c d e; do curl $host; sleep 1; done",
+            // Sleep run in the background inside the loop body.
+            "for i in $(seq 1 100); do echo $i; sleep 30 & done",
+            // Non-literal sleep argument: we can't classify, so we pass.
+            "while running; do sleep $DELAY; done",
+            // arith-for with a non-literal iteration bound and short sleep:
+            // the condition is not always-true and S<10, so we don't refuse.
+            "for ((i=0; i<30; i++)); do sleep 5; done",
+        ],
+    );
+    let budget = fixture
+        .refusal(
+            GuardKind::Sleep,
+            "for i in $(seq 1 280); do kill -0 1 || break; sleep 2; done",
+        )
+        .expect("refused");
+    assert!(
+        budget.contains("for loop with 280 iterations sleeping 2 seconds each"),
+        "{budget}"
+    );
+    assert!(budget.contains("560 seconds total"), "{budget}");
+    assert!(
+        budget.contains("until <check>; do sleep 2; done"),
+        "{budget}"
+    );
+    assert!(budget.contains("allow_sleep=True"), "{budget}");
+    let always = fixture
+        .refusal(GuardKind::Sleep, "while :; do date; sleep 3; done")
+        .expect("refused");
+    assert!(always.contains("always-true"), "{always}");
+    let unbounded = fixture
+        .refusal(GuardKind::Sleep, "while kill -0 1; do sleep 15; done")
+        .expect("refused");
+    assert!(
+        unbounded.contains("while loop sleeping 15 seconds each iteration"),
+        "{unbounded}"
     );
 }
 

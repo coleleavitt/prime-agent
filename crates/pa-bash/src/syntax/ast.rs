@@ -42,6 +42,14 @@ pub(crate) struct Pipeline {
     pub commands: Vec<Command>,
 }
 
+/// Which branching/looping construct a [`Command::Branches`] came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchKind {
+    If,
+    While,
+    Until,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
     Simple(SimpleCommand),
@@ -50,7 +58,10 @@ pub(crate) enum Command {
     /// `{ list; }`.
     Group(List, Vec<Redirect>),
     /// `if`/`while`/`until` (and `elif`/`else`): every condition and body.
-    Branches(Vec<List>, Vec<Redirect>),
+    /// The kind tells the three apart; the arithmetic `for (( ;; ))` reuses
+    /// the shape under [`BranchKind::While`], since its header-driven body is
+    /// loop-shaped.
+    Branches(BranchKind, Vec<List>, Vec<Redirect>),
     /// `for NAME in WORDS; do BODY; done` (`words` is `None` for the
     /// positional-parameter form) and `select`.
     For {

@@ -50,7 +50,7 @@ fn command_redirects(command: &mut Command, visit: &mut dyn FnMut(&mut Redirect)
             visit_redirects_mut(list, visit);
             redirects_of(redirects, visit);
         }
-        Command::Branches(lists, redirects) => {
+        Command::Branches(_, lists, redirects) => {
             for list in lists {
                 visit_redirects_mut(list, visit);
             }
@@ -148,7 +148,7 @@ fn command_words(command: &Command, visit: &mut dyn FnMut(&Word)) {
             visit_words(list, visit);
             redirect_words(redirects, visit);
         }
-        Command::Branches(lists, redirects) => {
+        Command::Branches(_, lists, redirects) => {
             for list in lists {
                 visit_words(list, visit);
             }
