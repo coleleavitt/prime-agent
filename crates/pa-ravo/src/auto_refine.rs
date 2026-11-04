@@ -81,6 +81,8 @@ mod tests {
                 .get("instructions")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
+            score: None,
+            bar: None,
             reply,
         }
     }

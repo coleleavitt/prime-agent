@@ -201,6 +201,8 @@ fn default_refuse() -> AutoRefineReview {
         should_refine: false,
         rationale: "Every reviewer declined without a structured decision.".to_string(),
         instructions: None,
+        score: None,
+        bar: None,
         reply: serde_json::Map::new(),
     }
 }
@@ -214,6 +216,8 @@ mod tests {
             should_refine,
             rationale: rationale.to_string(),
             instructions: should_refine.then(|| "refine".to_string()),
+            score: None,
+            bar: None,
             reply: serde_json::Map::new(),
         }
     }

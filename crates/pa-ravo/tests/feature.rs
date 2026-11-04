@@ -771,6 +771,8 @@ fn the_gate_offers_the_global_default_auto_refine_policy() {
         should_refine: true,
         rationale: "a standing rule".to_string(),
         instructions: None,
+        score: None,
+        bar: None,
         reply: serde_json::Map::new(),
     };
     assert!(policy.approved_refine("compact", &review).global);

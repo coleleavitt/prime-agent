@@ -1215,6 +1215,8 @@ mod tests {
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: Some("record it".to_string()),
+            score: None,
+            bar: None,
             reply: serde_json::Map::new(),
         };
         assert_eq!(
@@ -1227,6 +1229,8 @@ Reviewer instructions: record it"
             should_refine: true,
             rationale: "reusable tactic".to_string(),
             instructions: None,
+            score: None,
+            bar: None,
             reply: serde_json::Map::new(),
         };
         assert_eq!(

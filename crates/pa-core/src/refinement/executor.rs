@@ -411,9 +411,41 @@ pub struct AutoRefineReview {
     pub should_refine: bool,
     pub rationale: String,
     pub instructions: Option<String>,
+    /// The reviewer's 0-100 usefulness score for the trajectory; `None`
+    /// when the reviewer did not return the field (older prompt builds).
+    pub score: Option<u32>,
+    /// The passing bar the reviewer held the score to; `None` when absent.
+    pub bar: Option<u32>,
     /// The reviewer's whole JSON reply, for a policy that reads more of it
     /// (see [`AutoRefinePolicy`]).
     pub reply: serde_json::Map<String, serde_json::Value>,
+}
+
+impl AutoRefineReview {
+    /// Human-readable shape for the operator log: `"<verdict> score=N
+    /// bar=M — <rationale>"`. Score/bar are omitted when the reviewer did
+    /// not supply them (back-compat path).
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let verdict = if self.should_refine {
+            "approved"
+        } else {
+            "declined"
+        };
+        let mut parts = vec![verdict.to_string()];
+        if let Some(score) = self.score {
+            parts.push(format!("score={score}"));
+        }
+        if let Some(bar) = self.bar {
+            parts.push(format!("bar={bar}"));
+        }
+        let head = parts.join(" ");
+        if self.rationale.is_empty() {
+            head
+        } else {
+            format!("{head} \u{2014} {}", self.rationale)
+        }
+    }
 }
 
 /// The closing guidance of the native review prompt.
@@ -496,6 +528,8 @@ fn parse_auto_refine_review(text: &str) -> anyhow::Result<AutoRefineReview> {
                 rationale: "Reviewer replied without a structured decision; skipping refinement."
                     .to_string(),
                 instructions: None,
+                score: None,
+                bar: None,
                 reply: serde_json::Map::new(),
             });
         }
@@ -513,8 +547,33 @@ fn parse_auto_refine_review(text: &str) -> anyhow::Result<AutoRefineReview> {
             .get("instructions")
             .and_then(|value| value.as_str())
             .map(std::string::ToString::to_string),
+        score: parse_u32_in_range(record.get("score")),
+        bar: parse_u32_in_range(record.get("bar")),
         reply: record,
     })
+}
+
+/// Parse a JSON value as a `u32` in `0..=100`; `None` when absent, the
+/// wrong type, out of range, or a float with a fractional part.
+fn parse_u32_in_range(value: Option<&serde_json::Value>) -> Option<u32> {
+    let value = value?;
+    let integer = match value {
+        serde_json::Value::Number(number) => number.as_u64().or_else(|| {
+            number.as_f64().and_then(|float| {
+                if float.is_finite() && float.fract() == 0.0 && float >= 0.0 {
+                    Some(float as u64)
+                } else {
+                    None
+                }
+            })
+        })?,
+        serde_json::Value::String(text) => text.trim().parse::<u64>().ok()?,
+        _ => return None,
+    };
+    if integer > 100 {
+        return None;
+    }
+    Some(integer as u32)
 }
 
 /// The automatic /refine review gate.
@@ -963,6 +1022,70 @@ mod tests {
         assert!(!rejected.should_refine);
         assert_eq!(rejected.rationale, "No rationale provided.");
         assert_eq!(rejected.instructions, None);
+    }
+
+    #[tokio::test]
+    async fn auto_refine_review_parses_score_and_bar_and_formats_the_summary() {
+        let state = super::super::empty_harness_state();
+        let approved = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &test_model(),
+            &AutoRefineReviewContext {
+                reason: "checkpoint".to_string(),
+                turns_since_last_review: 4,
+            },
+            &NativeAutoRefinePolicy,
+            seam(
+                r#"{"shouldRefine":true,"score":82,"bar":70,"rationale":"user confirmed the tactic twice"}"#,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(approved.score, Some(82));
+        assert_eq!(approved.bar, Some(70));
+        assert_eq!(
+            approved.summary(),
+            "approved score=82 bar=70 \u{2014} user confirmed the tactic twice",
+        );
+        // An absent score/bar (older reviewer prompt or reply) stays absent;
+        // summary degrades to the verdict + rationale only.
+        let bare = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &test_model(),
+            &AutoRefineReviewContext {
+                reason: "checkpoint".to_string(),
+                turns_since_last_review: 1,
+            },
+            &NativeAutoRefinePolicy,
+            seam(r#"{"shouldRefine":false,"rationale":"one-off noise"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(bare.score, None);
+        assert_eq!(bare.bar, None);
+        assert_eq!(bare.summary(), "declined \u{2014} one-off noise");
+        // Out-of-range values read as unset; string-encoded integers are
+        // accepted (lenient path for reviewers that quote the number).
+        let clamped = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &test_model(),
+            &AutoRefineReviewContext {
+                reason: "checkpoint".to_string(),
+                turns_since_last_review: 1,
+            },
+            &NativeAutoRefinePolicy,
+            seam(r#"{"shouldRefine":false,"score":150,"bar":"60","rationale":"x"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(clamped.score, None);
+        assert_eq!(clamped.bar, Some(60));
     }
 
     /// Asks with its own prompt texts and runs every approval globally.
