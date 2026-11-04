@@ -1270,6 +1270,7 @@ impl TurnRunner {
         // queued behind it predicts the user's next prompt.
         if !more_queued && matches!(settled_outcome, Some(TurnSettle::Completed)) {
             self.maybe_suggest_prompt(&settle_engine);
+            self.maybe_generate_recap(&settle_engine);
         }
         if let Some(result) = settled_outcome {
             for done in items_done.into_iter().chain(folded_done) {

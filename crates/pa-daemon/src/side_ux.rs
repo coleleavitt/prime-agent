@@ -31,6 +31,9 @@ pub(crate) const SESSION_RECAP: &str = "session_recap";
 pub(crate) const GENERATE_SESSION_NAME: &str = "generate_session_name";
 /// The worker event carrying a predicted next prompt: `{ type, text }`.
 pub(crate) const PROMPT_SUGGESTION_EVENT: &str = "prompt_suggestion";
+/// The worker event carrying the automatic away-summary recap: `{ type, text }`.
+/// Empty text clears the client's cached recap (fires on the next prompt).
+pub(crate) const SESSION_RECAP_EVENT: &str = "session_recap";
 
 /// The confirmation feature status (`pa_core::features::CONFIRMATION_FEATURE`).
 const CONFIRMATION_FEATURE: &str = pa_core::features::CONFIRMATION_FEATURE;

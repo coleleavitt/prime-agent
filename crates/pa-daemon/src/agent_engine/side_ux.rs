@@ -34,6 +34,7 @@ impl AgentSessionEngine {
         let enabled = match &request {
             SideUxRequest::SessionTitle { .. } => switches.session_titles,
             SideUxRequest::PromptSuggestion => switches.prompt_suggestions,
+            SideUxRequest::AutoRecap => switches.away_summary,
             // On demand: `/rename` and `/recap` run whenever the user asks.
             SideUxRequest::SessionName | SideUxRequest::Recap => true,
         };
@@ -81,7 +82,7 @@ impl AgentSessionEngine {
                         .await
                         .map(text_or_nothing)
                 }
-                SideUxRequest::Recap => {
+                SideUxRequest::Recap | SideUxRequest::AutoRecap => {
                     side_ux::recap(&agent, &stream_fn)
                         .await
                         .map(|outcome| match outcome {

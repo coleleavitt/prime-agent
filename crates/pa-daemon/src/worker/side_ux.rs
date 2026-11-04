@@ -10,7 +10,13 @@ use serde_json::{Value, json};
 
 use super::turn::TurnRunner;
 use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
-use crate::side_ux::{PROMPT_SUGGESTION_EVENT, blocked_on, title_attempts, title_candidate};
+use crate::side_ux::{
+    PROMPT_SUGGESTION_EVENT,
+    SESSION_RECAP_EVENT,
+    blocked_on,
+    title_attempts,
+    title_candidate,
+};
 
 impl TurnRunner {
     /// Ask for the session title when `message` is the session's first
@@ -91,6 +97,50 @@ impl TurnRunner {
             if recorded {
                 roster.push();
             }
+        });
+    }
+
+    /// Claude Code's away summary: at the end of every settled turn, when
+    /// the session is idle and clients are attached, ask the engine for a
+    /// short recap and push it to the attached clients so the TUI has it
+    /// ready to show when the user comes back to the pane. CC's `aws()`
+    /// fires here with the same cadence; the engine side gates it on
+    /// `awaySummaryEnabled` / `PRIME_AGENT_ENABLE_AWAY_SUMMARY`. A `/recap`
+    /// still runs on demand through the ordinary `Recap` request and is
+    /// unaffected.
+    pub(crate) fn maybe_generate_recap(&self, engine: &Arc<dyn SessionEngine>) {
+        let session_id = {
+            let core = self.core.lock_or_recover();
+            if core.attached_client_ids.is_empty()
+                || blocked_on(&core.feature_status).is_some()
+                || core.has_ongoing_work()
+            {
+                return;
+            }
+            core.active_session_id.clone()
+        };
+        let engine = Arc::clone(engine);
+        let core = Arc::clone(&self.core);
+        let events = Arc::clone(&self.events);
+        tokio::spawn(async move {
+            let outcome =
+                tokio::task::spawn_blocking(move || engine.run_side_ux(SideUxRequest::AutoRecap))
+                    .await
+                    .unwrap_or(SideUxOutcome::Nothing);
+            let SideUxOutcome::Text(text) = outcome else {
+                return;
+            };
+            {
+                let core = core.lock_or_recover();
+                if core.active_session_id != session_id || core.has_ongoing_work() {
+                    return;
+                }
+            }
+            crate::worker::emit_worker_event_with(
+                &core,
+                &events,
+                json!({ "type": SESSION_RECAP_EVENT, "text": text }),
+            );
         });
     }
 

@@ -425,6 +425,11 @@ pub enum SideUxRequest {
     SessionName,
     /// The away summary (`/recap`).
     Recap,
+    /// The away summary fired automatically at turn-end-and-idle, so the TUI
+    /// has a recap ready to show when the user returns. Same prompt as
+    /// [`SideUxRequest::Recap`]; the auto variant is gated by
+    /// `awaySummaryEnabled` while `/recap` always runs.
+    AutoRecap,
     /// The predicted next prompt.
     PromptSuggestion,
 }
