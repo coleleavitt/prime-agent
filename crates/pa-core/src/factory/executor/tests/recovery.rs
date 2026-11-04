@@ -175,6 +175,43 @@ async fn a_fenced_json_output_at_the_binding_cap_binds() {
     assert!(case.host.spawn_prompts("build")[0].contains(&expected));
 }
 
+// Port of `test_json_output_binds_from_a_plain_text_tail_settle`: a child
+// settles after real work with its terminal JSON emitted as a plain-text
+// tail after prose, no fence anywhere; the capture binds the declared port
+// from the terminal object.
+#[tokio::test]
+async fn json_output_binds_from_a_plain_text_tail_settle() {
+    let case = Case::new();
+    case.host.outcome(
+        "src",
+        done("Gate ran: fmt, the touched suites, and clippy are green.\n\n{\"verdict\": \"pass\", \"head\": \"abc12345\"}"),
+    );
+    case.host.outcome("dep", done("DONE"));
+    case.store_machine(
+        json!({
+            "run": { "failure_policy": "escalate", "max_parallel": 4 },
+            "states": [
+                { "id": "src", "entry": true, "subagent": "worker",
+                  "outputs": [{ "name": "verdict", "type": "json" }] },
+                { "id": "dep", "subagent": { "prompt": "Ship the {verdict} head." },
+                  "inputs": [{ "name": "verdict", "type": "json", "from": "src.verdict" }] }
+            ],
+            "transitions": [{ "from": "src", "to": "dep" }]
+        }),
+        "sw",
+    );
+    let result = case.start().await;
+    assert_eq!(case.settle(&result).await["state"], "done");
+    assert_eq!(
+        case.host.spawn_prompts("dep"),
+        ["Ship the \"pass\" head.".to_string()]
+    );
+    assert_eq!(
+        case.all_events_of(&result, "output_capture_failed"),
+        Vec::<Value>::new()
+    );
+}
+
 #[tokio::test]
 async fn capture_failure_names_the_binding_cap_and_records_the_event() {
     let case = Case::new();

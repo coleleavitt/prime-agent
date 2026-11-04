@@ -199,15 +199,93 @@ fn fenced_json_blocks(answer: &str) -> Vec<&str> {
     blocks
 }
 
+/// The bare JSON object that terminates the answer, if one does.
+///
+/// A string-aware balanced-brace scan walks the answer's top-level object
+/// spans (braces inside string literals never count); the terminal object
+/// is the last balanced span that only benign residue follows (whitespace
+/// or punctuation such as fence fragments, dashes, or dots; never letters,
+/// digits, quotes, or more brackets). That is the settle shape the strict
+/// fence contract rejected: a JSON tail emitted as plain text after prose,
+/// an unclosed fence, or a dirty tail. Prose is never JSON syntax: quotes
+/// outside an object do not open strings, and a brace in prose only opens
+/// a candidate where it starts a string key. An unterminated candidate is
+/// a truncated emit and owns the tail, so nothing later binds.
+fn terminal_json_object(answer: &str) -> Option<&str> {
+    let chars: Vec<(usize, char)> = answer.char_indices().collect();
+    let length = chars.len();
+    let mut last: Option<(usize, usize)> = None;
+    let mut index = 0;
+    while index < length {
+        if chars[index].1 != '{' {
+            index += 1;
+            continue;
+        }
+        // A candidate opens only where its brace starts a string key.
+        let mut cursor = index + 1;
+        while cursor < length && is_py_space(chars[cursor].1) {
+            cursor += 1;
+        }
+        if cursor == length || chars[cursor].1 != '"' {
+            index += 1;
+            continue;
+        }
+        let mut depth = 1;
+        let mut in_string = false;
+        let mut escaped = false;
+        while cursor < length {
+            let ch = chars[cursor].1;
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+            } else if ch == '"' {
+                in_string = true;
+            } else if ch == '{' {
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    last = Some((index, cursor + 1));
+                    cursor += 1;
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        if depth > 0 {
+            return None;
+        }
+        index = cursor;
+    }
+    let (start, end) = last?;
+    let byte = |position: usize| {
+        chars
+            .get(position)
+            .map_or(answer.len(), |(offset, _)| *offset)
+    };
+    let (start, end) = (byte(start), byte(end));
+    let dirty = answer[end..]
+        .chars()
+        .any(|ch| ch.is_alphanumeric() || "\"'{}[]\\".contains(ch));
+    (!dirty).then(|| &answer[start..end])
+}
+
 /// Extract one named JSON output from an upstream answer: the fenced json
-/// block whose object carries the port (trailing blocks first), else the
-/// whole answer parsed as one object.
+/// block whose object carries the port (trailing blocks first), then the
+/// answer's terminal bare JSON object, else the whole answer parsed as one
+/// object. Only an object that contains the port binds, whatever its shape.
 ///
 /// # Errors
 ///
 /// Returns the binding-failure sentence when no candidate carries the port.
 pub fn parse_json_output(answer: &str, output_name: &str) -> Result<Value, String> {
     let mut candidates: Vec<&str> = fenced_json_blocks(answer).into_iter().rev().collect();
+    candidates.extend(terminal_json_object(answer));
     candidates.push(answer.trim_matches(is_py_space));
     for candidate in candidates {
         let Ok(Value::Object(mut parsed)) = serde_json::from_str::<Value>(candidate) else {
@@ -456,6 +534,89 @@ mod tests {
             parse_json_output(two_fences, "missing"),
             Err("no JSON object containing output 'missing' in the upstream answer".to_string())
         );
+    }
+
+    fn missing(output: &str) -> Result<Value, String> {
+        Err(format!(
+            "no JSON object containing output '{output}' in the upstream answer"
+        ))
+    }
+
+    // Port of `test_json_output_binds_from_terminal_bare_and_dirty_tails`:
+    // the settle shapes the strict fence rejected bind the same declared
+    // port with the same output-name requirement.
+    #[test]
+    fn json_output_binds_from_terminal_bare_and_dirty_tails() {
+        let cases = [
+            // A JSON tail emitted as plain text after prose.
+            (
+                "Gate ran clean on the worktree.\n\n{\"verdict\": \"pass\", \"head\": \"abc\"}",
+                Ok(json!("pass")),
+            ),
+            // A fence that lost its closing markers.
+            ("```json\n{\"verdict\": \"pass\"}", Ok(json!("pass"))),
+            // Benign punctuation residue around the emit.
+            ("---\n{\"verdict\": \"pass\"}\n``` --", Ok(json!("pass"))),
+            // Braces inside string literals never break the balanced scan.
+            (
+                "note: {\"verdict\": \"pass\", \"detail\": \"quoted } and { inside\"}",
+                Ok(json!("pass")),
+            ),
+            // A fence still wins over the bare tail, and the terminal emit
+            // is the LAST object when several are bare.
+            (
+                "```json\n{\"verdict\": \"fenced\"}\n```\n\n{\"verdict\": \"bare\"}",
+                Ok(json!("fenced")),
+            ),
+            (
+                "{\"verdict\": \"stale\"}\n.\n{\"verdict\": \"last\"}",
+                Ok(json!("last")),
+            ),
+            // An object trailing prose follows is not terminal; a terminal
+            // object without the port, and prose alone, fail the same way.
+            (
+                "{\"verdict\": \"pass\"}\n\nAll checks green, done.",
+                missing("verdict"),
+            ),
+            ("gate done\n\n{\"status\": \"done\"}", missing("verdict")),
+            (
+                "The gate ran clean; there is nothing to bind.",
+                missing("verdict"),
+            ),
+        ];
+        for (answer, expected) in cases {
+            assert_eq!(parse_json_output(answer, "verdict"), expected, "{answer:?}");
+        }
+    }
+
+    // Port of `test_terminal_object_survives_prose_delimiters`: syntax
+    // tracks within candidate objects only, so prose that leaves a quote or
+    // a brace open never hides the tail object, and a truncated emit owns
+    // the tail.
+    #[test]
+    fn terminal_object_survives_prose_delimiters() {
+        let cases = [
+            (
+                "The gate said \"all green, and\n\n{\"verdict\": \"pass\"}",
+                Ok(json!("pass")),
+            ),
+            (
+                "here is the { stray brace in prose\n\n{\"verdict\": \"pass\"}",
+                Ok(json!("pass")),
+            ),
+            (
+                "{\"verdict\": \"stale\"} and \"so on\n\n{\"verdict\": \"last\"}",
+                Ok(json!("last")),
+            ),
+            ("{\"outer\": {\"verdict\": \"x\"}", missing("verdict")),
+            (
+                "{\"verdict\": \"pass\"}\nAll checks green, \"done.\"",
+                missing("verdict"),
+            ),
+        ];
+        for (answer, expected) in cases {
+            assert_eq!(parse_json_output(answer, "verdict"), expected, "{answer:?}");
+        }
     }
 
     // Port of `test_guard_primitives_json_strict_and_defensive`

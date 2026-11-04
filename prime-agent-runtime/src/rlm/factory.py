@@ -1351,9 +1351,10 @@ watched = await rlm.factory.watch(result["run_id"], 30)
 - Outputs bind from the child's full final answer (the collect envelope
   carries it; the executor caps its own capture at 65,536 characters,
   the same bound the daemon puts on the envelope's answer text): a
-  fenced json output block binds whole as long as it fits that cap, so
-  keep declared outputs compact — the rosters and ledger previews stay
-  ~160 characters — and let the full answer live in the child's session.
+  fenced json output block binds whole as long as it fits that cap (a
+  bare JSON object that ends the answer binds too), so keep declared
+  outputs compact — the rosters and ledger previews stay ~160 characters
+  — and let the full answer live in the child's session.
 - Runs live in the Prime Agent host, not in the kernel: a kernel restart
   or crash never touches a running workflow, and `status` keeps reading
   it. Each run keeps a durable record; a host restart pauses a run that
