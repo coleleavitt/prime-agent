@@ -261,6 +261,7 @@ impl Inner {
                     .map(crate::kernel::shared::KernelFileAccess::parse_done_frame)
                     .unwrap_or_default(),
                 background_output: (!background_output.is_empty()).then_some(background_output),
+                ended_turn: buffers.ended_turn,
                 status,
                 error: buffers.error.take(),
                 duration_ms: execution.started.elapsed().as_millis() as u64,

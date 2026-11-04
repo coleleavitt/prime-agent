@@ -77,6 +77,10 @@ pub struct ExecuteResult {
     pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
     pub kernel_unresponsive: bool,
+    /// The cell ended the turn via the sanctioned `rlm.end_turn()` call:
+    /// the host marked the execution, and this result terminates the tool
+    /// batch (the "turn ended" note on the tool-result text).
+    pub ended_turn: bool,
 }
 
 /// The wire form of one sent agent message (TS `KernelSentAgentMessage`):
@@ -565,6 +569,12 @@ pub async fn execute_ipython(
             format!("{notice}\n\n{text}")
         };
     }
+    // The sanctioned turn-end confirmation: short, and it lands in the
+    // transcript for replay of the ended turn.
+    if r.ended_turn {
+        let separator = if text.is_empty() { "" } else { "\n" };
+        let _ = write!(text, "{separator}turn ended");
+    }
 
     let image_blocks = image_blocks_from_attachments(&r.attachments);
     let mut content = vec![ToolContentBlock::text(text)];
@@ -631,11 +641,14 @@ pub async fn execute_ipython(
     // and the files it opened for writing (`fileWrites`, absolute paths).
     let host_facts = cell_host_facts(&r);
 
+    // The flagged cell ends the turn: the batch rule terminates the run's
+    // turn once every call in the message has executed.
     Ok(ToolExecutionResult {
         content,
         details: Some(details),
         is_error: r.status == ExecuteStatus::Error || r.status == ExecuteStatus::Aborted,
         host_facts,
+        terminate: r.ended_turn.then_some(true),
     })
 }
 
@@ -690,6 +703,7 @@ fn kernel_crash_result(
         })),
         is_error: true,
         host_facts: serde_json::Value::Null,
+        terminate: None,
     }
 }
 

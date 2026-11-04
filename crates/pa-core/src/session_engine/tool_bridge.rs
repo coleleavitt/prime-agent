@@ -115,11 +115,12 @@ impl AgentTool for ToolDefinitionBridge {
             let details = result.details.clone().unwrap_or(serde_json::Value::Null);
             let host_facts = std::mem::take(&mut result.host_facts);
             let is_error = result.is_error;
+            let terminate = result.terminate;
             let _ = is_error;
             Ok(AgentToolResult {
                 content: convert_content(result),
                 details,
-                terminate: None,
+                terminate,
                 host_facts,
             })
         })

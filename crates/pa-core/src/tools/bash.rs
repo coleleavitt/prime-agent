@@ -468,6 +468,7 @@ pub async fn execute_bash(
                 details: formatted.details,
                 is_error: false,
                 host_facts: serde_json::Value::Null,
+                terminate: None,
             })
         }
     }

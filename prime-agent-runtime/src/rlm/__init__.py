@@ -226,6 +226,22 @@ def emit(data: dict[str, Any]) -> None:
     repl.emit(data)
 
 
+async def end_turn() -> dict[str, Any]:
+    """End the turn: the sanctioned terminal programmatic call.
+
+    The host marks the cell executing when the request arrives (a detached
+    task's call attributes to that cell, not the task), the cell's tool
+    result confirms the turn ended, and no further assistant response is
+    streamed for the run. Other tool calls in the same message still
+    execute first; the turn ends when the batch's end-turn call finishes
+    Ok (one is enough). The turn returns to the user while background work
+    keeps running: the remaining jobs keep running and their completion
+    notices collect the results. Raises where the host does not support
+    the call (a foreign harness): it never silently no-ops.
+    """
+    return await host_request("rlm.end_turn", {})
+
+
 async def spawn(
     prompt: str,
     *,
@@ -1297,6 +1313,9 @@ class _RLMNamespace:
     ) -> dict[str, Any]:
         return await schedule_wakeup(delay_seconds, prompt, reason, noop=noop, stop=stop)
 
+    async def end_turn(self) -> dict[str, Any]:
+        return await end_turn()
+
     factory = _RLMFactoryNamespace()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1353,6 +1372,7 @@ __all__ = [
     "persistent_shells",
     "delete_subagent",
     "emit",
+    "end_turn",
     "enter_plan_mode",
     "enter_worktree",
     "exit_plan_mode",

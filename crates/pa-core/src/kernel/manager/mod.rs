@@ -24,6 +24,7 @@ use crate::kernel::shared::{
     DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_SNAPSHOT_DEBOUNCE_MS,
     DIFF_DISPLAY_MIME,
+    END_TURN_REQUEST_TYPE,
     ExecuteOptions,
     ExecuteResult,
     ExecuteStatus,
@@ -125,6 +126,7 @@ struct ExitInfo {
 }
 
 /// Fields of a settled execution shared with the stdout reader task.
+#[allow(clippy::struct_excessive_bools)] // independent settlement flags, not a state machine
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)]
 struct ExecBuffers {
@@ -141,6 +143,8 @@ struct ExecBuffers {
     background_output_truncated: bool,
     error: Option<KernelError>,
     status: ExecuteStatus,
+    /// The cell called `rlm.end_turn()`; the host-request dispatch marks it.
+    ended_turn: bool,
     done_fields: Option<Value>,
     settled: bool,
     /// Force-aborted after the grace window: the kernel ignored the interrupt.
@@ -186,6 +190,7 @@ impl InternalExecuteResult {
                 executed_bash_commands: Vec::new(),
                 file_access: crate::kernel::shared::KernelFileAccess::default(),
                 background_output: None,
+                ended_turn: false,
                 status: ExecuteStatus::Aborted,
                 error: None,
                 duration_ms: started.elapsed().as_millis() as u64,

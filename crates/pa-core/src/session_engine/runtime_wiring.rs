@@ -635,6 +635,7 @@ fn convert_execute_result(
             .collect(),
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
+        ended_turn: result.ended_turn,
     }
 }
 

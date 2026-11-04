@@ -61,6 +61,9 @@ pub struct ToolExecutionResult {
     /// Host-side facts for in-process observers (the loop's
     /// `AgentToolResult::host_facts`); never sent to the model or persisted.
     pub host_facts: serde_json::Value,
+    /// Hint that the agent should stop after the current tool batch; the
+    /// bridged `AgentToolResult` carries it to the loop.
+    pub terminate: Option<bool>,
 }
 
 impl ToolExecutionResult {
@@ -70,6 +73,7 @@ impl ToolExecutionResult {
             details: None,
             is_error: false,
             host_facts: serde_json::Value::Null,
+            terminate: None,
         }
     }
 }

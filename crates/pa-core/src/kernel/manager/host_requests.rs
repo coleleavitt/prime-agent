@@ -6,6 +6,7 @@ use futures::FutureExt as _;
 use super::{
     Arc,
     Duration,
+    END_TURN_REQUEST_TYPE,
     HostRequestPayload,
     Inner,
     MAX_HANDLED_HOST_REQUEST_IDS,
@@ -17,8 +18,9 @@ use super::{
 use crate::kernel::shared::{HostHandlerFuture, with_host_request_cancellation};
 
 impl Inner {
-    /// Dispatch one typed request from kernel code to the registered handler
-    /// and reply over the protocol. Unhandled requests answer with an error.
+    /// Dispatch one typed request from kernel code and reply over the
+    /// protocol: the manager answers `rlm.end_turn` itself, registered
+    /// handlers answer the rest, and unhandled requests answer with an error.
     pub(crate) fn start_host_request(
         self: &Arc<Self>,
         request_id: &str,
@@ -119,6 +121,29 @@ impl Inner {
             .get("type")
             .and_then(Value::as_str)
             .filter(|t| !t.is_empty());
+        // The manager's own answer for `rlm.end_turn`: mark the executing
+        // cell, and the flag rides the settled result so the turn ends once
+        // the batch settles. Answered here before any host-side gate review
+        // so the native terminal call cannot be denied by user policy.
+        if request_type == Some(END_TURN_REQUEST_TYPE) {
+            let guarded = lock(&self.guarded);
+            let execution = guarded.active_execution.clone();
+            drop(guarded);
+            return Box::pin(async move {
+                let execution = execution.ok_or_else(|| {
+                    anyhow!("rlm.end_turn has no running cell to end the turn for")
+                })?;
+                let mut buffers = lock(&execution.buffers);
+                // A cell that settled between the clone and this write
+                // could not carry the flag: answer the error, never a
+                // silent no-op.
+                if buffers.settled {
+                    return Err(anyhow!("rlm.end_turn arrived after its cell settled"));
+                }
+                buffers.ended_turn = true;
+                Ok(json!({ "endedTurn": true }))
+            });
+        }
         let (Some(gate), Some(request_type)) = (handlers.gate().cloned(), request_type) else {
             return dispatch_host_request(&self.bash_jobs, handlers, data);
         };
