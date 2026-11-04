@@ -567,6 +567,7 @@ pub mod entries;
 pub mod executor;
 pub mod gate;
 pub mod lock;
+pub mod multi_vote;
 pub mod package_harness;
 pub mod planner;
 pub mod prompt_hook;

@@ -75,6 +75,12 @@ pub const BRIEF_MODE_ENV: &str = "PRIME_AGENT_BRIEF";
 /// Offers a threshold compaction to the user instead of running it silently
 /// (Claude Code 2.1.310's autocompact offer).
 pub const AUTOCOMPACT_OFFER_ENV: &str = "PRIME_AGENT_AUTOCOMPACT_OFFER";
+/// Turns the auto-refine review's multi-vote verification on or off. Mirrors
+/// Claude Code's extract-memories gate (`MAX_VERIFY_CLAIMS` / `VOTES_PER_CLAIM`
+/// / `REFUTATIONS_REQUIRED`): fans out three parallel reviewers and the
+/// majority verdict wins, so one bad reviewer no longer admits a bad
+/// refinement. Default off; it triples the side-model spend on every review.
+pub const MULTI_VOTE_REFINE_ENV: &str = "PRIME_AGENT_MULTI_VOTE_REFINE";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -134,6 +140,11 @@ pub struct ExperimentalSettings {
     /// leaves threshold compaction silent, and a session with no surface
     /// (print, headless, unwatched) compacts without asking.
     pub autocompact_offer: bool,
+    /// The auto-refine review fans out three parallel reviewers and the
+    /// majority verdict wins (Claude Code's extract-memories verification
+    /// loop). Off by default — three reviewers per auto-refine review is
+    /// pricey; see [`MULTI_VOTE_REFINE_ENV`] for the runtime toggle.
+    pub multi_vote_refine: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -158,6 +169,7 @@ impl Default for ExperimentalSettings {
             coordinator_skill_guidance: false,
             brief_mode: false,
             autocompact_offer: false,
+            multi_vote_refine: false,
         }
     }
 }
@@ -271,6 +283,7 @@ impl ExperimentalSettings {
             ),
             brief_mode: flag("briefMode", BRIEF_MODE_ENV),
             autocompact_offer: flag("autocompactOffer", AUTOCOMPACT_OFFER_ENV),
+            multi_vote_refine: flag("multiVoteRefine", MULTI_VOTE_REFINE_ENV),
         }
     }
 }
@@ -381,6 +394,7 @@ mod tests {
             "coordinatorSkillGuidance": true,
             "briefMode": true,
             "autocompactOffer": true,
+            "multiVoteRefine": true,
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -408,6 +422,7 @@ mod tests {
                 coordinator_skill_guidance: true,
                 brief_mode: true,
                 autocompact_offer: true,
+                multi_vote_refine: true,
             }
         );
     }

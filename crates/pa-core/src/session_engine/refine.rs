@@ -866,19 +866,44 @@ impl AgentSession {
             refinement_history: session_history,
         } = parts.await?;
         let history = crate::refinement::merge_refinement_history(&history, &session_history);
-        let review = review_auto_refine(
-            &messages,
-            &merged_state,
-            &history,
-            model,
-            &AutoRefineReviewContext {
-                reason: AUTO_REFINE_COMPACT_REASON.to_string(),
-                turns_since_last_review,
-            },
-            self.auto_refine_policy(),
-            default_refiner_call(api_key.clone(), self.session_id().await),
-        )
-        .await?;
+        let review_context = AutoRefineReviewContext {
+            reason: AUTO_REFINE_COMPACT_REASON.to_string(),
+            turns_since_last_review,
+        };
+        let session_id = self.session_id().await;
+        // The multi-vote switch (experimental.multiVoteRefine /
+        // PRIME_AGENT_MULTI_VOTE_REFINE): with it on, fan out three parallel
+        // reviewers and the majority verdict wins (Claude Code's
+        // extract-memories verification loop); with it off, the native
+        // single-pass behavior.
+        let multi_vote = self.multi_vote_refine_enabled();
+        let review = if multi_vote {
+            let api_key = api_key.clone();
+            let session_id = session_id.clone();
+            let make_reviewer = || default_refiner_call(api_key.clone(), session_id.clone());
+            crate::refinement::multi_vote::review_auto_refine_voting(
+                &messages,
+                &merged_state,
+                &history,
+                model,
+                &review_context,
+                self.auto_refine_policy(),
+                make_reviewer,
+                crate::refinement::multi_vote::MultiVoteConfig::default(),
+            )
+            .await?
+        } else {
+            review_auto_refine(
+                &messages,
+                &merged_state,
+                &history,
+                model,
+                &review_context,
+                self.auto_refine_policy(),
+                default_refiner_call(api_key.clone(), session_id),
+            )
+            .await?
+        };
         if !review.should_refine {
             return Ok(None);
         }

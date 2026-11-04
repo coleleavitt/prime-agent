@@ -11,6 +11,17 @@ impl super::AgentSession {
     pub(crate) fn harness_refinements_enabled(&self) -> bool {
         enabled(self.refinement_settings.as_ref())
     }
+
+    /// `experimental.multiVoteRefine` / `PRIME_AGENT_MULTI_VOTE_REFINE`:
+    /// with it on, the compact-trigger review fans out three parallel
+    /// reviewers and the majority verdict wins (Claude Code's
+    /// extract-memories gate). Off by default; triples the review's
+    /// side-model spend.
+    pub(crate) fn multi_vote_refine_enabled(&self) -> bool {
+        self.refinement_settings
+            .as_ref()
+            .is_some_and(|settings| settings.reopen().experimental().multi_vote_refine)
+    }
 }
 
 /// Remove only typed harness rows; never interpret a user's quoted text as metadata.
