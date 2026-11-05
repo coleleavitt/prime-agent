@@ -1700,6 +1700,7 @@ async fn run_prompts_and_emit(
                         global_harness_dir: global_harness_dir.clone(),
                         refine_call: pa_core::session_engine::refine::default_refiner_call(
                             api_key.clone(),
+                            None,
                             session_id.clone(),
                         ),
                     },

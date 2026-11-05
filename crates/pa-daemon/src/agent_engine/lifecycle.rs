@@ -1346,7 +1346,7 @@ impl AgentSessionEngine {
                                 model,
                                 global_harness_dir: daemon.config.global_harness_dir(),
                                 refine_call: pa_core::session_engine::refine::default_refiner_call(
-                                    api_key, session_id,
+                                    api_key, None, session_id,
                                 ),
                             },
                         )
