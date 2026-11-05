@@ -128,7 +128,6 @@ struct ExitInfo {
 /// Fields of a settled execution shared with the stdout reader task.
 #[allow(clippy::struct_excessive_bools)] // independent settlement flags, not a state machine
 #[derive(Default)]
-#[allow(clippy::struct_excessive_bools)]
 struct ExecBuffers {
     stdout: HeadTailBuffer,
     stderr: HeadTailBuffer,
