@@ -24,8 +24,10 @@ pub const AWAY_SUMMARY_KEY: &str = "awaySummaryEnabled";
 /// The predicted next prompt (Claude Code's key).
 pub const PROMPT_SUGGESTION_KEY: &str = "promptSuggestionEnabled";
 /// The tool-use label fast-model call (Claude Code's
-/// `tool_use_summary_generation`, fires per tool batch): off by default
-/// because it is one side-model call per batch.
+/// `tool_use_summary_generation`, fires per tool batch): default on,
+/// matching Claude Code's behavior. Turn off with
+/// `toolUseLabelsEnabled: false` / `PRIME_AGENT_TOOL_USE_LABELS=0` to
+/// skip the per-batch fast-model call.
 pub const TOOL_USE_LABELS_KEY: &str = "toolUseLabelsEnabled";
 /// `provider/model-id` for the session-title and `/rename` calls; unset
 /// uses `auxiliaryModel`, then the session's own model.
@@ -68,7 +70,7 @@ impl Default for SideUxSettings {
             session_titles: false,
             away_summary: true,
             prompt_suggestions: false,
-            tool_use_labels: false,
+            tool_use_labels: true,
             model: None,
         }
     }
@@ -159,14 +161,15 @@ mod tests {
         assert_eq!(resolve(&json!({}), &[]), SideUxSettings::default());
         // Session titles are off by default (opt-in): leaving them on adds a
         // model call to every new session's first prompt when no dedicated
-        // side model is configured. The recap away-summary stays on.
+        // side model is configured. The recap away-summary and the per-turn
+        // tool-use label stay on, matching Claude Code.
         assert_eq!(
             SideUxSettings::default(),
             SideUxSettings {
                 session_titles: false,
                 away_summary: true,
                 prompt_suggestions: false,
-                tool_use_labels: false,
+                tool_use_labels: true,
                 model: None,
             }
         );
@@ -186,7 +189,9 @@ mod tests {
                 session_titles: false,
                 away_summary: false,
                 prompt_suggestions: true,
-                tool_use_labels: false,
+                // `toolUseLabelsEnabled` is not in the document; the flag
+                // keeps its default (on).
+                tool_use_labels: true,
                 model: Some("anthropic/claude-haiku-4-5".to_string()),
             }
         );
