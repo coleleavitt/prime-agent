@@ -388,11 +388,16 @@ impl SessionUi {
                 self.pending_tools.clear();
                 self.aborted_tools.clear();
                 // The user is back; drop the "while you were away" banner,
-                // the predicted next prompt, and the last tool-use label,
-                // matching Claude Code.
+                // the predicted next prompt, the last tool-use label, and
+                // the "Saved N memories" row, matching Claude Code.
+                let had_memory_saved = view.chrome.memory_saved_count.take().is_some();
+                if had_memory_saved {
+                    view.chrome.memory_saved_titles.clear();
+                }
                 if view.chrome.away_recap.take().is_some()
                     || view.chrome.prompt_suggestion.take().is_some()
                     || view.chrome.tool_use_label.take().is_some()
+                    || had_memory_saved
                 {
                     self.dirty = true;
                 }
@@ -744,6 +749,15 @@ impl SessionUi {
                 } else {
                     Some(trimmed)
                 };
+            }
+            TurnUpdate::MemorySaved { titles } => {
+                if titles.is_empty() {
+                    view.chrome.memory_saved_count = None;
+                    view.chrome.memory_saved_titles.clear();
+                } else {
+                    view.chrome.memory_saved_count = Some(titles.len());
+                    view.chrome.memory_saved_titles = titles;
+                }
             }
         }
         self.dirty = true;

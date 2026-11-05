@@ -156,6 +156,11 @@ pub enum TurnUpdate {
     /// tiny past-tense noun subject for the last tool batch, rendered
     /// alongside the activity dock. An empty string clears it.
     ToolUseLabel { text: String },
+    /// Claude Code's "Saved N memories" row (`memory_saved` worker
+    /// event): the daemon's per-turn `maybe_extract_memories` applied a
+    /// refinement and these are the entry titles. A zero count or missing
+    /// titles clears the row.
+    MemorySaved { titles: Vec<String> },
 }
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).
@@ -281,6 +286,18 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+        }),
+        "memory_saved" => Some(TurnUpdate::MemorySaved {
+            titles: event
+                .get("titles")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }),
         "message_start" | "message_update" | "message_end" => {
             let message = event.get("message")?.clone();
