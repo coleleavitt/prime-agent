@@ -37,6 +37,17 @@ impl super::AgentSession {
                 .auto_refine_recurrence_probe
         })
     }
+
+    /// `experimental.perTurnMemory` / `PRIME_AGENT_POST_TURN_MEMORY`: when
+    /// on, the refinement pipeline fires at every settled turn in addition
+    /// to compaction (Claude Code's `CLAUDE_CODE_POST_TURN_MEMORY`). The
+    /// skip guards in [`super::refine`] keep this cheap in practice; RAVO
+    /// still gates every proposal.
+    pub(crate) fn per_turn_memory_enabled(&self) -> bool {
+        self.refinement_settings
+            .as_ref()
+            .is_some_and(|settings| settings.reopen().experimental().per_turn_memory)
+    }
 }
 
 /// Remove only typed harness rows; never interpret a user's quoted text as metadata.

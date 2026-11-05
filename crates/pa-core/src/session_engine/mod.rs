@@ -274,6 +274,14 @@ pub struct AgentSession {
     pre_synced_reply_ids: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Dropping the parent session stops its single coalescing queue pump.
     terminal_pump_shutdown: tokio::sync::watch::Sender<bool>,
+    /// The user-message count at which per-turn memory extraction last
+    /// fired (Claude Code's `[extractMemories] skipping — no user prose
+    /// since last extraction` guard). An in-memory marker: a fresh session
+    /// starts at 0 and the daemon advances it after each extraction call,
+    /// whether the call produced a memory or not. Rolls over on resume to
+    /// the resumed transcript's user-message count so a resumed session
+    /// cannot re-extract the history it already saw.
+    per_turn_memory_marker: std::sync::Mutex<u32>,
     #[cfg(test)]
     terminal_test_gate: terminal_inbox::TerminalGateSlot,
 }
@@ -387,6 +395,7 @@ impl AgentSession {
             terminal_admission: tokio::sync::Mutex::new(TerminalAdmission::default()),
             pre_synced_reply_ids,
             terminal_pump_shutdown,
+            per_turn_memory_marker: std::sync::Mutex::new(0),
             #[cfg(test)]
             terminal_test_gate,
             compaction_flight: tokio::sync::Mutex::new(()),

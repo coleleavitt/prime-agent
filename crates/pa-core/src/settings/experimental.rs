@@ -88,6 +88,15 @@ pub const MULTI_VOTE_REFINE_ENV: &str = "PRIME_AGENT_MULTI_VOTE_REFINE";
 /// so an operator can see which fixes have failed to prevent recurrence.
 /// Does NOT yet auto-revert; that is a separate switch.
 pub const AUTO_REFINE_RECURRENCE_PROBE_ENV: &str = "PRIME_AGENT_AUTO_REFINE_RECURRENCE_PROBE";
+/// Turns Claude Code's per-turn memory-extraction cadence on or off (Claude
+/// Code's `CLAUDE_CODE_POST_TURN_MEMORY`). With it on, the refinement
+/// pipeline runs at every settled turn in addition to compaction, gated by
+/// the usual skip guards: no new user prose since the last extraction, the
+/// turn already wrote memory through `rlm.memory`, an extraction is already
+/// in flight. Off by default: per-turn refinements multiply the side-model
+/// spend. RAVO still gates every proposal, so a bad per-turn fire cannot
+/// admit a bad memory.
+pub const PER_TURN_MEMORY_ENV: &str = "PRIME_AGENT_POST_TURN_MEMORY";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -156,6 +165,13 @@ pub struct ExperimentalSettings {
     /// recurrences of fingerprints tied to accepted entries, log each hit
     /// at INFO. Off by default; pure read side-effect (no auto-revert).
     pub auto_refine_recurrence_probe: bool,
+    /// Claude Code's per-turn memory-extraction cadence: the refinement
+    /// pipeline fires at every settled turn in addition to compaction. The
+    /// usual skip guards keep this cheap in practice (no new user prose,
+    /// in-turn `rlm.memory` write, extraction already in flight). Default
+    /// off: per-turn refinements multiply the side-model spend; RAVO still
+    /// gates every proposal.
+    pub per_turn_memory: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -182,6 +198,7 @@ impl Default for ExperimentalSettings {
             autocompact_offer: false,
             multi_vote_refine: false,
             auto_refine_recurrence_probe: false,
+            per_turn_memory: false,
         }
     }
 }
@@ -300,6 +317,7 @@ impl ExperimentalSettings {
                 "autoRefineRecurrenceProbe",
                 AUTO_REFINE_RECURRENCE_PROBE_ENV,
             ),
+            per_turn_memory: flag("perTurnMemory", PER_TURN_MEMORY_ENV),
         }
     }
 }
@@ -412,6 +430,7 @@ mod tests {
             "autocompactOffer": true,
             "multiVoteRefine": true,
             "autoRefineRecurrenceProbe": true,
+            "perTurnMemory": true,
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -441,6 +460,7 @@ mod tests {
                 autocompact_offer: true,
                 multi_vote_refine: true,
                 auto_refine_recurrence_probe: true,
+                per_turn_memory: true,
             }
         );
     }

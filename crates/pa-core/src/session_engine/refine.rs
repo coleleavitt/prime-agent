@@ -36,6 +36,12 @@ pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 
 pub const AUTO_REFINE_COMPACT_REASON: &str = "compact";
+/// The per-turn memory-extraction trigger reason, carried on every proposal
+/// the per-turn cadence fires. Distinct from `AUTO_REFINE_COMPACT_REASON` so
+/// the harness history can tell which path admitted an entry, and so RAVO's
+/// referee can read the trigger when framing its reasoning. Matches Claude
+/// Code's `[extractMemories]` log prefix in intent.
+pub const AUTO_REFINE_PER_TURN_REASON: &str = "per_turn";
 
 /// Read the failure ledger off `state.extensions.failures` as raw JSON
 /// (`pa-ledger` depends on `pa-core`, not the other way around, so the
@@ -867,6 +873,45 @@ pub(crate) enum AutoRefineRound {
     Ran(RefinementResult),
 }
 
+/// The per-turn memory-extraction trigger's resolution.
+#[derive(Debug, Clone)]
+pub enum PerTurnReviewOutcome {
+    /// The trigger did not even run the review; see [`PerTurnSkipReason`].
+    Skipped(PerTurnSkipReason),
+    /// The review ran and said no; the marker has advanced so unchanged
+    /// prose will not fire the trigger again.
+    Declined,
+    /// The review approved: the caller runs the refinement with this
+    /// proposal (RAVO still gates it inside the run).
+    Approved(AutoRefineReview),
+}
+
+/// Why a per-turn memory-extraction trigger was skipped. The daemon turns
+/// these into `[extractMemories] skipping — ...` log lines (Claude Code's
+/// shape).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerTurnSkipReason {
+    /// `experimental.perTurnMemory` is off (the default).
+    Disabled,
+    /// The master harness-refinements switch is off; both triggers skip.
+    RefinementsDisabled,
+    /// No user message since the last extraction advanced the marker.
+    NoUserProse,
+}
+
+impl PerTurnSkipReason {
+    /// Claude Code's `[extractMemories] skipping — …` tail for an
+    /// operator-friendly log line.
+    #[must_use]
+    pub fn log_tail(self) -> &'static str {
+        match self {
+            Self::Disabled => "experimental.perTurnMemory is off",
+            Self::RefinementsDisabled => "harness refinements are disabled",
+            Self::NoUserProse => "no user prose since last extraction",
+        }
+    }
+}
+
 impl AgentSession {
     /// The session's automatic-refine policy (the native one unless a
     /// feature installed its own).
@@ -1028,6 +1073,165 @@ impl AgentSession {
             return Ok(None);
         }
         Ok(Some(review))
+    }
+
+    /// The per-turn memory-extraction review (Claude Code's
+    /// `[extractMemories]` cadence): fires at every settled turn in
+    /// addition to compaction when `experimental.perTurnMemory` is on.
+    ///
+    /// Three skip guards mirror Claude Code's:
+    /// 1. `experimental.perTurnMemory` is off (default): decline silently.
+    /// 2. The harness refinements master switch is off.
+    /// 3. "No new user prose since the last extraction": the session's
+    ///    [`AgentSession::per_turn_memory_marker`] matches the current
+    ///    user-message count, so nothing fresh is worth reviewing.
+    ///
+    /// On an active review (`Approved` or `Declined`) the marker advances
+    /// to the current user-message count before returning, so the next
+    /// per-turn tick after a skipped intermediate turn cannot double-spend
+    /// the model call on unchanged prose.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying transcript-read or review-call error. A
+    /// skip is a successful [`PerTurnReviewOutcome::Skipped`], not an
+    /// error.
+    pub async fn review_per_turn_auto_refine(
+        &self,
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+        global_harness_dir: &Path,
+        user_message_count: u32,
+    ) -> anyhow::Result<PerTurnReviewOutcome> {
+        if !self.per_turn_memory_enabled() {
+            return Ok(PerTurnReviewOutcome::Skipped(PerTurnSkipReason::Disabled));
+        }
+        if !self.harness_refinements_enabled() {
+            return Ok(PerTurnReviewOutcome::Skipped(
+                PerTurnSkipReason::RefinementsDisabled,
+            ));
+        }
+        // "No new user prose since last extraction" (Claude Code's
+        // `[extractMemories] skipping — no user prose since last
+        // extraction`). The marker lives on the session (in-memory, not
+        // persisted); a fresh session starts at 0 and the first prompt
+        // bumps it above the marker.
+        {
+            let marker = self
+                .per_turn_memory_marker
+                .lock()
+                .expect("per_turn_memory_marker lock");
+            if user_message_count <= *marker {
+                return Ok(PerTurnReviewOutcome::Skipped(PerTurnSkipReason::NoUserProse));
+            }
+        }
+        // The review reads the same planning inputs the compact-trigger
+        // review uses; mirrors `review_compact_auto_refine` with a
+        // different reason tag so RAVO and the history can tell the
+        // paths apart.
+        let (parts, merged_state, history) = {
+            let session = self.session_handle().lock().await;
+            let local_state =
+                load_harness_state(&local_harness_state_dir(&session), HarnessScope::Local);
+            let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
+            (
+                session.refine_transcript_parts(),
+                merge_harness_states(&global_state, Some(&local_state)),
+                load_global_refinement_history(global_harness_dir),
+            )
+        };
+        let crate::session::manager::RefineTranscriptParts {
+            messages,
+            refinement_history: session_history,
+        } = parts.await?;
+        let history = crate::refinement::merge_refinement_history(&history, &session_history);
+        if self.auto_refine_recurrence_probe_enabled() {
+            let hits = run_recurrence_probe(&merged_state);
+            for hit in &hits {
+                tracing::info!(
+                    target: "pa_core::refinement::recurrence",
+                    entry_id = %hit.entry_id,
+                    entry_kind = ?hit.entry_kind,
+                    fingerprint_id = %hit.fingerprint_id,
+                    last_seen_at = %hit.last_seen_at,
+                    total_count = hit.total_count,
+                    "recurrence after refinement",
+                );
+            }
+        }
+        let review_context = AutoRefineReviewContext {
+            reason: AUTO_REFINE_PER_TURN_REASON.to_string(),
+            turns_since_last_review: 0,
+        };
+        let multi_vote = self.multi_vote_refine_enabled();
+        let review = if multi_vote {
+            let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
+                Some(context) => {
+                    let model = model.clone();
+                    let api_key = api_key.clone();
+                    let routed = tokio::task::spawn_blocking(move || {
+                        super::auxiliary_model::session_fallback_with_headers(
+                            &context, &model, api_key,
+                        )
+                    })
+                    .await?;
+                    (routed.api_key, routed.headers)
+                }
+                None => (api_key.clone(), None),
+            };
+            let session_id = self.session_id().await;
+            let make_reviewer = move || {
+                default_refiner_call(
+                    resolved_key.clone(),
+                    resolved_headers.clone(),
+                    session_id.clone(),
+                )
+            };
+            crate::refinement::multi_vote::review_auto_refine_voting(
+                &messages,
+                &merged_state,
+                &history,
+                model,
+                &review_context,
+                self.auto_refine_policy(),
+                make_reviewer,
+                crate::refinement::multi_vote::MultiVoteConfig::default(),
+            )
+            .await?
+        } else {
+            review_auto_refine(
+                &messages,
+                &merged_state,
+                &history,
+                model,
+                &review_context,
+                self.auto_refine_policy(),
+                self.refiner_call(model, api_key).await?,
+            )
+            .await?
+        };
+        // Advance the marker whether the review approved or declined, so a
+        // declined call doesn't fire again against identical prose.
+        *self
+            .per_turn_memory_marker
+            .lock()
+            .expect("per_turn_memory_marker lock") = user_message_count;
+        Ok(if review.should_refine {
+            PerTurnReviewOutcome::Approved(review)
+        } else {
+            PerTurnReviewOutcome::Declined
+        })
+    }
+
+    /// Set the per-turn memory marker to a specific user-message count. A
+    /// resumed session calls this with the resumed transcript's user count
+    /// so the per-turn trigger cannot re-extract history that preceded the
+    /// resume.
+    pub fn set_per_turn_memory_marker(&self, user_message_count: u32) {
+        *self
+            .per_turn_memory_marker
+            .lock()
+            .expect("per_turn_memory_marker lock") = user_message_count;
     }
 
     /// The serialized arm's compact-trigger round: the review, then only on
