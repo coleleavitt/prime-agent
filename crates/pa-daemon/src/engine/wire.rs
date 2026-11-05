@@ -470,10 +470,13 @@ pub enum SideUxOutcome {
     Unsupported,
     /// The model call failed; the user-facing error.
     Failed(String),
-    /// A per-turn `MemoryExtract` ran and wrote these entries. The titles
-    /// ride the daemon's memory-saved chrome row so the TUI can show
-    /// "● Saved N memories" with a hover list.
-    MemoriesSaved { titles: Vec<String> },
+    /// A per-turn `MemoryExtract` applied a refinement; the serialized
+    /// `pa_core::refinement::RefinementResult` JSON travels back to the
+    /// worker so it can inject a `refinement_outcome` custom row — the
+    /// same in-stream primitive compaction's own auto-refine uses, not a
+    /// chrome footer row (Claude Code's `extractMemories` returns its
+    /// `appendSystemMessage` rows to the same chat-stream lane).
+    RefinementApplied { result_json: String },
 }
 
 /// Wire form of one side-question status.

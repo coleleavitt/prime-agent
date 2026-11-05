@@ -14,11 +14,6 @@ pub const AWAY_RECAP_PREFIX: &str = "\u{2190} recap  ";
 /// The dim marker that leads the tool-use label below the feature panel.
 pub const TOOL_USE_LABEL_PREFIX: &str = "\u{25b8} ";
 
-/// The marker that leads the memory-saved row below the feature panel.
-/// Claude Code uses a filled bullet for this slot; prime matches it so the
-/// "● Saved N memories" row reads at a glance.
-pub const MEMORY_SAVED_PREFIX: &str = "\u{25cf} ";
-
 /// The compact 7-row brand butterfly.
 pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
     "                 \u{2597}\u{2584}\u{2584}\u{2588}\u{2580}\n",
@@ -125,16 +120,6 @@ pub struct ChromeState {
     /// subject rendered next to the activity dock to summarise the last
     /// tool batch. Cleared when the next turn starts.
     pub tool_use_label: Option<String>,
-    /// Claude Code's "Saved N memories" row (emitted by the daemon's
-    /// `maybe_extract_memories` when a per-turn refinement applied). The
-    /// value is the count; the titles ride through `memory_saved_titles`
-    /// so a longer form can be shown on demand without recomputing. Row
-    /// clears when the next turn starts.
-    pub memory_saved_count: Option<usize>,
-    /// The titles of the memories saved on the most recent extraction
-    /// (same timing as `memory_saved_count`). Empty when the count is
-    /// `None`.
-    pub memory_saved_titles: Vec<String>,
 }
 
 /// Which actionable group owns the dock's selection. Every group is

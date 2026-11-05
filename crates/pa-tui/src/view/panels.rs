@@ -9,7 +9,6 @@ use super::click::{ClickAction, DockClickRegion, EditorClickSurface};
 use super::{AgentView, ShareLoader, editor_surface};
 use crate::chrome::{
     AWAY_RECAP_PREFIX,
-    MEMORY_SAVED_PREFIX,
     TOOL_USE_LABEL_PREFIX,
     render_prompt_context,
     render_tray_with_hint,
@@ -89,27 +88,6 @@ impl AgentView {
                 Span::styled(
                     crate::width::truncate_to_width(
                         label,
-                        width.saturating_sub(crate::width::str_width(prefix)),
-                        "\u{2026}",
-                    ),
-                    self.theme.fg_style(ThemeColor::Dim),
-                ),
-            ]);
-        }
-        // Claude Code's "● Saved N memories" row: the per-turn
-        // `[extractMemories]` cadence just applied a refinement. Rendered
-        // under the feature panel like the tool-use label. The row shows
-        // the count; a terser form than CC because titles can be long and
-        // the chrome row needs to stay one line.
-        if let Some(count) = self.chrome.memory_saved_count {
-            let prefix = MEMORY_SAVED_PREFIX;
-            let noun = if count == 1 { "memory" } else { "memories" };
-            let text = format!("Saved {count} {noun}");
-            lines.push(vec![
-                Span::styled(prefix.to_string(), self.theme.fg_style(ThemeColor::Dim)),
-                Span::styled(
-                    crate::width::truncate_to_width(
-                        &text,
                         width.saturating_sub(crate::width::str_width(prefix)),
                         "\u{2026}",
                     ),

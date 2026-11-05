@@ -118,10 +118,13 @@ impl AgentSessionEngine {
                 SideUxRequest::MemoryExtract { user_message_count } => {
                     // The per-turn memory extractor runs the refinement
                     // pipeline on the current transcript (review + apply)
-                    // through `auto_refine_per_turn`. A skip leaves no
-                    // visible row; a decline likewise; an applied run
-                    // surfaces the written entries' titles on the
-                    // memory-saved chrome row.
+                    // through `auto_refine_per_turn`. A skip or decline
+                    // leaves no visible row; an applied run returns the
+                    // serialized `RefinementResult` so the worker side can
+                    // inject a `refinement_outcome` custom row — the same
+                    // in-stream primitive the compaction auto-refine boundary
+                    // uses (`agent_engine/turn/boundary.rs`), matching
+                    // Claude Code's `appendSystemMessage` placement.
                     let session_guard = self.session.lock().await;
                     let Some(engine) = session_guard.as_deref() else {
                         return Ok(SideUxOutcome::Nothing);
@@ -154,27 +157,32 @@ impl AgentSessionEngine {
                             Ok(SideUxOutcome::Nothing)
                         }
                         Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Ran(result)) => {
-                            let titles: Vec<String> = result
+                            let applied_count = result
                                 .applied_edits
                                 .iter()
                                 .filter(|edit| edit.applied)
-                                .filter_map(|edit| {
-                                    edit.title
-                                        .clone()
-                                        .or_else(|| edit.after.as_ref().map(|e| e.title.clone()))
-                                })
-                                .filter(|title| !title.is_empty())
-                                .collect();
+                                .count();
                             tracing::info!(
                                 target: "pa_daemon::memory_extract",
-                                count = titles.len(),
-                                "[extractMemories] memories saved",
+                                count = applied_count,
+                                "[extractMemories] refinement applied",
                             );
-                            Ok(if titles.is_empty() {
-                                SideUxOutcome::Nothing
-                            } else {
-                                SideUxOutcome::MemoriesSaved { titles }
-                            })
+                            if applied_count == 0 {
+                                return Ok(SideUxOutcome::Nothing);
+                            }
+                            match serde_json::to_string(&*result) {
+                                Ok(result_json) => {
+                                    Ok(SideUxOutcome::RefinementApplied { result_json })
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "pa_daemon::memory_extract",
+                                        error = %error,
+                                        "[extractMemories] could not serialize result",
+                                    );
+                                    Ok(SideUxOutcome::Nothing)
+                                }
+                            }
                         }
                     }
                 }

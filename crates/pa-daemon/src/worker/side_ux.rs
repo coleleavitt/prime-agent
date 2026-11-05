@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::turn::TurnRunner;
 use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
+use super::summary::{broadcast_custom_row_locked, persist_custom_row};
 use crate::side_ux::{
-    MEMORY_SAVED_EVENT,
     PROMPT_SUGGESTION_EVENT,
     SESSION_RECAP_EVENT,
     TOOL_USE_LABEL_EVENT,
@@ -72,7 +72,7 @@ impl TurnRunner {
                 SideUxOutcome::Nothing
                 | SideUxOutcome::Disabled
                 | SideUxOutcome::Unsupported
-                | SideUxOutcome::MemoriesSaved { .. } => {
+                | SideUxOutcome::RefinementApplied { .. } => {
                     return;
                 }
             };
@@ -198,8 +198,13 @@ impl TurnRunner {
     /// (default off); the engine-side `auto_refine_per_turn` enforces
     /// the three skip guards (feature off, master refinements off, no
     /// new user prose), and RAVO gates each proposal. An applied run
-    /// fires a [`MEMORY_SAVED_EVENT`] carrying the titles so the TUI
-    /// can render the "● Saved N memories" chrome row.
+    /// returns the serialized `RefinementResult` here, and we turn it
+    /// into the same `refinement_outcome` custom row the compaction
+    /// auto-refine boundary emits (plus a `refinement_notice` when
+    /// edits actually applied, and the `refine_complete` worker event
+    /// for the TUI's completion state) so the saved entries land in the
+    /// chat stream — not on a chrome footer row — matching Claude
+    /// Code's `appendSystemMessage` placement for extracted memories.
     pub(crate) fn maybe_extract_memories(
         &self,
         engine: &Arc<dyn SessionEngine>,
@@ -223,26 +228,56 @@ impl TurnRunner {
             })
             .await
             .unwrap_or(SideUxOutcome::Nothing);
-            let SideUxOutcome::MemoriesSaved { titles } = outcome else {
+            let SideUxOutcome::RefinementApplied { result_json } = outcome else {
                 return;
             };
-            if titles.is_empty() {
+            let typed: pa_core::refinement::RefinementResult =
+                match serde_json::from_str(&result_json) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        eprintln!(
+                            "pa-daemon: per-turn memory extractor returned an invalid \
+                             RefinementResult: {error}"
+                        );
+                        return;
+                    }
+                };
+            let outcome =
+                pa_core::session_engine::refine::create_refinement_outcome_message(&typed);
+            let Ok(outcome_value) =
+                serde_json::to_value(pa_types::session::AgentMessage::Custom(outcome))
+            else {
                 return;
-            }
+            };
+            let notice_value = typed
+                .applied_edits
+                .iter()
+                .any(|edit| edit.applied)
+                .then(|| {
+                    pa_core::session_engine::refine::create_refinement_notice_message(
+                        &typed,
+                        pa_core::session_engine::refine::RefinementSource::SelfRefine,
+                    )
+                })
+                .and_then(|notice| {
+                    serde_json::to_value(pa_types::session::AgentMessage::Custom(notice)).ok()
+                });
             {
-                let core = core.lock_or_recover();
-                if core.active_session_id != session_id {
+                let mut core_guard = core.lock_or_recover();
+                if core_guard.active_session_id != session_id {
                     return;
                 }
+                persist_custom_row(&mut core_guard, &outcome_value);
+                broadcast_custom_row_locked(&mut core_guard, &events, &outcome_value);
+                if let Some(notice) = notice_value.as_ref() {
+                    persist_custom_row(&mut core_guard, notice);
+                    broadcast_custom_row_locked(&mut core_guard, &events, notice);
+                }
             }
-            crate::worker::emit_worker_event_with(
+            crate::user_bash::emit_session_event_frame(
                 &core,
                 &events,
-                json!({
-                    "type": MEMORY_SAVED_EVENT,
-                    "count": titles.len(),
-                    "titles": titles,
-                }),
+                crate::worker::refine_complete_event(&typed),
             );
         });
     }
