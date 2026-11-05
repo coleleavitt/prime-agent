@@ -912,6 +912,19 @@ impl PerTurnSkipReason {
     }
 }
 
+/// The per-turn memory-extraction trigger's full round (review + run).
+/// The `Ran` variant is boxed so a frequent skip (the default on a cold
+/// cadence) does not drag the whole `RefinementResult` payload around.
+#[derive(Debug)]
+pub enum PerTurnRunOutcome {
+    /// The trigger did not even run the review (see [`PerTurnSkipReason`]).
+    Skipped(PerTurnSkipReason),
+    /// The review ran and said no.
+    Declined,
+    /// The refinement ran; the result carries the written entries.
+    Ran(Box<RefinementResult>),
+}
+
 impl AgentSession {
     /// The session's automatic-refine policy (the native one unless a
     /// feature installed its own).
@@ -1096,6 +1109,12 @@ impl AgentSession {
     /// Returns the underlying transcript-read or review-call error. A
     /// skip is a successful [`PerTurnReviewOutcome::Skipped`], not an
     /// error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the in-memory `per_turn_memory_marker` mutex is
+    /// poisoned by a panicking refinement reader; the session is
+    /// unusable at that point and a clean restart is the recovery.
     pub async fn review_per_turn_auto_refine(
         &self,
         model: &pa_types::ai::Model,
@@ -1227,6 +1246,12 @@ impl AgentSession {
     /// resumed session calls this with the resumed transcript's user count
     /// so the per-turn trigger cannot re-extract history that preceded the
     /// resume.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the in-memory `per_turn_memory_marker` mutex is
+    /// poisoned by a panicking refinement reader; the session is
+    /// unusable at that point and a clean restart is the recovery.
     pub fn set_per_turn_memory_marker(&self, user_message_count: u32) {
         *self
             .per_turn_memory_marker
@@ -1266,6 +1291,58 @@ impl AgentSession {
             self.run_approved_refine(&review, model, api_key, global_harness_dir)
                 .await?,
         ))
+    }
+
+    /// The per-turn equivalent of [`Self::auto_refine_after_compaction`]:
+    /// run the review, and on approval execute the refinement. The
+    /// outcome carries the skip reason (if any), decline, or the written
+    /// refinement; the daemon turns it into the memory-saved chrome row.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying review-call or refinement-run error. A skip
+    /// or decline is NOT an error.
+    pub async fn auto_refine_per_turn(
+        &self,
+        model: &pa_types::ai::Model,
+        api_key: Option<String>,
+        global_harness_dir: std::path::PathBuf,
+        user_message_count: u32,
+    ) -> anyhow::Result<PerTurnRunOutcome> {
+        let review = match self
+            .review_per_turn_auto_refine(
+                model,
+                api_key.clone(),
+                &global_harness_dir,
+                user_message_count,
+            )
+            .await?
+        {
+            PerTurnReviewOutcome::Skipped(reason) => return Ok(PerTurnRunOutcome::Skipped(reason)),
+            PerTurnReviewOutcome::Declined => return Ok(PerTurnRunOutcome::Declined),
+            PerTurnReviewOutcome::Approved(review) => review,
+        };
+        let run = self
+            .auto_refine_policy()
+            .approved_refine(AUTO_REFINE_PER_TURN_REASON, &review);
+        let options = RefineOptions {
+            global: run.global,
+            instructions: Some(run.instructions),
+            rollback_id: None,
+            trigger: None,
+            pinned_plan: None,
+            package_state: None,
+        };
+        let result = self
+            .refine(
+                &options,
+                RefinementSource::Auto,
+                model,
+                api_key,
+                global_harness_dir,
+            )
+            .await?;
+        Ok(PerTurnRunOutcome::Ran(Box::new(result)))
     }
 
     /// The approved review's refinement run; the result consumes the

@@ -38,6 +38,11 @@ pub(crate) const SESSION_RECAP_EVENT: &str = "session_recap";
 /// batch (Claude Code's `tool_use_summary_generation`): `{ type, text }`.
 /// Empty text clears the client's cached label (fires on next turn).
 pub(crate) const TOOL_USE_LABEL_EVENT: &str = "tool_use_label";
+/// The worker event carrying the auto-fired per-turn memory-extraction
+/// result (Claude Code's `[extractMemories]` + its `memory_saved` UI
+/// slot): `{ type, count, titles }`. A zero count never fires; the TUI
+/// clears its row on a fresh prompt.
+pub(crate) const MEMORY_SAVED_EVENT: &str = "memory_saved";
 
 /// The confirmation feature status (`pa_core::features::CONFIRMATION_FEATURE`).
 const CONFIRMATION_FEATURE: &str = pa_core::features::CONFIRMATION_FEATURE;
@@ -169,7 +174,10 @@ fn unavailable(what: &str, outcome: SideUxOutcome) -> String {
     match outcome {
         SideUxOutcome::Failed(error) => format!("Couldn't generate {what}: {error}"),
         SideUxOutcome::Disabled => format!("Couldn't generate {what}: the setting is off"),
-        SideUxOutcome::Unsupported | SideUxOutcome::Nothing | SideUxOutcome::Text(_) => {
+        SideUxOutcome::Unsupported
+        | SideUxOutcome::Nothing
+        | SideUxOutcome::Text(_)
+        | SideUxOutcome::MemoriesSaved { .. } => {
             format!("Couldn't generate {what}: this session has no model to ask")
         }
     }

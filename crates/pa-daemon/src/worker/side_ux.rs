@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::turn::TurnRunner;
 use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
 use crate::side_ux::{
+    MEMORY_SAVED_EVENT,
     PROMPT_SUGGESTION_EVENT,
     SESSION_RECAP_EVENT,
     TOOL_USE_LABEL_EVENT,
@@ -68,7 +69,10 @@ impl TurnRunner {
                     title_attempts().lock_or_recover().remove(&session_id);
                     return;
                 }
-                SideUxOutcome::Nothing | SideUxOutcome::Disabled | SideUxOutcome::Unsupported => {
+                SideUxOutcome::Nothing
+                | SideUxOutcome::Disabled
+                | SideUxOutcome::Unsupported
+                | SideUxOutcome::MemoriesSaved { .. } => {
                     return;
                 }
             };
@@ -182,6 +186,63 @@ impl TurnRunner {
                 &core,
                 &events,
                 json!({ "type": TOOL_USE_LABEL_EVENT, "text": text }),
+            );
+        });
+    }
+
+    /// Claude Code's `[extractMemories]` per-turn cadence: at the end of
+    /// every settled turn, run the refinement pipeline's review + apply
+    /// over the full transcript so a lesson worth saving lands now
+    /// instead of waiting for compaction. Gated by
+    /// `experimental.perTurnMemory` / `PRIME_AGENT_POST_TURN_MEMORY`
+    /// (default off); the engine-side `auto_refine_per_turn` enforces
+    /// the three skip guards (feature off, master refinements off, no
+    /// new user prose), and RAVO gates each proposal. An applied run
+    /// fires a [`MEMORY_SAVED_EVENT`] carrying the titles so the TUI
+    /// can render the "● Saved N memories" chrome row.
+    pub(crate) fn maybe_extract_memories(
+        &self,
+        engine: &Arc<dyn SessionEngine>,
+        user_message_count: u32,
+    ) {
+        let session_id = {
+            let core = self.core.lock_or_recover();
+            if core.attached_client_ids.is_empty() {
+                return;
+            }
+            core.active_session_id.clone()
+        };
+        let engine = Arc::clone(engine);
+        let core = Arc::clone(&self.core);
+        let events = Arc::clone(&self.events);
+        tokio::spawn(async move {
+            let outcome = tokio::task::spawn_blocking(move || {
+                engine.run_side_ux(SideUxRequest::MemoryExtract {
+                    user_message_count,
+                })
+            })
+            .await
+            .unwrap_or(SideUxOutcome::Nothing);
+            let SideUxOutcome::MemoriesSaved { titles } = outcome else {
+                return;
+            };
+            if titles.is_empty() {
+                return;
+            }
+            {
+                let core = core.lock_or_recover();
+                if core.active_session_id != session_id {
+                    return;
+                }
+            }
+            crate::worker::emit_worker_event_with(
+                &core,
+                &events,
+                json!({
+                    "type": MEMORY_SAVED_EVENT,
+                    "count": titles.len(),
+                    "titles": titles,
+                }),
             );
         });
     }

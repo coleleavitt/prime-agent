@@ -1272,6 +1272,22 @@ impl TurnRunner {
             self.maybe_suggest_prompt(&settle_engine);
             self.maybe_generate_recap(&settle_engine);
             self.maybe_generate_tool_use_label(&settle_engine);
+            // Claude Code's `[extractMemories]`: the per-turn memory
+            // extractor fires at every settled turn. The engine-side
+            // gate (`experimental.perTurnMemory`) + RAVO keep it cheap
+            // by default; the marker on the session skips the next
+            // tick when no new user prose landed.
+            let user_message_count = {
+                let core = self.core.lock_or_recover();
+                u32::try_from(
+                    core.store
+                        .as_ref()
+                        .map_or(0, crate::session_store::SessionFile::message_count)
+                        / 2,
+                )
+                .unwrap_or(u32::MAX)
+            };
+            self.maybe_extract_memories(&settle_engine, user_message_count);
         }
         if let Some(result) = settled_outcome {
             for done in items_done.into_iter().chain(folded_done) {

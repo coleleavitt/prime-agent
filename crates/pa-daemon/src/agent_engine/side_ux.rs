@@ -37,7 +37,13 @@ impl AgentSessionEngine {
             SideUxRequest::AutoRecap => switches.away_summary,
             SideUxRequest::ToolUseLabel => switches.tool_use_labels,
             // On demand: `/rename` and `/recap` run whenever the user asks.
-            SideUxRequest::SessionName | SideUxRequest::Recap => true,
+            // `MemoryExtract` likewise bypasses the side-UX switches — its
+            // own engine-side gate is `per_turn_memory_enabled` on the
+            // session, checked by `auto_refine_per_turn` itself; we let
+            // the dispatch through here so the skip reason is logged.
+            SideUxRequest::SessionName
+            | SideUxRequest::Recap
+            | SideUxRequest::MemoryExtract { .. } => true,
         };
         if !enabled {
             return SideUxOutcome::Disabled;
@@ -58,6 +64,9 @@ impl AgentSessionEngine {
         let selector = settings.side_ux_model();
         let cwd = self.cwd();
         let agent_dir = self.config.agent_dir.clone();
+        // For `MemoryExtract`: the refinement run reuses the session's
+        // own model + api key, same as compaction's auto-refine path.
+        let session_api_key = self.resolve_request_api_key(&model);
         let outcome = self.runtime.block_on(async {
             let side = || async {
                 let session_model = agent.state().await.model;
@@ -104,6 +113,69 @@ impl AgentSessionEngine {
                         side_ux::generate_tool_use_label(&side, &calls, &last_assistant_text)
                             .await
                             .map(text_or_nothing)
+                    }
+                }
+                SideUxRequest::MemoryExtract { user_message_count } => {
+                    // The per-turn memory extractor runs the refinement
+                    // pipeline on the current transcript (review + apply)
+                    // through `auto_refine_per_turn`. A skip leaves no
+                    // visible row; a decline likewise; an applied run
+                    // surfaces the written entries' titles on the
+                    // memory-saved chrome row.
+                    let session_guard = self.session.lock().await;
+                    let Some(engine) = session_guard.as_deref() else {
+                        return Ok(SideUxOutcome::Nothing);
+                    };
+                    let outcome = engine
+                        .session
+                        .auto_refine_per_turn(
+                            &model,
+                            session_api_key.clone(),
+                            self.config.global_harness_dir(),
+                            user_message_count,
+                        )
+                        .await;
+                    drop(session_guard);
+                    match outcome {
+                        Err(error) => Err(error),
+                        Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Skipped(reason)) => {
+                            tracing::info!(
+                                target: "pa_daemon::memory_extract",
+                                reason = reason.log_tail(),
+                                "[extractMemories] skipping",
+                            );
+                            Ok(SideUxOutcome::Nothing)
+                        }
+                        Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Declined) => {
+                            tracing::info!(
+                                target: "pa_daemon::memory_extract",
+                                "[extractMemories] review declined",
+                            );
+                            Ok(SideUxOutcome::Nothing)
+                        }
+                        Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Ran(result)) => {
+                            let titles: Vec<String> = result
+                                .applied_edits
+                                .iter()
+                                .filter(|edit| edit.applied)
+                                .filter_map(|edit| {
+                                    edit.title
+                                        .clone()
+                                        .or_else(|| edit.after.as_ref().map(|e| e.title.clone()))
+                                })
+                                .filter(|title| !title.is_empty())
+                                .collect();
+                            tracing::info!(
+                                target: "pa_daemon::memory_extract",
+                                count = titles.len(),
+                                "[extractMemories] memories saved",
+                            );
+                            Ok(if titles.is_empty() {
+                                SideUxOutcome::Nothing
+                            } else {
+                                SideUxOutcome::MemoriesSaved { titles }
+                            })
+                        }
                     }
                 }
             }

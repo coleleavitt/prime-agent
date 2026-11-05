@@ -439,6 +439,20 @@ pub enum SideUxRequest {
     /// for the last batch + the last assistant text; gated by
     /// [`pa_core::settings::SideUxSettings::tool_use_labels`].
     ToolUseLabel,
+    /// Claude Code's per-turn `[extractMemories]` cadence: at the end of
+    /// a settled turn, run the refinement pipeline's review + apply over
+    /// the full transcript so memories worth saving land now instead of
+    /// waiting for compaction. The engine checks the per-turn marker
+    /// (`user_message_count` compared to [`pa_core::session_engine::AgentSession`]'s
+    /// last-extraction count) + RAVO gates the output.
+    ///
+    /// `user_message_count` is the session's current user-message count
+    /// including the just-settled prompt. The marker advances to this
+    /// value on every non-skipped call so an unchanged prose count
+    /// cannot re-fire. Gated by
+    /// [`pa_core::settings::ExperimentalSettings::per_turn_memory`] /
+    /// `PRIME_AGENT_POST_TURN_MEMORY`.
+    MemoryExtract { user_message_count: u32 },
 }
 
 /// How one side-model UX call ended.
@@ -456,6 +470,10 @@ pub enum SideUxOutcome {
     Unsupported,
     /// The model call failed; the user-facing error.
     Failed(String),
+    /// A per-turn `MemoryExtract` ran and wrote these entries. The titles
+    /// ride the daemon's memory-saved chrome row so the TUI can show
+    /// "● Saved N memories" with a hover list.
+    MemoriesSaved { titles: Vec<String> },
 }
 
 /// Wire form of one side-question status.
