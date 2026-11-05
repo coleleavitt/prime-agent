@@ -7,7 +7,12 @@ use ratatui::style::Style;
 
 use super::click::{ClickAction, DockClickRegion, EditorClickSurface};
 use super::{AgentView, ShareLoader, editor_surface};
-use crate::chrome::{AWAY_RECAP_PREFIX, render_prompt_context, render_tray_with_hint};
+use crate::chrome::{
+    AWAY_RECAP_PREFIX,
+    TOOL_USE_LABEL_PREFIX,
+    render_prompt_context,
+    render_tray_with_hint,
+};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, wrap_text};
 use crate::{Line, Span};
@@ -74,6 +79,22 @@ impl AgentView {
             &self.theme,
             width,
         ));
+        // Claude Code's tool-use label: a tiny past-tense noun subject
+        // summarising the last tool batch, dim under the feature panel.
+        if let Some(label) = &self.chrome.tool_use_label {
+            let prefix = TOOL_USE_LABEL_PREFIX;
+            lines.push(vec![
+                Span::styled(prefix.to_string(), self.theme.fg_style(ThemeColor::Dim)),
+                Span::styled(
+                    crate::width::truncate_to_width(
+                        label,
+                        width.saturating_sub(crate::width::str_width(prefix)),
+                        "\u{2026}",
+                    ),
+                    self.theme.fg_style(ThemeColor::Dim),
+                ),
+            ]);
+        }
         // Vim mode's `-- INSERT --` indicator, then the status line rows
         // (Claude Code's placement: under the prompt).
         if let Some(indicator) = self

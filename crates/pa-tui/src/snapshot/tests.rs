@@ -947,6 +947,25 @@ fn decodes_session_recap_and_prompt_suggestion_events() {
             text: "run the tests".to_string(),
         }
     );
+    let label = event_to_update(&json!({
+        "type": "tool_use_label",
+        "text": "Searched in auth/",
+    }))
+    .expect("a tool_use_label update");
+    assert_eq!(
+        label,
+        TurnUpdate::ToolUseLabel {
+            text: "Searched in auth/".to_string(),
+        }
+    );
+    let cleared = event_to_update(&json!({ "type": "tool_use_label" }))
+        .expect("a tool_use_label update with no text clears");
+    assert_eq!(
+        cleared,
+        TurnUpdate::ToolUseLabel {
+            text: String::new(),
+        }
+    );
 }
 
 #[test]

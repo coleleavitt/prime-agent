@@ -1788,6 +1788,28 @@ fn the_away_recap_renders_above_the_editor_and_wraps() {
     }
 }
 
+/// Claude Code's tool-use label renders a dim `▸ <text>` row below the
+/// feature panel, between the editor and the tray; empty clears.
+#[test]
+fn tool_use_label_renders_below_the_feature_panel_and_clears_when_empty() {
+    let mut v = view();
+    v.editor.set_text("hello there");
+    let without = v.render_dock(80);
+    v.chrome.tool_use_label = Some("Searched in auth/".to_string());
+    let with = v.render_dock(80);
+    let texts: Vec<String> = with.iter().map(text_of).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|row| row.contains("\u{25b8} Searched in auth/")),
+        "expected the tool-use label row: {texts:#?}",
+    );
+    assert_eq!(with.len(), without.len() + 1);
+    v.chrome.tool_use_label = None;
+    let cleared = v.render_dock(80);
+    assert_eq!(cleared.len(), without.len());
+}
+
 /// The installed features' panel rows sit directly under the editor
 /// surface, above the tray.
 #[test]

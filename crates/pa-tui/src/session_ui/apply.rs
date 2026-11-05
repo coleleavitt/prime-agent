@@ -387,10 +387,12 @@ impl SessionUi {
                 // No card from a previous run settles on this one's failure.
                 self.pending_tools.clear();
                 self.aborted_tools.clear();
-                // The user is back; drop the "while you were away" banner
-                // and the predicted next prompt, matching Claude Code.
+                // The user is back; drop the "while you were away" banner,
+                // the predicted next prompt, and the last tool-use label,
+                // matching Claude Code.
                 if view.chrome.away_recap.take().is_some()
                     || view.chrome.prompt_suggestion.take().is_some()
+                    || view.chrome.tool_use_label.take().is_some()
                 {
                     self.dirty = true;
                 }
@@ -730,6 +732,14 @@ impl SessionUi {
             TurnUpdate::PromptSuggestion { text } => {
                 let trimmed = text.trim().to_string();
                 view.chrome.prompt_suggestion = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+            }
+            TurnUpdate::ToolUseLabel { text } => {
+                let trimmed = text.trim().to_string();
+                view.chrome.tool_use_label = if trimmed.is_empty() {
                     None
                 } else {
                     Some(trimmed)

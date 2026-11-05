@@ -11,6 +11,9 @@ use crate::{Line, Span};
 /// The dim marker that leads the away-summary banner in the dock.
 pub const AWAY_RECAP_PREFIX: &str = "\u{2190} recap  ";
 
+/// The dim marker that leads the tool-use label below the feature panel.
+pub const TOOL_USE_LABEL_PREFIX: &str = "\u{25b8} ";
+
 /// The compact 7-row brand butterfly.
 pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
     "                 \u{2597}\u{2584}\u{2584}\u{2588}\u{2580}\n",
@@ -111,6 +114,12 @@ pub struct ChromeState {
     /// `maybe_suggest_prompt`). Stored so a later chrome pass can render
     /// it as an inline composer placeholder; not shown yet.
     pub prompt_suggestion: Option<String>,
+    /// Claude Code's tool-use label (its `tool_use_summary_generation`,
+    /// generator `generate_tool_use_label` in
+    /// `pa-core::session_engine::side_ux`). A tiny past-tense noun
+    /// subject rendered next to the activity dock to summarise the last
+    /// tool batch. Cleared when the next turn starts.
+    pub tool_use_label: Option<String>,
 }
 
 /// Which actionable group owns the dock's selection. Every group is

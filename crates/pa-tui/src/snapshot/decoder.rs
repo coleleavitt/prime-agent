@@ -152,6 +152,10 @@ pub enum TurnUpdate {
     /// event): the next prompt the user might type, generated after a
     /// run's true end. Stored for a future composer-placeholder pass.
     PromptSuggestion { text: String },
+    /// Claude Code's tool-use label (`tool_use_label` worker event): a
+    /// tiny past-tense noun subject for the last tool batch, rendered
+    /// alongside the activity dock. An empty string clears it.
+    ToolUseLabel { text: String },
 }
 
 /// Why one `auto_retry_start` fired (the TS wire `reason` field).
@@ -265,6 +269,13 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .to_string(),
         }),
         "prompt_suggestion" => Some(TurnUpdate::PromptSuggestion {
+            text: event
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        }),
+        "tool_use_label" => Some(TurnUpdate::ToolUseLabel {
             text: event
                 .get("text")
                 .and_then(Value::as_str)
