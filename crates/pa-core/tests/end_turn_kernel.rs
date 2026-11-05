@@ -198,7 +198,6 @@ async fn an_end_turn_cell_ends_the_turn_without_another_assistant_response() {
         rlm_usage_store: None,
         progress_note_emit: None,
         rlm_depth: None,
-        factory_child: false,
         daemonless: true,
         telemetry: None,
         model_info: Some(registry_model()),
@@ -207,6 +206,7 @@ async fn an_end_turn_cell_ends_the_turn_without_another_assistant_response() {
         on_background_work_settled: None,
         bash_notice_wake: Some(wake),
         queued_goal_context_purge: None,
+        ..Default::default()
     })
     .await
     .expect("create_session");

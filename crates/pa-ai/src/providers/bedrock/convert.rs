@@ -667,6 +667,7 @@ mod convert_messages_tests {
             &model(),
             CacheRetention::None,
         )
+        .expect("converts for the convert_messages test fixture")
     }
 
     /// `rlm.end_turn()` ends a turn on a tool result, so the next request's history is
