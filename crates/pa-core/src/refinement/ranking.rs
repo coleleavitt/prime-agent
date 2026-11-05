@@ -686,6 +686,7 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         }
     }
@@ -753,6 +754,7 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         };
         let mut terms = HarnessQueryTerms::new();
@@ -1060,6 +1062,7 @@ mod tests {
             updated_at: String::new(),
             version: 2,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         };
         state

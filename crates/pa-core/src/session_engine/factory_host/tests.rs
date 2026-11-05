@@ -69,6 +69,7 @@ fn harness_entry(id: &str, kind: RefinementKind, arguments: &serde_json::Value) 
         updated_at: "2026-01-01T00:00:00Z".to_string(),
         version: 1,
         targets_fingerprints: Vec::new(),
+        lane: crate::refinement::RefinementLane::Lesson,
         extensions: serde_json::Map::new(),
     }
 }
@@ -298,6 +299,7 @@ fn titled_subagent(id: &str, title: &str, model: &str) -> HarnessEntry {
         updated_at: "2026-01-01T00:00:00Z".to_string(),
         version: 1,
         targets_fingerprints: Vec::new(),
+        lane: crate::refinement::RefinementLane::Lesson,
         extensions: serde_json::Map::new(),
     }
 }

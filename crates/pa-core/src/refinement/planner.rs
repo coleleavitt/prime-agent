@@ -585,6 +585,9 @@ pub fn apply_refinement_proposal(
                 .as_ref()
                 .map(|entry| entry.targets_fingerprints.clone())
                 .unwrap_or_default(),
+            // A refine inherits the prior entry's lane; a brand-new entry
+            // starts as a lesson (the default).
+            lane: before.as_ref().map(|entry| entry.lane).unwrap_or_default(),
             // TS spreads `before` first: a key this function does not model
             // survives an update instead of being dropped by the rewrite.
             extensions: before
@@ -1102,6 +1105,7 @@ mod tests {
                     updated_at: String::new(),
                     version: 1,
                     targets_fingerprints: Vec::new(),
+                    lane: crate::refinement::RefinementLane::Lesson,
                     extensions: serde_json::Map::new(),
                 },
             );

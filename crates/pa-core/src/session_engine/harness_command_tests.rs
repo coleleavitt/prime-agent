@@ -64,6 +64,7 @@ fn subagent(id: &str, title: &str) -> HarnessEntry {
         updated_at: "t0".to_string(),
         version: 1,
         targets_fingerprints: Vec::new(),
+        lane: crate::refinement::RefinementLane::Lesson,
         extensions: serde_json::Map::new(),
     }
 }

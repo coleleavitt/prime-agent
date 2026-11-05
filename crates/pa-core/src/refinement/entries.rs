@@ -243,6 +243,7 @@ mod tests {
             updated_at: "t0".to_string(),
             version: 2,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: extensions.as_object().cloned().unwrap_or_default(),
         }
     }

@@ -43,6 +43,40 @@ pub enum HarnessScope {
     Global,
 }
 
+/// Which lane an entry rides (design doc §3). The default is
+/// [`RefinementLane::Lesson`] so legacy harness files read cleanly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RefinementLane {
+    /// Short, replaced-in-place session state (CWD, open task, deploy
+    /// notes). A new status entry with the same `(kind, path)` as an
+    /// existing one supersedes it instead of growing the store.
+    Status,
+    /// A durable lesson that goes through the learning loop
+    /// (fix candidate, judge, measurement, revert). Also the fallback for
+    /// any unknown lane string, so a future `"kind"` lane added by another
+    /// producer does not refuse the file.
+    #[default]
+    #[serde(other)]
+    Lesson,
+}
+
+impl RefinementLane {
+    /// `true` when the lane matches [`RefinementLane::default`]; used by
+    /// serde to omit the key from disk for legacy/default entries.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        matches!(self, RefinementLane::Lesson)
+    }
+
+    /// `true` for [`RefinementLane::Status`] — convenience for apply-side
+    /// code that routes status edits through the replace-in-place path.
+    #[must_use]
+    pub fn is_status(&self) -> bool {
+        matches!(self, RefinementLane::Status)
+    }
+}
+
 /// One editable continual harness entry. The TS schema keeps
 /// `created_at`/`updated_at` snake-cased (the rest of the fields are
 /// single words).
@@ -73,6 +107,13 @@ pub struct HarnessEntry {
     /// entries to measure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets_fingerprints: Vec<String>,
+    /// Which lane the entry rides (design doc §3): a `"status"` entry is
+    /// short, replaced in place as the session evolves, and competes only
+    /// with itself; a `"lesson"` entry is a durable fact or rule that
+    /// goes through the learning loop. Absent on disk means lesson, so
+    /// legacy entries keep their current behavior.
+    #[serde(default, skip_serializing_if = "RefinementLane::is_default")]
+    pub lane: RefinementLane,
     /// Keys this crate does not model (another producer's per-entry state,
     /// such as the fork's `trust`), carried through load, refine and save
     /// untouched, after the modelled keys as a TS save writes them.
@@ -670,6 +711,7 @@ mod tests {
             updated_at: "2024-01-01T00:00:00.000Z".to_string(),
             version: 1,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         }
     }

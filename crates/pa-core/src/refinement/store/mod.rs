@@ -383,6 +383,7 @@ impl Session {
                 updated_at: now,
                 version: 1,
                 targets_fingerprints: Vec::new(),
+                lane: crate::refinement::RefinementLane::Lesson,
                 extensions: Map::new(),
             };
             bucket.insert(entry_id, entry.clone());

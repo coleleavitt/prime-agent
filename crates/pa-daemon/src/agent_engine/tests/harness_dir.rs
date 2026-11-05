@@ -31,6 +31,7 @@ fn reviewer() -> HarnessEntry {
         updated_at: "t0".to_string(),
         version: 1,
         targets_fingerprints: Vec::new(),
+        lane: pa_core::refinement::RefinementLane::Lesson,
         extensions: Map::new(),
     }
 }

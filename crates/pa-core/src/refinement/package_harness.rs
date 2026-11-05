@@ -314,6 +314,7 @@ fn validate_entry(
         updated_at: PACKAGE_HARNESS_TIMESTAMP.to_string(),
         version,
         targets_fingerprints: Vec::new(),
+        lane: crate::refinement::RefinementLane::Lesson,
         extensions: serde_json::Map::new(),
     })
 }

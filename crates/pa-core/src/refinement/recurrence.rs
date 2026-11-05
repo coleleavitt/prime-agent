@@ -199,6 +199,7 @@ mod tests {
             updated_at: updated_at.to_string(),
             version: 1,
             targets_fingerprints: targets.iter().map(|target| (*target).to_string()).collect(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         }
     }

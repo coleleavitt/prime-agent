@@ -32,7 +32,7 @@ use crate::refinement::{
 
 /// Entry keys the store models; every other key on an entry is carried in
 /// [`HarnessEntry::extensions`].
-const MODELLED_ENTRY_KEYS: [&str; 13] = [
+const MODELLED_ENTRY_KEYS: [&str; 15] = [
     "id",
     "kind",
     "title",
@@ -46,6 +46,8 @@ const MODELLED_ENTRY_KEYS: [&str; 13] = [
     "created_at",
     "updated_at",
     "version",
+    "targetsFingerprints",
+    "lane",
 ];
 
 /// The provenance an entry written before the kernel/refine split carries:
@@ -132,6 +134,14 @@ fn parse_entry(
                     .iter()
                     .filter_map(|item| item.as_str().map(str::to_string))
                     .collect()
+            })
+            .unwrap_or_default(),
+        lane: raw
+            .get("lane")
+            .and_then(Value::as_str)
+            .map(|value| match value {
+                "status" => super::super::RefinementLane::Status,
+                _ => super::super::RefinementLane::Lesson,
             })
             .unwrap_or_default(),
         extensions: raw
@@ -432,6 +442,7 @@ mod tests {
                 updated_at: String::new(),
                 version: 2,
                 targets_fingerprints: Vec::new(),
+                lane: crate::refinement::RefinementLane::Lesson,
                 extensions,
             }
         );
@@ -447,6 +458,80 @@ mod tests {
                 reason: None,
             }]
         );
+    }
+
+    #[test]
+    fn the_lane_round_trips_through_serde_and_defaults_to_lesson() {
+        use super::super::super::RefinementLane;
+        let status_entry = HarnessEntry {
+            id: "s1".to_string(),
+            kind: RefinementKind::Memory,
+            title: "cwd".to_string(),
+            content: "~/work/foo".to_string(),
+            path: "session/cwd".to_string(),
+            scope: Some(HarnessScope::Local),
+            reference: Map::new(),
+            arguments: Map::new(),
+            metadata: Map::new(),
+            source: "refine".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            targets_fingerprints: Vec::new(),
+            lane: RefinementLane::Status,
+            extensions: Map::new(),
+        };
+        let json = serde_json::to_value(&status_entry).unwrap();
+        assert_eq!(json.get("lane"), Some(&serde_json::json!("status")));
+        assert!(status_entry.lane.is_status());
+        let round_tripped: HarnessEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(round_tripped, status_entry);
+        // A lesson entry (the default) must NOT write the `lane` key, so
+        // legacy harness files round trip byte-identical through this
+        // change.
+        let lesson_entry = HarnessEntry {
+            lane: RefinementLane::Lesson,
+            ..status_entry
+        };
+        let json = serde_json::to_value(&lesson_entry).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("lane"));
+        // An on-disk entry with no `lane` key is read as `Lesson`.
+        let legacy: HarnessEntry = serde_json::from_value(serde_json::json!({
+            "id": "e1",
+            "kind": "memory",
+            "title": "a",
+            "content": "b",
+            "path": "general",
+            "reference": {},
+            "arguments": {},
+            "metadata": {},
+            "source": "refine",
+            "created_at": "",
+            "updated_at": "",
+            "version": 1,
+        }))
+        .unwrap();
+        assert_eq!(legacy.lane, RefinementLane::Lesson);
+        assert!(legacy.lane.is_default());
+        // An unknown lane string reads as Lesson (lenient, matches the
+        // targets_fingerprints path's behavior for unknown shapes).
+        let unknown_lane: HarnessEntry = serde_json::from_value(serde_json::json!({
+            "id": "e2",
+            "kind": "memory",
+            "title": "a",
+            "content": "b",
+            "path": "general",
+            "reference": {},
+            "arguments": {},
+            "metadata": {},
+            "source": "refine",
+            "created_at": "",
+            "updated_at": "",
+            "version": 1,
+            "lane": "some_future_lane",
+        }))
+        .unwrap();
+        assert_eq!(unknown_lane.lane, RefinementLane::Lesson);
     }
 
     #[test]
@@ -466,6 +551,7 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: vec!["fp-a".to_string(), "fp-b".to_string()],
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: Map::new(),
         };
         let json = serde_json::to_value(&entry_with_targets).unwrap();

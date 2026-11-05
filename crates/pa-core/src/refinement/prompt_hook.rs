@@ -263,6 +263,7 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: Vec::new(),
+            lane: crate::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         }
     }
