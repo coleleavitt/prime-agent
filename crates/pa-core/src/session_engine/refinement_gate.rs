@@ -22,6 +22,21 @@ impl super::AgentSession {
             .as_ref()
             .is_some_and(|settings| settings.reopen().experimental().multi_vote_refine)
     }
+
+    /// `experimental.autoRefineRecurrenceProbe` /
+    /// `PRIME_AGENT_AUTO_REFINE_RECURRENCE_PROBE`: when on, the
+    /// auto-refine review boundary scans the failure ledger for
+    /// recurrences of fingerprints that accepted entries claimed to
+    /// prevent. Off by default; purely reports (logs via tracing), does
+    /// not auto-revert.
+    pub(crate) fn auto_refine_recurrence_probe_enabled(&self) -> bool {
+        self.refinement_settings.as_ref().is_some_and(|settings| {
+            settings
+                .reopen()
+                .experimental()
+                .auto_refine_recurrence_probe
+        })
+    }
 }
 
 /// Remove only typed harness rows; never interpret a user's quoted text as metadata.

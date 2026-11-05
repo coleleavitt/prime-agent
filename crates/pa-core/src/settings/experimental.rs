@@ -81,6 +81,13 @@ pub const AUTOCOMPACT_OFFER_ENV: &str = "PRIME_AGENT_AUTOCOMPACT_OFFER";
 /// majority verdict wins, so one bad reviewer no longer admits a bad
 /// refinement. Default off; it triples the side-model spend on every review.
 pub const MULTI_VOTE_REFINE_ENV: &str = "PRIME_AGENT_MULTI_VOTE_REFINE";
+/// Turns the post-fix recurrence probe on or off. When on, the
+/// auto-refine review boundary scans the failure ledger for recurrences of
+/// fingerprints tied to accepted entries via
+/// `HarnessEntry::targets_fingerprints`; each hit is logged at INFO level
+/// so an operator can see which fixes have failed to prevent recurrence.
+/// Does NOT yet auto-revert; that is a separate switch.
+pub const AUTO_REFINE_RECURRENCE_PROBE_ENV: &str = "PRIME_AGENT_AUTO_REFINE_RECURRENCE_PROBE";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -145,6 +152,10 @@ pub struct ExperimentalSettings {
     /// loop). Off by default — three reviewers per auto-refine review is
     /// pricey; see [`MULTI_VOTE_REFINE_ENV`] for the runtime toggle.
     pub multi_vote_refine: bool,
+    /// Scan the failure ledger at the auto-refine review boundary for
+    /// recurrences of fingerprints tied to accepted entries, log each hit
+    /// at INFO. Off by default; pure read side-effect (no auto-revert).
+    pub auto_refine_recurrence_probe: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -170,6 +181,7 @@ impl Default for ExperimentalSettings {
             brief_mode: false,
             autocompact_offer: false,
             multi_vote_refine: false,
+            auto_refine_recurrence_probe: false,
         }
     }
 }
@@ -284,6 +296,10 @@ impl ExperimentalSettings {
             brief_mode: flag("briefMode", BRIEF_MODE_ENV),
             autocompact_offer: flag("autocompactOffer", AUTOCOMPACT_OFFER_ENV),
             multi_vote_refine: flag("multiVoteRefine", MULTI_VOTE_REFINE_ENV),
+            auto_refine_recurrence_probe: flag(
+                "autoRefineRecurrenceProbe",
+                AUTO_REFINE_RECURRENCE_PROBE_ENV,
+            ),
         }
     }
 }
@@ -395,6 +411,7 @@ mod tests {
             "briefMode": true,
             "autocompactOffer": true,
             "multiVoteRefine": true,
+            "autoRefineRecurrenceProbe": true,
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -423,6 +440,7 @@ mod tests {
                 brief_mode: true,
                 autocompact_offer: true,
                 multi_vote_refine: true,
+                auto_refine_recurrence_probe: true,
             }
         );
     }

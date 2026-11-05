@@ -37,6 +37,55 @@ pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 
 pub const AUTO_REFINE_COMPACT_REASON: &str = "compact";
 
+/// Read the failure ledger off `state.extensions.failures` as raw JSON
+/// (`pa-ledger` depends on `pa-core`, not the other way around, so the
+/// probe plumbing cannot call the ledger crate's parser directly; it
+/// reads the on-disk shape by hand). Each failure record has
+/// `lastSeenAt` and `count` at the top level, which is everything the
+/// probe needs.
+fn run_recurrence_probe(
+    state: &crate::refinement::HarnessState,
+) -> Vec<crate::refinement::recurrence::RecurrenceHit> {
+    let Some(failures) = state
+        .extensions
+        .get("failures")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|map| map.get("failures"))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let owned: std::collections::HashMap<String, crate::refinement::recurrence::FingerprintState> =
+        failures
+            .iter()
+            .filter_map(|(id, raw)| {
+                let record = raw.as_object()?;
+                let last_seen_at = record
+                    .get("lastSeenAt")
+                    .and_then(serde_json::Value::as_str)?;
+                let count = record
+                    .get("count")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                Some((
+                    id.clone(),
+                    crate::refinement::recurrence::FingerprintState {
+                        last_seen_at: last_seen_at.to_string(),
+                        count,
+                    },
+                ))
+            })
+            .collect();
+    if owned.is_empty() {
+        return Vec::new();
+    }
+    let observations: crate::refinement::recurrence::FingerprintObservations<'_> = owned
+        .iter()
+        .map(|(id, state)| (id.as_str(), state.clone()))
+        .collect();
+    crate::refinement::recurrence::probe_recurrence(state, &observations)
+}
+
 /// The resolved auto-refine gates: the settings block with the product
 /// defaults and clamps applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -866,6 +915,24 @@ impl AgentSession {
             refinement_history: session_history,
         } = parts.await?;
         let history = crate::refinement::merge_refinement_history(&history, &session_history);
+        // Post-fix recurrence probe (opt-in): scan the failure ledger for
+        // any fingerprint an accepted entry claimed to prevent, log each
+        // hit at INFO. The probe stays pure read-only: the review that
+        // follows is unchanged, and no auto-revert fires from the hits.
+        if self.auto_refine_recurrence_probe_enabled() {
+            let hits = run_recurrence_probe(&merged_state);
+            for hit in &hits {
+                tracing::info!(
+                    target: "pa_core::refinement::recurrence",
+                    entry_id = %hit.entry_id,
+                    entry_kind = ?hit.entry_kind,
+                    fingerprint_id = %hit.fingerprint_id,
+                    last_seen_at = %hit.last_seen_at,
+                    total_count = hit.total_count,
+                    "recurrence after refinement",
+                );
+            }
+        }
         let review_context = AutoRefineReviewContext {
             reason: AUTO_REFINE_COMPACT_REASON.to_string(),
             turns_since_last_review,
@@ -1024,6 +1091,75 @@ mod tests {
 
     use super::*;
     use crate::refinement::executor::RefinerFn;
+
+    #[test]
+    fn run_recurrence_probe_reads_the_failures_extension_and_reports_hits() {
+        use crate::refinement::{HarnessEntry, HarnessScope, HarnessState, RefinementKind};
+        let entry = HarnessEntry {
+            id: "e1".to_string(),
+            kind: RefinementKind::Memory,
+            title: "N".to_string(),
+            content: "C".to_string(),
+            path: "general".to_string(),
+            scope: Some(HarnessScope::Local),
+            reference: serde_json::Map::new(),
+            arguments: serde_json::Map::new(),
+            metadata: serde_json::Map::new(),
+            source: "refine".to_string(),
+            created_at: "2026-11-04T00:00:00Z".to_string(),
+            updated_at: "2026-11-04T00:00:00Z".to_string(),
+            version: 1,
+            targets_fingerprints: vec!["fp-a".to_string()],
+            lane: crate::refinement::RefinementLane::Lesson,
+            extensions: serde_json::Map::new(),
+        };
+        let mut entries: BTreeMap<RefinementKind, BTreeMap<String, HarnessEntry>> = BTreeMap::new();
+        entries
+            .entry(RefinementKind::Memory)
+            .or_default()
+            .insert(entry.id.clone(), entry);
+        let mut extensions = serde_json::Map::new();
+        extensions.insert(
+            "failures".to_string(),
+            serde_json::json!({
+                "schema": 1,
+                "failures": {
+                    "fp-a": {
+                        "lastSeenAt": "2026-11-05T00:00:00Z",
+                        "count": 3,
+                    },
+                    "fp-unused": {
+                        "lastSeenAt": "2026-11-05T00:00:00Z",
+                        "count": 1,
+                    },
+                },
+                "lastScannedEntryIndex": 0,
+            }),
+        );
+        let state = HarnessState {
+            schema: 1,
+            entries,
+            refinements: Vec::new(),
+            extensions,
+        };
+        let hits = run_recurrence_probe(&state);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry_id, "e1");
+        assert_eq!(hits[0].fingerprint_id, "fp-a");
+        assert_eq!(hits[0].total_count, 3);
+    }
+
+    #[test]
+    fn run_recurrence_probe_returns_empty_when_the_failures_key_is_absent() {
+        use crate::refinement::HarnessState;
+        let state = HarnessState {
+            schema: 1,
+            entries: BTreeMap::new(),
+            refinements: Vec::new(),
+            extensions: serde_json::Map::new(),
+        };
+        assert!(run_recurrence_probe(&state).is_empty());
+    }
 
     fn text_assistant(text: &str) -> AssistantMessage {
         AssistantMessage {
