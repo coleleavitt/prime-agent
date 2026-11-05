@@ -97,6 +97,13 @@ pub const AUTO_REFINE_RECURRENCE_PROBE_ENV: &str = "PRIME_AGENT_AUTO_REFINE_RECU
 /// spend. RAVO still gates every proposal, so a bad per-turn fire cannot
 /// admit a bad memory.
 pub const PER_TURN_MEMORY_ENV: &str = "PRIME_AGENT_POST_TURN_MEMORY";
+/// Turns the per-turn "Churned for 3m 4s \u{00B7} done 11:47 AM" chat row
+/// on or off (Claude Code 2.1.316's `showTurnDuration`, default on there).
+/// Prime-agent renders an in-stream `turn_duration` custom row at every
+/// settled turn with CC's eight-verb hashed selector
+/// (`["Baked","Brewed","Churned","Cogitated","Cooked","Crunched","Saut\u{00E9}ed","Worked"]`),
+/// duration since `turn_start`, and localised completion clock time.
+pub const SHOW_TURN_DURATION_ENV: &str = "PRIME_AGENT_SHOW_TURN_DURATION";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -172,6 +179,12 @@ pub struct ExperimentalSettings {
     /// off: per-turn refinements multiply the side-model spend; RAVO still
     /// gates every proposal.
     pub per_turn_memory: bool,
+    /// Claude Code's `showTurnDuration` (on by default there): emit a
+    /// `turn_duration` custom row at every settled turn with the eight-verb
+    /// hashed selector (`"Churned for 3m 4s \u{00B7} done 11:47 AM"`).
+    /// Prime-agent matches the default; setting `showTurnDuration: false`
+    /// or [`SHOW_TURN_DURATION_ENV`] `=0` suppresses the row.
+    pub show_turn_duration: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -199,6 +212,7 @@ impl Default for ExperimentalSettings {
             multi_vote_refine: false,
             auto_refine_recurrence_probe: false,
             per_turn_memory: false,
+            show_turn_duration: true,
         }
     }
 }
@@ -256,6 +270,13 @@ impl ExperimentalSettings {
             env_flag(env(env_name).as_deref())
                 .or_else(|| get(key).and_then(Value::as_bool))
                 .unwrap_or(false)
+        };
+        // `flag` but on-by-default, for the Claude Code knobs that ship
+        // on. The env var and the JSON key can still turn them off.
+        let flag_default_on = |key: &str, env_name: &str| {
+            env_flag(env(env_name).as_deref())
+                .or_else(|| get(key).and_then(Value::as_bool))
+                .unwrap_or(true)
         };
         let threshold = get("usageLimitWrapUpThreshold")
             .and_then(Value::as_f64)
@@ -318,6 +339,7 @@ impl ExperimentalSettings {
                 AUTO_REFINE_RECURRENCE_PROBE_ENV,
             ),
             per_turn_memory: flag("perTurnMemory", PER_TURN_MEMORY_ENV),
+            show_turn_duration: flag_default_on("showTurnDuration", SHOW_TURN_DURATION_ENV),
         }
     }
 }
@@ -461,6 +483,7 @@ mod tests {
                 multi_vote_refine: true,
                 auto_refine_recurrence_probe: true,
                 per_turn_memory: true,
+                show_turn_duration: true,
             }
         );
     }

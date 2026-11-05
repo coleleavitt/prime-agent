@@ -146,6 +146,8 @@ impl AgentView {
                         width,
                     )
             }
+            // One line; render_turn_duration never wraps.
+            ChatEntry::TurnDuration(_) => 1,
         }
     }
 }

@@ -10,6 +10,7 @@ use super::{
     AgentMessageRow,
     CustomPanelRow,
     ShellCompletionRow,
+    TurnDurationRow,
 };
 use crate::chat::Detail;
 use crate::markdown::MermaidMode;
@@ -246,6 +247,39 @@ pub(crate) fn render_shell_completion(
         ));
     }
     out
+}
+
+/// One `turn_duration` in-stream row, matching Claude Code 2.1.316's
+/// `Kf` component (chunk-ah34pb7m.js:36): a dim two-cell gutter icon
+/// plus `${verb} for ${duration} \u{00B7} done ${clock}` on a single
+/// line. Clock segment is omitted when the host did not supply one.
+pub(crate) fn render_turn_duration(
+    row: &TurnDurationRow,
+    theme: &Theme,
+    width: usize,
+) -> Vec<Line> {
+    // U+273B (HEAVY TEARDROP-SPOKED ASTERISK) matches CC's "✨/✻"-style
+    // dim gutter on the duration row; width-safe (one cell + trailing space).
+    const GUTTER: &str = "\u{273B} ";
+    let dim = theme.fg_style(ThemeColor::Dim);
+    let text = if row.clock_text.is_empty() {
+        format!("{} for {}", row.verb, row.duration_text)
+    } else {
+        format!(
+            "{} for {} \u{00B7} done {}",
+            row.verb, row.duration_text, row.clock_text
+        )
+    };
+    let gutter_width = str_width(GUTTER);
+    let content_budget = width.saturating_sub(gutter_width).max(1);
+    let line: Line = vec![
+        Span::styled(GUTTER.to_string(), dim),
+        Span::styled(
+            crate::width::truncate_to_width(&text, content_budget, "\u{2026}"),
+            dim,
+        ),
+    ];
+    vec![line]
 }
 
 /// Pad a rendered line to the full width with a base style.

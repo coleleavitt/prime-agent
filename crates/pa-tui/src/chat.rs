@@ -120,6 +120,10 @@ pub enum ChatEntry {
     CustomPanel(Box<crate::custom_message::CustomPanelRow>),
     /// One message the agent sent the user (`rlm.send_user_message`).
     BriefMessage(Box<crate::custom_message::BriefMessageRow>),
+    /// One `turn_duration` row (Claude Code's `${verb} for ${d} \u{00B7} done
+    /// ${clock}`): the hashed verb, the pre-formatted duration and
+    /// completion clock text. Rendered inline under the assistant turn.
+    TurnDuration(Box<crate::custom_message::TurnDurationRow>),
 }
 
 // The card types live in `tool_card`; re-exported here because the

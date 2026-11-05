@@ -82,6 +82,7 @@ pub mod telemetry;
 pub mod tool_bridge;
 pub mod tool_intent_recovery;
 pub mod turn_boundary;
+pub mod turn_duration;
 pub mod ultracode;
 
 mod admission;

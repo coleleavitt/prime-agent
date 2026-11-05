@@ -233,7 +233,8 @@ impl AgentView {
             | ChatEntry::InjectedPrompt(_)
             | ChatEntry::RefinementOutcome(_)
             | ChatEntry::CustomPanel(_)
-            | ChatEntry::BriefMessage(_) => true,
+            | ChatEntry::BriefMessage(_)
+            | ChatEntry::TurnDuration(_) => true,
             ChatEntry::Assistant(message) => !message.streaming,
             ChatEntry::Tool(card) => {
                 !matches!(
@@ -280,7 +281,8 @@ impl AgentView {
             | ChatEntry::InjectedPrompt(_)
             | ChatEntry::RefinementOutcome(_)
             | ChatEntry::CustomPanel(_)
-            | ChatEntry::BriefMessage(_) => false,
+            | ChatEntry::BriefMessage(_)
+            | ChatEntry::TurnDuration(_) => false,
         }
     }
 

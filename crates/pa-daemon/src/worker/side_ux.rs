@@ -4,13 +4,14 @@
 //! the daemon command handlers on [`crate::side_ux`]'s `Worker` use).
 
 use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use pa_types::sync::MutexExt;
 use serde_json::{Value, json};
 
+use super::summary::{broadcast_custom_row_locked, persist_custom_row};
 use super::turn::TurnRunner;
 use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
-use super::summary::{broadcast_custom_row_locked, persist_custom_row};
 use crate::side_ux::{
     PROMPT_SUGGESTION_EVENT,
     SESSION_RECAP_EVENT,
@@ -319,5 +320,61 @@ impl TurnRunner {
                 json!({ "type": PROMPT_SUGGESTION_EVENT, "text": text }),
             );
         });
+    }
+
+    /// Claude Code 2.1.316's `showTurnDuration` row: one in-stream
+    /// `${verb} for ${d} \u{00B7} done ${clock}` line emitted after a
+    /// settled turn. Reads
+    /// [`pa_core::settings::ExperimentalSettings::show_turn_duration`]
+    /// (default on, env `PRIME_AGENT_SHOW_TURN_DURATION`), computes the
+    /// elapsed wall-clock from `turn_started_at`, and injects the
+    /// `turn_duration` custom row — same persistence path the compaction
+    /// auto-refine boundary and per-turn memory extractor use. The verb
+    /// is picked deterministically from the session id + start-instant
+    /// nanos so replays stay stable. No-op when the setting is off, when
+    /// no clients are attached, or when the serializer trips.
+    pub(crate) fn maybe_emit_turn_duration(&self, turn_started_at: Instant) {
+        let (session_id, cwd) = {
+            let core = self.core.lock_or_recover();
+            if core.attached_client_ids.is_empty() {
+                return;
+            }
+            (core.active_session_id.clone(), core.cwd.clone())
+        };
+        let settings =
+            pa_core::settings::SettingsManager::create(&cwd, &self.passivation.agent_dir);
+        if !settings.reopen().experimental().show_turn_duration {
+            return;
+        }
+        let duration_ms =
+            u64::try_from(turn_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let done_at_unix_ms = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis()),
+        )
+        .unwrap_or(0);
+        // Deterministic per-turn verb seed: the session id + the turn's
+        // start nanos make a stable id with enough spread for % 8.
+        let stable_turn_id = format!(
+            "{session_id}:{}",
+            turn_started_at.elapsed().as_nanos()
+        );
+        let verb = pa_core::session_engine::turn_duration::pick_verb(&stable_turn_id);
+        let message = pa_core::session_engine::turn_duration::create_turn_duration_message(
+            verb,
+            duration_ms,
+            done_at_unix_ms,
+        );
+        let Ok(value) = serde_json::to_value(pa_types::session::AgentMessage::Custom(message))
+        else {
+            return;
+        };
+        let mut core_guard = self.core.lock_or_recover();
+        if core_guard.active_session_id != session_id {
+            return;
+        }
+        persist_custom_row(&mut core_guard, &value);
+        broadcast_custom_row_locked(&mut core_guard, &self.events, &value);
     }
 }

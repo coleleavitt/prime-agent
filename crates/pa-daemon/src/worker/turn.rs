@@ -376,6 +376,10 @@ impl TurnRunner {
         };
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
+        // Claude Code's `showTurnDuration`: capture the wall-clock start at
+        // turn-start emission; the settle below computes elapsed and
+        // injects the `turn_duration` custom row.
+        let turn_started_at = std::time::Instant::now();
         // Claude Code's generated session title: the session's first real
         // prompt names it on a side call, beside the turn.
         self.maybe_generate_title(
@@ -1288,6 +1292,12 @@ impl TurnRunner {
                 .unwrap_or(u32::MAX)
             };
             self.maybe_extract_memories(&settle_engine, user_message_count);
+            // Claude Code's `showTurnDuration` row: a dim in-stream
+            // `${verb} for ${d} \u{00B7} done ${clock}` line below the
+            // assistant turn. Gated by `experimental.showTurnDuration`
+            // (on by default); emits a durable `turn_duration` custom row
+            // so replays carry it too.
+            self.maybe_emit_turn_duration(turn_started_at);
         }
         if let Some(result) = settled_outcome {
             for done in items_done.into_iter().chain(folded_done) {

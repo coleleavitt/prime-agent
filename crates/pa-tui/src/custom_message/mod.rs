@@ -65,6 +65,9 @@ pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
 pub const FACTORY_RUN_NOTICE_CUSTOM_TYPE: &str = "factory_run_notice";
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
+/// Wire twin of `pa_core::session_engine::turn_duration::TURN_DURATION_CUSTOM_TYPE`:
+/// Claude Code 2.1.316's `${verb} for ${d} \u{00B7} done ${clock}` row.
+pub const TURN_DURATION_CUSTOM_TYPE: &str = "turn_duration";
 /// The durable single-line outcome of one provider-retry episode (SANCTIONED DIVERGENCE,
 /// operator ruling 2026-09-23: one terminal row per episode instead of TS's per-attempt error
 /// rows). Wire twin of `pa_core::session_engine::messages::PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE`.
@@ -157,6 +160,20 @@ pub struct EditField {
     pub change: Option<(Vec<String>, Vec<String>)>,
 }
 
+/// One `turn_duration` in-stream chat row (Claude Code 2.1.316's
+/// `${verb} for ${d}${done ? ' \u{00B7} done ' + clock : ''}`,
+/// chunk-ah34pb7m.js:36 `Kf`): the hashed verb, the duration string
+/// (`format_duration_ms`), and the localised completion clock
+/// (`format_clock_time`) prepared upstream by
+/// [`pa_core::session_engine::turn_duration::create_turn_duration_message`].
+/// Rendered inline under the assistant turn, not as footer chrome.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnDurationRow {
+    pub verb: String,
+    pub duration_text: String,
+    pub clock_text: String,
+}
+
 /// One generic custom row: the bold `[<customType>]` label header with
 /// the guttered markdown body in `customMessageText` — every display-true
 /// custom type without a dedicated component renders this way.
@@ -236,6 +253,7 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
             kind: crate::chat::StatusKind::Warning,
         }],
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
+        TURN_DURATION_CUSTOM_TYPE => turn_duration_entries(details),
         PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
         // `rlm.send_user_message`: the agent's message to the user.
         USER_MESSAGE_CUSTOM_TYPE => vec![ChatEntry::BriefMessage(Box::new(
@@ -279,6 +297,37 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
         // (those types persist with `display: false` and render nothing).
         _ => vec![generic_panel_entry(custom_type, message)],
     }
+}
+
+/// One `turn_duration` entry: pull the pre-formatted fields out of
+/// `details` (the host built them through
+/// [`pa_core::session_engine::turn_duration::create_turn_duration_message`]).
+/// A row with missing/empty `verb` or `durationText` renders nothing — a
+/// malformed emission should never produce a half-filled row.
+fn turn_duration_entries(details: &Value) -> Vec<ChatEntry> {
+    let verb = details
+        .get("verb")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let duration_text = details
+        .get("durationText")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let clock_text = details
+        .get("clockText")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if verb.is_empty() || duration_text.is_empty() {
+        return Vec::new();
+    }
+    vec![ChatEntry::TurnDuration(Box::new(TurnDurationRow {
+        verb: verb.to_string(),
+        duration_text: duration_text.to_string(),
+        clock_text: clock_text.to_string(),
+    }))]
 }
 
 /// A presented artifact's panel: the label line, then the image through the

@@ -300,6 +300,9 @@ impl AgentView {
             ChatEntry::BriefMessage(row) => {
                 crate::custom_message::brief_message::render_brief_message(row, &self.theme, width)
             }
+            ChatEntry::TurnDuration(row) => {
+                crate::custom_message::render::render_turn_duration(row, &self.theme, width)
+            }
         }
     }
 }
