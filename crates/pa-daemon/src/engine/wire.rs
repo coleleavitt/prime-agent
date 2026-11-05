@@ -432,6 +432,13 @@ pub enum SideUxRequest {
     AutoRecap,
     /// The predicted next prompt.
     PromptSuggestion,
+    /// The tool-use label for the last tool batch (Claude Code's
+    /// `tool_use_summary_generation`): the fast model writes a tiny
+    /// commit-subject-style label for the TUI to show beside the
+    /// running-tools row. The engine walks the agent's recent messages
+    /// for the last batch + the last assistant text; gated by
+    /// [`pa_core::settings::SideUxSettings::tool_use_labels`].
+    ToolUseLabel,
 }
 
 /// How one side-model UX call ended.

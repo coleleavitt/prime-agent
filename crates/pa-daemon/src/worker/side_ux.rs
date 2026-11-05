@@ -13,6 +13,7 @@ use crate::engine::{SessionEngine, SideUxOutcome, SideUxRequest};
 use crate::side_ux::{
     PROMPT_SUGGESTION_EVENT,
     SESSION_RECAP_EVENT,
+    TOOL_USE_LABEL_EVENT,
     blocked_on,
     title_attempts,
     title_candidate,
@@ -140,6 +141,47 @@ impl TurnRunner {
                 &core,
                 &events,
                 json!({ "type": SESSION_RECAP_EVENT, "text": text }),
+            );
+        });
+    }
+
+    /// Claude Code's `tool_use_summary_generation`: at the end of a
+    /// settled turn that ran at least one tool, write a tiny
+    /// commit-subject-style label for the batch and push it as a
+    /// [`TOOL_USE_LABEL_EVENT`] so the TUI can show it below the feature
+    /// panel. Gated by the side-ux `tool_use_labels` switch (default
+    /// off). No-op when the engine returns [`SideUxOutcome::Nothing`]
+    /// (e.g. no tools ran this turn).
+    pub(crate) fn maybe_generate_tool_use_label(&self, engine: &Arc<dyn SessionEngine>) {
+        let session_id = {
+            let core = self.core.lock_or_recover();
+            if core.attached_client_ids.is_empty() {
+                return;
+            }
+            core.active_session_id.clone()
+        };
+        let engine = Arc::clone(engine);
+        let core = Arc::clone(&self.core);
+        let events = Arc::clone(&self.events);
+        tokio::spawn(async move {
+            let outcome = tokio::task::spawn_blocking(move || {
+                engine.run_side_ux(SideUxRequest::ToolUseLabel)
+            })
+            .await
+            .unwrap_or(SideUxOutcome::Nothing);
+            let SideUxOutcome::Text(text) = outcome else {
+                return;
+            };
+            {
+                let core = core.lock_or_recover();
+                if core.active_session_id != session_id {
+                    return;
+                }
+            }
+            crate::worker::emit_worker_event_with(
+                &core,
+                &events,
+                json!({ "type": TOOL_USE_LABEL_EVENT, "text": text }),
             );
         });
     }
