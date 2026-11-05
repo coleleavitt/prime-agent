@@ -57,6 +57,13 @@ pub struct RefinementEdit {
         deserialize_with = "lenient_enabled"
     )]
     pub enabled: Option<bool>,
+    /// The lane the edit targets (see [`super::RefinementLane`]). A
+    /// `Create` edit with `lane: "status"` is rewritten to an `Update` of
+    /// the existing status entry with the same `(kind, path)` by
+    /// [`rewrite_status_replace_in_place`], so status entries stop piling
+    /// up. Absent keeps the inherited behaviour (lesson).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<super::RefinementLane>,
 }
 
 /// A non-boolean `enabled` (a model echoing the schema's placeholder text)
@@ -389,11 +396,78 @@ pub struct ApplyOptions {
 /// # Panics
 ///
 /// The unwraps cannot fire: validation runs first; the state pre-populates every kind map.
+/// Rewrite a proposal's edits so a `Create` with `lane: Status` and a
+/// matching `(kind, path)` as an existing status entry becomes an
+/// `Update` of that entry instead of adding a second one. Pure (returns
+/// a new proposal; the input stays untouched), and a no-op when no edit
+/// cites the status lane. This lands the design doc §3 two-lane behaviour
+/// — status notes replace in place, lessons continue through the normal
+/// learning loop.
+#[must_use]
+pub fn rewrite_status_replace_in_place(
+    proposal: &RefinementProposal,
+    state: &HarnessState,
+) -> RefinementProposal {
+    let needs_rewrite = proposal.edits.iter().any(|edit| {
+        matches!(edit.lane, Some(super::RefinementLane::Status))
+            && matches!(edit.action, Some(RefinementAction::Create))
+    });
+    if !needs_rewrite {
+        return proposal.clone();
+    }
+    let mut out = proposal.clone();
+    for edit in &mut out.edits {
+        if !matches!(edit.lane, Some(super::RefinementLane::Status))
+            || !matches!(edit.action, Some(RefinementAction::Create))
+        {
+            continue;
+        }
+        let Some(kind) = edit.kind else {
+            continue;
+        };
+        let Some(path) = edit.path.as_ref() else {
+            continue;
+        };
+        // Find the existing status entry with the same (kind, path).
+        // Multiple matches are unexpected (a prior rewrite would have
+        // collapsed them), but when they exist pick the latest by
+        // updated_at so the newest state wins.
+        let Some(target) = state
+            .entries
+            .get(&kind)
+            .and_then(|entries| {
+                entries
+                    .values()
+                    .filter(|entry| {
+                        matches!(entry.lane, super::RefinementLane::Status) && &entry.path == path
+                    })
+                    .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+            })
+            .map(|entry| entry.id.clone())
+        else {
+            continue;
+        };
+        edit.action = Some(RefinementAction::Update);
+        edit.id = Some(target);
+    }
+    out
+}
+
+/// Apply every edit in `proposal` to `state` and return the
+/// [`RefinementResult`] record of what landed.
+///
+/// # Panics
+///
+/// Panics only on an internal invariant violation (an edit that passed
+/// `validate_edit` must have its `action` set); user input never
+/// triggers one.
 pub fn apply_refinement_proposal(
     state: &mut HarnessState,
     proposal: &RefinementProposal,
     options: ApplyOptions,
 ) -> super::RefinementResult {
+    let rewritten = rewrite_status_replace_in_place(proposal, state);
+    let proposal: &RefinementProposal = &rewritten;
     let mut applied_edits: Vec<AppliedRefinementEdit> = Vec::new();
     let mut proposal_modified_keys: std::collections::HashSet<String> =
         std::collections::HashSet::default();
@@ -586,8 +660,14 @@ pub fn apply_refinement_proposal(
                 .map(|entry| entry.targets_fingerprints.clone())
                 .unwrap_or_default(),
             // A refine inherits the prior entry's lane; a brand-new entry
-            // starts as a lesson (the default).
-            lane: before.as_ref().map(|entry| entry.lane).unwrap_or_default(),
+            // takes the edit's cited lane when present, else lesson (the
+            // default). The status rewrite above has already remapped a
+            // Create to an Update when a status entry at (kind, path)
+            // existed, so a Create here with lane: status is genuinely new.
+            lane: edit
+                .lane
+                .or_else(|| before.as_ref().map(|entry| entry.lane))
+                .unwrap_or_default(),
             // TS spreads `before` first: a key this function does not model
             // survives an update instead of being dropped by the rewrite.
             extensions: before
@@ -670,6 +750,7 @@ pub fn rollback_proposal(target: &super::RefinementResult) -> RefinementProposal
                 enabled: (edit.after.as_ref().map(HarnessEntry::is_enabled)
                     != Some(before.is_enabled()))
                 .then_some(before.is_enabled()),
+                lane: Some(before.lane),
             });
         } else if edit.after.is_some() {
             edits.push(RefinementEdit {
@@ -781,8 +862,11 @@ pub fn refinement_request(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::super::empty_harness_state;
     use super::*;
+    use crate::refinement::{HarnessEntry, HarnessScope, HarnessState, RefinementLane};
 
     fn create_memory_edit(id: &str, title: &str, content: &str) -> RefinementEdit {
         RefinementEdit {
@@ -793,6 +877,130 @@ mod tests {
             content: Some(content.to_string()),
             ..Default::default()
         }
+    }
+
+    fn status_memory_at(path: &str, title: &str, content: &str) -> RefinementEdit {
+        RefinementEdit {
+            action: Some(RefinementAction::Create),
+            kind: Some(RefinementKind::Memory),
+            title: Some(title.to_string()),
+            content: Some(content.to_string()),
+            path: Some(path.to_string()),
+            lane: Some(RefinementLane::Status),
+            ..Default::default()
+        }
+    }
+
+    fn state_with_status_entry(path: &str, id: &str, updated_at: &str) -> HarnessState {
+        let entry = HarnessEntry {
+            id: id.to_string(),
+            kind: RefinementKind::Memory,
+            title: "status".to_string(),
+            content: "old".to_string(),
+            path: path.to_string(),
+            scope: Some(HarnessScope::Local),
+            reference: serde_json::Map::new(),
+            arguments: serde_json::Map::new(),
+            metadata: serde_json::Map::new(),
+            source: "refine".to_string(),
+            created_at: updated_at.to_string(),
+            updated_at: updated_at.to_string(),
+            version: 1,
+            targets_fingerprints: Vec::new(),
+            lane: RefinementLane::Status,
+            extensions: serde_json::Map::new(),
+        };
+        let mut entries: BTreeMap<RefinementKind, BTreeMap<String, HarnessEntry>> = BTreeMap::new();
+        entries
+            .entry(RefinementKind::Memory)
+            .or_default()
+            .insert(entry.id.clone(), entry);
+        HarnessState {
+            schema: 1,
+            entries,
+            refinements: Vec::new(),
+            extensions: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn status_create_with_existing_path_is_rewritten_to_update() {
+        let state = state_with_status_entry("session/cwd", "cwd1", "2026-11-05T00:00:00Z");
+        let proposal = RefinementProposal {
+            summary: "s".to_string(),
+            rationale: "r".to_string(),
+            expected_outcome: "e".to_string(),
+            edits: vec![status_memory_at("session/cwd", "cwd", "~/work/foo")],
+        };
+        let rewritten = rewrite_status_replace_in_place(&proposal, &state);
+        assert_eq!(rewritten.edits.len(), 1);
+        assert_eq!(rewritten.edits[0].action, Some(RefinementAction::Update));
+        assert_eq!(rewritten.edits[0].id.as_deref(), Some("cwd1"));
+    }
+
+    #[test]
+    fn status_create_with_no_matching_path_stays_a_create() {
+        let state = state_with_status_entry("session/cwd", "cwd1", "2026-11-05T00:00:00Z");
+        let proposal = RefinementProposal {
+            summary: "s".to_string(),
+            rationale: "r".to_string(),
+            expected_outcome: "e".to_string(),
+            edits: vec![status_memory_at("session/branch", "branch", "main")],
+        };
+        let rewritten = rewrite_status_replace_in_place(&proposal, &state);
+        assert_eq!(rewritten.edits[0].action, Some(RefinementAction::Create));
+        assert!(rewritten.edits[0].id.is_none());
+    }
+
+    #[test]
+    fn lesson_creates_are_untouched_by_the_rewrite() {
+        let state = state_with_status_entry("general", "s1", "2026-11-05T00:00:00Z");
+        let proposal = RefinementProposal {
+            summary: "s".to_string(),
+            rationale: "r".to_string(),
+            expected_outcome: "e".to_string(),
+            edits: vec![create_memory_edit("m1", "lesson", "stuff")],
+        };
+        let rewritten = rewrite_status_replace_in_place(&proposal, &state);
+        assert_eq!(rewritten.edits[0].action, Some(RefinementAction::Create));
+        assert_eq!(rewritten.edits[0].id.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn apply_collapses_a_second_status_create_onto_the_first() {
+        let mut applied_state =
+            state_with_status_entry("session/cwd", "cwd1", "2026-11-05T00:00:00Z");
+        let proposal = RefinementProposal {
+            summary: "s".to_string(),
+            rationale: "r".to_string(),
+            expected_outcome: "e".to_string(),
+            edits: vec![status_memory_at("session/cwd", "cwd", "~/work/bar")],
+        };
+        let options = ApplyOptions {
+            id: "refine_status_test".to_string(),
+            rollback_of: None,
+            scope: Some(HarnessScope::Local),
+            baseline_state: None,
+            factory_enabled: false,
+            package_state: None,
+        };
+        let result = apply_refinement_proposal(&mut applied_state, &proposal, options);
+        assert_eq!(result.applied_edits.len(), 1);
+        assert!(
+            result.applied_edits[0].applied,
+            "{:?}",
+            result.applied_edits
+        );
+        assert_eq!(result.applied_edits[0].id, "cwd1");
+        // Only one status entry remains at the path (no new id appeared).
+        let memory_entries = applied_state
+            .entries
+            .get(&RefinementKind::Memory)
+            .expect("memory entries exist");
+        assert_eq!(memory_entries.len(), 1);
+        let only = memory_entries.values().next().unwrap();
+        assert_eq!(only.content, "~/work/bar");
+        assert_eq!(only.lane, RefinementLane::Status);
     }
 
     #[test]
