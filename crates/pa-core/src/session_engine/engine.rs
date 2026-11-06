@@ -135,10 +135,21 @@ pub struct SessionEngineConfig {
     /// `rlm.spawn(agent=...)` child): its instructions end the system
     /// prompt and its tool scope gates the kernel's host requests.
     pub agent_definition: Option<crate::agents::AgentDefinition>,
+    /// Learning memory reranker handle: when present, the per-turn
+    /// harness digest render re-orders this session's memory entries
+    /// through flyrag on top of the native TF-IDF sort, and the daemon's
+    /// feedback-tap pumps cert-stream outcomes through the same handle.
+    /// `None` (the default) keeps the native sort and skips learning —
+    /// every existing caller is unchanged.
+    pub reranker: Option<crate::refinement::retrieval::RerankerHandle>,
 }
 
 pub struct SessionEngine {
     pub session: AgentSession,
+    /// The session's learning memory reranker handle (`None` when the
+    /// embedding never installed one — tests and the print surface stay
+    /// unaffected).
+    pub reranker: Option<crate::refinement::retrieval::RerankerHandle>,
     pub skills: Vec<crate::skills::Skill>,
     /// Skill-loading diagnostics; the connection resource snapshot
     /// surfaces them.
@@ -1222,6 +1233,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             &feature_context,
         ),
         package_state: Some(std::sync::Arc::new(resources.package_harness.state.clone())),
+        rerank_hook: config.reranker.as_ref().map(super::super::refinement::retrieval::RerankerHandle::as_rerank_hook),
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
@@ -1832,6 +1844,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         crate::features::SessionEndNotice::new(crate::features::installed(), &feature_context);
     let engine = SessionEngine {
         session,
+        reranker: config.reranker.clone(),
         skills: resources.skills,
         skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,

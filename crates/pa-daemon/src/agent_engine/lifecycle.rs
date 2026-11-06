@@ -244,6 +244,7 @@ impl AgentSessionEngine {
             session_telemetry: std::sync::Arc::new(std::sync::Mutex::new(None)),
             path_watches: crate::path_watch::PathWatchRegistry::default(),
             path_watch_sink: std::sync::Mutex::new(None),
+            reranker: std::sync::OnceLock::new(),
         })
     }
 
@@ -255,6 +256,49 @@ impl AgentSessionEngine {
         self.autonomous_driver_default
             .store(false, std::sync::atomic::Ordering::Relaxed);
         *self.autonomous_driver.write_or_recover() = driver;
+    }
+
+    /// The flyrag learning-memory reranker for this worker, constructed
+    /// on first touch. The handle persists to
+    /// `<agent dir>/harness/retrieval_state.json` across daemon restarts;
+    /// on cold boot it seeds itself from the memory entries already on
+    /// disk so the index matches the harness state from turn one. A
+    /// construction failure is logged and the worker falls back to the
+    /// native TF-IDF rerank (no behaviour regression — the digest still
+    /// renders).
+    pub(crate) fn reranker_handle(
+        &self,
+    ) -> Option<pa_core::refinement::retrieval::RerankerHandle> {
+        self.reranker
+            .get_or_init(|| {
+                let path = pa_core::refinement::retrieval::default_retrieval_path(
+                    &self.config.agent_dir,
+                );
+                // Seed derived from the agent-dir path so two concurrent
+                // agent dirs don't share a flyrag projection. On reload
+                // the saved state wins; the seed only matters for a fresh
+                // (never-saved) handle.
+                let seed = seed_from_agent_dir(&self.config.agent_dir);
+                let handle = match pa_core::refinement::retrieval::RerankerHandle::load_or_new(
+                    path,
+                    seed,
+                ) {
+                    Ok(handle) => handle,
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "pa_daemon::retrieval",
+                            %err,
+                            "flyrag reranker failed to initialise; falling back to native sort"
+                        );
+                        return None;
+                    }
+                };
+                if handle.is_empty() {
+                    seed_reranker_from_harness_state(&self.config.agent_dir, &handle);
+                }
+                Some(handle)
+            })
+            .clone()
     }
 
     pub(crate) fn cwd(&self) -> std::path::PathBuf {
@@ -1323,6 +1367,7 @@ impl AgentSessionEngine {
             }),
             rlm_token_allowance,
             agent_definition,
+            reranker: self.reranker_handle(),
         })
         .await
         .inspect(|engine| {
@@ -1393,4 +1438,62 @@ impl AgentSessionEngine {
             }
         })
     }
+}
+
+/// Seed the reranker from the current `harness_state.json` memory entries
+/// (cold-boot path). Each memory entry's title + content is added so BM25
+/// has recall from turn one. Failures are logged, never fatal.
+fn seed_reranker_from_harness_state(
+    agent_dir: &std::path::Path,
+    handle: &pa_core::refinement::retrieval::RerankerHandle,
+) {
+    let state_path = agent_dir
+        .join("harness")
+        .join(pa_ledger::HARNESS_STATE_FILE_NAME);
+    let Ok(bytes) = std::fs::read(&state_path) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return;
+    };
+    let Some(memories) = value
+        .get("entries")
+        .and_then(|e| e.get("memory"))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    let mut count = 0usize;
+    for (id, entry) in memories {
+        let title = entry.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let content = entry.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        if title.is_empty() && content.is_empty() {
+            continue;
+        }
+        let combined = if title.is_empty() {
+            content.to_string()
+        } else {
+            format!("{title}\n{content}")
+        };
+        handle.record_memory_upsert(id, &combined);
+        count += 1;
+    }
+    tracing::info!(
+        target: "pa_daemon::retrieval",
+        memory_count = count,
+        "seeded flyrag reranker from harness_state.json"
+    );
+}
+
+/// Stable per-worker seed. Each agent dir gets its own flyrag projection;
+/// the seed only matters until a persisted state file exists (then that
+/// state's projection wins on load).
+fn seed_from_agent_dir(agent_dir: &std::path::Path) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let s = agent_dir.to_string_lossy();
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write(s.as_bytes());
+    // Mask to avoid the 0 seed (not required, but a non-zero seed is
+    // easier to spot in logs).
+    hasher.finish() | 1
 }

@@ -934,6 +934,7 @@ pub(crate) async fn build_headless_engine_with(
                 HeadlessEmbedding::Child(overrides) => overrides.agent_definition.clone(),
                 HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc => None,
             },
+            reranker: None,
         },
     )
     .await

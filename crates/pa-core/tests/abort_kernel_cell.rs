@@ -166,6 +166,7 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         image_model_router: None,
         rlm_token_allowance: None,
         agent_definition: None,
+        reranker: None,
     })
     .await
     .expect("create_session");

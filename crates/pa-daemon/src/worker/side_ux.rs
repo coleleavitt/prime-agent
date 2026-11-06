@@ -377,4 +377,22 @@ impl TurnRunner {
         persist_custom_row(&mut core_guard, &value);
         broadcast_custom_row_locked(&mut core_guard, &self.events, &value);
     }
+
+    /// Flyrag retrieval tick: run on settle when the session engine
+    /// exposed a reranker handle. Drains the cert-stream feedback tap,
+    /// syncs new memory add/remove events into the index, and persists
+    /// the reranker's state. No-op when no handle is attached (tests,
+    /// legacy workers, headless print surfaces).
+    pub(crate) fn maybe_run_retrieval_tick(
+        &self,
+        engine: &std::sync::Arc<dyn super::SessionEngine>,
+    ) {
+        let Some(handle) = engine.reranker_handle() else {
+            return;
+        };
+        let agent_dir = self.passivation.agent_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::retrieval_tick::run(&agent_dir, &handle);
+        });
+    }
 }

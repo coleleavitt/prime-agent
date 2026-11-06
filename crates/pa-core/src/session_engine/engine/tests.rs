@@ -109,6 +109,7 @@ async fn engine_runs_tool_loop_and_persists() {
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
         agent_definition: None,
+        reranker: None,
     })
     .await
     .unwrap();
@@ -228,6 +229,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         queued_goal_context_purge: None,
         rlm_token_allowance: None,
         agent_definition: None,
+        reranker: None,
     })
     .await
     .unwrap();
@@ -310,6 +312,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             queued_goal_context_purge: None,
             rlm_token_allowance: None,
             agent_definition: None,
+            reranker: None,
         }
     }
 
@@ -1242,6 +1245,7 @@ async fn create_session_appends_missing_resume_settings_rows() {
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
         agent_definition: None,
+        reranker: None,
     })
     .await
     .unwrap();
@@ -1394,6 +1398,7 @@ async fn an_agent_with_memory_gets_its_directory_index_and_sandbox_root() {
             host_session,
         ))),
         agent_definition: Some(reviewer),
+        reranker: None,
         ..SessionEngineConfig::default()
     })
     .await

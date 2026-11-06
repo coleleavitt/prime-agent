@@ -18,6 +18,7 @@ fn empty_state_digest_renders_placeholder() {
         include_refine: true,
         prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         package_state: None,
+        rerank_hook: None,
     };
     let digest = harness_digest_text(&context, HarnessQueryTerms::default());
     assert!(digest.starts_with("# Continual Harness State"));
@@ -68,6 +69,7 @@ fn a_prompt_hook_adjusts_the_digest_and_its_fingerprint() {
                 .collect(),
         ),
         package_state: None,
+        rerank_hook: None,
     };
     let render = |context: &HarnessDigestContext| {
         HarnessDigestInputs {
@@ -473,6 +475,7 @@ async fn placement_rig(
             include_refine: false,
             prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
             package_state: None,
+            rerank_hook: None,
         }),
     )
     .await
@@ -732,6 +735,7 @@ fn package_harness_overlays_reach_the_digest_read_only() {
         include_refine: true,
         prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         package_state: Some(std::sync::Arc::new(package)),
+        rerank_hook: None,
     };
     let first = load();
     assert_eq!(first.diagnostics, Vec::new());

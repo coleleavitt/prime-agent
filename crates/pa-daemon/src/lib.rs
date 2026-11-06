@@ -95,6 +95,7 @@ pub mod rlm_children;
 pub mod rlm_ledger;
 pub(crate) mod rlm_roster;
 pub mod rlm_surface;
+pub(crate) mod retrieval_tick;
 pub(crate) mod roster_activity;
 pub mod rpc;
 pub(crate) mod saved_session_commands;

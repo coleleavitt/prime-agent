@@ -423,4 +423,10 @@ pub struct AgentSessionEngine {
     /// The worker-installed path-watch notice routing. `None` outside a
     /// daemon worker.
     pub(crate) path_watch_sink: std::sync::Mutex<Option<crate::path_watch::PathWatchSink>>,
+    /// The flyrag-backed learning memory reranker for this worker,
+    /// persisted to `<agent dir>/harness/retrieval_state.json`. Lazily
+    /// constructed on the first `create_session` call so test builds
+    /// that never trigger a session keep zero flyrag overhead.
+    pub(crate) reranker:
+        std::sync::OnceLock<Option<pa_core::refinement::retrieval::RerankerHandle>>,
 }

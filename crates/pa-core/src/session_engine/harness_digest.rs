@@ -25,7 +25,7 @@ mod direction;
 
 /// Session-scoped digest inputs: where harness state lives and which
 /// interfaces the digest may reference.
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct HarnessDigestContext {
     /// Global harness state directory (`<agent dir>/harness`).
     pub global_dir: PathBuf,
@@ -40,6 +40,26 @@ pub struct HarnessDigestContext {
     /// The read-only package overlay (upstream #2298), mounted below the
     /// editable entries; refine plans against it and never edits it.
     pub package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
+    /// Learning-rerank hook (`pa_retrieval::FlyRagReranker` bridged
+    /// through `pa_core::refinement::retrieval::RerankerHandle`). `None`
+    /// keeps the native TF-IDF order byte-for-byte; the daemon worker
+    /// installs this on session create when the retrieval feature is on.
+    pub rerank_hook: Option<crate::refinement::ranking::HarnessRerankHook>,
+}
+
+impl std::fmt::Debug for HarnessDigestContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HarnessDigestContext")
+            .field("global_dir", &self.global_dir)
+            .field("local_dir", &self.local_dir)
+            .field("include_ipython", &self.include_ipython)
+            .field("include_shell_examples", &self.include_shell_examples)
+            .field("include_refine", &self.include_refine)
+            .field("prompt_hooks", &self.prompt_hooks)
+            .field("package_state", &self.package_state)
+            .field("rerank_hook", &self.rerank_hook.is_some())
+            .finish()
+    }
 }
 
 /// Relevance terms for digest entry ranking: the active goal objective
@@ -116,6 +136,7 @@ fn render_digest_with_fingerprint(
             include_refine_examples: Some(render_flags.include_refine_examples),
             query_terms: Some(query_terms),
             adjustment,
+            rerank_hook: context.rerank_hook.clone(),
             ..Default::default()
         },
     );

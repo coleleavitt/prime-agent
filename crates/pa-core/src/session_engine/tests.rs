@@ -150,6 +150,7 @@ async fn digest_session(provider: Arc<ScriptedProvider>) -> (AgentSession, tempf
         include_refine: false,
         prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         package_state: None,
+        rerank_hook: None,
     };
     let session = digest_session_with_harness(provider, harness).await;
     (session, tmp)
@@ -286,6 +287,7 @@ async fn resume_dedupes_by_state_fingerprint_and_replaces_stale_digests() {
         include_refine: false,
         prompt_hooks: crate::refinement::prompt_hook::HarnessPromptHooks::default(),
         package_state: None,
+        rerank_hook: None,
     };
 
     // First session: the deferred first-turn digest rides the turn and

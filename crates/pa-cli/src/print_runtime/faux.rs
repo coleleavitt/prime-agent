@@ -191,6 +191,7 @@ pub(crate) async fn build_faux_engine_with(
             image_model_router: None,
             rlm_token_allowance: None,
             agent_definition: None,
+            reranker: None,
         },
     )
     .await

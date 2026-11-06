@@ -80,6 +80,14 @@ pub trait SessionEngine: Send + Sync {
         serde_json::to_value(pa_core::goals::empty_goal_state()).unwrap_or(Value::Null)
     }
 
+    /// The flyrag learning-memory reranker handle for this worker, when
+    /// one is installed. The retrieval tick (`crate::retrieval_tick`) is
+    /// a no-op when this returns `None` — tests, headless print surfaces,
+    /// and scripted engines all keep flyrag out of the loop.
+    fn reranker_handle(&self) -> Option<pa_core::refinement::retrieval::RerankerHandle> {
+        None
+    }
+
     /// Purge the queued goal-context turns: withdraw minted continuations
     /// waiting to run; engines without a queue do nothing.
     fn purge_queued_goal_contexts(&self) {}

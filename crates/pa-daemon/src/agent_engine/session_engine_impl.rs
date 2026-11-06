@@ -41,6 +41,10 @@ impl SessionEngine for AgentSessionEngine {
         AgentSessionEngine::clear_agent_watches(self);
     }
 
+    fn reranker_handle(&self) -> Option<pa_core::refinement::retrieval::RerankerHandle> {
+        AgentSessionEngine::reranker_handle(self)
+    }
+
     /// Withdraw the queued minted goal-context turns so a state change leaves nothing stale to run.
     fn purge_queued_goal_contexts(&self) {
         let purge = self.goal_queue_purge.lock_or_recover().clone();
