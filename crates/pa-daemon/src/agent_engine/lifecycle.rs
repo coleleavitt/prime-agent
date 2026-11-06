@@ -271,16 +271,15 @@ impl AgentSessionEngine {
     ) -> Option<pa_core::refinement::retrieval::RerankerHandle> {
         self.reranker
             .get_or_init(|| {
-                let path = pa_core::refinement::retrieval::default_retrieval_path(
-                    &self.config.agent_dir,
-                );
-                // Seed derived from the agent-dir path so two concurrent
-                // agent dirs don't share a flyrag projection. On reload
-                // the saved state wins; the seed only matters for a fresh
-                // (never-saved) handle.
+                // Shared across every worker in this process for the
+                // same agent_dir: pa-core's `shared_handle_for` returns
+                // the same `Arc<Mutex<FlyRagReranker>>` to every caller
+                // keyed on the canonical path, so two workers can't
+                // both load/mutate/save and clobber each other's
+                // updates.
                 let seed = seed_from_agent_dir(&self.config.agent_dir);
-                let handle = match pa_core::refinement::retrieval::RerankerHandle::load_or_new(
-                    path,
+                let handle = match pa_core::refinement::retrieval::shared_handle_for(
+                    &self.config.agent_dir,
                     seed,
                 ) {
                     Ok(handle) => handle,

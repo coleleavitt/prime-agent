@@ -12,6 +12,7 @@
 //! calls on each `memory`-kind edit. The feedback loop lives elsewhere
 //! (pa-ledger's feedback tap), so this module does not touch it.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -342,6 +343,50 @@ pub fn default_retrieval_path(agent_dir: &Path) -> PathBuf {
     agent_dir.join("harness").join("retrieval_state.json")
 }
 
+/// Process-wide map of `agent_dir` → shared [`RerankerHandle`]. Every
+/// worker that asks for a handle on the same agent dir gets the SAME
+/// `Arc<Mutex<FlyRagReranker>>` — mutations serialise through the
+/// Mutex, so two workers can't both load, mutate, and save without
+/// clobbering each other's updates.
+///
+/// The map is keyed by the canonical (`std::fs::canonicalize`) agent
+/// dir path so `.prime/agent` and `/home/.../.prime/agent` both hit
+/// the same entry even if one caller passes a relative path.
+///
+/// Cross-PROCESS races (two concurrent daemons on the same agent dir,
+/// a print-mode session alongside a daemon worker) are still possible;
+/// the on-disk `save_to_file` is atomic tmpfile+rename so neither will
+/// see a half-written file, but a losing writer still clobbers the
+/// other's mutations. Fixing that needs a file lock on the sidecar —
+/// follow-up.
+fn shared_handles() -> &'static Mutex<HashMap<PathBuf, RerankerHandle>> {
+    static HANDLES: std::sync::OnceLock<Mutex<HashMap<PathBuf, RerankerHandle>>> =
+        std::sync::OnceLock::new();
+    HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Get-or-create the shared `RerankerHandle` for `agent_dir`. Every
+/// call in this process on the same agent dir returns the SAME inner
+/// Mutex — multi-worker safe.
+///
+/// # Errors
+///
+/// Returns [`pa_retrieval::RetrievalError`] when flyrag rejects the
+/// seed on a fresh construction.
+pub fn shared_handle_for(agent_dir: &Path, seed: u64) -> Result<RerankerHandle, RetrievalError> {
+    let key = std::fs::canonicalize(agent_dir).unwrap_or_else(|_| agent_dir.to_path_buf());
+    let mut map = shared_handles()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(h) = map.get(&key) {
+        return Ok(h.clone());
+    }
+    let path = default_retrieval_path(&key);
+    let handle = RerankerHandle::load_or_new(path, seed)?;
+    map.insert(key, handle.clone());
+    Ok(handle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +448,30 @@ mod tests {
         assert!(path.exists());
         let back = RerankerHandle::load_or_new(path, 3).unwrap();
         assert_eq!(back.len(), 3);
+    }
+
+    #[test]
+    fn shared_handle_is_the_same_arc_for_every_caller_on_the_same_agent_dir() {
+        // Two call sites in the same process on the same agent_dir
+        // must receive the SAME `Arc<Mutex>` — a mutation through
+        // one must be visible to the other. Otherwise concurrent
+        // workers race their saves.
+        let dir = tempfile::tempdir().unwrap();
+        let agent_dir = dir.path().to_path_buf();
+        let a = shared_handle_for(&agent_dir, 17).unwrap();
+        a.record_memory_upsert("a", "install the dependencies with bun");
+        let b = shared_handle_for(&agent_dir, 17).unwrap();
+        // b sees a's mutation: no independent load.
+        assert_eq!(b.len(), 1, "shared handle sees a's upsert");
+        // Confirm the two share the SAME inner Mutex by checking that
+        // a mutation via b shows up in a immediately.
+        b.record_memory_upsert("b", "restart the daemon to see new code");
+        assert_eq!(a.len(), 2);
+
+        // A different agent_dir gets its OWN handle.
+        let other = tempfile::tempdir().unwrap();
+        let c = shared_handle_for(other.path(), 17).unwrap();
+        assert_eq!(c.len(), 0, "disjoint agent dirs don't share state");
     }
 
     #[test]
