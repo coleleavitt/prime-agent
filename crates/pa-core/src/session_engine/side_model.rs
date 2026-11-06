@@ -308,7 +308,10 @@ pub async fn complete_forked(
         let mut stream = stream_fn(
             state.model.clone(),
             context,
-            StreamRequestOptions::default(),
+            StreamRequestOptions {
+                reasoning: state.thinking_level,
+                ..StreamRequestOptions::default()
+            },
         )
         .await?;
         while stream.next_event().await.is_some() {}
