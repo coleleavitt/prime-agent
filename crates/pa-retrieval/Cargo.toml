@@ -1,0 +1,25 @@
+[package]
+name = "pa-retrieval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Learning memory retrieval for prime-agent: BM25 base retriever + flyrag re-ranker with certificate-stream feedback."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# flyrag is the learning re-ranker (fly mushroom-body sparse codes + two
+# opposing readout banks, bounded updates, lazy decay); kenyon is its
+# projection / novelty / index layer. Both are public at
+# github.com/coleleavitt/{flyrag,kenyon} and pinned by rev — a bump is
+# an architectural change (the RNG constants are a bit-level stability
+# surface persisted downstream state depends on, see kenyon README).
+flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "937bf1bb785d0936c2f8a7444f59dbc560a3e888", features = ["serde"] }
+kenyon = { git = "https://github.com/coleleavitt/kenyon.git", rev = "1a29b994a16ea3f54f613f30dd7a5112d18cdb24", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

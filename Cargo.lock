@@ -1200,6 +1200,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flyrag"
+version = "0.1.0"
+source = "git+https://github.com/coleleavitt/flyrag.git?rev=937bf1bb785d0936c2f8a7444f59dbc560a3e888#937bf1bb785d0936c2f8a7444f59dbc560a3e888"
+dependencies = [
+ "kenyon",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1977,6 +1987,15 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kenyon"
+version = "0.1.0"
+source = "git+https://github.com/coleleavitt/kenyon.git?rev=1a29b994a16ea3f54f613f30dd7a5112d18cdb24#1a29b994a16ea3f54f613f30dd7a5112d18cdb24"
+dependencies = [
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -3043,6 +3062,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "pa-retrieval"
+version = "0.10.1"
+dependencies = [
+ "flyrag",
+ "kenyon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
