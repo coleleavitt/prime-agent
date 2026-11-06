@@ -9,13 +9,14 @@ description = "Learning memory retrieval for prime-agent: BM25 base retriever + 
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 # flyrag is the learning re-ranker (fly mushroom-body sparse codes + two
 # opposing readout banks, bounded updates, lazy decay); kenyon is its
 # projection / novelty / index layer. Both are public at
 # github.com/coleleavitt/{flyrag,kenyon} and pinned by rev — a bump is
 # an architectural change (the RNG constants are a bit-level stability
 # surface persisted downstream state depends on, see kenyon README).
-flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "26c4d30a33b853a5060296a0b7bf06589b05364a", features = ["serde"] }
+flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "8043738cb22d4ab2b0c29e2678790418c5a5a387", features = ["serde"] }
 kenyon = { git = "https://github.com/coleleavitt/kenyon.git", rev = "e1dc0c2b05e586da237d5718f231405aac9dc2e5", features = ["serde"] }
 
 [dev-dependencies]

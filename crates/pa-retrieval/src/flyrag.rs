@@ -131,7 +131,19 @@ impl FlyRagReranker {
     ///
     /// Returns [`crate::RetrievalError::Json`] on a malformed file.
     pub fn load<R: Read>(reader: R) -> Result<Self> {
-        Ok(serde_json::from_reader(reader)?)
+        let mut back: Self = serde_json::from_reader(reader)?;
+        // Migrate stale state: a file written before `FlyRag::doc_units`
+        // existed deserialises with an empty vec via `#[serde(default)]`.
+        // The call is a no-op once the vectors are aligned.
+        let added = back.rag.ensure_doc_units();
+        if added > 0 {
+            tracing::info!(
+                target: "pa_retrieval",
+                migrated_doc_units = added,
+                "FlyRagReranker::load: rebuilt doc_units from the stored index (stale state file migration)"
+            );
+        }
+        Ok(back)
     }
 
     /// Load from a file path, or return `Ok(None)` when it does not

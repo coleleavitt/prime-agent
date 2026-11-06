@@ -1202,7 +1202,7 @@ dependencies = [
 [[package]]
 name = "flyrag"
 version = "0.1.0"
-source = "git+https://github.com/coleleavitt/flyrag.git?rev=26c4d30a33b853a5060296a0b7bf06589b05364a#26c4d30a33b853a5060296a0b7bf06589b05364a"
+source = "git+https://github.com/coleleavitt/flyrag.git?rev=8043738cb22d4ab2b0c29e2678790418c5a5a387#8043738cb22d4ab2b0c29e2678790418c5a5a387"
 dependencies = [
  "kenyon",
  "serde",
@@ -3078,6 +3078,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
