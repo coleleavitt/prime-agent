@@ -214,6 +214,62 @@ impl RerankerHandle {
         guard.len()
     }
 
+    /// Admission-time novelty score for `text` in [0, 1]: 1 = nothing
+    /// like it stored, 0 = fully familiar. Pair with the RAVO cert
+    /// record for an auditable "is this memory new signal" field.
+    /// Returns `None` when the lock is held by a poisoned writer or
+    /// flyrag's internals error; the caller logs and skips.
+    #[must_use]
+    pub fn novelty_score(&self, text: &str) -> Option<f64> {
+        let guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match guard.novelty_score(text) {
+            Ok(n) => Some(n),
+            Err(err) => {
+                tracing::debug!(
+                    target: "pa_core::retrieval",
+                    %err,
+                    "novelty_score errored; omitting field from cert record"
+                );
+                None
+            }
+        }
+    }
+
+    /// Compact the reranker's index, reclaiming tombstoned slots. Run
+    /// periodically (every N refinements) from pa-daemon's retrieval
+    /// tick — not every settle. Logs the number of slots dropped.
+    pub fn compact(&self) {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match guard.compact() {
+            Ok(0) => {
+                tracing::trace!(
+                    target: "pa_core::retrieval",
+                    "compact: no tombstoned slots to reclaim"
+                );
+            }
+            Ok(dropped) => {
+                tracing::info!(
+                    target: "pa_core::retrieval",
+                    dropped,
+                    "compact: reclaimed tombstoned memory slots"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "pa_core::retrieval",
+                    %err,
+                    "compact: flyrag errored; retaining tombstones"
+                );
+            }
+        }
+    }
+
     /// `true` when the reranker holds no memories.
     #[must_use]
     pub fn is_empty(&self) -> bool {

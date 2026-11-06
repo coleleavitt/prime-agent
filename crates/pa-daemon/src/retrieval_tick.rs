@@ -14,11 +14,27 @@ use std::path::Path;
 use pa_core::refinement::retrieval::RerankerHandle;
 use pa_ledger::FeedbackTap;
 use pa_retrieval::Outcome;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Sidecar that records the byte offset in `refinement_history.jsonl`
 /// we've already synced to the reranker's index (memory add/remove).
 const MEMORY_SYNC_CURSOR: &str = "retrieval_memory_sync.cursor";
+
+/// Sidecar that records the admission-time novelty score for every
+/// memory create/update event the retrieval tick saw. One JSON line
+/// per event; append-only; readable without parsing
+/// `refinement_history.jsonl`.
+const NOVELTY_DIARY: &str = "retrieval_novelty.jsonl";
+
+/// Compact tombstone slots once every N memory events synced.
+const COMPACT_EVERY: usize = 128;
+
+#[derive(Debug, Serialize)]
+struct NoveltyEntry<'a> {
+    memory_id: &'a str,
+    action: &'a str,
+    novelty_score: f64,
+}
 
 /// One settle-time pass: cheap when nothing changed.
 pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
@@ -83,6 +99,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
 fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result<()> {
     let history_path = harness_dir.join("refinement_history.jsonl");
     let cursor_path = harness_dir.join(MEMORY_SYNC_CURSOR);
+    let novelty_path = harness_dir.join(NOVELTY_DIARY);
     let bytes = match fs::read(&history_path) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -97,6 +114,7 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
     }
     let tail = &bytes[cursor..];
     let mut applied = 0usize;
+    let mut novelty_lines: Vec<String> = Vec::new();
     for line in tail.split(|&b| b == b'\n') {
         if line.is_empty() {
             continue;
@@ -109,16 +127,28 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
                 continue;
             }
             match edit.action.as_deref() {
-                Some("create" | "update") => {
+                Some(action @ ("create" | "update")) => {
                     let combined = if edit.title.is_empty() {
                         edit.content
                     } else {
                         format!("{}\n{}", edit.title, edit.content)
                     };
-                    if !combined.is_empty() {
-                        handle.record_memory_upsert(&edit.id, &combined);
-                        applied += 1;
+                    if combined.is_empty() {
+                        continue;
                     }
+                    // Admission-time novelty BEFORE the upsert — this
+                    // scores against the index as it was, not after.
+                    if let Some(score) = handle.novelty_score(&combined) {
+                        if let Ok(entry) = serde_json::to_string(&NoveltyEntry {
+                            memory_id: &edit.id,
+                            action,
+                            novelty_score: score,
+                        }) {
+                            novelty_lines.push(entry);
+                        }
+                    }
+                    handle.record_memory_upsert(&edit.id, &combined);
+                    applied += 1;
                 }
                 Some("delete") => {
                     handle.record_memory_removal(&edit.id);
@@ -127,6 +157,12 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
                 _ => {}
             }
         }
+    }
+    // Atomically advance the cursor; append the novelty diary (append
+    // is idempotent across crashes within the same tick — the cursor
+    // advances last).
+    if !novelty_lines.is_empty() {
+        append_jsonl(&novelty_path, &novelty_lines)?;
     }
     let offset = bytes.len().to_string();
     let tmp = cursor_path.with_extension("cursor.tmp");
@@ -139,8 +175,29 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
         tracing::info!(
             target: "pa_daemon::retrieval",
             applied,
+            novelty_entries = novelty_lines.len(),
             "synced memory add/remove events into flyrag"
         );
+        // Periodically compact to reclaim tombstone memory. A `0`
+        // return is a no-op; a non-zero return logs the drop count.
+        if applied.is_multiple_of(COMPACT_EVERY) || applied >= COMPACT_EVERY {
+            handle.compact();
+        }
+    }
+    Ok(())
+}
+
+/// Append `lines` to `path` as one JSONL line each, newline-terminated.
+fn append_jsonl(path: &Path, lines: &[String]) -> io::Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    for line in lines {
+        f.write_all(line.as_bytes())?;
+        f.write_all(b"\n")?;
     }
     Ok(())
 }

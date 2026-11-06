@@ -15,8 +15,8 @@ thiserror = { workspace = true }
 # github.com/coleleavitt/{flyrag,kenyon} and pinned by rev — a bump is
 # an architectural change (the RNG constants are a bit-level stability
 # surface persisted downstream state depends on, see kenyon README).
-flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "2d84d601fbdd070e9022ccc495799f361c1202af", features = ["serde"] }
-kenyon = { git = "https://github.com/coleleavitt/kenyon.git", rev = "1a29b994a16ea3f54f613f30dd7a5112d18cdb24", features = ["serde"] }
+flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "26c4d30a33b853a5060296a0b7bf06589b05364a", features = ["serde"] }
+kenyon = { git = "https://github.com/coleleavitt/kenyon.git", rev = "e1dc0c2b05e586da237d5718f231405aac9dc2e5", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"

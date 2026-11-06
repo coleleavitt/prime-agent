@@ -182,6 +182,76 @@ impl FlyRagReranker {
     pub fn base(&self) -> &Bm25Index {
         &self.bm25
     }
+
+    /// Admission-time novelty score for `text` in `[0, 1]`: 1 =
+    /// nothing like it stored, 0 = fully familiar. Pair with the
+    /// RAVO cert for an auditable "is this memory new signal" field.
+    ///
+    /// The underlying flyrag novelty-detection bar on `SciFact` was
+    /// 0.743 AUC against a predeclared 0.90 — too soft to GATE
+    /// admission, fine as a diagnostic field on the cert. See the
+    /// kenyon audit's "preregistered bars that MISSED" section.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::RetrievalError::FlyRag`] when flyrag's hash
+    /// path errors (dimension mismatch — should not happen for text
+    /// input going through the shared encoder).
+    pub fn novelty_score(&self, text: &str) -> Result<f64> {
+        // BM25 "is this a dup?" proxy: highest base_score of the
+        // top-16, normalised by a cap of 20 (prime-agent memories
+        // stay well under this, measured). 1.0 = nothing similar,
+        // 0.0 = max-known similarity.
+        let candidates = self.bm25.top_k(&Query::from_text(text), 16);
+        if candidates.is_empty() {
+            return Ok(1.0);
+        }
+        let top = candidates[0].base_score;
+        let normalised = (top / 20.0).clamp(0.0, 1.0);
+        Ok(1.0 - normalised)
+    }
+
+    /// Reclaim the memory held by tombstoned memories, calling through
+    /// to [`flyrag::FlyRag::compact`] and remapping this reranker's
+    /// own `forward` / `reverse` id maps and `offers` records with the
+    /// returned mapping.
+    ///
+    /// Returns the number of flyrag slots dropped. `0` means no
+    /// tombstones existed and the compact was a no-op.
+    ///
+    /// Safe to call after any number of `remove_memory` calls. Not a
+    /// hot path — meant to run periodically (every N refinements) from
+    /// pa-daemon's retrieval tick, not on every settle.
+    ///
+    /// # Errors
+    ///
+    /// Infallible today; the signature leaves room to surface a future
+    /// flyrag error.
+    pub fn compact(&mut self) -> Result<usize> {
+        let (mapping, dropped) = self.rag.compact();
+        if dropped == 0 {
+            return Ok(0);
+        }
+        // Rebuild forward/reverse so every memory_id now points at the
+        // new DocId. Memory ids whose doc was tombstoned drop out of
+        // both maps.
+        let mut new_forward: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::with_capacity(mapping.len());
+        let mut new_reverse: std::collections::HashMap<u32, String> =
+            std::collections::HashMap::with_capacity(mapping.len());
+        for (memory_id, &old_doc) in &self.forward {
+            if let Some(&new_doc) = mapping.get(&::flyrag::DocId(old_doc)) {
+                new_forward.insert(memory_id.clone(), new_doc.0);
+                new_reverse.insert(new_doc.0, memory_id.clone());
+            }
+        }
+        self.forward = new_forward;
+        self.reverse = new_reverse;
+        // Our own `offers` table holds memory_ids (strings), not
+        // DocIds — flyrag already remapped its own offer doc sets.
+        // Nothing to do here.
+        Ok(dropped)
+    }
 }
 
 impl Reranker for FlyRagReranker {
@@ -488,6 +558,48 @@ mod tests {
         let q = Query::from_text("install");
         let a = rerank_full(&mut r, &q, 2).unwrap();
         assert!(!r.feedback(a.offer, "nonexistent", Outcome::Helped).unwrap());
+    }
+
+    #[test]
+    fn novelty_score_falls_with_a_close_match_in_the_index() {
+        let r = seeded(3);
+        // A near-duplicate of a seeded doc reads LESS novel than fresh text.
+        let similar = r.novelty_score("install the dependencies with bun install").unwrap();
+        let unrelated = r.novelty_score("the sky is purple and the clouds sing").unwrap();
+        assert!(
+            unrelated > similar,
+            "unrelated text more novel than a near-duplicate: {unrelated} > {similar}"
+        );
+        assert!((0.0..=1.0).contains(&similar));
+        assert!((0.0..=1.0).contains(&unrelated));
+    }
+
+    #[test]
+    fn novelty_score_is_one_for_an_empty_index() {
+        let r = FlyRagReranker::new(1).unwrap();
+        // No memories added → nothing to be similar to.
+        let n = r.novelty_score("anything at all").unwrap();
+        assert!((n - 1.0).abs() < 1e-9, "empty index reads fully novel: {n}");
+    }
+
+    #[test]
+    fn compact_reclaims_tombstones_and_preserves_live_mappings() {
+        let mut r = seeded(19);
+        // Retire two memories.
+        assert!(r.remove_memory("bun").unwrap());
+        assert!(r.remove_memory("npm").unwrap());
+        assert_eq!(r.len(), 2, "two live");
+        let dropped = r.compact().unwrap();
+        assert_eq!(dropped, 2);
+        assert_eq!(r.len(), 2, "still two live");
+        // Ids for retired memories are gone.
+        assert!(r.doc_weights("bun").is_none());
+        assert!(r.doc_weights("npm").is_none());
+        // Live memories still rank + accept feedback on their new ids.
+        let q = rerank_full(&mut r, &Query::from_text("daemon restart"), 2).unwrap();
+        assert!(!q.ranked.is_empty());
+        let kept = q.ranked[0].id.clone();
+        assert!(r.doc_weights(&kept).is_some());
     }
 
     #[test]

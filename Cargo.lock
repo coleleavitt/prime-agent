@@ -1202,7 +1202,7 @@ dependencies = [
 [[package]]
 name = "flyrag"
 version = "0.1.0"
-source = "git+https://github.com/coleleavitt/flyrag.git?rev=2d84d601fbdd070e9022ccc495799f361c1202af#2d84d601fbdd070e9022ccc495799f361c1202af"
+source = "git+https://github.com/coleleavitt/flyrag.git?rev=26c4d30a33b853a5060296a0b7bf06589b05364a#26c4d30a33b853a5060296a0b7bf06589b05364a"
 dependencies = [
  "kenyon",
  "serde",
@@ -1992,7 +1992,7 @@ dependencies = [
 [[package]]
 name = "kenyon"
 version = "0.1.0"
-source = "git+https://github.com/coleleavitt/kenyon.git?rev=1a29b994a16ea3f54f613f30dd7a5112d18cdb24#1a29b994a16ea3f54f613f30dd7a5112d18cdb24"
+source = "git+https://github.com/coleleavitt/kenyon.git?rev=e1dc0c2b05e586da237d5718f231405aac9dc2e5#e1dc0c2b05e586da237d5718f231405aac9dc2e5"
 dependencies = [
  "serde",
  "thiserror",
