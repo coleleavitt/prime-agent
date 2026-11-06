@@ -879,8 +879,11 @@ pub enum PerTurnReviewOutcome {
     /// The trigger did not even run the review; see [`PerTurnSkipReason`].
     Skipped(PerTurnSkipReason),
     /// The review ran and said no; the marker has advanced so unchanged
-    /// prose will not fire the trigger again.
-    Declined,
+    /// prose will not fire the trigger again. The carried rationale is
+    /// the reviewer model's own `rationale` field, so the daemon's
+    /// `[extractMemories] review declined` log line names *why* the turn
+    /// was skipped instead of just that it was.
+    Declined(String),
     /// The review approved: the caller runs the refinement with this
     /// proposal (RAVO still gates it inside the run).
     Approved(AutoRefineReview),
@@ -919,8 +922,10 @@ impl PerTurnSkipReason {
 pub enum PerTurnRunOutcome {
     /// The trigger did not even run the review (see [`PerTurnSkipReason`]).
     Skipped(PerTurnSkipReason),
-    /// The review ran and said no.
-    Declined,
+    /// The review ran and said no; the carried rationale is the reviewer
+    /// model's own `rationale` field (see
+    /// [`PerTurnReviewOutcome::Declined`]).
+    Declined(String),
     /// The refinement ran; the result carries the written entries.
     Ran(Box<RefinementResult>),
 }
@@ -1238,7 +1243,7 @@ impl AgentSession {
         Ok(if review.should_refine {
             PerTurnReviewOutcome::Approved(review)
         } else {
-            PerTurnReviewOutcome::Declined
+            PerTurnReviewOutcome::Declined(review.rationale)
         })
     }
 
@@ -1319,7 +1324,9 @@ impl AgentSession {
             .await?
         {
             PerTurnReviewOutcome::Skipped(reason) => return Ok(PerTurnRunOutcome::Skipped(reason)),
-            PerTurnReviewOutcome::Declined => return Ok(PerTurnRunOutcome::Declined),
+            PerTurnReviewOutcome::Declined(rationale) => {
+                return Ok(PerTurnRunOutcome::Declined(rationale));
+            }
             PerTurnReviewOutcome::Approved(review) => review,
         };
         let run = self

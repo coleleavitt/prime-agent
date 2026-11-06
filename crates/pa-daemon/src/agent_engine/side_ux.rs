@@ -149,9 +149,12 @@ impl AgentSessionEngine {
                             );
                             Ok(SideUxOutcome::Nothing)
                         }
-                        Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Declined) => {
+                        Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Declined(
+                            rationale,
+                        )) => {
                             tracing::info!(
                                 target: "pa_daemon::memory_extract",
+                                rationale = %rationale,
                                 "[extractMemories] review declined",
                             );
                             Ok(SideUxOutcome::Nothing)
