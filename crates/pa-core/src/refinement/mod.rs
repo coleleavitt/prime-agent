@@ -641,6 +641,7 @@ pub mod planner;
 pub mod prompt_hook;
 pub mod ranking;
 pub mod recurrence;
+pub mod retrieval;
 pub mod relocate;
 pub mod store;
 
