@@ -495,11 +495,14 @@ fn direct_attach_ticket_streams_across_supervisor_kill9() {
         }),
     );
     assert_eq!(attach2["success"], true, "reattach failed: {attach2}");
+    // The persisted turn carries the user row, the assistant reply and the
+    // `turn_duration` custom row Claude Code 2.1.316 adds at every settled
+    // turn (`showTurnDuration`, default on).
     assert_eq!(
         attach2["data"]["snapshot"]["messages"]
             .as_array()
             .map(Vec::len),
-        Some(2),
+        Some(3),
         "the snapshot carries the persisted first turn: {attach2}"
     );
 

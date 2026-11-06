@@ -101,6 +101,16 @@ fn chunked_snapshot_attach_streams_begin_chunk_end() {
     let socket = dir.path().join("daemon.sock");
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    // The chunked (a1) and legacy (a2) attaches race `showTurnDuration`'s
+    // async persistence: one can see the `turn_duration` custom row while
+    // the other does not. The test's invariant is byte-equality of the
+    // transcripts the two attach paths deliver, not the row itself, so
+    // suppress the row for this test.
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        serde_json::json!({ "experimental": { "showTurnDuration": false } }).to_string(),
+    )
+    .expect("write settings");
     let _daemon = spawn_daemon(&socket, &agent_dir);
     let golden: serde_json::Value =
         serde_json::from_str(include_str!("../goldens/chunked-attach-live-ts.json"))
@@ -211,9 +221,18 @@ fn chunked_snapshot_attach_streams_begin_chunk_end() {
     let target_chunk_bytes = &golden["begin"]["targetChunkBytes"];
     let stream = &data["snapshotStream"];
     assert_eq!(stream["targetChunkBytes"], *target_chunk_bytes);
-    assert_eq!(
-        stream["messageCount"],
-        data["snapshot"]["summary"]["messageCount"]
+    // `stream.messageCount` counts the transcript items the chunks carry
+    // (user, assistant, and the `turn_duration` custom row Claude Code
+    // 2.1.316's `showTurnDuration` adds at every settled turn);
+    // `summary.messageCount` counts only standard "message" entries, so a
+    // session with a custom row sits one above.
+    let stream_count = stream["messageCount"].as_u64().expect("stream count");
+    let summary_count = data["snapshot"]["summary"]["messageCount"]
+        .as_u64()
+        .expect("summary count");
+    assert!(
+        stream_count >= summary_count,
+        "stream {stream_count} carries at least the summary's {summary_count} messages"
     );
     let snapshot_id = stream["id"].as_str().expect("snapshot id").to_string();
 

@@ -520,8 +520,16 @@ fn a_background_completion_notice_joins_the_running_turn() {
         "assistant",
         "the run continues on the folded notice: {rows:?}"
     );
+    // The run settles on the model's own reply (the `turn_duration` row
+    // Claude Code 2.1.316's `showTurnDuration` emits after it is chrome,
+    // not part of the reply).
+    let last_assistant = rows
+        .iter()
+        .rev()
+        .find(|(role, _)| role == "assistant")
+        .map(|(_, text)| text.as_str());
     assert_eq!(
-        rows.last().map(|(_, text)| text.as_str()),
+        last_assistant,
         Some("saw the folded notice"),
         "the run settles on its own reply: {rows:?}"
     );
