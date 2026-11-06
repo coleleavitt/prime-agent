@@ -1202,7 +1202,7 @@ dependencies = [
 [[package]]
 name = "flyrag"
 version = "0.1.0"
-source = "git+https://github.com/coleleavitt/flyrag.git?rev=937bf1bb785d0936c2f8a7444f59dbc560a3e888#937bf1bb785d0936c2f8a7444f59dbc560a3e888"
+source = "git+https://github.com/coleleavitt/flyrag.git?rev=2d84d601fbdd070e9022ccc495799f361c1202af#2d84d601fbdd070e9022ccc495799f361c1202af"
 dependencies = [
  "kenyon",
  "serde",

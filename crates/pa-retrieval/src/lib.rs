@@ -81,6 +81,21 @@ pub trait Reranker: Send + Sync {
     /// unexpected way (e.g. codec failures during persistence).
     fn feedback(&mut self, offer: OfferId, memory_id: &str, outcome: Outcome) -> Result<bool>;
 
+    /// Record one outcome for a memory without attributing it to a specific
+    /// offer — the cert-stream path. Used when the signal came from a
+    /// supersede event or a RAVO coverage match that long out-lived the
+    /// 10,000-offer window the reranker remembers. Default `Ok(false)` so
+    /// non-learning rerankers accept the call silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetrievalError`] when the underlying flyrag rejects the
+    /// id for a reason other than "offer forgotten" (e.g. unknown memory).
+    fn feedback_detached(&mut self, memory_id: &str, outcome: Outcome) -> Result<bool> {
+        let _ = (memory_id, outcome);
+        Ok(false)
+    }
+
     /// Add a memory to the index. Idempotent: re-adding an existing id
     /// updates its stored text in-place (the old code is tombstoned, the
     /// new one gets a fresh slot — flyrag's banks survive the swap for

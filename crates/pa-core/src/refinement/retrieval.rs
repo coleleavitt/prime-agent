@@ -147,6 +147,47 @@ impl RerankerHandle {
         }
     }
 
+    /// Record a cert-stream outcome for a memory with no live offer to
+    /// attribute to — a supersede, a RAVO coverage match, any signal that
+    /// arrived after the rerank that showed the memory was evicted from
+    /// the offer window. Routes to [`pa_retrieval::Reranker::feedback_detached`],
+    /// which trains flyrag on the doc's own KC units.
+    pub fn record_feedback_detached(
+        &self,
+        memory_id: &str,
+        outcome: pa_retrieval::Outcome,
+    ) {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match guard.feedback_detached(memory_id, outcome) {
+            Ok(true) => {
+                tracing::debug!(
+                    target: "pa_core::retrieval",
+                    %memory_id,
+                    ?outcome,
+                    "detached feedback trained flyrag"
+                );
+            }
+            Ok(false) => {
+                tracing::trace!(
+                    target: "pa_core::retrieval",
+                    %memory_id,
+                    "detached feedback for unknown memory id; skipping"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "pa_core::retrieval",
+                    %memory_id,
+                    %err,
+                    "reranker rejected detached feedback; skipping"
+                );
+            }
+        }
+    }
+
     /// Execute a full rerank against the current index.
     ///
     /// # Errors

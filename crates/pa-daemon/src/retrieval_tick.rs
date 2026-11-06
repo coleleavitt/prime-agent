@@ -33,31 +33,20 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
                     Outcome::Helped => pa_retrieval::Outcome::Helped,
                     Outcome::Misled => pa_retrieval::Outcome::Misled,
                 };
-                // There's no stable offer id for a cert-stream signal (the
-                // signal is over admitted edits, not over a prior rerank).
-                // The retrieval tick's feedback is detached: we route
-                // through `record_feedback` with a well-known "detached"
-                // offer that flyrag will reject as UnknownOffer — flyrag
-                // then returns Ok(false) and we move on. A real
-                // offer-based feedback path fires only from the digest
-                // render seam, which has the offer in hand.
-                //
-                // TODO(retrieval-detached-feedback): extend
-                // `FlyRagReranker::feedback_detached` upstream so a
-                // cert-stream signal can train the index without an
-                // offer id. For now the add/remove pass below does the
-                // load-bearing work.
-                handle.record_feedback(
-                    pa_retrieval::OfferId(u64::MAX),
-                    &signal.memory_id,
-                    outcome,
-                );
+                // Cert-stream signals have no offer id — the signal is
+                // over admitted edits, not over a prior rerank. Route
+                // through the detached-feedback path, which trains
+                // flyrag on the document's own KC units (not on a
+                // query's). The upstream flyrag change
+                // `FlyRag::feedback_detached` (rev 2d84d601) is what
+                // makes this a real update instead of a silent no-op.
+                handle.record_feedback_detached(&signal.memory_id, outcome);
                 applied += 1;
             }
-            tracing::debug!(
+            tracing::info!(
                 target: "pa_daemon::retrieval",
                 applied,
-                "fed cert-stream signals into flyrag"
+                "fed cert-stream signals into flyrag (detached)"
             );
         }
         Ok(_) => {}

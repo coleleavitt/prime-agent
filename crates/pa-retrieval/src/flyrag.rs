@@ -284,6 +284,21 @@ impl Reranker for FlyRagReranker {
         }
     }
 
+    fn feedback_detached(&mut self, memory_id: &str, outcome: Outcome) -> Result<bool> {
+        let Some(&doc) = self.forward.get(memory_id) else {
+            return Ok(false);
+        };
+        let fly_outcome = match outcome {
+            Outcome::Helped => fly::Outcome::Helped,
+            Outcome::Misled => fly::Outcome::Misled,
+        };
+        match self.rag.feedback_detached(fly::DocId(doc), fly_outcome) {
+            Ok(_) => Ok(true),
+            Err(::flyrag::FlyRagError::UnknownDocument(_)) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn add_memory(&mut self, memory_id: &str, text: &str) -> Result<()> {
         if let Some(&doc) = self.forward.get(memory_id) {
             // Re-add: tombstone the old flyrag slot and drop the forward
@@ -473,6 +488,33 @@ mod tests {
         let q = Query::from_text("install");
         let a = rerank_full(&mut r, &q, 2).unwrap();
         assert!(!r.feedback(a.offer, "nonexistent", Outcome::Helped).unwrap());
+    }
+
+    #[test]
+    fn feedback_detached_trains_without_a_live_offer() {
+        // The cert-stream path: a supersede or RAVO coverage match emits
+        // (memory_id, outcome) with no offer id. feedback_detached routes
+        // through flyrag::FlyRag::feedback_detached, which learns on the
+        // doc's own units.
+        let mut r = seeded(21);
+        // Known id trains the readout.
+        let before = r.doc_weights("bun").map_or(0, |w| {
+            w.use_weights.len() + w.skip_weights.len()
+        });
+        assert_eq!(before, 0, "cold doc has no moved weights");
+        assert!(
+            r.feedback_detached("bun", Outcome::Misled).unwrap(),
+            "detached feedback accepted"
+        );
+        let after = r.doc_weights("bun").unwrap();
+        assert!(
+            !after.use_weights.is_empty(),
+            "Misled depresses the `use` bank"
+        );
+        // Unknown id returns Ok(false), not an error.
+        assert!(
+            !r.feedback_detached("not_a_memory_id", Outcome::Helped).unwrap()
+        );
     }
 
     #[test]
