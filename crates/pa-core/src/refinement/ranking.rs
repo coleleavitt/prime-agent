@@ -205,7 +205,19 @@ fn native_entry_order(
     }
 }
 
-#[derive(Debug, Default)]
+/// External ranking hook: gets this kind's enabled entries (already in
+/// their native TF-IDF order) + the query terms, returns the ids to show
+/// in order, best first. Length may be <= input length (a reranker can
+/// drop a doc it has learned is unhelpful). Returning `None` falls back
+/// to the native TF-IDF sort.
+///
+/// `pa-retrieval::FlyRagReranker` is the intended producer; this crate
+/// stays dep-free of pa-retrieval so the trait object crosses the boundary
+/// without a cycle.
+pub type HarnessRerankHook =
+    std::sync::Arc<dyn Fn(&[HarnessEntry], &HarnessQueryTerms) -> Option<Vec<String>> + Send + Sync>;
+
+#[derive(Default)]
 pub struct HarnessStatePromptOptions {
     pub max_entries_per_kind: Option<usize>,
     pub max_refinements: Option<usize>,
@@ -218,6 +230,26 @@ pub struct HarnessStatePromptOptions {
     /// ([`super::prompt_hook`]); `None` (or an empty adjustment) renders the
     /// native digest byte for byte.
     pub adjustment: Option<super::prompt_hook::HarnessPromptAdjustment>,
+    /// Pluggable reranker over harness entries (see [`HarnessRerankHook`]).
+    /// `None` keeps the native TF-IDF order byte-for-byte; the daemon can
+    /// hand in a hook wrapping a `pa_retrieval::FlyRagReranker`.
+    pub rerank_hook: Option<HarnessRerankHook>,
+}
+
+impl std::fmt::Debug for HarnessStatePromptOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HarnessStatePromptOptions")
+            .field("max_entries_per_kind", &self.max_entries_per_kind)
+            .field("max_refinements", &self.max_refinements)
+            .field("max_content_length", &self.max_content_length)
+            .field("include_ipython_examples", &self.include_ipython_examples)
+            .field("include_shell_examples", &self.include_shell_examples)
+            .field("include_refine_examples", &self.include_refine_examples)
+            .field("query_terms", &self.query_terms)
+            .field("adjustment", &self.adjustment)
+            .field("rerank_hook", &self.rerank_hook.is_some())
+            .finish()
+    }
 }
 
 /// Render the harness state as the model-facing digest block. Strings must
@@ -318,6 +350,39 @@ pub fn format_harness_state_for_prompt(
                 .then_with(|| rank(a).cmp(&rank(b)))
                 .then_with(|| native_entry_order(a, b, query_terms.as_ref(), ranked_idf.as_ref()))
         });
+        // Hook: once the native sort has established the baseline, apply
+        // an external reranker's ordering over this kind's entries if one
+        // is attached. Packages keep their position (they're read-only
+        // overlays); only editable entries are reordered among themselves.
+        if let (Some(hook), Some(terms)) = (options.rerank_hook.as_ref(), query_terms.as_ref()) {
+            if !entries.is_empty() && !terms.is_empty() {
+                let (packages, editable): (Vec<_>, Vec<_>) =
+                    entries.into_iter().partition(package);
+                if let Some(ids) = hook(&editable, terms) {
+                    let by_id: std::collections::HashMap<String, HarnessEntry> =
+                        editable.into_iter().map(|e| (e.id.clone(), e)).collect();
+                    let mut reordered: Vec<HarnessEntry> = Vec::with_capacity(by_id.len());
+                    for id in &ids {
+                        if let Some(entry) = by_id.get(id) {
+                            reordered.push(entry.clone());
+                        }
+                    }
+                    // Any editable entry the hook omitted falls to the end,
+                    // native-order (so a dropped doc still shows under
+                    // `+N more`).
+                    for (_, entry) in by_id {
+                        if !reordered.iter().any(|e| e.id == entry.id) {
+                            reordered.push(entry);
+                        }
+                    }
+                    entries = packages;
+                    entries.extend(reordered);
+                } else {
+                    entries = packages;
+                    entries.extend(editable);
+                }
+            }
+        }
         total_entries += entries.len();
         let kind_name = kind;
         if kind_name == "subagent" && !entries.is_empty() && include_ipython {
@@ -1093,5 +1158,77 @@ mod tests {
             &HarnessStatePromptOptions::default(),
         );
         assert!(empty_text.contains("No saved harness entries yet."));
+    }
+
+    /// The rerank hook: when attached, its returned order wins over the
+    /// native TF-IDF sort for editable entries; a returned-but-missing id
+    /// is dropped; an omitted-from-the-hook entry falls to the end in
+    /// native order. `None` return keeps the native sort byte-for-byte.
+    #[test]
+    fn rerank_hook_reorders_editable_entries() {
+        let mut state = crate::refinement::empty_harness_state();
+        let memories = state.entries.entry(RefinementKind::Memory).or_default();
+        for (id, title) in [
+            ("alpha", "Alpha lesson about bash"),
+            ("beta", "Beta lesson about edits"),
+            ("gamma", "Gamma lesson about recall"),
+        ] {
+            let entry = make_entry(id, title, "", "general");
+            memories.insert(id.to_string(), entry);
+        }
+
+        let mut terms = HarnessQueryTerms::new();
+        terms.insert("lesson".to_string(), 1.0);
+
+        // Baseline: query_terms + no hook.
+        let baseline = format_harness_state_for_prompt(
+            &state,
+            &HarnessStatePromptOptions {
+                query_terms: Some(terms.clone()),
+                ..HarnessStatePromptOptions::default()
+            },
+        );
+        assert!(baseline.contains("alpha"));
+
+        // Hook that reverses the alphabetical order the native sort
+        // produces and drops `beta` to the end.
+        let hook: HarnessRerankHook = std::sync::Arc::new(|entries, _| {
+            let mut ids: Vec<String> = entries
+                .iter()
+                .filter(|e| e.id != "beta")
+                .map(|e| e.id.clone())
+                .collect();
+            ids.reverse();
+            Some(ids)
+        });
+        let reranked = format_harness_state_for_prompt(
+            &state,
+            &HarnessStatePromptOptions {
+                query_terms: Some(terms.clone()),
+                rerank_hook: Some(hook),
+                ..HarnessStatePromptOptions::default()
+            },
+        );
+        let pos = |hay: &str, needle: &str| hay.find(needle).unwrap_or(usize::MAX);
+        assert!(
+            pos(&reranked, "gamma") < pos(&reranked, "alpha"),
+            "hook put gamma above alpha: {reranked}"
+        );
+        assert!(
+            pos(&reranked, "alpha") < pos(&reranked, "beta"),
+            "beta (dropped from the hook's list) falls to the end: {reranked}"
+        );
+
+        // `None` from the hook → native TF-IDF order.
+        let fallback_hook: HarnessRerankHook = std::sync::Arc::new(|_, _| None);
+        let fallback = format_harness_state_for_prompt(
+            &state,
+            &HarnessStatePromptOptions {
+                query_terms: Some(terms),
+                rerank_hook: Some(fallback_hook),
+                ..HarnessStatePromptOptions::default()
+            },
+        );
+        assert_eq!(baseline, fallback, "a None hook keeps the native order");
     }
 }
