@@ -76,12 +76,18 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   `bash.output` `sinceBytes`). Send-now (Ctrl+Enter) moves the running cell to the background (`detach`, protocol 6,
   daemon `detach_running_cell`) and interrupts only what cannot move. Factory runs notify on the follow-up lane
   (`task_notification` rows); the bundled `tasks` skill is the model's task list.
-- Waiting follows Claude Code 2.1.316: pa-bash's `sleep` guard refuses a script whose first command is `sleep N`,
-  N >= 25 (`allow_sleep=True` / `PI_BASH_ALLOW_SLEEP=1`; loops, groups, later sleeps and `sleep N &` pass);
-  `bash(timeout=)` moves a command still running at the limit to the background (`BashResult.backgrounded` and
-  `.handle`, the usual `[bash-done]` notice; `on_timeout="kill"` keeps the kill); `rlm.monitor` takes `url=` (a
-  receive-only WebSocket client in `rlm/_websocket.py`, no dependency) and `persistent=True`. Adoption telemetry
-  schema 7: `bash_sleep_refused`, `bash_timeout_backgrounded`, `monitor_started` (kernel `telemetry.emit` bridge).
+- Waiting follows Claude Code 2.1.316, extended (`bcd200082`) with a polling-loop check CC itself lacks:
+  pa-bash's `sleep` guard refuses a script whose first command is `sleep N`, N >= 25, AND any `for`/`while`
+  (not `until`) reachable at the top level whose body waits with `sleep` and would hold the turn open the
+  same way — budget `iters * sleep_s >= 60s` with literal iters (`$(seq LO HI)`, `{LO..HI}`, word list),
+  `sleep_s >= 10s` per iteration with unknown iters, or any sleep inside `while :` / `while true` /
+  `while ((1))`. `until`, a backgrounded loop (`(while :; do ...; sleep 3; done) &`), and `sleep` run
+  with `&` inside the body still pass (`allow_sleep=True` / `PI_BASH_ALLOW_SLEEP=1` bypass both rules).
+  `bash(timeout=)` moves a command still running at the limit to the background (`BashResult.backgrounded`
+  and `.handle`, the usual `[bash-done]` notice; `on_timeout="kill"` keeps the kill); `rlm.monitor` takes
+  `url=` (a receive-only WebSocket client in `rlm/_websocket.py`, no dependency) and `persistent=True`.
+  Adoption telemetry schema 7: `bash_sleep_refused`, `bash_timeout_backgrounded`, `monitor_started`
+  (kernel `telemetry.emit` bridge).
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
 - The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the
@@ -274,6 +280,29 @@ Open:
   config, test `HOME`), and the agent-dir/kernel-venv resolvers and binary startups refuse the passwd home's
   `~/.prime`, `~/.anthropic-accounts` and `~/.claude` in any test process (`PA_TEST_PROTECTED_HOME` adds a sentinel).
 - Ask before removing functionality that looks intentional. No emoji in commits, code, or docs.
+
+## Install and daemon
+
+- There is one installed binary: `~/.cargo/bin/prime-agent` (release, ~515 MB). `~/.local/bin/prime-agent`
+  is a **symbolic link** to it; both paths reach the same build. Claims that the two live on different
+  branches (which this file's memory notes used to carry) were an inode-check artifact, not real state.
+- Reinstall from this checkout: `cargo install --path crates/pa-cli --locked --force`. It writes the
+  release profile straight to `~/.cargo/bin/prime-agent`. Do not hand-install the debug binary
+  (~1.2 GB); do not fall back to `install-rust.sh` unless you want the R2 release-channel payload
+  (not this checkout). The atomic-rename recipe (`install -m 0755 SRC …new && mv -f`) is only needed
+  when overwriting a binary the running daemon still holds (ETXTBSY), and `cargo install` already
+  does that via its own atomic replace.
+- **Worker- or daemon-side changes do not reach a live session until the daemon restarts.** The guards
+  (pa-bash), host requests, session-engine hooks, auth state, prompt layers, feature crates — all of
+  these ride in the worker or daemon process. A reinstall alone updates the on-disk binary; the
+  running supervisor + workers keep the previous inode (and the previous code) until
+  `prime-agent shutdown --force` is run. That command kills every active agent (resumable via
+  `--resume`) and, if run from inside a daemon-managed session, that session too, so it needs
+  explicit user approval per `.claude/rules/security.md`.
+- Confirming the running daemon matches the install: `sha256sum /proc/<pid>/exe` vs
+  `sha256sum ~/.cargo/bin/prime-agent`. **Inode comparison is not reliable** — `/proc/PID/exe` and
+  `~/.cargo/bin/` sit on different `st_dev`, so their inode numbers are never comparable (2026-10-28
+  lesson). Use the hash.
 
 ## Validation
 
