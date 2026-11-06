@@ -765,6 +765,10 @@ fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: boo
         .arg("kitty_exit_child_mode")
         .env(CHILD_ROUTE_ENV, route.name())
         .env(CHILD_SOCKET_ENV, socket)
+        // The force-quit route depends on the exit flush stalling on a
+        // filled pty so the watchdog fires its own restore; the flush is
+        // off by default now, so opt back in.
+        .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
         .env_remove("KITTY_WINDOW_ID")
         .env_remove("GHOSTTY_RESOURCES_DIR")

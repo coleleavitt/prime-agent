@@ -444,6 +444,11 @@ fn spawn_child(socket: &std::path::Path, slave: &OwnedFd) -> Child {
         // summary and the exit needle ("test result: ok") would never match.
         .args(["--color", "never"])
         .env(CHILD_SOCKET_ENV, socket)
+        // The exit-flush default is off (the main screen restores on leaving
+        // the alternate screen, matching vim/less/Claude Code). This test
+        // asserts the replayed transcript's shell-integration markers reach
+        // the primary screen, so opt back in.
+        .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
         .stdin(slave_as_stdio(slave))
         .stdout(slave_as_stdio(slave))

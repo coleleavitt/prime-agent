@@ -439,6 +439,10 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
         // The parent observes the child's handoff result through the PTY.
         .arg("--nocapture")
         .env(CHILD_SOCKET_ENV, socket)
+        // Exit-flush is off by default (main screen restores on exit). These
+        // tests assert the transcript tail and backfill pages reach the
+        // primary screen, so opt back in.
+        .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
         .stdin(slave_as_stdio(slave))
         .stdout(slave_as_stdio(slave))

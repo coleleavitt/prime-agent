@@ -464,6 +464,10 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
         .arg("--exact")
         .arg("slow_drain_child_mode")
         .env(CHILD_SOCKET_ENV, socket)
+        // These tests exercise the exit-flush drain (whole transcript streamed
+        // through the viewport on exit); the flush is off by default now, so
+        // opt back in.
+        .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
         .stdin(slave_as_stdio(slave))
         .stdout(slave_as_stdio(slave))
