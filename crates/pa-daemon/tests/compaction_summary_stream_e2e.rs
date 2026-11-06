@@ -394,8 +394,16 @@ fn threshold_compaction_streams_summary_deltas_to_attached_clients() {
     // crossing fires; a tiny keep-recent budget keeps the seeded turns summarizable.
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({ "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10} })
-            .to_string(),
+        json!({
+            "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10},
+            // Settled-turn side-model UX routes through the session's own
+            // stream_fn and would shift the mock's request indices this test
+            // relies on. Keep it quiet.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
+        })
+        .to_string(),
     )
     .expect("write settings.json");
     let socket = dir.path().join("daemon.sock");

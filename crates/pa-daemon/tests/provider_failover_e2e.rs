@@ -414,6 +414,14 @@ fn setup(
         agent_dir.join("settings.json"),
         json!({
             "compaction": {"enabled":true,"keepRecentTokens":10},
+            // The settled-turn side-model UX routes through the session's own
+            // stream_fn and so adds a provider call per fire. These tests
+            // pin the failed-primary and backup counts of one main turn, so
+            // suppress the extra calls (recap, titles, tool-use labels) that
+            // would otherwise shift the counts.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
             "retry": {
                 "enabled": true,
                 "maxRetries": 1,
@@ -804,6 +812,12 @@ fn failover_switch_and_restore_rebind_the_kernel_model_facts() {
     std::fs::write(
         agent_dir.join("settings.json"),
         json!({
+            // Settled-turn side-model UX is routed through the session's
+            // stream_fn and would add provider calls that shift the counts
+            // these tests pin. Keep the main-turn stream the only call.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
             "retry": {
                 "enabled": true,
                 "maxRetries": 1,

@@ -439,11 +439,12 @@ fn setup(name: &str) -> (tempfile::TempDir, DelayedMock, Supervisor, Client, Str
         .to_string(),
     )
     .expect("write models.json");
-    // Disable the side-model session title so it does not add a model call to
-    // the lane-ordering count (this test exercises queue delivery, not titles).
+    // Disable every side-model UX call so none of them add a model call to the
+    // lane-ordering count (this test exercises queue delivery, not titles /
+    // away recap).
     std::fs::write(
         agent_dir.join("settings.json"),
-        r#"{"sessionTitlesEnabled":false}"#,
+        r#"{"sessionTitlesEnabled":false,"awaySummaryEnabled":false}"#,
     )
     .expect("write settings.json");
     let socket = dir.path().join(format!("{name}.sock"));

@@ -409,8 +409,16 @@ fn abort_compaction_mid_threshold_run_records_the_cancelled_outcome() {
     // 126_010 crossing fires.
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({ "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10} })
-            .to_string(),
+        json!({
+            "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10},
+            // Settled-turn side-model UX routes through the session's own
+            // stream_fn and would shift the mock's request indices this test
+            // relies on to catch the compaction summarizer. Keep it quiet.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
+        })
+        .to_string(),
     )
     .expect("write settings.json");
     let socket = dir.path().join("daemon.sock");
@@ -717,8 +725,16 @@ fn wedged_worker_abort_acks_immediately_and_declares_terminal() {
     .expect("write models.json");
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({ "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10} })
-            .to_string(),
+        json!({
+            "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10},
+            // Settled-turn side-model UX routes through the session's own
+            // stream_fn and would shift the mock's request indices this test
+            // relies on to catch the compaction summarizer. Keep it quiet.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
+        })
+        .to_string(),
     )
     .expect("write settings.json");
     let socket = dir.path().join("daemon.sock");

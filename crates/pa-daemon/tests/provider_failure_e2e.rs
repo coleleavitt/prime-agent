@@ -436,7 +436,16 @@ fn setup_with_rejection(
     // A fast retry policy so the test asserts the loop, not the delays.
     std::fs::write(
         agent_dir.join("settings.json"),
-        json!({ "retry": { "enabled": true, "maxRetries": 2, "baseDelayMs": 50 } }).to_string(),
+        json!({
+            // Settled-turn side-model UX routes through the session's own
+            // stream_fn and would add provider calls that shift the request
+            // counts these tests pin. Keep the main-turn stream the only call.
+            "sessionTitlesEnabled": false,
+            "awaySummaryEnabled": false,
+            "toolUseLabelsEnabled": false,
+            "retry": { "enabled": true, "maxRetries": 2, "baseDelayMs": 50 },
+        })
+        .to_string(),
     )
     .expect("write settings.json");
     let socket = dir.path().join(format!("{name}.sock"));
