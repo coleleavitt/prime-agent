@@ -514,7 +514,11 @@ fn up_on_an_empty_editor_takes_the_queued_messages_into_it() {
             wait_for("second queued"),
             key(KeyCode::Up, KeyModifiers::NONE),
             HeadlessStep::WaitMs(300),
-            // The turn ends (the run's settle waits for it).
+            // The pulled messages sit in the editor as a draft: a plain Ctrl+C
+            // clears the typed draft first (873b7c182); the second press on
+            // the empty editor interrupts and ends the turn.
+            ctrl('c'),
+            HeadlessStep::WaitMs(100),
             ctrl('c'),
             HeadlessStep::WaitMs(100),
         ],
@@ -748,8 +752,12 @@ fn ctrl_c_with_a_selection_copies_and_does_nothing_else() {
             ),
             ctrl('c'),
             HeadlessStep::WaitMs(100),
-            // Then a plain press interrupts the running turn (ending it here).
+            // The draft still sits in the editor ("copy me"): a plain Ctrl+C
+            // clears the typed draft first (873b7c182); a second plain press
+            // on the empty editor interrupts and ends the turn.
             key(KeyCode::Right, KeyModifiers::NONE),
+            ctrl('c'),
+            HeadlessStep::WaitMs(100),
             ctrl('c'),
             HeadlessStep::WaitMs(100),
         ],
@@ -758,11 +766,11 @@ fn ctrl_c_with_a_selection_copies_and_does_nothing_else() {
     assert_eq!(
         types(&commands),
         vec!["abort_and_send_queued"],
-        "only the second press interrupted"
+        "only the interrupting press sent a command"
     );
     assert!(
-        frames.iter().rev().any(|frame| frame.contains("copy me")),
-        "the copy kept the editor text"
+        frames.iter().any(|frame| frame.contains("copy me")),
+        "the copy showed the editor text at least once"
     );
 }
 

@@ -50,7 +50,7 @@ for line in sys.stdin:
     pending = cell
     send({"event": "host_request", "id": "h-" + cell, "data": {
         "type": "bash.run", "command": code, "script": code, "cwd": os.getcwd(),
-        "env": {"PATH": "/usr/bin:/bin"}, "launchBypass": [], "allow": [],
+        "env": {"PATH": "/usr/bin:/bin"}, "launchBypass": [], "allow": ["sleep"],
         "kernelPid": os.getpid(), "waitMs": 20000,
     }})
     threading.Timer(0.3, send, ({"event": "host_cancel", "id": "h-" + cell},)).start()
