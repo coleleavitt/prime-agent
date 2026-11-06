@@ -513,11 +513,26 @@ pub fn observation_ordinal(ledger: Option<&FailureLedger>) -> u64 {
 /// refine triggers and the gate's failure opponents.
 #[must_use]
 pub fn recurring_failures(ledger: &FailureLedger, threshold: Option<u64>) -> Vec<FailureRecord> {
+    recurring_failures_excluding(ledger, threshold, &HashSet::new())
+}
+
+/// [`recurring_failures`] minus any fingerprint id in `already_targeted`.
+/// The gate uses this to drop opponents an existing entry has already claimed
+/// (through `HarnessEntry.targets_fingerprints`), so a well-scoped proposal in
+/// another domain is not penalized for not re-addressing them. Pass an empty
+/// set to get the plain recurrence list.
+#[must_use]
+pub fn recurring_failures_excluding<S: std::hash::BuildHasher>(
+    ledger: &FailureLedger,
+    threshold: Option<u64>,
+    already_targeted: &HashSet<&str, S>,
+) -> Vec<FailureRecord> {
     let threshold = threshold.unwrap_or(DEFAULT_RECURRENCE_THRESHOLD);
     let mut records: Vec<FailureRecord> = ledger
         .failures
         .values()
         .filter(|record| is_recurring(record, threshold))
+        .filter(|record| !already_targeted.contains(record.fingerprint.id.as_str()))
         .cloned()
         .collect();
     sort_records(&mut records);
@@ -820,6 +835,30 @@ mod tests {
     }
 
     const PREFIX: &str = "bash: build failed: error: cannot find symbol in module layout config error: cannot find symbol in module layout config error: cannot find symbol in module layout config error: cannot find symbol in module layout config error: cannot find symbol in module layout config ";
+
+    #[test]
+    fn already_targeted_fingerprints_drop_from_recurring_failures() {
+        let one = occurrence(FailureKind::ToolError, "flaky-a", "cannot connect a", 1);
+        let two = occurrence(FailureKind::ToolError, "flaky-b", "cannot connect b", 2);
+        let first = update(&FailureLedger::default(), &[one.clone(), two.clone()]);
+        let ledger = update(
+            &first.ledger,
+            &[at(&one, 3), at(&two, 4), at(&one, 5), at(&two, 6)],
+        )
+        .ledger;
+        // Baseline: both fingerprints recur without an exclusion set.
+        let all = recurring_failures(&ledger, None);
+        assert_eq!(all.len(), 2);
+        // With `one.id` already targeted, only `two` remains.
+        let mut targeted = HashSet::new();
+        targeted.insert(one.fingerprint.id.as_str());
+        let filtered = recurring_failures_excluding(&ledger, None, &targeted);
+        assert_eq!(
+            ids(&filtered),
+            vec![two.fingerprint.id],
+            "fingerprints with coverage must not reappear as gate opponents"
+        );
+    }
 
     #[test]
     fn non_actionable_failures_count_but_never_recur() {

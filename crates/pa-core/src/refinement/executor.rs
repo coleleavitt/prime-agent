@@ -22,6 +22,7 @@ use super::{
     REFINEMENT_KINDS,
     RefinementKind,
     RefinementResult,
+    already_targeted_fingerprints,
     infer_refinement_result_scope,
     merge_refinement_history,
 };
@@ -197,6 +198,98 @@ pub fn history_for_prompt(history: &[RefinementResult]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// The `<recurring_failures>` block body for the refiner reviewer: recurring
+/// fingerprints in the merged ledger that no existing entry already declares
+/// in its `targets_fingerprints`. Returns `None` when there is nothing to
+/// show, so the caller can omit the block entirely.
+///
+/// Parses `state.extensions["failures"]` as JSON directly rather than
+/// importing `pa-ledger`: `pa-ledger` depends on `pa-core`, so the crate
+/// graph forbids the reverse import (the same pattern `recurrence.rs` uses).
+/// The on-disk schema is stable and shared with `pa-ledger`'s
+/// `format_failure_ledger_for_prompt`; if either side evolves, both must
+/// change together.
+fn unaddressed_recurring_for_prompt(state: &HarnessState) -> Option<String> {
+    const RECURRENCE_THRESHOLD: u64 = 2;
+    const PROMPT_LIMIT: usize = 12;
+    const EXCERPT_MAX: usize = 240;
+
+    let failures = state.extensions.get("failures")?;
+    let records = failures.get("failures")?.as_object()?;
+    let already = already_targeted_fingerprints(state);
+
+    let mut rows: Vec<(u64, String)> = Vec::new();
+    for record in records.values() {
+        let fp = record.get("fingerprint")?;
+        let id = fp.get("id").and_then(|v| v.as_str())?;
+        if already.contains(id) {
+            continue;
+        }
+        let count = record.get("count").and_then(serde_json::Value::as_u64)?;
+        if count < RECURRENCE_THRESHOLD {
+            continue;
+        }
+        // A fingerprint whose occurrences were all non-actionable (e.g. user
+        // denial, provider outage) is tracked but should not turn into a gate
+        // opponent. The ledger writes `nonActionableCount` with the full
+        // count when every occurrence was non-actionable, so filter on that.
+        if let Some(non_actionable) = record
+            .get("nonActionableCount")
+            .and_then(serde_json::Value::as_u64)
+        {
+            if non_actionable >= count {
+                continue;
+            }
+        }
+        let kind = fp.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let source = fp.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let class = fp
+            .get("exceptionClass")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let first_turn = record
+            .get("firstSeenTurn")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let last_turn = record
+            .get("lastSeenTurn")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let excerpt_raw = record.get("excerpt").and_then(|v| v.as_str()).unwrap_or("");
+        let excerpt_normalised: String = excerpt_raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let excerpt = if excerpt_normalised.chars().count() > EXCERPT_MAX {
+            let prefix: String = excerpt_normalised.chars().take(EXCERPT_MAX).collect();
+            format!("{prefix}...")
+        } else {
+            excerpt_normalised
+        };
+        let mut parts = vec![format!("- failure:{id} [{kind}]")];
+        if !source.is_empty() {
+            parts.push(format!("source={source}"));
+        }
+        if !class.is_empty() {
+            parts.push(format!("class={class}"));
+        }
+        parts.push(format!("count={count}"));
+        parts.push(format!("turns={first_turn}..{last_turn}"));
+        rows.push((count, format!("{}\n  {excerpt}", parts.join(" "))));
+    }
+
+    if rows.is_empty() {
+        return None;
+    }
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+    let total = rows.len();
+    let mut lines: Vec<String> = rows.into_iter().take(PROMPT_LIMIT).map(|(_, s)| s).collect();
+    if total > PROMPT_LIMIT {
+        lines.push(format!("- ... {} more", total - PROMPT_LIMIT));
+    }
+    Some(lines.join("\n"))
 }
 
 /// Model-call seam (test seam over pa-ai completion): takes the request
@@ -592,8 +685,14 @@ pub async fn review_auto_refine(
 ) -> anyhow::Result<AutoRefineReview> {
     let system_prompt = policy.review_system_prompt();
     let conversation_text = conversation_text(messages, 40_000);
+    // Recurring failures that no existing entry already claims to target
+    // (`HarnessEntry.targets_fingerprints`). The refiner reviewer sees the
+    // unaddressed backlog, so it can propose a memory that cites a
+    // fingerprint id in `targetsFingerprints` and close the loop that
+    // `pa-ravo` is penalising proposals against.
+    let unaddressed_failures = unaddressed_recurring_for_prompt(state);
     let build_prompt = |conversation: &str| -> String {
-        [
+        let mut parts = vec![
             format!(
                 "<trigger>\n{}; {} assistant turns since last auto-refine review\n</trigger>",
                 context.reason, context.turns_since_last_review
@@ -602,14 +701,19 @@ pub async fn review_auto_refine(
                 "<current_harness_state>\n{}\n</current_harness_state>",
                 overview_for_prompt(state)
             ),
-            format!(
-                "<refinement_history>\n{}\n</refinement_history>",
-                history_for_prompt(history)
-            ),
-            format!("<conversation>\n{conversation}\n</conversation>"),
-            policy.review_guidance().to_string(),
-        ]
-        .join("\n\n")
+        ];
+        if let Some(block) = unaddressed_failures.as_deref() {
+            parts.push(format!(
+                "<recurring_failures>\n{block}\n</recurring_failures>"
+            ));
+        }
+        parts.push(format!(
+            "<refinement_history>\n{}\n</refinement_history>",
+            history_for_prompt(history)
+        ));
+        parts.push(format!("<conversation>\n{conversation}\n</conversation>"));
+        parts.push(policy.review_guidance().to_string());
+        parts.join("\n\n")
     };
     let (request_max_tokens, user_prompt) = refinement_request(
         model,
@@ -729,6 +833,90 @@ mod tests {
             id["refine_".len()..]
                 .chars()
                 .all(|char| char.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn unaddressed_recurring_block_hides_already_targeted_fingerprints() {
+        // Build a harness state with two recurring fingerprints and one
+        // memory entry that targets the first.
+        let mut state = super::super::empty_harness_state();
+        let mut covered = entry(RefinementKind::Memory, "covers-ipython", "...");
+        covered.targets_fingerprints = vec!["fp-ipython".to_string()];
+        state
+            .entries
+            .get_mut(&RefinementKind::Memory)
+            .unwrap()
+            .insert(covered.id.clone(), covered);
+        let ledger = serde_json::json!({
+            "schema": 1,
+            "failures": {
+                "a": {
+                    "fingerprint": {
+                        "id": "fp-ipython",
+                        "kind": "python_exception",
+                        "exceptionClass": "IndexError",
+                        "source": "ipython"
+                    },
+                    "count": 129,
+                    "firstSeenTurn": 1,
+                    "lastSeenTurn": 1385,
+                    "excerpt": "IndexError: list index out of range"
+                },
+                "b": {
+                    "fingerprint": {
+                        "id": "fp-other",
+                        "kind": "tool_error",
+                        "source": "bash"
+                    },
+                    "count": 5,
+                    "firstSeenTurn": 10,
+                    "lastSeenTurn": 20,
+                    "excerpt": "bash: command not found"
+                },
+                "c": {
+                    "fingerprint": {
+                        "id": "fp-noisy",
+                        "kind": "provider_error",
+                        "source": "anthropic"
+                    },
+                    "count": 50,
+                    "nonActionableCount": 50,
+                    "firstSeenTurn": 1,
+                    "lastSeenTurn": 300,
+                    "excerpt": "fetch failed"
+                }
+            }
+        });
+        state.extensions.insert("failures".to_string(), ledger);
+
+        let block = unaddressed_recurring_for_prompt(&state)
+            .expect("one unaddressed, actionable fingerprint remains");
+        assert!(
+            !block.contains("fp-ipython"),
+            "a targeted fingerprint must not reappear as an opponent: {block}"
+        );
+        assert!(
+            !block.contains("fp-noisy"),
+            "a fully non-actionable fingerprint must not list as an opponent: {block}"
+        );
+        assert!(
+            block.contains("fp-other"),
+            "the one open, actionable fingerprint must be listed: {block}"
+        );
+        assert!(block.contains("count=5"));
+
+        // Covering the remaining fingerprint collapses the block entirely.
+        let mut covered_all = entry(RefinementKind::Memory, "covers-bash", "...");
+        covered_all.targets_fingerprints = vec!["fp-other".to_string()];
+        state
+            .entries
+            .get_mut(&RefinementKind::Memory)
+            .unwrap()
+            .insert(covered_all.id.clone(), covered_all);
+        assert!(
+            unaddressed_recurring_for_prompt(&state).is_none(),
+            "every recurring fingerprint covered -> the block is omitted"
         );
     }
 

@@ -78,6 +78,7 @@ pub use ledger::{
     observation_ordinal,
     record_provisional_regressions,
     recurring_failures,
+    recurring_failures_excluding,
     update_failure_ledger,
 };
 pub use replay::{

@@ -37,6 +37,7 @@ use pa_core::refinement::{
     HarnessScope,
     HarnessState,
     RefinementAction,
+    already_targeted_fingerprints,
     load_harness_state,
     save_harness_state,
 };
@@ -44,7 +45,7 @@ use pa_ledger::{
     FailureRecord,
     failure_opponent_id,
     format_failure_ledger_for_prompt,
-    recurring_failures,
+    recurring_failures_excluding,
 };
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
@@ -479,7 +480,10 @@ impl RavoRunService {
             .get(pa_ledger::FAILURES_KEY)
             .map(pa_ledger::normalize_failure_ledger)
             .unwrap_or_default();
-        let recurring = recurring_failures(&failures, None);
+        let already_targeted_owned = already_targeted_fingerprints(&state);
+        let already_targeted: std::collections::HashSet<&str> =
+            already_targeted_owned.iter().map(String::as_str).collect();
+        let recurring = recurring_failures_excluding(&failures, None, &already_targeted);
         let mut active_failure_ids: Vec<String> = Vec::new();
         let mut referee_ids: Vec<String> = Vec::new();
         for record in &recurring {
@@ -1168,8 +1172,21 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
     if !failed.is_empty() {
         return Ok(CommitOutcome::Failed(failed.join("; ")));
     }
+    // The fingerprints this proposal claims to address, filtered to ones
+    // still active this run.
+    let claimed: Vec<String> = addressed_fingerprints_of(&proposal.artifact)
+        .into_iter()
+        .filter(|fingerprint| {
+            inputs
+                .active_failure_ids
+                .contains(&failure_opponent_id(fingerprint))
+        })
+        .collect();
     // Every entry an apply writes carries a trust record (TS
-    // `applyRefinementProposal`).
+    // `applyRefinementProposal`) AND inherits the proposal's filtered
+    // `claimed` fingerprints into its own `targets_fingerprints`, so the
+    // recurrence probe and the opponent exclusion in
+    // `recurring_failures_excluding` see coverage without a manual edit.
     for edit in &mut result.applied_edits {
         if edit.action == RefinementAction::Delete {
             continue;
@@ -1185,6 +1202,11 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
                 .extensions
                 .entry(TRUST_KEY.to_string())
                 .or_insert(trust);
+            for fingerprint in &claimed {
+                if !entry.targets_fingerprints.contains(fingerprint) {
+                    entry.targets_fingerprints.push(fingerprint.clone());
+                }
+            }
         }
     }
     // A referee opponent this run added is persisted only when a
@@ -1211,14 +1233,6 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
             .cloned()
             .collect(),
     };
-    let claimed: Vec<String> = addressed_fingerprints_of(&proposal.artifact)
-        .into_iter()
-        .filter(|fingerprint| {
-            inputs
-                .active_failure_ids
-                .contains(&failure_opponent_id(fingerprint))
-        })
-        .collect();
     let marked = ravo_mark_provisional(
         &RavoState {
             opponents: pool,

@@ -184,6 +184,26 @@ pub fn empty_harness_state() -> HarnessState {
     }
 }
 
+/// The union of every entry's `targets_fingerprints`, across every kind. The
+/// RAVO gate and the refiner reader use this to drop a fingerprint from the
+/// current opponent list when any existing entry claims to address it, so a
+/// well-scoped proposal in another domain is not penalised for not
+/// re-addressing it.
+#[must_use]
+pub fn already_targeted_fingerprints(state: &HarnessState) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    for kind_entries in state.entries.values() {
+        for entry in kind_entries.values() {
+            for id in &entry.targets_fingerprints {
+                if !id.is_empty() {
+                    set.insert(id.clone());
+                }
+            }
+        }
+    }
+    set
+}
+
 fn kind_from_name(name: &str) -> RefinementKind {
     match name {
         "prompt" => RefinementKind::Prompt,
