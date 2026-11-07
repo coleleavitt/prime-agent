@@ -404,8 +404,15 @@ pub(crate) struct SessionUi {
     ctrl_c_hint_until: Option<Instant>,
     /// The action whose key armed the exit hint (`app.clear` / `app.exit`).
     ctrl_c_hint_action: &'static str,
-    /// The draft the last idle Ctrl+C cleared; Up on an empty editor restores it.
-    cleared_draft: Option<String>,
+    /// The draft the last idle Ctrl+C cleared; Up on an empty editor restores
+    /// it. Carries the full editor state (text + paste snapshot + timestamp)
+    /// so Ctrl+C never loses a pasted file alongside the text, matching
+    /// CC's `holdCleared` tuple. When a new clear overwrites this slot, the
+    /// OLD slot's text is promoted into the persistent prompt history so it
+    /// stays recallable across sessions — the `holdCleared(intoHistory)`
+    /// path: today's slot restores IMMEDIATELY, the previous one restores
+    /// via up-arrow later.
+    cleared_draft: Option<prompt_history::ClearedDraft>,
     /// The running turn's `client.turn` span (see `prompt`): open from the
     /// submit that started the turn until the agent goes idle.
     client_turn_span: Option<tracing::Span>,

@@ -840,6 +840,11 @@ async fn run_interactive_surface(
             // The exit deadline is armed from the moment the run decides to leave: no cleanup below
             // may block past it.
             exit_guard.arm_for_exit();
+            // Promote any Ctrl+C-cleared draft into persistent history
+            // before the detach wires the client off, so a cleared
+            // draft survives the exit (CC's `holdCleared` -> history
+            // drain path).
+            session.flush_cleared_draft_on_exit();
             session.detach_for_exit().await;
             // The user quit at the onboarding screen: still hand the terminal back.
             renderer.finish(&mut view, false);
@@ -2316,6 +2321,10 @@ async fn run_interactive_surface(
     // Detach explicitly so the session's attached-client count stays honest; bounded hard: a
     // wedged worker socket can never hold the exit path. The agents-view handoff fires the detach
     // in the background instead (bookkeeping must not delay the switch).
+    // Promote any Ctrl+C-cleared draft into persistent history before the
+    // detach/handoff, so a cleared draft survives the exit (CC's
+    // `holdCleared` -> history drain path).
+    session.flush_cleared_draft_on_exit();
     if session.open_agents_view {
         session.detach_for_handoff();
     } else {

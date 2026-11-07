@@ -100,15 +100,20 @@ impl SessionUi {
     }
 
     /// Up on an empty editor restores the draft the last Ctrl+C cleared.
+    /// Text AND the collapsed-paste map come back together (CC's
+    /// `holdCleared` tuple carries `pastedContents` for exactly this
+    /// reason: a draft like `look at this [paste #3 example.pdf]` is
+    /// dead text without its paste map).
     pub(super) fn restore_cleared_draft(&mut self, view: &mut AgentView) -> bool {
         match self.cleared_draft.take() {
-            Some(draft) if view.editor.get_text().is_empty() => {
-                view.editor.set_text(&draft);
+            Some(snap) if view.editor.get_text().is_empty() => {
+                view.editor.set_text(&snap.text);
+                view.editor.restore_paste_snapshot(snap.paste_snapshot);
                 self.dirty = true;
                 true
             }
-            Some(draft) => {
-                self.cleared_draft = Some(draft);
+            Some(snap) => {
+                self.cleared_draft = Some(snap);
                 false
             }
             None => false,
@@ -733,9 +738,19 @@ impl SessionUi {
                     self.sync_queue_selection(view);
                 }
                 // The first press clears the editor into a slot Up restores.
+                // The PREVIOUS slot's text (if any) is promoted into
+                // persistent history, matching CC's
+                // `holdCleared(prev, next, { intoHistory: true })`: a
+                // user who clears several drafts in a row keeps the
+                // just-cleared one recallable via Up AND the earlier
+                // ones recallable via the project's history.
                 let draft = view.editor.get_text();
                 if !draft.is_empty() {
-                    self.cleared_draft = Some(draft);
+                    let new_draft = super::prompt_history::ClearedDraft {
+                        text: draft,
+                        paste_snapshot: view.editor.get_paste_snapshot(),
+                    };
+                    self.hold_cleared_draft(view, new_draft);
                     view.editor.set_text("");
                 }
                 if !interrupt {
@@ -757,7 +772,11 @@ impl SessionUi {
                 self.queue_selection.has_draft(),
                 &draft,
             ) {
-                self.cleared_draft = Some(draft);
+                let new_draft = super::prompt_history::ClearedDraft {
+                    text: draft,
+                    paste_snapshot: view.editor.get_paste_snapshot(),
+                };
+                self.hold_cleared_draft(view, new_draft);
                 view.editor.set_text("");
                 self.clear_ctrl_c_hint();
                 self.dirty = true;
