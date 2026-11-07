@@ -111,6 +111,27 @@ fn observe_tool_result(
         });
     }
     if !message.is_error {
+        // Silent-failure: exit code cleanly (is_error = false) but the
+        // output contains a failure marker (Rust compile error, pytest
+        // FAIL, Playwright "Executable doesn't exist", rust panic).
+        // The TUI showed a green check; the agent moved on; next turn
+        // hits the same wall. These are the ones the ✗ pipeline
+        // can't see.
+        if let Some(line) = crate::silent_failure::silent_failure_line_bare(&text) {
+            return Some(FailureObservation {
+                fingerprint: fingerprint_failure(
+                    FailureKind::SilentFailure,
+                    tool_name,
+                    None,
+                    &line,
+                ),
+                excerpt: clip_excerpt(&line),
+                entry_index,
+                turn,
+                at: now(),
+                replay_case: None,
+            });
+        }
         return None;
     }
     let raw = tool_error_text(&text);

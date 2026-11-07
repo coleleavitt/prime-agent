@@ -45,16 +45,26 @@ pub enum FailureKind {
     ToolError,
     /// An assistant message that ended with `stopReason: "error"`.
     ProviderError,
+    /// A tool result that EXITED CLEANLY (`is_error = false`) but whose
+    /// output contains a failure marker: `Executable doesn't exist`,
+    /// `error[E\d+]`, `panic!`, a rust test `FAILED` line, a Playwright
+    /// install-again box, an uncaught `Error: <msg>` at line start. The
+    /// agent sees a green check and moves on; the next turn hits the
+    /// same wall. These are the "✓-but-failed" failures the TUI can't
+    /// tell apart from real success.
+    SilentFailure,
 }
 
 impl FailureKind {
-    /// The wire name (`python_exception`, `tool_error`, `provider_error`).
+    /// The wire name (`python_exception`, `tool_error`, `provider_error`,
+    /// `silent_failure`).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PythonException => "python_exception",
             Self::ToolError => "tool_error",
             Self::ProviderError => "provider_error",
+            Self::SilentFailure => "silent_failure",
         }
     }
 
@@ -65,6 +75,7 @@ impl FailureKind {
             "python_exception" => Some(Self::PythonException),
             "tool_error" => Some(Self::ToolError),
             "provider_error" => Some(Self::ProviderError),
+            "silent_failure" => Some(Self::SilentFailure),
             _ => None,
         }
     }

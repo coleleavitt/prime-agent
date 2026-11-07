@@ -19,8 +19,10 @@ mod ledger;
 mod replay;
 mod resolution;
 mod resolution_store;
+mod silent_failure;
 
 pub use feedback_tap::{FEEDBACK_TAP_CURSOR_NAME, FeedbackTap};
+pub use silent_failure::{silent_failure_line, silent_failure_line_bare};
 
 pub use extract::{IPYTHON_TOOL_NAME, extract_failures, observe_message, tool_result_text};
 pub use feature::{
