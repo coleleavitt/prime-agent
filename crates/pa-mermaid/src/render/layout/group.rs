@@ -133,11 +133,9 @@ struct Scopes<'a> {
 impl Scopes<'_> {
     fn build(&self, scope: Option<usize>) -> Option<Canvas> {
         let graph = self.graph;
-        let mut items: Vec<Item> = self
-            .direct_nodes
-            .get(&scope)
-            .map(|nodes| nodes.iter().map(|&n| Item::Node(n)).collect())
-            .unwrap_or_default();
+        let mut items: Vec<Item> = self.direct_nodes.get(&scope).map_or_else(Vec::new, |nodes| {
+            nodes.iter().map(|&n| Item::Node(n)).collect()
+        });
         items.extend(
             (0..graph.groups.len())
                 .filter(|&gi| graph.groups[gi].parent == scope && self.keep[gi])

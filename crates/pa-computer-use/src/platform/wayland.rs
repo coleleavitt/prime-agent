@@ -939,8 +939,7 @@ where
         let roots = self
             .accessibility
             .application(Self::pid(&window))
-            .map(|app| self.accessibility.focus_roots(&app, &window))
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |app| self.accessibility.focus_roots(&app, &window));
         fingerprint.extend(
             self.accessibility
                 .focus_fingerprint(&roots, FINGERPRINT_FOCUS_SEARCH),

@@ -129,7 +129,11 @@ pub struct FeedbackEvent {
 }
 
 impl FeedbackEvent {
-    #[expect(
+    // Mirrors the feedback record's fields one-to-one — the arg count
+    // is upstream's. rustc-master's `too_many_arguments` threshold
+    // tolerates 8, stable's is 7, so `#[expect]` would be unfulfilled
+    // on one toolchain or the other — `#[allow]` is the portable form.
+    #[allow(
         clippy::too_many_arguments,
         reason = "mirrors the feedback record's fields one-to-one"
     )]

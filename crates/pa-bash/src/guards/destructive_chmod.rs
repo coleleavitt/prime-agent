@@ -185,8 +185,7 @@ fn operand_message(
     let shown = target.shown();
     let resolved = resolved
         .filter(|resolved| resolved.to_string_lossy() != shown)
-        .map(|resolved| format!(" ({})", resolved.display()))
-        .unwrap_or_default();
+        .map_or_else(String::new, |resolved| format!(" ({})", resolved.display()));
     let place = invocation.place();
     let place = if place.is_empty() {
         String::new()

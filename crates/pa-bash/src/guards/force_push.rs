@@ -254,8 +254,7 @@ fn config_refusal(
                     call.configs
                         .iter()
                         .find(|arg| arg.known().is_none())
-                        .map(|arg| arg.shown())
-                        .unwrap_or_default()
+                        .map_or_else(String::new, |arg| arg.shown())
                 )));
             }
             Some(text) if is_mirror_or_push_key(&text) => return Some(mirror_config_refusal()),

@@ -384,8 +384,7 @@ impl Walker {
         let name = fields
             .first()
             .and_then(|field| field.arg.known())
-            .map(lower_base)
-            .unwrap_or_default();
+            .map_or_else(String::new, lower_base);
         let cwd = cwd_override.clone();
         match name.as_str() {
             "cd" | "pushd" | "popd" => {

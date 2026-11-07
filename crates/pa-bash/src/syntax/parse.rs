@@ -587,7 +587,7 @@ impl<'s> Parser<'s> {
         if self.at_keyword("function") {
             self.pos += 8;
             self.skip_blanks();
-            let name = self.read_word().map(|word| word.raw).unwrap_or_default();
+            let name = self.read_word().map_or_else(String::new, |word| word.raw);
             self.skip_blanks();
             if self.at("()") {
                 self.pos += 2;
@@ -709,7 +709,7 @@ impl<'s> Parser<'s> {
                 redirects,
             );
         }
-        let name = self.read_word().map(|word| word.raw).unwrap_or_default();
+        let name = self.read_word().map_or_else(String::new, |word| word.raw);
         self.skip_linebreaks();
         let mut words = None;
         if self.at_keyword("in") {

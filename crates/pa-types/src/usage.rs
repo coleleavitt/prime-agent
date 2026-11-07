@@ -63,26 +63,22 @@ pub fn estimate_tokens(message: &Value) -> u64 {
                         chars += block
                             .get("text")
                             .and_then(Value::as_str)
-                            .map(|text| text.chars().count() as u64)
-                            .unwrap_or_default();
+                            .map_or(0, |text| text.chars().count() as u64);
                     }
                     Some("thinking") => {
                         chars += block
                             .get("thinking")
                             .and_then(Value::as_str)
-                            .map(|text| text.chars().count() as u64)
-                            .unwrap_or_default();
+                            .map_or(0, |text| text.chars().count() as u64);
                     }
                     Some("toolCall") => {
                         chars += block
                             .get("name")
                             .and_then(Value::as_str)
-                            .map(|name| name.chars().count() as u64)
-                            .unwrap_or_default();
+                            .map_or(0, |name| name.chars().count() as u64);
                         if let Some(arguments) = block.get("arguments") {
                             chars += serde_json::to_string(arguments)
-                                .map(|text| text.chars().count() as u64)
-                                .unwrap_or_default();
+                                .map_or(0, |text| text.chars().count() as u64);
                         }
                     }
                     Some("image") => {

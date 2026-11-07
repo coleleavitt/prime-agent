@@ -467,7 +467,7 @@ fn short_grep_options(
                 }
                 break;
             }
-            'A' | 'B' | 'C' => {
+            'A'..='C' => {
                 if value()
                     .and_then(|count| count.parse::<u32>().ok())
                     .is_none_or(|count| count > 0)
@@ -657,7 +657,7 @@ fn is_secret_path(path: &str, home: Option<&Path>) -> bool {
             | Component::Prefix(_) => None,
         })
         .collect();
-    let last = names.last().map(String::as_str).unwrap_or_default();
+    let last = names.last().map_or("", String::as_str);
     // With HOME known, a `~` or `$` still in a resolved path was quoted
     // (`'~/.ssh/id_rsa'`, `\$HOME/.aws/credentials`): bash reads a
     // directory literally named so, not the secret it spells.
