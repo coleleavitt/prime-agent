@@ -16,8 +16,15 @@ use pa_retrieval::Outcome;
 use serde::{Deserialize, Serialize};
 
 /// Sidecar that records the byte offset in `refinement_history.jsonl`
-/// we've already synced to the reranker's index (memory add/remove).
+/// (global-scope admits/rejects) we've already synced to the reranker's
+/// index (memory add/remove).
 const MEMORY_SYNC_CURSOR: &str = "retrieval_memory_sync.cursor";
+
+/// Sidecar for the LOCAL mirror (`local_refinement_history.jsonl`). A
+/// separate cursor so local and global refinement streams advance
+/// independently — a local-only session shouldn't advance the global
+/// cursor past records it didn't see.
+const LOCAL_MEMORY_SYNC_CURSOR: &str = "retrieval_memory_sync_local.cursor";
 
 /// Sidecar that records the admission-time novelty score for every
 /// memory create/update event the retrieval tick saw. One JSON line
@@ -143,19 +150,43 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
     }
 }
 
-/// Scan the tail of `refinement_history.jsonl` since the sync cursor and
-/// call `record_memory_upsert` / `record_memory_removal` for each applied
-/// memory edit. Advances the cursor atomically on success.
+/// Scan the tail of the refinement-history JSONLs since the sync
+/// cursors (both the global file AND the local mirror) and call
+/// `record_memory_upsert` / `record_memory_removal` for each applied
+/// memory edit. Advances each cursor atomically on success. A missing
+/// local mirror is a no-op (the account may be global-only or
+/// pre-fix); a missing global file is likewise a no-op.
 fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result<()> {
-    let history_path = harness_dir.join("refinement_history.jsonl");
-    let cursor_path = harness_dir.join(MEMORY_SYNC_CURSOR);
-    let novelty_path = harness_dir.join(NOVELTY_DIARY);
-    let bytes = match fs::read(&history_path) {
+    sync_one_history(
+        &harness_dir.join("refinement_history.jsonl"),
+        &harness_dir.join(MEMORY_SYNC_CURSOR),
+        &harness_dir.join(NOVELTY_DIARY),
+        handle,
+    )?;
+    sync_one_history(
+        &harness_dir.join("local_refinement_history.jsonl"),
+        &harness_dir.join(LOCAL_MEMORY_SYNC_CURSOR),
+        &harness_dir.join(NOVELTY_DIARY),
+        handle,
+    )?;
+    Ok(())
+}
+
+/// Drain one history file (global or local) against its cursor. Pulled
+/// out of `sync_memory_events` so both files take the same code path
+/// — the only differences are the file + cursor names.
+fn sync_one_history(
+    history_path: &Path,
+    cursor_path: &Path,
+    novelty_path: &Path,
+    handle: &RerankerHandle,
+) -> io::Result<()> {
+    let bytes = match fs::read(history_path) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     };
-    let cursor = fs::read_to_string(&cursor_path)
+    let cursor = fs::read_to_string(cursor_path)
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
@@ -213,7 +244,7 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
     // is idempotent across crashes within the same tick — the cursor
     // advances last).
     if !novelty_lines.is_empty() {
-        append_jsonl(&novelty_path, &novelty_lines)?;
+        append_jsonl(novelty_path, &novelty_lines)?;
     }
     let offset = bytes.len().to_string();
     let tmp = cursor_path.with_extension("cursor.tmp");
@@ -221,7 +252,7 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
         fs::create_dir_all(parent)?;
     }
     fs::write(&tmp, &offset)?;
-    fs::rename(&tmp, &cursor_path)?;
+    fs::rename(&tmp, cursor_path)?;
     if applied > 0 {
         tracing::info!(
             target: "pa_daemon::retrieval",

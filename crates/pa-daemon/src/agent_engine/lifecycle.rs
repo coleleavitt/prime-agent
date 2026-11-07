@@ -293,6 +293,22 @@ impl AgentSessionEngine {
                 if handle.is_empty() {
                     seed_reranker_from_harness_state(&self.config.agent_dir, &handle);
                 }
+                // One-shot: backfill `targetsFingerprints` on
+                // historical memories so the retrieval feedback loop
+                // has targets to credit. Sentinel-gated and
+                // idempotent (see `backfill_targets::backfill_once`);
+                // first worker to boot on a new binary does the walk,
+                // every later call is a cheap `.exists()` on the
+                // sentinel.
+                let harness_dir = self.config.agent_dir.join("harness");
+                if let Err(err) = pa_core::refinement::backfill_targets::backfill_once(&harness_dir)
+                {
+                    tracing::warn!(
+                        target: "pa_daemon::retrieval",
+                        %err,
+                        "targetsFingerprints backfill failed; learning loop keeps its current coverage"
+                    );
+                }
                 Some(handle)
             })
             .clone()

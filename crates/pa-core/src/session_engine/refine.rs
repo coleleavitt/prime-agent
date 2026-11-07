@@ -22,6 +22,7 @@ use crate::refinement::{
     HarnessScope,
     RefinementResult,
     append_global_refinement,
+    append_local_refinement,
     format_refinement_notice_body,
     load_global_refinement_history,
     load_harness_state,
@@ -589,6 +590,19 @@ pub async fn execute_refinement_gated(
     drop(store_lock);
     if target_scope == HarnessScope::Global {
         append_global_refinement(global_harness_dir, &result)?;
+    } else {
+        // Mirror local-scope refinements into the shared harness dir so
+        // the retrieval tick + feedback tap can observe them (they only
+        // read the shared dir). The authoritative audit still lands in
+        // the session jsonl as a `REFINEMENT_AUDIT_CUSTOM_TYPE` row
+        // below; this is a tap mirror, not a replacement.
+        if let Err(err) = append_local_refinement(global_harness_dir, &result) {
+            tracing::warn!(
+                target: "pa_core::refinement",
+                %err,
+                "local-refinement mirror append failed (tap will miss this record)"
+            );
+        }
     }
     // The audit append is attempted first; a failed write is caught (the row
     // stays live-indexed) and the audit error surfaces only after the outcome
@@ -636,6 +650,20 @@ fn record_rejected_refinement(
 ) -> anyhow::Result<(RefinementResult, Vec<String>)> {
     if target_scope == HarnessScope::Global {
         append_global_refinement(global_harness_dir, &rejected)?;
+    } else {
+        // Mirror local-scope rejections too: the retrieval feedback tap
+        // reads from the shared harness dir only. Dropping the mirror
+        // means a per-session rejection with failure fingerprints
+        // (e.g. `failure:<fp>` in `ravo.missedCriteria`) is invisible
+        // to the learning loop — which is exactly the gap that
+        // produced zero signals for this user's corpus.
+        if let Err(err) = append_local_refinement(global_harness_dir, &rejected) {
+            tracing::warn!(
+                target: "pa_core::refinement",
+                %err,
+                "local-rejection mirror append failed"
+            );
+        }
     }
     let (_, audit_write) = session.append_custom_entry_retained(
         REFINEMENT_AUDIT_CUSTOM_TYPE,
@@ -1146,7 +1174,9 @@ impl AgentSession {
                 .lock()
                 .expect("per_turn_memory_marker lock");
             if user_message_count <= *marker {
-                return Ok(PerTurnReviewOutcome::Skipped(PerTurnSkipReason::NoUserProse));
+                return Ok(PerTurnReviewOutcome::Skipped(
+                    PerTurnSkipReason::NoUserProse,
+                ));
             }
         }
         // The review reads the same planning inputs the compact-trigger

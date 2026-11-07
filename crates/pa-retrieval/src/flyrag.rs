@@ -210,17 +210,28 @@ impl FlyRagReranker {
     /// path errors (dimension mismatch — should not happen for text
     /// input going through the shared encoder).
     pub fn novelty_score(&self, text: &str) -> Result<f64> {
-        // BM25 "is this a dup?" proxy: highest base_score of the
-        // top-16, normalised by a cap of 20 (prime-agent memories
-        // stay well under this, measured). 1.0 = nothing similar,
-        // 0.0 = max-known similarity.
+        // Hyperbolic decay from BM25 top-1: `novelty = tau / (tau + top)`.
+        // Replaces the old `1 - clamp(top / 20)` which saturated at 0.0
+        // for any top >= 20 — a very common state on prime-agent's small
+        // corpus where common tokens ("key", "gpg", "import") push BM25
+        // top past 20 without the specific topic being covered. The
+        // hyperbolic form never saturates: fresh text at top=0 reads
+        // 1.0, a half-match at top=tau reads 0.5, and heavy coverage at
+        // top=100 reads ~0.05 — monotone decreasing, always in (0, 1].
+        //
+        // tau=5 sits between a weak term match (BM25 ~= 2-3) and a
+        // strong topical match (BM25 ~= 10+) on prime-agent's typical
+        // 50-200 memory corpus. Tuning knob stays local to the
+        // reranker; the signature is unchanged so callers (the
+        // retrieval tick's novelty diary) pick up the new scale
+        // automatically.
+        const TAU: f64 = 5.0;
         let candidates = self.bm25.top_k(&Query::from_text(text), 16);
         if candidates.is_empty() {
             return Ok(1.0);
         }
-        let top = candidates[0].base_score;
-        let normalised = (top / 20.0).clamp(0.0, 1.0);
-        Ok(1.0 - normalised)
+        let top = candidates[0].base_score.max(0.0);
+        Ok(TAU / (TAU + top))
     }
 
     /// Reclaim the memory held by tombstoned memories, calling through
@@ -418,11 +429,7 @@ impl Reranker for FlyRagReranker {
 ///
 /// Returns [`crate::RetrievalError`] when the base retriever or flyrag
 /// errors.
-pub fn rerank_full(
-    reranker: &mut FlyRagReranker,
-    query: &Query,
-    k: usize,
-) -> Result<RerankResult> {
+pub fn rerank_full(reranker: &mut FlyRagReranker, query: &Query, k: usize) -> Result<RerankResult> {
     let base_k = reranker.base_top_k;
     let candidates = reranker.bm25.top_k(query, base_k);
     reranker.rerank(query, &candidates, k)
@@ -536,7 +543,8 @@ mod tests {
         for _ in 0..30 {
             let offer = rerank_full(&mut r, &q, 3).unwrap();
             if offer.ranked.iter().any(|h| h.id == runner_up) {
-                r.feedback(offer.offer, &runner_up, Outcome::Helped).unwrap();
+                r.feedback(offer.offer, &runner_up, Outcome::Helped)
+                    .unwrap();
             }
         }
         let after = rerank_full(&mut r, &q, 3).unwrap();
@@ -576,8 +584,12 @@ mod tests {
     fn novelty_score_falls_with_a_close_match_in_the_index() {
         let r = seeded(3);
         // A near-duplicate of a seeded doc reads LESS novel than fresh text.
-        let similar = r.novelty_score("install the dependencies with bun install").unwrap();
-        let unrelated = r.novelty_score("the sky is purple and the clouds sing").unwrap();
+        let similar = r
+            .novelty_score("install the dependencies with bun install")
+            .unwrap();
+        let unrelated = r
+            .novelty_score("the sky is purple and the clouds sing")
+            .unwrap();
         assert!(
             unrelated > similar,
             "unrelated text more novel than a near-duplicate: {unrelated} > {similar}"
@@ -592,6 +604,38 @@ mod tests {
         // No memories added → nothing to be similar to.
         let n = r.novelty_score("anything at all").unwrap();
         assert!((n - 1.0).abs() < 1e-9, "empty index reads fully novel: {n}");
+    }
+
+    /// Guards the 2026-11-07 formula change: the OLD clamp-at-20
+    /// formula collapsed every reasonable BM25 top to 0.0 on this
+    /// user's corpus (43/43 live rows measured). The hyperbolic form
+    /// must stay strictly in (0, 1] for any non-empty index AND must
+    /// still be monotone decreasing in the BM25 top score.
+    #[test]
+    fn novelty_score_stays_strictly_positive_for_any_match() {
+        let r = seeded(7);
+        // Even for text that matches the seeded corpus heavily
+        // ("install" + "dependencies" are shared tokens), novelty must
+        // be strictly positive — the old formula returned 0.0 here
+        // once BM25 top crossed 20.
+        let highly_similar = r
+            .novelty_score("install the dependencies with bun install npm install pnpm install")
+            .unwrap();
+        assert!(
+            highly_similar > 0.0,
+            "novelty collapsed to 0.0 (saturation bug): {highly_similar}"
+        );
+        assert!(highly_similar <= 1.0);
+        // Monotonicity: a fresher query reads MORE novel than a
+        // similar one. This is the behaviour the diary actually cares
+        // about — the relative ordering, not the absolute scale.
+        let fresh = r
+            .novelty_score("quantum chromodynamics in the muon decay channel")
+            .unwrap();
+        assert!(
+            fresh > highly_similar,
+            "fresh {fresh} ≤ similar {highly_similar} (monotonicity broken)"
+        );
     }
 
     #[test]
@@ -622,9 +666,9 @@ mod tests {
         // doc's own units.
         let mut r = seeded(21);
         // Known id trains the readout.
-        let before = r.doc_weights("bun").map_or(0, |w| {
-            w.use_weights.len() + w.skip_weights.len()
-        });
+        let before = r
+            .doc_weights("bun")
+            .map_or(0, |w| w.use_weights.len() + w.skip_weights.len());
         assert_eq!(before, 0, "cold doc has no moved weights");
         assert!(
             r.feedback_detached("bun", Outcome::Misled).unwrap(),
@@ -637,7 +681,8 @@ mod tests {
         );
         // Unknown id returns Ok(false), not an error.
         assert!(
-            !r.feedback_detached("not_a_memory_id", Outcome::Helped).unwrap()
+            !r.feedback_detached("not_a_memory_id", Outcome::Helped)
+                .unwrap()
         );
     }
 
@@ -656,9 +701,12 @@ mod tests {
         let fresh_q = Query::from_text("install");
         let a = rerank_full(&mut r, &fresh_q, 3).unwrap();
         let b = rerank_full(&mut back, &fresh_q, 3).unwrap();
-        let ids =
-            |r: &RerankResult| r.ranked.iter().map(|h| h.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&a), ids(&b), "the reloaded reranker produces the same order");
+        let ids = |r: &RerankResult| r.ranked.iter().map(|h| h.id.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            ids(&a),
+            ids(&b),
+            "the reloaded reranker produces the same order"
+        );
         // doc_weights reports the same thing after reload.
         assert_eq!(
             r.doc_weights(&a.ranked[0].id),

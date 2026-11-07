@@ -512,6 +512,55 @@ pub fn append_global_refinement(
     Ok(history_path)
 }
 
+/// The on-disk file name for the LOCAL-refinement mirror: a JSONL under
+/// the agent's shared harness dir carrying every local-scope refinement
+/// (admit or reject). This mirror exists so audit trails that ride in
+/// the session jsonl are also observable to taps that read the shared
+/// `harness/` directory (notably `pa-ledger::FeedbackTap` and the
+/// retrieval tick's memory-sync): otherwise a local-scope rejection
+/// that carries failure fingerprints is dropped from the retrieval
+/// learning loop.
+pub const LOCAL_REFINEMENT_HISTORY_FILE_NAME: &str = "local_refinement_history.jsonl";
+
+#[must_use]
+pub fn get_local_refinement_history_path(harness_state_dir: &Path) -> PathBuf {
+    harness_state_dir.join(LOCAL_REFINEMENT_HISTORY_FILE_NAME)
+}
+
+/// Append a LOCAL refinement to the shared local-history mirror so the
+/// retrieval tick (and anything else reading the harness dir) sees it.
+/// A local refinement still writes its full audit row to the session
+/// jsonl as a `REFINEMENT_AUDIT_CUSTOM_TYPE` entry — this is
+/// intentionally a MIRROR for taps, not a replacement for that audit.
+///
+/// # Errors
+///
+/// Error when the directory cannot be created, serialization fails, or
+/// the history append fails.
+pub fn append_local_refinement(
+    harness_state_dir: &Path,
+    result: &RefinementResult,
+) -> anyhow::Result<PathBuf> {
+    use std::io::Write;
+    // Guard against an empty-path caller — writing to cwd via a
+    // fire-and-forget mirror would leak a file into the current
+    // working directory (observed during pa-core tests). Return a
+    // sentinel path that the caller's log-only error-handling swallows.
+    if harness_state_dir.as_os_str().is_empty() {
+        anyhow::bail!("local-refinement mirror skipped: empty harness_state_dir");
+    }
+    std::fs::create_dir_all(harness_state_dir)?;
+    let history_path = get_local_refinement_history_path(harness_state_dir);
+    let mut line = serde_json::to_string(result)?;
+    line.push('\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&history_path)?;
+    file.write_all(line.as_bytes())?;
+    Ok(history_path)
+}
+
 /// Load the global refinement history; malformed lines are skipped.
 #[must_use]
 pub fn load_global_refinement_history(harness_state_dir: &Path) -> Vec<RefinementResult> {
@@ -631,6 +680,7 @@ fn scope_prefix(scope: HarnessScope, id: &str) -> String {
     )
 }
 
+pub mod backfill_targets;
 pub mod entries;
 pub mod executor;
 pub mod gate;
@@ -641,8 +691,8 @@ pub mod planner;
 pub mod prompt_hook;
 pub mod ranking;
 pub mod recurrence;
-pub mod retrieval;
 pub mod relocate;
+pub mod retrieval;
 pub mod store;
 
 // Export the compact-text helper for the digest formatter.

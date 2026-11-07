@@ -14,9 +14,8 @@
 //!    emitted [`pa_retrieval::Signal`]s to the caller (pa-daemon loops
 //!    them back into the reranker's feedback method).
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use pa_retrieval::signal::{AppliedEditView, RefinementRecord, Signal, extract_signals};
 use serde::Deserialize;
@@ -24,13 +23,30 @@ use serde::Deserialize;
 /// Where the cursor file lives relative to the harness dir.
 pub const FEEDBACK_TAP_CURSOR_NAME: &str = "feedback_tap.cursor";
 
-/// A tap over one `refinement_history.jsonl` file.
+/// Where the local-history cursor lives. Separate from the global one
+/// so each file advances independently (local-only sessions might
+/// append while a global-heavy session is quiet, and vice versa).
+pub const FEEDBACK_TAP_LOCAL_CURSOR_NAME: &str = "feedback_tap_local.cursor";
+
+/// A tap over both the global and the local refinement-history JSONLs.
+/// A single call to [`FeedbackTap::drain`] drains BOTH files behind
+/// independent byte cursors — the signal-extraction logic is identical,
+/// so a local rejection that carries a `failure:<fp>` reaches the
+/// retrieval learning loop the same way a global one does.
 #[derive(Debug, Clone)]
 pub struct FeedbackTap {
-    /// The jsonl file to read.
+    /// The global jsonl (admits and rejections of global-scope refinements).
     pub history_path: PathBuf,
-    /// Sidecar cursor file (byte offset into `history_path`).
+    /// Sidecar cursor for the global file.
     pub cursor_path: PathBuf,
+    /// The local-scope JSONL mirror written by
+    /// `pa_core::refinement::append_local_refinement`. Carries every
+    /// per-session admit/reject so the tap sees them; the authoritative
+    /// audit still lives in the session jsonl as a custom entry, this
+    /// is just the machine-readable mirror.
+    pub local_history_path: PathBuf,
+    /// Sidecar cursor for the local mirror.
+    pub local_cursor_path: PathBuf,
     /// The `harness_state.json` beside the history file.
     pub harness_state_path: PathBuf,
 }
@@ -43,71 +59,90 @@ impl FeedbackTap {
         Self {
             history_path: harness_dir.join("refinement_history.jsonl"),
             cursor_path: harness_dir.join(FEEDBACK_TAP_CURSOR_NAME),
+            local_history_path: harness_dir.join("local_refinement_history.jsonl"),
+            local_cursor_path: harness_dir.join(FEEDBACK_TAP_LOCAL_CURSOR_NAME),
             harness_state_path: harness_dir.join(crate::HARNESS_STATE_FILE_NAME),
         }
     }
 
-    fn read_cursor(&self) -> u64 {
-        fs::read_to_string(&self.cursor_path)
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0)
-    }
-
-    fn write_cursor(&self, offset: u64) -> io::Result<()> {
-        if let Some(parent) = self.cursor_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let tmp = self.cursor_path.with_extension("cursor.tmp");
-        fs::write(&tmp, offset.to_string())?;
-        fs::rename(&tmp, &self.cursor_path)
-    }
-
-    /// Read every record after the last-known cursor and return the
-    /// retrieval signals they imply. Advances the cursor on success. Any
-    /// malformed record is logged (via `tracing`) and skipped; the cursor
-    /// still advances so a single bad line never jams the tap.
+    /// Read every record after the last-known cursor (across BOTH the
+    /// global and local history files) and return the retrieval
+    /// signals they imply. Advances each file's cursor independently
+    /// on success. Any malformed record is logged (via `tracing`) and
+    /// skipped; the cursor still advances so a single bad line never
+    /// jams the tap.
     ///
     /// # Errors
     ///
     /// Returns [`io::Error`] on a read/cursor-write failure. A missing
-    /// history file is NOT an error — the tap returns an empty vec and
-    /// leaves the cursor at zero (first-boot case).
+    /// file is NOT an error (either the global or the local can be
+    /// absent on a fresh account; the tap returns the other file's
+    /// signals, or an empty vec when both are absent).
     pub fn drain(&self) -> io::Result<Vec<Signal>> {
-        let bytes = match fs::read(&self.history_path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
-        };
-        let cursor = usize::try_from(self.read_cursor()).unwrap_or(0);
-        if cursor >= bytes.len() {
-            return Ok(Vec::new());
-        }
-        let tail = &bytes[cursor..];
-
         let targeting = load_memory_targeting(&self.harness_state_path);
-
         let mut records = Vec::new();
-        for line in tail.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            match serde_json::from_slice::<RawRecord>(line) {
-                Ok(raw) => records.push(raw.into_record()),
-                Err(err) => tracing::warn!(
-                    target: "pa_ledger::feedback_tap",
-                    %err,
-                    line_bytes = line.len(),
-                    "skipping malformed refinement_history line"
-                ),
-            }
-        }
 
-        let signals = extract_signals(records, &targeting);
-        let new_offset = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        self.write_cursor(new_offset)?;
-        Ok(signals)
+        append_new_records_from(&self.history_path, &self.cursor_path, &mut records)?;
+        append_new_records_from(
+            &self.local_history_path,
+            &self.local_cursor_path,
+            &mut records,
+        )?;
+
+        Ok(extract_signals(records, &targeting))
     }
+}
+
+/// Read `history_path` from byte `cursor_path` onward, parse each
+/// non-empty line into a `RefinementRecord`, append to `out`, and
+/// advance the cursor to `history_path`'s current size on success. A
+/// missing `history_path` is a no-op. The cursor is only advanced
+/// when the read AND the parse loop complete without IO error — a
+/// malformed record STILL advances the cursor because the malformed
+/// line is skipped and will be skipped again on the next drain.
+fn append_new_records_from(
+    history_path: &Path,
+    cursor_path: &Path,
+    out: &mut Vec<RefinementRecord>,
+) -> io::Result<()> {
+    let bytes = match fs::read(history_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let cursor = fs::read_to_string(cursor_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    if cursor >= bytes.len() {
+        return Ok(());
+    }
+    let tail = &bytes[cursor..];
+    for line in tail.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_slice::<RawRecord>(line) {
+            Ok(raw) => out.push(raw.into_record()),
+            Err(err) => tracing::warn!(
+                target: "pa_ledger::feedback_tap",
+                path = %history_path.display(),
+                %err,
+                line_bytes = line.len(),
+                "skipping malformed refinement_history line"
+            ),
+        }
+    }
+    write_cursor_atomic(cursor_path, bytes.len() as u64)
+}
+
+fn write_cursor_atomic(path: &Path, offset: u64) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("cursor.tmp");
+    fs::write(&tmp, offset.to_string())?;
+    fs::rename(&tmp, path)
 }
 
 /// The subset of a `RefinementResult` on-disk record the signal extractor
@@ -184,15 +219,20 @@ fn load_memory_targeting(path: &Path) -> Vec<(String, Vec<String>)> {
                 .iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect::<Vec<_>>();
-            if fps.is_empty() { None } else { Some((id.clone(), fps)) }
+            if fps.is_empty() {
+                None
+            } else {
+                Some((id.clone(), fps))
+            }
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_retrieval::Outcome;
+
+    use super::*;
 
     fn write_history(path: &Path, records: &[&str]) {
         let mut body = String::new();
@@ -288,6 +328,50 @@ mod tests {
         let tap = FeedbackTap::new(dir.path());
         assert!(tap.drain().unwrap().is_empty());
         assert!(!tap.cursor_path.exists());
+    }
+
+    /// Guards the 2026-11-07 local-mirror fix: a local-scope rejection
+    /// (admitted via `append_local_refinement`, not the global file)
+    /// must reach the same `extract_signals` path as a global one.
+    #[test]
+    fn drain_picks_up_local_refinement_mirror_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let hd = dir.path();
+        write_state_with_memories(
+            &hd.join(crate::HARNESS_STATE_FILE_NAME),
+            &[("memory_local", vec!["cafefeed"])],
+        );
+        // One global record (no match) + one local record that DOES match.
+        let g = r#"{"id":"g1","summary":"x","appliedEdits":[]}"#;
+        write_history(&hd.join("refinement_history.jsonl"), &[g]);
+        let l = r#"{"id":"l1","summary":"x","rejectionCause":"gate","ravo":{"missedCriteria":["failure:cafefeed"]},"appliedEdits":[]}"#;
+        write_history(&hd.join("local_refinement_history.jsonl"), &[l]);
+        let tap = FeedbackTap::new(hd);
+        let signals = tap.drain().unwrap();
+        assert_eq!(signals.len(), 1, "exactly one Helped from the local file");
+        assert_eq!(signals[0].memory_id, "memory_local");
+        assert_eq!(signals[0].outcome, Outcome::Helped);
+        // Second drain: both cursors past EOF, nothing re-fires.
+        assert!(tap.drain().unwrap().is_empty());
+    }
+
+    /// Each file's cursor advances independently: a growth on only the
+    /// local file must not advance the global cursor (or vice versa).
+    #[test]
+    fn drain_cursors_advance_independently_per_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let hd = dir.path();
+        write_state_with_memories(&hd.join(crate::HARNESS_STATE_FILE_NAME), &[]);
+        let r1 = r#"{"id":"r1","summary":"","appliedEdits":[{"id":"a","title":"supersedes x","content":""}]}"#;
+        write_history(&hd.join("refinement_history.jsonl"), &[r1]);
+        let tap = FeedbackTap::new(hd);
+        assert_eq!(tap.drain().unwrap().len(), 1);
+        // Add ONLY to the local file; global cursor must stay put.
+        let l1 = r#"{"id":"l1","summary":"","appliedEdits":[{"id":"b","title":"supersedes y","content":""}]}"#;
+        write_history(&hd.join("local_refinement_history.jsonl"), &[l1]);
+        let second = tap.drain().unwrap();
+        assert_eq!(second.len(), 1, "only the local record's signal fires");
+        assert_eq!(second[0].memory_id, "y");
     }
 
     #[test]
