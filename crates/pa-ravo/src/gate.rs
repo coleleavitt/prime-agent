@@ -308,6 +308,22 @@ pub fn ravo_fast_screen(proposal: &RefinementProposal, valid_edits: usize) -> u6
 
 /// The proposal as the JSON artifact the certificate binds and the lineage
 /// records (TS `RefinementProposal` key order; absent fields omitted).
+///
+/// A top-level `addressedFingerprints` is populated as the sorted union
+/// of every edit's `targetsFingerprints` so RAVO's `addressed_fingerprints_of`
+/// (which `record_trust` then reads as the claimed-fingerprints set the
+/// window opens over) sees what each edit cites. Before 2026-11-07 the
+/// field was never set at the artifact layer — every edit carried its
+/// own `targetsFingerprints`, but the artifact dropped them and the top-
+/// level claim stayed empty, so `record_trust`'s
+/// `!claimed.is_empty()` guard was always false, no trust window ever
+/// opened, and every memory sat at the default score of 50 forever.
+/// Measured on this account: all 98 live memories at trust=50, zero
+/// movements across 11 weeks of refinement activity.
+///
+/// Per-edit `targetsFingerprints` rides through on each edit object too
+/// so audit and diffing tools see the claim per edit, not only as the
+/// aggregate.
 #[must_use]
 pub fn proposal_artifact(proposal: &RefinementProposal) -> Value {
     let edits: Vec<Value> = proposal
@@ -336,16 +352,48 @@ pub fn proposal_artifact(proposal: &RefinementProposal) -> Value {
             put("reference", edit.reference.clone().map(Value::Object));
             put("arguments", edit.arguments.clone().map(Value::Object));
             put("metadata", edit.metadata.clone().map(Value::Object));
+            put(
+                "targetsFingerprints",
+                edit.targets_fingerprints
+                    .as_ref()
+                    .filter(|fps| !fps.is_empty())
+                    .map(|fps| Value::Array(fps.iter().cloned().map(Value::String).collect())),
+            );
             put("reason", edit.reason.clone().map(Value::from));
             Value::Object(map)
         })
         .collect();
-    json!({
+    // Aggregate every edit's `targetsFingerprints` into the top-level
+    // `addressedFingerprints` claim RAVO's gate reads. Sorted + deduped
+    // so the certificate binding is byte-stable.
+    let addressed_union: Vec<String> = {
+        let mut seen = std::collections::BTreeSet::new();
+        for edit in &proposal.edits {
+            if let Some(fps) = &edit.targets_fingerprints {
+                for fp in fps {
+                    if !fp.is_empty() {
+                        seen.insert(fp.clone());
+                    }
+                }
+            }
+        }
+        seen.into_iter().collect()
+    };
+    let mut artifact = json!({
         "summary": proposal.summary,
         "rationale": proposal.rationale,
         "expectedOutcome": proposal.expected_outcome,
         "edits": edits,
-    })
+    });
+    if !addressed_union.is_empty() {
+        if let Some(obj) = artifact.as_object_mut() {
+            obj.insert(
+                "addressedFingerprints".to_string(),
+                Value::Array(addressed_union.into_iter().map(Value::String).collect()),
+            );
+        }
+    }
+    artifact
 }
 
 /// The stored RAVO state of a harness state, normalized; `None` when the
@@ -984,6 +1032,84 @@ mod tests {
             .unwrap()
             .insert(entry.id.clone(), entry);
         state
+    }
+
+    /// Guards the 2026-11-07 trust-loop unblock: `proposal_artifact`
+    /// aggregates every edit's `targetsFingerprints` into the top-
+    /// level `addressedFingerprints` claim. Without it,
+    /// `record_trust`'s `claimed.is_empty()` guard always fired and
+    /// no trust window ever opened — observed on this account as
+    /// 98/98 memories stuck at trust=50.
+    #[test]
+    fn proposal_artifact_hoists_targets_fingerprints_into_addressed() {
+        use pa_core::refinement::planner::RefinementEdit;
+        let proposal = RefinementProposal {
+            summary: "fix the thing".into(),
+            rationale: "evidence says so".into(),
+            expected_outcome: "no repeat".into(),
+            edits: vec![
+                RefinementEdit {
+                    targets_fingerprints: Some(vec![
+                        "abcdef1234567890".into(),
+                        "cafefeeddeadbeef".into(),
+                    ]),
+                    ..RefinementEdit::default()
+                },
+                RefinementEdit {
+                    // A second edit with an overlapping fp — the
+                    // union must dedup.
+                    targets_fingerprints: Some(vec!["abcdef1234567890".into()]),
+                    ..RefinementEdit::default()
+                },
+            ],
+        };
+        let artifact = proposal_artifact(&proposal);
+        let addressed = artifact
+            .get("addressedFingerprints")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            addressed,
+            vec![
+                "abcdef1234567890".to_string(),
+                "cafefeeddeadbeef".to_string(),
+            ],
+            "sorted + deduped union"
+        );
+        // Per-edit `targetsFingerprints` rides through too.
+        let edits = artifact.get("edits").and_then(Value::as_array).unwrap();
+        assert!(
+            edits[0]
+                .get("targetsFingerprints")
+                .and_then(Value::as_array)
+                .is_some(),
+            "per-edit tfs present"
+        );
+    }
+
+    /// An empty `targetsFingerprints` across every edit must NOT add
+    /// a top-level `addressedFingerprints` field — a null claim
+    /// shouldn't open a window either.
+    #[test]
+    fn proposal_artifact_omits_addressed_when_no_edit_claims_any() {
+        use pa_core::refinement::planner::RefinementEdit;
+        let proposal = RefinementProposal {
+            summary: "x".into(),
+            rationale: "x".into(),
+            expected_outcome: "x".into(),
+            edits: vec![RefinementEdit::default()],
+        };
+        let artifact = proposal_artifact(&proposal);
+        assert!(
+            artifact.get("addressedFingerprints").is_none(),
+            "absent, not an empty array"
+        );
     }
 
     /// TS `refinementBaselineView` binds the entries without `trust`
