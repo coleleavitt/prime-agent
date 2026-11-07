@@ -12,7 +12,7 @@ use std::io;
 use std::path::Path;
 
 use pa_core::refinement::retrieval::RerankerHandle;
-use pa_ledger::FeedbackTap;
+use pa_ledger::{CorrectionTap, FeedbackTap};
 use pa_retrieval::Outcome;
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +82,40 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
             %err,
             "memory-event sync failed"
         );
+    }
+
+    // User- and self-correction taps: scan the active session's
+    // jsonl + the digest_memories.jsonl sidecar for correction events
+    // and feed them through the detached-feedback path.
+    if let Some(ctap) = CorrectionTap::for_latest_session(agent_dir) {
+        match ctap.drain_user_corrections() {
+            Ok(signals) if !signals.is_empty() => {
+                for signal in &signals {
+                    handle.record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                }
+                tracing::info!(
+                    target: "pa_daemon::retrieval",
+                    applied = signals.len(),
+                    "user-correction signals trained flyrag"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!(target: "pa_daemon::retrieval", %err, "user-correction tap drain failed"),
+        }
+        match ctap.drain_self_corrections() {
+            Ok(signals) if !signals.is_empty() => {
+                for signal in &signals {
+                    handle.record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                }
+                tracing::info!(
+                    target: "pa_daemon::retrieval",
+                    applied = signals.len(),
+                    "self-correction signals trained flyrag"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!(target: "pa_daemon::retrieval", %err, "self-correction tap drain failed"),
+        }
     }
 
     if let Err(err) = handle.save() {

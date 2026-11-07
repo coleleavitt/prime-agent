@@ -128,6 +128,7 @@ fn render_digest_with_fingerprint(
     let adjustment = context.prompt_hooks.adjust(&merged);
     let state_fingerprint =
         adjusted_harness_digest_fingerprint(&merged, render_flags, adjustment.as_ref());
+    let rendered_memory_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let digest = format_harness_state_for_prompt(
         &merged,
         &HarnessStatePromptOptions {
@@ -137,9 +138,19 @@ fn render_digest_with_fingerprint(
             query_terms: Some(query_terms),
             adjustment,
             rerank_hook: context.rerank_hook.clone(),
+            record_rendered_memory_ids: Some(std::sync::Arc::clone(&rendered_memory_ids)),
             ..Default::default()
         },
     );
+    // Persist which memory ids landed in this turn's digest. pa-ledger's
+    // user/self-correction taps read this sidecar to attribute Misled
+    // signals to the exact memories shown. Append-only JSONL; failures
+    // are logged and skipped — the digest render must never fail a turn.
+    if let Ok(ids) = rendered_memory_ids.lock() {
+        if !ids.is_empty() {
+            append_digest_memories_sidecar(&context.global_dir, &state_fingerprint, &ids);
+        }
+    }
     HarnessDigestRender {
         digest,
         state_fingerprint,
@@ -633,6 +644,47 @@ impl super::AgentSession {
         }
         texts.reverse();
         texts
+    }
+}
+
+/// Sidecar filename for the per-turn digest-memory record.
+pub const DIGEST_MEMORIES_SIDECAR: &str = "digest_memories.jsonl";
+
+/// Append one JSONL line per digest render: the ISO timestamp (so the
+/// pa-ledger tap can join by time), the state fingerprint (so a tap
+/// can also match on that), and the list of memory ids shown.
+/// Best-effort — any I/O failure is logged at debug and dropped; a
+/// digest render must never fail a turn.
+fn append_digest_memories_sidecar(global_dir: &std::path::Path, fingerprint: &str, ids: &[String]) {
+    use std::io::Write as _;
+    let path = global_dir.join(DIGEST_MEMORIES_SIDECAR);
+    if let Err(err) = std::fs::create_dir_all(global_dir) {
+        tracing::debug!(target: "pa_core::digest_sidecar", %err, "create_dir_all failed");
+        return;
+    }
+    // ISO-8601 UTC, serde_json escapes the strings.
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let record = serde_json::json!({
+        "timestamp": now,
+        "state_fingerprint": fingerprint,
+        "memory_ids": ids,
+    });
+    let line = match serde_json::to_string(&record) {
+        Ok(line) => line,
+        Err(err) => {
+            tracing::debug!(target: "pa_core::digest_sidecar", %err, "serialise failed");
+            return;
+        }
+    };
+    let mut file = match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(f) => f,
+        Err(err) => {
+            tracing::debug!(target: "pa_core::digest_sidecar", %err, "open failed");
+            return;
+        }
+    };
+    if let Err(err) = writeln!(file, "{line}") {
+        tracing::debug!(target: "pa_core::digest_sidecar", %err, "write failed");
     }
 }
 

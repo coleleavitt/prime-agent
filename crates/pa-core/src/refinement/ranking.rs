@@ -234,6 +234,13 @@ pub struct HarnessStatePromptOptions {
     /// `None` keeps the native TF-IDF order byte-for-byte; the daemon can
     /// hand in a hook wrapping a `pa_retrieval::FlyRagReranker`.
     pub rerank_hook: Option<HarnessRerankHook>,
+    /// When set, the render fills this buffer with the memory-kind entry
+    /// IDs it actually included in the digest (post-rerank, post-truncate
+    /// to `max_entries_per_kind`). The daemon uses it to persist a per-turn
+    /// `digest_memories.jsonl` sidecar so the pa-ledger feedback taps can
+    /// attribute `Misled` signals to the exact memories shown when a
+    /// failure or user correction follows.
+    pub record_rendered_memory_ids: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
 }
 
 impl std::fmt::Debug for HarnessStatePromptOptions {
@@ -248,6 +255,10 @@ impl std::fmt::Debug for HarnessStatePromptOptions {
             .field("query_terms", &self.query_terms)
             .field("adjustment", &self.adjustment)
             .field("rerank_hook", &self.rerank_hook.is_some())
+            .field(
+                "record_rendered_memory_ids",
+                &self.record_rendered_memory_ids.is_some(),
+            )
             .finish()
     }
 }
@@ -403,7 +414,16 @@ pub fn format_harness_state_for_prompt(
                 );
             }
         }
-        for entry in entries.iter().take(max_entries_per_kind) {
+        let rendered = entries.iter().take(max_entries_per_kind);
+        if kind == "memory" {
+            if let Some(sink) = options.record_rendered_memory_ids.as_ref() {
+                let ids: Vec<String> = rendered.clone().map(|e| e.id.clone()).collect();
+                if let Ok(mut guard) = sink.lock() {
+                    guard.extend(ids);
+                }
+            }
+        }
+        for entry in rendered {
             let arguments_text =
                 if entry.kind == RefinementKind::Skill && !entry.arguments.is_empty() {
                     format!(
