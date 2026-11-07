@@ -7,9 +7,8 @@
 //! failure in any step is logged and skipped; the tick is best-effort
 //! and must never fail a turn.
 
-use std::fs;
-use std::io;
 use std::path::Path;
+use std::{fs, io};
 
 use pa_core::refinement::retrieval::RerankerHandle;
 use pa_ledger::{CorrectionTap, FeedbackTap};
@@ -31,9 +30,20 @@ const COMPACT_EVERY: usize = 128;
 
 #[derive(Debug, Serialize)]
 struct NoveltyEntry<'a> {
+    /// ISO-8601 UTC millisecond timestamp at tick time. A late-added
+    /// field (schema originally had `memory_id` first) — downstream
+    /// readers must tolerate its absence on older rows.
+    timestamp: String,
     memory_id: &'a str,
     action: &'a str,
     novelty_score: f64,
+}
+
+/// Format an iso8601 UTC timestamp for a `NoveltyEntry`. Matches the
+/// shape `pa_ledger::js::now_iso` produces so a reader can parse both
+/// uniformly.
+fn now_iso() -> String {
+    pa_ledger::now_iso()
 }
 
 /// One settle-time pass: cheap when nothing changed.
@@ -91,7 +101,8 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
         match ctap.drain_user_corrections() {
             Ok(signals) if !signals.is_empty() => {
                 for signal in &signals {
-                    handle.record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                    handle
+                        .record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
                 }
                 tracing::info!(
                     target: "pa_daemon::retrieval",
@@ -100,12 +111,15 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
                 );
             }
             Ok(_) => {}
-            Err(err) => tracing::warn!(target: "pa_daemon::retrieval", %err, "user-correction tap drain failed"),
+            Err(err) => {
+                tracing::warn!(target: "pa_daemon::retrieval", %err, "user-correction tap drain failed")
+            }
         }
         match ctap.drain_self_corrections() {
             Ok(signals) if !signals.is_empty() => {
                 for signal in &signals {
-                    handle.record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                    handle
+                        .record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
                 }
                 tracing::info!(
                     target: "pa_daemon::retrieval",
@@ -114,7 +128,9 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
                 );
             }
             Ok(_) => {}
-            Err(err) => tracing::warn!(target: "pa_daemon::retrieval", %err, "self-correction tap drain failed"),
+            Err(err) => {
+                tracing::warn!(target: "pa_daemon::retrieval", %err, "self-correction tap drain failed")
+            }
         }
     }
 
@@ -174,6 +190,7 @@ fn sync_memory_events(harness_dir: &Path, handle: &RerankerHandle) -> io::Result
                     // scores against the index as it was, not after.
                     if let Some(score) = handle.novelty_score(&combined) {
                         if let Ok(entry) = serde_json::to_string(&NoveltyEntry {
+                            timestamp: now_iso(),
                             memory_id: &edit.id,
                             action,
                             novelty_score: score,
@@ -228,7 +245,10 @@ fn append_jsonl(path: &Path, lines: &[String]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     for line in lines {
         f.write_all(line.as_bytes())?;
         f.write_all(b"\n")?;
@@ -260,9 +280,10 @@ struct RawEdit {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pa_core::refinement::retrieval::RerankerHandle;
     use pa_retrieval::FlyRagReranker;
+
+    use super::*;
 
     fn write_history(path: &Path, records: &[&str]) {
         let mut body = String::new();
@@ -292,7 +313,9 @@ mod tests {
 
         // Append a delete, drain again.
         let mut full = fs::read_to_string(&history).unwrap();
-        full.push_str(r#"{"id":"r3","appliedEdits":[{"id":"m1","kind":"memory","action":"delete"}]}"#);
+        full.push_str(
+            r#"{"id":"r3","appliedEdits":[{"id":"m1","kind":"memory","action":"delete"}]}"#,
+        );
         full.push('\n');
         fs::write(&history, full).unwrap();
         sync_memory_events(&harness, &handle).unwrap();
@@ -333,10 +356,42 @@ mod tests {
         let history = harness.join("refinement_history.jsonl");
         write_history(
             &history,
-            &[r#"{"id":"r1","appliedEdits":[{"id":"s1","kind":"skill","action":"create","title":"t","content":"c"}]}"#],
+            &[
+                r#"{"id":"r1","appliedEdits":[{"id":"s1","kind":"skill","action":"create","title":"t","content":"c"}]}"#,
+            ],
         );
         let handle = RerankerHandle::new(FlyRagReranker::new(7).unwrap());
         sync_memory_events(&harness, &handle).unwrap();
         assert_eq!(handle.len(), 0);
+    }
+
+    /// Guards the 2026-11-07 fix: every novelty-diary row carries an iso
+    /// timestamp so downstream readers can tell historical replay from
+    /// live admits.
+    #[test]
+    fn novelty_diary_entries_carry_a_timestamp_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let harness = dir.path().join("harness");
+        fs::create_dir_all(&harness).unwrap();
+        let history = harness.join("refinement_history.jsonl");
+        write_history(
+            &history,
+            &[
+                r#"{"id":"r1","appliedEdits":[{"id":"m1","kind":"memory","action":"create","title":"t","content":"c"}]}"#,
+            ],
+        );
+        let handle = RerankerHandle::new(FlyRagReranker::new(7).unwrap());
+        sync_memory_events(&harness, &handle).unwrap();
+        let diary = fs::read_to_string(harness.join(NOVELTY_DIARY)).unwrap();
+        let first_line = diary.lines().next().expect("at least one row");
+        let row: serde_json::Value = serde_json::from_str(first_line).unwrap();
+        let ts = row["timestamp"].as_str().expect("timestamp is a string");
+        // iso format: YYYY-MM-DDTHH:MM:SS.mmmZ — never an empty string.
+        assert!(
+            ts.len() >= 20 && ts.ends_with('Z'),
+            "timestamp shape is iso-8601 UTC millis: {ts}"
+        );
+        assert_eq!(row["memory_id"], "m1");
+        assert_eq!(row["action"], "create");
     }
 }
