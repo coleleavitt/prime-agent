@@ -137,7 +137,10 @@ where
         pyproject_path: pyproject_path.to_string_lossy().to_string(),
         pyproject_hash: file_content_hash(&pyproject_path),
     };
-    let uv = match ensure_uv() {
+    // The same project boundary as the kernel bootstrap: this process's
+    // directory may be a repository, so uv and its PATH stay outside it.
+    let project = std::env::current_dir().ok();
+    let uv = match ensure_uv(project.as_deref()) {
         Ok(uv) => uv,
         Err(error) => {
             return Ok(PythonSkillPackageInstallResult {
@@ -156,7 +159,7 @@ where
         "--editable".to_string(),
         skill.package_path.clone(),
     ];
-    if let Err(error) = run_async(&uv, &install_args).await {
+    if let Err(error) = run_async(&uv, &install_args, project.as_deref()).await {
         return Ok(PythonSkillPackageInstallResult {
             installed: false,
             detail: format!("editable install failed: {error:#}"),

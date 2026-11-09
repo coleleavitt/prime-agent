@@ -25,6 +25,7 @@ use venv::store::{VenvOps, VenvStore, venv_key};
 use venv::{
     BootstrapPythonSkill,
     KernelVenvLocation,
+    UvCommand,
     bootstrap_venv,
     ensure_uv,
     expand_home,
@@ -177,8 +178,20 @@ static IN_FLIGHT: Mutex<InFlightBootstrap> = Mutex::new(None);
 ///
 /// The in-flight promise stores its outcome under the same lock, so the `expect` is unreachable.
 pub async fn ensure_kernel_python(options: EnsureKernelPythonOptions) -> anyhow::Result<PathBuf> {
+    ensure_kernel_python_for_project(options, std::env::current_dir().ok()).await
+}
+
+/// The kernel manager knows its session directory even when the host process
+/// was launched elsewhere. Keep that directory through probes and uv setup.
+pub(crate) async fn ensure_kernel_python_for_project(
+    options: EnsureKernelPythonOptions,
+    project: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
     let python_skills = normalize_python_skills(&options.python_skills);
     let key = [
+        project
+            .as_ref()
+            .map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
         std::env::var("PRIME_AGENT_KERNEL_PYTHON").unwrap_or_default(),
         std::env::var("PRIME_AGENT_KERNEL_VENV").unwrap_or_default(),
         std::env::var(venv::RUNTIME_SOURCE_ENV).unwrap_or_default(),
@@ -203,7 +216,8 @@ pub async fn ensure_kernel_python(options: EnsureKernelPythonOptions) -> anyhow:
     };
     let mut guard = shared.lock().await;
     if guard.is_none() {
-        *guard = Some(ensure_kernel_python_uncached(&options, &python_skills).await);
+        *guard =
+            Some(ensure_kernel_python_uncached(&options, &python_skills, project.as_deref()).await);
     }
     let outcome = guard.take().expect("outcome was just stored");
     // Drop the registry entry so a later call re-validates instead of reusing
@@ -220,6 +234,7 @@ pub async fn ensure_kernel_python(options: EnsureKernelPythonOptions) -> anyhow:
 async fn ensure_kernel_python_uncached(
     options: &EnsureKernelPythonOptions,
     python_skills: &[BootstrapPythonSkill],
+    project: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON") {
         if !override_python.is_empty() {
@@ -276,10 +291,10 @@ async fn ensure_kernel_python_uncached(
     let runtime_identity = resolve_runtime_identity();
     let result = match location {
         KernelVenvLocation::Pinned(venv) => {
-            ensure_pinned_venv(&venv, &runtime_identity, options, python_skills).await
+            ensure_pinned_venv(&venv, &runtime_identity, options, python_skills, project).await
         }
         KernelVenvLocation::Keyed(store) => {
-            ensure_keyed_venv(&store, &runtime_identity, options, python_skills).await
+            ensure_keyed_venv(&store, &runtime_identity, options, python_skills, project).await
         }
     };
     result.map_err(|error| format_bootstrap_failure(&error))
@@ -292,6 +307,7 @@ async fn ensure_pinned_venv(
     runtime_identity: &str,
     options: &EnsureKernelPythonOptions,
     python_skills: &[BootstrapPythonSkill],
+    project: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     let python = kernel_venv_python(venv);
     let python_str = python.to_string_lossy().to_string();
@@ -310,7 +326,15 @@ async fn ensure_pinned_venv(
             return Ok(python);
         }
         if kernel_base_ready(&python_str, venv, runtime_identity) {
-            sync_skills(venv, &python, runtime_identity, python_skills, options).await?;
+            sync_skills(
+                venv,
+                &python,
+                runtime_identity,
+                python_skills,
+                options,
+                project,
+            )
+            .await?;
             return Ok(python);
         }
         let had_venv = venv.exists();
@@ -320,7 +344,7 @@ async fn ensure_pinned_venv(
             std::fs::remove_dir_all(venv)
                 .with_context(|| format!("removing {}", venv.display()))?;
         }
-        bootstrap_venv(venv, python_skills, options).await?;
+        bootstrap_venv(venv, python_skills, options, project).await?;
         Ok(python)
     }
     .await;
@@ -336,6 +360,7 @@ async fn ensure_keyed_venv(
     runtime_identity: &str,
     options: &EnsureKernelPythonOptions,
     python_skills: &[BootstrapPythonSkill],
+    project: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     static PRUNED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     let key = venv_key(runtime_identity);
@@ -343,6 +368,7 @@ async fn ensure_keyed_venv(
         runtime_identity,
         options,
         python_skills,
+        project,
     };
     let venv = store.ensure(&key, &ops).await?;
     // Prune each store at most once per process: a long-lived host boots
@@ -372,6 +398,7 @@ struct KernelVenvOps<'a> {
     runtime_identity: &'a str,
     options: &'a EnsureKernelPythonOptions,
     python_skills: &'a [BootstrapPythonSkill],
+    project: Option<&'a Path>,
 }
 
 impl VenvOps for KernelVenvOps<'_> {
@@ -396,12 +423,13 @@ impl VenvOps for KernelVenvOps<'_> {
             self.runtime_identity,
             self.python_skills,
             self.options,
+            self.project,
         )
         .await
     }
 
     async fn build(&self, venv: &Path) -> anyhow::Result<()> {
-        bootstrap_venv(venv, self.python_skills, self.options).await
+        bootstrap_venv(venv, self.python_skills, self.options, self.project).await
     }
 
     fn report(&self, message: &str) {
@@ -415,12 +443,16 @@ async fn sync_skills(
     runtime_identity: &str,
     python_skills: &[BootstrapPythonSkill],
     options: &EnsureKernelPythonOptions,
+    project: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let uv = ensure_uv()?;
+    let uv = ensure_uv(project)?;
     let source_dir = venv::resolve_runtime_source_dir()
         .ok_or_else(|| anyhow!("the prime-agent-runtime source directory was not found"))?;
     sync_python_skills(
-        &uv,
+        &UvCommand {
+            executable: &uv,
+            project,
+        },
         venv,
         python,
         &source_dir,
@@ -486,7 +518,7 @@ mod tests {
 
         let error = tokio::time::timeout(
             std::time::Duration::from_secs(121),
-            ensure_pinned_venv(&venv, &resolve_runtime_identity(), &options, &[]),
+            ensure_pinned_venv(&venv, &resolve_runtime_identity(), &options, &[], None),
         )
         .await
         .expect("lock acquisition must have a bounded wait")

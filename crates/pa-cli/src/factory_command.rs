@@ -271,10 +271,12 @@ fn resolve_kernel_python() -> Result<PathBuf, String> {
 fn library_dirs_via_kernel(python: &std::path::Path) -> Result<LibraryDirs, String> {
     let mut child = Command::new(python);
     child
-        .args(["-c", LIBRARY_DIRS_RUNNER])
+        .args(["-P", "-s", "-c", LIBRARY_DIRS_RUNNER])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .env_clear()
+        .envs(pa_core::kernel::python_process_environment());
     // Hidden window on Windows, matching the kernel probes.
     pa_core::platform::process::set_no_window(&mut child);
     let output = child

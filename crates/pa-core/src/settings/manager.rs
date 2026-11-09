@@ -38,6 +38,7 @@ pub struct SettingsManager {
     global: Settings,
     pending_global_fields: BTreeSet<&'static str>,
     project: Settings,
+    project_raw: Option<serde_json::Value>,
     merged: Settings,
     runtime_overrides: Settings,
     errors: Vec<SettingsError>,
@@ -90,6 +91,7 @@ impl SettingsManager {
             global: Settings::default(),
             pending_global_fields: BTreeSet::new(),
             project: Settings::default(),
+            project_raw: None,
             merged: Settings::default(),
             runtime_overrides: Settings::default(),
             global_raw: None,
@@ -114,7 +116,7 @@ impl SettingsManager {
         let mut errors = std::mem::take(&mut self.errors);
         let (global, global_raw, global_load_error) =
             load_scope(self.storage.as_ref(), SettingsScope::Global, &mut errors);
-        let (project, _, project_load_error) =
+        let (project, project_raw, project_load_error) =
             load_scope(self.storage.as_ref(), SettingsScope::Project, &mut errors);
         self.workspace_trust = self
             .trust_workspace
@@ -125,6 +127,7 @@ impl SettingsManager {
         } else {
             untrusted_project_view(&project)
         };
+        self.project_raw = project_raw;
         self.global = global;
         self.global_raw = global_raw;
         self.global_load_error = global_load_error;
@@ -387,6 +390,18 @@ impl SettingsManager {
     #[must_use]
     pub fn project_settings(&self) -> &Settings {
         &self.project
+    }
+
+    /// Project package entries remain available for an explicit removal, but
+    /// never participate in session resource resolution or update checks.
+    #[must_use]
+    pub(crate) fn project_packages_for_removal(&self) -> Vec<serde_json::Value> {
+        self.project_raw
+            .as_ref()
+            .and_then(|value| value.get("packages"))
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -719,12 +734,16 @@ impl SettingsManager {
         if self.project_writes_blocked() {
             return;
         }
-        self.project.packages = Some(packages.clone());
-        self.persist_scope_field(
-            SettingsScope::Project,
-            "packages",
-            &serde_json::Value::Array(packages),
-        );
+        // Preserve project package entries for explicit removal. They never
+        // become active, including in this manager.
+        let value = serde_json::Value::Array(packages);
+        self.persist_scope_field(SettingsScope::Project, "packages", &value);
+        if let serde_json::Value::Object(project_raw) = self
+            .project_raw
+            .get_or_insert_with(|| serde_json::json!({}))
+        {
+            project_raw.insert("packages".into(), value);
+        }
         self.rederive_merged();
         self.refresh_workspace_trust();
     }
@@ -1610,7 +1629,19 @@ fn load_scope(
         }
         other => other,
     };
-    (from_value_lenient(&migrated), Some(migrated), None)
+    let mut settings = from_value_lenient(&migrated);
+    if scope == SettingsScope::Project {
+        // A repository can supply this file before the user opens it. Keep its
+        // document on disk, but never let it select a process, command prefix,
+        // package installer, or MCP server through an effective settings read.
+        settings.shell_path = None;
+        settings.shell_command_prefix = None;
+        settings.npm_command = None;
+        settings.packages = None;
+        settings.mcp_servers = None;
+        settings.mcp_catalog_sources = None;
+    }
+    (settings, Some(migrated), None)
 }
 
 #[cfg(test)]
@@ -1643,10 +1674,12 @@ mod tests {
         let mut manager = SettingsManager::create(&project, &agent_dir);
         manager.set_project_packages(vec![serde_json::json!({"source": "example"})]);
 
-        assert!(std::fs::symlink_metadata(&project_settings)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&project_settings)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(std::fs::read_to_string(&auth).unwrap(), secret);
         let messages: Vec<&str> = manager
             .errors()

@@ -207,11 +207,12 @@ impl Inner {
         }
         let progress = options.on_bootstrap_progress.clone();
         let skills = self.options.python_skills.clone();
-        let python = crate::kernel::bootstrap::ensure_kernel_python(
+        let python = crate::kernel::bootstrap::ensure_kernel_python_for_project(
             crate::kernel::bootstrap::EnsureKernelPythonOptions {
                 python_skills: skills,
                 on_progress: progress,
             },
+            self.start_cwd().or_else(|| std::env::current_dir().ok()),
         )
         .await?;
         *lock(&self.resolved_python) = Some(python.clone());
@@ -285,8 +286,10 @@ impl Inner {
         // The session's tasks directory: every `bash()` command's output is
         // persisted there (`<job id>.output`) for the model to read by path.
         self.bash_jobs.set_output_dir(
-            env.get(crate::session_engine::scratch::TASKS_ENV)
-                .map(std::path::PathBuf::from),
+            env.get(std::ffi::OsStr::new(
+                crate::session_engine::scratch::TASKS_ENV,
+            ))
+            .map(std::path::PathBuf::from),
         );
         // Under the OS sandbox the kernel process itself is confined, so
         // every `bash()`, `subprocess` and cell child inherits the policy.
@@ -298,7 +301,8 @@ impl Inner {
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default();
             let mut scratch = vec![crate::os_sandbox::temp_dir_for(
-                env.get("TMPDIR").map(String::as_str),
+                env.get(std::ffi::OsStr::new("TMPDIR"))
+                    .and_then(|value| value.to_str()),
             )];
             // A state dir the kernel would create on first use must exist now: the
             // sandbox only grants directories that exist when it is built.
@@ -308,10 +312,14 @@ impl Inner {
             scratch.extend(kernel_sandbox.state_dirs.iter().cloned());
             // The session's scratchpad stays writable (it exists: the
             // session created it before the kernel's first start).
-            if let Some(scratchpad) = env.get(crate::session_engine::scratch::SCRATCHPAD_ENV) {
+            if let Some(scratchpad) = env.get(std::ffi::OsStr::new(
+                crate::session_engine::scratch::SCRATCHPAD_ENV,
+            )) {
                 scratch.push(std::path::PathBuf::from(scratchpad));
             }
-            if let Some(journal) = env.get(orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV) {
+            if let Some(journal) = env.get(std::ffi::OsStr::new(
+                orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV,
+            )) {
                 scratch.extend(
                     std::path::Path::new(journal)
                         .parent()
@@ -353,9 +361,9 @@ impl Inner {
                 // `dill.py`, or stdlib-named module cannot shadow the runtime's imports. The
                 // runtime appends the cwd last so project modules stay importable from cells.
                 // Process-local (unlike `PYTHONSAFEPATH`): `bash()` children resolve their own
-                // imports as before.
+                // imports as before. `-s`: no user site-packages (`usercustomize`) either.
                 command
-                    .args(["-P", "-m", "rlm.repl"])
+                    .args(["-P", "-s", "-m", "rlm.repl"])
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
@@ -735,35 +743,40 @@ impl Inner {
 /// read UTF-8 regardless of the active legacy code page, overriding any
 /// provisioner-provided `PYTHONUTF8`) and the owner pid the runtime journals
 /// its process groups under.
-/// The daemon worker's identity never reaches the kernel or what it spawns
-/// (see `KernelEnvironment::passes_to_kernel`), nor, under the
-/// `scrub-credentials` policy, the provider API keys.
 fn kernel_spawn_env(
     options_env: &HashMap<String, String>,
     environment: crate::kernel::shared::KernelEnvironment,
-) -> HashMap<String, String> {
-    let mut env: HashMap<String, String> = std::env::vars()
-        .filter(|(key, _)| environment.passes_to_kernel(key))
+) -> HashMap<std::ffi::OsString, std::ffi::OsString> {
+    let mut env: HashMap<std::ffi::OsString, std::ffi::OsString> = std::env::vars_os()
+        .filter(|(key, _)| {
+            key.to_str()
+                .is_some_and(|key| environment.passes_to_kernel(key))
+        })
         .collect();
     for (key, value) in options_env {
-        env.insert(key.clone(), value.clone());
+        #[cfg(windows)]
+        env.retain(|name, _| !name.to_string_lossy().eq_ignore_ascii_case(key));
+        env.insert(key.into(), value.into());
     }
-    if cfg!(windows) {
-        env.insert("PYTHONUTF8".to_string(), "1".to_string());
+    #[cfg(windows)]
+    {
+        env.retain(|name, _| !name.to_string_lossy().eq_ignore_ascii_case("PYTHONUTF8"));
+        env.insert("PYTHONUTF8".into(), "1".into());
     }
     env.insert(
-        "PRIME_AGENT_KERNEL_OWNER_PID".to_string(),
-        std::process::id().to_string(),
+        "PRIME_AGENT_KERNEL_OWNER_PID".into(),
+        std::process::id().to_string().into(),
     );
     // This host serves the kernel's `bash.*` requests (it runs the
     // commands); the runtime reads the flag once at import.
-    env.insert("PRIME_AGENT_HOST_BASH".to_string(), "1".to_string());
+    env.insert("PRIME_AGENT_HOST_BASH".into(), "1".into());
     if let Some(traceparent) = pa_types::trace_context::current_traceparent() {
         env.insert(
-            pa_types::trace_context::TRACEPARENT_ENV.to_string(),
-            traceparent,
+            pa_types::trace_context::TRACEPARENT_ENV.into(),
+            traceparent.into(),
         );
     }
+    crate::kernel::python_env::sanitize_python_env(&mut env);
     env
 }
 
@@ -801,6 +814,37 @@ mod tests {
         ReplKernelManager::new(KernelManagerOptions::default())
     }
 
+    #[test]
+    fn kernel_spawn_drops_python_overrides_after_applying_options() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let trusted = root.path().join("trusted");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&trusted).unwrap();
+        let options = HashMap::from([
+            (
+                "PYTHONPATH".to_string(),
+                std::env::join_paths([std::path::Path::new("."), &project, &trusted])
+                    .unwrap()
+                    .into_string()
+                    .unwrap(),
+            ),
+            (
+                "PYTHONHOME".to_string(),
+                project.to_string_lossy().into_owned(),
+            ),
+            (
+                "PYTHONUSERBASE".to_string(),
+                project.to_string_lossy().into_owned(),
+            ),
+        ]);
+
+        let env = kernel_spawn_env(&options, crate::kernel::shared::KernelEnvironment::Inherit);
+        assert!(!env.contains_key(std::ffi::OsStr::new("PYTHONPATH")));
+        assert!(!env.contains_key(std::ffi::OsStr::new("PYTHONHOME")));
+        assert!(!env.contains_key(std::ffi::OsStr::new("PYTHONUSERBASE")));
+    }
+
     /// A fresh scratch dir (removed with the guard) and the not-yet-created root inside it.
     fn temp_root(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let guard = tempfile::Builder::new()
@@ -815,14 +859,19 @@ mod tests {
     #[test]
     fn kernel_spawn_env_forces_utf8_mode() {
         let mut options_env = HashMap::new();
-        options_env.insert("PYTHONUTF8".to_string(), "0".to_string());
+        options_env.insert("pythonutf8".to_string(), "0".to_string());
         let env = kernel_spawn_env(
             &options_env,
             crate::kernel::shared::KernelEnvironment::Inherit,
         );
-        assert_eq!(env.get("PYTHONUTF8").map(String::as_str), Some("1"));
         assert_eq!(
-            env.get("PRIME_AGENT_KERNEL_OWNER_PID").map(String::as_str),
+            env.get(std::ffi::OsStr::new("PYTHONUTF8"))
+                .and_then(|value| value.to_str()),
+            Some("1")
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("PRIME_AGENT_KERNEL_OWNER_PID"))
+                .and_then(|value| value.to_str()),
             Some(std::process::id().to_string().as_str())
         );
     }
