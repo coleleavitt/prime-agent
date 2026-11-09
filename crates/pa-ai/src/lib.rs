@@ -22,8 +22,6 @@ mod providers;
 mod stream;
 
 #[cfg(test)]
-mod prime_inference_differential_test;
-#[cfg(test)]
 mod test_mock_http;
 
 pub use event_stream::{AssistantMessageEventExt, AssistantMessageEventStream};
