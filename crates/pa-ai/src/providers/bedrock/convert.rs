@@ -537,6 +537,7 @@ mod supports_prompt_caching_tests {
             featured: None,
             headers: None,
             compat: None,
+            serving: None,
         }
     }
 
@@ -643,6 +644,7 @@ mod convert_messages_tests {
             featured: None,
             headers: None,
             compat: None,
+            serving: None,
         }
     }
 

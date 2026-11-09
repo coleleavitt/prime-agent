@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use pa_types::ai::{
     Model,
+    ModelServing,
     ModelThinkingLevel,
     PRIME_INFERENCE_PROVIDER_ID,
     clamp_thinking_level,
@@ -786,8 +787,19 @@ impl ModelPicker {
         if !self.is_configured(model) {
             segments.push("require sign in".to_string());
         }
-        segments.push(model.provider.clone());
+        segments.push(provider_label(model).to_string());
         segments
+    }
+}
+
+/// The provider a row displays (and search matches): Prime Inference routes
+/// split into their serving class (the live catalog labels each route hosted
+/// or gateway); unlabeled routes and every other provider show the provider id.
+fn provider_label(model: &Model) -> &str {
+    match (model.provider.as_str(), model.serving) {
+        (PRIME_INFERENCE_PROVIDER_ID, Some(ModelServing::Hosted)) => "prime-hosted",
+        (PRIME_INFERENCE_PROVIDER_ID, Some(ModelServing::Gateway)) => "prime-gateway",
+        _ => model.provider.as_str(),
     }
 }
 

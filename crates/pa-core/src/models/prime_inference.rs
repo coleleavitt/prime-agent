@@ -45,6 +45,7 @@ pub fn private_prime_inference_models() -> Vec<Model> {
             max_tokens: 131_072,
             max_tokens_explicit: false,
             featured: Some(true),
+            serving: None,
             compat: Some(ModelCompat::from_kind(CompatKind::OpenAiCompletions(
                 Box::new(pa_types::ai::OpenAiCompletionsCompat {
                     supports_developer_role: Some(false),
@@ -71,6 +72,7 @@ pub fn private_prime_inference_models() -> Vec<Model> {
             max_tokens: 131_072,
             max_tokens_explicit: false,
             featured: None,
+            serving: None,
             compat: Some(ModelCompat::from_kind(CompatKind::OpenAiCompletions(
                 Box::new(pa_types::ai::OpenAiCompletionsCompat {
                     supports_developer_role: Some(false),
