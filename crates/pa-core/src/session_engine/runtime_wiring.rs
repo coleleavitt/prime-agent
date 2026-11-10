@@ -355,6 +355,7 @@ pub fn kernel_provisioner(
     plan_mode: crate::kernel::plan_guard::PlanMode,
     sandbox: Option<crate::os_sandbox::SessionSandbox>,
     settings_env: Vec<(String, String)>,
+    ready_gate: Option<crate::kernel::provisioner::KernelReadyGate>,
 ) -> Arc<KernelProvisioner> {
     let mut env = kernel_base_env(agent_dir, settings_env);
     env.extend(kernel_harness_env(
@@ -391,7 +392,7 @@ pub fn kernel_provisioner(
             // The engine-resolved default cell time limit (`None`: daemonless;
             // the runtime bootstrap and state ops never arm it).
             cell_timeout_ms,
-            ready_gate: None,
+            ready_gate,
             on_restore,
             on_background_work_settled,
             on_unavailable_skills,

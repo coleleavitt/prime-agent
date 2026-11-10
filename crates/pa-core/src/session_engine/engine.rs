@@ -90,6 +90,9 @@ pub struct SessionEngineConfig {
     /// Boot the kernel in the background at creation, depth-0 gated; boot
     /// failures surface on the next `ensure()`.
     pub prewarm_ipython_kernel: Option<bool>,
+    /// The kernel restores its snapshot only after this resolves: a replaced engine
+    /// sharing the session's artifact dir flushes its final snapshot first.
+    pub kernel_ready_gate: Option<crate::kernel::provisioner::KernelReadyGate>,
     /// Fires when the kernel's last live background `bash()` handle
     /// settles; `None` installs nothing.
     pub on_background_work_settled: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
@@ -1046,6 +1049,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         plan.clone(),
         sandbox.clone(),
         claude_code_env,
+        config.kernel_ready_gate.clone(),
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {

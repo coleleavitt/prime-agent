@@ -155,6 +155,7 @@ async fn the_runtime_round_trips_workflow_v2_through_the_rust_host() {
         telemetry: None,
         model_info: None,
         mcp_manager: None,
+        kernel_ready_gate: None,
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,

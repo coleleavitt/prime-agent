@@ -143,6 +143,7 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         telemetry: None,
         model_info: None,
         mcp_manager: None,
+        kernel_ready_gate: None,
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,

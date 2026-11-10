@@ -198,6 +198,7 @@ async fn the_kernel_client_is_served_by_the_host() {
         telemetry: None,
         model_info: None,
         mcp_manager: None,
+        kernel_ready_gate: None,
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,

@@ -221,3 +221,45 @@ mod tests {
         assert!(!auth.parent().expect("agent dir").exists());
     }
 }
+
+/// Scoped process-env overrides for the live-kernel tests: applied on
+/// construction, restored on drop.
+#[cfg(test)]
+pub(crate) struct KernelEnvOverride {
+    saved: Vec<(String, Option<String>)>,
+}
+
+#[cfg(test)]
+impl KernelEnvOverride {
+    pub(crate) fn apply(pairs: &[(&str, Option<String>)]) -> Self {
+        let saved = pairs
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect();
+        for (key, value) in pairs {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        KernelEnvOverride { saved }
+    }
+}
+
+#[cfg(test)]
+impl Drop for KernelEnvOverride {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+/// The kernel python for the live-kernel tests (skipped without one).
+#[cfg(test)]
+pub(crate) fn live_kernel_python() -> Option<std::path::PathBuf> {
+    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
+}
