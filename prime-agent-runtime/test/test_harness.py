@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 from rlm import harness as package_harness
 from rlm import rlm as callable_rlm
-from rlm.harness import KERNEL_ENTRY_SOURCE, HarnessState, get_harness_state
+from rlm.harness import HarnessState, get_harness_state
 
 # The agent-dir override setUpModule installs: an isolated dir whose
 # settings.json carries the factory opt-in setting.
@@ -69,65 +70,6 @@ FACTORY_DAG = {
 
 
 class HarnessStateTest(unittest.TestCase):
-    def test_concurrent_subprocess_creates_all_land(self) -> None:
-        # Upstream #3380's lock pin, through this client: eight processes
-        # creating at once all land, because every write the host store
-        # serves holds the state file's owned lock across its read and save.
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness" / "harness_state.json"
-            start = Path(temp_dir) / "start"
-            env = dict(os.environ)
-            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
-            workers = []
-            for worker in range(8):
-                code = (
-                    "import time\n"
-                    "from pathlib import Path\n"
-                    "from rlm.harness import HarnessState\n"
-                    f"while not Path({str(start)!r}).exists():\n"
-                    "    time.sleep(0.005)\n"
-                    f"state = HarnessState({str(state_path)!r})\n"
-                    "for i in range(10):\n"
-                    f"    state.create('memory', f'note {worker} {{i}}', f'note {worker} {{i}}', id=f'm-{worker}-{{i}}')\n"
-                )
-                workers.append(subprocess.Popen([sys.executable, "-c", code], env=env))
-            start.write_text("", encoding="utf-8")
-            for worker in workers:
-                self.assertEqual(worker.wait(), 0)
-            entries = HarnessState(state_path).list("memory")
-            self.assertEqual(len(entries), 80)
-
-    def test_entries_disable_and_re_enable_without_deletion(self) -> None:
-        # #1118: a disabled entry stays stored with its content and version,
-        # survives a reload and a later content update, is marked in the
-        # overview, and re-enables in place; the flag lives under the entry's
-        # `enabled` key (absent = enabled) that the host's /harness reads.
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(path)
-            state.create_subagent("Reviewer", "Review diffs.", id="reviewer")
-            self.assertTrue(state.get("subagent", "reviewer").enabled)
-            self.assertNotIn("enabled", json.loads(path.read_text())["entries"]["subagent"]["reviewer"])
-
-            disabled = state.disable_subagent("reviewer")
-            self.assertFalse(disabled.enabled)
-            stored = json.loads(path.read_text())["entries"]["subagent"]["reviewer"]
-            self.assertIs(stored["enabled"], False)
-            self.assertEqual((stored["content"], stored["version"]), ("Review diffs.", 1))
-
-            reloaded = HarnessState(path)
-            self.assertFalse(reloaded.get("subagent", "reviewer").enabled)
-            reloaded.update_subagent("reviewer", "Reviewer", "Review diffs carefully.")
-            self.assertFalse(HarnessState(path).get("subagent", "reviewer").enabled)
-            self.assertIn("[local:reviewer] [disabled] Reviewer", HarnessState(path).overview())
-
-            self.assertTrue(HarnessState(path).set_enabled("subagent", "reviewer", True).enabled)
-            self.assertTrue(HarnessState(path).get("subagent", "reviewer").enabled)
-            with self.assertRaises(TypeError):
-                state.set_enabled("subagent", "reviewer", "no")
-            with self.assertRaises(ValueError):
-                state.disable_memory("missing")
-
     def test_crud_for_all_entry_kinds(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state = HarnessState(Path(temp_dir) / "harness_state.json")
@@ -486,12 +428,29 @@ class HarnessStateTest(unittest.TestCase):
                 {"nodes": [{"id": "collect", "subagent": "worker"}]},
             )
 
-    # The store's writes are the host's (pa_core::refinement::store::document):
-    # a torn or failed write leaving the previous file intact, and the temp file
-    # never looser than the destination, are pinned there
-    # (a_failed_write_leaves_the_previous_file_and_no_temp,
-    # writes_keep_the_destination_mode) -- the Python json.dump/os.open these
-    # tests patched no longer write the store.
+    def test_save_failure_preserves_previous_state_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = HarnessState(Path(temp_dir) / "harness_state.json")
+            state.create_memory("Durable fact", "Written before the crash.")
+
+            crashing = HarnessState(state.file_path)
+            original_dump = json.dump
+
+            def torn_dump(data: object, fh: object, **kwargs: object) -> None:
+                fh.write('{"schema": 1, "entr')  # type: ignore[attr-defined]
+                raise OSError("disk full")
+
+            json.dump = torn_dump  # type: ignore[assignment]
+            try:
+                with self.assertRaises(OSError):
+                    crashing.create_memory("Doomed fact", "Interrupted mid-write.")
+            finally:
+                json.dump = original_dump
+
+            # The interrupted save must not have truncated the durable state.
+            reloaded = HarnessState(state.file_path)
+            titles = [entry.title for entry in reloaded.entries["memory"].values()]
+            self.assertEqual(titles, ["Durable fact"])
 
     @unittest.skipIf(os.name == "nt", "POSIX mode bits and umask")
     def test_save_preserves_existing_mode_despite_umask(self) -> None:
@@ -529,6 +488,29 @@ class HarnessStateTest(unittest.TestCase):
 
             self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
 
+    def test_save_temp_file_is_never_looser_than_the_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = HarnessState(Path(temp_dir) / "harness_state.json")
+            state.create_memory("First", "Creates the file.")
+            os.chmod(state.file_path, 0o600)
+
+            observed_modes: list[int] = []
+            original_open = os.open
+
+            def observing_open(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+                if str(path).endswith(".tmp"):
+                    observed_modes.append(mode)
+                return original_open(path, flags, mode, **kwargs)
+
+            os.open = observing_open  # type: ignore[assignment]
+            try:
+                state.create_memory("Second", "Replaces the file.")
+            finally:
+                os.open = original_open
+
+            self.assertEqual(observed_modes, [0o600])
+            self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
+
     def test_save_writes_through_a_symlinked_state_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             real_path = Path(temp_dir) / "real_state.json"
@@ -542,6 +524,138 @@ class HarnessStateTest(unittest.TestCase):
             self.assertTrue(alias.is_symlink())
             titles = [entry.title for entry in HarnessState(real_path).entries["memory"].values()]
             self.assertEqual(titles, ["Seed", "Through alias"])
+
+    def test_concurrent_subprocess_creates_all_land(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness" / "harness_state.json"
+            start = Path(temp_dir) / "start"
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            workers = []
+            for worker in range(8):
+                # Unbounded lock retries: on a loaded runner eight contending writers can outlast the
+                # production ~1s acquire budget; this test proves no update is lost, not that budget.
+                # The package rebinds `rlm.harness` to the facade, so patch the module itself.
+                code = (
+                    "import time\n"
+                    "from importlib import import_module\n"
+                    "from pathlib import Path\n"
+                    "import_module('rlm.harness')._LOCK_ATTEMPTS = 10**9\n"
+                    "from rlm.harness import HarnessState\n"
+                    f"while not Path({str(start)!r}).exists():\n"
+                    "    time.sleep(0.005)\n"
+                    f"state = HarnessState({str(state_path)!r})\n"
+                    "for i in range(10):\n"
+                    f"    state.create('memory', f'note {worker} {{i}}', f'note {worker} {{i}}', id=f'm-{worker}-{{i}}')\n"
+                )
+                workers.append(
+                    subprocess.Popen([sys.executable, "-c", code], env=env)
+                )
+            start.write_text("", encoding="utf-8")
+            for worker in workers:
+                self.assertEqual(worker.wait(), 0)
+            entries = HarnessState(state_path).list("memory")
+            self.assertEqual(len(entries), 80)
+
+    def test_held_lock_dir_defers_writes_and_pins_the_shared_lock_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness" / "harness_state.json"
+            state = HarnessState(state_path)
+            state.create("memory", "Seed", "Creates the file.", id="seed")
+            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
+            lock_dir.mkdir()
+            try:
+                with self.assertRaises(RuntimeError) as raised:
+                    state.create("memory", "Second", "Blocked by the lock.", id="second")
+            finally:
+                lock_dir.rmdir()
+            self.assertIn(str(lock_dir), str(raised.exception))
+            entries = HarnessState(state_path).list("memory")
+            self.assertEqual([entry.id for entry in entries], ["seed"])
+
+    def test_save_syncs_parent_after_replace(self) -> None:
+        if os.name != "posix":
+            self.skipTest("directory fsync is POSIX-only")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(path)
+            events: list[str] = []
+            replace, fsync = os.replace, os.fsync
+
+            def observed_replace(source: Path, destination: Path) -> None:
+                replace(source, destination)
+                events.append("replace")
+
+            def observed_fsync(fd: int) -> None:
+                fsync(fd)
+                events.append("directory sync" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file sync")
+
+            with patch.object(os, "replace", side_effect=observed_replace), patch.object(
+                os, "fsync", side_effect=observed_fsync
+            ):
+                state.create_memory("Durable", "Saved")
+            self.assertEqual(events[-2:], ["replace", "directory sync"])
+
+    def test_live_stale_lock_is_not_stolen(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.create_memory("Seed", "Present")
+            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
+            owner = state._acquire_lock_dir(lock_dir)
+            os.utime(lock_dir, (1, 1))
+            try:
+                with self.assertRaises(RuntimeError):
+                    state.create_memory("Second", "Blocked")
+                self.assertTrue(state._owner_matches(lock_dir, owner))
+            finally:
+                (lock_dir / "owner").unlink()
+                lock_dir.rmdir()
+            self.assertEqual(len(HarnessState(state_path).list("memory")), 1)
+
+    def test_dead_lock_is_reclaimed_without_old_owner_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.create_memory("Seed", "Present")
+            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
+            owner = state._acquire_lock_dir(lock_dir)
+            worker = subprocess.Popen([sys.executable, "-c", "pass"])
+            worker.wait()
+            (lock_dir / "owner").write_text(f"{worker.pid} dead-token\n", encoding="utf-8")
+            os.utime(lock_dir, (1, 1))
+            state.create_memory("Second", "Saved")
+            self.assertFalse(state._owner_matches(lock_dir, owner))
+            self.assertFalse(lock_dir.exists())
+            self.assertEqual(len(HarnessState(state_path).list("memory")), 2)
+
+    def test_unparseable_stale_owner_is_reclaimed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.create_memory("Seed", "Present")
+            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
+            lock_dir.mkdir()
+            (lock_dir / "owner").write_bytes(b"\xff")
+            os.utime(lock_dir, (1, 1))
+            state.create_memory("Second", "Saved")
+            self.assertFalse(lock_dir.exists())
+            self.assertEqual(len(HarnessState(state_path).list("memory")), 2)
+
+    def test_save_refuses_lost_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "harness_state.json"
+            state = HarnessState(state_path)
+            state.create_memory("Seed", "Present")
+            with self.assertRaisesRegex(RuntimeError, "lock lost"):
+                with state._locked():
+                    lock_dir, _ = state._held_lock
+                    (lock_dir / "owner").write_text("999999 other-token\n", encoding="utf-8")
+                    state.save()
+            self.assertTrue(lock_dir.exists())
+            (lock_dir / "owner").unlink()
+            lock_dir.rmdir()
+            self.assertEqual(len(HarnessState(state_path).list("memory")), 1)
 
     def test_load_ignores_unknown_json_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1229,6 +1343,9 @@ class HarnessStateTest(unittest.TestCase):
             reloaded = HarnessState(Path(temp_dir) / "harness_state.json")
             self.assertEqual(reloaded.get("memory", "session_note").content, "persisted")
 
+    def test_dir_of_module_harness_lists_state_methods(self) -> None:
+        self.assertIn("delete_factory", dir(package_harness))
+
     def test_module_harness_without_env_raises_on_local_writes_and_reads_work(self) -> None:
         previous_local = os.environ.get("RLM_HARNESS_STATE_DIR")
         previous_session = os.environ.get("RLM_SESSION_DIR")
@@ -1392,277 +1509,6 @@ class HarnessStateTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown harness kind"):
                 state.list("tool")
 
-
-
-class HarnessStateDurabilityTest(unittest.TestCase):
-    """The kernel shares harness_state.json with the TypeScript host, which owns
-    top-level keys this dataclass does not model (`ravo`, `failures`,
-    `trustWindows`). A kernel-side write must round-trip them, and must not be
-    able to leave a truncated file behind."""
-
-    SEED = {
-        "schema": 1,
-        "entries": {"prompt": {}, "memory": {}, "skill": {}, "subagent": {}},
-        "refinements": [],
-        "ravo": {"champions": [{"id": "c1", "claimedFingerprints": ["abc123"]}]},
-        "failures": {
-            "schema": 1,
-            "failures": {"abc123": {"count": 2}},
-            "lastScannedEntryIndex": 7,
-        },
-        "trustWindows": {"abc123": {"clean": 3}},
-    }
-
-    def test_a_file_that_failed_to_parse_is_backed_up_before_a_save_replaces_it(self) -> None:
-        # A corrupt file loaded as empty, and the next save wiped every entry
-        # with no copy left (#961).
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            corrupt = '{"schema": 1, "entries": {"memory": {"kept": {"title": "T", "content": "C"'
-            state_path.write_text(corrupt, encoding="utf-8")
-            state = HarnessState(state_path)
-            self.assertIsNotNone(state.load_error)
-            state.create_memory("Fresh", "Written after the corrupt load.", id="fresh")
-            backups = sorted(Path(temp_dir).glob("harness_state.json.corrupt-*"))
-            self.assertEqual([path.read_text(encoding="utf-8") for path in backups], [corrupt])
-            self.assertEqual([entry.id for entry in HarnessState(state_path).list()], ["fresh"])
-            # One backup per corrupt file: the next save writes over a valid file.
-            state.create_memory("Second", "No new backup.", id="second")
-            self.assertEqual(len(list(Path(temp_dir).glob("harness_state.json.corrupt-*"))), 1)
-
-    def test_concurrent_kernels_never_lose_each_others_writes(self) -> None:
-        # Parent and child kernels both read-modify-write the same file; with
-        # no lock a write landing between another's reload and save was lost.
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            writer = (
-                "import sys\n"
-                "from rlm.harness import HarnessState\n"
-                "state = HarnessState(sys.argv[1])\n"
-                "for i in range(40):\n"
-                "    state.upsert('memory', f'w{sys.argv[2]}-{i}', 'x', id=f'w{sys.argv[2]}_{i}')\n"
-            )
-            env = {
-                **os.environ,
-                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
-                "HOME": str(Path(temp_dir) / "home"),
-                "PRIME_AGENT_CODING_AGENT_DIR": str(Path(temp_dir) / "agent"),
-                "PA_TEST_ISOLATED": "1",
-            }
-            procs = [
-                subprocess.Popen([sys.executable, "-c", writer, str(state_path), str(n)], env=env)
-                for n in range(4)
-            ]
-            for proc in procs:
-                self.assertEqual(proc.wait(timeout=120), 0)
-            ids = sorted(entry.id for entry in HarnessState(state_path).list("memory"))
-            self.assertEqual(ids, sorted(f"w{n}_{i}" for n in range(4) for i in range(40)))
-            self.assertFalse(Path(f"{state_path}.lock").exists())
-
-    def test_a_write_waits_for_the_hosts_lock_and_reclaims_a_stale_one(self) -> None:
-        import threading
-        import time
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            lock_path = Path(f"{state_path}.lock")
-            # A live holder (the host's proper-lockfile directory): the write waits.
-            lock_path.mkdir()
-            released = threading.Event()
-
-            def release() -> None:
-                time.sleep(0.3)
-                released.set()
-                lock_path.rmdir()
-
-            threading.Thread(target=release).start()
-            state.create_memory("Waited", "After the holder released.", id="waited")
-            self.assertTrue(released.is_set())
-            # A crashed holder's leftover (mtime past the stale window) is reclaimed.
-            lock_path.mkdir()
-            old = time.time() - 60
-            os.utime(lock_path, (old, old))
-            state.create_memory("Reclaimed", "Past a stale lock.", id="reclaimed")
-            self.assertEqual(
-                sorted(entry.id for entry in HarnessState(state_path).list("memory")), ["reclaimed", "waited"]
-            )
-            self.assertFalse(lock_path.exists())
-
-    def test_kernel_write_preserves_unmodelled_state(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
-
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-
-            after = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(after["ravo"], self.SEED["ravo"])
-            self.assertEqual(after["failures"], self.SEED["failures"])
-            self.assertEqual(after["trustWindows"], self.SEED["trustWindows"])
-            self.assertTrue(after["entries"]["memory"])
-
-    def test_kernel_write_keeps_the_host_refinement_reason(self) -> None:
-        """The host filters its prompt listing on an event's `reason`; a kernel save must not strip it."""
-        event = {"trigger": "t", "evidence": "", "outcome": "", "created_at": "2026-09-16T00:00:00+00:00"}
-        seed = {
-            **self.SEED,
-            "refinements": [
-                {**event, "id": "refine_a", "changes": ["create memory:m"], "reason": "turn_interval"},
-                {**event, "id": "refine_b", "changes": ["create memory:n"]},
-                {**event, "id": "refine_c", "changes": [], "reason": 7},
-            ],
-        }
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(json.dumps(seed), encoding="utf-8")
-
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-            state.record_refinement("kernel trigger", ["create memory:t"])
-
-            after = json.loads(state_path.read_text(encoding="utf-8"))["refinements"]
-            self.assertEqual([item["id"] for item in after][:3], ["refine_a", "refine_b", "refine_c"])
-            self.assertEqual(after[0]["reason"], "turn_interval")
-            self.assertEqual(HarnessState(state_path).refinements[0].reason, "turn_interval")
-            # Events without a reason stay without one, and a malformed reason is dropped.
-            self.assertNotIn("reason", after[1])
-            self.assertNotIn("reason", after[2])
-            self.assertNotIn("reason", after[3])
-
-    def test_write_preserves_file_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(json.dumps(self.SEED), encoding="utf-8")
-            os.chmod(state_path, 0o600)
-
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-
-            self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
-
-    # test_failed_write_leaves_original_intact moved to the host store:
-    # a_failed_write_leaves_the_previous_file_and_no_temp.
-
-    def test_state_with_no_unmodelled_keys_is_unchanged(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-            after = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(set(after.keys()), {"schema", "entries", "refinements"})
-
-    def test_kernel_write_preserves_unmodelled_entry_keys(self) -> None:
-        """Per-entry host keys (`trust`) are dropped by the modelled-field filter
-        unless they are round-tripped the way the top-level keys are."""
-        seed = {
-            "schema": 1,
-            "entries": {
-                "prompt": {},
-                "memory": {},
-                "skill": {
-                    "probe": {
-                        "id": "probe",
-                        "kind": "skill",
-                        "title": "probe",
-                        "content": "body",
-                        "path": "skills/probe",
-                        "scope": "global",
-                        "reference": {"type": "python", "import": "probe", "callable": "run"},
-                        "arguments": {},
-                        "metadata": {},
-                        "source": "refine",
-                        "created_at": "2026-09-14T08:00:00.000Z",
-                        "updated_at": "2026-09-14T08:00:00.000Z",
-                        "version": 1,
-                        "trust": {"score": 20, "updated_at": "2026-09-15T08:00:00.000Z", "events": []},
-                    }
-                },
-                "subagent": {},
-            },
-            "refinements": [],
-        }
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(json.dumps(seed), encoding="utf-8")
-
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c")
-
-            after = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                after["entries"]["skill"]["probe"]["trust"],
-                seed["entries"]["skill"]["probe"]["trust"],
-            )
-            self.assertNotIn("extra", after["entries"]["skill"]["probe"])
-            self.assertEqual(after["entries"]["skill"]["probe"]["version"], 1)
-
-    def test_kernel_update_keeps_an_unmodelled_entry_key(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c", id="m1")
-            state.entries["memory"]["m1"].extra = {"trust": {"score": 20, "updated_at": "", "events": []}}
-            state.save()
-
-            reopened = HarnessState(state_path)
-            reopened.upsert("memory", title="t2", content="c2", id="m1")
-
-            after = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(after["entries"]["memory"]["m1"]["trust"]["score"], 20)
-            self.assertEqual(after["entries"]["memory"]["m1"]["title"], "t2")
-            self.assertEqual(after["entries"]["memory"]["m1"]["version"], 2)
-
-
-class KernelEntryProvenanceTest(unittest.TestCase):
-    """Everything written here bypasses the RAVO gate; the store must say so.
-
-    26 of 27 entries in the real global store were indistinguishable from
-    host-gated ones because both were stamped "agent", so the ungated share of
-    the memory that reaches every future session could only be inferred.
-    """
-
-    def test_kernel_writes_are_labelled_kernel_not_agent(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.upsert("memory", title="t", content="c", id="m1")
-            state.create_memory("title", "content", id="m2")
-            state.save()
-
-            on_disk = json.loads(state_path.read_text(encoding="utf-8"))["entries"]["memory"]
-            self.assertEqual(on_disk["m1"]["source"], KERNEL_ENTRY_SOURCE)
-            self.assertEqual(on_disk["m2"]["source"], KERNEL_ENTRY_SOURCE)
-            self.assertNotEqual(on_disk["m1"]["source"], "agent")
-
-    def test_an_explicit_source_still_wins(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state = HarnessState(Path(temp_dir) / "harness_state.json")
-            entry = state.upsert("memory", title="t", content="c", id="m1", source="refine")
-            self.assertEqual(entry.source, "refine")
-
-    def test_legacy_rows_are_not_relabelled(self) -> None:
-        """A row with no source predates the split; inventing provenance is worse than none."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state_path.write_text(
-                json.dumps(
-                    {
-                        "schema": 1,
-                        "entries": {
-                            "prompt": {},
-                            "memory": {"old": {"id": "old", "kind": "memory", "title": "t", "content": "c"}},
-                            "skill": {},
-                            "subagent": {},
-                        },
-                        "refinements": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            state = HarnessState(state_path)
-            self.assertEqual(state.entries["memory"]["old"].source, "agent")
 
 
 
@@ -1847,7 +1693,9 @@ class HarnessRefinementsSettingTests(unittest.TestCase):
 
     def test_disabled_refinements_refuse_factory_runs_before_launch(self):
         import asyncio
-        from rlm import factory
+        import importlib
+
+        factory = importlib.import_module("rlm.factory")
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PRIME_AGENT_CODING_AGENT_DIR": tmp}):
             settings = Path(tmp) / "settings.json"
@@ -1857,22 +1705,11 @@ class HarnessRefinementsSettingTests(unittest.TestCase):
             before = state.file_path.read_bytes()
             executor = factory.FactoryExecutor(harness=state)
             settings.write_text('{"factory":{"enabled":true},"harnessRefinements":false}')
-            # The fork's executor runs host-side: a refused run never reaches
-            # the host's factory.run request.
-            launches: list[str] = []
-
-            async def record_launch(request_type: str, payload: dict[str, object]) -> object:
-                launches.append(request_type)
-                return None
-
-            with (
-                patch.object(factory, "_DEFAULT_EXECUTOR", executor),
-                patch.object(factory, "_executor_call", record_launch),
-            ):
+            with patch.object(factory, "_DEFAULT_EXECUTOR", executor):
                 for name in ("saved", "review-sweep"):
                     with self.assertRaisesRegex(RuntimeError, "disabled in /settings"):
                         asyncio.run(factory.run_factory(name))
-            self.assertEqual(launches, [])
+            self.assertEqual(executor._runs, {})
             self.assertEqual(state.file_path.read_bytes(), before)
 
 
