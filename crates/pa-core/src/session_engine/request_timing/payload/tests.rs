@@ -3,13 +3,10 @@
 //! the ring bound, the name uniqueness, and the dispatch-path contract
 //! (record never touches the filesystem).
 
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-
-use serde_json::json;
-
 use super::*;
+use serde_json::json;
+use std::path::Path;
+use std::sync::atomic::Ordering;
 
 /// The capture files' names, oldest first (the epoch-lead name order).
 pub(crate) fn payload_files(dir: &Path) -> Vec<String> {
@@ -67,27 +64,6 @@ pub(crate) fn wait_for_drained_queue() {
     }
 }
 
-/// Waits, when it drops, until the shared writer has finished every write handed to it (no job
-/// queued, no payload bytes retained: the writer releases those after the file lands). Each
-/// test holds one declared after its temp dir, so the writer never writes into a removed dir
-/// and leaves it behind.
-struct SettleWritesOnDrop;
-
-impl Drop for SettleWritesOnDrop {
-    fn drop(&mut self) {
-        let Some(Some(writer)) = super::CAPTURE_WRITER.get() else {
-            return;
-        };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while (writer.queued.load(Ordering::Relaxed) != 0
-            || writer.retained.load(Ordering::Relaxed) != 0)
-            && std::time::Instant::now() < deadline
-        {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-}
-
 /// One capture file's parsed envelope.
 pub(crate) fn payload_envelope(dir: &Path, name: &str) -> Value {
     let content = std::fs::read_to_string(dir.join(name)).expect("the capture file reads");
@@ -132,38 +108,10 @@ fn job(
     }
 }
 
-/// Fill the writer's queue until the reserve counter reports it full (the counter is the
-/// saturation observable, so the probe below races a provably-full queue).
-fn fill_until_saturated(capture: &RequestPayloadCapture, marker_prefix: &str) -> usize {
-    let writer = super::CAPTURE_WRITER
-        .get()
-        .and_then(|writer| writer.as_ref())
-        .expect("the writer is armed");
-    let mut fills = 0;
-    while fills < 2 * REQUEST_PAYLOAD_CAPTURE_KEEP {
-        if writer.queued.load(Ordering::Relaxed) >= WRITE_QUEUE_CAPACITY {
-            break;
-        }
-        capture.record(
-            &json!({ "marker": format!("{marker_prefix}-{fills}") }),
-            &agent_model(),
-            Some("sess-timing"),
-            fills as u64 + 2,
-        );
-        fills += 1;
-    }
-    assert!(
-        writer.queued.load(Ordering::Relaxed) >= WRITE_QUEUE_CAPACITY,
-        "the fill loop never saturated the queue"
-    );
-    fills
-}
-
 #[test]
 fn the_capture_writes_the_exact_body_and_envelope() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let payload = json!({"messages": [{"role": "user", "content": "hello \u{1F680}"}]});
     write_capture(
@@ -210,7 +158,6 @@ fn the_capture_writes_owner_only_modes_even_into_an_existing_dir() {
     use std::os::unix::fs::PermissionsExt;
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     std::fs::create_dir_all(&dir_path).unwrap();
     std::fs::set_permissions(&dir_path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -239,7 +186,6 @@ fn the_capture_writes_owner_only_modes_even_into_an_existing_dir() {
 fn symlinked_components_end_the_capture_before_any_write() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     // A symlinked ring directory: <agent>/request-payloads -> <attacker>.
     let attacker = dir.path().join("attacker");
     std::fs::create_dir_all(&attacker).unwrap();
@@ -281,7 +227,6 @@ fn symlinked_components_end_the_capture_before_any_write() {
 fn a_failed_write_takes_its_temp_file_with_it() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     std::fs::create_dir_all(&dir_path).unwrap();
     // The target exists as a directory, so the rename fails.
@@ -320,7 +265,6 @@ fn a_failed_write_takes_its_temp_file_with_it() {
 fn an_over_budget_body_drops_without_cloning() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let capture = RequestPayloadCapture::at(&dir_path, 8);
     // The stall: a many-node body serialized for far longer than the three records, so
@@ -377,7 +321,6 @@ fn an_over_budget_body_drops_without_cloning() {
 fn the_ring_keeps_the_newest_bodies() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     for seq in 1..=3u64 {
         write_capture(
@@ -412,7 +355,6 @@ fn the_ring_keeps_the_newest_bodies() {
 fn two_wirings_sharing_one_dir_each_keep_their_capture() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let wiring_a = RequestPayloadCapture::at(&dir_path, 64);
     let wiring_b = RequestPayloadCapture::at(&dir_path, 64);
@@ -437,7 +379,6 @@ fn two_wirings_sharing_one_dir_each_keep_their_capture() {
 fn two_sessions_captures_own_their_directories() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_a = dir.path().join("agent-a").join("request-payloads");
     let dir_b = dir.path().join("agent-b").join("request-payloads");
     let capture_a = RequestPayloadCapture::at(&dir_a, 8);
@@ -479,7 +420,6 @@ fn two_sessions_captures_own_their_directories() {
 fn an_unwritable_target_disables_the_capture_silently() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     // A FILE where the capture's directory would be: every write fails.
     let blocker = dir.path().join("request-payloads");
     std::fs::write(&blocker, "a file, not a directory").unwrap();
@@ -499,7 +439,6 @@ fn an_unwritable_target_disables_the_capture_silently() {
 fn a_record_hands_off_without_waiting_for_the_write() {
     let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
     let dir_path = dir.path().join("request-payloads");
     let capture = RequestPayloadCapture::at(&dir_path, 64);
     let big = "x".repeat(8 * 1024 * 1024);
@@ -527,149 +466,88 @@ fn a_record_hands_off_without_waiting_for_the_write() {
     );
 }
 
-/// The slot reserve precedes the clone; the self-calibrating bound compares the probe's
-/// handoff against the same body's measured clone cost.
+/// Fill an undrained writer's queue to capacity with `fill-*` bodies.
+fn fill_to_capacity(writer: &CaptureWriter, capture: &RequestPayloadCapture) {
+    for fill in 0..WRITE_QUEUE_CAPACITY {
+        writer.handoff(
+            capture,
+            &json!({ "marker": format!("fill-{fill}") }),
+            &agent_model(),
+            Some("sess-timing"),
+            fill as u64 + 2,
+        );
+    }
+    assert_eq!(writer.queued.load(Ordering::Relaxed), WRITE_QUEUE_CAPACITY);
+}
+
+/// The queued jobs' markers, in queue order.
+fn queued_markers(receiver: &std::sync::mpsc::Receiver<CaptureJob>) -> Vec<String> {
+    receiver
+        .try_iter()
+        .map(|job| {
+            job.payload["marker"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
 #[test]
 fn a_saturated_queue_drops_without_cloning() {
-    let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
-    let dir_path = dir.path().join("request-payloads");
-    // The ring keeps every body: the count assertions need no eviction.
-    let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
-    // The stall body: a many-node body the writer serializes for far
-    // longer than the whole test window, so no slot frees mid-probe.
-    let stall = json!({
-        "marker": "stall",
-        "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
-    });
-    capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
-    // The fill: the queue is saturated against the reserve counter.
-    let fills = fill_until_saturated(&capture, "fill");
-    // The probe: the same shape as the calibration body — its clone is
-    // measurably slow, its reserve-check drop is not.
-    let big = "x".repeat(128 * 1024 * 1024);
-    let probe = json!({ "messages": [{"role": "user", "content": big}] });
-    let clone_started = std::time::Instant::now();
-    let calibration = probe.clone();
-    let clone_cost = clone_started.elapsed();
-    drop(calibration);
-    let probe_started = std::time::Instant::now();
-    capture.record(&probe, &agent_model(), Some("sess-timing"), 99);
-    let probe_cost = probe_started.elapsed();
+    let capture = RequestPayloadCapture::at(dir.path().join("request-payloads"), 64);
+    // Nobody drains this queue: its saturation is exact while the test holds the receiver.
+    let (writer, receiver) = CaptureWriter::channel();
+    fill_to_capacity(&writer, &capture);
+    let retained = writer.retained.load(Ordering::Relaxed);
+    let probe =
+        json!({ "marker": "probe", "messages": [{"role": "user", "content": "x".repeat(1024)}] });
+    writer.handoff(&capture, &probe, &agent_model(), Some("sess-timing"), 99);
+    // The drop happens at the slot reserve: the byte budget, which precedes the clone, is
+    // never touched, and no job carries the probe.
+    assert_eq!(writer.queued.load(Ordering::Relaxed), WRITE_QUEUE_CAPACITY);
+    assert_eq!(writer.retained.load(Ordering::Relaxed), retained);
+    let markers = queued_markers(&receiver);
+    assert_eq!(markers.len(), WRITE_QUEUE_CAPACITY);
     assert!(
-        probe_cost + probe_cost < clone_cost,
-        "the saturated handoff must not pay the clone: probe {probe_cost:?} vs clone {clone_cost:?}"
-    );
-    wait_for_drained_queue();
-    capture.record(
-        &json!({ "marker": "recovered" }),
-        &agent_model(),
-        Some("sess-timing"),
-        u64::MAX,
-    );
-    wait_for_payload_files(&dir_path, fills + 2);
-    let landed = payload_files(&dir_path);
-    let fill_count = landed
-        .iter()
-        .filter(|name| {
-            std::fs::read_to_string(dir_path.join(name))
-                .is_ok_and(|content| content.contains("fill-"))
-        })
-        .count();
-    assert_eq!(
-        fill_count, fills,
-        "every fill landed (the fills are part of the saturated queue's content)"
-    );
-    assert_eq!(
-        landed.len(),
-        fill_count + 2,
-        "the stall body, every fill, and the recovery — the probe exists nowhere"
-    );
-    assert!(
-        !landed.iter().any(|name| {
-            std::fs::metadata(dir_path.join(name)).is_ok_and(|meta| meta.len() > 16 * 1024 * 1024)
-        }),
-        "no probe-sized body landed"
+        !markers.iter().any(|marker| marker == "probe"),
+        "{markers:?}"
     );
 }
 
 #[test]
 fn concurrent_producers_drop_at_the_reserve_when_the_queue_is_full() {
-    let _writer_lock = super::WRITER_TEST_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let _settle = SettleWritesOnDrop;
-    let dir_path = dir.path().join("request-payloads");
-    // The ring keeps every body: the count assertions need no eviction.
-    let capture = RequestPayloadCapture::at(&dir_path, 4 * REQUEST_PAYLOAD_CAPTURE_KEEP);
-    // Hold the writer for the whole storm: no queued job is written, so no
-    // slot frees mid storm however the producer threads are scheduled.
-    let gate = super::WRITER_TEST_GATE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // The stall body: the job the held writer sits on.
-    let stall = json!({
-        "marker": "stall",
-        "messages": (0..100_000_u32).map(|seq| json!({ "seq": seq })).collect::<Vec<_>>()
-    });
-    capture.record(&stall, &agent_model(), Some("sess-timing"), 1);
-    let fills = fill_until_saturated(&capture, "fill");
-    // The storm: many concurrent producers racing the full queue; none
-    // of their bodies exists anywhere afterwards.
+    let capture = RequestPayloadCapture::at(dir.path().join("request-payloads"), 64);
+    // Nobody drains this queue: its saturation is exact while the test holds the receiver.
+    let (writer, receiver) = CaptureWriter::channel();
+    fill_to_capacity(&writer, &capture);
+    // The storm: many concurrent producers racing the full queue.
     let producers = 4 * REQUEST_PAYLOAD_CAPTURE_KEEP;
-    let barrier = Arc::new(std::sync::Barrier::new(producers + 1));
-    let mut handles = Vec::new();
-    for producer in 0..producers {
-        let capture = capture.clone();
-        let barrier = Arc::clone(&barrier);
-        handles.push(std::thread::spawn(move || {
-            barrier.wait();
-            capture.record(
-                &json!({ "marker": format!("storm-{producer}") }),
-                &agent_model(),
-                Some("sess-timing"),
-                u64::MAX,
-            );
-        }));
-    }
-    barrier.wait();
-    for handle in handles {
-        handle.join().expect("the producer finishes");
-    }
-    drop(gate);
-    let queued_after = super::CAPTURE_WRITER
-        .get()
-        .and_then(|writer| {
-            writer
-                .as_ref()
-                .map(|writer| writer.queued.load(Ordering::Relaxed))
-        })
-        .expect("the writer is armed");
-    assert!(
-        queued_after <= REQUEST_PAYLOAD_CAPTURE_KEEP,
-        "the reserve counter stays within the capacity: {queued_after}"
-    );
-    // A fresh handoff still reserves after the storm — a leaked
-    // reservation would report saturation forever.
-    wait_for_drained_queue();
-    capture.record(
-        &json!({ "marker": "recovered" }),
-        &agent_model(),
-        Some("sess-timing"),
-        u64::MAX,
-    );
-    wait_for_payload_files(&dir_path, fills + 2);
-    let landed = payload_files(&dir_path);
-    let storm_body = landed.iter().any(|name| {
-        std::fs::read_to_string(dir_path.join(name)).is_ok_and(|content| content.contains("storm-"))
+    let barrier = std::sync::Barrier::new(producers);
+    std::thread::scope(|scope| {
+        for producer in 0..producers {
+            let (writer, capture, barrier) = (&writer, &capture, &barrier);
+            scope.spawn(move || {
+                barrier.wait();
+                writer.handoff(
+                    capture,
+                    &json!({ "marker": format!("storm-{producer}") }),
+                    &agent_model(),
+                    Some("sess-timing"),
+                    u64::MAX,
+                );
+            });
+        }
     });
+    // Every storm producer dropped at the reserve: the counter still equals the queued
+    // fills, so no reservation leaked either.
+    assert_eq!(writer.queued.load(Ordering::Relaxed), WRITE_QUEUE_CAPACITY);
+    let markers = queued_markers(&receiver);
+    assert_eq!(markers.len(), WRITE_QUEUE_CAPACITY);
     assert!(
-        !storm_body,
-        "no storm body may land: every storm producer dropped at the reserve"
-    );
-    assert_eq!(
-        landed.len(),
-        fills + 2,
-        "the stall body, every fill, and the recovery body: the queue bound held"
+        markers.iter().all(|marker| marker.starts_with("fill-")),
+        "only the fills queued: {markers:?}"
     );
 }
