@@ -10,7 +10,7 @@ pa-core = { path = "../pa-core" }
 serde = { workspace = true }
 # `raw_value` (already enabled by pa-daemon): numbers are parsed from their
 # text, exactly.
-serde_json = { workspace = true, features = ["raw_value"] }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
