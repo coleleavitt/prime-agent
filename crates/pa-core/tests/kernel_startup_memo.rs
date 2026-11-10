@@ -35,7 +35,9 @@
 //! venv); like `kernel_stop_revive.rs`, these tests skip (with a note) on
 //! machines without a live install so the suite stays hermetic elsewhere.
 
-use std::os::unix::fs::PermissionsExt;
+mod script;
+
+use script::write_executable;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -47,7 +49,27 @@ use pa_core::kernel::state_snapshot::snapshot_path_in;
 /// The kernel Python with prime-agent-runtime installed (see
 /// `kernel_stop_revive.rs`); skipped with a note when absent.
 fn kernel_python() -> Option<PathBuf> {
-    pa_types::platform::test_isolation::test_kernel_python("PA_CORE_KERNEL_PYTHON")
+    if let Some(explicit) = std::env::var_os("PA_CORE_KERNEL_PYTHON") {
+        let explicit = PathBuf::from(explicit);
+        assert!(
+            explicit.exists(),
+            "PA_CORE_KERNEL_PYTHON {} not found",
+            explicit.display()
+        );
+        return Some(explicit);
+    }
+    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
+        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
+        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
+    ));
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    eprintln!(
+        "kernel python {} not found; skipping live startup-memo test",
+        candidate.display()
+    );
+    None
 }
 
 /// A kernel interpreter wrapper that counts spawns into `count` AND holds
@@ -61,9 +83,9 @@ fn counting_gated_kernel(
     gates: &std::path::Path,
 ) -> PathBuf {
     let wrapper = dir.join("counting-gated-python");
-    std::fs::write(
+    write_executable(
         &wrapper,
-        format!(
+        &format!(
             "#!/bin/sh\nn=$(wc -c < '{}')\nprintf x >> '{}'\nwhile [ ! -f '{}'/gate$n ] && [ -d '{}' ]; do sleep 0.05; done\nexec '{}' \"$@\"\n",
             count.display(),
             count.display(),
@@ -71,9 +93,7 @@ fn counting_gated_kernel(
             gates.display(),
             python.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     wrapper
 }
 
@@ -588,9 +608,9 @@ fn flaky_first_kernel(
     fail_gate: &std::path::Path,
 ) -> PathBuf {
     let wrapper = dir.join("flaky-first-python");
-    std::fs::write(
+    write_executable(
         &wrapper,
-        format!(
+        &format!(
             "#!/bin/sh\nprintf x >> '{}'\nif [ -f '{}' ]; then exec '{}' \"$@\"; fi\nwhile [ ! -f '{}' ] && [ -d '{}' ]; do sleep 0.05; done\nexit 1\n",
             count.display(),
             flip.display(),
@@ -598,9 +618,7 @@ fn flaky_first_kernel(
             fail_gate.display(),
             dir.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     wrapper
 }
 
