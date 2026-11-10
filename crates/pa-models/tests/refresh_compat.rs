@@ -8,16 +8,14 @@ mod common;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pa_models::cache::{CatalogCache, PUBLIC_SCOPE, RefreshOptions};
+use pa_models::cache::{CatalogCache, RefreshOptions, PUBLIC_SCOPE};
 use pa_models::fetch::CatalogFetcher;
-use pa_models::pinning::{PinnedTemplates, parse_provider_model_catalog};
+use pa_models::pinning::{parse_provider_model_catalog, PinnedTemplates};
 use pa_models::prime_inference::{
-    PrimeInferenceCatalog,
+    build_prime_inference_models, parse_prime_inference_model_catalog, PrimeInferenceCatalog,
     PrimeInferenceCredentials,
-    build_prime_inference_models,
-    parse_prime_inference_model_catalog,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// A cache over the models catalog parse pipeline (the same closure
 /// `ModelCatalog` installs in production), aimed at the mock server.
@@ -149,13 +147,11 @@ async fn unsupported_future_version_keeps_last_good_silently() {
         "v3 payload silently keeps last-good"
     );
     let cache2 = models_cache(dir.path(), server.url("/catalog"));
-    assert!(
-        cache2
-            .get(PUBLIC_SCOPE)
-            .expect("disk snapshot intact")
-            .iter()
-            .any(|m| m.id == "model-a")
-    );
+    assert!(cache2
+        .get(PUBLIC_SCOPE)
+        .expect("disk snapshot intact")
+        .iter()
+        .any(|m| m.id == "model-a"));
 }
 
 #[tokio::test]
@@ -237,8 +233,8 @@ async fn network_failure_and_oversize_keep_state_unchanged() {
 
     let oversize = common::MockServer::start(vec![common::oversized_header()]).await;
     let big = models_cache(dir.path(), oversize.url("/catalog"));
-    assert!(
-        big.refresh(
+    assert!(big
+        .refresh(
             PUBLIC_SCOPE,
             RefreshOptions {
                 force: true,
@@ -246,8 +242,7 @@ async fn network_failure_and_oversize_keep_state_unchanged() {
             }
         )
         .await
-        .is_none()
-    );
+        .is_none());
     assert!(
         big.get(PUBLIC_SCOPE).is_none(),
         "oversized body never produces a snapshot"
@@ -550,28 +545,21 @@ async fn a_dropped_refresh_resolves_the_gate_and_the_next_refresh_starts_fresh()
     let cache = Arc::new(models_cache(dir.path(), server.url("/catalog")));
 
     // A coalesced waiter joins the dropped driver: it must wake with a
-    // failed refresh (None), never hang on the abandoned gate. Both waits
-    // are bounded — the 2s bound fails the test instead of wedging it. The
-    // driver is dropped once the server holds its request, not on a timer:
-    // dropped earlier, the held response would go to the next refresh.
-    let dropped = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let driver = cache.refresh(
-            PUBLIC_SCOPE,
-            RefreshOptions {
-                force: true,
-                ..Default::default()
-            },
-        );
-        let held = async {
-            while server.request_count() == 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        };
+    // failed refresh (None), never hang on the abandoned gate. The driver
+    // drops once the server holds its fetch; the 2s bound fails the test
+    // instead of wedging it.
+    let dropped = async {
         tokio::select! {
-            _ = driver => false,
-            () = held => true,
+            _ = cache.refresh(
+                PUBLIC_SCOPE,
+                RefreshOptions {
+                    force: true,
+                    ..Default::default()
+                },
+            ) => panic!("the held fetch settled before the drop"),
+            () = server.wait_for_requests(1) => {}
         }
-    });
+    };
     let joined = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         cache.refresh(
@@ -582,12 +570,7 @@ async fn a_dropped_refresh_resolves_the_gate_and_the_next_refresh_starts_fresh()
             },
         ),
     );
-    let (dropped, joined) = tokio::join!(dropped, joined);
-    assert_eq!(
-        dropped.ok(),
-        Some(true),
-        "the driver is dropped while the fetch is held"
-    );
+    let ((), joined) = tokio::join!(dropped, joined);
     let joined = joined.expect("the coalesced waiter wakes on the abandoned gate");
     assert!(
         joined.is_none(),
