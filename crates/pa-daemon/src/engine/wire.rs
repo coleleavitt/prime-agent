@@ -477,6 +477,18 @@ pub enum SideUxOutcome {
     /// chrome footer row (Claude Code's `extractMemories` returns its
     /// `appendSystemMessage` rows to the same chat-stream lane).
     RefinementApplied { result_json: String },
+    /// A per-turn `MemoryExtract` review returned `should_refine=false`;
+    /// the reviewer's rationale travels back so the worker can inject a
+    /// `refinement_decline` custom row. Without this, ~90% of turns
+    /// silently decline and the loop looks dead
+    /// (`project_trust_loop_fix.md` "decline-visibility gap").
+    RefinementDeclined {
+        /// The trigger reason: `"compact"` or `"per_turn"`.
+        reason: String,
+        /// The reviewer's full rationale (no clipping; the display tail
+        /// is cut on the worker side).
+        rationale: String,
+    },
 }
 
 /// Wire form of one side-question status.

@@ -38,6 +38,41 @@ impl super::AgentSession {
         })
     }
 
+    /// `experimental.autoRefineRecurrenceRevert` /
+    /// `PRIME_AGENT_AUTO_REFINE_RECURRENCE_REVERT`: when on, each probe
+    /// hit is grouped by its originating refinement result and surfaced as
+    /// a rollback plan on the harness `pending_reverts` extension. Off by
+    /// default. Requires the probe to be on too — a revert decision needs
+    /// a hit to act on.
+    pub(crate) fn auto_refine_recurrence_revert_enabled(&self) -> bool {
+        if !self.auto_refine_recurrence_probe_enabled() {
+            return false;
+        }
+        self.refinement_settings.as_ref().is_some_and(|settings| {
+            settings
+                .reopen()
+                .experimental()
+                .auto_refine_recurrence_revert
+        })
+    }
+
+    /// `experimental.autoRefineRecurrenceRevertApply` /
+    /// `PRIME_AGENT_AUTO_REFINE_RECURRENCE_REVERT_APPLY`: when on, each
+    /// plan the previous flag surfaced is applied at the next refinement
+    /// boundary via [`crate::refinement::planner::rollback_proposal`].
+    /// Requires both the probe and revert flags.
+    pub(crate) fn auto_refine_recurrence_revert_apply_enabled(&self) -> bool {
+        if !self.auto_refine_recurrence_revert_enabled() {
+            return false;
+        }
+        self.refinement_settings.as_ref().is_some_and(|settings| {
+            settings
+                .reopen()
+                .experimental()
+                .auto_refine_recurrence_revert_apply
+        })
+    }
+
     /// `experimental.perTurnMemory` / `PRIME_AGENT_POST_TURN_MEMORY`: when
     /// on, the refinement pipeline fires at every settled turn in addition
     /// to compaction (Claude Code's `CLAUDE_CODE_POST_TURN_MEMORY`). The

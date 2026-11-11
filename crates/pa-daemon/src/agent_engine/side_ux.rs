@@ -157,7 +157,12 @@ impl AgentSessionEngine {
                                 rationale = %rationale,
                                 "[extractMemories] review declined",
                             );
-                            Ok(SideUxOutcome::Nothing)
+                            Ok(SideUxOutcome::RefinementDeclined {
+                                reason:
+                                    pa_core::session_engine::refine::AUTO_REFINE_PER_TURN_REASON
+                                        .to_string(),
+                                rationale,
+                            })
                         }
                         Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Ran(result)) => {
                             let applied_count = result

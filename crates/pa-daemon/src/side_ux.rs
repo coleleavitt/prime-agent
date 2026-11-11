@@ -172,7 +172,8 @@ fn unavailable(what: &str, outcome: SideUxOutcome) -> String {
         SideUxOutcome::Unsupported
         | SideUxOutcome::Nothing
         | SideUxOutcome::Text(_)
-        | SideUxOutcome::RefinementApplied { .. } => {
+        | SideUxOutcome::RefinementApplied { .. }
+        | SideUxOutcome::RefinementDeclined { .. } => {
             format!("Couldn't generate {what}: this session has no model to ask")
         }
     }

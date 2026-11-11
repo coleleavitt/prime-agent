@@ -65,6 +65,12 @@ pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
 pub const FACTORY_RUN_NOTICE_CUSTOM_TYPE: &str = "factory_run_notice";
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
+/// Wire twin of
+/// `pa_core::session_engine::refine::REFINEMENT_DECLINE_CUSTOM_TYPE`:
+/// the per-turn memory reviewer chose not to refine this turn. Renders
+/// as a compact status row so the ~90% decline cadence is visible without
+/// swamping the chat.
+pub const REFINEMENT_DECLINE_CUSTOM_TYPE: &str = "refinement_decline";
 /// Wire twin of `pa_core::session_engine::turn_duration::TURN_DURATION_CUSTOM_TYPE`:
 /// Claude Code 2.1.316's `${verb} for ${d} \u{00B7} done ${clock}` row.
 pub const TURN_DURATION_CUSTOM_TYPE: &str = "turn_duration";
@@ -253,6 +259,10 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
             kind: crate::chat::StatusKind::Warning,
         }],
         REFINEMENT_OUTCOME_CUSTOM_TYPE => refinement::refinement_outcome_entries(message, details),
+        REFINEMENT_DECLINE_CUSTOM_TYPE => vec![ChatEntry::Status {
+            text: content,
+            kind: crate::chat::StatusKind::Info,
+        }],
         TURN_DURATION_CUSTOM_TYPE => turn_duration_entries(details),
         PRESENTED_ARTIFACT_CUSTOM_TYPE => vec![presented_artifact_entry(message, details)],
         // `rlm.send_user_message`: the agent's message to the user.

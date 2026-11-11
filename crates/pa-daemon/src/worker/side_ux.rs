@@ -73,7 +73,8 @@ impl TurnRunner {
                 SideUxOutcome::Nothing
                 | SideUxOutcome::Disabled
                 | SideUxOutcome::Unsupported
-                | SideUxOutcome::RefinementApplied { .. } => {
+                | SideUxOutcome::RefinementApplied { .. }
+                | SideUxOutcome::RefinementDeclined { .. } => {
                     return;
                 }
             };
@@ -223,12 +224,31 @@ impl TurnRunner {
         let events = Arc::clone(&self.events);
         tokio::spawn(async move {
             let outcome = tokio::task::spawn_blocking(move || {
-                engine.run_side_ux(SideUxRequest::MemoryExtract {
-                    user_message_count,
-                })
+                engine.run_side_ux(SideUxRequest::MemoryExtract { user_message_count })
             })
             .await
             .unwrap_or(SideUxOutcome::Nothing);
+            // Declined: emit the audit row so the ~90% of turns whose
+            // review declines leave a trace, then exit without crowning a
+            // champion. Nothing else runs — the review decided no proposal
+            // fires this turn.
+            if let SideUxOutcome::RefinementDeclined { reason, rationale } = outcome {
+                let decline = pa_core::session_engine::refine::create_refinement_decline_message(
+                    &rationale, &reason,
+                );
+                let Ok(decline_value) =
+                    serde_json::to_value(pa_types::session::AgentMessage::Custom(decline))
+                else {
+                    return;
+                };
+                let mut core_guard = core.lock_or_recover();
+                if core_guard.active_session_id != session_id {
+                    return;
+                }
+                persist_custom_row(&mut core_guard, &decline_value);
+                broadcast_custom_row_locked(&mut core_guard, &events, &decline_value);
+                return;
+            }
             let SideUxOutcome::RefinementApplied { result_json } = outcome else {
                 return;
             };
@@ -346,8 +366,7 @@ impl TurnRunner {
         if !settings.reopen().experimental().show_turn_duration {
             return;
         }
-        let duration_ms =
-            u64::try_from(turn_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let duration_ms = u64::try_from(turn_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
         let done_at_unix_ms = i64::try_from(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -356,10 +375,7 @@ impl TurnRunner {
         .unwrap_or(0);
         // Deterministic per-turn verb seed: the session id + the turn's
         // start nanos make a stable id with enough spread for % 8.
-        let stable_turn_id = format!(
-            "{session_id}:{}",
-            turn_started_at.elapsed().as_nanos()
-        );
+        let stable_turn_id = format!("{session_id}:{}", turn_started_at.elapsed().as_nanos());
         let verb = pa_core::session_engine::turn_duration::pick_verb(&stable_turn_id);
         let message = pa_core::session_engine::turn_duration::create_turn_duration_message(
             verb,

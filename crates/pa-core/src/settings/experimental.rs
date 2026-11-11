@@ -91,6 +91,21 @@ pub const MULTI_VOTE_REFINE_ENV: &str = "PRIME_AGENT_MULTI_VOTE_REFINE";
 /// so an operator can see which fixes have failed to prevent recurrence.
 /// Does NOT yet auto-revert; that is a separate switch.
 pub const AUTO_REFINE_RECURRENCE_PROBE_ENV: &str = "PRIME_AGENT_AUTO_REFINE_RECURRENCE_PROBE";
+/// Turns the recurrence auto-revert on or off. Requires the probe to be on
+/// too (`autoRefineRecurrenceProbe` / [`AUTO_REFINE_RECURRENCE_PROBE_ENV`]).
+/// When on, each probe hit is grouped by its originating refinement result
+/// and surfaced as a rollback plan on the harness `pending_reverts`
+/// extension; when both this and
+/// `autoRefineRecurrenceRevertApply` are on, the plans are applied as a
+/// rollback refinement on the next auto-refine boundary. Default off:
+/// reverting on recurrence is a destructive operation and the opt-in
+/// surface mirrors `autoRefineRecurrenceProbe`.
+pub const AUTO_REFINE_RECURRENCE_REVERT_ENV: &str = "PRIME_AGENT_AUTO_REFINE_RECURRENCE_REVERT";
+/// Applies the planned recurrence reverts (`autoRefineRecurrenceRevert`
+/// surfaces plans; this flag applies them). Requires the revert flag to be
+/// on too. Default off.
+pub const AUTO_REFINE_RECURRENCE_REVERT_APPLY_ENV: &str =
+    "PRIME_AGENT_AUTO_REFINE_RECURRENCE_REVERT_APPLY";
 /// Turns Claude Code's per-turn memory-extraction cadence on or off (Claude
 /// Code's `CLAUDE_CODE_POST_TURN_MEMORY`). With it on, the refinement
 /// pipeline runs at every settled turn in addition to compaction, gated by
@@ -175,6 +190,18 @@ pub struct ExperimentalSettings {
     /// recurrences of fingerprints tied to accepted entries, log each hit
     /// at INFO. Off by default; pure read side-effect (no auto-revert).
     pub auto_refine_recurrence_probe: bool,
+    /// Plan auto-reverts for every probe hit via
+    /// `plan_recurrence_reverts`. Requires
+    /// [`Self::auto_refine_recurrence_probe`]; the plans are stored on the
+    /// harness state's `pending_reverts` extension and logged at INFO.
+    /// Off by default.
+    pub auto_refine_recurrence_revert: bool,
+    /// Apply the planned auto-reverts at the next refinement boundary
+    /// through `apply_refinement_plan` with
+    /// [`crate::refinement::planner::rollback_proposal`]. Requires both
+    /// [`Self::auto_refine_recurrence_probe`] and
+    /// [`Self::auto_refine_recurrence_revert`]. Off by default.
+    pub auto_refine_recurrence_revert_apply: bool,
     /// Claude Code's per-turn memory-extraction cadence: the refinement
     /// pipeline fires at every settled turn in addition to compaction. The
     /// usual skip guards keep this cheap in practice (no new user prose,
@@ -225,6 +252,8 @@ impl Default for ExperimentalSettings {
             // and apply flags stay off — they only engage when the operator
             // trusts the revert plan.
             auto_refine_recurrence_probe: true,
+            auto_refine_recurrence_revert: false,
+            auto_refine_recurrence_revert_apply: false,
             per_turn_memory: false,
             show_turn_duration: true,
         }
@@ -354,6 +383,14 @@ impl ExperimentalSettings {
             auto_refine_recurrence_probe: flag_default_on(
                 "autoRefineRecurrenceProbe",
                 AUTO_REFINE_RECURRENCE_PROBE_ENV,
+            ),
+            auto_refine_recurrence_revert: flag(
+                "autoRefineRecurrenceRevert",
+                AUTO_REFINE_RECURRENCE_REVERT_ENV,
+            ),
+            auto_refine_recurrence_revert_apply: flag(
+                "autoRefineRecurrenceRevertApply",
+                AUTO_REFINE_RECURRENCE_REVERT_APPLY_ENV,
             ),
             per_turn_memory: flag("perTurnMemory", PER_TURN_MEMORY_ENV),
             show_turn_duration: flag_default_on("showTurnDuration", SHOW_TURN_DURATION_ENV),
@@ -503,6 +540,8 @@ mod tests {
             "autocompactOffer": true,
             "multiVoteRefine": true,
             "autoRefineRecurrenceProbe": true,
+            "autoRefineRecurrenceRevert": true,
+            "autoRefineRecurrenceRevertApply": true,
             "perTurnMemory": true,
         });
         assert_eq!(
@@ -533,6 +572,8 @@ mod tests {
                 autocompact_offer: true,
                 multi_vote_refine: true,
                 auto_refine_recurrence_probe: true,
+                auto_refine_recurrence_revert: true,
+                auto_refine_recurrence_revert_apply: true,
                 per_turn_memory: true,
                 show_turn_duration: true,
             }

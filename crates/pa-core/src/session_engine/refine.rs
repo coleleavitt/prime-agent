@@ -35,6 +35,12 @@ pub const REFINEMENT_AUDIT_CUSTOM_TYPE: &str = "prime-agent.refinement";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 /// Model-facing notice custom type (display=false).
 pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
+/// Review-declined-this-turn custom type: the per-turn memory reviewer
+/// chose `should_refine=false`, so no proposal fired. The row carries the
+/// rationale tail so the decliner's judgment is auditable (the
+/// "decline-visibility gap" in `project_trust_loop_fix.md` — without it,
+/// ~90% of turns leave no trace and the loop looks dead).
+pub const REFINEMENT_DECLINE_CUSTOM_TYPE: &str = "refinement_decline";
 
 pub const AUTO_REFINE_COMPACT_REASON: &str = "compact";
 /// The per-turn memory-extraction trigger reason, carried on every proposal
@@ -91,6 +97,168 @@ fn run_recurrence_probe(
         .map(|(id, state)| (id.as_str(), state.clone()))
         .collect();
     crate::refinement::recurrence::probe_recurrence(state, &observations)
+}
+
+/// Record the probe result on the harness state's `pending_reverts`
+/// extension when the recurrence-revert flag is on. The plans are
+/// deterministic (grouped by the originating refinement result, sorted),
+/// so persisting them here lets the next refinement boundary pick them up
+/// and apply them if the `revert_apply` flag is on. Pure read-only when
+/// no plans result.
+fn record_recurrence_revert_plans(
+    merged_state: &crate::refinement::HarnessState,
+    hits: &[crate::refinement::recurrence::RecurrenceHit],
+    history: &[crate::refinement::RefinementResult],
+    reason: &str,
+) -> Vec<crate::refinement::recurrence::RecurrenceRevertPlan> {
+    let plans = crate::refinement::recurrence::plan_recurrence_reverts(hits, history);
+    for plan in &plans {
+        tracing::info!(
+            target: "pa_core::refinement::recurrence",
+            reason,
+            refinement = %plan.refinement_result_id,
+            hits = plan.motivating_hits.len(),
+            rationale = %plan.proposal.rationale,
+            "recurrence revert plan",
+        );
+    }
+    // The `merged_state` is a read-only merge used for review context, so
+    // `pending_reverts` only reaches durable state when the caller (apply
+    // path) writes it. Return the plans so the caller can use them.
+    let _ = merged_state;
+    plans
+}
+
+/// Key on `HarnessState.extensions` that carries recurrence-revert plans
+/// the probe prepared and the next apply boundary should execute. Shape:
+/// `{"plans": [{"refinement_result_id": "...", "proposal": {...}}, ...]}`.
+pub const PENDING_REVERTS_KEY: &str = "pending_reverts";
+
+/// Append each new plan to `state.extensions[PENDING_REVERTS_KEY]`
+/// (initialising when absent), deduplicating by
+/// `refinement_result_id`: a probe re-firing on the same recurrence does
+/// not double-queue the same revert. Reverts stay queued until an apply
+/// boundary consumes them in [`drain_pending_reverts`].
+pub fn stage_pending_reverts(
+    state: &mut crate::refinement::HarnessState,
+    plans: &[crate::refinement::recurrence::RecurrenceRevertPlan],
+) {
+    if plans.is_empty() {
+        return;
+    }
+    let existing = state
+        .extensions
+        .get(PENDING_REVERTS_KEY)
+        .and_then(|value| value.get("plans"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut seen: std::collections::BTreeSet<String> = existing
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("refinement_result_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    let mut merged = existing;
+    for plan in plans {
+        if seen.insert(plan.refinement_result_id.clone()) {
+            let entry = json!({
+                "refinement_result_id": plan.refinement_result_id,
+                "rationale": plan.proposal.rationale,
+                "summary": plan.proposal.summary,
+                "motivating_fingerprints": plan
+                    .motivating_hits
+                    .iter()
+                    .map(|hit| hit.fingerprint_id.clone())
+                    .collect::<Vec<_>>(),
+            });
+            merged.push(entry);
+        }
+    }
+    state
+        .extensions
+        .insert(PENDING_REVERTS_KEY.to_string(), json!({ "plans": merged }));
+}
+
+/// Consume `state.extensions[PENDING_REVERTS_KEY]`, returning the ids of
+/// originating refinement results to revert. Clears the extension so a
+/// crash mid-apply doesn't re-run the same reverts.
+pub fn drain_pending_reverts(state: &mut crate::refinement::HarnessState) -> Vec<String> {
+    let Some(value) = state.extensions.remove(PENDING_REVERTS_KEY) else {
+        return Vec::new();
+    };
+    let Some(plans) = value.get("plans").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    plans
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("refinement_result_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Apply every plan the probe staged on `state` via
+/// [`crate::refinement::planner::rollback_proposal`]. The caller holds the
+/// store lock and will persist `state` once this returns. Draining happens
+/// up-front so a partial failure still removes processed ids; the applied
+/// reverts are logged under `pa_core::refinement::recurrence`.
+fn apply_staged_recurrence_reverts(
+    state: &mut crate::refinement::HarnessState,
+    global_harness_dir: &Path,
+    factory_enabled: bool,
+    package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
+) {
+    let ids = drain_pending_reverts(state);
+    if ids.is_empty() {
+        return;
+    }
+    // Build the history the planner expects: local + global merged exactly
+    // as the review path does.
+    let history = load_global_refinement_history(global_harness_dir);
+    let options = CoreRefineOptions {
+        global: false,
+        instructions: None,
+        rollback_id: None,
+        package_state,
+    };
+    for id in &ids {
+        let Some(target) = history.iter().find(|item| &item.id == id).cloned() else {
+            tracing::warn!(
+                target: "pa_core::refinement::recurrence",
+                refinement = %id,
+                "pending recurrence revert refers to a missing refinement result; dropped",
+            );
+            continue;
+        };
+        let proposal = crate::refinement::planner::rollback_proposal(&target);
+        let scope = crate::refinement::infer_refinement_result_scope(&target)
+            .unwrap_or(HarnessScope::Local);
+        let plan = RefinementPlan {
+            proposal,
+            id: format!("revert_{id}"),
+            rollback_of: Some(id.clone()),
+            rollback_scope: Some(scope),
+        };
+        let result = apply_refinement_plan(state, plan, &options, None, factory_enabled);
+        let applied = result
+            .applied_edits
+            .iter()
+            .filter(|edit| edit.applied)
+            .count();
+        tracing::info!(
+            target: "pa_core::refinement::recurrence",
+            refinement = %id,
+            applied,
+            "applied staged recurrence revert",
+        );
+    }
 }
 
 /// The resolved auto-refine gates: the settings block with the product
@@ -183,6 +351,58 @@ pub fn create_refinement_outcome_message(result: &RefinementResult) -> CustomMes
         timestamp: now_millis(),
         rest: serde_json::Map::default(),
     }
+}
+
+/// How much of the reviewer's rationale to show in a decline row's
+/// display content. The full rationale is kept in `details.rationale`;
+/// the display tail stays short so a per-turn cadence does not swamp
+/// the chat scrollback.
+pub const REFINEMENT_DECLINE_DISPLAY_CLIP: usize = 240;
+
+/// Review-declined row. Called from the per-turn memory extractor's
+/// `Declined` path (`pa-daemon::agent_engine::side_ux.rs`) so the
+/// reviewer's judgment is visible in the transcript and auditable via
+/// `grep refinement_decline` on the session JSONL.
+///
+/// `rationale` is the reviewer's own `rationale` field; `reason` is the
+/// trigger reason ([`AUTO_REFINE_COMPACT_REASON`] or
+/// [`AUTO_REFINE_PER_TURN_REASON`]).
+#[must_use]
+pub fn create_refinement_decline_message(rationale: &str, reason: &str) -> CustomMessage {
+    let trimmed = rationale.trim();
+    let tail = clip_decline_display(trimmed);
+    let display_body = if tail.is_empty() {
+        format!("Refinement declined ({reason})")
+    } else {
+        format!("Refinement declined ({reason}): {tail}")
+    };
+    CustomMessage {
+        custom_type: REFINEMENT_DECLINE_CUSTOM_TYPE.to_string(),
+        content: UserContent::Text(display_body),
+        display: true,
+        details: Some(json!({
+            "reason": reason,
+            "rationale": trimmed,
+        })),
+        timestamp: now_millis(),
+        rest: serde_json::Map::default(),
+    }
+}
+
+/// Grapheme-ish clip of the rationale for the decline row's display
+/// line. Keeps the first line only (reviewers sometimes return multi-line
+/// rationales) and caps the length at
+/// [`REFINEMENT_DECLINE_DISPLAY_CLIP`] chars, trailing `…` on overflow.
+fn clip_decline_display(rationale: &str) -> String {
+    let first_line = rationale.lines().next().unwrap_or("").trim();
+    if first_line.chars().count() <= REFINEMENT_DECLINE_DISPLAY_CLIP {
+        return first_line.to_string();
+    }
+    let truncated: String = first_line
+        .chars()
+        .take(REFINEMENT_DECLINE_DISPLAY_CLIP)
+        .collect();
+    format!("{truncated}…")
 }
 
 /// Model-facing notice (display=false).
@@ -538,6 +758,16 @@ pub async fn execute_refinement_gated(
         }
         None => false,
     };
+    // Gap 2 apply half: resolve the revert-apply flag BEFORE moving
+    // `settings` into the store-lock task. When on, the probe staged
+    // plans on this scope's harness state (see [`stage_pending_reverts`])
+    // and the apply draws them down below under the same store lock.
+    let revert_apply_on = settings.as_ref().is_some_and(|settings| {
+        let experimental = settings.reopen().experimental();
+        experimental.auto_refine_recurrence_probe
+            && experimental.auto_refine_recurrence_revert
+            && experimental.auto_refine_recurrence_revert_apply
+    });
     // Every refine holds the store lock from the re-read until the save
     // landed (upstream #3380's `update_harness_state`): the kernel's
     // harness writes and the ledger flush take the same `{file}.lock`.
@@ -557,6 +787,14 @@ pub async fn execute_refinement_gated(
         .map_err(|error| anyhow::anyhow!("refinement harness lock task failed: {error}"))??
     };
     let mut state = load_harness_state(&target_dir, target_scope);
+    if revert_apply_on && target_scope == HarnessScope::Local {
+        apply_staged_recurrence_reverts(
+            &mut state,
+            global_harness_dir,
+            factory_enabled,
+            core_options.package_state.clone(),
+        );
+    }
     if let Some(verdict) = &verdict {
         if let GateAdmission::Reject(rejected) = verdict.admit(&plan.proposal, &state) {
             let mut rejected = *rejected;
@@ -1048,6 +1286,42 @@ impl AgentSession {
                     "recurrence after refinement",
                 );
             }
+            if self.auto_refine_recurrence_revert_enabled() && !hits.is_empty() {
+                let plans = record_recurrence_revert_plans(
+                    &merged_state,
+                    &hits,
+                    &history,
+                    AUTO_REFINE_COMPACT_REASON,
+                );
+                if self.auto_refine_recurrence_revert_apply_enabled() {
+                    tracing::info!(
+                        target: "pa_core::refinement::recurrence",
+                        reason = AUTO_REFINE_COMPACT_REASON,
+                        plans = plans.len(),
+                        "recurrence revert apply flag is on; plans surface at next refinement boundary",
+                    );
+                    // Durable record: write the plans to the local harness
+                    // state's `pending_reverts` extension so the next
+                    // execute_refinement call picks them up under the store
+                    // lock. Keeps the probe pure read, with the apply
+                    // happening at the already-locked apply boundary.
+                    let mut local_state = load_harness_state(
+                        &local_harness_state_dir(&*self.session_handle().lock().await),
+                        HarnessScope::Local,
+                    );
+                    stage_pending_reverts(&mut local_state, &plans);
+                    if let Err(err) = save_harness_state(
+                        &local_harness_state_dir(&*self.session_handle().lock().await),
+                        &local_state,
+                    ) {
+                        tracing::warn!(
+                            target: "pa_core::refinement::recurrence",
+                            %err,
+                            "could not stage pending_reverts to local harness state",
+                        );
+                    }
+                }
+            }
         }
         let review_context = AutoRefineReviewContext {
             reason: AUTO_REFINE_COMPACT_REASON.to_string(),
@@ -1211,6 +1485,31 @@ impl AgentSession {
                     total_count = hit.total_count,
                     "recurrence after refinement",
                 );
+            }
+            if self.auto_refine_recurrence_revert_enabled() && !hits.is_empty() {
+                let plans = record_recurrence_revert_plans(
+                    &merged_state,
+                    &hits,
+                    &history,
+                    AUTO_REFINE_PER_TURN_REASON,
+                );
+                if self.auto_refine_recurrence_revert_apply_enabled() {
+                    let mut local_state = load_harness_state(
+                        &local_harness_state_dir(&*self.session_handle().lock().await),
+                        HarnessScope::Local,
+                    );
+                    stage_pending_reverts(&mut local_state, &plans);
+                    if let Err(err) = save_harness_state(
+                        &local_harness_state_dir(&*self.session_handle().lock().await),
+                        &local_state,
+                    ) {
+                        tracing::warn!(
+                            target: "pa_core::refinement::recurrence",
+                            %err,
+                            "could not stage pending_reverts to local harness state",
+                        );
+                    }
+                }
             }
         }
         let review_context = AutoRefineReviewContext {
@@ -1515,6 +1814,51 @@ mod tests {
         assert_eq!(hits[0].total_count, 3);
     }
 
+    /// Gap 2 regression: `stage_pending_reverts` appends plans
+    /// deduplicating by `refinement_result_id`, and `drain_pending_reverts`
+    /// consumes them and clears the extension so a crash mid-apply does
+    /// not re-apply the same reverts.
+    #[test]
+    fn stage_then_drain_pending_reverts_dedupes_and_clears() {
+        use crate::refinement::HarnessState;
+        use crate::refinement::recurrence::{RecurrenceHit, RecurrenceRevertPlan};
+        let mut state = HarnessState {
+            schema: 1,
+            entries: BTreeMap::new(),
+            refinements: Vec::new(),
+            extensions: serde_json::Map::new(),
+        };
+        let hit = RecurrenceHit {
+            entry_id: "e1".into(),
+            entry_kind: crate::refinement::RefinementKind::Memory,
+            entry_updated_at: "2026-11-04T00:00:00Z".into(),
+            fingerprint_id: "fp-a".into(),
+            last_seen_at: "2026-11-05T00:00:00Z".into(),
+            total_count: 3,
+        };
+        let plan = RecurrenceRevertPlan {
+            refinement_result_id: "r1".into(),
+            proposal: crate::refinement::planner::RefinementProposal {
+                summary: "s".into(),
+                rationale: "rat".into(),
+                expected_outcome: "e".into(),
+                edits: Vec::new(),
+            },
+            motivating_hits: vec![hit],
+        };
+        stage_pending_reverts(&mut state, &[plan.clone()]);
+        // Restaging the same plan twice must not duplicate.
+        stage_pending_reverts(&mut state, &[plan]);
+        let ids = drain_pending_reverts(&mut state);
+        assert_eq!(ids, vec!["r1".to_string()]);
+        assert!(
+            state.extensions.get(PENDING_REVERTS_KEY).is_none(),
+            "drain clears the extension",
+        );
+        // A second drain is an empty no-op (fail-closed).
+        assert!(drain_pending_reverts(&mut state).is_empty());
+    }
+
     #[test]
     fn run_recurrence_probe_returns_empty_when_the_failures_key_is_absent() {
         use crate::refinement::HarnessState;
@@ -1680,6 +2024,78 @@ mod tests {
         assert_eq!(
             notice.content,
             UserContent::Text("[user-refinement]\n\nadd memory".to_string())
+        );
+    }
+
+    #[test]
+    fn refinement_decline_row_carries_reason_and_rationale_tail() {
+        // Short rationale: whole thing fits in the display line.
+        let message = create_refinement_decline_message(
+            "nothing durable this turn, user was iterating on a layout",
+            AUTO_REFINE_PER_TURN_REASON,
+        );
+        assert_eq!(message.custom_type, "refinement_decline");
+        assert!(message.display, "declines must be visible in the TUI");
+        assert_eq!(
+            message.content,
+            UserContent::Text(
+                "Refinement declined (per_turn): nothing durable this turn, user was iterating \
+                 on a layout"
+                    .to_string(),
+            )
+        );
+        let details = message.details.expect("details");
+        assert_eq!(
+            details.get("reason").and_then(|value| value.as_str()),
+            Some(AUTO_REFINE_PER_TURN_REASON),
+        );
+        assert_eq!(
+            details.get("rationale").and_then(|value| value.as_str()),
+            Some("nothing durable this turn, user was iterating on a layout"),
+        );
+
+        // Multi-line rationale: only the first line shows in the display tail;
+        // the full rationale rides in `details.rationale`.
+        let multi = create_refinement_decline_message(
+            "first-line summary\nsecond-line detail about why not to extract",
+            AUTO_REFINE_COMPACT_REASON,
+        );
+        assert_eq!(
+            multi.content,
+            UserContent::Text("Refinement declined (compact): first-line summary".to_string()),
+        );
+        assert_eq!(
+            multi
+                .details
+                .unwrap()
+                .get("rationale")
+                .and_then(|value| value.as_str()),
+            Some("first-line summary\nsecond-line detail about why not to extract"),
+        );
+
+        // Overflow rationale: clipped on display, full text preserved in details.
+        let long: String = "a".repeat(REFINEMENT_DECLINE_DISPLAY_CLIP + 50);
+        let clipped = create_refinement_decline_message(&long, AUTO_REFINE_PER_TURN_REASON);
+        let UserContent::Text(ref body) = clipped.content else {
+            panic!("expected text content");
+        };
+        assert!(body.ends_with('\u{2026}'), "ellipsis on overflow");
+        assert_eq!(
+            clipped
+                .details
+                .unwrap()
+                .get("rationale")
+                .and_then(|value| value.as_str())
+                .map(str::len),
+            Some(long.len()),
+            "full rationale preserved for grep audit",
+        );
+
+        // Empty rationale: row still emits, just with the bare reason tag.
+        let empty = create_refinement_decline_message("", AUTO_REFINE_PER_TURN_REASON);
+        assert_eq!(
+            empty.content,
+            UserContent::Text("Refinement declined (per_turn)".to_string()),
         );
     }
 
