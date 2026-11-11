@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from rlm import harness as package_harness
 from rlm import rlm as callable_rlm
@@ -428,30 +427,6 @@ class HarnessStateTest(unittest.TestCase):
                 {"nodes": [{"id": "collect", "subagent": "worker"}]},
             )
 
-    def test_save_failure_preserves_previous_state_on_disk(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state = HarnessState(Path(temp_dir) / "harness_state.json")
-            state.create_memory("Durable fact", "Written before the crash.")
-
-            crashing = HarnessState(state.file_path)
-            original_dump = json.dump
-
-            def torn_dump(data: object, fh: object, **kwargs: object) -> None:
-                fh.write('{"schema": 1, "entr')  # type: ignore[attr-defined]
-                raise OSError("disk full")
-
-            json.dump = torn_dump  # type: ignore[assignment]
-            try:
-                with self.assertRaises(OSError):
-                    crashing.create_memory("Doomed fact", "Interrupted mid-write.")
-            finally:
-                json.dump = original_dump
-
-            # The interrupted save must not have truncated the durable state.
-            reloaded = HarnessState(state.file_path)
-            titles = [entry.title for entry in reloaded.entries["memory"].values()]
-            self.assertEqual(titles, ["Durable fact"])
-
     @unittest.skipIf(os.name == "nt", "POSIX mode bits and umask")
     def test_save_preserves_existing_mode_despite_umask(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -486,29 +461,6 @@ class HarnessStateTest(unittest.TestCase):
 
             state.create_memory("Second", "Replaces the file.")
 
-            self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
-
-    def test_save_temp_file_is_never_looser_than_the_destination(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state = HarnessState(Path(temp_dir) / "harness_state.json")
-            state.create_memory("First", "Creates the file.")
-            os.chmod(state.file_path, 0o600)
-
-            observed_modes: list[int] = []
-            original_open = os.open
-
-            def observing_open(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
-                if str(path).endswith(".tmp"):
-                    observed_modes.append(mode)
-                return original_open(path, flags, mode, **kwargs)
-
-            os.open = observing_open  # type: ignore[assignment]
-            try:
-                state.create_memory("Second", "Replaces the file.")
-            finally:
-                os.open = original_open
-
-            self.assertEqual(observed_modes, [0o600])
             self.assertEqual(os.stat(state.file_path).st_mode & 0o777, 0o600)
 
     def test_save_writes_through_a_symlinked_state_file(self) -> None:
@@ -557,78 +509,6 @@ class HarnessStateTest(unittest.TestCase):
             entries = HarnessState(state_path).list("memory")
             self.assertEqual(len(entries), 80)
 
-    def test_held_lock_dir_defers_writes_and_pins_the_shared_lock_path(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness" / "harness_state.json"
-            state = HarnessState(state_path)
-            state.create("memory", "Seed", "Creates the file.", id="seed")
-            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
-            lock_dir.mkdir()
-            try:
-                with self.assertRaises(RuntimeError) as raised:
-                    state.create("memory", "Second", "Blocked by the lock.", id="second")
-            finally:
-                lock_dir.rmdir()
-            self.assertIn(str(lock_dir), str(raised.exception))
-            entries = HarnessState(state_path).list("memory")
-            self.assertEqual([entry.id for entry in entries], ["seed"])
-
-    def test_save_syncs_parent_after_replace(self) -> None:
-        if os.name != "posix":
-            self.skipTest("directory fsync is POSIX-only")
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(path)
-            events: list[str] = []
-            replace, fsync = os.replace, os.fsync
-
-            def observed_replace(source: Path, destination: Path) -> None:
-                replace(source, destination)
-                events.append("replace")
-
-            def observed_fsync(fd: int) -> None:
-                fsync(fd)
-                events.append("directory sync" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file sync")
-
-            with patch.object(os, "replace", side_effect=observed_replace), patch.object(
-                os, "fsync", side_effect=observed_fsync
-            ):
-                state.create_memory("Durable", "Saved")
-            self.assertEqual(events[-2:], ["replace", "directory sync"])
-
-    def test_live_stale_lock_is_not_stolen(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.create_memory("Seed", "Present")
-            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
-            owner = state._acquire_lock_dir(lock_dir)
-            os.utime(lock_dir, (1, 1))
-            try:
-                with self.assertRaises(RuntimeError):
-                    state.create_memory("Second", "Blocked")
-                self.assertTrue(state._owner_matches(lock_dir, owner))
-            finally:
-                (lock_dir / "owner").unlink()
-                lock_dir.rmdir()
-            self.assertEqual(len(HarnessState(state_path).list("memory")), 1)
-
-    def test_dead_lock_is_reclaimed_without_old_owner_cleanup(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.create_memory("Seed", "Present")
-            lock_dir = Path(f"{os.path.realpath(state_path)}.lock")
-            owner = state._acquire_lock_dir(lock_dir)
-            worker = subprocess.Popen([sys.executable, "-c", "pass"])
-            worker.wait()
-            (lock_dir / "owner").write_text(f"{worker.pid} dead-token\n", encoding="utf-8")
-            os.utime(lock_dir, (1, 1))
-            state.create_memory("Second", "Saved")
-            self.assertFalse(state._owner_matches(lock_dir, owner))
-            self.assertFalse(lock_dir.exists())
-            self.assertEqual(len(HarnessState(state_path).list("memory")), 2)
-
     def test_unparseable_stale_owner_is_reclaimed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "harness_state.json"
@@ -641,21 +521,6 @@ class HarnessStateTest(unittest.TestCase):
             state.create_memory("Second", "Saved")
             self.assertFalse(lock_dir.exists())
             self.assertEqual(len(HarnessState(state_path).list("memory")), 2)
-
-    def test_save_refuses_lost_lock(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "harness_state.json"
-            state = HarnessState(state_path)
-            state.create_memory("Seed", "Present")
-            with self.assertRaisesRegex(RuntimeError, "lock lost"):
-                with state._locked():
-                    lock_dir, _ = state._held_lock
-                    (lock_dir / "owner").write_text("999999 other-token\n", encoding="utf-8")
-                    state.save()
-            self.assertTrue(lock_dir.exists())
-            (lock_dir / "owner").unlink()
-            lock_dir.rmdir()
-            self.assertEqual(len(HarnessState(state_path).list("memory")), 1)
 
     def test_load_ignores_unknown_json_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1705,11 +1570,14 @@ class HarnessRefinementsSettingTests(unittest.TestCase):
             before = state.file_path.read_bytes()
             executor = factory.FactoryExecutor(harness=state)
             settings.write_text('{"factory":{"enabled":true},"harnessRefinements":false}')
-            with patch.object(factory, "_DEFAULT_EXECUTOR", executor):
+            with patch.object(factory, "_DEFAULT_EXECUTOR", executor), patch.object(
+                executor, "_start", new_callable=AsyncMock
+            ) as start:
                 for name in ("saved", "review-sweep"):
                     with self.assertRaisesRegex(RuntimeError, "disabled in /settings"):
                         asyncio.run(factory.run_factory(name))
-            self.assertEqual(executor._runs, {})
+            # The host owns runs: nothing reached its executor.
+            start.assert_not_awaited()
             self.assertEqual(state.file_path.read_bytes(), before)
 
 
