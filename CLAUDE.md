@@ -333,7 +333,8 @@ Five files still use `gen` as an identifier, which edition 2024 reserves, so rus
 `--edition 2024`: `pa-ai/src/providers/faux/mod.rs`, `pa-tui/src/{auth_panel.rs,bash_view/tests.rs,session_ui/share.rs,session_ui/auth.rs}`.
 Rename the identifier (or write `r#gen`) when touching one.
 
-`make check` is upstream's mirror of these gates (it assumes a default environment). This machine has only the
+There is no CI: these gates and `make check` (the same gates, assuming a default environment) are the merge
+gates, and `make lifecycle-checks` runs the `scripts/check_*.py` real-binary verifiers. This machine has only the
 `rustc-master` toolchain, so every gate above runs on `+rustc-master`. A kernel-backed
 test run needs the sandbox HOME's venv bootstrapped by **this** checkout's binary — two checkouts testing
 concurrently against one venv will clobber each other.
