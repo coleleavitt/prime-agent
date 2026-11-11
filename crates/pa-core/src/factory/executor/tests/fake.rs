@@ -394,6 +394,7 @@ impl FactoryChildren for FakePorts {
             if let Some(thinking) = &request.thinking {
                 kwargs.insert("thinking".into(), Value::from(thinking.clone()));
             }
+            kwargs.insert("factory".into(), json!(request.factory));
             let node = node_of_name(&request.name);
             // The supervisor rejects duplicate sibling names: a prior run's
             // settled children stay registered (upstream #3462's M1 class).

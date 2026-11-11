@@ -41,7 +41,7 @@ use super::{Inner, RunCell};
 use crate::factory::labels::spawn_label;
 use crate::factory::pyvalue::py_str_repr;
 use crate::factory::spec::NODE_RETRIES_DEFAULT;
-use crate::session_engine::rlm_host::RlmChildResult;
+use crate::session_engine::rlm_host::{RlmChildResult, RlmFactoryTag};
 
 /// Spawn admissions per instance before a persistent rate limit fails it.
 pub const BACKOFF_MAX_ATTEMPTS: u32 = 5;
@@ -1094,7 +1094,7 @@ impl Inner {
     /// fails it immediately. A spawn that lands after `stop()` is retracted.
     async fn admit(&self, cell: &Arc<RunCell>, slot: Slot, allow_backoff: bool) -> Admission {
         let request = cell.with(|run| {
-            let run_id = run.run_id.clone();
+            let (run_id, spec_id) = (run.run_id.clone(), run.spec_id.clone());
             let state = &run.states[slot.state];
             let (name, model, thinking, state_id) = (
                 state.name.clone(),
@@ -1116,6 +1116,11 @@ impl Inner {
                 name: label,
                 model,
                 thinking,
+                factory: RlmFactoryTag {
+                    run_id,
+                    spec_id,
+                    state_id,
+                },
             }
         });
         let child_name = request.name.clone();

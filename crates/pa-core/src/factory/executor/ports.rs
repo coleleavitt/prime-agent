@@ -13,7 +13,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 pub use super::notice::FactoryNotice;
-use crate::session_engine::rlm_host::{RlmChildResult, RlmHostBridge};
+use crate::session_engine::rlm_host::{RlmChildResult, RlmFactoryTag, RlmHostBridge};
 
 /// One pending seam call.
 pub type PortFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -25,6 +25,9 @@ pub struct FactorySpawn {
     pub name: String,
     pub model: Option<String>,
     pub thinking: Option<String>,
+    /// The run, spec and state the child belongs to; the host records it
+    /// on the child's ledger spawn edge.
+    pub factory: RlmFactoryTag,
 }
 
 /// The child-session host: admission, settlement, cancellation.
@@ -115,6 +118,7 @@ impl FactoryChildren for SessionChildren {
             if let Some(thinking) = request.thinking {
                 kwargs.insert("thinking".into(), Value::from(thinking));
             }
+            kwargs.insert("factory".into(), json!(request.factory));
             let payload = json!({ "prompt": request.prompt, "kwargs": kwargs });
             let handle = bridge
                 .spawn_from_payload(&payload)

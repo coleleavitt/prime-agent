@@ -91,6 +91,35 @@ async fn resolves_subagent_by_id_and_title_with_model_settings() {
     }
 }
 
+/// Each child is spawned with its run's factory tag, which the host
+/// records on the child's ledger spawn edge (the `/context` grouping).
+#[tokio::test]
+async fn each_child_carries_its_runs_factory_tag() {
+    let case = Case::new();
+    case.store_factory(
+        json!({ "nodes": [
+            { "id": "a", "subagent": "worker" },
+            { "id": "b", "subagent": "worker", "depends_on": ["a"] }
+        ] }),
+        "sw",
+    );
+    let result = case.start().await;
+    let status = case.settle(&result).await;
+    assert_eq!(status["state"], "done");
+    let run_id = Case::run_id(&result);
+    for node in ["a", "b"] {
+        let spawn = case.host.spawn_calls(node);
+        assert_eq!(
+            spawn
+                .iter()
+                .map(|call| call["kwargs"]["factory"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!({ "runId": run_id, "specId": "sw", "stateId": node })],
+            "{node}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn inline_subagent_name_labels_the_spawned_child() {
     let case = Case::new();
