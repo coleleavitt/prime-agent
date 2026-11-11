@@ -356,3 +356,24 @@ async fn mid_turn_withdrawal_keeps_the_in_flight_turn_busy() {
     );
     let _ = std::fs::remove_dir_all(worker.config.socket_path.parent().unwrap());
 }
+
+/// An aborted retry wait (`abort_retry`) and a parent's
+/// `rlm.interrupt_subagent` are explicit cancellations of the running turn:
+/// a daemon-wide shutdown that lands before the turn settles must not queue
+/// its continuation (`handle_shutdown` reads `turn_cancelled`).
+#[tokio::test]
+async fn retry_aborts_and_subagent_interrupts_cancel_the_running_turn() {
+    for (command, payload) in [
+        ("abort_retry", json!({})),
+        (
+            "abort",
+            json!({ crate::rlm_children::INTERRUPT_RUN_MARKER: true }),
+        ),
+    ] {
+        let worker = created_worker_with_journal().await;
+        assert!(!worker.core.lock().unwrap().turn_cancelled, "{command}");
+        let cancelled = worker.dispatch(command, &payload).await;
+        assert!(cancelled.success, "{command}: {cancelled:?}");
+        assert!(worker.core.lock().unwrap().turn_cancelled, "{command}");
+    }
+}

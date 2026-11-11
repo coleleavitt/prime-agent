@@ -569,7 +569,11 @@ impl Worker {
         if let Err(response) = self.require_created("abort_retry") {
             return response;
         }
-        self.core.lock_or_recover().retry_abort_requested = true;
+        let mut core = self.core.lock_or_recover();
+        core.retry_abort_requested = true;
+        // An explicit cancellation: a graceful shutdown never continues it.
+        core.turn_cancelled = true;
+        drop(core);
         response_success(None, "abort_retry", None)
     }
 }

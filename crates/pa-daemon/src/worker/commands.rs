@@ -476,6 +476,8 @@ impl Worker {
         // and a compaction keeps running, so a later follow-up starts a new
         // turn; the reply says whether a run was active.
         if payload.get(crate::rlm_children::INTERRUPT_RUN_MARKER) == Some(&Value::Bool(true)) {
+            // An explicit cancellation: a graceful shutdown never continues it.
+            self.core.lock_or_recover().turn_cancelled = true;
             let interrupted = self.engine.abort_in_flight_turn();
             return response_success(None, "abort", Some(json!({ "interrupted": interrupted })));
         }
