@@ -12,7 +12,9 @@ use serde_json::json;
 
 use crate::settings::types::DEFAULT_PYTHON_CELL_TIMEOUT_MS;
 
-mod diff;
+pub(crate) mod diff;
+
+use diff::generate_diff_string;
 
 use crate::tools::tool_definition::{
     AbortSignal,
@@ -23,7 +25,6 @@ use crate::tools::tool_definition::{
     ToolExecutionResult,
     ToolUpdate,
 };
-use diff::generate_diff_string;
 
 /// Mime types the model context accepts as images.
 pub const IMAGE_MIME_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -765,7 +766,8 @@ pub async fn execute_ipython(
         details["errorEname"] = json!(error.ename);
     }
     if !r.diffs.is_empty() {
-        details["diffs"] = json!(r
+        details["diffs"] =
+            json!(r
             .diffs
             .iter()
             .map(|diff| {

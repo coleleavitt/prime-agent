@@ -361,11 +361,12 @@ fn line_stats(current: &[u8], target: &[u8]) -> (u64, u64) {
     let target = String::from_utf8_lossy(target);
     let mut insertions = 0;
     let mut deletions = 0;
-    for part in crate::tools::jsdiff::diff_lines(&current, &target) {
+    for part in crate::tools::ipython::diff::diff_lines(&current, &target) {
+        let count = part.value.lines().count() as u64;
         if part.added {
-            insertions += part.count as u64;
+            insertions += count;
         } else if part.removed {
-            deletions += part.count as u64;
+            deletions += count;
         }
     }
     (insertions, deletions)

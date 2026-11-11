@@ -44,7 +44,7 @@ fn jsdiff_line_tokenize(value: &str) -> Vec<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DiffPart {
+pub(crate) struct DiffPart {
     pub value: String,
     pub added: bool,
     pub removed: bool,
@@ -301,7 +301,7 @@ impl DiffEngine<'_> {
 
 /// jsdiff `diffLines` with default options (case-sensitive, newlines merged
 /// into line tokens). Returns the change parts in order.
-pub(super) fn diff_lines(old_str: &str, new_str: &str) -> Vec<DiffPart> {
+pub(crate) fn diff_lines(old_str: &str, new_str: &str) -> Vec<DiffPart> {
     let mut old_tokens = jsdiff_line_tokenize(old_str);
     let mut new_tokens = jsdiff_line_tokenize(new_str);
     // removeEmpty: drop empty tokens.

@@ -2,7 +2,7 @@
 
 mod lines;
 
-use lines::diff_lines;
+pub(crate) use lines::diff_lines;
 
 /// Generate the cell edit display with line numbers and bounded context.
 pub(super) fn generate_diff_string(
