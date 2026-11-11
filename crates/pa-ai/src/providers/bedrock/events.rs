@@ -584,7 +584,8 @@ mod tests {
             },
             &wire_model(),
             crate::types::CacheRetention::None,
-        );
+        )
+        .expect("convert_messages succeeds");
         assert_eq!(
             replay,
             vec![json!({"role": "assistant", "content": [
@@ -624,7 +625,8 @@ mod tests {
             },
             &wire_model(),
             crate::types::CacheRetention::None,
-        );
+        )
+        .expect("convert_messages succeeds");
         assert_eq!(
             replay,
             vec![json!({"role": "assistant", "content": [
