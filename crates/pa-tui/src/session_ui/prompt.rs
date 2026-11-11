@@ -134,9 +134,19 @@ impl SessionUi {
     const MAX_PASTED_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
     /// Read the clipboard image and register it behind a new editor marker.
+    /// A hard-refused paste (image past the single-image 8000-pixel cap)
+    /// surfaces as a note instead of being silently dropped — mirrors CC's
+    /// `ImageResizeError` → `[Image could not be processed: ...]` text
+    /// substitute (`chunk-mvvq2nx1.js` catch at the end of `ust`).
     pub(super) async fn handle_clipboard_image_paste(&mut self, view: &mut AgentView) {
-        let Some(attachment) = crate::clipboard_image::read_clipboard_image().await else {
-            return;
+        let attachment = match crate::clipboard_image::read_clipboard_image().await {
+            crate::clipboard_image::ClipboardOutcome::Image(image) => image,
+            crate::clipboard_image::ClipboardOutcome::None => return,
+            crate::clipboard_image::ClipboardOutcome::Refused(reason) => {
+                self.note(&format!("Pasted image was not attached: {reason}."), view);
+                self.dirty = true;
+                return;
+            }
         };
         let marker_id = self.next_image_marker_id;
         self.next_image_marker_id += 1;

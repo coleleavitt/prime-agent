@@ -145,6 +145,10 @@ path = "src/main.rs"
 [dev-dependencies]
 tempfile = "3"
 base64 = "0.22"
+# The file_processor tests build real PNGs so they pass pa-tui's
+# `image_limits::enforce` decode gate (which replaced the TS magic-only
+# accept — the gate rejects anything that is not a decodable image).
+image = { version = "0.25", default-features = false, features = ["png"] }
 # The release-workflow test parses the CI workflow YAML and builds fixture
 # tarballs/manifests for the promote-job layout gates (the same versions the
 # workspace already resolves for pa-core's update/release seam).

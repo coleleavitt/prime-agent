@@ -94,6 +94,21 @@ mod tests {
         (dir, path)
     }
 
+    /// A decodable PNG at `(w, h)` with a cheap xor-of-coordinates pattern.
+    /// `pa_tui::image_limits::enforce` now decodes before accepting, so
+    /// the magic-prefix-only fixtures the TS port used no longer pass.
+    fn make_png(width: u32, height: u32) -> Vec<u8> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(width, height, |x, y| {
+            Rgb([((x ^ y) & 0xff) as u8, (x & 0xff) as u8, (y & 0xff) as u8])
+        });
+        let mut buf = Vec::new();
+        DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+            .expect("encode PNG fixture");
+        buf
+    }
+
     #[test]
     fn text_files_embed_in_file_blocks() {
         let (_guard, dir) = temp_dir();
@@ -145,12 +160,9 @@ mod tests {
     #[test]
     fn images_attach_as_base64_content() {
         let (_guard, dir) = temp_dir();
-        // A minimal 1x1 PNG (the magic prefix the sniffer matches).
-        let png: &[u8] = &[
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-        ];
+        let png = make_png(4, 4);
         let file = dir.join("pixel.png");
-        std::fs::write(&file, png).expect("write fixture");
+        std::fs::write(&file, &png).expect("write fixture");
         let processed = process_file_arguments(&[file.to_string_lossy().to_string()], &dir, true)
             .expect("process");
         assert_eq!(processed.images.len(), 1);
@@ -164,9 +176,11 @@ mod tests {
     #[test]
     fn oversized_images_under_auto_resize_get_the_omitted_note() {
         let (_guard, dir) = temp_dir();
-        // A PNG-magic payload whose base64 exceeds the 4.5MB limit.
-        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        png.extend(std::iter::repeat_n(0u8, 4_000_000));
+        // 2000 x 2000 of noisy pixels: survives `image_limits::enforce`
+        // (at exactly the downscale cap, no further resize), but its
+        // base64 still crosses the 4.5 MB `@file` ceiling, so pa-cli's
+        // auto-resize branch replaces it with the omitted-note text.
+        let png = make_png(2000, 2000);
         let file = dir.join("huge.png");
         std::fs::write(&file, &png).expect("write fixture");
         let processed = process_file_arguments(&[file.to_string_lossy().to_string()], &dir, true)
@@ -194,8 +208,9 @@ mod tests {
     #[test]
     fn auto_resize_off_attaches_the_raw_payload() {
         let (_guard, dir) = temp_dir();
-        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        png.extend(std::iter::repeat_n(0u8, 4_000_000));
+        // Same 2000x2000 PNG; with auto-resize off the 4.5 MB size gate
+        // is skipped and the image rides through as-is.
+        let png = make_png(2000, 2000);
         let file = dir.join("huge.png");
         std::fs::write(&file, &png).expect("write fixture");
         let processed = process_file_arguments(&[file.to_string_lossy().to_string()], &dir, false)

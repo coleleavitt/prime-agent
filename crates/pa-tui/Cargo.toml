@@ -31,6 +31,12 @@ flate2 = "1"
 # zlib-compressed RGBA (`f=32,o=z`); iTerm2 takes GIF as is and WebP as a PNG transcode.
 gif = { version = "0.14.2", default-features = false, features = ["std"] }
 image-webp = { version = "0.2.4", default-features = false }
+# Pasted-image downscale pipeline: Claude Code (v2.1.316 `ust` in chunk-mvvq2nx1.js)
+# funnels every image through libvips at `maxWidth/maxHeight = 2000` with a Lanczos
+# resize; prime-agent does the same on both paste paths via `image_limits::enforce`.
+# Decodes PNG/JPEG/GIF/WebP, resizes with `FilterType::Lanczos3` (sharp parity),
+# re-encodes through the CC degradation cascade. Codec-only, no rayon/network features.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "process"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }

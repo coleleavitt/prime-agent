@@ -8,6 +8,8 @@ use std::path::Path;
 
 use base64::Engine;
 
+use crate::image_limits;
+
 /// The supported attachment mime types (TS `IMAGE_MIME_TYPES`).
 pub const SUPPORTED_IMAGE_MIME_TYPES: [&str; 4] =
     ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -60,11 +62,18 @@ pub fn detect_supported_image_mime_from_path(path: &Path) -> std::io::Result<Opt
 
 /// Load an image file as an attachment payload. `Ok(None)` when the file
 /// is empty or not a supported image (the caller treats those as plain
-/// text instead).
+/// text instead). The bytes are passed through
+/// [`image_limits::enforce`] so a pasted or `--image`-flagged file is
+/// resized under the Anthropic many-image 3000-pixel-per-side cap before
+/// it ever reaches the provider; a true-oversize image (over 8000 px on
+/// either side, past the single-image hard cap) is surfaced as an
+/// `InvalidData` IO error so the caller can show the user *why* the
+/// paste was refused.
 ///
 /// # Errors
 ///
-/// Returns `Err` when the file cannot be opened, its prefix read, or its full bytes re-read.
+/// Returns `Err` when the file cannot be opened, its prefix read, its
+/// full bytes re-read, or when the image is over the hard-reject cap.
 pub fn load_image_from_path(path: &Path) -> std::io::Result<Option<LoadedImage>> {
     let Some(mime_type) = detect_supported_image_mime_from_path(path)? else {
         return Ok(None);
@@ -73,10 +82,17 @@ pub fn load_image_from_path(path: &Path) -> std::io::Result<Option<LoadedImage>>
     if bytes.is_empty() {
         return Ok(None);
     }
-    Ok(Some(LoadedImage {
-        data: base64::engine::general_purpose::STANDARD.encode(bytes),
-        mime_type: mime_type.to_string(),
-    }))
+    match image_limits::enforce(&bytes, mime_type, &image_limits::DEFAULT_LIMITS) {
+        Ok(enforced) => Ok(Some(LoadedImage {
+            data: base64::engine::general_purpose::STANDARD.encode(&enforced.data),
+            mime_type: enforced.mime_type.to_string(),
+        })),
+        Err(image_limits::ImageError::Decode(_)) => Ok(None),
+        Err(error) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.to_string(),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -136,12 +152,33 @@ mod tests {
 
     #[test]
     fn loads_supported_images_as_base64_attachments() {
-        let (_gif_dir, gif) = temp_image("a.gif", b"GIF89a\x02\x00\x01\x00");
-        let loaded = load_image_from_path(&gif).unwrap().expect("image");
-        assert_eq!(loaded.mime_type, "image/gif");
+        // A real tiny PNG round-trips through `image_limits::enforce` (which
+        // decodes before accepting), so the base64 payload matches the raw
+        // bytes under the target-raw-size passthrough.
+        let png_bytes = {
+            use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+            let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+                ImageBuffer::from_fn(2, 2, |x, y| Rgb([x as u8, y as u8, 0]));
+            let mut buf = Vec::new();
+            DynamicImage::ImageRgb8(img)
+                .write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+                .unwrap();
+            buf
+        };
+        let (_png_dir, png) = temp_image("a.png", &png_bytes);
+        let loaded = load_image_from_path(&png).unwrap().expect("image");
+        assert_eq!(loaded.mime_type, "image/png");
         assert_eq!(
             loaded.data,
-            base64::engine::general_purpose::STANDARD.encode(b"GIF89a\x02\x00\x01\x00")
+            base64::engine::general_purpose::STANDARD.encode(&png_bytes),
+            "under-cap PNG passes through unchanged (CC `ust` passthrough branch)"
+        );
+        // Magic-only bytes without a decodable payload are not an image.
+        let (_gif_dir, gif) = temp_image("a.gif", b"GIF89a\x02\x00\x01\x00");
+        assert_eq!(
+            load_image_from_path(&gif).unwrap(),
+            None,
+            "a GIF header without a frame no longer slips through the decode gate"
         );
         let (_text_dir, text) = temp_image("a.txt", b"just text");
         assert_eq!(load_image_from_path(&text).unwrap(), None);
