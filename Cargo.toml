@@ -87,7 +87,14 @@ unsafe_code = "forbid"
 # (the design-choice classes, each with its in-code justification) keep
 # their force under the manifest route.
 pedantic = "warn"
-redundant_clone = "warn"
+# rustc-master-only allowances. Upstream CI pins clippy 1.98.1; the newer
+# clippy on this machine fires these on hundreds of pre-existing upstream
+# sites, and sweeping upstream code would cost every future upstream merge.
+# - `assert_is_empty` (pedantic) is new in clippy 1.99 (rust-clippy #17149).
+# - `redundant_clone` started analysing loop bodies after 1.98
+#   (rust-clippy #17495); upstream CI keeps enforcing the 1.98.1 form.
+assert_is_empty = "allow"
+redundant_clone = "allow"
 clone_on_copy = "warn"
 assigning_clones = "warn"
 unnecessary_to_owned = "warn"

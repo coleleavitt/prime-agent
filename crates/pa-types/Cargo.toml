@@ -33,7 +33,12 @@ tempfile = "3"
 # workspace table, and the pedantic class rides here so CI's
 # -D warnings bar enforces it on this crate too.
 pedantic = "warn"
-redundant_clone = "warn"
+# rustc-master-only allowances, mirrored from the workspace table (see the
+# reasons there): `assert_is_empty`, `redundant_clone`, and `map_unwrap_or`,
+# which clippy extended to `.map(f).unwrap_or_default()` after 1.98
+# (rust-clippy #17644).
+assert_is_empty = "allow"
+redundant_clone = "allow"
 clone_on_copy = "warn"
 assigning_clones = "warn"
 unnecessary_to_owned = "warn"
@@ -43,7 +48,7 @@ redundant_closure_for_method_calls = "warn"
 unnested_or_patterns = "warn"
 unreadable_literal = "warn"
 duration_suboptimal_units = "warn"
-map_unwrap_or = "warn"
+map_unwrap_or = "allow"
 match_same_arms = "warn"
 single_match_else = "warn"
 needless_continue = "warn"
