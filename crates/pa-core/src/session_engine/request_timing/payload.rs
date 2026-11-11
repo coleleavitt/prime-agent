@@ -100,7 +100,7 @@ impl CaptureWriter {
         // must never depend on the send's completion.
         let reserved = self
             .queued
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
                 (queued < WRITE_QUEUE_CAPACITY).then_some(queued + 1)
             })
             .is_ok();
@@ -112,7 +112,7 @@ impl CaptureWriter {
         let estimate = payload_bytes(payload);
         let budgeted = self
             .retained
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |retained| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |retained| {
                 retained
                     .checked_add(estimate)
                     .filter(|total| *total <= REQUEST_PAYLOAD_BUDGET_BYTES)
