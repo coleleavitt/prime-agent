@@ -1,6 +1,7 @@
 //! Foreground-sleep rules: block waits that hold the turn open for something
 //! the session can be told about (`rlm.monitor` over an `until` loop, a
-//! `bash()` handle's done notice). Three checks:
+//! `bash()` handle's done notice). Three leaf checks and two wrapper passes
+//! that let the leaf checks see through quoting and prefix noise:
 //!
 //! 1. A command whose first command is exactly `sleep N` with `N` of 25
 //!    seconds or more is refused, so `sleep 60 && make` becomes
@@ -17,9 +18,30 @@
 //!    delay) and never exits on its own, so it holds the turn open the
 //!    same way a `while :; do …; sleep S; done` would. `watch &` and
 //!    `watch` from inside a subshell that is itself backgrounded pass.
+//! 4. The three leaf checks also run against the inner script of a
+//!    `sh -c '…'` / `bash -c '…'` (and `dash`/`ash`/`zsh`/`ksh`, with
+//!    bundled short flags like `bash -lc`) wrapper, and against the remote
+//!    command of an `ssh host '…'` call, so a polling loop quoted inside a
+//!    wrapper is caught the same way the unwrapped shape is.
+//! 5. `sudo [opts]` and `timeout [opts] DURATION` are peeled from the front
+//!    of a command before the four passes above run, so `sudo sh -c '…'`,
+//!    `timeout 900 bash -lc '…'` and `timeout 60 sleep 100` are inspected
+//!    as if their outer prefix were not there. Peeling is compositional:
+//!    refusal only fires when the peeled residual would already be refused
+//!    on its own, so `timeout 900 cargo test` stays allowed.
 
 use super::{Check, Rule};
-use crate::syntax::ast::{BranchKind, Command, List, Part, Quoting, SimpleCommand, Word};
+use crate::syntax::ast::{
+    AndOr,
+    BranchKind,
+    Command,
+    List,
+    Part,
+    Pipeline,
+    Quoting,
+    SimpleCommand,
+    Word,
+};
 use crate::syntax::parse::parse;
 use crate::verdict::GuardKind;
 
@@ -35,6 +57,10 @@ const BUDGET_SECONDS: f64 = 60.0;
 /// count is not literal: at this point the loop holds the turn as long as
 /// a leading `sleep 10` would.
 const IN_LOOP_SLEEP_SECONDS: f64 = 10.0;
+/// Cap on nested wrapper descent. Legitimate scripts never nest deeper than
+/// one or two layers (`timeout … sh -c '…'`, `sudo sh -c '…'`); the cap only
+/// exists to keep a pathological input bounded.
+const MAX_WRAPPER_DEPTH: usize = 8;
 
 impl Rule for Sleep {
     const GUARD: GuardKind = GuardKind::Sleep;
@@ -42,17 +68,288 @@ impl Rule for Sleep {
 
     fn judge(check: &Check<'_>) -> Option<String> {
         let list = parse(check.script.command).list;
-        if let Some(what) = leading_sleep(&list) {
-            return Some(refusal_message(&what));
-        }
-        if let Some(what) = polling_loop(&list) {
-            return Some(refusal_message(&what));
-        }
-        if let Some(what) = top_level_watch(&list) {
-            return Some(refusal_message(&what));
-        }
-        None
+        inspect(&list, None, 0)
     }
+}
+
+fn inspect(list: &List, inside: Option<&str>, depth: usize) -> Option<String> {
+    if let Some(what) = leading_sleep(list) {
+        return Some(refusal_message(&wrap_what(&what, inside)));
+    }
+    if let Some(what) = polling_loop(list) {
+        return Some(refusal_message(&wrap_what(&what, inside)));
+    }
+    if let Some(what) = top_level_watch(list) {
+        return Some(refusal_message(&wrap_what(&what, inside)));
+    }
+    if depth >= MAX_WRAPPER_DEPTH {
+        return None;
+    }
+    for item in &list.items {
+        if item.background {
+            continue;
+        }
+        for pipeline in item.pipelines() {
+            for command in &pipeline.commands {
+                if let Command::Simple(simple) = command {
+                    if let Some(refusal) = descend(simple, inside, depth) {
+                        return Some(refusal);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn wrap_what(what: &str, inside: Option<&str>) -> String {
+    match inside {
+        Some(chain) => format!("{what} inside {chain}"),
+        None => what.to_string(),
+    }
+}
+
+/// Descend into one simple command: peel `sudo` / `timeout` prefixes, then
+/// either recurse into a known `sh -c` / `bash -c` / `ssh` wrapper, or re-run
+/// the leaf checks on the peeled residual (so `timeout 60 sleep 100` is
+/// refused through `sleep 100`'s leading-sleep rule).
+fn descend(simple: &SimpleCommand, inside: Option<&str>, depth: usize) -> Option<String> {
+    if !simple.assignments.is_empty() {
+        return None;
+    }
+    let (peeled, remaining) = peel_passthrough(&simple.words);
+    if remaining.is_empty() {
+        return None;
+    }
+    if let Some((label, inner_script)) = extract_wrapper(remaining) {
+        let mut chain = peeled;
+        chain.push(label);
+        let display = compose_chain(inside, &chain);
+        let inner_list = parse(&inner_script).list;
+        return inspect(&inner_list, Some(&display), depth + 1);
+    }
+    if peeled.is_empty() {
+        return None;
+    }
+    let display = compose_chain(inside, &peeled);
+    let synth = synthesize_simple_list(remaining);
+    inspect(&synth, Some(&display), depth + 1)
+}
+
+fn compose_chain(parent: Option<&str>, more: &[String]) -> String {
+    let fresh = more
+        .iter()
+        .map(|segment| format!("`{segment}`"))
+        .collect::<Vec<_>>()
+        .join(" → ");
+    match parent {
+        Some(outer) => format!("{outer} → {fresh}"),
+        None => fresh,
+    }
+}
+
+/// Synthesize a `List` holding one simple command with the given words. Used
+/// so the leaf checks can re-run on `timeout 60 sleep 100`'s residual
+/// `sleep 100` as if it had been typed on its own.
+fn synthesize_simple_list(words: &[Word]) -> List {
+    let command = Command::Simple(SimpleCommand {
+        assignments: Vec::new(),
+        words: words.to_vec(),
+        redirects: Vec::new(),
+    });
+    let pipeline = Pipeline {
+        negated: false,
+        commands: vec![command],
+    };
+    let item = AndOr {
+        first: pipeline,
+        rest: Vec::new(),
+        background: false,
+    };
+    List { items: vec![item] }
+}
+
+/// Strip `sudo [opts]` and `timeout [opts] DURATION` from the front of a
+/// command's word slice. Returns the labels of what was peeled in order (for
+/// the refusal message) and the remaining slice.
+fn peel_passthrough(words: &[Word]) -> (Vec<String>, &[Word]) {
+    let mut labels = Vec::new();
+    let mut rest = words;
+    while let Some(first) = rest.first() {
+        let Some(text) = first.as_static() else {
+            break;
+        };
+        let basename = basename_of(&text);
+        match basename {
+            "sudo" => {
+                let skip = 1 + skip_sudo_flags(&rest[1..]);
+                if skip > rest.len() {
+                    return (labels, &[]);
+                }
+                labels.push("sudo".to_string());
+                rest = &rest[skip..];
+            }
+            "timeout" => {
+                let flag_skip = skip_timeout_flags(&rest[1..]);
+                let after_flags = 1 + flag_skip;
+                if after_flags >= rest.len() {
+                    return (labels, &[]);
+                }
+                // The next word is DURATION; skip it unconditionally. Its
+                // literal value is irrelevant to the rule (we refuse any
+                // wrapped blocker regardless of how long the cap is).
+                let skip = after_flags + 1;
+                labels.push("timeout".to_string());
+                if skip >= rest.len() {
+                    return (labels, &[]);
+                }
+                rest = &rest[skip..];
+            }
+            _ => break,
+        }
+    }
+    (labels, rest)
+}
+
+fn basename_of(text: &str) -> &str {
+    text.rsplit('/').next().unwrap_or(text)
+}
+
+fn skip_sudo_flags(words: &[Word]) -> usize {
+    const TAKES_ARG_SHORT: &[&str] = &[
+        "-u", "-g", "-p", "-C", "-r", "-t", "-U", "-h", "-A", "-D", "-R",
+    ];
+    const TAKES_ARG_LONG: &[&str] = &[
+        "--user",
+        "--group",
+        "--prompt",
+        "--close-from",
+        "--role",
+        "--type",
+        "--other-user",
+        "--host",
+        "--askpass",
+        "--chdir",
+        "--chroot",
+    ];
+    let mut i = 0;
+    while let Some(word) = words.get(i) {
+        let Some(opt) = word.as_static() else { break };
+        if opt == "--" {
+            i += 1;
+            break;
+        }
+        if !opt.starts_with('-') {
+            break;
+        }
+        if TAKES_ARG_SHORT.iter().any(|flag| *flag == opt)
+            || TAKES_ARG_LONG.iter().any(|flag| *flag == opt)
+        {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    i
+}
+
+fn skip_timeout_flags(words: &[Word]) -> usize {
+    const TAKES_ARG_SHORT: &[&str] = &["-s", "-k"];
+    const TAKES_ARG_LONG: &[&str] = &["--signal", "--kill-after"];
+    let mut i = 0;
+    while let Some(word) = words.get(i) {
+        let Some(opt) = word.as_static() else { break };
+        if opt == "--" {
+            i += 1;
+            break;
+        }
+        if !opt.starts_with('-') {
+            break;
+        }
+        if TAKES_ARG_SHORT.iter().any(|flag| *flag == opt)
+            || TAKES_ARG_LONG.iter().any(|flag| *flag == opt)
+        {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    i
+}
+
+/// If `words` begins with a known wrapper (`sh`/`bash`/`dash`/`ash`/`zsh`/
+/// `ksh` with `-c SCRIPT`, or `ssh [opts] host CMD...`), return the wrapper's
+/// label and the inner shell script to be fed back through the parser.
+fn extract_wrapper(words: &[Word]) -> Option<(String, String)> {
+    let program = words.first()?.as_static()?;
+    let basename = basename_of(&program);
+    match basename {
+        "sh" | "bash" | "dash" | "ash" | "zsh" | "ksh" => shell_c_inner(basename, &words[1..]),
+        "ssh" => ssh_remote_inner(&words[1..]),
+        _ => None,
+    }
+}
+
+fn shell_c_inner(shell_name: &str, args: &[Word]) -> Option<(String, String)> {
+    for (i, word) in args.iter().enumerate() {
+        let text = word.as_static()?;
+        if text == "-c" {
+            let script = args.get(i + 1)?.as_static()?;
+            return Some((format!("{shell_name} -c"), script));
+        }
+        // Bundled short flags: `-lc`, `-ic`, `-ec`, etc. The command script
+        // is still the word after the bundle. `--long` never bundles `c`.
+        if let Some(bundled) = text.strip_prefix('-') {
+            if !bundled.is_empty() && !bundled.starts_with('-') && bundled.contains('c') {
+                let script = args.get(i + 1)?.as_static()?;
+                return Some((format!("{shell_name} {text}"), script));
+            }
+        }
+    }
+    None
+}
+
+fn ssh_remote_inner(args: &[Word]) -> Option<(String, String)> {
+    const TAKES_ARG: &[&str] = &[
+        "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o",
+        "-p", "-Q", "-R", "-S", "-W", "-w",
+    ];
+    let mut i = 0;
+    while let Some(word) = args.get(i) {
+        let opt = word.as_static()?;
+        if opt == "--" {
+            i += 1;
+            break;
+        }
+        if !opt.starts_with('-') {
+            break;
+        }
+        if opt.len() == 2 && TAKES_ARG.iter().any(|flag| *flag == opt) {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    // The host is the next positional. Its value need not be literal (ssh
+    // takes `$HOST` fine); skip past it without reading.
+    if i >= args.len() {
+        return None;
+    }
+    i += 1;
+    if i >= args.len() {
+        return None;
+    }
+    let remainder = &args[i..];
+    let script = if remainder.len() == 1 {
+        remainder[0].as_static()?
+    } else {
+        let mut parts = Vec::with_capacity(remainder.len());
+        for word in remainder {
+            parts.push(word.as_static()?);
+        }
+        parts.join(" ")
+    };
+    Some(("ssh".to_string(), script))
 }
 
 fn refusal_message(what: &str) -> String {
