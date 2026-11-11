@@ -411,9 +411,8 @@ def pack_tarball(staging: Path, out_path: Path, entries: list[str]) -> None:
         fail(str(error))
 
 
-# GNU binutils tool name per Rust target triple: the cross-compile leg
-# (aarch64-unknown-linux-gnu on the x86_64 sandbox runner,
-# docs/sandbox-runners.md) splits and inspects a foreign-arch ELF, which the
+# GNU binutils tool name per Rust target triple: a cross-compile build
+# (aarch64-unknown-linux-gnu on an x86_64 host) splits and inspects a foreign-arch ELF, which the
 # host's plain objcopy/objdump/readelf cannot read; the target-prefixed
 # binutils can. Native builds (the host-arch linux and darwin targets) keep
 # the plain tool names.

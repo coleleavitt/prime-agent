@@ -1,5 +1,0 @@
-self-hosted-runner:
-  # Prime sandbox runners (docs/sandbox-runners.md).
-  labels:
-    - prime-linux-x64
-    - prime-linux-arm64

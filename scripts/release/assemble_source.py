@@ -128,8 +128,7 @@ def export_tree(repo_root: Path, staging: Path) -> None:
     """Extract the git tree at HEAD into `staging` (`git archive`).
 
     The archive is the COMMITTED tree, so a dirty worktree never leaks
-    into the tarball. Extraction is member-by-member (the
-    restamp_continuous.unpack_archive discipline: plain files and
+    into the tarball. Extraction is member-by-member (plain files and
     directories only, every member inside `staging`) because a git tree
     with a link or a submodule would need link-aware packing this
     assembler deliberately does not implement — fail loudly instead.

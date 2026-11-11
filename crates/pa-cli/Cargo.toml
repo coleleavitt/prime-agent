@@ -149,12 +149,6 @@ base64 = "0.22"
 # `image_limits::enforce` decode gate (which replaced the TS magic-only
 # accept — the gate rejects anything that is not a decodable image).
 image = { version = "0.25", default-features = false, features = ["png"] }
-# The release-workflow test parses the CI workflow YAML and builds fixture
-# tarballs/manifests for the promote-job layout gates (the same versions the
-# workspace already resolves for pa-core's update/release seam).
-serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
-tar = "0.4"
-flate2 = "1"
 # The traces login tests encrypt the challenge result with the flow's own
 # public key (same versions the workspace resolves for the engine).
 rsa = { version = "0.9", features = ["sha2", "pem"] }
@@ -172,8 +166,8 @@ tokio = { workspace = true, features = ["test-util"] }
 # pa-cli keeps its OWN lints table (not `workspace = true`): the
 # workspace's `rust.unsafe_code = "forbid"` would outlaw the e2e
 # tests' process-kill/cleanup unsafe blocks. The clippy rows mirror
-# the workspace table, and the pedantic class rides here so CI's
-# -D warnings bar enforces it on this crate too.
+# the workspace table, and the pedantic class rides here so the merge
+# gates' -D warnings bar enforces it on this crate too.
 pedantic = "warn"
 # rustc-master-only allowances, mirrored from the workspace table (see the
 # reasons there): `assert_is_empty`, `redundant_clone`, and `map_unwrap_or`,

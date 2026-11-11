@@ -1,4 +1,5 @@
 # Merge gate (AGENTS.md): fmt + clippy + test + release build must pass before every merge.
+# There is no CI: these targets are the gates.
 check:
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -6,8 +7,7 @@ check:
 	cargo build --release --workspace
 
 
-# Supply-chain gates — local mirrors of the
-# ci.yml workflow jobs. They fail loudly when the tool is missing instead of
+# Supply-chain gate. It fails loudly when the tool is missing instead of
 # silently skipping the gate.
 
 deny:
@@ -15,39 +15,27 @@ deny:
 	cargo deny --all-features --workspace check advisories licenses
 
 # Windows cfg-hygiene gate: cross-target check +
-# clippy at -D warnings for every crate and test, the local mirror of the
-# ci.yml windows-cross job (.github/workflows/ci.yml). Fails loudly when the
+# clippy at -D warnings for every crate and test. Fails loudly when the
 # target is missing instead of silently skipping the gate.
 windows-cross:
 	@rustup target list --installed | grep -q x86_64-pc-windows-gnu || { echo "x86_64-pc-windows-gnu target not installed (rustup target add x86_64-pc-windows-gnu)"; exit 1; }
 	cargo check --workspace --target x86_64-pc-windows-gnu --all-targets
 	cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 
-# Windows MSVC cross-check: the release target's own triple (release.yml's
-# build-windows job builds x86_64-pc-windows-msvc natively on windows-2022;
-# this gate type-checks the same target from a linux host). The check form
+# Windows MSVC cross-check: the Windows release target's own triple,
+# type-checked from a linux host. The check form
 # needs MSVC-side C tooling for the native build scripts (ring): cargo-xwin
 # wraps the build with the MSVC CRT + clang-cl/llvm-lib, so the gate fails
 # loudly when cargo-xwin (or the llvm tools) is missing instead of silently
-# skipping. The gnu gate above stays the cheap cfg-hygiene mirror; the
-# authoritative msvc build runs on the windows runner.
+# skipping. The gnu gate above stays the cheap cfg-hygiene check.
 windows-msvc-cross:
 	@rustup target list --installed | grep -q x86_64-pc-windows-msvc || { echo "x86_64-pc-windows-msvc target not installed (rustup target add x86_64-pc-windows-msvc)"; exit 1; }
 	@command -v cargo-xwin >/dev/null 2>&1 || { echo "cargo-xwin not installed (cargo install cargo-xwin --locked; it provisions the MSVC CRT + expects clang-cl/llvm-lib on PATH)"; exit 1; }
 	cargo xwin check --workspace --target x86_64-pc-windows-msvc --all-targets
 
-# Lints every workflow file (.github/workflows/ is the one home for
-# workflow files).
-actionlint:
-	@command -v actionlint >/dev/null 2>&1 || { echo "actionlint not installed (see rhysd/actionlint releases)"; exit 1; }
-	actionlint .github/workflows/ci.yml .github/workflows/codebase-health.yml .github/workflows/contribution-gate.yml \
-		.github/workflows/continuous.yml .github/workflows/release.yml .github/workflows/windows-runtime-triage.yml \
-		.github/workflows/release-prepare.yml .github/workflows/nightly.yml
-
-# GLIBC baseline gate (the continuous.yml/release.yml build-gnu jobs): a
-# GNU/Linux artifact must not require symbols above GLIBC_2.35, the Ubuntu
-# 22.04 release baseline. No-op on non-GNU hosts; the authoritative gate runs
-# in CI on the Ubuntu 22.04 sandbox runners. POSIX sh throughout: make
+# GLIBC baseline gate: a GNU/Linux artifact must not require symbols above
+# GLIBC_2.35, the Ubuntu 22.04 release baseline. No-op on non-GNU hosts.
+# POSIX sh throughout: make
 # runs recipes with /bin/sh, which is dash on Ubuntu (no [[ ]], no ==).
 glibc-gate:
 	@case "$(TARGET)" in *-linux-gnu) \
@@ -66,7 +54,7 @@ glibc-gate:
 		fi \
 		;; esac
 
-# Local mirror of the release build-job gates:
+# Release dry-run gates:
 # release build against the committed lockfile, deterministic tarball assembly,
 # then end-to-end verification of the host-target artifact. The vendored
 # prime-agent-runtime/ at the repo root is the default runtime sidecar
@@ -77,16 +65,15 @@ RUNTIME_DIR ?=
 RUNTIME_FLAG = $(if $(RUNTIME_DIR),--runtime-dir $(RUNTIME_DIR),)
 
 # Bundled catalog assets (catalog spec §3.2 layer 2): generated at build
-# time, never committed. Release and continuous CI ship the live catalog
-# (--network) at one prime-agent-catalog commit per run (`bundle_catalog.py
-# resolve-ref`). The local dry-runs default to the offline fixture snapshot
+# time, never committed. A release ships the live catalog (--network) at one
+# prime-agent-catalog commit (`bundle_catalog.py resolve-ref`). The dry-runs default to the offline fixture snapshot
 # (it passes the full packer gates); CATALOG_ASSETS_MODE=network switches
 # them to the live fetch of the catalog's main.
 CATALOG_ASSETS_DIR = target/catalog-assets
 CATALOG_ASSETS_MODE ?= fixture
 CATALOG_ASSETS_FLAG = --catalog-assets $(CATALOG_ASSETS_DIR)
 
-# Mirror the Linux CI split: Cargo's executable remains unstripped and the
+# The Linux release split: Cargo's executable remains unstripped and the
 # archive receives a separate shipped ELF plus its detached decoder.
 ifneq ($(filter %-unknown-linux-gnu,$(TARGET)),)
 RELEASE_BINARY = target/release/dist/prime-agent
@@ -105,7 +92,7 @@ RELEASE_PACKAGE_BUILD = :
 RELEASE_PACKAGE_FLAGS =
 endif
 
-# Live-catalog asset generation (network fetch; what release CI ships).
+# Live-catalog asset generation (network fetch; what a release ships).
 catalog-assets:
 	python3 scripts/release/bundle_catalog.py generate --network --out $(CATALOG_ASSETS_DIR)
 
@@ -125,7 +112,7 @@ release-dry-run:
 	python3 scripts/release/verify_release.py \
 		--dist-dir target/release/dist --version "$(VERSION)" --target "$(TARGET)"
 
-# Local mirror of the continuous.yml build job:
+# Continuous-build dry-run:
 # same release build, but commit-stamped: the tarball carries a package.json
 # version manifest and the binary must report "<version>-continuous.<sha>".
 GIT_SHA := $(shell git rev-parse HEAD)
@@ -184,30 +171,27 @@ perf:
 fold-gates:
 	python3 scripts/release/test_fold_changelog.py
 
-# The consume route's restamp battery (release.yml's beta channel): the
-# continuous artifacts restamped to the beta version keep the built bytes
-# and carry the release shape - the provenance case is first (a foreign
-# commit's artifacts are refused).
-restamp-gates:
-	python3 scripts/release/test_restamp.py
+# The real-binary lifecycle checks (scripts/check_*.py): each drives the
+# debug binary through owned daemons, PTYs and loopback providers, after its
+# own unit test (scripts/test_check_<scenario>.py) when one exists. Build the
+# bins and bootstrap the kernel venv first (CLAUDE.md -> Validation).
+LIFECYCLE_RECEIPTS ?= target/lifecycle-check-receipts
+PA_RUST_BINARY ?= $(CURDIR)/target/debug/prime-agent
+LIFECYCLE_KERNEL_PYTHON ?= $(HOME)/.prime/agent/kernel-venv/bin/python
+lifecycle-checks:
+	@mkdir -p $(LIFECYCLE_RECEIPTS)
+	@test -x "$(LIFECYCLE_KERNEL_PYTHON)" || { echo "no kernel venv at $(LIFECYCLE_KERNEL_PYTHON) (run prime-agent --prime-agent-bootstrap)"; exit 1; }
+	@export PA_RUST_BINARY="$(PA_RUST_BINARY)" PRIME_AGENT_KERNEL_PYTHON="$(LIFECYCLE_KERNEL_PYTHON)" PA_E2E_KERNEL_PYTHON="$(LIFECYCLE_KERNEL_PYTHON)"; \
+	status=0; \
+	python3 scripts/test_lifecycle_lib.py || status=1; \
+	for check in scripts/check_*.py; do \
+		scenario=$${check#scripts/check_}; scenario=$${scenario%.py}; \
+		if [ -f scripts/test_check_$$scenario.py ]; then python3 scripts/test_check_$$scenario.py || status=1; fi; \
+		python3 $$check --receipt $(LIFECYCLE_RECEIPTS)/$$scenario.json || status=1; \
+	done; \
+	exit $$status
 
-# The CI shard tooling's contract battery (ci.yml's PR smoke): the stable
-# crc32 assignment under the narrowed selection, the scope-aware summary
-# audit, the selection resolver the conditional bins build reads, and the
-# fail-safe PR-files mapping the changes job feeds it.
-shard-gates:
-	python3 scripts/test_ci_test_shard.py
-	python3 scripts/test_ci_pr_crates.py
-
-# The sandbox-runner provisioning contract battery (scripts/ci/
-# register_runner.sh): the security case is first - the registration values
-# reach config.sh as argv and the supervisor script path reaches su as
-# argv, never as interpolated shell source, and the -- on both su
-# invocations keeps a leading-dash value from becoming su's own option.
-runner-gates:
-	python3 scripts/ci/test_register_runner.py
-
-.PHONY: check deny windows-cross actionlint glibc-gate release-dry-run continuous-dry-run audit-build package catalog-assets catalog-assets-fixture catalog-assets-gates fold-gates restamp-gates shard-gates runner-gates perf
+.PHONY: check deny windows-cross windows-msvc-cross glibc-gate release-dry-run continuous-dry-run audit-build package catalog-assets catalog-assets-fixture catalog-assets-gates fold-gates lifecycle-checks perf
 
 # Offline packaging contract tests for updaters shipped since Prime Agent 0.6.
 legacy-upgrade-gates:

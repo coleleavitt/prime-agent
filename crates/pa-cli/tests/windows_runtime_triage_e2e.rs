@@ -5,11 +5,9 @@
 //! The Windows runtime triage battery (the operator's 2026-10-08 ask: "we
 //! need to give you an easy way to test things"): three scripted TUI
 //! scenarios that boot the freshly-built binary against a real daemon and
-//! assert the Windows-reported breakages stay fixed. The workflow
-//! `.github/workflows/windows-runtime-triage.yml` runs this battery on
-//! windows-2022 for Windows-touched PRs and nightly on main, and uploads
-//! the captured pane dumps (`WINDOWS_RUNTIME_TRIAGE_DUMP_DIR`) as run
-//! artifacts the fleet can read.
+//! assert the Windows-reported breakages stay fixed. `cargo test` on a
+//! Windows host runs this battery; `WINDOWS_RUNTIME_TRIAGE_DUMP_DIR` keeps
+//! the captured pane dumps.
 //!
 //! The scenarios map one-to-one onto the operator's report:
 //!   (1) `tui_reopen_renders_the_old_history` - reopening an old session
