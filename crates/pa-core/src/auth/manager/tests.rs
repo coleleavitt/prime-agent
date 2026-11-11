@@ -1621,6 +1621,88 @@ fn a_failed_write_serves_the_fetched_credential_never_the_expired_one() {
     );
 }
 
+/// A scripted OAuth integration whose token call succeeds while a
+/// concurrent writer replaces the stored entry (`replacement`; `{}` is a
+/// logout): the commit guard must keep the replacement.
+struct ReplacedDuringFetch {
+    backend: Arc<CatchBackend>,
+    replacement: String,
+}
+
+impl OAuthIntegration for ReplacedDuringFetch {
+    fn api_key_for(&self, _provider: &str, credential: &AuthCredential) -> Option<String> {
+        match credential {
+            AuthCredential::Oauth { access, .. } => Some(access.clone()),
+            _ => None,
+        }
+    }
+
+    fn refresh(
+        &self,
+        _provider: &str,
+        _credentials: &AuthStorageData,
+    ) -> Result<AuthCredential, OAuthRefreshError> {
+        *self.backend.content.lock().expect("catch backend content") =
+            Some(self.replacement.clone());
+        Ok(CountingOAuth::fetched_credential())
+    }
+}
+
+/// One refresh over an expired grant whose fetch races `replacement`
+/// into the store: the served key and the stored document.
+fn refresh_racing(provider: &str, replacement: String) -> (Option<String>, Option<String>) {
+    let backend = Arc::new(CatchBackend {
+        content: std::sync::Mutex::new(Some(catch_document(
+            provider,
+            &expired_oauth("old-access"),
+        ))),
+        peer_on_lock_error: None,
+        fail_writes: false,
+    });
+    let oauth: Arc<dyn OAuthIntegration> = Arc::new(ReplacedDuringFetch {
+        backend: Arc::clone(&backend),
+        replacement,
+    });
+    let mut auth =
+        AuthStorage::from_storage(Arc::clone(&backend) as Arc<dyn AuthStorageBackend>, oauth);
+    let key = auth.get_api_key(provider);
+    let stored = backend
+        .content
+        .lock()
+        .expect("catch backend content")
+        .clone();
+    (key, stored)
+}
+
+/// The commit guard (logout): a logout that lands while the token call
+/// runs is never undone by the fetched grant.
+#[test]
+fn a_logout_during_the_fetch_is_never_resurrected_by_the_fetched_grant() {
+    let (key, stored) = refresh_racing("x-logout-during-fetch", "{}".to_string());
+    assert_eq!(key, None);
+    assert_eq!(stored.as_deref(), Some("{}"), "the logout stays");
+}
+
+/// The commit guard (replacement): a new API-key login that lands while
+/// the token call runs stays; the fetched grant is discarded.
+#[test]
+fn a_login_during_the_fetch_is_never_overwritten_by_the_fetched_grant() {
+    let provider = "x-login-during-fetch";
+    let login = catch_document(
+        provider,
+        &AuthCredential::ApiKey {
+            key: "new-login-key".to_string(),
+            prime_team: None,
+        },
+    );
+    let (key, stored) = refresh_racing(provider, login.clone());
+    assert_eq!(
+        key, None,
+        "this resolution served nothing; the next one serves the login"
+    );
+    assert_eq!(stored.as_deref(), Some(login.as_str()), "the login stays");
+}
+
 /// A scripted backend for the refresh-claim wait: `claim_refresh` first
 /// lands a scripted store change — the world a waiting flight sees when
 /// it finally gets past the lock — then either reports the lock

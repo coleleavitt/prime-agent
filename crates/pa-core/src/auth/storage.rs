@@ -408,7 +408,7 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         let mut holder = None;
         let mut deadline = std::time::Instant::now() + REFRESH_CLAIM_WAIT;
         loop {
-            match LockGuard::acquire(&claim, STALE_AFTER) {
+            match LockGuard::acquire_owned(&claim, STALE_AFTER) {
                 Ok(lock) => return Ok(Some(lock.with_heartbeat(STALE_AFTER / 2))),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     let current = LockGuard::holder_at(&lock_path);
@@ -480,7 +480,7 @@ impl AuthStorageBackend for FileAuthStorageBackend {
             let held = forgotten.as_ref().is_some_and(|kept| kept.claim.is_some());
             let claim = (!held)
                 .then(|| {
-                    LockGuard::acquire(
+                    LockGuard::acquire_owned(
                         &provider_file(&self.auth_path, "refresh", provider_id),
                         STALE_AFTER,
                     )

@@ -409,6 +409,19 @@ impl LockDir {
         }
     }
 
+    /// A complete owner record (newline-terminated, as [`Self::create`]
+    /// writes it) whose process no longer exists. A record still being
+    /// written never qualifies, so a fresh lock is never taken from its
+    /// creator.
+    fn owner_exited(recorded: &str) -> bool {
+        recorded.ends_with('\n')
+            && recorded
+                .trim()
+                .split_once(' ')
+                .is_some_and(|(pid, token)| !token.is_empty() && pid.parse::<u32>().is_ok())
+            && Self::owner_dead(recorded)
+    }
+
     /// The mkdir is the acquisition signal: EEXIST is the only collision.
     /// Returns the created lock's [`lock_identity`].
     #[cfg(any(unix, windows))]
@@ -480,6 +493,11 @@ impl LockDir {
             }
         }
         if metadata.is_dir() {
+            // A holder that provably exited released the lock with its
+            // process: no staleness window to wait out.
+            if Self::read_owner(path).is_some_and(|owner| Self::owner_exited(&owner)) {
+                return Self::reclaim(path, lock_identity(&metadata)?);
+            }
             let modified = metadata.modified()?;
             let age = std::time::SystemTime::now()
                 .duration_since(modified)
@@ -951,6 +969,28 @@ mod tests {
         next.ensure_owned().unwrap();
         drop(next);
         assert!(!LockDir::path_for(&file).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_exited_owner_releases_a_fresh_lock_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("auth.json.refresh");
+        let old = LockDir::acquire_owned(&file, Duration::from_secs(10)).unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait().unwrap();
+        fs::write(old.path.join("owner"), format!("{dead_pid} dead-token\n")).unwrap();
+        // Fresh (no staleness), yet its holder is gone.
+        let next = LockDir::acquire_owned(&file, Duration::from_secs(10)).unwrap();
+        next.ensure_owned().unwrap();
+        // A record still being written (no newline yet) never qualifies.
+        drop(next);
+        drop(old);
+        let held = LockDir::acquire_owned(&file, Duration::from_secs(10)).unwrap();
+        fs::write(held.path.join("owner"), format!("{dead_pid} partial")).unwrap();
+        let error = LockDir::acquire_owned(&file, Duration::from_secs(10)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
     }
 
     #[cfg(unix)]
