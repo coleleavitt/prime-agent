@@ -14,7 +14,9 @@ Preserve these properties:
   plain tool calls. The model-visible surface is pinned in `AGENTS.md` → "Surface contract".
 - **The client does not own execution.** The supervisor daemon routes to one worker process per session; closing the
   TUI never stops an agent. Anything that couples a session's life to a client connection is a bug.
-- **Parity with the TS product is the definition of done** for user-visible surfaces (see `AGENTS.md` → Merge gates).
+- **Existing installs keep working.** The TS product is no longer the spec (upstream #3870 dropped the parity-diff
+  merge gate and the TS comparison tests); on-disk formats, settings keys and wire identifiers stay stable for existing
+  installs, settings and clients (`AGENTS.md` → Branding).
 
 ## Authority
 
