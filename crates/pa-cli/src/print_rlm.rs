@@ -1380,7 +1380,6 @@ mod tests {
             target: pa_core::session_engine::rlm_host::RlmSpawnTarget::Local,
             plan_mode: false,
             token_budget: None,
-            cwd: None,
             agent: None,
             worktree: None,
         });

@@ -897,7 +897,15 @@ mod tests {
             reason: "checkpoint".to_string(),
             turns_since_last_review: 1,
         };
-        let review = review_auto_refine(&[], &state, &[], &model, &ctx, stopped(StopReason::Error));
+        let review = review_auto_refine(
+            &[],
+            &state,
+            &[],
+            &model,
+            &ctx,
+            &NativeAutoRefinePolicy,
+            stopped(StopReason::Error),
+        );
         assert_eq!(
             [
                 plan.await.err().unwrap().to_string(),
