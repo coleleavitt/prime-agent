@@ -1459,7 +1459,11 @@ class ReplTest(unittest.TestCase):
             "(result.backgrounded, result.exit_code)",
         )
         self.assertEqual(one(started, "result")["text"], "(True, None)")
-        notice = wait_for_host_request(self.repl, started)["data"]
+        # The move to the background is an adoption event first (sent without
+        # waiting for a reply); the completion notice follows.
+        adoption = wait_for_host_request(self.repl, started)["data"]
+        self.assertEqual((adoption["type"], adoption["name"]), ("telemetry.emit", "bash_timeout_backgrounded"))
+        notice = wait_for_host_request(self.repl, [])["data"]
         self.assertEqual(
             (notice["type"], notice["exitCode"], notice["outputTail"]), ("bash.completed", 0, "done")
         )
