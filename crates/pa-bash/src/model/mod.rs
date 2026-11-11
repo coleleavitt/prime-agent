@@ -226,11 +226,11 @@ pub(crate) fn describe_context(context: &[Via]) -> String {
         let piece = match via {
             Via::Payload { runner } => format!("inside the `{runner}` payload"),
             Via::Eval => "inside an `eval` payload".to_string(),
-            Via::Script { path } => format!("in the script {path}"),
+            Via::Script { path } => format!("in the script `{path}`"),
             Via::Stdin { runner } => format!("in the code `{runner}` reads from its stdin"),
-            Via::Remote { host } => format!("on the remote host {host}"),
-            Via::Function { name } => format!("in the function {name}"),
-            Via::Alias { name } => format!("in the alias {name}"),
+            Via::Remote { host } => format!("on the remote host `{host}`"),
+            Via::Function { name } => format!("in the function `{name}`"),
+            Via::Alias { name } => format!("in the alias `{name}`"),
             Via::Trap => "in a trap handler".to_string(),
             Via::Substitution => continue,
         };

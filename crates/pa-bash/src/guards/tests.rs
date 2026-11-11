@@ -357,7 +357,11 @@ fn scripts_in_the_workspace_are_read() {
     let ship = fixture
         .refusal(GuardKind::ForcePush, "bash ship.sh")
         .expect("refused");
-    assert!(ship.contains("in the script ship.sh"), "{ship}");
+    // Backticks around the script path make the identifier
+    // fingerprint-stable: the failure-ledger fold catches backtick spans
+    // via `fingerprint::fold_quoted`, so two refusals in two different
+    // scripts share one id instead of sharding on the user's filename.
+    assert!(ship.contains("in the script `ship.sh`"), "{ship}");
     assert!(fixture.refusal(GuardKind::Sudo, "./build.sh").is_none());
     assert!(fixture.refusal(GuardKind::Sudo, "bash build.sh").is_some());
     let written = fixture.refusal(
@@ -876,6 +880,88 @@ fn polling_loops_with_sleep_are_refused() {
         unbounded.contains("while loop sleeping 15 seconds each iteration"),
         "{unbounded}"
     );
+}
+
+#[test]
+fn wrapped_blockers_are_refused_through_descent() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            // `sh -c` / `bash -c` recursion.
+            "sh -c 'for i in $(seq 1 100); do sleep 1; done'",
+            "bash -c 'while :; do date; sleep 3; done'",
+            "bash -lc 'while true; do curl x; sleep 5; done'",
+            "sh -ec 'sleep 60'",
+            "sh -c 'watch date'",
+            // `ssh host '…'` recursion on the final positional script.
+            "ssh host 'for i in $(seq 1 100); do sleep 1; done'",
+            "ssh user@host 'while :; do date; sleep 2; done'",
+            "ssh -p 2222 host 'sleep 60'",
+            "ssh -o StrictHostKeyChecking=no host 'while kill -0 1; do sleep 15; done'",
+            // Multi-word remote command (ssh joins before the remote shell).
+            "ssh host sleep 60",
+            // Pass-through prefixes: sudo and timeout.
+            "sudo sh -c 'while :; do sleep 5; done'",
+            "sudo -u root bash -c 'for i in {1..60}; do sleep 2; done'",
+            "timeout 55 sh -c 'while :; do curl x; sleep 2; done'",
+            "timeout 60 sleep 100",
+            "timeout -k 5 300 bash -c 'watch date'",
+            "timeout --kill-after=5 60 sleep 30",
+            "sudo timeout 60 sleep 100",
+            // Nested wrapper pair.
+            "sh -c \"bash -c 'while :; do sleep 5; done'\"",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Sleep,
+        &[
+            // `until` bypass survives the recursion.
+            "sh -c 'until test -f /tmp/ready; do sleep 2; done'",
+            "ssh host 'until grep -q DONE log; do sleep 5; done'",
+            "timeout 55 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:8099/cv/; do sleep 2; done'",
+            // Legitimate deadline on real work.
+            "timeout 900 cargo test",
+            "timeout 1200 cargo test --workspace",
+            // Inner has no blocker.
+            "bash -c '. env.sh; cargo clippy --all-targets'",
+            "sudo sh -c 'kill 1483; sleep 1; kill -9 1483 2>/dev/null; echo done'",
+            "ssh host 'bash -s' < probe.sh",
+            "ssh chat-aws \"sleep 1; docker logs --since 3m svc | tail -1\"",
+            // Dynamic inner script: as_static returns None → no recursion.
+            "sh -c \"$SCRIPT\"",
+            "ssh host \"$REMOTE\"",
+        ],
+    );
+    let wrapped = fixture
+        .refusal(
+            GuardKind::Sleep,
+            "sudo timeout 60 sh -c 'while :; do sleep 5; done'",
+        )
+        .expect("refused");
+    assert!(
+        wrapped.contains("`sudo` → `timeout` → `sh -c`"),
+        "{wrapped}"
+    );
+    assert!(wrapped.contains("always-true"), "{wrapped}");
+    let synth = fixture
+        .refusal(GuardKind::Sleep, "timeout 60 sleep 100")
+        .expect("refused");
+    assert!(synth.contains("standalone sleep 100"), "{synth}");
+    assert!(synth.contains("`timeout`"), "{synth}");
+    let pipeline_hit = fixture
+        .refusal(
+            GuardKind::Sleep,
+            "echo start && sh -c 'for i in $(seq 1 100); do sleep 1; done'",
+        )
+        .expect("refused");
+    assert!(
+        pipeline_hit.contains("for loop with 100 iterations"),
+        "{pipeline_hit}"
+    );
+    assert!(pipeline_hit.contains("`sh -c`"), "{pipeline_hit}");
 }
 
 #[test]
