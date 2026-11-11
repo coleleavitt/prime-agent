@@ -4,11 +4,17 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use common::{Reply, serve, sse};
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+use pa_core::session_engine::model_usage::ModelUsage;
+use pa_core::session_engine::rlm_usage::{
+    ChildUsageAppendResult,
+    RlmChildUsageFuture,
+    RlmChildUsageStore,
+};
 use pa_web::config::{BackendChoice, WebSettings};
 use pa_web::search::{SearchBackend, SearchRequest};
 use pa_web::{SEARCH_REQUEST, WebFeature, WebOverrides, resolve_backend};
@@ -232,6 +238,7 @@ async fn an_override_backend_serves_every_search() {
                 Ok(pa_web::search::SearchOutcome {
                     backend: "brave",
                     model: None,
+                    billed: None,
                     items: vec![pa_web::search::SearchItem::Search {
                         query: request.query,
                         hits: vec![],
@@ -251,4 +258,82 @@ async fn an_override_backend_serves_every_search() {
         .await
         .unwrap();
     assert!(reply["text"].as_str().unwrap().contains("No links found."));
+}
+
+/// A durable usage store that keeps each bill it is given.
+#[derive(Default)]
+struct Bills(Mutex<Vec<(String, ModelUsage)>>);
+
+impl RlmChildUsageStore for Bills {
+    fn last_assistant(&self) -> RlmChildUsageFuture<'_, Option<(String, pa_types::ai::Usage)>> {
+        Box::pin(async { None })
+    }
+
+    fn append_attribution(
+        &self,
+        _row_id: &str,
+        _target_id: &str,
+        _child_usage: pa_types::ai::Usage,
+        _origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<ChildUsageAppendResult>> {
+        Box::pin(async { Err(std::io::Error::other("bills only")) })
+    }
+
+    fn append_model_usage(
+        &self,
+        session_id: String,
+        usage: ModelUsage,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
+        self.0.lock().unwrap().push((session_id, usage));
+        Box::pin(async { Ok(()) })
+    }
+
+    fn observe_billed_rows(
+        &self,
+        _sink: pa_core::session::billed_row::BilledRowSink,
+    ) -> RlmChildUsageFuture<'_, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// The Anthropic backend's nested call bills the session that searched:
+/// one `web_search` `model_usage` row on the search model.
+#[tokio::test]
+async fn an_anthropic_search_records_its_usage_on_the_session() {
+    let model_server = serve(|_request| Reply::ok("text/event-stream", search_stream())).await;
+    let dir = tempfile::tempdir().unwrap();
+    write_models(dir.path(), &model_server.base);
+    std::fs::write(
+        dir.path().join("settings.json"),
+        json!({ "web": { "searchModel": "mock-anthropic/mock-haiku" } }).to_string(),
+    )
+    .unwrap();
+    let mut context = context(dir.path());
+    context.session_id = "s-web-search-billed".into();
+    let bills = Arc::new(Bills::default());
+    let store: Arc<dyn RlmChildUsageStore> = bills.clone();
+    pa_core::session_engine::billed_calls::register_session_usage_store(
+        "s-web-search-billed",
+        &store,
+    );
+    let mut handlers = HostRequestHandlers::default();
+    WebFeature::new().register_host_handlers(&context, &mut handlers);
+    search(&handlers, json!({ "query": "tokio" }))
+        .await
+        .unwrap();
+    let bills = bills.0.lock().unwrap().clone();
+    assert!(bills.iter().all(|(_, bill)| bill.usage.total_tokens > 0));
+    let billed: Vec<(String, String, String, String)> = bills
+        .into_iter()
+        .map(|(session_id, bill)| (session_id, bill.source, bill.provider, bill.model_id))
+        .collect();
+    assert_eq!(
+        billed,
+        vec![(
+            "s-web-search-billed".to_string(),
+            "web_search".to_string(),
+            "mock-anthropic".to_string(),
+            "mock-haiku".to_string()
+        )]
+    );
 }

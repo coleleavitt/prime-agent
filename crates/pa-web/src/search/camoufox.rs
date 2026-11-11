@@ -156,6 +156,7 @@ impl SearchBackend for CamoufoxSearch {
             Ok(SearchOutcome {
                 backend: "camoufox",
                 model: None,
+                billed: None,
                 items: vec![SearchItem::Search {
                     query: request.query.clone(),
                     hits: parse_hits(&body, &request),

@@ -265,6 +265,12 @@ impl SearchBackend for AnthropicSearch {
                 cancel,
             )
             .await;
+            let billed = result.as_ref().ok().and_then(|completion| {
+                pa_core::session_engine::model_usage::ModelUsage::of_reply(
+                    "web_search",
+                    &completion.message,
+                )
+            });
             let collected = std::mem::take(
                 &mut *collector
                     .lock()
@@ -286,6 +292,7 @@ impl SearchBackend for AnthropicSearch {
                 backend: "anthropic",
                 model: Some(format!("{}/{}", model.model.provider, model.model.id)),
                 items,
+                billed,
             })
         })
     }

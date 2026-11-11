@@ -150,13 +150,16 @@ pub enum SearchItem {
 }
 
 /// A finished search.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchOutcome {
     /// The backend name (`anthropic`, `brave`, `exa`).
     pub backend: &'static str,
     /// `provider/id` of the model that searched, for the Anthropic backend.
     pub model: Option<String>,
     pub items: Vec<SearchItem>,
+    /// The model call the search billed (the Anthropic backend's nested
+    /// call): the session records it as a `model_usage` row.
+    pub billed: Option<pa_core::session_engine::model_usage::ModelUsage>,
 }
 
 /// A backend's failure.
@@ -408,6 +411,7 @@ mod tests {
         let outcome = SearchOutcome {
             backend: "anthropic",
             model: Some("anthropic/claude-haiku-4-5".into()),
+            billed: None,
             items: vec![
                 SearchItem::Commentary("Searching.".into()),
                 SearchItem::Search {

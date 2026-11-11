@@ -163,7 +163,7 @@ impl SessionFeature for WebFeature {
 
 /// One session's view of the feature.
 struct SessionWeb {
-    /// The session the fetch answers bill.
+    /// The session the searches and fetch answers bill.
     session_id: String,
     agent_dir: PathBuf,
     cwd: PathBuf,
@@ -313,6 +313,11 @@ impl SessionWeb {
         let query = request.query.clone();
         match backend.search(request, cancel.clone()).await {
             Ok(outcome) => {
+                pa_core::session_engine::billed_calls::record_session_model_usage(
+                    &self.session_id,
+                    outcome.billed.clone(),
+                )
+                .await;
                 self.track(
                     SEARCH_EVENT,
                     &[
