@@ -1595,6 +1595,7 @@ fn family_edges_track_restore_and_relocation_without_a_ledger_append() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "child".into(),
+            factory: None,
         })
         .unwrap();
     let family_children = || -> Vec<PathBuf> {
@@ -1640,6 +1641,7 @@ fn family_edges_recheck_symlink_targets_without_a_ledger_append() {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: child_id.into(),
+                factory: None,
             })
             .unwrap();
     }

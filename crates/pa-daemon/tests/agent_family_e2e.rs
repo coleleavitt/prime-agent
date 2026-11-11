@@ -1616,6 +1616,7 @@ async fn passivated_child_recent_messages_reads_its_file_end_to_end() {
             cwd: None,
             agent: None,
             worktree: None,
+            factory: None,
         })
         .await
         .expect("spawn kid-a");
@@ -1793,6 +1794,7 @@ async fn family_members_read_each_others_transcripts_end_to_end() {
                     cwd: None,
                     agent: None,
                     worktree: None,
+                    factory: None,
                 })
                 .await
                 .expect("spawn a kid");
