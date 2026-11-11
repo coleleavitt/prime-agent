@@ -13,6 +13,7 @@ import codecs
 import contextlib
 import contextvars
 import ctypes
+import difflib
 import errno
 import functools
 import inspect
@@ -1015,6 +1016,94 @@ def _cap_traceback_lines(lines: list[str]) -> list[str]:
     return kept
 
 
+_SUGGESTION_MAX_CHARS = 160
+# Module names the agent reaches for most often but doesn't always import
+# first; included in NameError suggestions so an unqualified `os`/`json`
+# miss points at the obvious fix.
+_COMMON_IMPORT_NAMES = frozenset({
+    "os", "sys", "json", "re", "pathlib", "subprocess", "asyncio",
+    "math", "time", "datetime", "collections", "itertools", "functools",
+    "typing", "traceback", "shutil", "tempfile", "io", "difflib",
+    "pandas", "numpy", "httpx", "requests", "pydantic", "tyro",
+    "bs4", "yaml",
+})
+
+
+def _suggestion_line(exc: BaseException) -> str | None:
+    """A short 'did you mean ...' hint for the common recurring errors.
+
+    Appended to the traceback as the last line, so the model can self-correct
+    on the next step. Never raises: a broken suggestion must not mask a real
+    error, and a mishandled edge case is a silent skip.
+    """
+    try:
+        if isinstance(exc, NameError):
+            name = getattr(exc, "name", None)
+            if not name:
+                return None
+            # The cell's own frame holds the namespace the model was writing
+            # into; walk to the deepest frame to find it.
+            tb = exc.__traceback__
+            while tb and tb.tb_next:
+                tb = tb.tb_next
+            if tb is None:
+                return None
+            candidates = set(tb.tb_frame.f_globals) | set(tb.tb_frame.f_locals)
+            candidates |= _COMMON_IMPORT_NAMES
+            matches = difflib.get_close_matches(name, candidates, n=3, cutoff=0.6)
+            if matches:
+                return (
+                    f"Hint: nearest names in scope — {', '.join(matches)}."
+                )
+            return None
+        if isinstance(exc, ModuleNotFoundError):
+            name = getattr(exc, "name", None) or ""
+            if not name:
+                return None
+            # The suggestion stays passive: a hint, not an auto-install.
+            return (
+                f"Hint: install with `await bash(\"uv pip install {name}\")` "
+                "or use a shipped alternative."
+            )
+        if isinstance(exc, FileNotFoundError):
+            path = getattr(exc, "filename", None)
+            if not isinstance(path, str) or not path:
+                return None
+            try:
+                parent = os.path.dirname(path) or "."
+                base = os.path.basename(path)
+                if not os.path.isdir(parent):
+                    return None
+                siblings = os.listdir(parent)[:200]
+            except (OSError, PermissionError):
+                return None
+            matches = difflib.get_close_matches(base, siblings, n=3, cutoff=0.5)
+            if matches:
+                return (
+                    f"Hint: nearest existing in {parent} — {', '.join(matches)}."
+                )
+            return None
+        if isinstance(exc, AttributeError):
+            attr = getattr(exc, "name", None)
+            obj = getattr(exc, "obj", None)
+            if obj is None:
+                return None
+            type_name = type(obj).__name__
+            attrs = [a for a in dir(obj) if not a.startswith("_")][:12]
+            if attr and attrs:
+                matches = difflib.get_close_matches(attr, attrs, n=3, cutoff=0.6)
+                if matches:
+                    return (
+                        f"Hint: {type_name} has — {', '.join(matches)}."
+                    )
+            if attrs:
+                return f"Hint: {type_name}.{{{', '.join(attrs)}}}."
+            return None
+    except BaseException:  # noqa: BLE001 - the error formatter must never fail
+        return None
+    return None
+
+
 def _error_event(cell_id: str, exc: BaseException) -> dict[str, Any]:
     # No cell frame (e.g. SyntaxError): exception-only keeps filename, source, and caret.
     te = traceback.TracebackException.from_exception(exc)
@@ -1024,6 +1113,13 @@ def _error_event(cell_id: str, exc: BaseException) -> dict[str, Any]:
     else:
         te.stack = stack
         lines = list(te.format())
+    suggestion = _suggestion_line(exc)
+    if suggestion:
+        # Clamp to one line, bounded, with a trailing newline so the host's
+        # line-oriented traceback cap counts it correctly.
+        if len(suggestion) > _SUGGESTION_MAX_CHARS:
+            suggestion = suggestion[: _SUGGESTION_MAX_CHARS - 1] + "…"
+        lines.append(suggestion + "\n")
     return {
         "event": "error",
         "id": cell_id,
