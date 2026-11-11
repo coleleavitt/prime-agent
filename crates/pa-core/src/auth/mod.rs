@@ -95,6 +95,8 @@ pub use types::{
     AuthSourceToken,
     AuthStatus,
     AuthStorageData,
+    ECO_CREDENTIAL_ID,
+    ECO_CREDENTIAL_NAME,
     PRIME_INFERENCE_PROVIDER_ID,
     PrimeTeamAssignment,
     PrimeTeamCredential,

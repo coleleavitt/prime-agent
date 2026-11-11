@@ -43,4 +43,5 @@ pub use types::{
     ThinkingLevelSetting,
     TransportSetting,
     UpdateChannel,
+    WebSearchProvider,
 };

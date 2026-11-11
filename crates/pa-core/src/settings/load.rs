@@ -48,6 +48,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "enableSkillCommands",
     "fileCheckpointingEnabled",
     "bundledSkills",
+    "webSearchProvider",
     "enableBuiltinSkills",
     "terminal",
     "images",
