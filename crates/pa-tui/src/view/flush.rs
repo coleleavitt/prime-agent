@@ -29,7 +29,9 @@ impl AgentView {
         // Scrollback keeps no placed image (TS's in-product image rows were all
         // `fallbackOnly`): every preview flushes as its textual fallback.
         crate::inline_image::with_text_fallback(|| {
+            let sparse = self.sparse_enabled;
             let layout = self.layout_pass(width);
+            self.sparse_enabled = sparse;
             let mut sink = FlushSink {
                 flushed: std::mem::take(&mut self.flushed_frame),
                 texts: Vec::new(),
