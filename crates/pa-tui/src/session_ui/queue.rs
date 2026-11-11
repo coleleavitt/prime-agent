@@ -345,7 +345,7 @@ impl SessionUi {
             .and_then(Value::as_array)
             .is_some_and(|caps| caps.iter().any(|cap| cap.as_str() == Some(CELL_DETACH)));
         if !can_detach {
-            self.cut_turn_for_send_now();
+            self.cut_turn_for_send_now(view);
             return;
         }
         let result = self
@@ -378,7 +378,7 @@ impl SessionUi {
         }
         match data.get("reason").and_then(Value::as_str) {
             // Nothing is running but the reply being written: cut it so the message goes out.
-            Some("no_cell") => self.cut_turn_for_send_now(),
+            Some("no_cell") => self.cut_turn_for_send_now(view),
             // A cell blocks the runtime's loop (synchronous work like a native call):
             // interrupting it would destroy in-progress work, so it keeps running and the
             // message rides the next boundary.

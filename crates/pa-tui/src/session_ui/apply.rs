@@ -764,9 +764,16 @@ impl SessionUi {
             // The interrupt cancels the compaction run only — the agent is not
             // streaming, so no turn abort goes out.
             self.abort_compaction(view.compaction_generation);
-        } else if self.turn_active {
-            // No transient abort hint: the aborted turn's own assistant row carries
-            // the interrupt, so nothing is noted here.
+        } else if self.turn_active || view.retry.is_some() {
+            // No transient abort hint: the aborted turn's own assistant row
+            // carries the interrupt, so nothing is noted here.
+            //
+            // The retry-wait window: a stream failure ends the attempt with
+            // `TurnEnded{error}` BEFORE `AutoRetryStart`, so `turn_active`
+            // is false while the retry countdown runs; without the
+            // `view.retry.is_some()` arm, Esc during the wait would never
+            // reach `request_abort` on the daemon and the countdown would
+            // run to its next attempt (or exhaust) with no way to cancel.
             self.abort_turn(false);
         }
         // A running user-bash command aborts the same way; the settled run
@@ -777,9 +784,11 @@ impl SessionUi {
     }
 
     /// Send-now's cut (Claude Code's promote-to-now): the reply being written stops so the queued
-    /// message goes out at once. A running user bash and a compaction are left alone.
-    pub(super) fn cut_turn_for_send_now(&self) {
-        if self.turn_active {
+    /// message goes out at once. A running user bash and a compaction are left alone. A retry wait
+    /// is treated the same as a live turn: send-now must cut the countdown so the queued message
+    /// can go out instead of waiting for the next attempt.
+    pub(super) fn cut_turn_for_send_now(&self, view: &AgentView) {
+        if self.turn_active || view.retry.is_some() {
             self.abort_turn(true);
         }
     }

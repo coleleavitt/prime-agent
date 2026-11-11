@@ -89,11 +89,14 @@ impl SessionUi {
         self.ctrl_c_hint_action
     }
 
-    /// Whether a Ctrl+C now has work to interrupt: a turn, a compaction, a
-    /// user bash command, or a side question. Such a press only interrupts;
-    /// it never arms the exit.
+    /// Whether a Ctrl+C now has work to interrupt: a turn, a provider-failover
+    /// retry wait, a compaction, a user bash command, or a side question. Such
+    /// a press only interrupts; it never arms the exit. A retry wait counts as
+    /// interruptible work even though `turn_active` is false between the failed
+    /// attempt's `TurnEnded` and the retry's next `TurnStarted`.
     fn has_interruptible_work(&self, view: &AgentView) -> bool {
         self.turn_active
+            || view.retry.is_some()
             || view.compaction.is_some()
             || self.user_bash_running
             || self.active_side_question_id.is_some()
