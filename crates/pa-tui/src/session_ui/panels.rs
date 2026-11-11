@@ -484,15 +484,10 @@ impl SessionUi {
 /// trailing failed-attempt error row the retry supersedes, leaving the transient loader while the
 /// episode runs and the durable outcome row at the settle. No-op on anything else.
 pub(crate) fn pop_superseded_attempt_row(view: &mut AgentView) -> bool {
-    if view
-        .chat
+    view.chat
         .last()
         .is_some_and(crate::snapshot::is_superseded_attempt_row)
-    {
-        view.pop_chat_entry().is_some()
-    } else {
-        false
-    }
+        && view.pop_chat_entry().is_some()
 }
 
 #[cfg(test)]

@@ -37,7 +37,6 @@
 
 mod script;
 
-use script::write_executable;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -45,6 +44,7 @@ use std::time::Duration;
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use pa_core::kernel::shared::{ExecuteOptions, ExecuteStatus};
 use pa_core::kernel::state_snapshot::snapshot_path_in;
+use script::write_executable;
 
 /// The kernel Python with prime-agent-runtime installed (see
 /// `kernel_stop_revive.rs`); skipped with a note when absent.
@@ -964,7 +964,7 @@ async fn a_kill_while_the_boot_waits_the_stop_gate_spawns_no_interpreter() {
     // spawn. Poll it once on the test thread so the arm is guaranteed -
     // no scheduling assumption - and assert the wait state instead of
     // discarding it.
-    let mut stop = Box::pin(provisioner.stop_kernel(None));
+    let mut stop = std::pin::pin!(provisioner.stop_kernel(None));
     assert!(
         futures::future::poll_immediate(stop.as_mut())
             .await
@@ -976,7 +976,7 @@ async fn a_kill_while_the_boot_waits_the_stop_gate_spawns_no_interpreter() {
     // way), and a second kill() then invalidates that newer generation
     // while its boot still waits.
     provisioner.kill();
-    let mut boot_b = Box::pin(provisioner.ensure(None, None));
+    let mut boot_b = std::pin::pin!(provisioner.ensure(None, None));
     assert!(
         futures::future::poll_immediate(boot_b.as_mut())
             .await

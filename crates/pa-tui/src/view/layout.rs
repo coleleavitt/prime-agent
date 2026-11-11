@@ -470,8 +470,13 @@ impl AgentView {
             .offsets
             .partition_point(|offset| *offset <= start)
             .saturating_sub(1);
-        for index in first..self.chat.len() {
-            let offset = layout.offsets[index];
+        for (index, &offset) in layout
+            .offsets
+            .iter()
+            .enumerate()
+            .take(self.chat.len())
+            .skip(first)
+        {
             if offset >= end {
                 break;
             }

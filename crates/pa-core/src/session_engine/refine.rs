@@ -1780,7 +1780,6 @@ pub(crate) struct AutoRefineReviewInputs<'a> {
 }
 
 /// The default model seam over pa-ai completion.
-#[must_use]
 pub fn default_refiner_call(
     api_key: Option<String>,
     headers: Option<std::collections::BTreeMap<String, String>>,

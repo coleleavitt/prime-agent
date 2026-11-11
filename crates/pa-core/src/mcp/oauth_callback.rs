@@ -472,7 +472,7 @@ mod tests {
                 state: "state".to_string(),
             };
             server.shared.settle(Some(browser_code.clone())).await;
-            let mut input = Box::pin(async {
+            let mut input = std::pin::pin!(async {
                 server.cancel().await;
             });
             let (code, _) = server.wait_for_code_or_input(input.as_mut()).await;

@@ -38,29 +38,6 @@ fn recorded_process_alive(
     alive != Some(false) && (expected.is_none() || observed.is_none() || expected == observed)
 }
 
-#[cfg(test)]
-mod recorded_process_tests {
-    use super::recorded_process_alive;
-
-    #[test]
-    fn unobservable_start_id_keeps_live_tombstone_owned_by_recorded_pid() {
-        assert!(recorded_process_alive(Some(true), Some("original"), None));
-        assert!(recorded_process_alive(None, Some("original"), None));
-        assert!(recorded_process_alive(Some(true), None, None));
-        assert!(recorded_process_alive(
-            Some(true),
-            Some("original"),
-            Some("original")
-        ));
-        assert!(!recorded_process_alive(
-            Some(true),
-            Some("original"),
-            Some("recycled")
-        ));
-        assert!(!recorded_process_alive(Some(false), Some("original"), None));
-    }
-}
-
 /// The boot the descriptor-adoption pass runs under. An update boot relaunches kept
 /// workers before the roster restore walks the rows (spec §6 step 2's create-or-adopt
 /// order). A plain startup revives only genuinely interrupted ones — no mass-revival
@@ -849,5 +826,28 @@ impl Supervisor {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod recorded_process_tests {
+    use super::recorded_process_alive;
+
+    #[test]
+    fn unobservable_start_id_keeps_live_tombstone_owned_by_recorded_pid() {
+        assert!(recorded_process_alive(Some(true), Some("original"), None));
+        assert!(recorded_process_alive(None, Some("original"), None));
+        assert!(recorded_process_alive(Some(true), None, None));
+        assert!(recorded_process_alive(
+            Some(true),
+            Some("original"),
+            Some("original")
+        ));
+        assert!(!recorded_process_alive(
+            Some(true),
+            Some("original"),
+            Some("recycled")
+        ));
+        assert!(!recorded_process_alive(Some(false), Some("original"), None));
     }
 }

@@ -511,11 +511,7 @@ pub(crate) fn supervisor_argv_names_socket(argv: &[String], socket: &str) -> boo
     // Both spellings normalize: an argv token may carry the symlink or `..` spelling of
     // the same socket; a RELATIVE token stays unmatched here.
     let names_socket = |named: &str| {
-        if Path::new(named).is_absolute() {
-            normalize_socket_spelling(Path::new(named)) == socket
-        } else {
-            false
-        }
+        Path::new(named).is_absolute() && normalize_socket_spelling(Path::new(named)) == socket
     };
     match after_flag("--daemon-socket") {
         Some(named) => names_socket(named) && argv.iter().any(|arg| arg == "daemon"),

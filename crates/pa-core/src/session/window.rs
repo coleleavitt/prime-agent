@@ -38,13 +38,12 @@ impl ReverseLines {
                 let mut line = self.pending.split_off(index + 1);
                 self.pending.pop();
                 self.line_start = self.position + self.pending.len() as u64 + 1;
-                for piece in pieces.into_iter().rev() {
+                for piece in pieces.drain(..).rev() {
                     line.extend(piece);
                 }
                 if !line.is_empty() {
                     return Ok(Some(line));
                 }
-                pieces = Vec::new();
                 continue;
             }
             pieces.push(std::mem::take(&mut self.pending));

@@ -103,7 +103,7 @@ fn reference_wrap_line(line: &Line, width: usize) -> Vec<Line> {
         if current_width + token_width > width && current_width > 0 {
             let trimmed = trim_end(&current);
             wrapped.push(trimmed);
-            current = Vec::new();
+            current.clear();
             current_width = 0;
             if is_ws {
                 continue;

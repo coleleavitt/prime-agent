@@ -151,6 +151,34 @@ pub(crate) fn plan_shutdown_all(daemons: &[DaemonInfo], force: bool) -> Vec<Reap
         .collect()
 }
 
+/// The confirmation decision for `shutdown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShutdownConfirmationPlan {
+    None,
+    Prompt,
+    JsonError,
+    TtyError,
+}
+
+pub(crate) fn plan_shutdown_confirmation(
+    daemon_count: usize,
+    json: bool,
+    force: bool,
+    stdin_is_tty: bool,
+) -> ShutdownConfirmationPlan {
+    if daemon_count == 0 || force {
+        return ShutdownConfirmationPlan::None;
+    }
+    if json {
+        return ShutdownConfirmationPlan::JsonError;
+    }
+    if stdin_is_tty {
+        ShutdownConfirmationPlan::Prompt
+    } else {
+        ShutdownConfirmationPlan::TtyError
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -310,33 +338,5 @@ mod tests {
             plan_shutdown_confirmation(2, false, false, true),
             Plan::Prompt
         );
-    }
-}
-
-/// The confirmation decision for `shutdown`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShutdownConfirmationPlan {
-    None,
-    Prompt,
-    JsonError,
-    TtyError,
-}
-
-pub(crate) fn plan_shutdown_confirmation(
-    daemon_count: usize,
-    json: bool,
-    force: bool,
-    stdin_is_tty: bool,
-) -> ShutdownConfirmationPlan {
-    if daemon_count == 0 || force {
-        return ShutdownConfirmationPlan::None;
-    }
-    if json {
-        return ShutdownConfirmationPlan::JsonError;
-    }
-    if stdin_is_tty {
-        ShutdownConfirmationPlan::Prompt
-    } else {
-        ShutdownConfirmationPlan::TtyError
     }
 }

@@ -76,7 +76,7 @@ impl AgentSession {
                 }
             }
         };
-        if messages.last().is_some_and(&matches_filter) {
+        if messages.last().is_some_and(matches_filter) {
             messages.pop();
             self.agent.set_messages(messages).await;
         }

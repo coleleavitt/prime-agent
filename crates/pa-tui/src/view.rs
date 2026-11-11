@@ -291,7 +291,7 @@ impl AgentView {
         // panels, the fork selector, the pending confirm, the share
         // loader, the reload box, and the auth panel (its own channel
         // drives it). None of them leaves a paste to the editor behind.
-        if self.heartbeats_picker.is_some()
+        self.heartbeats_picker.is_some()
             || self.bash_view.is_some()
             || self.goal_panel.is_some()
             || self.info_panel.is_some()
@@ -301,10 +301,6 @@ impl AgentView {
             || self.share_loader.is_some()
             || self.reload_box.is_some()
             || self.auth_panel.is_some()
-        {
-            return true;
-        }
-        false
     }
 
     #[must_use]

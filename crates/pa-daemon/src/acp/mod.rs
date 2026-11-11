@@ -73,11 +73,8 @@ fn same_cwd(requested: &Path, actual: &Path) -> bool {
     };
     let requested = canonical(requested);
     let actual = canonical(actual);
-    if requested == actual {
-        return true;
-    }
     #[cfg(unix)]
-    {
+    let same_directory = || {
         let identity = |path: &Path| -> Option<(u64, u64)> {
             use std::os::unix::fs::MetadataExt;
             let metadata = std::fs::metadata(path).ok()?;
@@ -86,11 +83,14 @@ fn same_cwd(requested: &Path, actual: &Path) -> bool {
             }
             Some((metadata.dev(), metadata.ino()))
         };
-        if let (Some(left), Some(right)) = (identity(&requested), identity(&actual)) {
-            return left == right;
-        }
-    }
-    false
+        matches!(
+            (identity(&requested), identity(&actual)),
+            (Some(left), Some(right)) if left == right
+        )
+    };
+    #[cfg(not(unix))]
+    let same_directory = || false;
+    requested == actual || same_directory()
 }
 
 #[cfg(test)]
