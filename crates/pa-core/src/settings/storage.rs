@@ -485,6 +485,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
+    }
 
     #[test]
     fn in_memory_round_trip() {
