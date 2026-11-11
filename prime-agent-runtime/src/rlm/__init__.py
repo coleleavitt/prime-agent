@@ -1509,6 +1509,7 @@ __all__ = [
     "HarnessState",
     "McpIntegration",
     "McpToolError",
+    "MemoryError",
     "NotEnabled",
     "PersistentShellHandle",
     "RLMAgent",
