@@ -3,3 +3,23 @@
 # already set, so a test that needs it can still set its own value.
 [env]
 DO_NOT_TRACK = "1"
+
+# Fast local builds (modelled on Bevy's config_fast_builds.toml). The -Z flags
+# need a nightly compiler (this checkout builds with rustc-master), and a
+# RUSTFLAGS environment variable REPLACES the rustflags below entirely.
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = [
+  # Mold linker.
+  "-Clink-arg=-fuse-ld=mold",
+  # Parallel compiler frontend: type and borrow checking use all cores.
+  "-Zthreads=0",
+  # Crates share monomorphized generics instead of each compiling its own copy.
+  "-Zshare-generics=y",
+  # Cache derive proc-macro expansions in incremental builds.
+  "-Zcache-proc-macros",
+]
+
+# Line tables only: smaller debug info, faster links.
+[profile.dev]
+debug = "line-tables-only"
