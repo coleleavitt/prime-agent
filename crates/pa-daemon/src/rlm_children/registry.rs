@@ -653,9 +653,7 @@ fn ledger_child_records(
             live_observation: None,
             direct_observation: Arc::new(Mutex::new(())),
             notice_delivered: true,
-            // The fork's ledger edge carries no run tag; a recovered
-            // child's notice is never owed (`notice_delivered`).
-            factory: false,
+            factory: edge.factory.is_some(),
             prompt_admitted: true,
             error: None,
             closed_by_parent: false,
