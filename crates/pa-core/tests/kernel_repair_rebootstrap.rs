@@ -34,6 +34,9 @@ async fn every_discarded_repair_reprovisions_the_next_kernel() {
         bootstrap_code: Some("BOOT".to_string()),
         stderr_log_path: None,
         on_background_work_settled: None,
+        environment: Default::default(),
+        plan_guard: None,
+        sandbox: None,
     });
     manager
         .start(KernelStartOptions::default())
