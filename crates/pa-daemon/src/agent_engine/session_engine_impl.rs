@@ -483,8 +483,16 @@ impl SessionEngine for AgentSessionEngine {
                 headers,
             });
         }
-        let session = self.session.blocking_lock();
-        if let Some(core) = session.as_deref() {
+        // Clone the Arc out and drop the session guard before the async
+        // call — any in-flight task holding `self.session.lock().await`
+        // (side_ux, run_turn_once, the GLM stream that the provider-target
+        // write above just orphaned) must be free to finish and release,
+        // or the blocking_lock here waits forever and the switch handler
+        // hangs past the TUI's 10 s budget. This matches the clone-and-
+        // release pattern in `auto_compaction::run_auto_compaction`,
+        // `turn::model::run_model_turn`, and peers.
+        let core = self.session.blocking_lock().clone();
+        if let Some(core) = core {
             let provider = model.provider.clone();
             let model_id = model.id.clone();
             // ONE agent-lock acquisition updates model and level together
