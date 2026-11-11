@@ -411,6 +411,35 @@ async fn unknown_tool_name_yields_error_tool_result() {
 }
 
 #[tokio::test]
+async fn an_rlm_name_emitted_as_a_tool_call_redirects_to_python_repl() {
+    // Ledger fingerprint `3a5c0662c08f17cb` captured the model emitting
+    // `rlm.end_turn` as a tool call (it's a Python function inside a
+    // `python_repl` cell, not a tool). A plain "Tool X not found" leaves
+    // the model guessing; the redirect is the one-shot teach.
+    let echo = EchoTool::new("echo");
+    let (agent, provider, _events) = scripted_agent(vec![echo.clone()]).await;
+    provider.push_tool_call_turn(
+        None,
+        vec![("call-1", "rlm.end_turn", serde_json::json!({}))],
+    );
+    provider.push_text_turn("ok");
+
+    agent.prompt("end the turn").await.unwrap();
+    agent.wait_for_idle().await;
+
+    let state = agent.state().await;
+    let result = tool_result(&state.messages[2]);
+    assert!(result.is_error);
+    let text = single_text(&result.content);
+    assert!(text.contains("rlm.end_turn"), "{text}");
+    assert!(text.contains("python_repl"), "{text}");
+    assert!(
+        text.contains("await rlm.end_turn()"),
+        "the hint shows the invocation shape: {text}"
+    );
+}
+
+#[tokio::test]
 async fn provider_stream_failure_mid_turn_ends_run_and_retry_continues() {
     let (agent, provider, _events) = scripted_agent(vec![]).await;
     provider.push_stream_failure_turn("partial answer", "connection reset by peer");

@@ -75,8 +75,25 @@ pub(crate) async fn prepare_tool_call(
         };
     }
     let Some(tool) = find_tool(&current_context.tools, &tool_call.name) else {
+        // `rlm.*` identifiers (`rlm.end_turn`, `rlm.spawn`, `rlm.memory.append`,
+        // ...) are Python calls inside a `python_repl` cell, not tools. The
+        // model sometimes mistakes them for tools after seeing them quoted in
+        // the prompt or in transcripts; a plain "Tool X not found" leaves it
+        // guessing. Redirect to the actual shape so the next step
+        // self-corrects. Historical ledger entry: `3a5c0662c08f17cb`.
+        let message = if tool_call.name.starts_with("rlm.") || tool_call.name == "rlm" {
+            format!(
+                "`{}` is a Python call inside a `python_repl` cell, not a tool. \
+                 Invoke it with the `python_repl` tool, for example \
+                 `python_repl(code=\"await {}()\")`. See the system prompt's \
+                 `rlm.*` section for the full surface.",
+                tool_call.name, tool_call.name,
+            )
+        } else {
+            format!("Tool {} not found", tool_call.name)
+        };
         return Preparation::Immediate {
-            result: AgentToolResult::error(format!("Tool {} not found", tool_call.name)),
+            result: AgentToolResult::error(message),
             is_error: true,
         };
     };
