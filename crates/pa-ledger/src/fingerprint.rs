@@ -157,6 +157,24 @@ static HEX_LITERAL: LazyLock<Regex> = LazyLock::new(|| regex(r"(?-u:\b)0x[0-9a-f
 static HEX_RUN: LazyLock<Regex> =
     LazyLock::new(|| regex(r"(?-u:\b)[0-9a-f]{8,}(?:-[0-9a-f]{4,}){0,4}(?-u:\b)"));
 static NUMBER: LazyLock<Regex> = LazyLock::new(|| regex(r"[-+]?[0-9]+(?:\.[0-9]+)?"));
+/// A provider's per-request id trailer (`[request_id: req_...]`): the
+/// anthropic/openai SDKs tag every error with a unique id, so a fault that
+/// recurs every call used to produce a fresh fingerprint on each hit. See
+/// `crates/pa-ai/src/utils_inner/stream_failure.rs` for the writer.
+static REQUEST_ID_TAIL: LazyLock<Regex> =
+    LazyLock::new(|| regex(r"\[request_id:\s*[^\]]+\]"));
+/// Prefixed alphanumeric identifiers the SDKs sprinkle through error prose
+/// (`req_abcd1234`, `tr_...`, `msg_...`, `evt_...`): the `_` tail breaks
+/// `HEX_RUN` since it mixes digits and letters outside the pure-hex class,
+/// so they escape normalization and shard fingerprints.
+static TOKEN_ID: LazyLock<Regex> =
+    LazyLock::new(|| regex(r"(?-u:\b)(?:req|tr|msg|evt|sess|run|conn|rc|ses)_[a-z0-9]{8,}(?-u:\b)"));
+/// Runs of `?` placeholders inside braces (`{ ?: ?, ?: ? }`): the tool
+/// validator stringifies the received `code` argument field by field, so
+/// `{}` and `{ ?: ? }` and `{ ?: ?, ?: ? }` are the same bug with
+/// different payloads.
+static PLACEHOLDER_BRACE_RUN: LazyLock<Regex> =
+    LazyLock::new(|| regex(r"\{\s*(?:\?[\s,:]*)+\?\s*\}"));
 static TRACEBACK_FRAME: LazyLock<Regex> = LazyLock::new(|| {
     regex(&format!(
         r#"^[{JS_WHITESPACE_CLASS}]*File "([^"]+)", line [0-9]+"#
@@ -209,9 +227,18 @@ pub fn normalize_failure_message(raw: &str) -> String {
     let text = raw.to_lowercase();
     let text = PATH.replace_all(&text, "<path>");
     let text = fold_quoted(&text);
+    // Strip the provider's per-request id tail BEFORE the generic token
+    // pass so we keep the `[request_id: ?]` marker shape but discard the
+    // unique id. The two together collapse ~250 historical fingerprints
+    // (about 31% of the live ledger) into ~10 real bugs.
+    let text = REQUEST_ID_TAIL.replace_all(&text, "[request_id: ?]");
+    let text = TOKEN_ID.replace_all(&text, "<id>");
     let text = HEX_LITERAL.replace_all(&text, "<hex>");
     let text = HEX_RUN.replace_all(&text, "<hex>");
     let text = NUMBER.replace_all(&text, "#");
+    // Fold validator / stringified-arg braces so the same shape with
+    // different field payloads shares an id.
+    let text = PLACEHOLDER_BRACE_RUN.replace_all(&text, "{...}");
     let text = collapse_js_whitespace(&text);
     let text = js_trim(&text);
     if js_len(text) > MAX_NORMALIZED_MESSAGE_LENGTH {
@@ -455,6 +482,51 @@ mod tests {
             "[errno #] no such file: ? at <hex> id=<hex> line #"
         );
         assert_eq!(js_len(&normalize_failure_message(&"x".repeat(500))), 200);
+    }
+
+    #[test]
+    fn request_id_tail_normalizes_across_sdk_calls() {
+        // Every call carries a unique request id; without this fold, one
+        // bug produces N fingerprints — this mirrors the historical
+        // ~95 OAuth-revoked fingerprints and ~119 "model refused" ids.
+        let first = normalize_failure_message(
+            "OAuth access token has been revoked [request_id: req_011CgCboz6aXDnb27ipwC6dy]",
+        );
+        let second = normalize_failure_message(
+            "OAuth access token has been revoked [request_id: req_019ZZbazzkzzzzzzzzzzz9zz]",
+        );
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            "oauth access token has been revoked [request_id: ?]"
+        );
+    }
+
+    #[test]
+    fn prefixed_token_ids_normalize_to_a_single_shape() {
+        // Mixed-alpha ids that `HEX_RUN` cannot catch (requires pure hex).
+        let a = normalize_failure_message("Trace tr_7abc1234ZZ aborted mid-flight");
+        let b = normalize_failure_message("Trace tr_9ff0q4xxYY aborted mid-flight");
+        assert_eq!(a, b);
+        assert!(a.contains("<id>"), "got: {a}");
+    }
+
+    #[test]
+    fn placeholder_brace_runs_fold_to_a_single_shape() {
+        // Validator stringifies the received field-by-field; `{}` vs `{ ?: ? }`
+        // vs `{ ?: ?, ?: ? }` is the same bug.
+        let empty = normalize_failure_message("validation failed for tool: received {}");
+        let one = normalize_failure_message(
+            "validation failed for tool: received { \"code\": \"print(1)\" }",
+        );
+        let two = normalize_failure_message(
+            "validation failed for tool: received { \"code\": \"print(1)\", \"other\": \"x\" }",
+        );
+        // The empty `{}` keeps its empty shape; the non-empty ones both
+        // collapse to `{...}` so they share an id.
+        assert_eq!(one, two);
+        assert!(one.contains("{...}"), "got: {one}");
+        assert!(!empty.contains("{...}"), "empty braces stay literal: {empty}");
     }
 
     #[test]
