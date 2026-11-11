@@ -21,7 +21,7 @@
 //! runs once per account; the sentinel carries the date for audit.
 //!
 //! Call `backfill_once` from the daemon's cold-boot path. It is
-//! best-effort: every failure mode logs a warning and returns Ok(),
+//! best-effort: every failure mode logs a warning and returns `Ok(())`,
 //! so a missing file, malformed record, or permission error never
 //! blocks startup.
 
@@ -42,7 +42,7 @@ const HARNESS_STATE_FILE_NAME: &str = "harness_state.json";
 const SENTINEL_NAME: &str = "targets_fingerprints_backfill.done";
 
 /// A `RefinementResult`-shaped record we project just enough of to
-/// extract (edit_id, kind, action, applied) tuples plus the parent
+/// extract (`edit_id`, kind, action, applied) tuples plus the parent
 /// `ravo.missedCriteria`. Every other field is ignored (serde
 /// `default`), so a schema drift elsewhere in the record doesn't
 /// block the backfill.
@@ -183,7 +183,7 @@ pub fn backfill_once(harness_dir: &Path) -> anyhow::Result<()> {
 
 /// Build `memory_id -> {fingerprint ...}` from both history files.
 /// Non-applied edits contribute nothing; non-memory edits contribute
-/// nothing. A memory_id that appears in multiple records gets the
+/// nothing. A `memory_id` that appears in multiple records gets the
 /// union of every parent record's failure fingerprints.
 fn collect_fingerprints(harness_dir: &Path) -> std::collections::HashMap<String, Vec<String>> {
     let mut joins: std::collections::HashMap<String, Vec<String>> =

@@ -10,7 +10,12 @@ use std::path::PathBuf;
 
 use pa_core::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use pa_core::kernel::shared::{
-    ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
+    ExecuteOptions,
+    ExecuteStatus,
+    HostRequestHandlers,
+    KernelEnvironment,
+    KernelManagerOptions,
+    KernelShutdownOptions,
 };
 
 #[tokio::test]
@@ -34,7 +39,7 @@ async fn every_discarded_repair_reprovisions_the_next_kernel() {
         bootstrap_code: Some("BOOT".to_string()),
         stderr_log_path: None,
         on_background_work_settled: None,
-        environment: Default::default(),
+        environment: KernelEnvironment::default(),
         plan_guard: None,
         sandbox: None,
     });
@@ -46,10 +51,12 @@ async fn every_discarded_repair_reprovisions_the_next_kernel() {
 
     // The repair's bootstrap and the first reprovision both fail.
     std::fs::write(&fail_boots, "2").expect("write counter");
-    assert!(manager
-        .execute("corrupt", ExecuteOptions::default())
-        .await
-        .is_err());
+    assert!(
+        manager
+            .execute("corrupt", ExecuteOptions::default())
+            .await
+            .is_err()
+    );
     assert!(check_boot().await.is_err());
     let recovered = check_boot()
         .await
@@ -58,10 +65,12 @@ async fn every_discarded_repair_reprovisions_the_next_kernel() {
 
     // A second discard after a successful reprovision.
     std::fs::write(&fail_boots, "1").expect("write counter");
-    assert!(manager
-        .execute("corrupt", ExecuteOptions::default())
-        .await
-        .is_err());
+    assert!(
+        manager
+            .execute("corrupt", ExecuteOptions::default())
+            .await
+            .is_err()
+    );
     let second = check_boot().await.expect("second reprovision must run");
     assert_eq!(
         second.status,
@@ -70,8 +79,10 @@ async fn every_discarded_repair_reprovisions_the_next_kernel() {
         second.error
     );
 
-    assert!(manager
-        .shutdown(KernelShutdownOptions::default())
-        .await
-        .is_ok());
+    assert!(
+        manager
+            .shutdown(KernelShutdownOptions::default())
+            .await
+            .is_ok()
+    );
 }

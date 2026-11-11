@@ -459,7 +459,7 @@ pub fn parse_dream_command(args: &str) -> Result<DreamCommand, String> {
                 seeds = Some(list);
             }
             "priming" => match value {
-                Some("none") => priming_policies = Vec::new(),
+                Some("none") => priming_policies.clear(),
                 Some("diverse") => priming_policies = PRIMING_DIVERSE.to_vec(),
                 _ => return Err(usage_with("--priming expects none or diverse")),
             },

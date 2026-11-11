@@ -300,6 +300,10 @@ fn stream_turn(writer: &mut UnixStream) {
 /// A long scripted session must not grow the TUI's resident memory without bound: the transcript
 /// grows with the session (as designed), but no per-frame or per-event class may accumulate.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end scenario read top to bottom; the fork's extra InteractiveOptions fields take it past the budget"
+)]
 fn interactive_session_rss_plateaus_over_long_stream() {
     const TURNS: usize = 40;
     let dir = tempfile::TempDir::new().expect("temp dir");

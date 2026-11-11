@@ -119,7 +119,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
             }
             Ok(_) => {}
             Err(err) => {
-                tracing::warn!(target: "pa_daemon::retrieval", %err, "user-correction tap drain failed")
+                tracing::warn!(target: "pa_daemon::retrieval", %err, "user-correction tap drain failed");
             }
         }
         match ctap.drain_self_corrections() {
@@ -136,7 +136,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
             }
             Ok(_) => {}
             Err(err) => {
-                tracing::warn!(target: "pa_daemon::retrieval", %err, "self-correction tap drain failed")
+                tracing::warn!(target: "pa_daemon::retrieval", %err, "self-correction tap drain failed");
             }
         }
     }

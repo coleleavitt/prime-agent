@@ -48,6 +48,10 @@ pub enum ExecuteStatus {
     Aborted,
 }
 
+// The four flags are independent facts about one cell (timed out, outlived
+// the interrupt, auto-backgrounded, ended the turn) and can hold together,
+// so no state enum replaces them.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct ExecuteResult {
     pub status: ExecuteStatus,

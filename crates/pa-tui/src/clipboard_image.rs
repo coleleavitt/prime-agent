@@ -142,7 +142,7 @@ async fn read_via_wl_paste() -> ClipboardOutcome {
     else {
         return ClipboardOutcome::None;
     };
-    clipboard_image_from_bytes(bytes)
+    clipboard_image_from_bytes(&bytes)
 }
 
 /// `xclip` (X11): enumerate `TARGETS`, then read the preferred supported
@@ -174,7 +174,7 @@ async fn read_via_xclip() -> ClipboardOutcome {
         .filter(|bytes| !bytes.is_empty()) else {
             continue;
         };
-        let outcome = clipboard_image_from_bytes(bytes);
+        let outcome = clipboard_image_from_bytes(&bytes);
         if !outcome.is_none() {
             return outcome;
         }
@@ -186,15 +186,15 @@ async fn read_via_xclip() -> ClipboardOutcome {
 /// there is no converter to fall back on — content sniffing is this port's equivalent of
 /// TS's Photon conversion), then funnel through [`image_limits::enforce`] so the
 /// payload is under the Anthropic many-image cap before it reaches the API.
-fn clipboard_image_from_bytes(bytes: Vec<u8>) -> ClipboardOutcome {
+fn clipboard_image_from_bytes(bytes: &[u8]) -> ClipboardOutcome {
     use base64::Engine;
     if bytes.is_empty() {
         return ClipboardOutcome::None;
     }
-    let Some(mime_type) = crate::image_load::detect_supported_image_mime_from_bytes(&bytes) else {
+    let Some(mime_type) = crate::image_load::detect_supported_image_mime_from_bytes(bytes) else {
         return ClipboardOutcome::None;
     };
-    match image_limits::enforce(&bytes, mime_type, &image_limits::DEFAULT_LIMITS) {
+    match image_limits::enforce(bytes, mime_type, &image_limits::DEFAULT_LIMITS) {
         Ok(enforced) => ClipboardOutcome::Image(ClipboardImage {
             data: base64::engine::general_purpose::STANDARD.encode(&enforced.data),
             mime_type: enforced.mime_type.to_string(),
@@ -330,7 +330,7 @@ pub async fn read_clipboard_image() -> ClipboardOutcome {
     // clipboard and travels the exact paste path from there.
     if let Some(path) = std::env::var_os("PRIME_AGENT_TEST_CLIPBOARD_IMAGE") {
         return match std::fs::read(path) {
-            Ok(bytes) => clipboard_image_from_bytes(bytes),
+            Ok(bytes) => clipboard_image_from_bytes(&bytes),
             Err(_) => ClipboardOutcome::None,
         };
     }

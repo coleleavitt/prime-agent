@@ -14,7 +14,7 @@
 //! - `FAKE_LSP_SILENT`: never publish diagnostics.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
 
@@ -372,7 +372,7 @@ pub fn run() {
         config: None,
         content_modified_sent: false,
     };
-    let mut reader = BufReader::new(std::io::stdin().lock());
+    let mut reader = std::io::stdin().lock();
     let mut backlog: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
     loop {
         let Some(message) = backlog.pop_front().or_else(|| read_message(&mut reader)) else {

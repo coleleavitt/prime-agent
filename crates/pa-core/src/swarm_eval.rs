@@ -158,14 +158,14 @@ fn score_line(value: Option<f64>, limit: f64) -> MessagingDefenseLine {
 #[must_use]
 pub fn turn_share(snapshot: &MessagingStatsSnapshot) -> Option<f64> {
     (snapshot.model_steps.total > 0)
-        .then(|| snapshot.ingestion_steps.total as f64 / snapshot.model_steps.total as f64)
+        .then_some(snapshot.ingestion_steps.total as f64 / snapshot.model_steps.total as f64)
 }
 
 /// Ingestion-step usage tokens over all step usage tokens (unknown with none).
 #[must_use]
 pub fn cost_share(snapshot: &MessagingStatsSnapshot) -> Option<f64> {
     (snapshot.model_steps.tokens > 0)
-        .then(|| snapshot.ingestion_steps.tokens as f64 / snapshot.model_steps.tokens as f64)
+        .then_some(snapshot.ingestion_steps.tokens as f64 / snapshot.model_steps.tokens as f64)
 }
 
 /// Message size sweep axis: a short REPORT line or the 200-filler-line long

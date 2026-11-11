@@ -1912,7 +1912,7 @@ mod tests {
             },
             motivating_hits: vec![hit],
         };
-        stage_pending_reverts(&mut state, &[plan.clone()]);
+        stage_pending_reverts(&mut state, std::slice::from_ref(&plan));
         // Restaging the same plan twice must not duplicate.
         stage_pending_reverts(&mut state, &[plan]);
         let ids = drain_pending_reverts(&mut state);

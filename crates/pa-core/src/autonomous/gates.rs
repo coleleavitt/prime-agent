@@ -357,10 +357,10 @@ pub async fn capture_git_worktree_snapshot(cwd: &Path) -> Option<GitWorktreeSnap
 /// as in [`crate::workspace_snapshot`]. The gate commands themselves keep the full environment.
 ///
 /// A promisor lazy fetch would run a repository-chosen transport (uploadpack,
-/// ssh or ext command, remote helper). GIT_ALLOW_PROTOCOL is a positive list
+/// ssh or ext command, remote helper). `GIT_ALLOW_PROTOCOL` is a positive list
 /// that overrides every `protocol.*` key: the empty list permits no transport,
 /// so a repository URL like `none::x` fails closed. A name in the list allows
-/// that protocol, including on the gits where GIT_NO_LAZY_FETCH (git >= 2.44)
+/// that protocol, including on the gits where `GIT_NO_LAZY_FETCH` (git >= 2.44)
 /// does nothing and this list is the whole guard.
 async fn run_git(command: &[&str], pathspec: &[String], cwd: &Path) -> Option<String> {
     let mut args: Vec<String> = SNAPSHOT_GIT_OVERRIDES

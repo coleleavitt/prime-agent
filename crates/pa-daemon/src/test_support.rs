@@ -189,39 +189,6 @@ impl<T: AsRef<std::path::Path>> AsRef<std::path::Path> for InTestDir<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{BlockingWork, TestDir};
-
-    /// The leak class: a worker's background walk finished after its test, and its
-    /// `AuthStorage::create` recreated `<dir>/agent/auth.json` in the removed dir. A
-    /// [`TestDir`] removal now waits for in-flight [`BlockingWork`], so a write that lands
-    /// while the work is in flight is removed with the dir.
-    #[test]
-    fn removal_waits_for_in_flight_blocking_work() {
-        let dir = TestDir::new("pa-blocking-work-");
-        let auth = dir.join("agent").join("auth.json");
-        let work = BlockingWork::start();
-        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
-        let dropper = std::thread::spawn(move || {
-            drop(dir);
-            dropped_tx.send(()).expect("report the removal");
-        });
-        // Removal must not finish while the work is in flight. (Without the wait it finishes
-        // at once and the write below recreates the dir, as the walk did.)
-        assert_eq!(
-            dropped_rx.recv_timeout(std::time::Duration::from_millis(200)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        );
-        std::fs::create_dir_all(auth.parent().expect("agent dir")).expect("agent dir");
-        std::fs::write(&auth, "{}").expect("late write");
-        drop(work);
-        dropped_rx.recv().expect("the removal finishes");
-        dropper.join().expect("dropper");
-        assert!(!auth.parent().expect("agent dir").exists());
-    }
-}
-
 /// Scoped process-env overrides for the live-kernel tests: applied on
 /// construction, restored on drop.
 #[cfg(test)]
@@ -411,5 +378,38 @@ impl FileReadCounter {
         std::fs::remove_file(&self.path).expect("remove FIFO");
         std::fs::write(&self.path, self.raw).expect("restore file");
         reads
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockingWork, TestDir};
+
+    /// The leak class: a worker's background walk finished after its test, and its
+    /// `AuthStorage::create` recreated `<dir>/agent/auth.json` in the removed dir. A
+    /// [`TestDir`] removal now waits for in-flight [`BlockingWork`], so a write that lands
+    /// while the work is in flight is removed with the dir.
+    #[test]
+    fn removal_waits_for_in_flight_blocking_work() {
+        let dir = TestDir::new("pa-blocking-work-");
+        let auth = dir.join("agent").join("auth.json");
+        let work = BlockingWork::start();
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            drop(dir);
+            dropped_tx.send(()).expect("report the removal");
+        });
+        // Removal must not finish while the work is in flight. (Without the wait it finishes
+        // at once and the write below recreates the dir, as the walk did.)
+        assert_eq!(
+            dropped_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+        std::fs::create_dir_all(auth.parent().expect("agent dir")).expect("agent dir");
+        std::fs::write(&auth, "{}").expect("late write");
+        drop(work);
+        dropped_rx.recv().expect("the removal finishes");
+        dropper.join().expect("dropper");
+        assert!(!auth.parent().expect("agent dir").exists());
     }
 }

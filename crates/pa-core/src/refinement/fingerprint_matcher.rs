@@ -170,7 +170,7 @@ fn edit_text(edit: &RefinementEdit) -> String {
     parts.join("\n")
 }
 
-/// One failure the matcher reads from state.extensions["failures"]. Field
+/// One failure the matcher reads from `state.extensions["failures"]`. Field
 /// names mirror `pa_ledger`'s `FailureRecord` + `FailureFingerprint`
 /// (parsed from JSON rather than imported because `pa-ledger` depends on
 /// `pa-core`, so the reverse import is forbidden).

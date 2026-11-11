@@ -13,7 +13,7 @@
 //!   Reads session jsonl only; no joins past the turn N → turn N+1
 //!   boundary.
 //!
-//! - **Self correction** — turn N's bash emitted a SilentFailure
+//! - **Self correction** — turn N's bash emitted a `SilentFailure`
 //!   fingerprint (caught by [`crate::silent_failure`]) AND turn N+1's
 //!   bash matches a corrective pattern (`playwright install`,
 //!   `pip install`, `cargo clean`, `rustup install`, `npm install`).
@@ -245,7 +245,7 @@ impl CorrectionTap {
     }
 
     /// Scan for user-correction events since the last drain. Returns one
-    /// Signal per (memory_id, correction turn) pair.
+    /// Signal per (`memory_id`, correction turn) pair.
     ///
     /// # Errors
     ///
@@ -454,8 +454,7 @@ impl SessionMessage {
             serde_json::Value::String(s) => s.as_str(),
             serde_json::Value::Array(parts) => parts
                 .iter()
-                .filter_map(|p| p.get("text").and_then(|v| v.as_str()))
-                .next()
+                .find_map(|p| p.get("text").and_then(|v| v.as_str()))
                 .unwrap_or_default(),
             _ => "",
         }
@@ -475,7 +474,7 @@ impl SessionMessage {
         if let Some(code) = self.content.get("code").and_then(serde_json::Value::as_str) {
             for line in code.lines() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("!") {
+                if trimmed.starts_with('!') {
                     return trimmed.trim_start_matches('!').trim().to_string();
                 }
             }
@@ -559,8 +558,7 @@ fn load_digest_sidecar(harness_dir: &Path) -> Vec<DigestSidecarEntry> {
 fn memories_before<'a>(sidecar: &'a [DigestSidecarEntry], timestamp: &str) -> Option<&'a [String]> {
     sidecar
         .iter()
-        .filter(|e| e.timestamp.as_str() <= timestamp)
-        .last()
+        .rfind(|e| e.timestamp.as_str() <= timestamp)
         .map(|e| e.memory_ids.as_slice())
 }
 

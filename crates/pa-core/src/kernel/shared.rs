@@ -355,6 +355,10 @@ fn kernel_exited_message(exit: &KernelUnexpectedExit) -> String {
 }
 
 /// Result of executing one cell.
+// The four flags are independent facts about one cell (it ended the turn,
+// timed out, outlived the interrupt, was auto-backgrounded) and can hold
+// together, so no state enum replaces them.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct ExecuteResult {
     pub stdout: String,
