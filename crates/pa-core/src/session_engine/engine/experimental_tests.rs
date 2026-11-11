@@ -114,7 +114,7 @@ async fn run_tool_loop(settings: &str) -> Vec<pa_agent::stream::LlmContext> {
 }
 
 /// Near the five-hour limit, the request after a tool batch carries Claude
-/// Code's checkpoint row; without `usageLimitWrapUp` it never does.
+/// Code's checkpoint row; with `usageLimitWrapUp` off it never does.
 #[tokio::test]
 async fn the_usage_limit_wrap_up_rides_the_request_after_a_tool_batch() {
     let calls = run_tool_loop(r#"{"experimental": {"usageLimitWrapUp": true}}"#).await;
@@ -129,7 +129,7 @@ async fn the_usage_limit_wrap_up_rides_the_request_after_a_tool_batch() {
         user_texts(&calls[1])
     );
 
-    let calls = run_tool_loop("{}").await;
+    let calls = run_tool_loop(r#"{"experimental": {"usageLimitWrapUp": false}}"#).await;
     assert_eq!(calls.len(), 2);
     assert!(!user_texts(&calls[1]).contains(&wrap_up));
 }
