@@ -258,10 +258,8 @@ fn unaddressed_recurring_for_prompt(state: &HarnessState) -> Option<String> {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let excerpt_raw = record.get("excerpt").and_then(|v| v.as_str()).unwrap_or("");
-        let excerpt_normalised: String = excerpt_raw
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let excerpt_normalised: String =
+            excerpt_raw.split_whitespace().collect::<Vec<_>>().join(" ");
         let excerpt = if excerpt_normalised.chars().count() > EXCERPT_MAX {
             let prefix: String = excerpt_normalised.chars().take(EXCERPT_MAX).collect();
             format!("{prefix}...")
@@ -285,7 +283,11 @@ fn unaddressed_recurring_for_prompt(state: &HarnessState) -> Option<String> {
     }
     rows.sort_by_key(|row| std::cmp::Reverse(row.0));
     let total = rows.len();
-    let mut lines: Vec<String> = rows.into_iter().take(PROMPT_LIMIT).map(|(_, s)| s).collect();
+    let mut lines: Vec<String> = rows
+        .into_iter()
+        .take(PROMPT_LIMIT)
+        .map(|(_, s)| s)
+        .collect();
     if total > PROMPT_LIMIT {
         lines.push(format!("- ... {} more", total - PROMPT_LIMIT));
     }
@@ -475,7 +477,7 @@ fn assistant_text(reply: &AssistantMessage) -> String {
 )]
 pub fn apply_refinement_plan(
     state: &mut HarnessState,
-    plan: RefinementPlan,
+    mut plan: RefinementPlan,
     options: &RefineOptions,
     baseline_state: Option<HarnessState>,
     factory_enabled: bool,
@@ -485,6 +487,14 @@ pub fn apply_refinement_plan(
     } else {
         HarnessScope::Local
     });
+    // Server-side fingerprint matcher (`project_trust_loop_fix` option 3):
+    // when the refiner omitted per-edit `targetsFingerprints`, deterministically
+    // attach fingerprints whose cause the edit's content covers. A rollback
+    // proposal restores recorded snapshots, not refiner output, so it is
+    // exempt — never add fingerprints a snapshot never carried.
+    if plan.rollback_of.is_none() {
+        super::fingerprint_matcher::attach_server_side_fingerprints(&mut plan.proposal, state);
+    }
     apply_refinement_proposal(
         state,
         &plan.proposal,
@@ -567,11 +577,24 @@ pub trait AutoRefinePolicy: Send + Sync {
         AUTO_REFINE_REVIEW_GUIDANCE
     }
 
-    /// The refine an approved `review` (triggered by `reason`) runs: a
-    /// local one, natively.
+    /// The refine an approved `review` (triggered by `reason`) runs. The
+    /// native policy honors the reviewer's own [`AutoRefineReview::reply`]
+    /// `"scope"` field: the review prompt ([`AUTO_REFINE_REVIEW_GUIDANCE`])
+    /// asks the model to pick `"local"` (default) or `"global"` (durable
+    /// cross-session lesson), and this method routes accordingly.
+    ///
+    /// Before 2026-11-10 the native policy hardcoded `global: false` and
+    /// dropped the reply's scope on the floor, so even a strong global-scope
+    /// signal from the reviewer landed as a local refinement and the global
+    /// store stopped growing after most sessions. The test stub at
+    /// `StubPolicy::approved_refine` already matched the right shape; the
+    /// native policy just skipped it. This closure restores the signal.
     fn approved_refine(&self, reason: &str, review: &AutoRefineReview) -> AutoRefineRun {
+        let scope = review.reply.get("scope").and_then(serde_json::Value::as_str);
         AutoRefineRun {
-            global: false,
+            // Only the explicit `"global"` promotes; unknown or `"local"`
+            // stays session-scoped. Mirrors the native guidance's defaults.
+            global: matches!(scope, Some("global")),
             instructions: native_auto_refine_instructions(reason, review),
         }
     }
