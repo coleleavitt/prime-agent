@@ -4,7 +4,7 @@
 //! message as a `provider_stream_failure` diagnostic (kind, status, `retryAfterMs`).
 
 use pa_agent::abort::AbortSignal;
-use pa_agent::types::{AssistantMessage, StopReason};
+use pa_agent::types::{AssistantContent, AssistantMessage, AssistantMessageDiagnostic, StopReason};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +172,9 @@ pub fn is_permanent_provider_failure_kind(
         // A payment failure never refills mid-ladder, so it settles on
         // the first attempt (the disclosure row still fires).
         Some("invalid_request" | "refusal" | "permission" | "safety" | "payment_required") => true,
-        Some("auth") => retries_performed > 0,
+        // Auth retries once before it can be marked stale; an incomplete
+        // reply retries once before its turn fails.
+        Some("auth" | INCOMPLETE_REPLY_KIND) => retries_performed > 0,
         _ => false,
     }
 }
@@ -199,6 +201,62 @@ pub fn is_transient_provider_failure(message: &AssistantMessage) -> bool {
 /// provider do not re-converge on the same exponential-ladder ticks (the
 /// 429-storm operator incident). The jittered value is what the caller waits AND reports.
 const RETRY_JITTER_FRACTION: f64 = 0.2;
+
+/// The `provider_stream_failure` kind of a final reply that cannot end its
+/// turn (see [`incomplete_reply_reason`]). It gets one retry.
+pub const INCOMPLETE_REPLY_KIND: &str = "incomplete_reply";
+
+/// Why a final reply cannot end its turn, if it cannot. The agent loop ends
+/// a turn on any reply without a tool call, so a reply cut off at the output
+/// limit, or a clean stop with no visible text, would otherwise end the turn
+/// as if it were the answer. A turn that owes no answer (`owes_answer` false:
+/// harness notices and agent messages) may end silently. A silent context
+/// overflow stays with the overflow recovery.
+#[must_use]
+pub fn incomplete_reply_reason(
+    message: &AssistantMessage,
+    owes_answer: bool,
+    context_window: u64,
+) -> Option<&'static str> {
+    if message
+        .content
+        .iter()
+        .any(|block| matches!(block, AssistantContent::ToolCall(_)))
+        || is_context_overflow_failure(message, context_window)
+    {
+        return None;
+    }
+    let has_visible_text = message
+        .content
+        .iter()
+        .any(|block| matches!(block, AssistantContent::Text(text) if !text.text.trim().is_empty()));
+    match message.stop_reason {
+        StopReason::Length => {
+            Some("The model's reply was cut off at its output limit before it finished")
+        }
+        StopReason::Stop if owes_answer && !has_visible_text => {
+            Some("The model ended its reply with no visible answer")
+        }
+        _ => None,
+    }
+}
+
+/// `message` as a retryable provider failure carrying `reason`.
+#[must_use]
+pub fn incomplete_reply_failure(mut message: AssistantMessage, reason: &str) -> AssistantMessage {
+    message.stop_reason = StopReason::Error;
+    message.error_message = Some(reason.to_string());
+    message
+        .diagnostics
+        .get_or_insert_with(Vec::new)
+        .push(AssistantMessageDiagnostic {
+            kind: "provider_stream_failure".to_string(),
+            timestamp: message.timestamp,
+            error: None,
+            details: Some(serde_json::json!({ "kind": INCOMPLETE_REPLY_KIND })),
+        });
+    message
+}
 
 /// The retry wait for `delay_ms`, jittered by `rand01` (a uniform sample in
 /// `[0, 1]`; `0.5` is the identity); pure so tests stay deterministic.
