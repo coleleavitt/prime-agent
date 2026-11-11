@@ -1631,6 +1631,14 @@ mod tests {
         let secret = r#"{"prime-inference":{"type":"api_key","key":"sensitive-key"}}"#;
         std::fs::write(&auth, secret).unwrap();
         std::os::unix::fs::symlink("../../../global/auth.json", &project_settings).unwrap();
+        // A trusted workspace, so the write reaches the store's containment
+        // check instead of stopping at the trust gate.
+        crate::workspace_trust::record(
+            &project,
+            &agent_dir,
+            crate::workspace_trust::TrustDecision::Trusted,
+        )
+        .unwrap();
 
         let mut manager = SettingsManager::create(&project, &agent_dir);
         manager.set_project_packages(vec![serde_json::json!({"source": "example"})]);
