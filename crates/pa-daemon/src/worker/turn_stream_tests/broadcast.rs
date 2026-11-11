@@ -464,3 +464,118 @@ async fn a_retried_turn_broadcasts_one_agent_end_per_run() {
         "no bare agent_end frames: {events:?}"
     );
 }
+
+/// An abort during the retry wait settles the episode on the wire: no run
+/// is live then (no aborted row or `turn_end` follows), so the
+/// `auto_retry_end` frame is what stops the client's retry countdown.
+#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
+#[tokio::test]
+async fn an_abort_during_the_retry_wait_broadcasts_the_retry_end() {
+    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = crate::test_support::TestDir::new("pa-worker-retry-wait-abort-");
+    std::fs::create_dir_all(dir.join("agent")).unwrap();
+    // A wait the test never sits out: only the abort can end it.
+    std::fs::write(
+        dir.join("agent").join("settings.json"),
+        json!({ "retry": { "enabled": true, "maxRetries": 3, "baseDelayMs": 600_000 } })
+            .to_string(),
+    )
+    .unwrap();
+    let config = WorkerConfig {
+        socket_path: dir.join("worker.sock"),
+        supervisor_socket_path: PathBuf::new(),
+        token: "token".to_string(),
+        worker_instance_id: String::new(),
+        active_session_id: "retry-wait-abort-session".to_string(),
+        agent_dir: dir.join("agent"),
+        recovery_journal_path: dir.join("recovery.jsonl"),
+        telemetry_disabled: None,
+        script: Some(json!({
+            "engine": "faux",
+            "responses": [
+                { "stopReason": "error", "errorMessage": "faux provider overloaded" },
+                { "text": "never served" },
+            ],
+        })),
+    };
+    let worker = std::sync::Arc::new(Worker::new(config, None));
+    let created = worker
+        .dispatch(
+            "create",
+            &json!({ "noSession": true, "cwd": "/tmp", "name": "retry-wait-abort" }),
+        )
+        .await;
+    assert!(created.success, "create failed: {created:?}");
+    let mut subscription = worker.events.subscribe();
+    let prompt = worker
+        .dispatch(
+            "prompt",
+            &json!({
+                "activeSessionId": "retry-wait-abort-session",
+                "message": "a turn whose retry wait is aborted",
+            }),
+        )
+        .await;
+    assert!(prompt.success, "prompt failed: {prompt:?}");
+    let mut events = Vec::new();
+    let mut aborted = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        while let Ok(frame) = subscription.try_recv() {
+            if frame.outbound_type != "session_event" {
+                continue;
+            }
+            let Ok(outbound) = serde_json::from_slice::<Value>(&frame.payload) else {
+                continue;
+            };
+            if let Some(event) = outbound.get("event") {
+                events.push(event.clone());
+            }
+        }
+        if !aborted && !positions_of(&events, "auto_retry_start").is_empty() {
+            let abort = worker
+                .dispatch(
+                    "abort_and_send_queued",
+                    &json!({ "activeSessionId": "retry-wait-abort-session" }),
+                )
+                .await;
+            assert!(abort.success, "abort failed: {abort:?}");
+            aborted = true;
+        }
+        if aborted && !worker.core.lock().unwrap().busy {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the aborted retry wait never settled: {events:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    while let Ok(frame) = subscription.try_recv() {
+        if frame.outbound_type != "session_event" {
+            continue;
+        }
+        let Ok(outbound) = serde_json::from_slice::<Value>(&frame.payload) else {
+            continue;
+        };
+        if let Some(event) = outbound.get("event") {
+            events.push(event.clone());
+        }
+    }
+    let retry_ends: Vec<&Value> = positions_of(&events, "auto_retry_end")
+        .into_iter()
+        .map(|index| &events[index])
+        .collect();
+    assert_eq!(
+        retry_ends,
+        [&json!({
+            "type": "auto_retry_end",
+            "success": false,
+            "attempt": 1,
+            "finalError": "Retry cancelled",
+        })],
+        "the cancelled wait closes the retry on the wire: {events:?}"
+    );
+}

@@ -98,10 +98,14 @@ where
         let message = attempt().await?;
         if message.stop_reason != StopReason::Error {
             if retries_performed > 0 {
+                // An abort that cut a retried attempt cancels the retry, it
+                // never reads as a recovery (TS `abortRetry` settles the
+                // episode before the aborted row lands).
+                let cancelled = message.stop_reason == StopReason::Aborted;
                 emit(AutoRetryEvent::End {
-                    success: true,
+                    success: !cancelled,
                     attempt: retries_performed,
-                    final_error: None,
+                    final_error: cancelled.then(|| "Retry cancelled".to_string()),
                     restored_model: None,
                 })
                 .await?;

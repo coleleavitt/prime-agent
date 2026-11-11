@@ -557,9 +557,15 @@ impl TurnRunner {
                             message.get("stopReason").and_then(Value::as_str) == Some("aborted")
                         })
                 );
+                // `auto_retry_end` settles an abort that lands between
+                // attempts (TS `abortRetry`'s "Retry cancelled"): no run is
+                // live then, so no aborted row or `turn_end` follows, and a
+                // swallowed end leaves clients counting down a retry that
+                // will never come.
                 let abort_settle = matches!(
                     &event,
                     EngineEvent::ModelChange(_)
+                        | EngineEvent::AutoRetryEnd { .. }
                         | EngineEvent::ToolExecutionEnd { .. }
                         | EngineEvent::ToolResultMessage(_)
                         | EngineEvent::TurnEnd { .. }

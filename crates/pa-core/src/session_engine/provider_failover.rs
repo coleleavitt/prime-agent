@@ -221,21 +221,17 @@ where
     'episode: loop {
         let message = attempt().await?;
         if message.stop_reason != StopReason::Error {
-            if switched {
-                let restored_model = restore().await?;
+            if switched || total_retries > 0 {
+                let restored_model = if switched { restore().await? } else { None };
+                // An aborted retried attempt cancels the retry, as in
+                // `run_turn_with_auto_retry`; like the cancelled wait below,
+                // the restore is not announced as a recovery.
+                let cancelled = message.stop_reason == StopReason::Aborted;
                 emit(AutoRetryEvent::End {
-                    success: true,
+                    success: !cancelled,
                     attempt: total_retries,
-                    final_error: None,
-                    restored_model,
-                })
-                .await?;
-            } else if total_retries > 0 {
-                emit(AutoRetryEvent::End {
-                    success: true,
-                    attempt: total_retries,
-                    final_error: None,
-                    restored_model: None,
+                    final_error: cancelled.then(|| "Retry cancelled".to_string()),
+                    restored_model: restored_model.filter(|_| !cancelled),
                 })
                 .await?;
             }
@@ -784,6 +780,34 @@ mod tests {
                 && restored_model.as_deref() == Some("primary/glm-5.3")
         );
         assert!(shape_matches, "events: {:?}", harness.events);
+    }
+
+    /// An abort that cuts the backup's attempt restores the primary and ends
+    /// the episode cancelled, never as a recovery.
+    #[tokio::test]
+    async fn an_aborted_backup_attempt_ends_cancelled_not_recovered() {
+        let candidates = vec![model("backup-a")];
+        let script = vec![
+            error_message(Some("server_error"), Some(500), "primary down 1"),
+            error_message(Some("server_error"), Some(500), "primary down 2"),
+            error_message(Some("server_error"), Some(500), "primary down 3"),
+            AssistantMessage {
+                stop_reason: StopReason::Aborted,
+                ..ok_message("")
+            },
+        ];
+        let harness = drive(&fast_failover(), &candidates, script).await;
+        assert_eq!(harness.switches, vec!["backup-a/glm-5.3"]);
+        assert_eq!(harness.restores, vec![Some("primary/glm-5.3".to_string())]);
+        assert_eq!(
+            harness.events.last(),
+            Some(&AutoRetryEvent::End {
+                success: false,
+                attempt: 3,
+                final_error: Some("Retry cancelled".to_string()),
+                restored_model: None,
+            })
+        );
     }
 
     /// Operator ruling 2026-09-23: the chain gives up at

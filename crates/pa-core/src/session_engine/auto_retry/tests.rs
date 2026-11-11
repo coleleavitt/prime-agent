@@ -712,6 +712,55 @@ async fn cancelled_wait_aborts_with_retry_cancelled() {
     );
 }
 
+/// An abort that cuts the retried attempt itself closes the episode as
+/// cancelled, never as a recovery.
+#[tokio::test]
+async fn an_aborted_retry_attempt_ends_cancelled_not_recovered() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_for_emit = Arc::clone(&events);
+    let mut attempts = 0;
+    let message = run_turn_with_auto_retry(
+        &fast_policy(),
+        0,
+        None,
+        || {
+            attempts += 1;
+            let first = attempts == 1;
+            async move {
+                if first {
+                    Ok(error_message(Some("server_error"), None, None))
+                } else {
+                    Ok(AssistantMessage {
+                        stop_reason: StopReason::Aborted,
+                        ..ok_message()
+                    })
+                }
+            }
+        },
+        move |event| {
+            let events = Arc::clone(&events_for_emit);
+            async move {
+                events.lock().unwrap().push(event);
+                Ok(())
+            }
+        },
+        |_| async { true },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(message.stop_reason, StopReason::Aborted);
+    assert_eq!(
+        events.lock().unwrap().last(),
+        Some(&AutoRetryEvent::End {
+            success: false,
+            attempt: 1,
+            final_error: Some("Retry cancelled".to_string()),
+            restored_model: None,
+        })
+    );
+}
+
 #[tokio::test]
 async fn aborted_signal_racing_failure_stops_aborted() {
     let controller = pa_agent::abort::AbortController::new();
