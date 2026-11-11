@@ -1,5 +1,5 @@
 # cargo-deny configuration for the prime-agent Rust workspace.
-# Runs in CI (ci.yml) and locally via `make deny`.
+# Runs via `make deny`.
 
 [graph]
 all-features = true

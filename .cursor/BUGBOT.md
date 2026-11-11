@@ -24,7 +24,7 @@ either changes.
 
 ## File size (advisory)
 
-- Flag new or grown Rust files past ~2,000 lines (tests included) as advisory guidance: cite the growth and suggest splitting by responsibility. Size is ADVISORY per the operator's ruling - a soft cap that informs review and never blocks a merge; the repo's `codebase-health` PR check reports the same as warnings only.
+- Flag new or grown Rust files past ~2,000 lines (tests included) as advisory guidance: cite the growth and suggest splitting by responsibility. Size is ADVISORY per the operator's ruling - a soft cap that informs review and never blocks a merge.
 - Generated files are exempt from the size rule (see Generated files).
 
 ## Dependency direction
@@ -42,10 +42,10 @@ either changes.
 
 ## Repo hygiene
 
-- Flag scripts and tools that no CI workflow, Makefile target, or other code runs, such as one-off review, parity, evidence, or reproduction scripts (for example a 520-line TS-vs-Rust shutdown comparison script added in a feature PR). Nothing keeps them working; their results belong in the PR body, not in the repo.
-- Flag test files that nothing runs. Before flagging, check the globs, loops, and paths built at run time in `.github/workflows/` and the Makefile (for example, ci.yml runs `scripts/test_check_<scenario>.py` through a path built inside its loop over `scripts/check_*.py`). A file name that appears nowhere can still run. Flag only when no runner, glob, or loop reaches the file; such a test only looks like coverage.
+- Flag scripts and tools that no Makefile target or other code runs, such as one-off review, parity, evidence, or reproduction scripts (for example a 520-line TS-vs-Rust shutdown comparison script added in a feature PR). Nothing keeps them working; their results belong in the PR body, not in the repo.
+- Flag test files that nothing runs. Before flagging, check `cargo test` (Rust test targets) and the globs, loops, and paths built at run time in the Makefile (for example, `make lifecycle-checks` runs `scripts/test_check_<scenario>.py` through a path built inside its loop over `scripts/check_*.py`). A file name that appears nowhere can still run. Flag only when no runner, glob, or loop reaches the file; such a test only looks like coverage.
 - Flag committed artifacts that no code or test reads: evidence logs, reports, generated outputs, and local venvs or caches.
-- Flag a PR body that presents a script or run that CI does not run as lasting proof (for example "covered by `scripts/foo.py`"). One-off evidence belongs in the body, but it must read as a one-off run with its command and result, not as coverage.
+- Flag a PR body that presents a script or run that no Makefile gate runs as lasting proof (for example "covered by `scripts/foo.py`"). One-off evidence belongs in the body, but it must read as a one-off run with its command and result, not as coverage.
 
 ## Tests
 

@@ -2,7 +2,7 @@
 
 The prime-agent performance tooling: a deterministic corpus generator over
 the product's real on-disk layout, and a pty bench harness that drives the
-REAL release binary (`target/release/prime-agent`) headlessly. A dev/CI
+REAL release binary (`target/release/prime-agent`) headlessly. A dev-tooling
 crate at the top of the workspace dependency graph — nothing depends on it,
 and it never ships (the release lanes build `-p pa-cli --bin prime-agent`
 only).
@@ -96,7 +96,7 @@ records (`parentSession`/`child` are canonical paths).
 ## The bench harness
 
 ```
-# the whole suite (CI + make perf): generates the corpora, routes every
+# the whole suite (make perf): generates the corpora, routes every
 # scenario to the corpus state it needs, writes one results/<scenario>.json
 pa-perf run --binary target/release/prime-agent --profile medium --out DIR [--runs N]
 
@@ -197,13 +197,3 @@ as terminal cell diffs, which the raw byte stream cannot see). The crate
 never ships — the release lanes build `-p pa-cli --bin prime-agent` only —
 and `make deny` stays clean.
 
-## CI
-
-The bench matrix runs all four profiles at 10 runs each; the xl
-(2500-session) agents-view populate measures ~2.7 s on an 8-core sandbox.
-
-`.github/workflows/perf.yml`: nightly schedule + workflow_dispatch +
-label-gated pull requests (`perf-test` label, [labeled, synchronize] —
-labeling is the explicit opt-in). One release build, a bench matrix over
-the four profiles, and a report job writing the `$GITHUB_STEP_SUMMARY`
-table with the >2x gate.

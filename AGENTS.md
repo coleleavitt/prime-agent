@@ -19,8 +19,8 @@ Every contributor (human or agent) must read this before working on this repo.
 - The repo is PrimeIntellect-ai/prime-agent; the Rust implementation lives on the `main` branch.
 - PRs go to the org repo with base `main`:
   `gh pr create --repo PrimeIntellect-ai/prime-agent --base main`.
-- CI runs on the org's billing: `.github/workflows/continuous.yml` on `main` pushes and
-  `release.yml` on version tags.
+- There is no CI. The Makefile gates (`make check`, `make deny`, `make windows-cross`,
+  `make lifecycle-checks`) are the merge gates, run locally.
 
 ## Style and structure
 
@@ -60,7 +60,7 @@ Every contributor (human or agent) must read this before working on this repo.
   A new dependency is an architectural change: state in the PR why the existing crates cannot
   host the functionality, and `make deny` must stay clean for it.
 - If a change starts forcing edits across many crate internals, stop and fix the boundary instead.
-- Do not commit scripts or tools that no workflow, Makefile target, or other code runs (one-off review, parity, or reproduction scripts). Put their results in the PR body as a one-off run with its command and result, not as coverage.
+- Do not commit scripts or tools that no Makefile target or other code runs (one-off review, parity, or reproduction scripts). Put their results in the PR body as a one-off run with its command and result, not as coverage.
 - Do not commit evidence logs, reports, generated outputs, or local venvs and caches that no code or test reads.
 
 ## Tests
@@ -70,7 +70,7 @@ Every contributor (human or agent) must read this before working on this repo.
 - Do not add negative tests for logic that was removed.
 - Bug fixes need a regression test that fails without the fix.
 - Keep test code in proportion to the change: one discriminating test per behavior change, not several that pin the same behavior or re-check behavior the PR does not change.
-- A new test file must be run by something: a runner, glob, loop, or run-time path in `.github/workflows/` or the Makefile. A name missing from those files can still be reached by a glob or a built path, so check those before calling a test unrun.
+- A new test file must be run by something: `cargo test` (Rust test targets), or a runner, glob, loop, or run-time path in the Makefile. A name missing from the Makefile can still be reached by a glob or a built path, so check those before calling a test unrun.
 - Verifiers over self-assessment: tmux user-level tests, golden corpora replayed against real
   captured data. No lane merges without its verifier passing, rerun by the reviewer where
   feasible.
@@ -126,10 +126,9 @@ launch path must keep that test red-first.
 ## Merge gates
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace` must pass before every merge. Run `make check` — the local mirror of
-  the same gates; CI runs on the org's billing (`.github/workflows/continuous.yml` on `main`
-  pushes; `release.yml` on version tags). The PR-only codebase-health check reports growth
-  past 2,000 lines as review guidance; it never blocks a merge.
+  `cargo test --workspace` must pass before every merge. Run `make check`: there is no CI, so
+  the local run is the gate. File growth past 2,000 lines is review guidance; it never blocks a
+  merge.
 - PRs must state ownership compliance (crate README scope/non-goals/public API, dependency
   direction) and classify the change: internals, new `pub` surface, or a new
   dependency/cross-crate re-export. The latter two are architectural changes — an innocent-looking
@@ -189,7 +188,7 @@ The table summarizes each crate's current direct workspace dependencies:
 | `pa-daemon` | Supervisor, workers, wire protocol | `pa-types`, `pa-core`, `pa-agent`, `pa-ai`, `pa-telemetry`, `pa-models` |
 | `pa-tui` | Terminal UI, daemon-wire client | `pa-types` |
 | `pa-cli` | `prime-agent` binary, composition root | `pa-types`, `pa-core`, `pa-ai`, `pa-agent`, `pa-daemon`, `pa-tui`, `pa-telemetry`, `pa-bash` |
-| `pa-perf` | Performance corpora + pty bench harness (dev/CI tooling, never shipped) | `pa-types`, `pa-core`, `pa-daemon` |
+| `pa-perf` | Performance corpora + pty bench harness (dev tooling, never shipped) | `pa-types`, `pa-core`, `pa-daemon` |
 
 Layering rules:
 

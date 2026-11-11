@@ -1,4 +1,4 @@
-# pa-perf: the performance corpus generator + bench harness (dev/CI tooling).
+# pa-perf: the performance corpus generator + bench harness (dev tooling).
 # Top of the dependency graph: nothing depends on it, and it never ships —
 # the release lanes build only `-p pa-cli --bin prime-agent`.
 [package]

@@ -4,8 +4,7 @@
 # formula for the TypeScript product. The Rust port is distributed as a
 # source tarball (prime-agent-<version>-src.tar.gz: the git tree at the tag
 # plus the bundled catalog assets at the archive root — see
-# scripts/release/assemble_source.py and the assemble step in
-# .github/workflows/release.yml), which this formula builds with cargo.
+# scripts/release/assemble_source.py), which this formula builds with cargo.
 # The cask sketch next door (packaging/homebrew/Casks/prime-agent.rb) is
 # the vendor-tap alternative (prebuilt binaries) and stays untouched.
 #

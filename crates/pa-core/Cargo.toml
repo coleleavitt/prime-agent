@@ -83,7 +83,7 @@ path = "tests/golden/system_prompt.rs"
 # workspace's `rust.unsafe_code = "forbid"` would outlaw the platform
 # bindings' legitimate unsafe blocks (process/termios/lock-dir). The
 # clippy rows mirror the workspace table, and the pedantic class rides
-# here so CI's -D warnings bar enforces it on this crate too.
+# here so the merge gates' -D warnings bar enforces it on this crate too.
 pedantic = "warn"
 # rustc-master-only allowances, mirrored from the workspace table (see the
 # reasons there): `assert_is_empty`, `redundant_clone`, and `map_unwrap_or`,

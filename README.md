@@ -19,9 +19,6 @@ Prime Agent: A Self-Improving RLM Harness
 </p>
 
 <p align="center">
-  <a href="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/ci.yml">
-    <img src="https://github.com/PrimeIntellect-ai/prime-agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  </a>
   <a href="https://arxiv.org/abs/2608.23552">
     <img src="https://img.shields.io/badge/arXiv-2608.23552-b31b1b.svg" alt="arXiv" />
   </a>
