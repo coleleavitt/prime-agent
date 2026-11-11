@@ -161,18 +161,28 @@ fn is_test_harness() -> bool {
     *HARNESS.get_or_init(|| std::env::current_exe().is_ok_and(|exe| is_test_harness_path(&exe)))
 }
 
-/// `…/deps/<crate>-<16 hex>`: the file name cargo gives a test harness.
+/// `<crate>-<16 hex>` in the directory cargo builds test harnesses into:
+/// `…/deps/`, or `…/build/<package>/<hash>/out/` (the same hash) in cargo's
+/// newer build-dir layout.
 fn is_test_harness_path(exe: &Path) -> bool {
-    let in_deps = exe
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|dir| dir == "deps");
-    let hashed = exe
+    let Some(hash) = exe
         .file_stem()
         .and_then(OsStr::to_str)
         .and_then(|stem| stem.rsplit_once('-'))
-        .is_some_and(|(_, hash)| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
-    in_deps && hashed
+        .map(|(_, hash)| hash)
+        .filter(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+    else {
+        return false;
+    };
+    let mut dirs = exe.ancestors().skip(1).map(Path::file_name);
+    match dirs.next().flatten() {
+        Some(dir) if dir == "deps" => true,
+        Some(dir) if dir == "out" => {
+            dirs.next().flatten().is_some_and(|dir| dir == hash)
+                && dirs.nth(1).flatten().is_some_and(|dir| dir == "build")
+        }
+        _ => false,
+    }
 }
 
 fn env_flag(name: &str) -> bool {
@@ -617,6 +627,12 @@ mod tests {
     fn harness_binaries_are_recognized_by_their_hashed_deps_name() {
         assert!(is_test_harness_path(Path::new(
             "/w/target/debug/deps/pa_core-0123456789abcdef"
+        )));
+        assert!(is_test_harness_path(Path::new(
+            "/w/target/debug/build/pa-core/0123456789abcdef/out/pa_core-0123456789abcdef"
+        )));
+        assert!(!is_test_harness_path(Path::new(
+            "/w/target/debug/build/pa-core/fedcba9876543210/out/pa_core-0123456789abcdef"
         )));
         assert!(!is_test_harness_path(Path::new(
             "/w/target/debug/prime-agent"
