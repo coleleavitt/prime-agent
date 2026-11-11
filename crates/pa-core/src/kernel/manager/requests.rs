@@ -410,10 +410,14 @@ impl ReplKernelManager {
 
         // Abort watcher: on an abort, or when the cell outlives its time limit,
         // interrupts the kernel out-of-band, then force-aborts after the grace
-        // window if the runtime did not settle the cell. The limit's clock
-        // starts here, as the request goes on the wire (no await separates the
-        // two): queue wait and kernel boot are excluded.
+        // window if the runtime did not settle the cell. At the limit a user
+        // cell is first asked to move to the background, like the
+        // auto-background timer does: only a cell that cannot move (synchronous
+        // work holding the event loop) is interrupted. The limit's clock starts
+        // here, as the request goes on the wire (no await separates the two):
+        // queue wait and kernel boot are excluded.
         let cell_timeout_ms = execution.opts.cell_timeout_ms.filter(|ms| *ms > 0);
+        let movable = execution.request_type == "execute" && !execution.opts.internal;
         if execution.opts.signal.is_some() || cell_timeout_ms.is_some() {
             let signal = execution.opts.signal.clone();
             // Weak on both sides: a never-fired signal leaves this watcher pending forever, and a
@@ -442,6 +446,18 @@ impl ReplKernelManager {
                     return;
                 };
                 if timed_out_after_ms.is_some() {
+                    // A detach the auto-background timer already sent and the
+                    // cell ignored will not land now either.
+                    let detach_tried = lock(&execution.buffers).auto_backgrounded;
+                    if movable && !detach_tried && inner.detach_active(&execution).await {
+                        let grace = Duration::from_millis(KERNEL_ABORT_GRACE_MS);
+                        if tokio::time::timeout(grace, inner.settled(&execution))
+                            .await
+                            .is_ok()
+                        {
+                            return;
+                        }
+                    }
                     lock(&execution.buffers).timed_out_after_ms = timed_out_after_ms;
                 }
                 // A blocked request write holds the stdin mutex. Do not let an
@@ -472,57 +488,30 @@ impl ReplKernelManager {
         // Only `Request::Execute` is eligible, and only when the caller is
         // not synthetic (`internal: false`) — state ops (snapshot/restore,
         // list_names, mcp_status) have no detach future in the kernel.
-        if execution.request_type == "execute" && !execution.opts.internal {
-            if let Some(ms) = execution.opts.auto_background_ms {
-                if ms > 0 {
-                    let inner = Arc::downgrade(&self.inner);
-                    let weak_exec = Arc::downgrade(&execution);
-                    let budget = Duration::from_millis(ms);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(budget).await;
-                        let Some(execution) = weak_exec.upgrade() else {
-                            return;
-                        };
-                        let Some(inner) = inner.upgrade() else {
-                            return;
-                        };
-                        // Only fire while this execution is still the active
-                        // one; a race where it settled under budget leaves
-                        // nothing to move, and the detach frame on a stale
-                        // request id would target whatever is running next.
-                        let still_active = {
-                            let g = lock(&inner.guarded);
-                            matches!(
-                                g.active_execution.as_ref(),
-                                Some(active) if Arc::ptr_eq(active, &execution)
-                            )
-                        };
-                        if !still_active {
-                            return;
-                        }
-                        let mut frame = Request::Detach.to_json();
-                        frame["id"] = json!(execution.request_id);
-                        // A write failure leaves the cell on the active slot
-                        // for the hard `cell_timeout_ms` to finish (or the
-                        // caller's abort signal): never force the result.
-                        if inner.write_line(&frame).await.is_err() {
-                            return;
-                        }
+        if movable {
+            if let Some(ms) = execution.opts.auto_background_ms.filter(|ms| *ms > 0) {
+                let inner = Arc::downgrade(&self.inner);
+                let weak_exec = Arc::downgrade(&execution);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    let Some(execution) = weak_exec.upgrade() else {
+                        return;
+                    };
+                    let Some(inner) = inner.upgrade() else {
+                        return;
+                    };
+                    // A cell that settled under budget has nothing to move; a
+                    // failed write leaves it to the time limit or the caller's
+                    // abort signal.
+                    if inner.detach_active(&execution).await {
                         tracing::info!(
                             target: "pa_core::kernel::auto_background",
                             budget_ms = ms,
                             request_id = %execution.request_id,
                             "cell auto-backgrounded by wall-clock timer",
                         );
-                        let g = lock(&inner.guarded);
-                        if let Some(active) = g.active_execution.as_ref() {
-                            if Arc::ptr_eq(active, &execution) {
-                                let mut buffers = lock(&active.buffers);
-                                buffers.auto_backgrounded = true;
-                            }
-                        }
-                    });
-                }
+                    }
+                });
             }
         }
 

@@ -22,6 +22,7 @@ use super::{
     LateSentAgentMessageCallback,
     MAX_BACKGROUND_OUTPUT_CHARS,
     MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
+    Request,
     Value,
     anyhow,
     json,
@@ -58,13 +59,45 @@ impl Inner {
         self.write_line(&frame).await
     }
 
-    pub(crate) fn force_abort(&self, execution: &Arc<ActiveExecution>) {
-        {
-            let g = lock(&self.guarded);
-            let is_active = matches!(g.active_execution.as_ref(), Some(active) if Arc::ptr_eq(active, execution));
-            if !is_active {
+    /// Whether `execution` is still the active cell (not yet settled, moved,
+    /// or replaced).
+    pub(crate) fn is_active(&self, execution: &Arc<ActiveExecution>) -> bool {
+        let g = lock(&self.guarded);
+        matches!(g.active_execution.as_ref(), Some(active) if Arc::ptr_eq(active, execution))
+    }
+
+    /// Ask the runtime to move the still-active `execution` to the background
+    /// (one `detach` frame) and mark it auto-backgrounded. `false` when the cell
+    /// already settled or the write failed: nothing was asked. A cell that cannot
+    /// yield to the event loop ignores the frame and stays active.
+    pub(crate) async fn detach_active(&self, execution: &Arc<ActiveExecution>) -> bool {
+        if !self.is_active(execution) {
+            return false;
+        }
+        let mut frame = Request::Detach.to_json();
+        frame["id"] = json!(execution.request_id);
+        if self.write_line(&frame).await.is_err() {
+            return false;
+        }
+        lock(&execution.buffers).auto_backgrounded = true;
+        true
+    }
+
+    /// Resolves once `execution` is no longer the active cell.
+    pub(crate) async fn settled(&self, execution: &Arc<ActiveExecution>) {
+        loop {
+            // Created before the check: `notify_waiters` reaches it from here on.
+            let idle = self.busy_notify.notified();
+            if !self.is_active(execution) {
                 return;
             }
+            idle.await;
+        }
+    }
+
+    pub(crate) fn force_abort(&self, execution: &Arc<ActiveExecution>) {
+        if !self.is_active(execution) {
+            return;
         }
         {
             let mut buffers = lock(&execution.buffers);
@@ -151,11 +184,7 @@ impl Inner {
     }
 
     pub(crate) fn finish_active_execution(&self, execution: &Arc<ActiveExecution>) {
-        let is_active = {
-            let g = lock(&self.guarded);
-            matches!(g.active_execution.as_ref(), Some(active) if Arc::ptr_eq(active, execution))
-        };
-        if !is_active {
+        if !self.is_active(execution) {
             return;
         }
         self.resolve_execution(execution, true);

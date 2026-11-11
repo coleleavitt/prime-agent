@@ -78,7 +78,8 @@ pub struct ExecuteResult {
     pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
     pub kernel_unresponsive: bool,
-    /// The host's auto-background timer fired and wrote a `detach` frame.
+    /// The host wrote a `detach` frame (the auto-background timer, or the
+    /// time limit, which tries the move before it interrupts).
     /// For an async cell that yields to the kernel loop, `result` carries
     /// the `[Still running...]` marker and the cell continues in
     /// `_detached_bodies`; for a sync-blocked cell, the flag is `true` but

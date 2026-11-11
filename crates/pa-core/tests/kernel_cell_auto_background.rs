@@ -260,18 +260,10 @@ async fn a_detached_cell_outlives_the_time_limit() {
     );
     assert_eq!(result.timed_out_after_ms, None);
 
-    // Wait for the background body itself, then read what it left behind.
-    let settled = manager
-        .execute(
-            "import asyncio\nimport rlm.repl as _repl\nawait asyncio.gather(*_repl._detached_bodies.values(), return_exceptions=True)\nfinished",
-            ExecuteOptions::default(),
-        )
-        .await
-        .expect("execute must not fail");
     assert_eq!(
-        (settled.status, settled.result.as_deref()),
-        (ExecuteStatus::Ok, Some("True")),
-        "the time limit interrupted a cell that was already in the background: {settled:?}"
+        finished_in_the_background(&manager).await,
+        Some("True".to_string()),
+        "the time limit interrupted a cell that was already in the background"
     );
 
     manager
@@ -302,6 +294,90 @@ async fn a_cell_that_cannot_move_is_interrupted_at_its_time_limit() {
     assert_eq!(result.status, ExecuteStatus::Error, "{result:?}");
     assert!(result.auto_backgrounded, "the detach was tried first");
     assert_eq!(result.timed_out_after_ms, Some(1_000));
+
+    manager
+        .shutdown(pa_core::kernel::shared::KernelShutdownOptions::default())
+        .await
+        .expect("shutdown");
+}
+
+/// Waits for the cells moved to the background to end, then reads the
+/// `finished` flag their bodies set.
+async fn finished_in_the_background(manager: &ReplKernelManager) -> Option<String> {
+    let settled = manager
+        .execute(
+            "import asyncio\nimport rlm.repl as _repl\nawait asyncio.gather(*_repl._detached_bodies.values(), return_exceptions=True)\nfinished",
+            ExecuteOptions::default(),
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(settled.status, ExecuteStatus::Ok, "{settled:?}");
+    settled.result
+}
+
+/// The time limit itself moves a cell that can move: an async cell reaching
+/// its limit before any auto-background budget goes to the background and
+/// runs to its end instead of being interrupted.
+#[tokio::test]
+async fn a_movable_cell_at_its_time_limit_moves_instead_of_being_interrupted() {
+    let Some(manager) = started_manager("cell-limit-moves-async").await else {
+        return;
+    };
+
+    let result = manager
+        .execute(
+            "import asyncio\nfinished = False\nawait asyncio.sleep(2)\nfinished = True",
+            ExecuteOptions {
+                auto_background_ms: Some(120_000),
+                cell_timeout_ms: Some(500),
+                ..ExecuteOptions::default()
+            },
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(result.status, ExecuteStatus::Ok, "{result:?}");
+    assert!(
+        result
+            .result
+            .as_deref()
+            .is_some_and(|text| text.starts_with("[Still running.")),
+        "the limit moved the cell: {result:?}"
+    );
+    assert!(result.auto_backgrounded);
+    assert_eq!(result.timed_out_after_ms, None);
+    assert_eq!(
+        finished_in_the_background(&manager).await,
+        Some("True".to_string()),
+        "the moved cell ran to its end"
+    );
+
+    manager
+        .shutdown(pa_core::kernel::shared::KernelShutdownOptions::default())
+        .await
+        .expect("shutdown");
+}
+
+/// With no auto-background budget, the limit tries the move itself; a
+/// synchronous cell cannot move and is interrupted.
+#[tokio::test]
+async fn the_limit_interrupts_a_cell_its_own_move_cannot_reach() {
+    let Some(manager) = started_manager("cell-limit-sync").await else {
+        return;
+    };
+
+    let result = manager
+        .execute(
+            "import time\ntime.sleep(30)",
+            ExecuteOptions {
+                cell_timeout_ms: Some(500),
+                ..ExecuteOptions::default()
+            },
+        )
+        .await
+        .expect("execute must not fail");
+    assert_eq!(result.status, ExecuteStatus::Error, "{result:?}");
+    assert!(result.auto_backgrounded, "the limit tried the move first");
+    assert_eq!(result.timed_out_after_ms, Some(500));
 
     manager
         .shutdown(pa_core::kernel::shared::KernelShutdownOptions::default())

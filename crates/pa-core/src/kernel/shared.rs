@@ -392,8 +392,9 @@ pub struct ExecuteResult {
     /// window: the kernel is still busy running it, so the next cell would
     /// find it busy until the process is killed.
     pub kernel_unresponsive: bool,
-    /// The host's auto-background timer fired and wrote a `detach` frame
-    /// for this request (Claude Code's `fHe` timer shape). Whether the
+    /// The host wrote a `detach` frame for this request: the auto-background
+    /// timer fired (Claude Code's `fHe` timer shape), or the cell reached its
+    /// `cell_timeout_ms` limit, which tries the move first. Whether the
     /// cell *moved* is distinct: an async cell that yields to the loop
     /// settles `ok` with the `[Still running...]` result text and keeps
     /// running in `_detached_bodies`; a synchronous cell cannot yield and
@@ -426,13 +427,16 @@ pub struct ExecuteOptions {
     /// flight, so a cell awaiting delegated work is never timed out for it.
     pub timeout_excludes_host_requests: bool,
     /// Per-cell time limit in milliseconds, measured from the request going on
-    /// the wire (queue wait and kernel boot excluded). A cell that outlives it
+    /// the wire (queue wait and kernel boot excluded). At the limit an execute
+    /// cell is first asked to move to the background (one `detach` frame, the
+    /// auto-background path): a cell that moves within the grace window
+    /// settles `ok` and keeps running. A cell that cannot move, or a state op,
     /// is interrupted exactly like an aborted one (interrupt, then force-abort
     /// after the grace window), and its result carries
     /// [`ExecuteResult::timed_out_after_ms`]. A cell moved to the background
-    /// first (auto-background or send-now `detach`) has already settled: it no
-    /// longer blocks the session, so the limit does not reach it. `None` and
-    /// zero disable it; the runtime bootstrap and state ops never arm it.
+    /// earlier (auto-background or send-now `detach`) has already settled, so
+    /// the limit does not reach it. `None` and zero disable it; the runtime
+    /// bootstrap and state ops never arm it.
     pub cell_timeout_ms: Option<u64>,
     /// Wall-clock budget after which an async execute cell is moved to the
     /// background by writing a `detach` frame (Claude Code's `fHe` setTimeout
@@ -442,10 +446,10 @@ pub struct ExecuteOptions {
     /// `[cell-done]` notice lands later via `_finish_detached`. A cell that
     /// cannot yield to the loop (synchronous blocking work) stays on the
     /// active slot and keeps burning the hard `cell_timeout_ms` instead.
-    /// The timer acts only when it fires before `cell_timeout_ms`: a limit
-    /// that fires first interrupts the cell. Only `Request::Execute` is
-    /// eligible; state ops and `internal` executions are never
-    /// auto-detached. `None` and zero disable the timer.
+    /// A `cell_timeout_ms` shorter than this budget makes the same move at
+    /// the limit. Only `Request::Execute` is eligible; state ops and
+    /// `internal` executions are never auto-detached. `None` and zero disable
+    /// the timer.
     pub auto_background_ms: Option<u64>,
 }
 
