@@ -700,7 +700,8 @@ mod tests {
             },
             &wire_model(),
             crate::types::CacheRetention::None,
-        );
+        )
+        .expect("convert_messages");
         assert_eq!(
             replay,
             vec![json!({"role": "assistant", "content": [
