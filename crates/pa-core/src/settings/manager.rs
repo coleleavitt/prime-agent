@@ -1629,20 +1629,32 @@ fn load_scope(
         }
         other => other,
     };
-    let mut settings = from_value_lenient(&migrated);
-    if scope == SettingsScope::Project {
-        // A repository can supply this file before the user opens it. Keep its
-        // document on disk, but never let it select a process, command prefix,
-        // package installer, or MCP server through an effective settings read.
-        settings.shell_path = None;
-        settings.shell_command_prefix = None;
-        settings.npm_command = None;
-        settings.packages = None;
-        settings.mcp_servers = None;
-        settings.mcp_catalog_sources = None;
-    }
+    // A repository can supply this file before the user opens it. Keep its
+    // document on disk, but never let it select a process, command prefix,
+    // package installer, or MCP server through an effective settings read.
+    let settings =
+        if let (SettingsScope::Project, serde_json::Value::Object(document)) = (scope, &migrated) {
+            let mut effective = document.clone();
+            effective.retain(|key, _| !PROJECT_INERT_SETTINGS_KEYS.contains(&key.as_str()));
+            from_value_lenient(&serde_json::Value::Object(effective))
+        } else {
+            from_value_lenient(&migrated)
+        };
     (settings, Some(migrated), None)
 }
+
+/// Project settings keys that never take effect, trusted or not: a
+/// repository's settings file cannot select an executable, a command
+/// prefix, a package or an MCP server (upstream #3907). The workspace-trust
+/// gate leaves them out of what trusting a workspace would apply.
+pub(crate) const PROJECT_INERT_SETTINGS_KEYS: &[&str] = &[
+    "shellPath",
+    "shellCommandPrefix",
+    "npmCommand",
+    "packages",
+    "mcpServers",
+    "mcpCatalogSources",
+];
 
 #[cfg(test)]
 mod tests {

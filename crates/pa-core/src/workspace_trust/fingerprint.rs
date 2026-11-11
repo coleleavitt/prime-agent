@@ -62,8 +62,10 @@ fn dir_has_entries(dir: &Path) -> bool {
 }
 
 /// The project settings document's gated keys (post-migration, so a legacy
-/// key that migrates into a gated one is gated too). An unparseable
-/// document loads as empty settings, so it gates nothing.
+/// key that migrates into a gated one is gated too). Keys no project scope
+/// can ever apply (`PROJECT_INERT_SETTINGS_KEYS`) are not gated: trusting the
+/// workspace would not activate them. An unparseable document loads as
+/// empty settings, so it gates nothing.
 fn gated_settings(project_dir: &Path) -> serde_json::Map<String, Value> {
     let Ok(content) = std::fs::read_to_string(project_dir.join("settings.json")) else {
         return serde_json::Map::new();
@@ -72,7 +74,10 @@ fn gated_settings(project_dir: &Path) -> serde_json::Map<String, Value> {
         return serde_json::Map::new();
     };
     crate::settings::merge::migrate(&mut document);
-    document.retain(|key, value| !super::is_untrusted_safe_setting(key, value));
+    document.retain(|key, value| {
+        !super::is_untrusted_safe_setting(key, value)
+            && !crate::settings::manager::PROJECT_INERT_SETTINGS_KEYS.contains(&key.as_str())
+    });
     document
 }
 

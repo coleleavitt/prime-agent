@@ -8,19 +8,17 @@ only after you trust the workspace.
 ## What is gated
 
 - `.prime/agent/settings.json` keys outside the safe list below - among them
-  `shellPath`, `shellCommandPrefix`, `npmCommand`, `mcpServers`,
-  `mcpCatalogSources`, `packages`, `skills`, `prompts`, `themes`,
-  `sessionDir`, `autonomous`, `factory`, `telemetry`, and any key Prime Agent
-  does not know.
+  `skills`, `prompts`, `themes`, `sessionDir`, `autonomous`, `factory`,
+  `telemetry`, `hooks`, and any key Prime Agent does not know.
 - `.prime/agent/SYSTEM.md` and `.prime/agent/APPEND_SYSTEM.md`.
 - `.prime/agent/prompts/` (prompt templates).
 - Project skills, Python and prompt skills alike: `.prime/agent/skills/`,
   every `.agents/skills/` from the workspace up to its git root (your own
   `~/.agents/skills` excluded), and paths named by the project `skills`
-  setting. A Python skill is installed into the kernel venv (an editable
-  install that runs its build backend) and imported when the kernel starts,
-  so an untrusted workspace's skills are neither listed to the model nor
-  installed. The trust hash covers every file in these directories except
+  setting. An untrusted workspace's skills are not listed to the model. In a
+  trusted workspace they load as instructions only: a project Python skill is
+  never installed into the kernel venv or imported. The trust hash covers
+  every file in these directories except
   tool caches (`__pycache__`, `*.pyc`, `*.egg-info`, `.git`, test and lint
   caches), so editing a skill's code asks again.
 - Claude Code's project directories: `.claude/commands/` (custom commands)
@@ -39,6 +37,12 @@ models you already configured: `theme`, `defaultProvider`, `defaultModel`,
 `autocompleteMaxVisible`, `showHardwareCursor`, `markdown`, `warnings`,
 `quietStartup`, `requestTiming`, `enableSkillCommands`, and `sandbox` (it can only tighten
 the [OS sandbox](os-sandbox.md), never loosen it).
+
+These project settings keys never apply, trusted or not, so trusting a
+workspace does not list or activate them: `shellPath`, `shellCommandPrefix`,
+`npmCommand`, `packages`, `mcpServers`, and `mcpCatalogSources`. Set them in
+your own `~/.prime/agent/settings.json`. Project packages stay in the file
+for `prime-agent package remove --local`, but they never load.
 
 A repository's `.mcp.json` servers are not part of the trust hash: each one
 waits for its own approval ([Project MCP servers](mcp-json.md)), and a project
@@ -65,9 +69,7 @@ the workspace's canonical path and pinned to a SHA-256 of the gated content.
 Changing any gated file (or a gated settings key) asks again; editing a safe
 key such as `theme` does not. A decision applies to sessions started after it;
 running sessions keep what they loaded. Revoking trust stops a project
-Python skill from being listed and imported in new sessions; a package an
-earlier trusted session installed stays in the kernel venv until it is
-rebuilt.
+skill from being listed in new sessions.
 
 ## Commands
 

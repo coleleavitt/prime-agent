@@ -562,7 +562,7 @@ fn claude_code_project_settings_approve_only_when_opted_in_and_trusted() {
     // Opted in, but nothing made the workspace explicitly trusted.
     assert_eq!(approval(&fixture), Some(ProjectApproval::Pending));
     // Something gated (a project setting) is trusted: now it counts.
-    fixture.project_settings(&json!({ "shellPath": "/bin/sh" }));
+    fixture.project_settings(&json!({ "outputStyle": "terse" }));
     fixture.trust();
     assert_eq!(approval(&fixture), Some(ProjectApproval::Approved));
 

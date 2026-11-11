@@ -313,7 +313,7 @@ mod tests {
             workspace: PathBuf::from("/work/repo"),
             state,
             gated: vec![
-                GatedItem::SettingsKeys(vec!["shellPath".to_string()]),
+                GatedItem::SettingsKeys(vec!["outputStyle".to_string()]),
                 GatedItem::SystemPrompt,
             ],
         }
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(output).unwrap(),
             "This workspace has project configuration that can run code or change the agent's instructions:\n  \
-             - .prime/agent/settings.json keys: shellPath\n  \
+             - .prime/agent/settings.json keys: outputStyle\n  \
              - .prime/agent/SYSTEM.md\n\
              Only trust workspaces whose contents you know.\n\
              Trust /work/repo? [y/N] "
@@ -425,7 +425,7 @@ mod tests {
     fn the_command_summary_names_what_new_sessions_load() {
         assert_eq!(
             command_summary(&status(TrustState::Trusted), TrustDecision::Trusted),
-            "Trusted: /work/repo. New sessions here load: .prime/agent/settings.json keys: shellPath; .prime/agent/SYSTEM.md."
+            "Trusted: /work/repo. New sessions here load: .prime/agent/settings.json keys: outputStyle; .prime/agent/SYSTEM.md."
         );
         let empty = WorkspaceTrustStatus {
             gated: Vec::new(),

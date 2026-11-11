@@ -1648,8 +1648,7 @@ mod tests {
                 .to_string(),
         )
         .unwrap();
-        // Project settings apply only in a trusted workspace (the fork's
-        // workspace trust gate); trust the content just written.
+        // Not even a trusted workspace selects the shell.
         crate::workspace_trust::record(
             &cwd,
             &agent_dir,

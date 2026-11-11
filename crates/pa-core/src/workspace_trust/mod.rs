@@ -1,11 +1,14 @@
 //! Workspace trust: the gate on project-scope configuration that can run
 //! code or change the agent's instructions.
 //!
-//! A cloned repository can carry `.prime/agent/settings.json` (shell,
-//! npm, MCP and package keys), `SYSTEM.md` / `APPEND_SYSTEM.md`, prompt
-//! templates, and project skills (whose Python packages install into the
-//! shared kernel venv and import at kernel startup). None of it applies
-//! until the user trusts the workspace. The decision is recorded in `<agentDir>/trusted-workspaces.json`,
+//! A cloned repository can carry `.prime/agent/settings.json` (hooks,
+//! prompt, skill and other keys), `SYSTEM.md` / `APPEND_SYSTEM.md`, prompt
+//! templates, and project skills. None of it applies until the user trusts
+//! the workspace. Trust never runs a project Python skill's code (its
+//! instructions load, its package is never installed or imported), and some
+//! project settings never apply even then (the shell, npm, package and MCP
+//! keys, `settings::manager::PROJECT_INERT_SETTINGS_KEYS`): the gate does
+//! not list those keys. The decision is recorded in `<agentDir>/trusted-workspaces.json`,
 //! keyed by the workspace's canonical path and pinned to a content hash
 //! of the gated files, so a change to them asks again.
 //!
@@ -83,8 +86,9 @@ pub enum GatedItem {
     PromptTemplates,
     /// A project skill directory (`.prime/agent/skills/`, an ancestor's
     /// `.agents/skills/` or `.claude/skills/`, or a project `skills`
-    /// settings entry): its Python skills install into the kernel venv and
-    /// import at startup, its Claude Code skills can run shell blocks.
+    /// settings entry): its skills' instructions reach the model (a Python
+    /// skill's code never runs), its Claude Code skills can run shell
+    /// blocks when invoked.
     ProjectSkills(String),
     /// A project directory a composition root registered as gated
     /// ([`register_gated_project_dir`]): `.prime/agent/<dir>/`.

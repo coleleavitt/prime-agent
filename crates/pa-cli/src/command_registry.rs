@@ -300,8 +300,8 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     )
     .description(
         "Project configuration that can run code or change the agent's instructions - \
-.prime/agent/settings.json keys such as shellPath, shellCommandPrefix, npmCommand, mcpServers \
-and packages, .prime/agent/SYSTEM.md and APPEND_SYSTEM.md, prompt templates, and project skills - \
+.prime/agent/settings.json keys such as hooks, prompts and skills, .prime/agent/SYSTEM.md \
+and APPEND_SYSTEM.md, prompt templates, and project skills (as instructions; their code never runs) - \
 loads only in a trusted workspace. The decision is recorded in \
 ~/.prime/agent/trusted-workspaces.json, pinned to the content it covered: a change asks again.",
     )
