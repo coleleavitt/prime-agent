@@ -17,7 +17,6 @@ use super::{
     KILL_TIMEOUT_MS,
     Mutex,
     Path,
-    PathBuf,
     RENAME_TIMEOUT_MS,
     Result,
     RlmChildResult,
@@ -170,12 +169,16 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
                 let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
-                // `cwd=` or the child's worktree, else the parent's.
-                let cwd = request
-                    .cwd
-                    .clone()
-                    .or_else(|| identity.cwd.clone())
-                    .unwrap_or_else(|| "/".to_string());
+                // `cwd=` or the child's worktree (relative to the parent's,
+                // canonicalized: project-context discovery walks its
+                // ancestors), else the parent's.
+                let cwd = crate::rlm_child_model::resolve_child_cwd(
+                    Path::new(identity.cwd.as_deref().unwrap_or("/")),
+                    request.cwd.as_deref(),
+                    "rlm.spawn",
+                )?
+                .to_string_lossy()
+                .into_owned();
                 let mut runtime_metadata = json!({
                     "kind": "subagent",
                     "rlmChildId": child_id,
@@ -431,11 +434,11 @@ impl RlmSubagentHost for SupervisorChildSessions {
             assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
             // A depth-0 resident session is created exactly like a client
             // `create`: the shared sessions dir and the requested cwd.
-            let cwd = match &request.cwd {
-                Some(cwd) if Path::new(cwd).is_absolute() => PathBuf::from(cwd),
-                Some(cwd) => Path::new(identity.cwd.as_deref().unwrap_or("/")).join(cwd),
-                None => PathBuf::from(identity.cwd.clone().unwrap_or_else(|| "/".to_string())),
-            };
+            let cwd = crate::rlm_child_model::resolve_child_cwd(
+                Path::new(identity.cwd.as_deref().unwrap_or("/")),
+                request.cwd.as_deref(),
+                "rlm.create_session",
+            )?;
             let sessions_dir = crate::paths::sessions_dir(&this.agent_dir)?;
             std::fs::create_dir_all(&sessions_dir)
                 .with_context(|| format!("create sessions dir {}", sessions_dir.display()))?;

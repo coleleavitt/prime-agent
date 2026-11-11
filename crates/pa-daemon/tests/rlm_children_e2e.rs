@@ -316,9 +316,13 @@ async fn rlm_spawn_cwd_starts_the_child_in_that_directory() {
         &json!({ "type": "get_system_prompt", "activeSessionId": summary["id"] }),
     );
     let context = client.read_response("prompt");
-    let system_prompt = context["data"]["systemPrompt"].as_str().unwrap_or_default();
-    assert!(system_prompt.contains(&marker), "{context}");
-    assert!(!system_prompt.contains(&main_marker), "{context}");
+    // The project context rides the session-context row, not the system
+    // prompt (the byte-stable prompt keeps no per-directory text).
+    let session_context = context["data"]["sessionContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(session_context.contains(&marker), "{context}");
+    assert!(!session_context.contains(&main_marker), "{context}");
 
     let missing = project.join("missing");
     let error = children
