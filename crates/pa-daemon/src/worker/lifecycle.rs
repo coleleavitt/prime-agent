@@ -140,7 +140,40 @@ impl Worker {
             }
             still_interrupted
         };
-        if continue_turn {
+        // The user steers already folded into the aborted turn that no model
+        // call read exist only in the agent's memory: they return to the
+        // steering lane right behind the continuation, so the restart folds
+        // them into it (a user-aborted lane stays parked with them).
+        let restored_steers = match (&self.agent_engine, daemon_wide) {
+            (Some(agent_engine), true) => agent_engine.take_unread_user_steers(),
+            _ => Vec::new(),
+        };
+        let restored_any = !restored_steers.is_empty();
+        if restored_any {
+            let mut core = self.core.lock_or_recover();
+            let behind = usize::from(continue_turn);
+            for (offset, message) in restored_steers.into_iter().enumerate() {
+                core.steering.insert(
+                    behind + offset,
+                    QueuedItem {
+                        priority: QueuePriority::Human,
+                        preview: None,
+                        message,
+                        custom_message: None,
+                        agent_message: None,
+                        queue_key: None,
+                        admission_id: None,
+                        images: Vec::new(),
+                        done: None,
+                        queue_visible: true,
+                        policy: TurnPolicy::Queued,
+                        forced_batch: false,
+                        traceparent: None,
+                    },
+                );
+            }
+        }
+        if continue_turn || restored_any {
             self.checkpoint_queue(QueueCheckpoint::Admitted {
                 operation: "prompt_accepted",
             });

@@ -907,6 +907,38 @@ impl AgentSessionEngine {
         }
     }
 
+    /// The user steers the worker folded into the running turn that no model
+    /// call read (the abort that ended the turn parked them in the agent's
+    /// queue), taken out of the agent as their prompt text, oldest first. The
+    /// agent's queue is memory only: a graceful shutdown hands them back to
+    /// the worker's steering lane, which the journal keeps.
+    pub(crate) fn take_unread_user_steers(&self) -> Vec<String> {
+        use pa_agent::types::{AgentMessage, Message, UserContent, UserPart};
+        let Some(agent) = self.turn_agent.lock_or_recover().clone() else {
+            return Vec::new();
+        };
+        agent
+            .remove_queued_messages(|message| {
+                matches!(message, AgentMessage::Standard(Message::User(_)))
+            })
+            .into_iter()
+            .filter_map(|message| match message {
+                AgentMessage::Standard(Message::User(user)) => Some(match user.content {
+                    UserContent::Text(text) => text,
+                    UserContent::Parts(parts) => parts
+                        .into_iter()
+                        .filter_map(|part| match part {
+                            UserPart::Text(text) => Some(text.text),
+                            UserPart::Image(_) => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Mark the session closed and retire the closed runtime's continuation
     /// mirrors — a stopped session never continues.
     pub fn mark_session_closed(&self) {

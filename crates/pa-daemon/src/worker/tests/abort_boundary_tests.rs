@@ -1104,3 +1104,101 @@ async fn abort_and_send_queued_under_a_held_pause_delivers_on_the_release() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A user steer the fold already handed to the running turn, unread by any
+/// model call when the shutdown's abort ended the turn (it waits, parked, in
+/// the agent's memory), survives a graceful daemon shutdown: it returns to
+/// the journaled steering lane, so the restart delivers it. The crash case
+/// keeps the gap (the fold's checkpoint already dropped it from the lane).
+#[tokio::test]
+// the faux registry is process-global: the guard must span the async flow
+#[allow(clippy::await_holding_lock)]
+async fn a_folded_unread_steer_survives_a_graceful_daemon_shutdown() {
+    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = crate::test_support::TestDir::new("pa-worker-folded-steer-");
+    let config = WorkerConfig {
+        socket_path: dir.join("worker.sock"),
+        supervisor_socket_path: PathBuf::new(),
+        token: "token".to_string(),
+        worker_instance_id: String::new(),
+        active_session_id: "folded-steer-session".to_string(),
+        agent_dir: dir.join("agent"),
+        recovery_journal_path: dir.join("recovery.jsonl"),
+        telemetry_disabled: None,
+        script: Some(json!({ "engine": "faux", "responses": ["ack"] })),
+    };
+    let worker = std::sync::Arc::new(Worker::new(config, None));
+    *worker.recovery.lock().unwrap() =
+        Some(WorkerRecoveryJournal::open(&worker.config.recovery_journal_path).unwrap());
+    let created = worker
+        .dispatch(
+            "create",
+            &json!({ "noSession": true, "cwd": "/tmp", "name": "folded-steer" }),
+        )
+        .await;
+    assert!(created.success, "create failed: {created:?}");
+    // A turn builds the session's agent.
+    let first = worker
+        .dispatch(
+            "prompt_and_wait",
+            &json!({ "activeSessionId": "folded-steer-session", "message": "hi" }),
+        )
+        .await;
+    assert!(first.success, "the first turn failed: {first:?}");
+    // The fold's hand-off: the steer left the lane for the agent's queue,
+    // and the turn ended before a model call read it.
+    let agent = worker
+        .agent_engine
+        .as_ref()
+        .expect("the faux script runs the agent engine")
+        .turn_agent
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the created session's agent");
+    agent.steer(pa_agent::types::AgentMessage::Standard(
+        pa_agent::types::Message::User(pa_agent::types::UserMessage {
+            content: pa_agent::types::UserContent::Text("also check the tests".to_string()),
+            timestamp: 0,
+        }),
+    ));
+
+    let shutdown = worker
+        .handle_shutdown(&json!({ "daemonShutdown": true }))
+        .await;
+    assert!(shutdown.success, "shutdown failed: {shutdown:?}");
+
+    let lane: Vec<String> = worker
+        .core
+        .lock()
+        .unwrap()
+        .steering
+        .iter()
+        .map(|item| item.message.clone())
+        .collect();
+    assert_eq!(lane, ["also check the tests"]);
+    let (steering, follow_up, suspended) = WorkerRecoveryJournal::read_queue_snapshot(
+        &worker.config.recovery_journal_path,
+        "folded-steer-session",
+    )
+    .unwrap()
+    .expect("the shutdown journaled the lane");
+    assert_eq!(
+        (
+            steering
+                .iter()
+                .map(|record| record.message.as_str())
+                .collect::<Vec<_>>(),
+            follow_up.len(),
+            suspended,
+        ),
+        (vec!["also check the tests"], 0, false)
+    );
+    assert!(
+        WorkerRecoveryJournal::read_interrupted(&worker.config.recovery_journal_path),
+        "the restored steer is live work the next boot revives"
+    );
+    assert!(!agent.has_queued_messages(), "the agent kept the steer");
+}
