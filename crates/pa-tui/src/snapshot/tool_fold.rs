@@ -61,7 +61,7 @@ pub fn settle_pending_tool_cards<S: std::hash::BuildHasher + Default>(
             continue;
         }
         // Calls without a card also record as aborted, blocking their late frames.
-        aborted.insert(tool_call_id.clone());
+        aborted.insert(tool_call_id);
         if let Some(index) = card_index {
             view.prepare_entry_mutation(index);
             if let Some(ChatEntry::Tool(card)) = view.chat.get_mut(index) {

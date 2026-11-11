@@ -4,10 +4,15 @@
 
 use std::path::Path;
 
-use super::{highlight, Line, RowOutput, Span, Theme, ThemeColor, Value};
+use super::{Line, RowOutput, Span, Theme, ThemeColor, Value, highlight};
 use crate::theme::{ColorMode, ThemeBg};
 use crate::width::{
-    line_width, str_width, truncate_line, truncate_to_width, wrap_line, wrapped_line_count,
+    line_width,
+    str_width,
+    truncate_line,
+    truncate_to_width,
+    wrap_line,
+    wrapped_line_count,
 };
 
 const SUMMARY_PREFIX: &str = "    \u{2570}\u{2500} ";
