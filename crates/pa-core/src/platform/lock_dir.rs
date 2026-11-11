@@ -5,7 +5,10 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
+
+use pa_types::sync::MutexExt;
 
 /// Minimum staleness threshold, like proper-lockfile's floor.
 const MIN_STALE: Duration = Duration::from_secs(2);
@@ -183,8 +186,9 @@ mod win32 {
 pub struct LockDir {
     path: PathBuf,
     owner: Option<String>,
-    /// [`lock_identity`] of the directory this guard created.
-    created: SystemTime,
+    /// [`lock_identity`] this guard last gave the directory: at creation,
+    /// then at each [`LockDir::refresh`] (a heartbeat is the same holder).
+    identity: Mutex<SystemTime>,
 }
 
 impl LockDir {
@@ -232,7 +236,7 @@ impl LockDir {
             Ok(created) => Ok(LockDir {
                 path,
                 owner,
-                created,
+                identity: Mutex::new(created),
             }),
             // Only an existing path is a lock collision; other failures
             // (missing parent, permissions) are real errors, never contention.
@@ -244,7 +248,7 @@ impl LockDir {
                     Ok(created) => Ok(LockDir {
                         path,
                         owner,
-                        created,
+                        identity: Mutex::new(created),
                     }),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                         Err(io::Error::new(
@@ -555,7 +559,7 @@ impl LockDir {
         // A guard whose stale lock was reclaimed must not remove the
         // successor's lock. Compare before removing `owner` (which bumps the mtime).
         match fs::symlink_metadata(&self.path).and_then(|metadata| lock_identity(&metadata)) {
-            Ok(identity) if identity == self.created => {}
+            Ok(identity) if identity == *self.identity.lock_or_recover() => {}
             Ok(_) => return,
             Err(error) => {
                 if error.kind() != io::ErrorKind::NotFound {
@@ -624,8 +628,12 @@ impl LockDir {
     pub fn refresh(&self) -> io::Result<()> {
         // A taken-over lock is the new holder's: never keep it fresh.
         self.ensure_owned()?;
+        let mut identity = self.identity.lock_or_recover();
         let (sec, nanos) = probe_mtime();
-        set_mtime(&self.path, sec, nanos)
+        set_mtime(&self.path, sec, nanos)?;
+        // The bump changes the identity; the release compares against it.
+        *identity = lock_identity(&fs::symlink_metadata(&self.path)?)?;
+        Ok(())
     }
 
     /// Hold the lock with a heartbeat: a thread refreshes it every
@@ -991,15 +999,32 @@ mod tests {
         assert!(!path.exists());
     }
 
+    /// A heartbeat bumps the lock's mtime, its identity: the holder's own
+    /// release still removes the refreshed lock.
+    #[test]
+    fn a_refreshed_lock_is_released_by_its_holder() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("harness_state.json");
+        let guard = LockDir::acquire_owned(&file, MIN_STALE).unwrap();
+        // Created long ago, so the refresh moves the mtime.
+        set_mtime(&guard.path, 1, 0).unwrap();
+        *guard.identity.lock_or_recover() =
+            lock_identity(&fs::symlink_metadata(&guard.path).unwrap()).unwrap();
+        guard.refresh().unwrap();
+        drop(guard);
+        assert!(!lock_of(&file).exists());
+    }
+
     #[test]
     fn displaced_guard_keeps_the_successors_lock() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("auth.json");
-        let mut displaced = LockDir::acquire(&file, MIN_STALE).unwrap();
+        let displaced = LockDir::acquire(&file, MIN_STALE).unwrap();
         // The holder stalled past the staleness threshold, as if it had
         // created the lock long ago.
         set_mtime(&displaced.path, 1, 0).unwrap();
-        displaced.created = lock_identity(&fs::symlink_metadata(&displaced.path).unwrap()).unwrap();
+        *displaced.identity.lock_or_recover() =
+            lock_identity(&fs::symlink_metadata(&displaced.path).unwrap()).unwrap();
         let successor = LockDir::acquire(&file, MIN_STALE).unwrap();
         drop(displaced);
         assert!(lock_of(&file).is_dir(), "the successor's lock survives");
