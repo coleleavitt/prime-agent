@@ -131,10 +131,10 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Gates for every feature crate
 
 ```sh
-cargo +1.98.1 clippy --workspace --all-targets --locked -- -D warnings          # all features (pa-cli default)
-cargo +1.98.1 clippy -p pa-cli --all-targets --locked --no-default-features -- -D warnings   # native product
-cargo +1.98.1 test --workspace --locked
-cargo +1.98.1 test -p pa-cli --locked --no-default-features
+cargo +rustc-master clippy --workspace --all-targets --locked -- -D warnings          # all features (pa-cli default)
+cargo +rustc-master clippy -p pa-cli --all-targets --locked --no-default-features -- -D warnings   # native product
+cargo +rustc-master test --workspace --locked
+cargo +rustc-master test -p pa-cli --locked --no-default-features
 ```
 
 plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the crate's own red-first tests.

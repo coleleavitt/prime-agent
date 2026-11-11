@@ -1,0 +1,47 @@
+flowchart TB
+    S([Session runs]):::start --> T[Trajectory<br/>user prompts, tool calls, replies, errors]
+    T --> L[Failure ledger<br/>fingerprint each failure, count recurrences]:::signal
+
+    T --> R{Auto-refine trigger<br/>compaction  session end  observer signal}:::gate
+    R -->|held| S
+    R -->|fires| V{{Multi-vote reviewer<br/>3 reviewers  approve if refutations&lt;2<br/>score, bar, strongest-evidence reason}}:::judge
+
+    V -->|reject| S
+    V -->|approve| P[Refiner writes edits<br/>prompt note  skill  subagent  factory  memory]
+    P --> K[Fix-kind diversity nudge<br/>a note that didn't work twice<br/>becomes a skill or prompt note]:::hint
+    K --> P
+
+    P --> Z{Lane?}:::gate
+    Z -->|status| ST[Replace in place at kind,path<br/>short session state]:::status
+    Z -->|lesson| LE[Harness entry<br/>targets_fingerprints link to failures<br/>durable across sessions]:::lesson
+    ST --> H[Harness state]
+    LE --> H
+
+    H --> I[Injected into next session's prompt<br/>as memories, skills, subagents, factory specs]
+    I --> S
+
+    L --> M{Post-fix recurrence probe<br/>lesson's fingerprint seen again?}:::new
+    H --> M
+    M -->|no| G[Keep the fix]:::good
+    M -->|yes| B[Plan rollback<br/>group hits by originating refinement<br/>reason='recurred']:::warn
+    B --> P
+
+    T --> TUL[Tool-use label  side-model<br/>commit-subject style]:::side
+    TUL --> UI[TUI chrome rows<br/>recap  tool-use label  session title]
+    T --> REC[Away-summary recap  side-model]:::side
+    REC --> UI
+
+    R --> MEM[rlm.memory  model-facing tool<br/>7 ops over user-wide personal tree]:::side
+    MEM --> H
+
+    classDef start fill:#e8f1ff,stroke:#3b6fd4,color:#111,stroke-width:2px
+    classDef gate fill:#eef1ff,stroke:#6f73d4,color:#111
+    classDef judge fill:#f4ecff,stroke:#8a4bd4,color:#111,stroke-width:2px
+    classDef signal fill:#fff1e8,stroke:#d49153,color:#111
+    classDef hint fill:#fff8d6,stroke:#c9a700,color:#111
+    classDef new fill:#fff4d6,stroke:#c98a00,color:#111,stroke-width:2px
+    classDef good fill:#e3f7e8,stroke:#2f9e5b,color:#111
+    classDef warn fill:#ffe9d6,stroke:#d9731f,color:#111
+    classDef status fill:#eef7ff,stroke:#3b89d4,color:#111
+    classDef lesson fill:#edf6ea,stroke:#58a339,color:#111
+    classDef side fill:#f7f0f7,stroke:#9e5ba8,color:#111

@@ -1,0 +1,16 @@
+flowchart LR
+    subgraph NOW[Today: one pipe for everything]
+        direction TB
+        N1[Session status<br/>deploy state, commit hashes] --> P1((Refinement gate))
+        N2[Real lessons<br/>why an error keeps happening] --> P1
+        P1 --> M1[Memory notes<br/>rewritten again and again]
+    end
+    subgraph GOAL[Goal: two lanes]
+        direction TB
+        S1[Session status] --> L1[Short session note<br/>one per task, replaced in place]
+        S2[Repeated errors and real lessons] --> L2((Learning loop<br/>with measurement))
+        L2 --> L3[Prompt notes, skills, shared memories]
+    end
+    NOW ==> GOAL
+    style NOW fill:#fff1f1,stroke:#d64545,color:#111
+    style GOAL fill:#effaf2,stroke:#2f9e5b,color:#111

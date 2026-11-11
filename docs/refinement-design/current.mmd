@@ -1,0 +1,11 @@
+flowchart TB
+    A([Agent works in a session]):::start --> B[A trigger fires<br/>compaction, timer or repeated error]
+    B --> C[Planner drafts edits<br/><b>158 of 159 accepted edits are notes</b>]
+    C --> D{Judge scores 0 to 100<br/>pass if within 10 of the best ever}
+    D -->|pass| E[Saved as a note<br/>mostly for one session]
+    D -->|fail| F[Dropped<br/>score and bar not shown]
+    E --> A
+    F --> A
+    E -.-> G[/No check that the error<br/>stopped coming back/]:::gap
+    classDef start fill:#e8f1ff,stroke:#3b6fd4,color:#111
+    classDef gap fill:#ffe3e3,stroke:#d64545,color:#7a1c1c,stroke-dasharray: 5 3

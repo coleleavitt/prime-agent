@@ -1,0 +1,20 @@
+---
+title: Every session makes the next one better
+---
+flowchart LR
+    A(["<b>1. Work</b><br/>The agent runs the session<br/>with the user"]):::work
+    B(["<b>2. Notice</b><br/>It spots what helped<br/>and what went wrong"]):::notice
+    C(["<b>3. Remember</b><br/>Writes the lesson down —<br/>a note, a rule, or a new skill"]):::remember
+    D(["<b>4. Prove it</b><br/>The next session checks:<br/>did the lesson actually help?"]):::prove
+    E(["<b>5. Keep or undo</b><br/>Winning lessons stay.<br/>Lessons that didn't help get reverted."]):::decide
+
+    A --> B --> C --> D --> E
+    E -. starts the next session smarter .-> A
+
+    classDef work      fill:#e8f1ff,stroke:#3b6fd4,color:#111,stroke-width:3px
+    classDef notice    fill:#fff4d6,stroke:#c98a00,color:#111,stroke-width:3px
+    classDef remember  fill:#edf6ea,stroke:#58a339,color:#111,stroke-width:3px
+    classDef prove     fill:#f4ecff,stroke:#8a4bd4,color:#111,stroke-width:3px
+    classDef decide    fill:#ffe9d6,stroke:#d9731f,color:#111,stroke-width:3px
+
+    linkStyle 4 stroke:#3b6fd4,stroke-width:2px,stroke-dasharray:6 4

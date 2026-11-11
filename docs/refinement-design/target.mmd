@@ -1,0 +1,17 @@
+flowchart TB
+    A([Agent works in a session]):::start --> B[Log every error and group the repeats]
+    B --> C[Pick the errors that repeat the most]
+    C --> D[Draft the right fix<br/>prompt note, skill, helper or shared memory]
+    D --> E{Judge with the evidence<br/>one clear bar, score and reason shown}
+    E -->|pass| F[Apply where it helps<br/>all sessions, not one]
+    E -->|fail| G[Explain why, retry with a smaller edit]
+    G --> D
+    F --> H{Measure: did the error come back<br/>in the next sessions?}:::new
+    H -->|gone| I[Keep the fix and raise the bar]:::good
+    H -->|still there| J[Revert or try a stronger fix]:::warn
+    I --> A
+    J --> D
+    classDef start fill:#e8f1ff,stroke:#3b6fd4,color:#111
+    classDef new fill:#fff4d6,stroke:#c98a00,color:#111
+    classDef good fill:#e3f7e8,stroke:#2f9e5b,color:#111
+    classDef warn fill:#ffe9d6,stroke:#d9731f,color:#111
