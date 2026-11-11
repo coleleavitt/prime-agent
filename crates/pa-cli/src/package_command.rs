@@ -372,7 +372,7 @@ fn print_package_command_help(command: PackageCommand) {
             "Usage:\n  {usage}\n\nUpdate {APP_NAME} or installed packages.\n\nOptions:\n  --self                  Update {APP_NAME} only\n  --extensions            Update installed packages only\n  --extension <source>    Update one package only\n  --force                 Reinstall {APP_NAME} even if the current version is latest\n  --rollback              Restore the previous compiled release\n  --nightly               Switch updates to the nightly channel (unreleased builds, may be broken)\n  --stable                Return updates to the stable channel\n  --daemon-socket <path>  Restart the daemon listening on this exact socket\n\nCommands:\n  {APP_NAME} update                Update {APP_NAME}\n  {APP_NAME} package update        Update installed packages\n  {APP_NAME} package update <source> Update one package\n"
         ),
         PackageCommand::List => {
-            println!("Usage:\n  {usage}\n\nList active packages from user settings.\n")
+            println!("Usage:\n  {usage}\n\nList active packages from user settings.\n");
         }
     }
 }

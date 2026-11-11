@@ -1084,12 +1084,12 @@ async fn a_length_auto_continue_counts_on_session_end() {
     assert_eq!(ended[0]["length_continuation_count"], serde_json::json!(1));
 }
 
-/// The workspace-trust gate covers the host-owned MCP sessions: an untrusted
-/// project's `mcpServers` never reach them (the command never runs), and
-/// trusting the workspace admits the entry.
+/// A project's `mcpServers` never reach the host-owned MCP sessions (the
+/// command never runs), untrusted or trusted: repository settings cannot
+/// declare an MCP server (upstream #3907).
 #[cfg(unix)]
 #[tokio::test]
-async fn an_untrusted_project_mcp_server_never_starts() {
+async fn a_project_settings_mcp_server_never_starts() {
     let model = pa_agent::types::Model {
         id: "m".into(),
         name: "m".into(),
@@ -1161,13 +1161,10 @@ async fn an_untrusted_project_mcp_server_never_starts() {
     )
     .unwrap();
     let trusted = call_evil(engine(model).await.unwrap()).await;
-    // Admitted: the command ran (it is no MCP server, so its startup fails).
-    assert_eq!(
-        trusted["error"]["type"],
-        serde_json::json!("McpStartupError"),
-        "{trusted}"
-    );
-    assert!(marker.exists());
+    // Trust does not admit it either: a repository's settings never declare
+    // an MCP server (upstream #3907); `.mcp.json` is the project route.
+    assert_eq!(trusted, untrusted);
+    assert!(!marker.exists());
 }
 
 /// A daemon-shaped resume: an in-memory session manager (the daemon's

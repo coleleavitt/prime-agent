@@ -3164,6 +3164,51 @@ pub struct FactoryKernelPython {
     pub python_path: Option<String>,
 }
 
+impl FactoryKernelPython {
+    /// The interpreter to pin as `PRIME_AGENT_KERNEL_PYTHON`. The kernel
+    /// spawn drops an inherited `PYTHONPATH` (repository paths must not reach
+    /// interpreter startup), so a candidate that needs one runs through a
+    /// wrapper in `dir` that sets it for the kernel alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the wrapper cannot be written.
+    pub fn kernel_interpreter(&self, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        let Some(python_path) = &self.python_path else {
+            return Ok(self.python.clone());
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+            let wrapper = dir.join("kernel-python-with-path");
+            std::fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/sh\nexport PYTHONPATH={}\nexec {} \"$@\"\n",
+                    quote(python_path),
+                    quote(&self.python.to_string_lossy())
+                ),
+            )?;
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700))?;
+            Ok(wrapper)
+        }
+        #[cfg(not(unix))]
+        {
+            let wrapper = dir.join("kernel-python-with-path.cmd");
+            std::fs::write(
+                &wrapper,
+                format!(
+                    "@echo off\r\nset \"PYTHONPATH={}\"\r\n\"{}\" %*\r\n",
+                    python_path.replace('%', "%%"),
+                    self.python.to_string_lossy().replace('%', "%%")
+                ),
+            )?;
+            Ok(wrapper)
+        }
+    }
+}
+
 /// The imports a factory-capable kernel needs: the runtime (with
 /// `rlm.factory`, this branch's addition) plus the kernel's default
 /// packages.

@@ -603,10 +603,10 @@ fn spawn_supervisor(
             "15000",
         );
     if let Some(kernel) = kernel {
-        command.env("PRIME_AGENT_KERNEL_PYTHON", &kernel.python);
-        if let Some(path) = &kernel.python_path {
-            command.env("PYTHONPATH", path);
-        }
+        let python = kernel
+            .kernel_interpreter(harness_dir)
+            .expect("write the kernel python wrapper");
+        command.env("PRIME_AGENT_KERNEL_PYTHON", python);
     }
     let child = command.spawn().expect("spawn pa-daemon supervisor");
     let deadline = Instant::now() + Duration::from_secs(10);

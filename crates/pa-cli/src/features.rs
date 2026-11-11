@@ -149,8 +149,11 @@ pub fn install_enabled_features() -> InstalledFeatures {
     pa_hooks::worktree::install();
     install_credential_sources();
     install_tui_features();
+    // Without an agent dir nothing here may read settings or open the log:
+    // the command boundary reports the missing home (`require_agent_dir`).
+    let has_agent_dir = crate::config::require_agent_dir().is_ok();
     // Install refusal hooks if enabled in settings.
-    if let Ok(cwd) = std::env::current_dir() {
+    if let (true, Ok(cwd)) = (has_agent_dir, std::env::current_dir()) {
         let settings =
             pa_core::settings::SettingsManager::create(&cwd, crate::config::get_agent_dir());
         install_refusal_hooks(&settings);
@@ -163,11 +166,15 @@ pub fn install_enabled_features() -> InstalledFeatures {
         index
     };
     #[cfg(feature = "trace")]
-    let trace = pa_trace::install(pa_trace::RecorderConfig::from_env(
-        trace_log_path(),
-        crate::config::VERSION,
-    ))
-    .ok();
+    let trace = has_agent_dir
+        .then(|| {
+            pa_trace::install(pa_trace::RecorderConfig::from_env(
+                trace_log_path(),
+                crate::config::VERSION,
+            ))
+            .ok()
+        })
+        .flatten();
     #[cfg(feature = "trace")]
     install_crash_record(trace.clone());
     InstalledFeatures {

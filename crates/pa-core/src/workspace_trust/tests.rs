@@ -112,20 +112,24 @@ fn untrusted_project_settings_keep_only_the_safe_keys() {
 }
 
 #[test]
-fn trusting_the_workspace_applies_its_project_settings() {
+fn trusting_the_workspace_applies_its_project_settings_except_executable_ones() {
     let fixture = Fixture::new();
-    fixture.write_settings(&risky_settings());
+    let mut project = risky_settings();
+    project["prompts"] = serde_json::json!(["team-prompts"]);
+    fixture.write_settings(&project);
 
-    assert_eq!(
-        fixture.trust(),
-        status(&fixture.cwd, TrustState::Trusted, vec![risky_keys()])
-    );
+    assert_eq!(fixture.trust().state, TrustState::Trusted);
     let settings = fixture.settings();
     assert!(settings.project_scope_trusted());
     let effective = settings.settings();
-    assert_eq!(effective.shell_path.as_deref(), Some("/tmp/evil-shell"));
-    assert_eq!(effective.npm_command, Some(vec!["evil-npm".to_string()]));
-    assert!(effective.mcp_servers.as_ref().unwrap().contains_key("evil"));
+    assert_eq!(effective.prompts, Some(vec!["team-prompts".to_string()]));
+    // Trust never lets a repository select an executable, a command
+    // prefix, a package, or an MCP server (upstream #3907).
+    assert_eq!(effective.shell_path, None);
+    assert_eq!(effective.shell_command_prefix, None);
+    assert_eq!(effective.npm_command, None);
+    assert!(effective.mcp_servers.is_none());
+    assert_eq!(effective.packages, None);
 }
 
 #[test]
@@ -416,10 +420,12 @@ fn untrusted_project_writes_are_refused_and_trusted_writes_keep_trust() {
     trusted.set_project_packages(vec![serde_json::json!("npm:other")]);
     assert_eq!(trusted.errors().len(), 0, "{:?}", trusted.errors());
     assert_eq!(fixture.evaluate().state, TrustState::Trusted);
-    assert_eq!(
-        fixture.settings().settings().packages,
-        Some(vec![serde_json::json!("npm:other")])
-    );
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fixture.project_file("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(on_disk["packages"], serde_json::json!(["npm:other"]));
+    // The written entry stays inert: project packages never activate (upstream #3907).
+    assert_eq!(fixture.settings().settings().packages, None);
 }
 
 #[test]
@@ -502,13 +508,20 @@ fn untrusted_project_python_skills_never_reach_the_kernel() {
     );
     assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
 
+    // Trust loads their instructions, never their code: a repository's
+    // Python skills stay Markdown-only (upstream #3907).
     fixture.trust();
-    let mut imports = kernel_imports(&fixture);
-    imports.sort();
-    assert_eq!(
-        imports,
-        vec!["agents_tool".to_string(), "repo_tool".to_string()]
-    );
+    let resources =
+        load_resources(ResourceLoaderOptions::new(&fixture.cwd, &fixture.agent_dir)).unwrap();
+    for name in ["repo-tool", "agents-tool"] {
+        let skill = resources
+            .skills
+            .iter()
+            .find(|skill| skill.name == name)
+            .unwrap();
+        assert_eq!(skill.kind, crate::skills::SkillKind::Markdown);
+    }
+    assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
 }
 
 #[test]
@@ -568,7 +581,8 @@ fn project_skills_named_by_settings_are_gated_with_their_content() {
     );
     assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
     fixture.trust();
-    assert_eq!(kernel_imports(&fixture), vec!["linked_tool".to_string()]);
+    // Trusted, the linked skill loads as instructions only (upstream #3907).
+    assert_eq!(kernel_imports(&fixture), Vec::<String>::new());
 
     write_python_skill(&fixture.cwd.join("tools"), "linked-tool", "VALUE = 2\n");
     assert_eq!(fixture.evaluate().state, TrustState::Changed);

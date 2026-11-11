@@ -276,10 +276,10 @@ fn spawn_supervisor(
             "15000",
         );
     if let Some(kernel) = kernel {
-        command.env("PRIME_AGENT_KERNEL_PYTHON", &kernel.python);
-        if let Some(path) = &kernel.python_path {
-            command.env("PYTHONPATH", path);
-        }
+        let python = kernel
+            .kernel_interpreter(harness_dir)
+            .map_err(|error| format!("write the kernel python wrapper: {error}"))?;
+        command.env("PRIME_AGENT_KERNEL_PYTHON", python);
     }
     let mut child = command
         .spawn()
