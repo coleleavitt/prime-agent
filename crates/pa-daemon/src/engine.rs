@@ -259,7 +259,7 @@ pub trait SessionEngine: Send + Sync {
         None
     }
 
-    /// Context window (tokens) of the engine's resolved model, when known.
+    /// Context window (tokens) of the model serving the session, when known.
     /// Drives the `contextUsage` estimate in `get_session_stats`.
     fn model_context_window(&self) -> Option<u64> {
         None

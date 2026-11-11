@@ -273,7 +273,11 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     fn model_context_window(&self) -> Option<u64> {
-        self.resolve_model().ok().map(|model| model.context_window)
+        // The serving model, as the threshold compaction reads it (TS
+        // `getSessionStats` reads the session's live model): a fresh
+        // resolution re-reads models.json, and an edit there would show a
+        // window the running session does not compact against.
+        self.session_model().ok().map(|model| model.context_window)
     }
 
     fn sandbox(&self) -> Option<pa_core::os_sandbox::SessionSandbox> {

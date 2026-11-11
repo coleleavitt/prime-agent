@@ -1713,3 +1713,76 @@ fn an_explicit_scope_with_no_matches_does_not_warn_about_an_excluded_default() {
         "explicitly excluded defaults do not imply an unavailable-model fallback"
     );
 }
+
+/// The stats window is the serving model's: a models.json edit after the
+/// session built must not move the tray's window away from the one the
+/// running session compacts against.
+#[test]
+fn the_stats_window_stays_on_the_serving_model_after_a_models_json_edit() {
+    let _faux = FAUX_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::TempDir::new().unwrap();
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let parsed = pa_ai::faux::script::parse_faux_script(&serde_json::json!({
+        "responses": [{ "text": "built" }],
+    }))
+    .expect("faux script parses");
+    let _registration = pa_ai::faux::script::register_faux_provider_from_script(&parsed);
+    let write_models = |context_window: u64| {
+        std::fs::write(
+            agent_dir.join("models.json"),
+            serde_json::json!({
+                "providers": {
+                    "faux": {
+                        "api": "faux",
+                        "baseUrl": "http://localhost:0",
+                        "apiKey": "sk-faux",
+                        "models": [{
+                            "id": "faux-1",
+                            "name": "Faux Model",
+                            "contextWindow": context_window,
+                            "maxTokens": 8192,
+                        }],
+                    },
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+    };
+    write_models(131_072);
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        serde_json::json!({ "defaultProvider": "faux", "defaultModel": "faux-1" }).to_string(),
+    )
+    .unwrap();
+    let engine = AgentSessionEngine::new(AgentEngineConfig {
+        cwd: dir.path().to_path_buf(),
+        agent_dir: agent_dir.clone(),
+        provider: None,
+        model: None,
+        api_key: None,
+        thinking: None,
+        session_dir: None,
+        session_file: None,
+        faux_script: None,
+        supervisor_link: None,
+        telemetry_disabled: None,
+        cron_store: None,
+        queued_steering_probe: None,
+        steering_fold: None,
+    })
+    .unwrap();
+    admit(&engine, "build the session".to_string(), &mut Vec::new());
+    write_models(1_048_576);
+    assert_eq!(
+        (
+            engine.session_model().unwrap().context_window,
+            engine.model_context_window(),
+        ),
+        (131_072, Some(131_072)),
+        "the stats window follows the serving model"
+    );
+}
