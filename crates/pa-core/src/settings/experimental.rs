@@ -1,5 +1,8 @@
-//! `experimental`: Claude Code's unreleased (flag-gated) behaviors, each OFF
-//! unless its setting or environment variable turns it on.
+//! `experimental`: Claude Code's flag-gated behaviors. Most ship OFF unless
+//! their setting or environment variable turns them on; the three CC
+//! defaults-on knobs (`usageLimitWrapUp`, `idleCompaction`,
+//! `modelProposedGoals`) match CC's shape and can be turned off through
+//! the same keys / env vars.
 //!
 //! The settings document carries them in one `experimental` object (read
 //! from the merged document's unknown keys, so the typed [`Settings`] stays
@@ -190,12 +193,17 @@ pub struct ExperimentalSettings {
 impl Default for ExperimentalSettings {
     fn default() -> Self {
         Self {
-            usage_limit_wrap_up: false,
+            // Claude Code 2.1.31x defaults for the "while gone" / idle
+            // memory surfaces: `usageLimitWrapUp`, `idleCompaction`, and
+            // `modelProposedGoals` ship on there (consumers gate via
+            // `flag_default_on`), and prime-agent matches the default.
+            // Per-knob env vars + the JSON key still turn them off.
+            usage_limit_wrap_up: true,
             usage_limit_wrap_up_threshold: DEFAULT_USAGE_LIMIT_WRAP_UP_THRESHOLD,
             goal_evaluator: false,
             goal_evaluator_model: None,
-            model_proposed_goals: false,
-            idle_compaction: false,
+            model_proposed_goals: true,
+            idle_compaction: true,
             idle_compaction_after_ms: DEFAULT_IDLE_COMPACTION_MINUTES * 60_000,
             idle_compaction_min_tokens: DEFAULT_IDLE_COMPACTION_MIN_TOKENS,
             observer: false,
@@ -210,7 +218,13 @@ impl Default for ExperimentalSettings {
             brief_mode: false,
             autocompact_offer: false,
             multi_vote_refine: false,
-            auto_refine_recurrence_probe: false,
+            // The probe is purely observational (INFO logs + the
+            // `observedRecurrences` counter), so keeping it on by default
+            // costs nothing and surfaces when accepted refinements fail to
+            // prevent the recurrences they claim to. The destructive revert
+            // and apply flags stay off — they only engage when the operator
+            // trusts the revert plan.
+            auto_refine_recurrence_probe: true,
             per_turn_memory: false,
             show_turn_duration: true,
         }
@@ -299,12 +313,15 @@ impl ExperimentalSettings {
                 tokens.max(MIN_IDLE_COMPACTION_MIN_TOKENS)
             });
         Self {
-            usage_limit_wrap_up: flag("usageLimitWrapUp", USAGE_LIMIT_WRAP_UP_ENV),
+            usage_limit_wrap_up: flag_default_on("usageLimitWrapUp", USAGE_LIMIT_WRAP_UP_ENV),
             usage_limit_wrap_up_threshold: threshold,
             goal_evaluator: flag("goalEvaluator", GOAL_EVALUATOR_ENV),
             goal_evaluator_model: non_empty(get("goalEvaluatorModel")),
-            model_proposed_goals: flag("modelProposedGoals", MODEL_PROPOSED_GOALS_ENV),
-            idle_compaction: flag("idleCompaction", IDLE_COMPACTION_ENV),
+            model_proposed_goals: flag_default_on(
+                "modelProposedGoals",
+                MODEL_PROPOSED_GOALS_ENV,
+            ),
+            idle_compaction: flag_default_on("idleCompaction", IDLE_COMPACTION_ENV),
             idle_compaction_after_ms: idle_after_ms,
             idle_compaction_min_tokens: idle_min_tokens,
             observer: flag("observer", OBSERVER_ENV),
@@ -334,7 +351,7 @@ impl ExperimentalSettings {
             brief_mode: flag("briefMode", BRIEF_MODE_ENV),
             autocompact_offer: flag("autocompactOffer", AUTOCOMPACT_OFFER_ENV),
             multi_vote_refine: flag("multiVoteRefine", MULTI_VOTE_REFINE_ENV),
-            auto_refine_recurrence_probe: flag(
+            auto_refine_recurrence_probe: flag_default_on(
                 "autoRefineRecurrenceProbe",
                 AUTO_REFINE_RECURRENCE_PROBE_ENV,
             ),
@@ -421,11 +438,45 @@ mod tests {
     }
 
     #[test]
-    fn everything_is_off_without_the_object_or_the_environment() {
-        assert_eq!(
-            ExperimentalSettings::resolve(None, &env_of(&[])),
-            ExperimentalSettings::default()
+    fn claude_codes_defaults_on_match_without_the_object_or_the_environment() {
+        let resolved = ExperimentalSettings::resolve(None, &env_of(&[]));
+        assert_eq!(resolved, ExperimentalSettings::default());
+        // Guard the CC defaults-on trio from silent regression.
+        assert!(resolved.usage_limit_wrap_up);
+        assert!(resolved.idle_compaction);
+        assert!(resolved.model_proposed_goals);
+        assert!(resolved.show_turn_duration);
+    }
+
+    #[test]
+    fn env_turns_claude_codes_defaults_on_off() {
+        let resolved = ExperimentalSettings::resolve(
+            None,
+            &env_of(&[
+                (USAGE_LIMIT_WRAP_UP_ENV, "0"),
+                (IDLE_COMPACTION_ENV, "off"),
+                (MODEL_PROPOSED_GOALS_ENV, "false"),
+            ]),
         );
+        assert!(!resolved.usage_limit_wrap_up);
+        assert!(!resolved.idle_compaction);
+        assert!(!resolved.model_proposed_goals);
+        // The other flags stay at their defaults.
+        assert!(!resolved.goal_evaluator);
+        assert!(resolved.show_turn_duration);
+    }
+
+    #[test]
+    fn json_object_turns_claude_codes_defaults_on_off() {
+        let object = serde_json::json!({
+            "usageLimitWrapUp": false,
+            "idleCompaction": false,
+            "modelProposedGoals": false,
+        });
+        let resolved = ExperimentalSettings::resolve(Some(&object), &env_of(&[]));
+        assert!(!resolved.usage_limit_wrap_up);
+        assert!(!resolved.idle_compaction);
+        assert!(!resolved.model_proposed_goals);
     }
 
     #[test]
