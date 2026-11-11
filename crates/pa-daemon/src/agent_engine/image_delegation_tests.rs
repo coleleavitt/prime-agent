@@ -127,7 +127,7 @@ fn stripped_custom_row_keeps_text_and_drops_images() {
 pub(crate) fn delegating_engine_with_socket(
     dir: &std::path::Path,
     socket: &std::path::Path,
-) -> crate::agent_engine::AgentSessionEngine {
+) -> std::sync::Arc<crate::agent_engine::AgentSessionEngine> {
     delegating_engine_with_settings(
         dir,
         socket,
@@ -140,7 +140,7 @@ pub(crate) fn delegating_engine_with_settings(
     dir: &std::path::Path,
     socket: &std::path::Path,
     settings: &serde_json::Value,
-) -> crate::agent_engine::AgentSessionEngine {
+) -> std::sync::Arc<crate::agent_engine::AgentSessionEngine> {
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     std::fs::write(
@@ -202,10 +202,16 @@ pub(crate) fn delegating_engine_with_settings(
         api_key: None,
         thinking: None,
     });
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     engine
 }
 
-fn delegating_engine(dir: &std::path::Path) -> crate::agent_engine::AgentSessionEngine {
+fn delegating_engine(
+    dir: &std::path::Path,
+) -> std::sync::Arc<crate::agent_engine::AgentSessionEngine> {
     delegating_engine_with_socket(dir, &dir.join("no-such-supervisor.sock"))
 }
 

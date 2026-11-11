@@ -47,7 +47,11 @@ impl EngineGuestExecutor {
     pub fn new(config: AgentEngineConfig, model_label: Option<String>) -> anyhow::Result<Self> {
         let cwd = config.cwd.display().to_string();
         let engine = if config.faux_script.is_some() {
-            Some(Arc::new(AgentSessionEngine::new(config)?))
+            let engine = Arc::new(AgentSessionEngine::new(config)?);
+            // The live-auth resolver upgrades the engine's own arc per
+            // provider call, as the worker registers it.
+            engine.register_arc();
+            Some(engine)
         } else {
             None
         };

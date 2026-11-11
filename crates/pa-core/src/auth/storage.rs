@@ -53,8 +53,9 @@ pub trait AuthStorageBackend: Send + Sync {
 
     /// # Errors
     ///
-    /// Returns an error when the backend fails to lock, the `update` callback fails, or writing the
-    /// document fails; an unreadable file reaches the callback as `None`.
+    /// Returns an error when the backend fails to lock, the document read
+    /// fails, the `update` callback fails, or writing the document fails; a
+    /// file that is genuinely absent reaches the callback as `None`.
     fn with_lock(
         &self,
         update: &mut dyn FnMut(Option<String>) -> Result<((), Option<String>)>,
@@ -337,7 +338,15 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         // so re-stat for the identity that pairs with this read.
         let now_identity = self.current_identity();
         let guard = self.acquire_lock()?;
-        let content = fs::read_to_string(&self.auth_path).ok();
+        // TS `withLock` reads through `readFileSync` and propagates its
+        // failures (auth-storage.ts:203): an unreadable document is an
+        // ERROR, never an empty store — a failed read is not a logout.
+        // Only a file that is genuinely absent reads as `None`.
+        let content = if self.auth_path.exists() {
+            Some(fs::read_to_string(&self.auth_path)?)
+        } else {
+            None
+        };
         drop(guard);
         self.remember(now_identity);
         if let (Some(identity), Some(content)) = (now_identity, content.as_deref()) {
@@ -364,7 +373,14 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         self.ensure_file_exists()?;
         let guard = self.acquire_lock()?;
         let identity_before_read = self.current_identity();
-        let current = fs::read_to_string(&self.auth_path).ok();
+        // The TS read arm: `readFileSync` failures propagate
+        // (auth-storage.ts:246), only a genuinely absent file reads as
+        // `None`.
+        let current = if self.auth_path.exists() {
+            Some(fs::read_to_string(&self.auth_path)?)
+        } else {
+            None
+        };
         let ((), next) = update(current)?;
         if let Some(next) = next {
             super::super::settings::storage::atomic_write_with(

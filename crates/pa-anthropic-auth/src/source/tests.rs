@@ -47,6 +47,7 @@ fn served(api_key: &str) -> ResolvedRequestAuth {
         headers: None,
         error: None,
         oauth_refresh_failed: false,
+        request_model: None,
     }
 }
 
@@ -139,6 +140,7 @@ fn a_refresh_failure_is_the_oauth_authentication_error() {
             headers: None,
             error: Some(pa_core::auth::oauth_refresh_failed_message(provider)),
             oauth_refresh_failed: true,
+            request_model: None,
         }
     );
     assert_eq!(hits.load(Ordering::SeqCst), 1);

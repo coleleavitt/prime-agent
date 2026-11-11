@@ -134,7 +134,7 @@ impl AgentSessionEngine {
             *self.auto_compaction_abort.lock_or_recover() =
                 Some(std::sync::Arc::clone(&controller));
         }
-        let api_key = self.resolve_request_api_key(&model);
+        let (model, api_key) = self.resolve_request_target(model);
         // The lock covers the clone only; the summarizer call below must not ride it.
         let engine = self.session.blocking_lock().clone();
         let Some(engine) = engine else {

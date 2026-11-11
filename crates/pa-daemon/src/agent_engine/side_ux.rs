@@ -66,7 +66,7 @@ impl AgentSessionEngine {
         let agent_dir = self.config.agent_dir.clone();
         // For `MemoryExtract`: the refinement run reuses the session's
         // own model + api key, same as compaction's auto-refine path.
-        let session_api_key = self.resolve_request_api_key(&model);
+        let (_, session_api_key) = self.resolve_request_target(model.clone());
         let outcome = self.runtime.block_on(async {
             let side = || async {
                 let session_model = agent.state().await.model;

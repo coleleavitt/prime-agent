@@ -8,6 +8,7 @@
 use super::{
     AuthApiKeyResult,
     AuthCredential,
+    AuthSourceCandidate,
     AuthStorage,
     OAuthRefreshError,
     PRIME_INFERENCE_PROVIDER_ID,
@@ -122,7 +123,9 @@ impl AuthStorage {
             .credential(provider_id)
             .filter(|_| directory_candidate.is_none())
         {
-            if let Some(candidate) = self.stored_candidate(provider_id) {
+            if let Some(candidate) =
+                self.stored_candidate(provider_id, /*resolved_command_value*/ None)
+            {
                 if !self.is_stale(provider_id, &candidate) {
                     match &credential {
                         AuthCredential::ApiKey { key, .. } => {
@@ -133,6 +136,24 @@ impl AuthStorage {
                             } else {
                                 resolve_config_value(key)
                             };
+                            // The source token reuses the value this lookup
+                            // just resolved (TS's `resolvedCommandValue`):
+                            // a command key resolves once per lookup, never
+                            // again through the candidate's lazy fingerprint.
+                            // A FAILED resolution produced no value: the
+                            // deferred fingerprint is dropped too — the
+                            // source token is None either way, and a failed
+                            // command still retries once per lookup (TS
+                            // #2497), not twice.
+                            let candidate = api_key
+                                .as_deref()
+                                .and_then(|resolved| {
+                                    self.stored_candidate(provider_id, Some(resolved))
+                                })
+                                .unwrap_or_else(|| AuthSourceCandidate {
+                                    resolve_value_fingerprint: None,
+                                    ..candidate.clone()
+                                });
                             return AuthApiKeyResult {
                                 api_key,
                                 source_token: Self::token_for(provider_id, &candidate),
@@ -147,7 +168,10 @@ impl AuthStorage {
                                 .map_or(i64::MAX, |d| d.as_millis() as i64);
                             if now_ms >= *expires {
                                 if let Some(refreshed) = self.refresh_oauth(provider_id) {
-                                    let candidate = self.stored_candidate(provider_id);
+                                    let candidate = self.stored_candidate(
+                                        provider_id,
+                                        /*resolved_command_value*/ None,
+                                    );
                                     return AuthApiKeyResult {
                                         api_key: self.oauth.api_key_for(provider_id, &refreshed),
                                         source_token: candidate
@@ -233,6 +257,18 @@ impl AuthStorage {
             .api_key
     }
 
+    /// The stored OAuth credential when it is fresh — a peer's completed
+    /// refresh or a concurrent `/login` — else `None` (the expired
+    /// credential stays stored for a later retry).
+    fn stored_unexpired_credential(&self, provider_id: &str) -> Option<AuthCredential> {
+        self.data.credential(provider_id).filter(|credential| {
+            matches!(
+                credential,
+                AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
+            )
+        })
+    }
+
     /// Refresh an expired OAuth credential, returning the new credential on success.
     ///
     /// Load-then-lock shape: the token fetch never runs under the document lock
@@ -246,29 +282,32 @@ impl AuthStorage {
     ///    a waiter admitted before the new credential is written would re-check, still
     ///    read the expired one, and spend the single-use refresh token a second time.
     /// 3. FETCH: the expiry re-checked under the claim (a released holder wrote a fresh
-    ///    credential), then the token call outside the document lock.
+    ///    credential; a failed re-read fails closed), then the token call outside the
+    ///    document lock.
     /// 4. WRITE: the locked read-modify-write, holding the lock only for the re-read,
     ///    insert, and atomic write. A peer that refreshed meanwhile keeps its fresher
-    ///    credential. A failed write still returns the fetched credential: the
+    ///    credential, and the commit lands only while the document still holds the
+    ///    entry this refresh rotated: a logout or a new login that landed during the
+    ///    fetch is never overwritten or resurrected by the fetched grant. A failed write still returns the fetched credential: the
     ///    provider rotated the refresh token, so the stored one is dead. The backend
     ///    keeps it (taking over the claim) until a retried save lands it, and every
     ///    phase above reads the document with kept refreshes laid over it.
     fn refresh_oauth(&mut self, provider_id: &str) -> Option<AuthCredential> {
         // LOAD: no document lock.
         let Ok(content) = self.storage.read() else {
-            // A failed read: reload, then serve the stored credential.
+            // A failed read: reload, then serve only a CURRENT credential.
+            // A reload that fails too keeps the last read's data (TS
+            // `reload` catches the error and leaves `this.data`), and that
+            // in-memory copy may be the very credential this refresh set
+            // out to rotate — expired. Serving it would stream a known
+            // stale token; TS's catch path returns nothing and lets the
+            // environment/fallback arms serve instead.
             self.reload();
-            return self
-                .data
-                .credential(provider_id)
-                .filter(|c| matches!(c, AuthCredential::Oauth { .. }));
+            return self.stored_unexpired_credential(provider_id);
         };
         let Ok(mut data) = parse_storage_data(content.as_deref()) else {
             self.reload();
-            return self
-                .data
-                .credential(provider_id)
-                .filter(|c| matches!(c, AuthCredential::Oauth { .. }));
+            return self.stored_unexpired_credential(provider_id);
         };
         self.overlay_unsaved_refreshes(&mut data);
         let Some(credential) = data.credential(provider_id) else {
@@ -297,25 +336,30 @@ impl AuthStorage {
                     "the OAuth refresh claim was not granted"
                 );
                 self.reload();
-                return self.data.credential(provider_id).filter(|credential| {
-                    matches!(
-                        credential,
-                        AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
-                    )
-                });
+                return self.stored_unexpired_credential(provider_id);
             }
         };
         // FETCH: the previous holder may have just written a fresh credential;
         // re-check before spending a refresh token, and spend the one stored now.
-        let data = self
+        // A failed re-read fails closed: the LOAD-time snapshot may be stale (a
+        // peer can have rotated the single-use token while this waited for the
+        // claim), so no fetch runs on it; only a current unexpired credential
+        // serves.
+        let Some(document) = self
             .storage
             .read()
             .ok()
             .and_then(|content| parse_storage_data(content.as_deref()).ok())
-            .map_or(data, |mut current| {
-                self.overlay_unsaved_refreshes(&mut current);
-                current
-            });
+        else {
+            self.reload();
+            return self.stored_unexpired_credential(provider_id);
+        };
+        // The document entry this refresh rotates: the commit lands only while
+        // the document still holds it, so a logout or a new login that lands
+        // while the (possibly aborted, detached) fetch runs stays authoritative.
+        let rotating = document.credential(provider_id);
+        let mut data = document;
+        self.overlay_unsaved_refreshes(&mut data);
         if let Some(credential) = data.credential(provider_id).filter(|credential| {
             matches!(
                 credential,
@@ -347,29 +391,43 @@ impl AuthStorage {
                     remember_revoked_refresh_token(provider_id, &data);
                 }
                 // Refresh failed: keep credentials for a later retry (a
-                // new login, when revoked); a peer may have refreshed
-                // meanwhile, so reload before failing.
+                // new login, when revoked); a peer or a concurrent `/login`
+                // may have landed a fresh credential, so reload and serve it
+                // before failing.
                 self.reload();
-                return None;
+                return self.stored_unexpired_credential(provider_id);
             }
         };
-        // WRITE: the locked read-modify-write.
-        let mut refreshed: Option<AuthCredential> = Some(new_credential.clone());
+        // WRITE: the locked read-modify-write, guarded by the rotated entry's
+        // identity: the current entry decides whether the fetched grant lands
+        // at all.
+        let mut refreshed: Option<AuthCredential> = None;
         let result = self.storage.with_lock(&mut |current| {
             let mut data = parse_storage_data(current.as_deref())?;
-            if let Some(credential) = data.credential(provider_id).filter(|credential| {
+            let current_credential = data.credential(provider_id);
+            let still_original = current_credential == rotating;
+            if let Some(credential) = current_credential.filter(|credential| {
                 matches!(
                     credential,
                     AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
                 )
             }) {
-                // A peer refreshed while this fetch ran: its fresher
-                // credential stands and this attempt writes nothing.
+                // A peer refreshed or a concurrent `/login` landed a
+                // fresher credential while this fetch ran: it stands and
+                // this attempt writes nothing, serving it instead.
                 refreshed = Some(credential);
+                return Ok(((), None));
+            }
+            if !still_original {
+                // The credential changed while this fetch ran — a logout
+                // removed the grant, a new login replaced it: the current
+                // entry is authoritative and the fetched grant is
+                // discarded, never resurrected over it.
                 return Ok(((), None));
             }
             data.insert(provider_id, &new_credential);
             let content = serde_json::to_string_pretty(&data.0)?;
+            refreshed = Some(new_credential.clone());
             Ok(((), Some(content)))
         });
         if let Err(error) = result {

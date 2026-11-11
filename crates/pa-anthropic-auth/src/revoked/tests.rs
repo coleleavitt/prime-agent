@@ -49,6 +49,7 @@ fn served(api_key: &str) -> ResolvedRequestAuth {
         headers: None,
         error: None,
         oauth_refresh_failed: false,
+        request_model: None,
     }
 }
 

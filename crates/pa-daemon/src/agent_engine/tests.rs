@@ -15,6 +15,7 @@ mod digest_host;
 mod failover_facts;
 mod goal;
 mod harness_dir;
+mod live_auth;
 mod model_resolution;
 mod plan_mode;
 mod quota_park;
@@ -47,7 +48,7 @@ fn bare_engine(dir: &std::path::Path) -> AgentSessionEngine {
 }
 
 /// A settings.json with an explicit compaction reserve (the f14 battery shape).
-fn write_compaction_settings(dir: &std::path::Path, reserve_tokens: u64) {
+pub(crate) fn write_compaction_settings(dir: &std::path::Path, reserve_tokens: u64) {
     std::fs::create_dir_all(dir.join("agent")).unwrap();
     std::fs::write(
         dir.join("agent").join("settings.json"),
@@ -95,7 +96,7 @@ impl Drop for TelemetryOptIn {
 pub(crate) fn faux_engine_with_settings(
     script: &serde_json::Value,
     reserve_tokens: u64,
-) -> (AgentSessionEngine, tempfile::TempDir) {
+) -> (std::sync::Arc<AgentSessionEngine>, tempfile::TempDir) {
     let dir = tempfile::TempDir::new().unwrap();
     write_compaction_settings(dir.path(), reserve_tokens);
     let engine = AgentSessionEngine::new(AgentEngineConfig {
@@ -115,6 +116,10 @@ pub(crate) fn faux_engine_with_settings(
         steering_fold: None,
     })
     .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     (engine, dir)
 }
 

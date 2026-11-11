@@ -34,8 +34,6 @@ impl AgentSessionEngine {
         struct FailoverPrimary {
             model: pa_types::ai::Model,
             thinking_level: pa_agent::types::ThinkingLevel,
-            api_key: Option<String>,
-            headers: Option<std::collections::BTreeMap<String, String>>,
             session_restored: bool,
         }
         let model = match self.resolve_model() {
@@ -140,32 +138,10 @@ impl AgentSessionEngine {
                 };
             }
         };
-        // The serving target's Prime Inference key and team header were
-        // resolved when the session was built (or its model last switched).
-        // Re-resolve them for every turn so a `.prime/context.json` change
-        // mid-session (`prime switch --local`) bills the team the preflight
-        // above just validated, not the one the session started with. The
-        // target keeps its model: only the request auth moves.
-        let serving = self
-            .provider_target
-            .read_or_recover()
-            .as_ref()
-            .map(|target| target.model.clone())
-            .filter(|serving| serving.provider == pa_core::auth::PRIME_INFERENCE_PROVIDER_ID);
-        if let Some(serving) = serving {
-            let (api_key, headers) = self.resolve_request_key_and_headers(&serving);
-            if let Some(target) =
-                self.provider_target
-                    .write_or_recover()
-                    .as_mut()
-                    .filter(|target| {
-                        target.model.provider == serving.provider && target.model.id == serving.id
-                    })
-            {
-                target.api_key = api_key;
-                target.headers = headers;
-            }
-        }
+        // No per-turn request-auth re-resolve: the session stream resolves
+        // request auth on every provider call (the live-auth seam), so a
+        // `.prime/context.json` change mid-session (`prime switch --local`)
+        // bills the team the preflight above just validated.
         // The delivery's cancel flag is consulted at the admission, before
         // the agent run registers: an abort landing in the [pickup,
         // registration] window is otherwise lost. Delivery-scoped by
@@ -267,7 +243,8 @@ impl AgentSessionEngine {
         let owes_answer = matches!(prompt, TurnPrompt::User { .. });
         let settle = move |assistant: pa_agent::types::AssistantMessage| {
             use pa_core::session_engine::provider_retry::{
-                incomplete_reply_failure, incomplete_reply_reason,
+                incomplete_reply_failure,
+                incomplete_reply_reason,
             };
             match incomplete_reply_reason(&assistant, owes_answer, overflow_window) {
                 Some(reason) => incomplete_reply_failure(assistant, reason),
@@ -366,8 +343,6 @@ impl AgentSessionEngine {
                 let Some(FailoverPrimary {
                     model: primary_model,
                     thinking_level,
-                    api_key: primary_api_key,
-                    headers: primary_headers,
                     session_restored,
                 }) = primary
                 else {
@@ -376,18 +351,15 @@ impl AgentSessionEngine {
                 let agent_model = json_round_trip(&primary_model)
                     .ok_or_else(|| anyhow::anyhow!("model conversion failed"))?;
                 {
-                    // The restore serializes with `/reload`'s
-                    // live-input refresh: without this fence a
-                    // reload landing between the restore's
-                    // resolution and its slot write is clobbered
-                    // by the restore's older pair — the lock
-                    // makes whichever runs last leave the newest
-                    // store standing. The whole turn (this
+                    // The restore serializes with the other
+                    // slot writers (`set_model`, the failover
+                    // switch, the image-route apply/clear): the
+                    // lock makes the last writer leave the newest
+                    // target standing. The whole turn (this
                     // closure included) runs on the blocking
                     // pool — the worker parks the turn there
-                    // (`worker/turn.rs`) — so the synchronous
-                    // credential resolution below, OAuth refresh
-                    // and all, never touches an async executor
+                    // (`worker/turn.rs`) — so the slot write
+                    // below never touches an async executor
                     // worker; only a concurrently reloading
                     // session waits on this span.
                     let _reload_serialized = self
@@ -398,17 +370,12 @@ impl AgentSessionEngine {
                     // fenced helper (no provider-slot lock held
                     // across the route read).
                     if !self.install_armed_route_target() {
-                        // The primary's request auth re-resolves at
-                        // restore: a credential rotated (and
-                        // reloaded) during the failover serves from
-                        // the store, never the pre-failover
-                        // capture.
-                        let target = self.restored_primary_target(
-                            &primary_model,
-                            primary_api_key,
-                            primary_headers,
-                        );
-                        *self.provider_target.write().expect("provider target lock") = Some(target);
+                        // The restored target carries the model and
+                        // the tier: the daemon's stream re-resolves
+                        // request auth per provider call, so the
+                        // slot's auth half is write-only here.
+                        let target = self.restored_primary_target(&primary_model);
+                        *self.provider_target.write_or_recover() = Some(target);
                     }
                 }
                 agent.set_model(agent_model).await;
@@ -610,12 +577,9 @@ impl AgentSessionEngine {
                         // Capture the primary state once (TS `_backupModel`), restored when the
                         // successful backup response arrives.
                         if primary.is_none() {
-                            let (api_key, headers) = self.resolve_request_key_and_headers(&model);
                             *primary = Some(FailoverPrimary {
                                 model: model.clone(),
                                 thinking_level: map_thinking_level(self.effective_thinking()),
-                                api_key,
-                                headers,
                                 session_restored: false,
                             });
                         } else if let Some(primary) = primary.as_mut() {
@@ -634,15 +598,12 @@ impl AgentSessionEngine {
                         // The stream's provider target follows the switch (the same slot
                         // `set_model` swaps).
                         {
-                            // The switch's resolve-and-install serializes
-                            // with `/reload`'s live-input refresh — the
-                            // restore path in the sibling callback takes
-                            // the same lock: a reload landing between
-                            // this resolution and its slot write must not
-                            // be clobbered by the switch's older pair. The
-                            // turn runs on the blocking pool, so the
-                            // synchronous resolution never touches an
-                            // async executor worker.
+                            // The switch's install serializes with the
+                            // other slot writers (the restore path in
+                            // the sibling callback takes the same lock):
+                            // the turn runs on the blocking pool, so the
+                            // write never touches an async executor
+                            // worker.
                             let _reload_serialized = self.reload_lock.lock_or_recover();
                             // A routed image episode fails over WITHIN the
                             // routed model (the candidates derive from the
@@ -652,7 +613,6 @@ impl AgentSessionEngine {
                             // to the provider that just failed (#3312). The
                             // routed tier re-clamps for the candidate row, as
                             // the route's resolution clamped it at arm time.
-                            let (api_key, headers) = self.resolve_request_key_and_headers(&next);
                             let session_tier = *self.service_tier.read_or_recover();
                             let routed = self.armed_image_route().is_some();
                             let service_tier = if routed {
@@ -661,11 +621,14 @@ impl AgentSessionEngine {
                                 session_tier
                             };
                             let mut target = self.provider_target.write_or_recover();
+                            // The daemon's stream re-resolves request auth
+                            // per provider call: the slot's auth half is
+                            // write-only here.
                             *target = Some(ProviderTarget {
                                 service_tier,
-                                api_key,
+                                api_key: None,
                                 model: next.clone(),
-                                headers,
+                                headers: None,
                             });
                         }
                         agent.set_model(agent_model).await;

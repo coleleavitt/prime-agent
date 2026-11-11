@@ -31,8 +31,7 @@ fn vision_read_handlers(
     dir: &std::path::Path,
     socket: &std::path::Path,
 ) -> (std::sync::Arc<AgentSessionEngine>, HostRequestHandlers) {
-    let engine = std::sync::Arc::new(delegating_engine_with_socket(dir, socket));
-    engine.register_arc();
+    let engine = delegating_engine_with_socket(dir, socket);
     let mut handlers = HostRequestHandlers::default();
     engine.register_vision_read_host_handler(&mut handlers);
     (engine, handlers)

@@ -42,7 +42,7 @@ impl AuthStorage {
             Ok(((), Some(content)))
         });
         if let Err(error) = result {
-            self.errors.push(error.to_string());
+            self.record_error(&error);
             return false;
         }
         self.reload();

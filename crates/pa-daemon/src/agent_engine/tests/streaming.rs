@@ -80,6 +80,10 @@ fn assistant_updates_stream_live_while_the_turn_runs() {
         steering_fold: None,
     })
     .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     let start = std::time::Instant::now();
     let mut updates: Vec<(std::time::Duration, usize)> = Vec::new();
     engine.run_prompt(
@@ -156,6 +160,10 @@ fn agent_engine_streams_updates_and_final_message() {
         steering_fold: None,
     })
     .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     let mut events: Vec<EngineEvent> = Vec::new();
     engine.run_prompt(
         0,
@@ -225,6 +233,10 @@ fn lazy_build_restores_only_the_pre_admission_prompt_context() {
         steering_fold: None,
     })
     .unwrap();
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     let expected_content = json!([
         { "type": "text", "text": "repeat this exact prompt" },
         { "type": "image", "mimeType": "image/png", "data": "QUJD" },

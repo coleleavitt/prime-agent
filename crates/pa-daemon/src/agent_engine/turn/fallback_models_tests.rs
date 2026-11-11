@@ -32,7 +32,10 @@ fn failure(text: &str) -> pa_ai::faux::FauxResponseStep {
 /// `primary` serves only the session model, `fallback` only the chain's
 /// model: no same-model provider failover exists, so only the chain can
 /// keep the turn alive.
-fn fallback_engine(dir: &std::path::Path, settings: &serde_json::Value) -> AgentSessionEngine {
+fn fallback_engine(
+    dir: &std::path::Path,
+    settings: &serde_json::Value,
+) -> std::sync::Arc<AgentSessionEngine> {
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     let provider = |api: &str, id: &str| {
@@ -81,6 +84,10 @@ fn fallback_engine(dir: &std::path::Path, settings: &serde_json::Value) -> Agent
         api_key: None,
         thinking: None,
     });
+    let engine = std::sync::Arc::new(engine);
+    // The worker registers the engine's own arc: the live-auth resolver
+    // upgrades it per provider call.
+    engine.register_arc();
     engine
 }
 
