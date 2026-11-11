@@ -148,6 +148,10 @@ struct ExecBuffers {
     settled: bool,
     /// Force-aborted after the grace window: the kernel ignored the interrupt.
     force_aborted: bool,
+    /// The auto-background timer fired and the detach frame was written;
+    /// the kernel still returns the cell's result, but the session engine
+    /// sees `auto_backgrounded: true` and surfaces a `[detached]` marker.
+    auto_backgrounded: bool,
 }
 
 pub(crate) struct ActiveExecution {
@@ -195,6 +199,7 @@ impl InternalExecuteResult {
                 duration_ms: started.elapsed().as_millis() as u64,
                 timed_out: false,
                 kernel_unresponsive: false,
+                auto_backgrounded: false,
             },
             done_fields: None,
         }

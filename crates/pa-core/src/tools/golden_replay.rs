@@ -556,6 +556,7 @@ async fn golden_ipython_group_matches_ts() {
                 None
             },
             cell_timeout_ms: None,
+            auto_background_ms: None,
             on_late_sent_agent_message: None,
         };
         let result = ipython::execute_ipython(
@@ -636,6 +637,7 @@ fn golden_schema_group_matches_ts() {
                     }),
                     ui: None,
                     cell_timeout_ms: None,
+                    auto_background_ms: None,
                 },
             ),
             other => panic!("unknown tool {other}"),

@@ -267,6 +267,7 @@ impl Inner {
                 duration_ms: execution.started.elapsed().as_millis() as u64,
                 timed_out: false,
                 kernel_unresponsive: buffers.force_aborted,
+                auto_backgrounded: buffers.auto_backgrounded,
             };
             drop(buffers);
             if let Some(tx) = lock(&execution.result_tx).take() {

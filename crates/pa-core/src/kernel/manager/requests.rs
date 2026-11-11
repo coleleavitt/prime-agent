@@ -443,6 +443,69 @@ impl ReplKernelManager {
             });
         }
 
+        // Auto-background timer (Claude Code's `fHe` setTimeout shape): after
+        // the budget elapses, write one `detach` frame for this request so
+        // the kernel's `_run_guarded` returns "detached" and the cell keeps
+        // running on the event loop in `_detached_bodies`. A cell that cannot
+        // yield to the loop (synchronous blocking work) stays active and the
+        // detach is a no-op there; the hard `cell_timeout_ms` still fires.
+        // Only `Request::Execute` is eligible, and only when the caller is
+        // not synthetic (`internal: false`) — state ops (snapshot/restore,
+        // list_names, mcp_status) have no detach future in the kernel.
+        if execution.request_type == "execute" && !execution.opts.internal {
+            if let Some(ms) = execution.opts.auto_background_ms {
+                if ms > 0 {
+                    let inner = Arc::downgrade(&self.inner);
+                    let weak_exec = Arc::downgrade(&execution);
+                    let budget = Duration::from_millis(ms);
+                    tokio::spawn(async move {
+                        tokio::time::sleep(budget).await;
+                        let Some(execution) = weak_exec.upgrade() else {
+                            return;
+                        };
+                        let Some(inner) = inner.upgrade() else {
+                            return;
+                        };
+                        // Only fire while this execution is still the active
+                        // one; a race where it settled under budget leaves
+                        // nothing to move, and the detach frame on a stale
+                        // request id would target whatever is running next.
+                        let still_active = {
+                            let g = lock(&inner.guarded);
+                            matches!(
+                                g.active_execution.as_ref(),
+                                Some(active) if Arc::ptr_eq(active, &execution)
+                            )
+                        };
+                        if !still_active {
+                            return;
+                        }
+                        let mut frame = Request::Detach.to_json();
+                        frame["id"] = json!(execution.request_id);
+                        // A write failure leaves the cell on the active slot
+                        // for the hard `cell_timeout_ms` to finish (or the
+                        // caller's abort signal): never force the result.
+                        if inner.write_line(&frame).await.is_err() {
+                            return;
+                        }
+                        tracing::info!(
+                            target: "pa_core::kernel::auto_background",
+                            budget_ms = ms,
+                            request_id = %execution.request_id,
+                            "cell auto-backgrounded by wall-clock timer",
+                        );
+                        let g = lock(&inner.guarded);
+                        if let Some(active) = g.active_execution.as_ref() {
+                            if Arc::ptr_eq(active, &execution) {
+                                let mut buffers = lock(&active.buffers);
+                                buffers.auto_backgrounded = true;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
         let mut frame = request.to_json();
         frame["id"] = json!(request_id);
         if let Some(traceparent) = pa_types::trace_context::current_traceparent() {

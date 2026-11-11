@@ -72,6 +72,7 @@ async fn the_validator_client_answers_from_the_host_inside_a_cell() {
             ui: None,
             on_late_sent_agent_message: None,
             cell_timeout_ms: None,
+            auto_background_ms: None,
         },
     );
     // Every validator call is a blocking host request from the loop thread;

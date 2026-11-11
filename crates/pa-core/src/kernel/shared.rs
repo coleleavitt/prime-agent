@@ -388,6 +388,15 @@ pub struct ExecuteResult {
     /// window: the kernel is still busy running it, so the next cell would
     /// find it busy until the process is killed.
     pub kernel_unresponsive: bool,
+    /// The host's auto-background timer fired and wrote a `detach` frame
+    /// for this request (Claude Code's `fHe` timer shape). Whether the
+    /// cell *moved* is distinct: an async cell that yields to the loop
+    /// settles `ok` with the `[Still running...]` result text and keeps
+    /// running in `_detached_bodies`; a synchronous cell cannot yield and
+    /// runs to completion with its own result, so the flag is `true` but
+    /// `result` is normal. Callers who need "cell actually detached"
+    /// check the result text for the `[Still running.` prefix.
+    pub auto_backgrounded: bool,
 }
 
 /// Options for one `execute` call.
@@ -417,6 +426,18 @@ pub struct ExecuteOptions {
     /// the namespace are untouched. `None` and zero disable the watchdog; the
     /// runtime bootstrap never arms it.
     pub cell_timeout_ms: Option<u64>,
+    /// Wall-clock budget after which an async execute cell is moved to the
+    /// background by writing a `detach` frame (Claude Code's `fHe` setTimeout
+    /// shape: default 120s, env `PRIME_AGENT_CELL_AUTO_BACKGROUND_MS`). The
+    /// cell keeps running on the kernel's event loop in `_detached_bodies`
+    /// and settles the request `ok` with a `[detached]` result text; a
+    /// `[cell-done]` notice lands later via `_finish_detached`. A cell that
+    /// cannot yield to the loop (synchronous blocking work) stays on the
+    /// active slot and keeps burning the hard `cell_timeout_ms` instead.
+    /// Only `Request::Execute` is eligible; state ops and `internal`
+    /// executions are never auto-detached. `None` and zero disable the
+    /// timer.
+    pub auto_background_ms: Option<u64>,
 }
 
 /// The error raised when a new cell cannot start because the previously

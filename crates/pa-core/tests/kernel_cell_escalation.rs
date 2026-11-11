@@ -67,6 +67,7 @@ impl Harness {
                 ui: None,
                 on_late_sent_agent_message: None,
                 cell_timeout_ms,
+                auto_background_ms: None,
             },
         );
         Self { _dir: dir, tool }

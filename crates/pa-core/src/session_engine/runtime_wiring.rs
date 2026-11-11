@@ -539,6 +539,7 @@ impl KernelExecutor for KernelManagerExecutor {
         let on_late_sent_agent_message = options.on_late_sent_agent_message;
         let file_access = self.file_access.clone();
         let cell_timeout_ms = self.cell_timeout_ms;
+        let auto_background_ms = options.auto_background_ms;
         Box::pin(async move {
             let result = manager
                 .execute_bounded(
@@ -548,6 +549,7 @@ impl KernelExecutor for KernelManagerExecutor {
                         on_late_sent_agent_message,
                         timeout_excludes_host_requests: true,
                         cell_timeout_ms,
+                        auto_background_ms,
                         ..Default::default()
                     },
                     timeout_ms,
@@ -635,6 +637,7 @@ fn convert_execute_result(
             .collect(),
         timed_out: result.timed_out,
         kernel_unresponsive: result.kernel_unresponsive,
+        auto_backgrounded: result.auto_backgrounded,
         ended_turn: result.ended_turn,
     }
 }
@@ -651,6 +654,11 @@ pub fn ipython_tool_options(
         on_late_sent_agent_message,
         cell_timeout_ms: crate::tools::ipython::resolve_cell_timeout_ms(
             std::env::var(crate::tools::ipython::IPYTHON_CELL_TIMEOUT_ENV)
+                .ok()
+                .as_deref(),
+        ),
+        auto_background_ms: crate::tools::ipython::resolve_cell_auto_background_ms(
+            std::env::var(crate::tools::ipython::CELL_AUTO_BACKGROUND_ENV)
                 .ok()
                 .as_deref(),
         ),

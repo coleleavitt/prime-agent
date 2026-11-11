@@ -77,6 +77,13 @@ pub struct ExecuteResult {
     pub timed_out: bool,
     /// The cell ignored the interrupt: the kernel is still running it.
     pub kernel_unresponsive: bool,
+    /// The host's auto-background timer fired and wrote a `detach` frame.
+    /// For an async cell that yields to the kernel loop, `result` carries
+    /// the `[Still running...]` marker and the cell continues in
+    /// `_detached_bodies`; for a sync-blocked cell, the flag is `true` but
+    /// `result` is the cell's own outcome (the detach was a no-op, and the
+    /// hard `cell_timeout_ms` is the next lever).
+    pub auto_backgrounded: bool,
     /// The cell ended the turn via the sanctioned `rlm.end_turn()` call:
     /// the host marked the execution, and this result terminates the tool
     /// batch (the "turn ended" note on the tool-result text).
@@ -188,6 +195,12 @@ pub struct KernelExecuteOptions<'a> {
     /// (time spent waiting on host requests such as sub-agent runs does not
     /// count). `None` runs unbounded.
     pub timeout_ms: Option<u64>,
+    /// Wall-clock budget after which an async cell is moved to the
+    /// background by writing a `detach` frame (Claude Code's `fHe`
+    /// setTimeout shape). `None` and zero disable the timer. See
+    /// [`DEFAULT_CELL_AUTO_BACKGROUND_MS`] and
+    /// [`CELL_AUTO_BACKGROUND_ENV`].
+    pub auto_background_ms: Option<u64>,
     /// Streams cell output while the cell runs.
     pub on_stream: StreamFn<'a>,
     pub on_late_sent_agent_message: Option<crate::kernel::shared::LateSentAgentMessageCallback>,
@@ -271,6 +284,30 @@ pub fn resolve_cell_timeout_ms(raw: Option<&str>) -> Option<u64> {
         Some(Ok(0)) => None,
         Some(Ok(ms)) => Some(ms),
         Some(Err(_)) | None => Some(DEFAULT_IPYTHON_CELL_TIMEOUT_MS),
+    }
+}
+
+/// The wall-clock budget after which a still-running cell is moved to the
+/// background (Claude Code's `fHe` `setTimeout` default: 120s, see
+/// `chunk-e6aww6q8.js`). Distinct from the hard `cell_timeout_ms`, which
+/// interrupts; this one detaches cooperatively (the cell keeps running on
+/// the kernel's event loop and settles via `[cell-done]`).
+pub const DEFAULT_CELL_AUTO_BACKGROUND_MS: u64 = 120_000;
+
+/// Env override for the per-cell auto-background budget, in milliseconds;
+/// `0` disables the timer (parity with CC's
+/// `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` posture: a main agent with the
+/// var cleared keeps the default; `0` opts out entirely).
+pub const CELL_AUTO_BACKGROUND_ENV: &str = "PRIME_AGENT_CELL_AUTO_BACKGROUND_MS";
+
+/// The per-cell auto-background budget from `raw` (the env value): unset or
+/// unparsable falls back to the default, `0` disables.
+#[must_use]
+pub fn resolve_cell_auto_background_ms(raw: Option<&str>) -> Option<u64> {
+    match raw.map(str::trim).map(str::parse::<u64>) {
+        Some(Ok(0)) => None,
+        Some(Ok(ms)) => Some(ms),
+        Some(Err(_)) | None => Some(DEFAULT_CELL_AUTO_BACKGROUND_MS),
     }
 }
 
@@ -376,6 +413,7 @@ async fn execute_with_busy_kernel_choice(
                 KernelExecuteOptions {
                     signal: execute.signal.clone(),
                     timeout_ms: execute.timeout_ms,
+                    auto_background_ms: execute.auto_background_ms,
                     on_stream: execute.on_stream,
                     on_late_sent_agent_message: execute.on_late_sent_agent_message.clone(),
                 },
@@ -431,6 +469,11 @@ pub struct IpythonToolOptions {
     pub on_late_sent_agent_message: Option<LateSentAgentMessageHandler>,
     /// Per-cell execution timeout in milliseconds; `None` runs unbounded.
     pub cell_timeout_ms: Option<u64>,
+    /// Per-cell auto-background budget in milliseconds; a still-running
+    /// async cell at this age writes a `detach` frame and keeps running on
+    /// the kernel loop. `None` and zero disable the timer. See
+    /// [`DEFAULT_CELL_AUTO_BACKGROUND_MS`] and [`CELL_AUTO_BACKGROUND_ENV`].
+    pub auto_background_ms: Option<u64>,
 }
 
 pub fn ipython_tool_schema() -> serde_json::Value {
@@ -505,6 +548,7 @@ pub async fn execute_ipython(
         KernelExecuteOptions {
             signal,
             timeout_ms: options.cell_timeout_ms,
+            auto_background_ms: options.auto_background_ms,
             on_stream: Some(&stream_update),
             on_late_sent_agent_message,
         },
@@ -906,6 +950,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_auto_background_budget_defaults_to_two_minutes_and_zero_disables_it() {
+        // Claude Code's `fHe` setTimeout default is 120_000 ms; a cleared
+        // env or a garbled value keeps the default, `0` opts out.
+        assert_eq!(
+            [None, Some("45000"), Some(" 0 "), Some("nope")]
+                .map(resolve_cell_auto_background_ms),
+            [Some(120_000), Some(45_000), None, Some(120_000)]
+        );
+    }
+
     /// Serves scripted cell outcomes; a crash outcome "replaces" the
     /// kernel, leaving its exit unreported like the real provisioner.
     struct CrashingProvisioner {
@@ -988,6 +1043,7 @@ mod tests {
             ui: None,
             on_late_sent_agent_message: None,
             cell_timeout_ms: None,
+            auto_background_ms: None,
         };
 
         let crashed = execute_ipython(&options, "import os; os._exit(7)", None, None, None)
