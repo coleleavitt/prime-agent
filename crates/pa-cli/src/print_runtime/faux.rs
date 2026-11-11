@@ -135,7 +135,6 @@ pub(crate) async fn build_faux_engine_with(
         rlm_subagent_host,
         extra_host_handlers,
         rlm_depth,
-        factory_child,
         bash_wake,
         rpc_bash_wake,
         on_late_sent_agent_message,
@@ -177,7 +176,6 @@ pub(crate) async fn build_faux_engine_with(
             progress_note_emit: None,
             factory_notices: None,
             rlm_depth,
-            factory_child,
             daemonless: true,
             model_info: Some(model.clone()),
             // A Rust-only verification harness: no background kernel boot in tests.

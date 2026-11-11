@@ -225,7 +225,6 @@ impl AgentSessionEngine {
             autonomous_queue_purge: std::sync::Mutex::new(None),
             cwd,
             rlm_depth: std::sync::atomic::AtomicU32::new(0),
-            factory_child: std::sync::atomic::AtomicBool::new(false),
             rlm_max_depth_source: std::sync::Mutex::new("default"),
             pending_max_depth: std::sync::Mutex::new(None),
             rlm_token_allowance: std::sync::Mutex::new(None),
@@ -1299,9 +1298,6 @@ impl AgentSessionEngine {
             progress_note_emit,
             factory_notices,
             rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),
-            factory_child: self
-                .factory_child
-                .load(std::sync::atomic::Ordering::Relaxed),
             // The worker session runs under the daemon scheduler and its wake-ups.
             daemonless: false,
             model_info: Some(model.clone()),
