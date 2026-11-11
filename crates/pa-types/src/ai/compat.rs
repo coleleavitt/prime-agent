@@ -32,6 +32,10 @@ pub struct OpenAiCompletionsCompat {
     pub vercel_gateway_routing: Option<VercelGatewayRouting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zai_tool_stream: Option<bool>,
+    /// When true, flatten user message content blocks to plain strings.
+    /// Some OpenAI-compatible endpoints reject the multimodal `[{type: "text", text: "..."}]` format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flatten_content_blocks: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_strict_mode: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

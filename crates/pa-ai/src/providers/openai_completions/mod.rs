@@ -122,6 +122,8 @@ pub struct ResolvedCompat {
     pub send_session_affinity_headers: bool,
     pub supports_long_cache_retention: bool,
     pub zai_tool_stream: bool,
+    /// When true, flatten user message content blocks to plain strings.
+    pub flatten_content_blocks: bool,
     pub open_router_routing: Option<crate::types::OpenRouterRouting>,
     pub vercel_gateway_routing: Option<pa_types::ai::VercelGatewayRouting>,
 }
@@ -198,6 +200,7 @@ pub fn detect_compat(model: &Model) -> ResolvedCompat {
         open_router_routing: None,
         vercel_gateway_routing: None,
         zai_tool_stream: false,
+        flatten_content_blocks: false,
         supports_strict_mode: !is_moonshot && !is_cloudflare_ai_gateway && !is_prime_inference,
         cache_control_format,
         send_session_affinity_headers: false,
@@ -249,6 +252,9 @@ pub fn get_compat(model: &Model) -> ResolvedCompat {
             .clone()
             .or(detected.vercel_gateway_routing),
         zai_tool_stream: compat.zai_tool_stream.unwrap_or(detected.zai_tool_stream),
+        flatten_content_blocks: compat
+            .flatten_content_blocks
+            .unwrap_or(detected.flatten_content_blocks),
         supports_strict_mode: compat
             .supports_strict_mode
             .unwrap_or(detected.supports_strict_mode),

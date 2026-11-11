@@ -71,6 +71,26 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &ResolvedCompa
                     "content": sanitize_surrogates(text),
                 })),
                 UserMessageContent::Blocks(blocks) => {
+                    // Some endpoints reject the multimodal format; flatten to a plain string.
+                    if compat.flatten_content_blocks {
+                        let text: String = blocks
+                            .iter()
+                            .filter_map(|item| match crate::types::user_block_payload(item) {
+                                crate::types::UserBlockPayload::Text(text) => Some(sanitize_surrogates(text)),
+                                crate::types::UserBlockPayload::Opaque(json) => Some(sanitize_surrogates(&json)),
+                                crate::types::UserBlockPayload::Image { .. } => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.is_empty() {
+                            params.push(json!({
+                                "role": "user",
+                                "content": text,
+                            }));
+                        }
+                        index += 1;
+                        continue;
+                    }
                     let content_blocks: Vec<Value> = blocks
                         .iter()
                         .map(|item| match crate::types::user_block_payload(item) {
