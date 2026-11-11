@@ -180,6 +180,10 @@ fn the_authority_decides_like_the_ts_authority() {
                 screen_threshold: input["screenThreshold"].as_u64().unwrap_or(50),
                 epsilon: input["epsilon"].as_u64().unwrap_or(1),
                 deep_tolerance: input["deepTolerance"].as_u64().unwrap_or(0),
+                // TS parity: unclaimed challengers face the global max, and
+                // a judge error rejects instead of admitting unmeasured.
+                scope_unclaimed_bar_to_zero: false,
+                admit_screen_pass_on_judge_error: false,
             },
             failure_opponents: &failure_opponents,
             referee_verdicts: &verdicts,
@@ -348,7 +352,13 @@ async fn the_gate_reports_like_the_ts_gate() {
                 proposal: &proposal,
                 proposal_id: options["proposalId"].as_str().unwrap(),
                 state: &state,
-                config: RAVO_DEFAULT_CONFIG,
+                // TS parity test: use the TS semantic (fork flags off) so
+                // the golden `decision` rows match the TS-generated output.
+                config: RavoConfig {
+                    scope_unclaimed_bar_to_zero: false,
+                    admit_screen_pass_on_judge_error: false,
+                    ..RAVO_DEFAULT_CONFIG
+                },
                 conversation_text: options["conversationText"].as_str().unwrap().to_string(),
                 harness_overview: options["harnessOverview"].as_str().unwrap().to_string(),
                 baseline: options["baseline"].clone(),

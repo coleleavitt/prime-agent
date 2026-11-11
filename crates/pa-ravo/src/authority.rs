@@ -372,7 +372,22 @@ pub fn authorize_assisted_ravo(input: &AuthorityInput<'_>) -> AssistedRavoAuthor
     );
     let mut next_state = stepped.state;
     let mut certificate = stepped.certificate;
-    if certificate.committed {
+    let judge_errored_screen_pass_admit = input.config.admit_screen_pass_on_judge_error
+        && input.observation.status == GateStatus::Error
+        && input.fast_score >= input.config.screen_threshold
+        && !certificate.committed
+        && certificate.rejection == Some(RavoRejection::Deep);
+    if judge_errored_screen_pass_admit {
+        // Fork divergence: a judge error on an otherwise passing proposal
+        // leaves us with no deep information, which is not the same as
+        // a scored rejection. Admit the edit as unmeasured (state stays
+        // the base state: no champion crowned, no provisional window),
+        // so a transient model failure does not silently kill a valid
+        // memory with a `RavoRejection::Deep`.
+        certificate.committed = true;
+        certificate.rejection = None;
+        next_state = base_state.clone();
+    } else if certificate.committed {
         let claimed: Vec<String> = failure_opponents
             .iter()
             .map(|id| failure_opponent_fingerprint(id).unwrap_or_default())

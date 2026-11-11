@@ -172,6 +172,22 @@ pub struct RavoConfig {
     /// Slack under the best recorded score the deep gate tolerates.
     #[serde(default)]
     pub deep_tolerance: u64,
+    /// Fork divergence: when true, a challenger that addresses no
+    /// fingerprints faces bar 0 (uncontested territory) instead of the
+    /// all-time max. Default `false` preserves TS golden parity;
+    /// `RAVO_DEFAULT_CONFIG` sets it `true` so fact memories and
+    /// session-state notes aren't gated by an unrelated champion.
+    #[serde(default)]
+    pub scope_unclaimed_bar_to_zero: bool,
+    /// Fork divergence: when true, a proposal whose screen passes but
+    /// whose deep judge errored (`GateStatus::Error`, e.g. the model
+    /// returned an empty response or a parse failure) is admitted as
+    /// unmeasured — the edit lands, state is left unchanged, no champion
+    /// is crowned. Default `false` preserves TS parity; without this a
+    /// transient judge-side model failure silently killed otherwise valid
+    /// proposals with a `RavoRejection::Deep`.
+    #[serde(default)]
+    pub admit_screen_pass_on_judge_error: bool,
 }
 
 /// Why a step did not commit.
@@ -236,14 +252,97 @@ fn checked_add(left: u64, right: u64) -> Option<u64> {
     left.checked_add(right).filter(|sum| is_safe(*sum))
 }
 
-/// The best recorded deep score (0 for an empty lineage).
+/// The deep bar a challenger must clear, under the TS semantic. A
+/// challenger that addresses one or more fingerprints is scoped to prior
+/// champions whose `claimed_fingerprints` overlap it; a challenger that
+/// addresses no fingerprints falls back to the all-time max. The fork
+/// preserves this for TS golden parity and uses [`ravo_best_score_scoped`]
+/// at the gate call site, where an unclaimed challenger is uncontested
+/// territory instead of competing against every unrelated champion.
 #[must_use]
-pub fn ravo_best_score(lineage: &[RavoChampion]) -> u64 {
+pub fn ravo_best_score(lineage: &[RavoChampion], challenger_fingerprints: &[String]) -> u64 {
+    if challenger_fingerprints.is_empty() {
+        return lineage
+            .iter()
+            .map(|champion| champion.score)
+            .max()
+            .unwrap_or(0);
+    }
     lineage
         .iter()
+        .filter(|champion| {
+            champion
+                .claimed_fingerprints
+                .as_deref()
+                .is_some_and(|claimed| {
+                    claimed
+                        .iter()
+                        .any(|fingerprint| challenger_fingerprints.contains(fingerprint))
+                })
+        })
         .map(|champion| champion.score)
         .max()
         .unwrap_or(0)
+}
+
+/// The fork's deep bar: like [`ravo_best_score`] but a challenger that
+/// addresses no fingerprints is uncontested territory. Fact memories,
+/// session-state notes and working-context memories face bar 0 instead of
+/// the all-time max; the screen threshold and the deep absolute score are
+/// still what decide admission. Symmetric with how `TrustWindow` refuses
+/// to open on an empty `claimed_fingerprints` set.
+///
+/// The fork diverges from the TS semantic here deliberately: TS goldens
+/// only exercise the empty branch because the TS run never hoisted
+/// `addressedFingerprints` onto proposals. In the fork, a single
+/// high-scoring champion on an unrelated topic was ratcheting the floor
+/// across every unclaimed proposal on the machine.
+#[must_use]
+pub fn ravo_best_score_scoped(
+    lineage: &[RavoChampion],
+    challenger_fingerprints: &[String],
+) -> u64 {
+    if challenger_fingerprints.is_empty() {
+        return 0;
+    }
+    ravo_best_score(lineage, challenger_fingerprints)
+}
+
+/// Picks between [`ravo_best_score`] (TS parity) and
+/// [`ravo_best_score_scoped`] (fork) based on
+/// [`RavoConfig::scope_unclaimed_bar_to_zero`]. `ravo_step` uses this so the
+/// TS goldens' three-field configs still deserialize and still match their
+/// recorded `previousBestScore`, while `RAVO_DEFAULT_CONFIG` (the fork's
+/// production config) picks the scoped semantic.
+fn best_score_for(
+    lineage: &[RavoChampion],
+    challenger_fingerprints: &[String],
+    config: &RavoConfig,
+) -> u64 {
+    if config.scope_unclaimed_bar_to_zero {
+        ravo_best_score_scoped(lineage, challenger_fingerprints)
+    } else {
+        ravo_best_score(lineage, challenger_fingerprints)
+    }
+}
+
+/// The `addressedFingerprints` the gate hoists onto a proposal artifact
+/// (empty for an artifact that claims none). The reducer uses this to scope
+/// the deep bar; see `ravo_best_score`.
+#[must_use]
+pub(crate) fn addressed_fingerprints_of_artifact(artifact: &Value) -> Vec<String> {
+    artifact
+        .get("addressedFingerprints")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// An empty state over `opponents`.
@@ -495,13 +594,18 @@ fn invalid_certificate(
     evaluation: &RavoEvaluation,
     config: &RavoConfig,
     previous: &RavoState,
+    challenger_fingerprints: &[String],
     rejection: RavoRejection,
 ) -> RavoStepResult {
     RavoStepResult {
         certificate: RavoGateCertificate {
             proposal_id: proposal.id.clone(),
             previous_champion_id: previous.champion_id.clone(),
-            previous_best_score: ravo_best_score(&previous.lineage),
+            previous_best_score: best_score_for(
+                &previous.lineage,
+                challenger_fingerprints,
+                config,
+            ),
             screen_threshold: config.screen_threshold,
             epsilon: config.epsilon,
             deep_tolerance: config.deep_tolerance,
@@ -531,6 +635,7 @@ pub fn ravo_step(
     evaluation: &RavoEvaluation,
     config: &RavoConfig,
 ) -> RavoStepResult {
+    let challenger_fingerprints = addressed_fingerprints_of_artifact(&proposal.artifact);
     if state.evaluated_proposal_ids.contains(&proposal.id) {
         return invalid_certificate(
             state.clone(),
@@ -538,6 +643,7 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::AlreadyEvaluated,
         );
     }
@@ -554,6 +660,7 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::InvalidInput,
         );
     }
@@ -573,10 +680,11 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::Screen,
         );
     }
-    let previous_best_score = ravo_best_score(&state.lineage);
+    let previous_best_score = best_score_for(&state.lineage, &challenger_fingerprints, config);
     let slacked = evaluation
         .deep
         .score
@@ -591,6 +699,7 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::Deep,
         );
     }
@@ -621,6 +730,7 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::InvalidInput,
         );
     }
@@ -666,6 +776,7 @@ pub fn ravo_step(
             evaluation,
             config,
             state,
+            &challenger_fingerprints,
             RavoRejection::InvalidInput,
         );
     }

@@ -32,7 +32,9 @@ use crate::reducer::{
     RavoRejection,
     RavoState,
     RavoWindowClock,
+    addressed_fingerprints_of_artifact,
     ravo_best_score,
+    ravo_best_score_scoped,
     ravo_extend_opponents,
 };
 use crate::referee::{
@@ -55,6 +57,8 @@ pub const RAVO_DEFAULT_CONFIG: RavoConfig = RavoConfig {
     screen_threshold: 50,
     epsilon: 1,
     deep_tolerance: 10,
+    scope_unclaimed_bar_to_zero: true,
+    admit_screen_pass_on_judge_error: true,
 };
 
 /// The rationale of an approval the harness moved out from under.
@@ -830,8 +834,13 @@ pub async fn ravo_evaluate_proposal(
         evaluation.proposal,
         count_valid_refinement_edits(evaluation.proposal),
     );
-    let best_score = ravo_best_score(&evaluation.state.lineage);
     let artifact = proposal_artifact(evaluation.proposal);
+    let challenger_fingerprints = addressed_fingerprints_of_artifact(&artifact);
+    let best_score = if config.scope_unclaimed_bar_to_zero {
+        ravo_best_score_scoped(&evaluation.state.lineage, &challenger_fingerprints)
+    } else {
+        ravo_best_score(&evaluation.state.lineage, &challenger_fingerprints)
+    };
     let unclaimed_commit = if evaluation.refine_kind == RefineKind::Failure {
         UnclaimedCommitPolicy::Reject
     } else {

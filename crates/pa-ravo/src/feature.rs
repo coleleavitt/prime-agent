@@ -1026,7 +1026,13 @@ impl RavoVerdict {
                     .unwrap_or(Value::Null);
                 after.extensions.insert(TRUST_KEY.to_string(), trust);
             }
-            if !(all_applied && edit.applied) {
+            // Gap 6 fix (`project_trust_loop_fix.md`): drop the `all_applied`
+            // gate. A partial-apply refinement still carries trust signal on
+            // each edit that landed; the previous shape symmetrically denied
+            // the measurement loop even for the successful ones. Each edit
+            // is still gated on its own `edit.applied` flag below, so a
+            // refused edit never enters `touched`.
+            if !edit.applied {
                 continue;
             }
             if let Some(stored) = state
@@ -1056,7 +1062,12 @@ impl RavoVerdict {
             return;
         };
         let claimed = &self.report.addressed_fingerprints;
-        if all_applied && !claimed.is_empty() && !touched.is_empty() {
+        // Gap 6: open the window on any successful edit set, not only
+        // all-or-nothing. A partial apply (2/3 edits landed) still has a
+        // real set of entries whose trust should be measured on the claimed
+        // fingerprints — `touched` carries only those applied edits.
+        let touched_count = touched.len();
+        if !claimed.is_empty() && !touched.is_empty() {
             let windows = open_trust_window(
                 stored_trust_windows(state).as_ref(),
                 &TrustClaim {
@@ -1071,6 +1082,22 @@ impl RavoVerdict {
             state
                 .extensions
                 .insert(TRUST_WINDOWS_KEY.to_string(), trust_windows_value(&windows));
+        } else {
+            // Gap 7 / trust-loop audit signal: when `record_trust` skips
+            // opening a window, log why. The three reasons are: (a) the
+            // applying context was taken by a concurrent writer (already
+            // returned above), (b) the proposal claimed no fingerprints,
+            // (c) every edit refused to apply. All three are measurable
+            // from the chat-side audit as "trust not credited; here's why".
+            tracing::info!(
+                target: "pa_ravo::harness_trust",
+                proposal_id = %self.proposal_id,
+                scope = scope_name(self.scope),
+                claimed_count = claimed.len(),
+                touched = touched_count,
+                all_applied,
+                "harness.trust.window.skipped",
+            );
         }
         log_trust_settlement(&applying.settlement, scope_name(self.scope));
     }

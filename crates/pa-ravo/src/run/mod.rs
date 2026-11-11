@@ -18,7 +18,7 @@ pub mod archive;
 pub mod context;
 pub mod controller;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -769,6 +769,15 @@ fn validate_judge(value: &Value) -> Result<JudgeVerdict, String> {
 
 /// The implement/repair output as the run's artifact: the normalized
 /// proposal plus `addressedFingerprints` (TS `validateArtifact`).
+///
+/// The top-level `addressedFingerprints` is the UNION of the proposal's
+/// per-edit `targetsFingerprints` (hoisted by `proposal_artifact`) and any
+/// top-level `addressedFingerprints` the model wrote. The previous shape
+/// let the model's unverified top-level list OVERRIDE the hoisted union,
+/// which is what [`project_trust_loop_fix`]'s Gap 5 flagged — a bluff
+/// citation on the top level could open a trust window on a fingerprint
+/// no edit actually targets. Unioning instead keeps the stricter hoist
+/// signal while preserving model citations the hoist missed.
 fn validate_artifact(value: &Value) -> Result<Value, String> {
     let record = object(value);
     if !record.get("edits").is_some_and(Value::is_array) {
@@ -776,11 +785,30 @@ fn validate_artifact(value: &Value) -> Result<Value, String> {
     }
     let proposal = normalize_refinement_proposal(value);
     let mut artifact = crate::gate::proposal_artifact(&proposal);
+    // Union hoisted tfs (`proposal_artifact`'s output) with the model's
+    // own top-level `addressedFingerprints` in a stable, deduped order.
+    let hoisted: BTreeSet<String> = artifact
+        .get("addressedFingerprints")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let top_level: Vec<String> = string_list(record.get("addressedFingerprints"));
+    let mut union = hoisted;
+    union.extend(top_level);
     if let Some(map) = artifact.as_object_mut() {
-        map.insert(
-            "addressedFingerprints".into(),
-            json!(string_list(record.get("addressedFingerprints"))),
-        );
+        if union.is_empty() {
+            map.remove("addressedFingerprints");
+        } else {
+            map.insert(
+                "addressedFingerprints".into(),
+                json!(union.into_iter().collect::<Vec<_>>()),
+            );
+        }
     }
     Ok(artifact)
 }
@@ -1136,7 +1164,47 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
     if baseline != inputs.base_baseline {
         return Ok(CommitOutcome::Stale);
     }
-    let refinement = proposal_of(&proposal.artifact);
+    let mut refinement = proposal_of(&proposal.artifact);
+    // Server-side fingerprint matcher (`project_trust_loop_fix` option 3):
+    // attach fingerprints the refiner model omitted but whose cause the
+    // edit's content covers. Deterministic, additive — model citations are
+    // never removed. The matcher runs before apply so the apply-side union
+    // into `HarnessEntry.targets_fingerprints` sees the attachments, and
+    // the committed artifact's top-level `addressedFingerprints` is
+    // reconciled below.
+    let matcher_attached =
+        pa_core::refinement::fingerprint_matcher::attach_server_side_fingerprints(
+            &mut refinement,
+            &current,
+        );
+    // Rebuild the artifact's `addressedFingerprints` from the matched
+    // proposal when the matcher added anything, unioned with whatever
+    // top-level claim the model already carried so the matcher never
+    // shrinks a model citation. A locally owned clone of the artifact
+    // carries the reconciled shape — `inputs.proposal` is behind a shared
+    // borrow, and the trust-claim read below uses this adjusted copy.
+    let adjusted_artifact: Value = if matcher_attached > 0 {
+        let rebuilt = crate::gate::proposal_artifact(&refinement);
+        let model_cited: BTreeSet<String> = addressed_fingerprints_of(&proposal.artifact)
+            .into_iter()
+            .collect();
+        let mut artifact = proposal.artifact.clone();
+        if let Some(object) = artifact.as_object_mut() {
+            let mut union: BTreeSet<String> =
+                addressed_fingerprints_of(&rebuilt).into_iter().collect();
+            union.extend(model_cited);
+            object.insert(
+                "addressedFingerprints".to_string(),
+                Value::Array(union.into_iter().map(Value::String).collect::<Vec<Value>>()),
+            );
+            if let Some(edits) = rebuilt.get("edits").and_then(Value::as_array).cloned() {
+                object.insert("edits".to_string(), Value::Array(edits));
+            }
+        }
+        artifact
+    } else {
+        proposal.artifact.clone()
+    };
     let mut result = apply_refinement_proposal(
         &mut current,
         &refinement,
@@ -1173,8 +1241,9 @@ fn commit(inputs: &CommitInputs) -> Result<CommitOutcome, String> {
         return Ok(CommitOutcome::Failed(failed.join("; ")));
     }
     // The fingerprints this proposal claims to address, filtered to ones
-    // still active this run.
-    let claimed: Vec<String> = addressed_fingerprints_of(&proposal.artifact)
+    // still active this run. Reads the matcher-adjusted artifact so a
+    // server-side attachment is visible to the trust-claim path.
+    let claimed: Vec<String> = addressed_fingerprints_of(&adjusted_artifact)
         .into_iter()
         .filter(|fingerprint| {
             inputs
@@ -1894,4 +1963,108 @@ pub fn parse_ravo_run_payload(payload: &Value) -> Result<RavoRunRequest, String>
         deadline_ms: positive("deadline_ms")?,
         token_budget: positive("token_budget")?,
     })
+}
+
+#[cfg(test)]
+mod validate_artifact_tests {
+    use serde_json::{Value, json};
+
+    use super::validate_artifact;
+
+    /// Gap 5 regression: per-edit `targetsFingerprints` hoisted by
+    /// `proposal_artifact` AND a disjoint model-provided top-level
+    /// `addressedFingerprints` both end up on the committed artifact.
+    /// The previous shape let the model's unverified top-level list
+    /// OVERRIDE the hoist, which could open a trust window on a
+    /// fingerprint no edit actually targets.
+    #[test]
+    fn addressed_fingerprints_unions_per_edit_tfs_with_top_level() {
+        let proposal = json!({
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+                {
+                    "action": "create",
+                    "kind": "memory",
+                    "title": "Fix note",
+                    "content": "Addresses this failure.",
+                    "targetsFingerprints": ["cafef00d12345678"],
+                }
+            ],
+            "addressedFingerprints": ["deadbeefdeadbeef"],
+        });
+        let artifact = validate_artifact(&proposal).unwrap();
+        let addressed: Vec<String> = artifact
+            .get("addressedFingerprints")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        assert!(
+            addressed.contains(&"cafef00d12345678".to_string()),
+            "per-edit hoist kept"
+        );
+        assert!(
+            addressed.contains(&"deadbeefdeadbeef".to_string()),
+            "top-level model citation preserved"
+        );
+        assert_eq!(addressed.len(), 2, "sorted + deduped union");
+    }
+
+    /// No per-edit tfs and no top-level addressed → the key is ABSENT,
+    /// not an empty array (an empty-claim window should never open).
+    #[test]
+    fn addressed_fingerprints_absent_when_neither_source_cites_any() {
+        let proposal = json!({
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+                {
+                    "action": "create",
+                    "kind": "memory",
+                    "title": "Fix note",
+                    "content": "Addresses this failure.",
+                }
+            ],
+        });
+        let artifact = validate_artifact(&proposal).unwrap();
+        assert!(
+            artifact.get("addressedFingerprints").is_none(),
+            "absent, not an empty array"
+        );
+    }
+
+    /// Overlap between per-edit tfs and model top-level dedupes.
+    #[test]
+    fn addressed_fingerprints_dedupes_overlap() {
+        let proposal = json!({
+            "summary": "s",
+            "rationale": "r",
+            "expectedOutcome": "e",
+            "edits": [
+                {
+                    "action": "create",
+                    "kind": "memory",
+                    "title": "Fix note",
+                    "content": "Addresses this failure.",
+                    "targetsFingerprints": ["abc12345abc12345"],
+                }
+            ],
+            "addressedFingerprints": ["abc12345abc12345"],
+        });
+        let artifact = validate_artifact(&proposal).unwrap();
+        let addressed: Vec<String> = artifact
+            .get("addressedFingerprints")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        assert_eq!(addressed, vec!["abc12345abc12345".to_string()]);
+    }
 }
