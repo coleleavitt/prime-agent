@@ -114,20 +114,46 @@ const STATE_REDIRECT_VARS: &[&str] = &[
     "OPENCODE_ANTHROPIC_AUTH_FILE",
     "PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE",
     "GROK_HOME",
+    // A session's own stores, exported to its kernel and every command it runs.
+    "RLM_SESSION_DIR",
+    "RLM_HARNESS_STATE_DIR",
+    "RLM_GLOBAL_HARNESS_STATE_DIR",
+    "PRIME_AGENT_SCRATCHPAD",
+    "PRIME_AGENT_TASKS_DIR",
+    "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL",
+];
+
+/// What a prime-agent host tells its own kernel: which host binary serves it,
+/// that it serves `bash()`, whose process owns it, the session's shell and
+/// settings. Every command a session runs inherits them; a test run started
+/// from one is never that kernel, so a harness drops them whatever they say.
+/// The runtime's unittest isolation (`rlm._state_guard`) drops the same set.
+const SESSION_KERNEL_VARS: &[&str] = &[
+    "RLM_SESSION_ID",
+    "PRIME_AGENT_EXECUTABLE",
+    "PRIME_AGENT_HOST_BASH",
+    "PRIME_AGENT_KERNEL_OWNER_PID",
+    "PRIME_AGENT_BASH_SHELL",
+    "PRIME_AGENT_BASH_COMMAND_PREFIX",
+    "PRIME_AGENT_EDIT_READ_CHECK",
 ];
 
 /// A libtest harness never runs on the real state its runner's environment
 /// points at: before its first guarded resolution, it drops each inherited
 /// redirect into a protected home's state (a `cargo test` started from a
-/// prime-agent session inherits the session's agent dir) and moves `HOME`
-/// off a protected home ([`harness_home`]). In-process code and the children
-/// it spawns then resolve the test home. Says so on stderr.
+/// prime-agent session inherits the session's agent dir) and the session
+/// kernel's own variables ([`SESSION_KERNEL_VARS`]), and moves `HOME` off a
+/// protected home ([`harness_home`]). In-process code and the children it
+/// spawns then resolve the test home. Says so on stderr.
 fn isolate_harness_env() {
     let inherited = STATE_REDIRECT_VARS
         .iter()
         .filter_map(|name| Some((*name, std::env::var_os(name)?)));
     for name in protected_redirects(inherited) {
         eprintln!("test isolation: ignoring the inherited {name}, which points at the real state");
+        std::env::remove_var(name);
+    }
+    for name in SESSION_KERNEL_VARS {
         std::env::remove_var(name);
     }
     if let Some(home) = super::dirs::raw_home_dir() {
@@ -646,6 +672,21 @@ mod tests {
     #[test]
     fn this_unit_test_binary_is_a_test_process() {
         assert!(is_test_process());
+    }
+
+    #[test]
+    fn a_harness_drops_what_a_session_told_its_kernel() {
+        // A `cargo test` started from a prime-agent session inherits these.
+        std::env::set_var("PRIME_AGENT_KERNEL_OWNER_PID", "1");
+        std::env::set_var("PRIME_AGENT_HOST_BASH", "1");
+        isolate_harness_env();
+        assert_eq!(
+            [
+                std::env::var_os("PRIME_AGENT_KERNEL_OWNER_PID"),
+                std::env::var_os("PRIME_AGENT_HOST_BASH"),
+            ],
+            [None, None]
+        );
     }
 
     #[test]

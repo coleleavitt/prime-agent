@@ -44,6 +44,25 @@ class StateGuardTest(unittest.TestCase):
         if home is not None:
             self.assertIsNone(_state_guard.real_state_violation("home", Path(home) / ".prime"))
 
+    def test_a_run_started_from_a_session_drops_what_the_session_told_its_kernel(self) -> None:
+        # The variables a Prime Agent session exports to every command it runs:
+        # its store paths (inside the real home's state) and its kernel's own markers.
+        store = self.home / ".prime" / "agent" / "session-artifacts" / "s1"
+        session = {
+            "RLM_SESSION_DIR": str(store),
+            "RLM_HARNESS_STATE_DIR": str(store / "harness"),
+            "PRIME_AGENT_TASKS_DIR": str(store / "tasks"),
+            "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL": str(self.home / ".prime" / "agent" / "w.orphans.jsonl"),
+            "RLM_SESSION_ID": "s1",
+            "PRIME_AGENT_EXECUTABLE": "/installed/prime-agent",
+            "PRIME_AGENT_HOST_BASH": "1",
+            "PRIME_AGENT_KERNEL_OWNER_PID": "1",
+        }
+        with self._env(**session, PRIME_AGENT_HOST_BINARY="/checkout/prime-agent"):
+            _state_guard.isolate_unittest_process()
+            self.assertEqual([name for name in session if name in os.environ], [])
+            self.assertEqual(os.environ["PRIME_AGENT_HOST_BINARY"], "/checkout/prime-agent")
+
     def test_the_default_agent_dir_under_a_protected_home_is_refused(self) -> None:
         with self._env():
             with self.assertRaises(_state_guard.RealStateError) as raised:

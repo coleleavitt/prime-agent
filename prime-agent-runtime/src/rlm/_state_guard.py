@@ -36,6 +36,27 @@ _STATE_REDIRECT_VARS = (
     "OPENCODE_ANTHROPIC_AUTH_FILE",
     "PI_ANTHROPIC_AUTH_ROUTING_STATE_FILE",
     "GROK_HOME",
+    # A session's own stores, exported to its kernel and every command it runs.
+    "RLM_SESSION_DIR",
+    "RLM_HARNESS_STATE_DIR",
+    "RLM_GLOBAL_HARNESS_STATE_DIR",
+    "PRIME_AGENT_SCRATCHPAD",
+    "PRIME_AGENT_TASKS_DIR",
+    "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL",
+)
+
+# What a Prime Agent host tells its own kernel (which host binary serves it,
+# that it serves bash(), whose process owns it, the session's shell and
+# settings). Every command a session runs inherits them; a test run started
+# from one is never that kernel, so it drops them whatever they say.
+_SESSION_KERNEL_VARS = (
+    "RLM_SESSION_ID",
+    "PRIME_AGENT_EXECUTABLE",
+    "PRIME_AGENT_HOST_BASH",
+    "PRIME_AGENT_KERNEL_OWNER_PID",
+    "PRIME_AGENT_BASH_SHELL",
+    "PRIME_AGENT_BASH_COMMAND_PREFIX",
+    "PRIME_AGENT_EDIT_READ_CHECK",
 )
 
 _PROTECTED_STATE = (
@@ -132,7 +153,8 @@ def _test_home() -> Path:
 
 def isolate_unittest_process() -> None:
     """A ``python -m unittest`` run never works on the real state: it drops
-    inherited redirects into a protected home's state, moves a protected
+    inherited redirects into a protected home's state and the session kernel's
+    own variables (a run started from a Prime Agent session), moves a protected
     ``HOME`` to the test home, and marks its environment
     (``PA_TEST_ISOLATED=1``) so the host binaries and kernels it spawns run
     the Rust guards too. The Rust test harness does the same
@@ -144,6 +166,8 @@ def isolate_unittest_process() -> None:
         if value and real_state_violation(name, Path(value)) is not None:
             print(f"test isolation: ignoring the inherited {name}, which points at the real state", file=sys.stderr)
             del os.environ[name]
+    for name in _SESSION_KERNEL_VARS:
+        os.environ.pop(name, None)
     home = os.environ.get("HOME")
     if home and _is_protected_home(Path(home)):
         os.environ["HOME"] = str(_test_home())
