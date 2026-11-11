@@ -285,6 +285,8 @@ async fn rlm_spawn_cwd_starts_the_child_in_that_directory() {
         session_file: Some(agent_dir.join("parent.jsonl").to_string_lossy().to_string()),
         thinking: None,
         child_script: Some(script.to_string_lossy().to_string()),
+        sandbox: None,
+        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
     });
 
     let handle = children
