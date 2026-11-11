@@ -16,7 +16,7 @@ def done(req_id, ok, evalue=""):
     print(json.dumps({"event": "done", "id": req_id, "status": "ok" if ok else "error"}), flush=True)
 
 
-print(json.dumps({"event": "ready", "protocol": 3, "python": "3.13.0"}), flush=True)
+print(json.dumps({"event": "ready", "protocol": 6, "python": "3.13.0"}), flush=True)
 for line in sys.stdin:
     try:
         req = json.loads(line)
