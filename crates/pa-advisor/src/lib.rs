@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use pa_agent::types::AgentMessage;
 use pa_core::features::{SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, host_handler};
-use pa_core::session_engine::side_model::{SideModel, SideRequest, render_transcript};
+use pa_core::session_engine::side_model::{SideBill, SideModel, SideRequest, render_transcript};
 use serde_json::{Value, json};
 
 /// The host request the skill sends.
@@ -175,10 +175,16 @@ impl SessionFeature for AdvisorFeature {
                         )
                     };
                     let advice = model
-                        .complete(SideRequest::single(
-                            ADVISOR_SYSTEM_PROMPT,
-                            consultation_prompt(&transcript, &question),
-                        ))
+                        .complete(
+                            SideRequest::single(
+                                ADVISOR_SYSTEM_PROMPT,
+                                consultation_prompt(&transcript, &question),
+                            ),
+                            SideBill {
+                                session_id: &session_id,
+                                source: "advisor",
+                            },
+                        )
                         .await
                         .map_err(|error| {
                             anyhow::anyhow!("the advisor ({selector}) failed: {error:#}")

@@ -61,6 +61,8 @@ pub fn ravo_run_allowed(context: &SessionFeatureContext) -> bool {
 /// at each call (a credential refreshed meanwhile is picked up), one
 /// tool-less provider call per prompt, no system prompt.
 pub struct SessionModel {
+    /// The session the run's prompts bill.
+    session_id: String,
     agent_dir: std::path::PathBuf,
     cwd: std::path::PathBuf,
     model: pa_agent::types::Model,
@@ -70,6 +72,7 @@ impl SessionModel {
     #[must_use]
     pub fn new(context: &SessionFeatureContext) -> Self {
         Self {
+            session_id: context.session_id.clone(),
             agent_dir: context.agent_dir.clone(),
             cwd: context.cwd.clone(),
             model: context.model.clone(),
@@ -122,6 +125,7 @@ impl RavoModel for SessionModel {
         let agent_dir = self.agent_dir.clone();
         let cwd = self.cwd.clone();
         let session = self.model.clone();
+        let session_id = self.session_id.clone();
         Box::pin(async move {
             let failure = |status: &str, error: String| ModelFailure {
                 status: status.to_string(),
@@ -156,6 +160,11 @@ impl RavoModel for SessionModel {
                 reply = pa_ai::complete_simple(&model, &context, Some(options)) => reply,
             };
             let reply = reply.map_err(|error| failure("error", error.to_string()))?;
+            pa_core::session_engine::billed_calls::record_session_model_usage(
+                &session_id,
+                pa_core::session_engine::model_usage::ModelUsage::of_reply("ravo_run", &reply),
+            )
+            .await;
             let tokens = reply.usage.total_tokens;
             if reply.stop_reason == pa_types::ai::StopReason::Error {
                 return Err(ModelFailure {

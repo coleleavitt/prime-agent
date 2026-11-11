@@ -2601,6 +2601,7 @@ dependencies = [
  "pa-agent",
  "pa-core",
  "pa-telemetry",
+ "pa-types",
  "serde_json",
  "tokio",
  "tracing",

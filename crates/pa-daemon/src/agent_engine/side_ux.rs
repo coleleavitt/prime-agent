@@ -52,13 +52,15 @@ impl AgentSessionEngine {
             Ok(agent) => agent,
             Err(error) => return SideUxOutcome::Failed(error.to_string()),
         };
-        let stream_fn = {
+        let (stream_fn, session) = {
             let guard = self.session.blocking_lock();
-            guard
-                .as_deref()
-                .and_then(|engine| engine.session.side_question_stream_fn())
+            let engine = guard.as_deref();
+            (
+                engine.and_then(|engine| engine.session.side_question_stream_fn()),
+                engine.map(|engine| engine.session.shared_persistence()),
+            )
         };
-        let Some(stream_fn) = stream_fn else {
+        let (Some(stream_fn), Some(session)) = (stream_fn, session) else {
             return SideUxOutcome::Failed("Select a model first".to_string());
         };
         let selector = settings.side_ux_model();
@@ -68,6 +70,8 @@ impl AgentSessionEngine {
         // own model + api key, same as compaction's auto-refine path.
         let (_, session_api_key) = self.resolve_request_target(model.clone());
         let outcome = self.runtime.block_on(async {
+            // The session the side calls bill.
+            let session_id = session.lock().await.get_session_id().to_string();
             let side = || async {
                 let session_model = agent.state().await.model;
                 side_model_for(
@@ -81,28 +85,30 @@ impl AgentSessionEngine {
             match request {
                 SideUxRequest::SessionTitle { first_message } => {
                     let side: SideModel = side().await;
-                    side_ux::generate_title(&side, &first_message)
+                    side_ux::generate_title(&side, &session_id, &first_message)
                         .await
                         .map(text_or_nothing)
                 }
                 SideUxRequest::SessionName => {
                     let side = side().await;
                     let messages = agent.state().await.messages;
-                    side_ux::generate_session_name(&side, &messages)
+                    side_ux::generate_session_name(&side, &session_id, &messages)
                         .await
                         .map(text_or_nothing)
                 }
                 SideUxRequest::Recap | SideUxRequest::AutoRecap => {
-                    side_ux::recap(&agent, &stream_fn)
+                    side_ux::recap(&agent, &stream_fn, &session_id)
                         .await
                         .map(|outcome| match outcome {
                             side_ux::RecapOutcome::Recap { text, .. } => SideUxOutcome::Text(text),
                             side_ux::RecapOutcome::NoTurn => SideUxOutcome::Nothing,
                         })
                 }
-                SideUxRequest::PromptSuggestion => side_ux::prompt_suggestion(&agent, &stream_fn)
-                    .await
-                    .map(text_or_nothing),
+                SideUxRequest::PromptSuggestion => {
+                    side_ux::prompt_suggestion(&agent, &stream_fn, &session_id)
+                        .await
+                        .map(text_or_nothing)
+                }
                 SideUxRequest::ToolUseLabel => {
                     let side: SideModel = side().await;
                     let messages = agent.state().await.messages;
@@ -110,9 +116,14 @@ impl AgentSessionEngine {
                     if calls.is_empty() {
                         Ok(SideUxOutcome::Nothing)
                     } else {
-                        side_ux::generate_tool_use_label(&side, &calls, &last_assistant_text)
-                            .await
-                            .map(text_or_nothing)
+                        side_ux::generate_tool_use_label(
+                            &side,
+                            &session_id,
+                            &calls,
+                            &last_assistant_text,
+                        )
+                        .await
+                        .map(text_or_nothing)
                     }
                 }
                 SideUxRequest::MemoryExtract { user_message_count } => {

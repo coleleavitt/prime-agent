@@ -10,6 +10,7 @@ pub mod auto_retry;
 pub mod autocompact_offer;
 pub mod auxiliary_model;
 pub mod bash_notices;
+pub mod billed_calls;
 pub mod branch_summarization;
 pub mod brief_mode;
 pub mod compact_session;

@@ -3,6 +3,13 @@
 use std::time::Duration;
 
 use pa_agent::scripted::ScriptedProvider;
+use pa_core::session_engine::model_usage::ModelUsage;
+use pa_core::session_engine::rlm_usage::{
+    ChildUsageAppendResult,
+    RlmChildUsageFuture,
+    RlmChildUsageStore,
+};
+use serde_json::json;
 
 use super::*;
 
@@ -49,6 +56,70 @@ fn feature(provider: &Arc<ScriptedProvider>, enabled: bool) -> ObserverFeature {
         }),
     )
     .with_nonce("n0")
+}
+
+/// A durable usage store that hands each bill to the test as it lands.
+struct BillChannel(tokio::sync::mpsc::UnboundedSender<(String, ModelUsage)>);
+
+impl RlmChildUsageStore for BillChannel {
+    fn last_assistant(&self) -> RlmChildUsageFuture<'_, Option<(String, pa_types::ai::Usage)>> {
+        Box::pin(async { None })
+    }
+
+    fn append_attribution(
+        &self,
+        _row_id: &str,
+        _target_id: &str,
+        _child_usage: pa_types::ai::Usage,
+        _origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<ChildUsageAppendResult>> {
+        Box::pin(async { Err(std::io::Error::other("bills only")) })
+    }
+
+    fn append_model_usage(
+        &self,
+        session_id: String,
+        usage: ModelUsage,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
+        let _ = self.0.send((session_id, usage));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Register a bill channel as `session_id`'s durable store; the store lives
+/// as long as the returned handle.
+fn bill_channel(
+    session_id: &str,
+) -> (
+    Arc<dyn RlmChildUsageStore>,
+    tokio::sync::mpsc::UnboundedReceiver<(String, ModelUsage)>,
+) {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let store: Arc<dyn RlmChildUsageStore> = Arc::new(BillChannel(sender));
+    pa_core::session_engine::billed_calls::register_session_usage_store(session_id, &store);
+    (store, receiver)
+}
+
+/// A scripted text turn whose reply bills 40 input and 2 output tokens.
+fn billed_text_turn(text: &str) -> pa_agent::scripted::ScriptedTurn {
+    let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
+            message.usage.input = 40;
+            message.usage.output = 2;
+            message.usage.total_tokens = 42;
+        }
+    }
+    pa_agent::scripted::ScriptedTurn::Events(steps)
+}
+
+/// The bill of one [`billed_text_turn`] reply, as its row records it.
+fn expected_bill(session_id: &str, source: &str) -> serde_json::Value {
+    json!([session_id, {
+        "source": source, "provider": "test", "modelId": "m",
+        "usage": { "input": 40, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 42,
+                   "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } }
+    }])
 }
 
 fn user(text: &str) -> AgentMessage {
@@ -208,5 +279,28 @@ async fn silence_delivers_nothing_and_a_report_reaches_the_observed_session() {
     assert_eq!(
         *recorded.lock().unwrap(),
         vec![(OBSERVER_SESSION_EVENT.to_string(), expected)]
+    );
+}
+
+/// Each digest the observer reads bills the observed session: its reply
+/// lands as an `observer` `model_usage` row.
+#[tokio::test]
+async fn each_digest_records_its_usage_on_the_observed_session() {
+    let session_id = "observer-billed";
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    provider.push_turn(billed_text_turn("NO_REPORT"));
+    let (_store, mut bills) = bill_channel(session_id);
+    let observer = feature(&provider, true);
+    let context = context(session_id, 0);
+    observer.on_session_start(&context, &[]);
+    observer.on_message_end(&context, &user("hi"));
+    observer.on_agent_end(&context);
+    let bill = tokio::time::timeout(Duration::from_secs(5), bills.recv())
+        .await
+        .expect("the digest's bill landed")
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(bill).unwrap(),
+        expected_bill(session_id, "observer")
     );
 }

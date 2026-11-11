@@ -2,6 +2,12 @@
 
 use pa_agent::scripted::ScriptedProvider;
 use pa_core::kernel::shared::HostRequestPayload;
+use pa_core::session_engine::model_usage::ModelUsage;
+use pa_core::session_engine::rlm_usage::{
+    ChildUsageAppendResult,
+    RlmChildUsageFuture,
+    RlmChildUsageStore,
+};
 
 use super::*;
 
@@ -42,6 +48,70 @@ fn feature(provider: &Arc<ScriptedProvider>, selector: Option<&'static str>) -> 
             model: test_model(),
         }),
     )
+}
+
+/// A durable usage store that hands each bill to the test as it lands.
+struct BillChannel(tokio::sync::mpsc::UnboundedSender<(String, ModelUsage)>);
+
+impl RlmChildUsageStore for BillChannel {
+    fn last_assistant(&self) -> RlmChildUsageFuture<'_, Option<(String, pa_types::ai::Usage)>> {
+        Box::pin(async { None })
+    }
+
+    fn append_attribution(
+        &self,
+        _row_id: &str,
+        _target_id: &str,
+        _child_usage: pa_types::ai::Usage,
+        _origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<ChildUsageAppendResult>> {
+        Box::pin(async { Err(std::io::Error::other("bills only")) })
+    }
+
+    fn append_model_usage(
+        &self,
+        session_id: String,
+        usage: ModelUsage,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
+        let _ = self.0.send((session_id, usage));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Register a bill channel as `session_id`'s durable store; the store lives
+/// as long as the returned handle.
+fn bill_channel(
+    session_id: &str,
+) -> (
+    Arc<dyn RlmChildUsageStore>,
+    tokio::sync::mpsc::UnboundedReceiver<(String, ModelUsage)>,
+) {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let store: Arc<dyn RlmChildUsageStore> = Arc::new(BillChannel(sender));
+    pa_core::session_engine::billed_calls::register_session_usage_store(session_id, &store);
+    (store, receiver)
+}
+
+/// A scripted text turn whose reply bills 40 input and 2 output tokens.
+fn billed_text_turn(text: &str) -> pa_agent::scripted::ScriptedTurn {
+    let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+        if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
+            message.usage.input = 40;
+            message.usage.output = 2;
+            message.usage.total_tokens = 42;
+        }
+    }
+    pa_agent::scripted::ScriptedTurn::Events(steps)
+}
+
+/// The bill of one [`billed_text_turn`] reply, as its row records it.
+fn expected_bill(session_id: &str, source: &str) -> serde_json::Value {
+    json!([session_id, {
+        "source": source, "provider": "test", "modelId": "m",
+        "usage": { "input": 40, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 42,
+                   "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } }
+    }])
 }
 
 fn user(text: &str) -> AgentMessage {
@@ -149,5 +219,32 @@ async fn each_consultation_reports_its_outcome() {
             (ADVISOR_ASK_EVENT.to_string(), Some(json!("ok")), true),
             (ADVISOR_ASK_EVENT.to_string(), Some(json!("invalid")), true),
         ]
+    );
+}
+
+/// A consultation bills the session it was asked in: the advisor's reply
+/// lands as an `advisor` `model_usage` row.
+#[tokio::test]
+async fn a_consultation_records_its_usage_on_the_session() {
+    let provider = Arc::new(ScriptedProvider::new(test_model()));
+    provider.push_turn(billed_text_turn("Check the lockfile first."));
+    let advisor = feature(&provider, Some("anthropic/strong"));
+    let context = context("advisor-billed");
+    let (_store, mut bills) = bill_channel("advisor-billed");
+    advisor.on_session_start(&context, &[]);
+    let mut handlers = HostRequestHandlers::default();
+    advisor.register_host_handlers(&context, &mut handlers);
+    let handler = handlers.get(ADVISOR_REQUEST).unwrap().clone();
+    handler(HostRequestPayload {
+        data: json!({ "type": ADVISOR_REQUEST, "question": "why does it fail?" }),
+    })
+    .await
+    .unwrap();
+    let bill = bills
+        .try_recv()
+        .expect("the consultation recorded its bill");
+    assert_eq!(
+        serde_json::to_value(bill).unwrap(),
+        expected_bill("advisor-billed", "advisor")
     );
 }

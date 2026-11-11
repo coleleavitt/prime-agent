@@ -246,3 +246,62 @@ fn image_support_follows_the_model_input_modalities() {
     assert!(!supports_images(&text_only));
     assert_eq!(router_thinking_level(&text_only), ModelThinkingLevel::Off);
 }
+
+/// Each decision call bills the session the router runs for: one
+/// `system_router` `model_usage` row on the action model.
+#[tokio::test]
+async fn each_decision_call_records_its_usage_on_the_session() {
+    let faux =
+        pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions::default());
+    faux.set_responses(vec![pa_ai::faux::FauxResponseStep::Message(
+        pa_ai::faux::faux_assistant_text_message(
+            r#"{"action":"finish","params":{},"confidence":0.9}"#,
+            pa_ai::faux::FauxAssistantMessageOptions::default(),
+        ),
+    )]);
+    let store = std::sync::Arc::new(crate::session_engine::billed_calls::RecordingStore::default());
+    let dyn_store: std::sync::Arc<dyn crate::session_engine::rlm_usage::RlmChildUsageStore> =
+        store.clone();
+    crate::session_engine::billed_calls::register_session_usage_store("router-billed", &dyn_store);
+    let model = faux.get_model();
+    let decide = create_model_decision_function(RouterDecisionContext {
+        model: model.clone(),
+        api_key: None,
+        headers: None,
+        session_id: Some("router-billed".to_string()),
+        policy: ProviderRetryPolicy {
+            enabled: false,
+            max_retries: 0,
+            base_delay_ms: 0,
+            max_retry_delay_ms: 0,
+            max_delay_ms: 0,
+            connection_wait_ms: 0,
+        },
+        actions: std::sync::Arc::new(
+            compile_action_space(&support::sample_action_space()).unwrap(),
+        ),
+    });
+    decide(RouterDecisionRequest {
+        prompt: "the next step".to_string(),
+        image: None,
+        signal: None,
+    })
+    .await
+    .unwrap();
+    faux.unregister();
+    let bills = store.0.lock().unwrap().clone();
+    assert!(bills.iter().all(|(_, bill)| bill.usage.total_tokens > 0));
+    let billed: Vec<(String, String, String, String)> = bills
+        .into_iter()
+        .map(|(session_id, bill)| (session_id, bill.source, bill.provider, bill.model_id))
+        .collect();
+    assert_eq!(
+        billed,
+        vec![(
+            "router-billed".to_string(),
+            "system_router".to_string(),
+            model.provider,
+            model.id
+        )]
+    );
+}

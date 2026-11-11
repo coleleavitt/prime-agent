@@ -133,6 +133,7 @@ impl SessionFeature for WebFeature {
         handlers: &mut HostRequestHandlers,
     ) {
         let session = Arc::new(SessionWeb {
+            session_id: context.session_id.clone(),
             agent_dir: context.agent_dir.clone(),
             cwd: context.cwd.clone(),
             session_model: (context.model.provider.clone(), context.model.id.clone()),
@@ -162,6 +163,8 @@ impl SessionFeature for WebFeature {
 
 /// One session's view of the feature.
 struct SessionWeb {
+    /// The session the fetch answers bill.
+    session_id: String,
     agent_dir: PathBuf,
     cwd: PathBuf,
     session_model: (String, String),
@@ -489,7 +492,7 @@ impl SessionWeb {
         };
         let total = page.content.chars().count();
         let request = render::answer_prompt(shown, start, total, prompt);
-        match model::complete(
+        let completion = match model::complete(
             &model,
             None,
             request,
@@ -499,14 +502,25 @@ impl SessionWeb {
         )
         .await
         {
-            Ok(completion) if !completion.text.trim().is_empty() => {
-                PromptHandling::Answered(Answer {
-                    text: completion.text.trim().to_string(),
-                    model: format!("{}/{}", model.model.provider, model.model.id),
-                })
+            Ok(completion) => {
+                pa_core::session_engine::billed_calls::record_session_model_usage(
+                    &self.session_id,
+                    pa_core::session_engine::model_usage::ModelUsage::of_reply(
+                        "web_fetch",
+                        &completion.message,
+                    ),
+                )
+                .await;
+                completion
             }
-            Ok(_) => PromptHandling::Failed("the model returned no text".to_string()),
-            Err(error) => PromptHandling::Failed(error),
+            Err(error) => return PromptHandling::Failed(error),
+        };
+        if completion.text.trim().is_empty() {
+            return PromptHandling::Failed("the model returned no text".to_string());
         }
+        PromptHandling::Answered(Answer {
+            text: completion.text.trim().to_string(),
+            model: format!("{}/{}", model.model.provider, model.model.id),
+        })
     }
 }

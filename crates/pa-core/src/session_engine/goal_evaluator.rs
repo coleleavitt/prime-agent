@@ -24,7 +24,7 @@ use std::sync::Arc;
 use pa_agent::types::{AgentMessage, ShouldStopAfterTurnContext, StopReason};
 
 use super::goal_driver::GoalDriver;
-use super::side_model::{SideModel, SideRequest, render_transcript};
+use super::side_model::{SideBill, SideModel, SideRequest, render_transcript};
 use crate::goals::GoalStatus;
 use crate::session::manager::SessionManager;
 
@@ -164,12 +164,19 @@ impl GoalEvaluator {
             }
         };
         let transcript = render_transcript(&turn.context.messages, TRANSCRIPT_CHARS);
+        let session_id = self.session.lock().await.get_session_id().to_string();
         let reply = match self
             .side
-            .complete(SideRequest::single(
-                GOAL_EVALUATOR_SYSTEM_PROMPT,
-                evaluation_prompt(&transcript, &condition),
-            ))
+            .complete(
+                SideRequest::single(
+                    GOAL_EVALUATOR_SYSTEM_PROMPT,
+                    evaluation_prompt(&transcript, &condition),
+                ),
+                SideBill {
+                    session_id: &session_id,
+                    source: "goal_evaluator",
+                },
+            )
             .await
         {
             Ok(reply) => reply,

@@ -9,6 +9,12 @@ use std::sync::{Arc, Mutex};
 use common::{Reply, anthropic_model, serve, text_answer};
 use pa_core::features::{FeatureTelemetry, SessionFeature, SessionFeatureContext};
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+use pa_core::session_engine::model_usage::ModelUsage;
+use pa_core::session_engine::rlm_usage::{
+    ChildUsageAppendResult,
+    RlmChildUsageFuture,
+    RlmChildUsageStore,
+};
 use pa_telemetry::Properties;
 use pa_web::fetch::FetchOptions;
 use pa_web::model::ResolvedModel;
@@ -393,5 +399,82 @@ async fn the_answering_model_resolves_from_the_auxiliary_model_setting() {
     assert_eq!(
         model_server.requests()[0].header("x-api-key"),
         Some("sk-ant-api-test")
+    );
+}
+
+/// A durable usage store that keeps each bill it is given.
+#[derive(Default)]
+struct Bills(Mutex<Vec<(String, ModelUsage)>>);
+
+impl RlmChildUsageStore for Bills {
+    fn last_assistant(&self) -> RlmChildUsageFuture<'_, Option<(String, pa_types::ai::Usage)>> {
+        Box::pin(async { None })
+    }
+
+    fn append_attribution(
+        &self,
+        _row_id: &str,
+        _target_id: &str,
+        _child_usage: pa_types::ai::Usage,
+        _origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<ChildUsageAppendResult>> {
+        Box::pin(async { Err(std::io::Error::other("bills only")) })
+    }
+
+    fn append_model_usage(
+        &self,
+        session_id: String,
+        usage: ModelUsage,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
+        self.0.lock().unwrap().push((session_id, usage));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// The answering model's call bills the session that fetched: one
+/// `web_fetch` `model_usage` row on the answering model.
+#[tokio::test]
+async fn an_answered_prompt_records_its_usage_on_the_session() {
+    let server = serve(site()).await;
+    let model_server =
+        serve(|_request| Reply::ok("text/event-stream", text_answer("The page is a guide."))).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tracked = Tracked::default();
+    let mut context = context(dir.path(), &tracked);
+    context.session_id = "s-web-billed".into();
+    let bills = Arc::new(Bills::default());
+    let store: Arc<dyn RlmChildUsageStore> = bills.clone();
+    pa_core::session_engine::billed_calls::register_session_usage_store("s-web-billed", &store);
+    let mut answering = HostRequestHandlers::default();
+    WebFeature::with_overrides(WebOverrides {
+        fetch: Some(local_fetch()),
+        answer_model: Some(ResolvedModel {
+            model: anthropic_model(&model_server.base),
+            api_key: Some("sk-ant-api-test".into()),
+            headers: None,
+        }),
+        ..WebOverrides::default()
+    })
+    .register_host_handlers(&context, &mut answering);
+    fetch(
+        &answering,
+        json!({ "url": format!("{}/page", server.base), "prompt": "What is this page?" }),
+    )
+    .await
+    .unwrap();
+    let bills = bills.0.lock().unwrap().clone();
+    assert!(bills.iter().all(|(_, bill)| bill.usage.total_tokens > 0));
+    let billed: Vec<(String, String, String, String)> = bills
+        .into_iter()
+        .map(|(session_id, bill)| (session_id, bill.source, bill.provider, bill.model_id))
+        .collect();
+    assert_eq!(
+        billed,
+        vec![(
+            "s-web-billed".to_string(),
+            "web_fetch".to_string(),
+            "mock-anthropic".to_string(),
+            "mock-haiku".to_string()
+        )]
     );
 }

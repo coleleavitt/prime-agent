@@ -603,12 +603,19 @@ impl AgentSession {
                 .and_then(|context| context.package_state.clone());
         }
         let options = &options;
-        let gating = match (&self.refinement_gate, gate_call) {
-            (Some(gate), Some(model_call)) => Some(crate::refinement::gate::RefinementGating {
-                gate: std::sync::Arc::clone(gate),
-                model_call,
-            }),
-            _ => None,
+        // The gate's judge call bills like the planning call.
+        let (gating, gate_billed) = match (&self.refinement_gate, gate_call) {
+            (Some(gate), Some(model_call)) => {
+                let (model_call, billed) = refine::billed_refiner_call(model_call, "refine_gate");
+                (
+                    Some(crate::refinement::gate::RefinementGating {
+                        gate: std::sync::Arc::clone(gate),
+                        model_call,
+                    }),
+                    Some(billed),
+                )
+            }
+            _ => (None, None),
         };
         // The flight serializes every live-context replacer against a
         // compaction's rebuild: this round's outcome rows persist and then
@@ -655,6 +662,10 @@ impl AgentSession {
         // The planning call bills whether or not its plan applied.
         let billed = billed.lock().expect("billed refiner call lock").take();
         self.record_model_usage(billed).await;
+        if let Some(gate_billed) = gate_billed {
+            let billed = gate_billed.lock().expect("billed refiner call lock").take();
+            self.record_model_usage(billed).await;
+        }
         let (result, context_row_ids) = refined?;
         // The outcome rows (and the notice row when any edit applied) push
         // onto the live context after the durable append, never a full rebuild

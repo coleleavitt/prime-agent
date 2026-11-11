@@ -1232,40 +1232,22 @@ impl AgentSession {
     }
 
     /// The automatic-refine review over `review_context`: one reviewer, or
-    /// with the multi-vote switch (experimental.multiVoteRefine /
-    /// PRIME_AGENT_MULTI_VOTE_REFINE) on, three parallel reviewers whose
+    /// with the multi-vote switch (`experimental.multiVoteRefine` /
+    /// `PRIME_AGENT_MULTI_VOTE_REFINE`) on, three parallel reviewers whose
     /// majority verdict wins (Claude Code's extract-memories verification
     /// loop). Every reviewer carries the session's merged request headers
-    /// (Prime team billing), and each reviewer's billed call lands as its
-    /// own `refine_review` model_usage row, a failed review's calls included.
+    /// (Prime team billing).
     async fn run_auto_refine_review(
         &self,
         messages: &[AgentMessage],
         merged_state: &crate::refinement::HarnessState,
-        history: &[crate::refinement::RefinementResult],
+        history: &[RefinementResult],
         model: &pa_types::ai::Model,
         api_key: Option<String>,
         review_context: &AutoRefineReviewContext,
     ) -> anyhow::Result<AutoRefineReview> {
-        if !self.multi_vote_refine_enabled() {
-            let (review_call, billed) =
-                billed_refiner_call(self.refiner_call(model, api_key).await?, "refine_review");
-            let review = review_auto_refine(
-                messages,
-                merged_state,
-                history,
-                model,
-                review_context,
-                self.auto_refine_policy(),
-                review_call,
-            )
-            .await;
-            let billed = billed.lock().expect("billed refiner call lock").take();
-            self.record_model_usage(billed).await;
-            return review;
-        }
         // Resolve the merged request headers once, then build a fresh
-        // refiner call per vote synchronously: the `Fn` bound on
+        // refiner call per reviewer synchronously: the `Fn` bound on
         // `make_reviewer` forbids an async per-call build.
         let (resolved_key, resolved_headers) = match self.auxiliary_model.clone() {
             Some(context) => {
@@ -1279,31 +1261,82 @@ impl AgentSession {
             None => (api_key, None),
         };
         let session_id = self.session_id().await;
-        let vote_bills = std::sync::Mutex::new(Vec::new());
-        let make_reviewer = || {
-            let (call, billed) = billed_refiner_call(
+        let votes = self
+            .multi_vote_refine_enabled()
+            .then(crate::refinement::multi_vote::MultiVoteConfig::default);
+        self.billed_auto_refine_review(
+            AutoRefineReviewInputs {
+                messages,
+                merged_state,
+                history,
+                model,
+                review_context,
+            },
+            || {
                 default_refiner_call(
                     resolved_key.clone(),
                     resolved_headers.clone(),
                     session_id.clone(),
-                ),
-                "refine_review",
-            );
-            vote_bills.lock().expect("vote bills lock").push(billed);
+                )
+            },
+            votes,
+        )
+        .await
+    }
+
+    /// Run the review on reviewers from `make_reviewer`: one, or `votes`
+    /// in parallel. Each reviewer's billed call lands as its own
+    /// `refine_review` `model_usage` row, a failed review's calls included.
+    pub(crate) async fn billed_auto_refine_review<F>(
+        &self,
+        inputs: AutoRefineReviewInputs<'_>,
+        make_reviewer: F,
+        votes: Option<crate::refinement::multi_vote::MultiVoteConfig>,
+    ) -> anyhow::Result<AutoRefineReview>
+    where
+        F: Fn() -> crate::refinement::executor::RefinerFn + Send + Sync,
+    {
+        let bills = std::sync::Mutex::new(Vec::new());
+        let billed_reviewer = || {
+            let (call, billed) = billed_refiner_call(make_reviewer(), "refine_review");
+            bills.lock().expect("reviewer bills lock").push(billed);
             call
         };
-        let review = crate::refinement::multi_vote::review_auto_refine_voting(
+        let AutoRefineReviewInputs {
             messages,
             merged_state,
             history,
             model,
             review_context,
-            self.auto_refine_policy(),
-            make_reviewer,
-            crate::refinement::multi_vote::MultiVoteConfig::default(),
-        )
-        .await;
-        let bills = vote_bills.into_inner().expect("vote bills lock");
+        } = inputs;
+        let review = match votes {
+            Some(config) => {
+                crate::refinement::multi_vote::review_auto_refine_voting(
+                    messages,
+                    merged_state,
+                    history,
+                    model,
+                    review_context,
+                    self.auto_refine_policy(),
+                    billed_reviewer,
+                    config,
+                )
+                .await
+            }
+            None => {
+                review_auto_refine(
+                    messages,
+                    merged_state,
+                    history,
+                    model,
+                    review_context,
+                    self.auto_refine_policy(),
+                    billed_reviewer(),
+                )
+                .await
+            }
+        };
+        let bills = bills.into_inner().expect("reviewer bills lock");
         for billed in bills {
             let billed = billed.lock().expect("billed refiner call lock").take();
             self.record_model_usage(billed).await;
@@ -1735,6 +1768,15 @@ pub(crate) fn billed_refiner_call(
         })
     });
     (seam, billed)
+}
+
+/// What one automatic-refine review reads.
+pub(crate) struct AutoRefineReviewInputs<'a> {
+    pub(crate) messages: &'a [AgentMessage],
+    pub(crate) merged_state: &'a crate::refinement::HarnessState,
+    pub(crate) history: &'a [RefinementResult],
+    pub(crate) model: &'a pa_types::ai::Model,
+    pub(crate) review_context: &'a AutoRefineReviewContext,
 }
 
 /// The default model seam over pa-ai completion.

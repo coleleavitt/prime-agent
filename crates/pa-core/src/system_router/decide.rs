@@ -385,6 +385,7 @@ pub fn create_model_decision_function(context: RouterDecisionContext) -> RouterD
                 .collect::<HashMap<String, String>>()
         });
         let session_id = context.session_id.clone();
+        let bill_session = context.session_id.clone();
         let policy = context.policy.clone();
         let actions = Arc::clone(&context.actions);
         Box::pin(async move {
@@ -447,6 +448,19 @@ pub fn create_model_decision_function(context: RouterDecisionContext) -> RouterD
                 },
             )
             .await?;
+            if let Some(session_id) = &bill_session {
+                let billed =
+                    json_round_trip::<_, pa_types::ai::Usage>(&message.usage).and_then(|usage| {
+                        crate::session_engine::model_usage::ModelUsage::new(
+                            "system_router",
+                            &model.provider,
+                            &model.id,
+                            usage,
+                        )
+                    });
+                crate::session_engine::billed_calls::record_session_model_usage(session_id, billed)
+                    .await;
+            }
             let usage = Some(RouterUsage {
                 input_tokens: message.usage.input,
                 output_tokens: message.usage.output,

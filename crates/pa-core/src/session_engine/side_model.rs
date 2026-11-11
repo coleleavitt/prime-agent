@@ -13,6 +13,8 @@ use std::sync::Arc;
 use pa_agent::stream::{LlmContext, StreamFn, StreamRequestOptions};
 use pa_agent::types::{AssistantContent, Message, StopReason};
 
+use super::model_usage::ModelUsage;
+
 /// The longest a side call may take before it counts as failed.
 pub const SIDE_MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -69,6 +71,34 @@ impl SideRequest {
     }
 }
 
+/// Who a side call bills: the session it is made for and the `source` its
+/// `model_usage` row names ([`super::billed_calls`]).
+#[derive(Debug, Clone, Copy)]
+pub struct SideBill<'a> {
+    pub session_id: &'a str,
+    pub source: &'static str,
+}
+
+impl SideBill<'_> {
+    /// Record what one reply billed (pa-agent's message shape).
+    async fn record_agent_reply(
+        self,
+        model: &pa_agent::types::Model,
+        reply: &pa_agent::types::AssistantMessage,
+    ) {
+        let usage =
+            super::provider_adapter::json_round_trip::<_, pa_types::ai::Usage>(&reply.usage);
+        self.record(
+            usage.and_then(|usage| ModelUsage::new(self.source, &model.provider, &model.id, usage)),
+        )
+        .await;
+    }
+
+    async fn record(self, usage: Option<ModelUsage>) {
+        super::billed_calls::record_session_model_usage(self.session_id, usage).await;
+    }
+}
+
 fn reply_text(content: &[AssistantContent]) -> String {
     content
         .iter()
@@ -82,13 +112,18 @@ fn reply_text(content: &[AssistantContent]) -> String {
 
 impl SideModel {
     /// Ask once; the reply's text, or why it failed (a provider error, a
-    /// missing credential, the timeout).
+    /// missing credential, the timeout). What the call billed lands on
+    /// `bill`'s session, a failed reply's included.
     ///
     /// # Errors
     ///
     /// Returns the failure as text-bearing `anyhow` error.
-    pub async fn complete(&self, request: SideRequest) -> anyhow::Result<String> {
-        match tokio::time::timeout(SIDE_MODEL_TIMEOUT, self.complete_inner(request)).await {
+    pub async fn complete(
+        &self,
+        request: SideRequest,
+        bill: SideBill<'_>,
+    ) -> anyhow::Result<String> {
+        match tokio::time::timeout(SIDE_MODEL_TIMEOUT, self.complete_inner(request, bill)).await {
             Ok(result) => result,
             Err(_) => anyhow::bail!(
                 "the side model call timed out after {}s",
@@ -97,7 +132,11 @@ impl SideModel {
         }
     }
 
-    async fn complete_inner(&self, request: SideRequest) -> anyhow::Result<String> {
+    async fn complete_inner(
+        &self,
+        request: SideRequest,
+        bill: SideBill<'_>,
+    ) -> anyhow::Result<String> {
         match self {
             SideModel::Session { stream_fn, model } => {
                 let context = LlmContext {
@@ -109,6 +148,7 @@ impl SideModel {
                     stream_fn(model.clone(), context, StreamRequestOptions::default()).await?;
                 while stream.next_event().await.is_some() {}
                 let message = stream.result().await?;
+                bill.record_agent_reply(model, &message).await;
                 if message.stop_reason == StopReason::Error {
                     anyhow::bail!(
                         "{}",
@@ -155,6 +195,7 @@ impl SideModel {
                 let reply = pa_ai::complete_simple(&model, &context, Some(options))
                     .await
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
+                bill.record(ModelUsage::of_reply(bill.source, &reply)).await;
                 if reply.stop_reason == pa_types::ai::StopReason::Error {
                     anyhow::bail!(
                         "{}",
@@ -180,7 +221,8 @@ impl SideModel {
     /// One model turn with `tools` offered: the assistant message as the
     /// model answered it (its tool calls included), for a caller running its
     /// own short tool loop (an agent hook). A failed call is an error; the
-    /// caller bounds the loop and its time.
+    /// caller bounds the loop and its time. What the call billed lands on
+    /// `bill`'s session.
     ///
     /// # Errors
     ///
@@ -190,6 +232,7 @@ impl SideModel {
         &self,
         request: SideRequest,
         tools: Vec<pa_agent::stream::ToolDefinition>,
+        bill: SideBill<'_>,
     ) -> anyhow::Result<pa_agent::types::AssistantMessage> {
         let message = match self {
             SideModel::Session { stream_fn, model } => {
@@ -201,7 +244,9 @@ impl SideModel {
                 let mut stream =
                     stream_fn(model.clone(), context, StreamRequestOptions::default()).await?;
                 while stream.next_event().await.is_some() {}
-                stream.result().await?
+                let message = stream.result().await?;
+                bill.record_agent_reply(model, &message).await;
+                message
             }
             SideModel::Selector {
                 selector,
@@ -247,6 +292,7 @@ impl SideModel {
                 let reply = pa_ai::complete_simple(&model, &context, Some(options))
                     .await
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
+                bill.record(ModelUsage::of_reply(bill.source, &reply)).await;
                 super::provider_adapter::json_round_trip::<_, pa_agent::types::AssistantMessage>(
                     &reply,
                 )
@@ -271,6 +317,7 @@ impl SideModel {
 /// request shares the conversation's prompt-cache prefix), then `prompt`
 /// as one more user message. The reply's text; a tool call the model
 /// makes anyway is ignored, never run. The parent agent is not touched.
+/// What the call billed lands on `bill`'s session.
 ///
 /// # Errors
 ///
@@ -279,6 +326,7 @@ pub async fn complete_forked(
     parent: &pa_agent::agent::Agent,
     stream_fn: &StreamFn,
     prompt: &str,
+    bill: SideBill<'_>,
 ) -> anyhow::Result<String> {
     let state = parent.state().await;
     if state.model == pa_agent::types::Model::unknown() {
@@ -316,6 +364,7 @@ pub async fn complete_forked(
         .await?;
         while stream.next_event().await.is_some() {}
         let message = stream.result().await?;
+        bill.record_agent_reply(&state.model, &message).await;
         if message.stop_reason == StopReason::Error {
             anyhow::bail!(
                 "{}",
@@ -516,7 +565,13 @@ mod tests {
             model: test_model(),
         };
         let reply = side
-            .complete(SideRequest::single("judge it", "is it done?"))
+            .complete(
+                SideRequest::single("judge it", "is it done?"),
+                SideBill {
+                    session_id: "side-model-test",
+                    source: "test",
+                },
+            )
             .await
             .unwrap();
         assert_eq!(reply, "the verdict");
@@ -524,6 +579,51 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].system_prompt.as_deref(), Some("judge it"));
         assert!(calls[0].tools.is_empty());
+    }
+
+    /// A side call bills its session: the reply's usage lands as a
+    /// `model_usage` row of the bill's source, on the bill's session only.
+    #[tokio::test]
+    async fn a_side_call_records_its_usage_on_the_billed_session() {
+        let provider = Arc::new(ScriptedProvider::new(test_model()));
+        let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), "the verdict");
+        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
+            if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
+                message.usage.input = 40;
+                message.usage.output = 2;
+                message.usage.total_tokens = 42;
+            }
+        }
+        provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
+        let store = Arc::new(super::super::billed_calls::RecordingStore::default());
+        let dyn_store: Arc<dyn super::super::rlm_usage::RlmChildUsageStore> = store.clone();
+        super::super::billed_calls::register_session_usage_store("side-model-billed", &dyn_store);
+        let side = SideModel::Session {
+            stream_fn: provider.stream_fn(),
+            model: test_model(),
+        };
+        side.complete(
+            SideRequest::single("judge it", "is it done?"),
+            SideBill {
+                session_id: "side-model-billed",
+                source: "goal_evaluator",
+            },
+        )
+        .await
+        .unwrap();
+        let usage = pa_types::ai::Usage {
+            input: 40,
+            output: 2,
+            total_tokens: 42,
+            ..Default::default()
+        };
+        assert_eq!(
+            *store.0.lock().unwrap(),
+            vec![(
+                "side-model-billed".to_string(),
+                ModelUsage::new("goal_evaluator", "test", "m", usage).unwrap()
+            )]
+        );
     }
 
     #[tokio::test]
@@ -534,7 +634,17 @@ mod tests {
             stream_fn: provider.stream_fn(),
             model: test_model(),
         };
-        assert!(side.complete(SideRequest::single("s", "u")).await.is_err());
+        assert!(
+            side.complete(
+                SideRequest::single("s", "u"),
+                SideBill {
+                    session_id: "side-model-test",
+                    source: "test",
+                },
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[test]

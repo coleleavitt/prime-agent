@@ -54,7 +54,7 @@ use pa_core::features::{
     SessionFeatureContext,
     deliver_feature_notice,
 };
-use pa_core::session_engine::side_model::{SideModel, SideRequest};
+use pa_core::session_engine::side_model::{SideBill, SideModel, SideRequest};
 
 /// Claude Code's observer fan-out depth cap (`G`).
 pub const MAX_OBSERVED_DEPTH: u32 = 2;
@@ -226,10 +226,16 @@ async fn deliver(session_id: String, observed: Arc<ObservedSession>, digest: Str
     messages.push(user_row(&digest));
     let reply = match observed
         .model
-        .complete(SideRequest {
-            system_prompt: system_prompt(OBSERVED_NAME),
-            messages,
-        })
+        .complete(
+            SideRequest {
+                system_prompt: system_prompt(OBSERVED_NAME),
+                messages,
+            },
+            SideBill {
+                session_id: &session_id,
+                source: "observer",
+            },
+        )
         .await
     {
         Ok(reply) => reply,

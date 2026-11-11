@@ -139,9 +139,13 @@ async fn the_title_call_sends_claude_codes_prompt_and_reads_the_json_title() {
         stream_fn: provider.stream_fn(),
         model: test_model(),
     };
-    let title = generate_title(&side, "why do roster deltas arrive out of order?")
-        .await
-        .unwrap();
+    let title = generate_title(
+        &side,
+        "side-ux-test",
+        "why do roster deltas arrive out of order?",
+    )
+    .await
+    .unwrap();
     assert_eq!(title.as_deref(), Some("Roster delta ordering"));
     let calls = provider.calls();
     assert_eq!(calls.len(), 1);
@@ -154,7 +158,10 @@ async fn the_title_call_sends_claude_codes_prompt_and_reads_the_json_title() {
     };
     assert!(text.starts_with("<session>\nwhy do roster deltas arrive out of order?\n</session>"));
     // Too short: no call at all.
-    assert_eq!(generate_title(&side, "hi").await.unwrap(), None);
+    assert_eq!(
+        generate_title(&side, "side-ux-test", "hi").await.unwrap(),
+        None
+    );
     assert_eq!(provider.calls().len(), 1);
 }
 
@@ -169,7 +176,9 @@ async fn the_recap_forks_the_conversation_with_its_system_prompt_and_appends_the
             assistant("on it", StopReason::Stop),
         ],
     );
-    let outcome = recap(&agent, &provider.stream_fn()).await.unwrap();
+    let outcome = recap(&agent, &provider.stream_fn(), "side-ux-test")
+        .await
+        .unwrap();
     assert_eq!(
         outcome,
         RecapOutcome::Recap {
@@ -196,7 +205,9 @@ async fn a_recap_without_a_model_turn_makes_no_call_and_a_long_one_is_capped() {
     let provider = Arc::new(ScriptedProvider::new(test_model()));
     let empty = parent(&provider, vec![user("hello there")]);
     assert_eq!(
-        recap(&empty, &provider.stream_fn()).await.unwrap(),
+        recap(&empty, &provider.stream_fn(), "side-ux-test")
+            .await
+            .unwrap(),
         RecapOutcome::NoTurn
     );
     assert!(provider.calls().is_empty());
@@ -205,7 +216,9 @@ async fn a_recap_without_a_model_turn_makes_no_call_and_a_long_one_is_capped() {
         &provider,
         vec![user("go"), assistant("done", StopReason::Stop)],
     );
-    let RecapOutcome::Recap { text, capped } = recap(&agent, &provider.stream_fn()).await.unwrap()
+    let RecapOutcome::Recap { text, capped } = recap(&agent, &provider.stream_fn(), "side-ux-test")
+        .await
+        .unwrap()
     else {
         panic!("a recap");
     };
@@ -222,7 +235,7 @@ async fn suggestions_wait_for_two_turns_skip_a_failed_turn_and_filter_the_reply(
         vec![user("fix the bug"), assistant("fixed", StopReason::Stop)],
     );
     assert_eq!(
-        prompt_suggestion(&early, &provider.stream_fn())
+        prompt_suggestion(&early, &provider.stream_fn(), "side-ux-test")
             .await
             .unwrap(),
         None
@@ -237,7 +250,7 @@ async fn suggestions_wait_for_two_turns_skip_a_failed_turn_and_filter_the_reply(
         ],
     );
     assert_eq!(
-        prompt_suggestion(&failed, &provider.stream_fn())
+        prompt_suggestion(&failed, &provider.stream_fn(), "side-ux-test")
             .await
             .unwrap(),
         None
@@ -252,7 +265,7 @@ async fn suggestions_wait_for_two_turns_skip_a_failed_turn_and_filter_the_reply(
     provider.push_text_turn("<suggestion>run the tests</suggestion>");
     let agent = parent(&provider, conversation.clone());
     assert_eq!(
-        prompt_suggestion(&agent, &provider.stream_fn())
+        prompt_suggestion(&agent, &provider.stream_fn(), "side-ux-test")
             .await
             .unwrap()
             .as_deref(),
@@ -271,7 +284,7 @@ async fn suggestions_wait_for_two_turns_skip_a_failed_turn_and_filter_the_reply(
     provider.push_text_turn("Looks good, thanks!");
     let agent = parent(&provider, conversation);
     assert_eq!(
-        prompt_suggestion(&agent, &provider.stream_fn())
+        prompt_suggestion(&agent, &provider.stream_fn(), "side-ux-test")
             .await
             .unwrap(),
         None
@@ -367,7 +380,9 @@ async fn generate_tool_use_label_returns_none_on_empty_batch_without_a_call() {
         model: test_model(),
     };
     assert_eq!(
-        generate_tool_use_label(&side, &[], "hi").await.unwrap(),
+        generate_tool_use_label(&side, "side-ux-test", &[], "hi")
+            .await
+            .unwrap(),
         None
     );
     assert!(provider.calls().is_empty());

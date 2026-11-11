@@ -1672,6 +1672,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &feature_context,
     ));
     session.set_usage_store(wiring.rlm_usage.store());
+    // The calls billed for this session outside the engine (features, side
+    // models) land in the same durable store.
+    super::billed_calls::register_session_usage_store(
+        &feature_context.session_id,
+        &wiring.rlm_usage.store(),
+    );
     // Keep the context descriptor even while disabled, so re-enabling can load it.
     session.harness_digest = Some(digest_context);
     session.refinement_settings = Some(refinement_settings);

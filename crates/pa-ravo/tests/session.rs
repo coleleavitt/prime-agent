@@ -29,6 +29,12 @@ use pa_core::features::{
     register_feature_status_sink,
 };
 use pa_core::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+use pa_core::session_engine::model_usage::ModelUsage;
+use pa_core::session_engine::rlm_usage::{
+    ChildUsageAppendResult,
+    RlmChildUsageFuture,
+    RlmChildUsageStore,
+};
 use pa_ledger::ReplayCase;
 use pa_ravo::{RavoFeature, RavoOptions, ReplayEnvironment, ReplayOutcome, ReplayRunner};
 use serde_json::{Value, json};
@@ -441,4 +447,71 @@ fn the_feature_contributes_its_command_and_skill() {
     assert!(text.starts_with("---\nname: ravo\n"));
     assert!(skill_dir.join("pyproject.toml").is_file());
     assert!(skill_dir.join("src/ravo/__init__.py").is_file());
+}
+
+/// A durable usage store that keeps each bill it is given.
+#[derive(Default)]
+struct Bills(Mutex<Vec<(String, ModelUsage)>>);
+
+impl RlmChildUsageStore for Bills {
+    fn last_assistant(&self) -> RlmChildUsageFuture<'_, Option<(String, pa_types::ai::Usage)>> {
+        Box::pin(async { None })
+    }
+
+    fn append_attribution(
+        &self,
+        _row_id: &str,
+        _target_id: &str,
+        _child_usage: pa_types::ai::Usage,
+        _origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<ChildUsageAppendResult>> {
+        Box::pin(async { Err(std::io::Error::other("bills only")) })
+    }
+
+    fn append_model_usage(
+        &self,
+        session_id: String,
+        usage: ModelUsage,
+    ) -> RlmChildUsageFuture<'_, std::io::Result<()>> {
+        self.0.lock().unwrap().push((session_id, usage));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Every prompt of a RAVO run bills the session that started it: one
+/// `ravo_run` `model_usage` row per child call, on the session's model.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_ravo_run_prompt_records_its_usage_on_the_session() {
+    let harness = harness("billed", 0, true);
+    harness.script();
+    let bills = Arc::new(Bills::default());
+    let store: Arc<dyn RlmChildUsageStore> = bills.clone();
+    pa_core::session_engine::billed_calls::register_session_usage_store(
+        &harness.context.session_id,
+        &store,
+    );
+    let feature = feature();
+    let outcome = ravo(&feature, &harness.context, "note the tactic")
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        outcome.completion.expect("a run reports its end"),
+    )
+    .await
+    .expect("the run settles")
+    .unwrap();
+    let bills = bills.0.lock().unwrap().clone();
+    assert!(bills.iter().all(|(_, bill)| bill.usage.total_tokens > 0));
+    let billed: Vec<(String, String, String, String)> = bills
+        .into_iter()
+        .map(|(session_id, bill)| (session_id, bill.source, bill.provider, bill.model_id))
+        .collect();
+    let expected = (
+        harness.context.session_id.clone(),
+        "ravo_run".to_string(),
+        harness.context.model.provider.clone(),
+        MODEL_ID.to_string(),
+    );
+    assert_eq!(billed, vec![expected; 4], "inspect, plan, implement, judge");
 }

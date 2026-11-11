@@ -740,3 +740,153 @@ async fn refinement_and_auto_review_send_the_session_request_identity() {
         ]
     );
 }
+
+/// A reply billing `total_tokens` that carries `text`.
+fn billed_reply_call(
+    text: &'static str,
+    total_tokens: u64,
+) -> crate::refinement::executor::RefinerFn {
+    Box::new(move |model, system, prompt| {
+        let reply = refine_plan_call(text)(model, system, prompt);
+        Box::pin(async move {
+            let mut reply = reply.await?;
+            reply.usage = billed_usage(total_tokens);
+            Ok(reply)
+        })
+    })
+}
+
+fn billed_usage(total_tokens: u64) -> pa_types::ai::Usage {
+    pa_types::ai::Usage {
+        input: total_tokens,
+        total_tokens,
+        ..Default::default()
+    }
+}
+
+/// The `model_usage` rows the session recorded, in order.
+async fn model_usage_rows(session: &AgentSession) -> Vec<super::model_usage::ModelUsage> {
+    session
+        .shared_persistence()
+        .lock()
+        .await
+        .get_entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            pa_types::session::FileEntry::Custom { payload, .. }
+                if payload.custom_type == super::model_usage::MODEL_USAGE_CUSTOM_TYPE =>
+            {
+                serde_json::from_value(payload.data.clone()?).ok()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn review_bill(total_tokens: u64) -> super::model_usage::ModelUsage {
+    super::model_usage::ModelUsage::new("refine_review", "test", "m", billed_usage(total_tokens))
+        .unwrap()
+}
+
+/// Every multi-vote reviewer bills its own call: three votes are three
+/// `refine_review` rows, whatever the verdict.
+#[tokio::test]
+async fn each_multi_vote_reviewer_records_its_call() {
+    let (session, _tmp) = refine_test_session().await;
+    let next = std::sync::atomic::AtomicU64::new(0);
+    let review = session
+        .billed_auto_refine_review(
+            refine::AutoRefineReviewInputs {
+                messages: &[],
+                merged_state: &crate::refinement::empty_harness_state(),
+                history: &[],
+                model: &session_ai_model(),
+                review_context: &crate::refinement::executor::AutoRefineReviewContext {
+                    reason: "test".to_string(),
+                    turns_since_last_review: 0,
+                },
+            },
+            || {
+                let vote = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                billed_reply_call(r#"{"shouldRefine":false,"rationale":"noise"}"#, 10 + vote)
+            },
+            Some(crate::refinement::multi_vote::MultiVoteConfig::default()),
+        )
+        .await
+        .unwrap();
+    assert!(!review.should_refine);
+    let mut rows = model_usage_rows(&session).await;
+    rows.sort_by_key(|row| row.usage.total_tokens);
+    assert_eq!(
+        rows,
+        vec![review_bill(10), review_bill(11), review_bill(12)]
+    );
+}
+
+/// The single reviewer bills too, through the same path.
+#[tokio::test]
+async fn the_single_reviewer_records_its_call() {
+    let (session, _tmp) = refine_test_session().await;
+    session
+        .billed_auto_refine_review(
+            refine::AutoRefineReviewInputs {
+                messages: &[],
+                merged_state: &crate::refinement::empty_harness_state(),
+                history: &[],
+                model: &session_ai_model(),
+                review_context: &crate::refinement::executor::AutoRefineReviewContext {
+                    reason: "test".to_string(),
+                    turns_since_last_review: 0,
+                },
+            },
+            || billed_reply_call(r#"{"shouldRefine":false,"rationale":"noise"}"#, 21),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(model_usage_rows(&session).await, vec![review_bill(21)]);
+}
+
+/// A gate that consults its model call once and lets the edits apply.
+struct ConsultingGate;
+
+impl crate::refinement::gate::RefinementGate for ConsultingGate {
+    fn evaluate(
+        &self,
+        request: crate::refinement::gate::RefinementGateRequest,
+    ) -> crate::features::FeatureFuture<
+        anyhow::Result<Option<Box<dyn crate::refinement::gate::RefinementGateVerdict>>>,
+    > {
+        Box::pin(async move {
+            (request.model_call)(request.model, "judge", "the proposal".to_string()).await?;
+            Ok(None)
+        })
+    }
+}
+
+/// The refinement gate's judge call bills like the planning call: one
+/// `refine_gate` row beside the `refine` row.
+#[tokio::test]
+async fn the_refinement_gates_judge_call_records_its_usage() {
+    let (mut session, tmp) = refine_test_session().await;
+    session.set_refinement_gate(Some(Arc::new(ConsultingGate)));
+    session
+        .refine_with_calls(
+            &refine::RefineOptions::default(),
+            refine::RefinementSource::User,
+            &session_ai_model(),
+            billed_reply_call(APPLIED_PLAN, 30),
+            Some(billed_reply_call("ok", 7)),
+            tmp.path().join("harness"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        model_usage_rows(&session).await,
+        vec![
+            super::model_usage::ModelUsage::new("refine", "test", "m", billed_usage(30)).unwrap(),
+            super::model_usage::ModelUsage::new("refine_gate", "test", "m", billed_usage(7))
+                .unwrap(),
+        ]
+    );
+}
