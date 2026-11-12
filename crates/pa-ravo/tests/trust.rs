@@ -96,6 +96,7 @@ fn session(global_ledger: bool) -> Session {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: Some(manager.get_session_dir().to_path_buf()),
+        daemonless: false,
     });
     let runner = Arc::new(Probe::default());
     let ravo = RavoFeature::new(RavoOptions {

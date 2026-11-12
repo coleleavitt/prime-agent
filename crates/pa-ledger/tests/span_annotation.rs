@@ -72,6 +72,7 @@ async fn failed_results_annotate_their_span_and_successes_do_not() {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     });
     let feature = FailureLedgerFeature::new(LedgerOptions {
         resolution_index: false,

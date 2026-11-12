@@ -117,6 +117,7 @@ fn session_with(runner: Arc<dyn ReplayRunner>) -> Session {
         })),
         rlm_depth: 0,
         session_artifact_dir: Some(manager.get_session_dir().to_path_buf()),
+        daemonless: false,
     });
     let ravo = RavoFeature::new(RavoOptions {
         enabled: Some(true),

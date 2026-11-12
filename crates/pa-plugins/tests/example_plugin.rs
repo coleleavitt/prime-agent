@@ -50,6 +50,7 @@ async fn the_example_guard_plugin_reviews_and_answers() {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     });
     let run = |command: &str| HostRequestObservation {
         request_type: "bash.run".to_string(),

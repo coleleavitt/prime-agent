@@ -43,6 +43,7 @@ fn context(root: &Path, session_id: &str, artifacts: bool) -> Arc<SessionFeature
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: artifacts.then(|| root.join("artifacts").join(session_id)),
+        daemonless: false,
     })
 }
 

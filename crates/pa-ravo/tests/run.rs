@@ -121,6 +121,7 @@ fn session_at_depth(model: Scripted, artifacts: bool, rlm_depth: u32) -> Session
         telemetry: None,
         rlm_depth,
         session_artifact_dir: artifacts.then(|| root.path().join("artifacts")),
+        daemonless: false,
     };
     let model = Arc::new(model);
     let shared = Arc::clone(&model);

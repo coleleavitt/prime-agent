@@ -117,6 +117,7 @@ fn a_global_champion_regresses_on_the_global_ordinal() {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: Some(root.path().join("artifacts")),
+        daemonless: false,
     });
     let ravo = RavoFeature::new(RavoOptions {
         enabled: Some(true),

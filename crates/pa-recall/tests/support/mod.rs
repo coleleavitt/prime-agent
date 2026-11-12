@@ -182,6 +182,7 @@ pub fn context(repo: &Path, agent_dir: &Path, session_id: &str) -> Arc<SessionFe
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     })
 }
 

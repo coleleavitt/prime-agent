@@ -38,6 +38,7 @@ fn context(session_id: &str, depth: u32) -> Arc<SessionFeatureContext> {
         telemetry: None,
         rlm_depth: depth,
         session_artifact_dir: None,
+        daemonless: false,
     })
 }
 

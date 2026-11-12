@@ -687,6 +687,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .map(crate::features::FeatureTelemetry::from_wiring),
         rlm_depth: config.rlm_depth.unwrap_or(0),
         session_artifact_dir: session_artifact_dir.clone(),
+        daemonless: config.daemonless,
     };
     // What features report as the session's `transcript_path`.
     crate::features::set_session_transcript_path(
@@ -1244,7 +1245,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         rerank_hook: config
             .reranker
             .as_ref()
-            .map(super::super::refinement::retrieval::RerankerHandle::as_rerank_hook),
+            .map(super::super::refinement::retrieval::RerankerHandle::as_rerank_hook)
+            .or_else(|| {
+                crate::features::session_harness_rerank_hook(
+                    crate::features::installed(),
+                    &feature_context,
+                )
+            }),
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;

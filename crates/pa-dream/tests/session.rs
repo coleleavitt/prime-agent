@@ -87,6 +87,7 @@ fn harness(name: &str, depth: u32) -> Harness {
         })),
         rlm_depth: depth,
         session_artifact_dir: Some(dir.path().join("artifacts")),
+        daemonless: false,
     };
     Harness {
         dir,

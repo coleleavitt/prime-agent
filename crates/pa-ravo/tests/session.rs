@@ -145,6 +145,7 @@ fn harness(name: &str, depth: u32, artifacts: bool) -> Harness {
         })),
         rlm_depth: depth,
         session_artifact_dir: artifacts.then(|| dir.path().join("artifacts")),
+        daemonless: false,
     };
     let statuses: Arc<Mutex<Vec<FeatureStatus>>> = Arc::default();
     let seen = Arc::clone(&statuses);

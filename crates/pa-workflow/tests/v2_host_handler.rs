@@ -98,6 +98,7 @@ fn harness(with_telemetry: bool) -> Harness {
         }),
         session_artifact_dir: None,
         rlm_depth: 0,
+        daemonless: false,
     };
     let mut handlers = HostRequestHandlers::new();
     WorkflowFeature.register_host_handlers(&context, &mut handlers);

@@ -495,6 +495,7 @@ pub(crate) fn feature_context() -> Arc<pa_core::features::SessionFeatureContext>
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     })
 }
 

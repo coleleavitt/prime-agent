@@ -567,6 +567,7 @@ fn feature(tree: &Tree, session_id: &str) -> (PermissionsFeature, Arc<SessionFea
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     });
     (feature, context)
 }

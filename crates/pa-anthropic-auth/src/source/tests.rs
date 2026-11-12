@@ -216,6 +216,7 @@ fn context(telemetry: pa_core::features::FeatureTelemetry) -> Arc<SessionFeature
         telemetry: Some(telemetry),
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     })
 }
 

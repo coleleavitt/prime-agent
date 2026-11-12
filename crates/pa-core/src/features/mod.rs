@@ -123,6 +123,7 @@ pub use status::{
 use crate::kernel::shared::HostRequestHandlers;
 use crate::refinement::gate::RefinementGate;
 use crate::refinement::prompt_hook::{HarnessPromptHook, HarnessPromptHooks};
+use crate::refinement::ranking::HarnessRerankHook;
 use crate::session_engine::telemetry::TelemetryWiring;
 
 /// A feature hook's boxed future: hooks run inline on the session's tool
@@ -154,6 +155,9 @@ pub struct SessionFeatureContext {
     /// kernel snapshot and other per-session files live); `None` for a
     /// session that persists nothing.
     pub session_artifact_dir: Option<PathBuf>,
+    /// Whether the session runs without a daemon (print mode and its inline
+    /// subagents) rather than in a daemon worker.
+    pub daemonless: bool,
 }
 
 /// A tool call the loop is about to execute (arguments validated).
@@ -766,6 +770,19 @@ pub trait SessionFeature: Send + Sync {
         let _ = context;
         None
     }
+
+    /// The hook that reorders the session's editable harness entries of each
+    /// kind for the digest's query terms (see [`HarnessRerankHook`]); `None`,
+    /// the default, keeps the native relevance order. Called once, on the
+    /// session-creation path; the first installed feature that offers one is
+    /// the session's.
+    fn harness_rerank_hook(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<HarnessRerankHook> {
+        let _ = context;
+        None
+    }
 }
 
 static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
@@ -936,6 +953,17 @@ pub(crate) fn session_harness_prompt_hooks(
             .filter_map(|feature| feature.harness_prompt_hook(context))
             .collect(),
     )
+}
+
+/// The first harness rerank hook `features` offer the session; `None` keeps
+/// the native order.
+pub(crate) fn session_harness_rerank_hook(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> Option<HarnessRerankHook> {
+    features
+        .iter()
+        .find_map(|feature| feature.harness_rerank_hook(context))
 }
 
 /// Tell `features` a session was created with `history`; nothing happens

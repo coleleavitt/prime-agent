@@ -39,6 +39,7 @@ fn context(agent_dir: PathBuf, loaded: &[&str], tracked: &Tracked) -> SessionFea
                 .unwrap()
                 .push((name.to_string(), properties));
         })),
+        daemonless: false,
     }
 }
 

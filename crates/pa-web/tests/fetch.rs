@@ -45,6 +45,7 @@ fn context(dir: &std::path::Path, tracked: &Tracked) -> SessionFeatureContext {
         })),
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     }
 }
 

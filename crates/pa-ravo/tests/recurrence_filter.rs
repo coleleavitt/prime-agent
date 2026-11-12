@@ -84,6 +84,7 @@ fn session(root: &Path, id: &str, global: bool, filter: Option<Arc<MuteAll>>) ->
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: Some(root.join("artifacts").join(id)),
+        daemonless: false,
     });
     let ravo = RavoFeature::new(RavoOptions {
         enabled: Some(true),

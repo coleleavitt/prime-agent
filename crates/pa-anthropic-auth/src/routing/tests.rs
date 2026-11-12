@@ -398,6 +398,7 @@ fn the_session_feature_names_the_sticky_session() {
             telemetry: None,
             rlm_depth: depth,
             session_artifact_dir: None,
+            daemonless: false,
         })
     };
     let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::default();

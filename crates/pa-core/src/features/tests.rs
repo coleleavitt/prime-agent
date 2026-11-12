@@ -48,6 +48,7 @@ pub(super) fn context(session_id: &str) -> SessionFeatureContext {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: None,
+        daemonless: false,
     }
 }
 
@@ -131,6 +132,40 @@ fn a_feature_offers_a_harness_prompt_hook_through_the_seam() {
         .adjust(&crate::refinement::empty_harness_state())
         .expect("a ranking adjustment");
     assert_eq!(adjustment.rank("a"), -1);
+}
+
+/// The first rerank hook an installed feature offers is the session's;
+/// features that offer none are passed over.
+#[test]
+fn a_feature_offers_a_harness_rerank_hook_through_the_seam() {
+    struct Reranking(&'static str);
+    impl SessionFeature for Reranking {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn harness_rerank_hook(
+            &self,
+            _context: &Arc<SessionFeatureContext>,
+        ) -> Option<HarnessRerankHook> {
+            let name = self.0;
+            Some(Arc::new(move |_entries, _terms| {
+                Some(vec![name.to_string()])
+            }))
+        }
+    }
+    let context = Arc::new(context("s1"));
+    let none: Vec<Arc<dyn SessionFeature>> = vec![Arc::new(Stub)];
+    assert!(session_harness_rerank_hook(&none, &context).is_none());
+    let features: Vec<Arc<dyn SessionFeature>> = vec![
+        Arc::new(Stub),
+        Arc::new(Reranking("first")),
+        Arc::new(Reranking("second")),
+    ];
+    let hook = session_harness_rerank_hook(&features, &context).expect("a rerank hook");
+    assert_eq!(
+        hook(&[], &crate::refinement::ranking::HarnessQueryTerms::new()),
+        Some(vec!["first".to_string()])
+    );
 }
 
 /// A feature's telemetry handle tracks catalogued events through the

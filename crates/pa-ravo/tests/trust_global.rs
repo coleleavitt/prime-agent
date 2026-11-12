@@ -134,6 +134,7 @@ fn world(windows: Value) -> World {
         telemetry: None,
         rlm_depth: 0,
         session_artifact_dir: Some(root.path().join("artifacts")),
+        daemonless: false,
     });
     let ravo = RavoFeature::new(RavoOptions {
         enabled: Some(true),
