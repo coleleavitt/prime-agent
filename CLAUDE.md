@@ -94,8 +94,15 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
 - `pa-agent`: queued batches record their origin; an aborted run parks the **user's** steer/follow-up rows (next
   prompt or `continue` folds them) while host rows (terminal notices, injected rows) keep driving the session.
 - The factory (`skills/factory`, `rlm.factory`) runs host-side: `pa-core::factory` owns the spec validator, the
-  executor (one per session, a durable `factory-runs/<run id>.json` record per run, recovery that pauses in-flight
-  runs as interrupted after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
+  executor (one per session, a durable `factory-runs/<run id>.json` record per run, recovery that adopts the
+  children still running after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
+- RLM children (Claude Code 2.1.322's agent lifecycle where it has one): the settle carries the final answer
+  (`get_state` `includeSettlement`, one worker snapshot) and `subagent_tokens`/`tool_uses` (`RlmChildResult`,
+  the notice's `<usage>`); a caller-picked `child_id` makes `rlm.run` idempotent (a known id is adopted, an
+  unconfirmable one refused as `admission unknown`). The factory record and the `rlm.workflow` journal write the
+  id before the spawn; a restarted parent, factory or resumed workflow adopts a surviving child (capped at 5,
+  Claude Code's `restartResumes`) and pauses for the user on an unknown admission. No token budgets in either flow
+  (removed; goal budgets stay).
 - Spawn hardening: ETXTBSY-tolerant spawns (`platform::process::{status,spawn}_retrying_text_busy`) for the runtime
   probe, `uv`, and staged-update version probes; runtime-probe memo invalidation scoped to the failed interpreter.
 - Resume follows Claude Code's picker: `--resume <selector>` / `/resume <selector>` resolve in `pa-cli`
@@ -176,7 +183,7 @@ Claude Code parity port (branch `cc-parity`; no kernel or daemon protocol bump; 
   running session like `/cwd`. Each session has a private `scratchpad/` and `tasks/` (`PRIME_AGENT_SCRATCHPAD`,
   `PRIME_AGENT_TASKS_DIR`); every `bash()` output is saved to `tasks/<job id>.output` (pruned to 200 files / 512 MiB).
 - Workflows and review: `rlm.workflow` (`rlm/workflow_script.py`) runs CC's async Workflow scripts
-  (`agent`/`pipeline`/`parallel`/`phase`/`log`/`args`/`budget`, schema results with a repair retry) over `rlm.spawn`
+  (`agent`/`pipeline`/`parallel`/`phase`/`log`/`args`, schema results with a repair retry) over `rlm.spawn`
   children, journaled under `<session>/workflows/<wf id>/` for `resume_from`; `start()` backgrounds a run. Saved
   workflows resolve `<name>.py` from `.prime/workflows/`, `.claude/workflows/`, `<agent dir>/workflows/`,
   `~/.claude/workflows/` (`/workflows`). The bundled `code-review` skill (`/code-review`, `/review`) and
