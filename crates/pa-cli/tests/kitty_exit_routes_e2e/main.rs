@@ -770,6 +770,8 @@ fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: boo
         // off by default now, so opt back in.
         .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
+        // The probe skips the kitty query on a `dumb`/`linux` TERM; do not inherit the runner's.
+        .env("TERM", "xterm-256color")
         .env_remove("KITTY_WINDOW_ID")
         .env_remove("GHOSTTY_RESOURCES_DIR")
         .env_remove("KITTY_PID")

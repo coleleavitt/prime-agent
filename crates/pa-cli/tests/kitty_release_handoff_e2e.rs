@@ -409,6 +409,8 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
         .arg("kitty_child_mode")
         .env(CHILD_SOCKET_ENV, socket)
         .env_remove("TMUX")
+        // The probe skips the kitty query on a `dumb`/`linux` TERM; do not inherit the runner's.
+        .env("TERM", "xterm-256color")
         .stdin(slave_as_stdio(slave))
         .stdout(slave_as_stdio(slave))
         .stderr(slave_as_stdio(slave));

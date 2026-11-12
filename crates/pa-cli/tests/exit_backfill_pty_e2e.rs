@@ -444,6 +444,8 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
         // primary screen, so opt back in.
         .env("PRIME_AGENT_TUI_EXIT_FLUSH", "1")
         .env_remove("TMUX")
+        // The probe skips the kitty query on a `dumb`/`linux` TERM; do not inherit the runner's.
+        .env("TERM", "xterm-256color")
         .stdin(slave_as_stdio(slave))
         .stdout(slave_as_stdio(slave))
         .stderr(slave_as_stdio(slave));
