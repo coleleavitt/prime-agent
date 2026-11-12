@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use pa_core::session_engine::semantic_edges::ChildCancelledReason;
 use pa_types::sync::MutexExt;
 
+use super::run_state::{RunEvent, RunState, RunVerdict};
 use super::{
     Arc,
     ChildCloseReason,
@@ -51,9 +52,10 @@ impl SupervisorChildSessionsInner {
             status: record.roster_status(),
             answer_preview: record.answer_preview.clone(),
             error: record
-                .error
-                .clone()
-                .unwrap_or_else(|| "Deleted by parent orchestrator".to_string()),
+                .run
+                .error()
+                .unwrap_or("Deleted by parent orchestrator")
+                .to_string(),
         };
         self.deleted_children
             .lock()
@@ -79,30 +81,26 @@ impl SupervisorChildSessionsInner {
 
         let children = self.children.lock().await.clone();
         for record in &children {
-            let (matched, running, active_session_id) = {
-                let record = record.lock().await;
-                (
-                    record.rlm_child_id == child_id,
-                    record.settled_status.is_none(),
-                    record.active_session_id.clone(),
-                )
-            };
-            // A fruitless match keeps walking: child ids are only
-            // mkdir-unique among siblings, so a colliding live run
-            // elsewhere must stay reachable.
-            if !matched || !running {
-                continue;
-            }
-            let notice_was_delivered = {
+            let claim = {
                 let mut record = record.lock().await;
-                // The no-reply terminal notice is suppressed for a
-                // cancelled run; a settle watcher that already claimed it
-                // keeps its claim.
-                let notice_was_delivered = record.notice_delivered;
-                record.notice_delivered = true;
-                record.settled_status = Some("cancelled");
-                record.error = Some("Cancelled by user".to_string());
-                notice_was_delivered
+                // A fruitless match keeps walking: child ids are only
+                // mkdir-unique among siblings, so a colliding live run
+                // elsewhere must stay reachable.
+                let claimed = record.rlm_child_id == child_id
+                    && record.run.apply(RunEvent::Cancel {
+                        reason: Some("Cancelled by user".to_string()),
+                    });
+                claimed.then(|| {
+                    // The no-reply terminal notice is suppressed for a
+                    // cancelled run; a settle watcher that already claimed
+                    // it keeps its claim.
+                    let notice_was_delivered = record.notice_delivered;
+                    record.notice_delivered = true;
+                    (notice_was_delivered, record.active_session_id.clone())
+                })
+            };
+            let Some((notice_was_delivered, active_session_id)) = claim else {
+                continue;
             };
             self.emit_child_update(record).await;
             // Capture before the abort: the completed turns' usage (the
@@ -145,8 +143,7 @@ impl SupervisorChildSessionsInner {
                 // already claimed the terminal notice keeps the claim, and
                 // an unclaimed one stays owed exactly once.
                 let mut row = record.lock().await;
-                row.settled_status = None;
-                row.error = None;
+                row.run.apply(RunEvent::CancelRefused);
                 row.notice_delivered = notice_was_delivered;
                 drop(row);
                 // The pre-abort update published `cancelled`; publish the
@@ -198,10 +195,7 @@ impl SupervisorChildSessionsInner {
             }
             let (running, active_session_id) = {
                 let record = record.lock().await;
-                (
-                    record.settled_status.is_none(),
-                    record.active_session_id.clone(),
-                )
+                (record.run.is_running(), record.active_session_id.clone())
             };
             if running && !already_terminated {
                 return Ok("running");
@@ -280,16 +274,13 @@ impl SupervisorChildSessionsInner {
                 self.emit_child_usage(record).await;
                 let (active_session_id, was_running) = {
                     let mut record = record.lock().await;
-                    let was_running = record.settled_status.is_none();
                     // A close that kills a live run settles the row
                     // `cancelled` (the same registry state
                     // `cancel_child_run` leaves): a watcher parked inside
                     // its wait slice can then never refresh the killed run
                     // back to `done` and record a clean `child_returned`
                     // beside the cancel line.
-                    if was_running {
-                        record.settled_status = Some("cancelled");
-                    }
+                    let was_running = record.run.apply(RunEvent::Cancel { reason: None });
                     (record.active_session_id.clone(), was_running)
                 };
                 if let Err(error) = self.kill_child(&active_session_id, reason).await
@@ -300,7 +291,7 @@ impl SupervisorChildSessionsInner {
                     // a later successful stop can still record its cancel
                     // edge (the recorder's dedup never saw this attempt).
                     if was_running {
-                        record.lock().await.settled_status = None;
+                        record.lock().await.run.apply(RunEvent::CancelRefused);
                     }
                     close_error.get_or_insert(error);
                     continue;
@@ -360,8 +351,7 @@ impl SupervisorChildSessionsInner {
             match intent {
                 super::RetirementIntent::Delete { was_running } => {
                     if was_running {
-                        row.settled_status = Some("cancelled");
-                        row.error = Some("Deleted by parent orchestrator".into());
+                        row.run.apply(RunEvent::DeleteCancel);
                     }
                     self.remember_deleted_child(&row);
                 }
@@ -467,7 +457,7 @@ impl SupervisorChildSessionsInner {
         self.refresh_running().await;
         let notify_hook = {
             let mut row = record.lock().await;
-            row.settled = true;
+            row.run.apply(RunEvent::Funnel);
             row.retirement_finished = true;
             deleted
         };
@@ -575,7 +565,7 @@ impl SupervisorChildSessionsInner {
             // completed, so its child may still be working.
             let (active_session_id, session_dir, child_id) = {
                 let record = record.lock().await;
-                if record.settled_status != Some("error") {
+                if !matches!(record.run.verdict(), Some(RunVerdict::Error(_))) {
                     continue;
                 }
                 (
@@ -611,8 +601,7 @@ impl SupervisorChildSessionsInner {
             }
             {
                 let mut record = record.lock().await;
-                record.settled_status = None;
-                record.settled = false;
+                record.run.apply(RunEvent::Adopt);
                 record.notice_delivered = false;
                 record.lost_at_restart = false;
             }
@@ -705,8 +694,11 @@ fn ledger_child_records(
                 },
                 |display| display.created_at,
             ),
-            settled_status: Some(if running { "error" } else { "done" }),
-            settled: true,
+            run: RunState::reseeded(if running {
+                RunVerdict::Error(None)
+            } else {
+                RunVerdict::Done
+            }),
             answer_preview: None,
             answer_text: None,
             answer_captured: false,
@@ -720,7 +712,6 @@ fn ledger_child_records(
             notice_delivered: true,
             factory: edge.factory.is_some(),
             prompt_admitted: true,
-            error: None,
             closed_by_parent: false,
             lost_at_restart: running && !notified,
             retiring: false,

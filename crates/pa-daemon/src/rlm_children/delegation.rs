@@ -11,6 +11,7 @@
 use pa_core::session_engine::rlm_in_process::compact_rlm_text;
 use pa_types::sync::MutexExt;
 
+use super::run_state::{RunEvent, RunState};
 use super::{
     Arc,
     ChildCloseReason,
@@ -75,13 +76,7 @@ impl SupervisorChildSessionsInner {
     /// error status, its usage flushes once, and the settle funnel fires
     /// (the roster and the quiescence predicate see a settled child).
     async fn fail_delegation_child(&self, record: &Arc<Mutex<ChildRecord>>, error: String) {
-        {
-            let mut record = record.lock().await;
-            if record.settled_status.is_none() {
-                record.settled_status = Some("error");
-                record.error = Some(error.clone());
-            }
-        }
+        record.lock().await.run.apply(RunEvent::Failed(error));
         self.emit_child_usage(record).await;
         self.fire_settle_hook(record).await;
     }
@@ -168,8 +163,7 @@ impl SupervisorChildSessionsInner {
             model: request.model.clone(),
             label: rlm_child_label(&request.prompt),
             started_at_ms: now_ms(),
-            settled_status: None,
-            settled: false,
+            run: RunState::running(),
             answer_preview: None,
             answer_captured: false,
             replied_since_task: true,
@@ -182,7 +176,6 @@ impl SupervisorChildSessionsInner {
             notice_delivered: false,
             factory: false,
             prompt_admitted: true,
-            error: None,
             closed_by_parent: false,
             lost_at_restart: false,
             retiring: false,
@@ -284,7 +277,9 @@ impl SupervisorChildSessionsInner {
                         Ok(Some(answer)) => {
                             {
                                 let mut record = record.lock().await;
-                                record.settled_status = Some("done");
+                                record.run.apply(RunEvent::IdleRead {
+                                    final_turn_error: None,
+                                });
                                 if !record.answer_captured || record.answer_preview.is_none() {
                                     record.answer_preview = Some(compact_rlm_text(&answer));
                                     record.answer_captured = true;

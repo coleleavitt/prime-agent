@@ -5,6 +5,7 @@
 use pa_core::session_engine::rlm_in_process::assert_thinking_supported;
 use pa_types::sync::MutexExt;
 
+use super::run_state::{RunEvent, RunState};
 use super::{
     Arc,
     ChildCloseReason,
@@ -96,7 +97,7 @@ async fn resolve_child_model_allowlisted(
 /// admission-to-run hand-off misread the grace exists to un-settle — is
 /// re-cleared for re-reading.
 pub(super) fn collect_grace_may_reclear(record: &ChildRecord) -> bool {
-    !record.settled && !record.notice_delivered
+    !record.run.funnel_fired() && !record.notice_delivered
 }
 
 /// The `rlm.create_session` launch env (TS `createRlmRootSession`'s
@@ -280,8 +281,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     model: model.clone(),
                     label: rlm_child_label(&request.prompt),
                     started_at_ms: now_ms(),
-                    settled_status: None,
-                    settled: false,
+                    run: RunState::running(),
                     answer_preview: None,
                     answer_text: None,
                     answer_captured: false,
@@ -295,7 +295,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     notice_delivered: false,
                     factory: request.factory.is_some(),
                     prompt_admitted: false,
-                    error: None,
                     closed_by_parent: false,
                     lost_at_restart: false,
                     retiring: false,
@@ -629,7 +628,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     return Err(error).with_context(|| format!("interrupt RLM child \"{target}\""));
                 }
             };
-            if aborted && record.settled_status.is_none() {
+            if aborted && record.run.is_running() {
                 record.interrupted = true;
             }
             Ok(RlmInterruptSubagentResult::resolved(entry, aborted))
@@ -730,7 +729,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // A settled child's delete records no cancel line, so it
                 // leaves its return alone.
                 let mut row = record.lock().await;
-                let was_running = row.settled_status.is_none();
+                let was_running = row.run.is_running();
                 if was_running {
                     row.retiring = true;
                 }
@@ -845,18 +844,18 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // was running on entry) gets the stability grace below —
                 // records settled on a previous collect keep their result
                 // (TS completed children stay readable until deleted).
-                let settled_on_entry = record.lock().await.settled_status.is_some();
+                let settled_on_entry = !record.lock().await.run.is_running();
                 this.refresh_record(record).await;
                 // A settled child that is busy again runs a follow-up turn:
                 // re-arm usage observation (the task-run watcher retired at
                 // its settle).
-                if record.lock().await.settled_status.is_some() {
+                if !record.lock().await.run.is_running() {
                     let active_session_id = record.lock().await.active_session_id.clone();
                     if matches!(this.child_busy(&active_session_id).await, Ok(true)) {
                         SupervisorChildSessionsInner::arm_usage_watch(&this, record).await;
                     }
                 }
-                let still_running = record.lock().await.settled_status.is_none();
+                let still_running = record.lock().await.run.is_running();
                 if still_running {
                     // Wait inside the shared budget, then re-read the child:
                     // a timeout yields the current snapshot, never an error.
@@ -887,7 +886,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // child is a follow-up turn that keeps the settled result,
                 // and only the unclaimed misread re-clears
                 // (`collect_grace_may_reclear`).
-                if !settled_on_entry && record.lock().await.settled_status.is_some() {
+                if !settled_on_entry && !record.lock().await.run.is_running() {
                     let active_session_id = record.lock().await.active_session_id.clone();
                     tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
                     let busy_again = matches!(this.child_busy(&active_session_id).await, Ok(true));
@@ -908,9 +907,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     // unclaimed misreads re-clear.
                     let recleared = {
                         let mut record = record.lock().await;
-                        let may = busy_again && collect_grace_may_reclear(&record);
+                        let may = busy_again
+                            && collect_grace_may_reclear(&record)
+                            && record.run.apply(RunEvent::Reclear);
                         if may {
-                            record.settled_status = None;
                             // A follow-up turn is running: a re-settle owes a
                             // fresh return on the parent's ledger.
                             record.return_recorded = false;

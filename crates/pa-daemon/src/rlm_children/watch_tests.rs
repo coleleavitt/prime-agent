@@ -1477,7 +1477,9 @@ async fn a_verdict_landing_inside_the_unreachable_give_up_still_runs_the_settle_
         // answers idle.
         let record = Arc::clone(&sessions.inner.children.lock().await[0]);
         let mut record = record.lock().await;
-        record.settled_status = Some("done");
+        record.run.apply(RunEvent::IdleRead {
+            final_turn_error: None,
+        });
     }
     VERDICT_LANDED.notify_one();
 
@@ -3072,8 +3074,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,
-        settled_status: None,
-        settled: false,
+        run: RunState::running(),
         answer_preview: None,
         answer_text: None,
         answer_captured: false,
@@ -3087,7 +3088,6 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         notice_delivered: false,
         factory: false,
         prompt_admitted: true,
-        error: None,
         closed_by_parent: false,
         lost_at_restart: false,
         retiring: false,
@@ -3110,7 +3110,9 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
     assert!(super::lifecycle::should_mark_error(&base()));
     // A settled child keeps its positive verdict.
     let mut settled = base();
-    settled.settled_status = Some("done");
+    settled.run.apply(RunEvent::IdleRead {
+        final_turn_error: None,
+    });
     assert!(
         !super::lifecycle::should_mark_error(&settled),
         "an idle-passivated (or post-settle crashed) child keeps its settled verdict"
@@ -3145,7 +3147,6 @@ async fn collect_recaptures_the_answer_of_a_settled_child_whose_capture_raced() 
                 active_session_id: "child-live".to_string(),
                 session_id: Some("child-file".to_string()),
             },
-            Some("done"),
             None,
         )
         .await;
@@ -3186,26 +3187,29 @@ async fn only_an_unclaimed_settle_re_clears_inside_the_collect_grace() {
         .await;
     let record = Arc::clone(&sessions.inner.children.lock().await[0]);
     // Unclaimed (the admission-window misread): re-clearable.
+    record.lock().await.run.apply(RunEvent::IdleRead {
+        final_turn_error: None,
+    });
     assert!(
         super::host::collect_grace_may_reclear(&*record.lock().await),
         "a settle no claim took is the misread the grace un-does"
     );
-    // The funnel completed (the watcher retired at its settle): final.
-    record.lock().await.settled = true;
-    assert!(
-        !super::host::collect_grace_may_reclear(&*record.lock().await),
-        "the funnel's latch owns the verdict"
-    );
     // The notice claim alone (the cancel/delete window before the hook):
     // final.
-    {
-        let mut record = record.lock().await;
-        record.settled = false;
-        record.notice_delivered = true;
-    }
+    record.lock().await.notice_delivered = true;
     assert!(
         !super::host::collect_grace_may_reclear(&*record.lock().await),
         "a claimed notice owns the verdict"
+    );
+    // The funnel completed (the watcher retired at its settle): final.
+    {
+        let mut record = record.lock().await;
+        record.notice_delivered = false;
+        record.run.apply(RunEvent::Funnel);
+    }
+    assert!(
+        !super::host::collect_grace_may_reclear(&*record.lock().await),
+        "the funnel's latch owns the verdict"
     );
 }
 
@@ -3386,7 +3390,7 @@ async fn the_funnel_claim_never_lands_between_the_grace_gate_and_its_re_clear() 
     );
     let (settled_latch, noticed) = {
         let record = record.lock().await;
-        (record.settled, record.notice_delivered)
+        (record.run.funnel_fired(), record.notice_delivered)
     };
     assert!(
         !settled_latch,
@@ -3447,7 +3451,7 @@ async fn the_settle_tail_claim_aborts_on_a_re_cleared_verdict() {
         let record = record.lock().await;
         assert!(!record.notice_delivered, "no notice claims a running child");
         assert!(
-            !record.settled,
+            !record.run.funnel_fired(),
             "the funnel never fires for a re-cleared verdict"
         );
     }
@@ -3464,7 +3468,9 @@ async fn the_settle_tail_claim_aborts_on_a_re_cleared_verdict() {
     );
     // A standing verdict commits: the notice claims once and delivers,
     // and the display completes behind the claim.
-    record.lock().await.settled_status = Some("done");
+    record.lock().await.run.apply(RunEvent::IdleRead {
+        final_turn_error: None,
+    });
     assert!(
         sessions.inner.run_settle_tail(&record).await,
         "a standing verdict commits its tail"
@@ -3591,21 +3597,20 @@ async fn the_display_completes_only_a_verdict_the_tail_claim_committed() {
     let (verdict, noticed, latched) = {
         let record = record.lock().await;
         (
-            record.settled_status,
+            record.run.status(),
             record.notice_delivered,
-            record.settled,
+            record.run.funnel_fired(),
         )
     };
     // The durable display may say completed ONLY for a verdict the
     // tail's claim committed (the restart reseed trusts the display).
     assert_eq!(
         display_status == "completed",
-        verdict == Some("done") && noticed,
+        verdict == "done" && noticed,
         "the display completes only a committed verdict"
     );
     assert_eq!(
-        verdict,
-        Some("done"),
+        verdict, "done",
         "the claim won the queue and the gate kept the claimed verdict"
     );
     assert!(noticed, "the committed verdict's notice is delivered");
@@ -3650,8 +3655,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,
-        settled_status: None,
-        settled: false,
+        run: RunState::running(),
         answer_preview: Some("the captured say".to_string()),
         answer_text: Some("the captured say".to_string()),
         answer_captured: true,
@@ -3664,7 +3668,6 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         notice_delivered: false,
         factory: false,
         prompt_admitted: true,
-        error: None,
         closed_by_parent: false,
         lost_at_restart: false,
         retiring: false,
@@ -3703,7 +3706,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         "no exit-capture round trip may run while a captured answer stands"
     );
     let record = record.lock().await;
-    assert_eq!(record.settled_status, Some("error"));
+    assert_eq!(record.run.status(), "error");
     assert_eq!(record.answer_preview.as_deref(), Some("the captured say"));
     assert_eq!(record.answer_text.as_deref(), Some("the captured say"));
     assert!(record.answer_captured);

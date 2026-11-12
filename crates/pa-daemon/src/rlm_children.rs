@@ -41,6 +41,7 @@ use pa_core::session_engine::rlm_usage::{RlmChildUsageReport, RlmChildUsageSink}
 use pa_types::daemon::{DaemonCommand, DaemonSessionLifecycle, PromptInput};
 use pa_types::session::CustomMessage;
 use pa_types::sync::MutexExt;
+use run_state::{RunEvent, RunState, RunVerdict};
 use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
@@ -195,12 +196,7 @@ struct ChildRecord {
     model: String,
     label: String,
     started_at_ms: u64,
-    /// Terminal state (`done` | `error` | `cancelled`); running while absent.
-    settled_status: Option<&'static str>,
-    /// Set only by the settle funnel, after the terminal notice is delivered; the
-    /// terminal status flips earlier, so the quiescence predicate waits out the
-    /// notice window.
-    settled: bool,
+    run: RunState,
     answer_preview: Option<String>,
     /// The full final-answer text (bounded by
     /// [`ANSWER_TEXT_MAX_CHARS`]), the collect envelope's binding lane:
@@ -238,9 +234,6 @@ struct ChildRecord {
     /// The task prompt was admitted; never settle a pre-prompt child (it
     /// is idle with an empty queue by construction).
     prompt_admitted: bool,
-    /// Terminal error text: the cancel reason for a cancelled run, the
-    /// failure text for a failed one.
-    error: Option<String>,
     /// The parent session closed while this child ran: the settle watcher
     /// exits without a notice — none is owed to a session being torn down.
     closed_by_parent: bool,
@@ -252,7 +245,7 @@ struct ChildRecord {
     /// A parent delete is in flight for this child: a settle watcher that
     /// wakes inside the kill window must not record a clean
     /// `child_returned` (the delete records a cancel edge instead). Kept
-    /// apart from `settled_status` so the live run is never faked settled:
+    /// apart from `run` so the live run is never faked settled:
     /// the watcher stays alive and the row stays correctly reported, which
     /// also lets a failed kill simply clear the mark.
     retiring: bool,
@@ -310,18 +303,13 @@ impl ChildRecord {
         }
     }
 
-    /// Raw run status: `running` | `done` | `error` | `cancelled`.
-    fn status(&self) -> &'static str {
-        self.settled_status.unwrap_or("running")
-    }
-
     fn snapshot_value(&self) -> Value {
         let mut snapshot = json!({
             "id": self.rlm_child_id,
             "activeSessionId": self.active_session_id,
             "sessionName": self.session_name,
             "label": self.label,
-            "status": self.status(),
+            "status": self.run.status(),
             "durationMs": now_ms().saturating_sub(self.started_at_ms),
             "sessionDir": self.session_dir,
         });
@@ -331,7 +319,7 @@ impl ChildRecord {
         if let Some(answer) = &self.answer_preview {
             snapshot["answerPreview"] = json!(answer);
         }
-        if let Some(error) = &self.error {
+        if let Some(error) = self.run.error() {
             snapshot["error"] = json!(error);
         }
         snapshot
@@ -341,11 +329,11 @@ impl ChildRecord {
     /// `cancelled` (TS keeps a cancelled run's status verbatim in the
     /// registry row).
     fn roster_status(&self) -> &'static str {
-        match self.status() {
-            "done" => "completed",
-            "error" => "error",
-            "cancelled" => "cancelled",
-            _ => "running",
+        match self.run.verdict() {
+            None => "running",
+            Some(RunVerdict::Done) => "completed",
+            Some(RunVerdict::Error(_)) => "error",
+            Some(RunVerdict::Cancelled(_)) => "cancelled",
         }
     }
 
@@ -365,7 +353,7 @@ impl ChildRecord {
 /// Whether any record's settle funnel has not fired yet.
 async fn any_unsettled(children: &[Arc<Mutex<ChildRecord>>]) -> bool {
     for record in children {
-        if !record.lock().await.settled {
+        if !record.lock().await.run.funnel_fired() {
             return true;
         }
     }
@@ -770,7 +758,7 @@ impl SupervisorChildSessions {
             verdicts.push(RlmChildVerdict {
                 active_session_id: record.active_session_id.clone(),
                 session_id: record.session_id.clone(),
-                settled_status: record.settled_status,
+                settled_status: (!record.run.is_running()).then(|| record.run.status()),
             });
         }
         verdicts
@@ -808,16 +796,15 @@ impl SupervisorChildSessions {
                 let mut record = record.lock().await;
                 let matched = record.active_session_id == child_active_session_id;
                 if matched {
-                    record.settled_status = Some("done");
-                    // The settle funnel's flag: the quiescence predicate reads it, not
-                    // the terminal status.
-                    record.settled = true;
+                    record.run.apply(RunEvent::IdleRead {
+                        final_turn_error: None,
+                    });
                 }
                 matched
             };
             if matched {
-                // The settle FUNNEL, not just the flags: the goal
-                // continuation is released by the hook a real settle fires.
+                // The settle funnel marks the run settled and fires the hook
+                // that releases the goal continuation, as a real settle does.
                 self.inner.fire_settle_hook(&record).await;
             }
         }
@@ -831,7 +818,6 @@ impl SupervisorChildSessions {
     pub(crate) async fn push_test_settled_child(
         &self,
         identity: RlmChildIdentity,
-        settled_status: Option<&'static str>,
         answer_preview: Option<String>,
     ) {
         self.inner
@@ -847,11 +833,10 @@ impl SupervisorChildSessions {
                 model: String::new(),
                 label: String::new(),
                 started_at_ms: 0,
-                settled_status,
-                // The settle funnel's flag (the record was pushed already
-                // settled): the quiescence predicate reads it, so a
-                // seam-pushed settled record must not count as running.
-                settled: true,
+                // Pushed with its settle funnel fired: the quiescence
+                // predicate reads it, so a seam-pushed settled record must
+                // not count as running.
+                run: RunState::reseeded(RunVerdict::Done),
                 answer_captured: answer_preview.is_some(),
                 answer_preview,
                 replied_since_task: false,
@@ -864,7 +849,6 @@ impl SupervisorChildSessions {
                 notice_delivered: false,
                 factory: false,
                 prompt_admitted: true,
-                error: None,
                 closed_by_parent: false,
                 lost_at_restart: false,
                 retiring: false,
@@ -903,8 +887,7 @@ impl SupervisorChildSessions {
                 model: String::new(),
                 label: String::new(),
                 started_at_ms: 0,
-                settled_status: None,
-                settled: false,
+                run: RunState::running(),
                 answer_preview: None,
                 answer_text: None,
                 answer_captured: false,
@@ -918,7 +901,6 @@ impl SupervisorChildSessions {
                 notice_delivered: false,
                 factory: false,
                 prompt_admitted: true,
-                error: None,
                 closed_by_parent: false,
                 lost_at_restart: false,
                 retiring: false,
@@ -968,7 +950,7 @@ impl SupervisorChildSessions {
     }
 
     fn entry(record: &ChildRecord) -> RlmSubagentEntry {
-        let running = record.settled_status.is_none();
+        let running = record.run.is_running();
         RlmSubagentEntry {
             rlm_child_id: record.rlm_child_id.clone(),
             active_session_id: Some(record.active_session_id.clone()),
@@ -998,11 +980,11 @@ impl SupervisorChildSessions {
             rlm_child_id: record.rlm_child_id.clone(),
             session_name: Some(record.session_name.clone()),
             session_dir: Some(record.session_dir.clone()),
-            status: record.status(),
-            settled: record.settled_status.is_some(),
+            status: record.run.status(),
+            settled: !record.run.is_running(),
             answer_preview: record.answer_preview.clone(),
             answer_text: record.answer_text.clone(),
-            error: record.error.clone(),
+            error: record.run.error().map(str::to_string),
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
             tool_use_count: record.tool_use_count,
             subagent_tokens: record.subagent_tokens,
@@ -1034,9 +1016,16 @@ impl SupervisorChildSessionsInner {
     /// Fire the settle hook off-thread (the settle sites run inside
     /// watcher tasks; the hook owns its own scheduling). The funnel marks
     /// the record settled and wakes the barrier only after the terminal
-    /// notice is delivered.
-    pub(crate) async fn fire_settle_hook(&self, record: &Arc<Mutex<ChildRecord>>) {
-        record.lock().await.settled = true;
+    /// notice is delivered. Returns whether the run is settled: a run that a
+    /// refused cancel rolled back to running fires nothing.
+    pub(crate) async fn fire_settle_hook(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
+        {
+            let mut record = record.lock().await;
+            record.run.apply(RunEvent::Funnel);
+            if !record.run.funnel_fired() {
+                return false;
+            }
+        }
         self.refresh_running().await;
         self.settle_notify.notify_waiters();
         let hook = self
@@ -1047,6 +1036,7 @@ impl SupervisorChildSessionsInner {
         if let Some(hook) = hook {
             std::thread::spawn(move || hook());
         }
+        true
     }
 
     /// Whether any tracked child run's settle funnel has not fired yet.
@@ -1081,7 +1071,7 @@ impl SupervisorChildSessionsInner {
     ) -> Option<Vec<Value>> {
         let running = async {
             for record in records {
-                if record.lock().await.settled_status.is_none() {
+                if record.lock().await.run.is_running() {
                     return true;
                 }
             }
@@ -1180,7 +1170,7 @@ impl SupervisorChildSessionsInner {
         };
         let row = {
             let mut record = record.lock().await;
-            let status = record.status();
+            let status = record.run.status();
             if record.last_emitted_status == Some(status) {
                 return;
             }
@@ -1314,6 +1304,7 @@ mod delegation;
 mod host;
 mod lifecycle;
 mod registry;
+mod run_state;
 mod usage;
 
 pub(crate) use delegation::{ImageDelegationOutcome, ImageDelegationRequest};
