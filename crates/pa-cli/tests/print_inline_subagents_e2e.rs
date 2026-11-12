@@ -466,6 +466,13 @@ fn print_inline_subagents_enforce_the_depth_limit() {
         parent_text.contains(r#"<summary>Agent \"kid\" finished without replying</summary>"#),
         "the parent read the no-reply notice: {parent_text}"
     );
+    // The notice carries Claude Code's usage, as the daemon host's does: the
+    // kid's tokens and its one tool call.
+    assert!(
+        parent_text.contains("<usage><subagent_tokens>")
+            && parent_text.contains("</subagent_tokens><tool_uses>1</tool_uses><duration_ms>"),
+        "the notice reports the kid's usage: {parent_text}"
+    );
 }
 
 /// A settled child re-tasked by its parent must keep the run open: the

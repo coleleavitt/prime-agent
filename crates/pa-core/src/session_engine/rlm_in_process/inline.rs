@@ -58,9 +58,10 @@ use crate::session_engine::rlm_host::{
     spawn_name_unavailable_error,
 };
 use crate::session_engine::rlm_notices::{
+    RlmChildNoticeExtras,
     RlmChildTerminalNotice,
-    create_rlm_child_failure_message,
-    create_rlm_child_terminal_notice,
+    create_rlm_child_failure_message_with,
+    create_rlm_child_terminal_notice_with,
 };
 
 /// Everything a spawned child inherits from the print invocation: the
@@ -286,6 +287,10 @@ struct InlineChildState {
     /// An agent message to the parent arrived since the task was
     /// admitted; the no-reply terminal notice is withheld once set.
     replied_since_task: bool,
+    /// Claude Code's `<usage>` at the settle: `subagent_tokens` and the
+    /// child's tool calls (`None` until the child settles).
+    subagent_tokens: Option<u64>,
+    tool_uses: Option<u64>,
     /// `rlm.interrupt_subagent` aborted the running task: it settles as a
     /// silent `done` (the parent asked for the stop, so no failure or
     /// completed-without-reply notice is owed).
@@ -622,6 +627,28 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
         } else {
             (None, None)
         };
+    // Claude Code's `<usage>`, the daemon host's numbers: every assistant
+    // call folded into `subagent_tokens`, and the tool calls they made.
+    let (subagent_tokens, tool_uses) = {
+        let mut tokens = crate::session_engine::rlm_usage::SubagentTokens::default();
+        let mut tool_uses = 0_u64;
+        for message in &child.engine.session.agent().state().await.messages {
+            let Some(pa_types::session::AgentMessage::Assistant(assistant)) =
+                serde_json::to_value(message)
+                    .ok()
+                    .and_then(|value| serde_json::from_value(value).ok())
+            else {
+                continue;
+            };
+            tokens.add(&assistant.usage);
+            tool_uses += assistant
+                .content
+                .iter()
+                .filter(|block| matches!(block, pa_types::ai::AssistantContentBlock::ToolCall(_)))
+                .count() as u64;
+        }
+        (tokens.total(), tool_uses)
+    };
     let name = child
         .node
         .session_name()
@@ -634,22 +661,31 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
         }
         state.settled = true;
         state.answer_text = answer.map(|text| cap_text(&text, ANSWER_TEXT_MAX_CHARS));
+        state.subagent_tokens = Some(subagent_tokens);
+        state.tool_uses = Some(tool_uses);
+        let extras = RlmChildNoticeExtras {
+            subagent_tokens: state.subagent_tokens,
+            tool_uses: state.tool_uses,
+            duration_ms: Some(super::now_ms().saturating_sub(state.started_at_ms)),
+            worktree: None,
+        };
         let notice = if std::mem::take(&mut state.interrupted) {
             state.status = "done";
             None
         } else if let Some(error) = run_error.or(terminal_error) {
             state.status = "error";
             state.error = Some(error.clone());
-            Some(create_rlm_child_failure_message(
+            Some(create_rlm_child_failure_message_with(
                 &child.rlm_child_id,
                 &name,
                 &error,
+                &extras,
                 super::now_ms(),
             ))
         } else {
             state.status = "done";
             (!state.replied_since_task).then(|| {
-                create_rlm_child_terminal_notice(
+                create_rlm_child_terminal_notice_with(
                     &RlmChildTerminalNotice::CompletedWithoutReply {
                         child_id: child.rlm_child_id.clone(),
                         session_name: name.clone(),
@@ -658,6 +694,7 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
                             .as_deref()
                             .map(compact_rlm_text),
                     },
+                    &extras,
                     super::now_ms(),
                 )
             })
@@ -990,6 +1027,8 @@ impl RlmSubagentHost for InlineHost {
                     error: None,
                     started_at_ms: super::now_ms(),
                     replied_since_task: false,
+                    subagent_tokens: None,
+                    tool_uses: None,
                     interrupted: false,
                 }),
             });
@@ -1152,8 +1191,8 @@ impl RlmSubagentHost for InlineHost {
                         answer_text: state.answer_text.clone(),
                         error: state.error.clone(),
                         duration_ms: Some(super::now_ms().saturating_sub(state.started_at_ms)),
-                        tool_use_count: None,
-                        subagent_tokens: None,
+                        tool_use_count: state.tool_uses,
+                        subagent_tokens: state.subagent_tokens,
                         replied_since_task: Some(state.replied_since_task),
                     });
                 }
