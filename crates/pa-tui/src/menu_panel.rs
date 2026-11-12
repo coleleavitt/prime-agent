@@ -512,6 +512,68 @@ pub(crate) fn detail_row(theme: &Theme, width: usize, content: &Line) -> Line {
     line
 }
 
+/// A pane's header block (the bash and heartbeats views): a muted separator rule, then the title
+/// row with the status counts trailing flush right, an optional muted subtitle, and a blank line.
+pub(crate) fn pane_header_lines(
+    theme: &Theme,
+    width: usize,
+    title: &str,
+    counts: &[(ThemeColor, String)],
+    subtitle: Option<&str>,
+) -> Vec<Line> {
+    let mut title_row = vec![
+        Span::raw("  "),
+        theme.fg_span(ThemeColor::Text, title.to_string()),
+    ];
+    if !counts.is_empty() {
+        let joined_width = counts
+            .iter()
+            .map(|(_, text)| str_width(text) + 3)
+            .sum::<usize>()
+            .saturating_sub(3);
+        let gap = width
+            .saturating_sub(2 + title.chars().count() + 2 + joined_width)
+            .max(2);
+        title_row.push(Span::raw(" ".repeat(gap)));
+        for (index, (color, text)) in counts.iter().enumerate() {
+            if index > 0 {
+                title_row.push(theme.fg_span(ThemeColor::Muted, " \u{b7} ".to_string()));
+            }
+            title_row.push(theme.fg_span(*color, text.clone()));
+        }
+    }
+    let mut lines = vec![rule_row(theme, width), truncate_line(&title_row, width, "")];
+    if let Some(subtitle) = subtitle {
+        if !subtitle.is_empty() {
+            let line = vec![
+                Span::raw("  "),
+                theme.fg_span(ThemeColor::Muted, subtitle.to_string()),
+            ];
+            lines.push(truncate_line(&line, width, ""));
+        }
+    }
+    lines.push(Vec::new());
+    lines
+}
+
+/// A pane's hint row: `  {hint}` dim, truncated to the frame width.
+pub(crate) fn pane_hint_line(theme: &Theme, width: usize, hint: &str) -> Line {
+    let line = vec![
+        Span::raw("  "),
+        theme.fg_span(ThemeColor::Dim, hint.to_string()),
+    ];
+    truncate_line(&line, width, "")
+}
+
+/// A pane's error row: `  Error: {message}` in the error color.
+pub(crate) fn pane_error_line(theme: &Theme, width: usize, message: &str) -> Line {
+    let line = vec![
+        Span::raw("  "),
+        theme.fg_span(ThemeColor::Error, format!("Error: {message}")),
+    ];
+    truncate_line(&line, width, "")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

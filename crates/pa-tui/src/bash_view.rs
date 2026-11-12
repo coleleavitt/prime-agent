@@ -10,6 +10,9 @@ use crate::menu_panel::{
     fill_row,
     hug_row,
     menu_list_layout,
+    pane_error_line,
+    pane_header_lines,
+    pane_hint_line,
     plain_cell,
     scrub_controls,
     status_dot,
@@ -21,16 +24,7 @@ use crate::{Line, Span};
 mod render;
 
 pub(crate) use render::format_duration;
-use render::{
-    Columns,
-    action_row,
-    clean_line,
-    error_line,
-    hint_line,
-    marker_line,
-    metadata_row,
-    pane_header_lines,
-};
+use render::{Columns, action_row, clean_line, marker_line, metadata_row};
 
 // A tail response may outlive its entire pane, so tokens belong to the process,
 // not one BashView instance. Relaxed ordering only allocates distinct tokens.
@@ -838,10 +832,10 @@ impl BashView {
         let mut lines = Vec::new();
         if let Some(error) = &self.error {
             lines.push(Vec::new());
-            lines.push(error_line(theme, width, error));
+            lines.push(pane_error_line(theme, width, error));
         }
         lines.push(Vec::new());
-        lines.push(hint_line(theme, width, hint));
+        lines.push(pane_hint_line(theme, width, hint));
         lines.push(Vec::new());
         lines
     }

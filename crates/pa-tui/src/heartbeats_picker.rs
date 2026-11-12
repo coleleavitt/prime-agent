@@ -6,7 +6,16 @@
 use serde_json::Value;
 
 use crate::keybindings::{KeybindingsManager, format_key_text};
-use crate::menu_panel::{fill_row, hug_row, menu_list_layout, plain_cell, status_dot};
+use crate::menu_panel::{
+    fill_row,
+    hug_row,
+    menu_list_layout,
+    pane_error_line,
+    pane_header_lines,
+    pane_hint_line,
+    plain_cell,
+    status_dot,
+};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{str_width, truncate_line, wrap_text};
 use crate::{Line, Span};
@@ -36,15 +45,7 @@ pub use schedule::human_schedule;
 
 mod render;
 
-use render::{
-    Columns,
-    action_row,
-    detail_block_lines,
-    detail_pairs,
-    error_line,
-    hint_line,
-    pane_header_lines,
-};
+use render::{Columns, action_row, detail_block_lines, detail_pairs};
 
 const PREFERRED_VISIBLE: usize = 8;
 
@@ -627,10 +628,10 @@ impl HeartbeatsPicker {
         }
         if let Some(error) = &self.error {
             lines.push(Vec::new());
-            lines.push(error_line(theme, width, error));
+            lines.push(pane_error_line(theme, width, error));
         }
         lines.push(Vec::new());
-        lines.push(hint_line(theme, width, hint));
+        lines.push(pane_hint_line(theme, width, hint));
         lines.push(Vec::new());
         lines
     }
