@@ -111,11 +111,7 @@ mod integration_tests {
         let rewritten_score = filter.classify(&rewritten).score;
         assert!(
             rewritten_score < original_score,
-            "Rewritten '{}' (score={}) should score lower than '{}' (score={})",
-            rewritten,
-            rewritten_score,
-            text,
-            original_score
+            "Rewritten '{rewritten}' (score={rewritten_score}) should score lower than '{text}' (score={original_score})"
         );
     }
 

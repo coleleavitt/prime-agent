@@ -25,16 +25,19 @@ pub fn log_dir() -> PathBuf {
 }
 
 /// Path to the refusal-events JSONL file.
+#[must_use]
 pub fn refusal_events_path() -> PathBuf {
     log_dir().join("refusal-events.jsonl")
 }
 
 /// Path to the content-filter-outcomes JSONL file.
+#[must_use]
 pub fn filter_outcomes_path() -> PathBuf {
     log_dir().join("content-filter-outcomes.jsonl")
 }
 
 /// Directory for gzipped refused request bodies.
+#[must_use]
 pub fn refused_bodies_dir() -> PathBuf {
     log_dir().join("refused-bodies")
 }
@@ -75,9 +78,16 @@ pub struct FilterOutcomeEvent {
 }
 
 /// Write a refusal event to `refusal-events.jsonl`.
+///
+/// # Errors
+///
+/// Returns an error when the log directory or file cannot be written, or the log cannot rotate.
 pub fn log_refusal_event(event: &RefusalEvent) -> Result<(), Box<dyn std::error::Error>> {
     let path = refusal_events_path();
-    let dir: std::path::PathBuf = path.parent().map(|p| p.to_path_buf()).unwrap_or(log_dir());
+    let dir: std::path::PathBuf = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or(log_dir());
     fs::create_dir_all(dir).ok();
 
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
@@ -95,9 +105,16 @@ pub fn log_refusal_event(event: &RefusalEvent) -> Result<(), Box<dyn std::error:
 }
 
 /// Write a filter outcome event to `content-filter-outcomes.jsonl`.
+///
+/// # Errors
+///
+/// Returns an error when the log directory or file cannot be written, or the log cannot rotate.
 pub fn log_filter_outcome(event: &FilterOutcomeEvent) -> Result<(), Box<dyn std::error::Error>> {
     let path = filter_outcomes_path();
-    let dir: std::path::PathBuf = path.parent().map(|p| p.to_path_buf()).unwrap_or(log_dir());
+    let dir: std::path::PathBuf = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or(log_dir());
     fs::create_dir_all(dir).ok();
 
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
@@ -137,6 +154,7 @@ impl FeedbackEvent {
         clippy::too_many_arguments,
         reason = "mirrors the feedback record's fields one-to-one"
     )]
+    #[must_use]
     pub fn new(
         timestamp: String,
         session_id: Option<String>,
@@ -172,17 +190,25 @@ impl FeedbackEvent {
 }
 
 /// Write feedback events to `feedback-events.jsonl`.
+///
+/// # Errors
+///
+/// Returns an error when the log file cannot be opened or written.
 pub fn log_feedback_event(event: &FeedbackEvent) -> Result<(), Box<dyn std::error::Error>> {
     let path = log_dir().join("feedback-events.jsonl");
     let file = OpenOptions::new().create(true).append(true).open(path)?;
 
     let json = serde_json::to_string(event)?;
     let mut writer = BufWriter::new(file);
-    writeln!(writer, "{}", json)?;
+    writeln!(writer, "{json}")?;
     Ok(())
 }
 
 /// Save a gzipped refused request body.
+///
+/// # Errors
+///
+/// Returns an error when the body cannot be serialized, compressed or written, or the old bodies cannot be swept.
 pub fn save_refused_body(
     body: &serde_json::Value,
     session_id: &str,
@@ -192,7 +218,7 @@ pub fn save_refused_body(
     fs::create_dir_all(&dir).ok();
 
     let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
-    let filename = format!("{}-{}.json.gz", session_id, timestamp);
+    let filename = format!("{session_id}-{timestamp}.json.gz");
     let path = dir.join(&filename);
 
     let body_json = serde_json::to_string(body)?;
@@ -201,7 +227,7 @@ pub fn save_refused_body(
 
     sweep_bodies(&dir)?;
 
-    Ok(format!("refused-bodies/{}", filename))
+    Ok(format!("refused-bodies/{filename}"))
 }
 
 fn rotate_log(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -216,7 +242,7 @@ fn rotate_log(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> 
 
 fn sweep_bodies(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<(PathBuf, u64)> = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| (e.path(), e.metadata().map(|m| m.len()).unwrap_or(0)))
         .collect();
 

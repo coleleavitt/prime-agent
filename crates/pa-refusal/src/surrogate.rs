@@ -31,6 +31,11 @@ pub struct SurrogateModel {
 
 impl SurrogateModel {
     /// Load from the embedded model.json.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the embedded `model.json` (a build-time asset) is malformed.
+    #[must_use]
     pub fn load() -> Self {
         let data: serde_json::Value = serde_json::from_str(include_str!("model.json"))
             .expect("model.json must be valid JSON");
@@ -45,14 +50,17 @@ impl SurrogateModel {
         let bias = &data["bias"];
         let weights: Vec<f64> =
             serde_json::from_value(data["weights"].clone()).expect("weights must be a JSON array");
+        let count = |value: &serde_json::Value, name: &str| {
+            usize::try_from(value.as_u64().expect(name)).expect("the count fits usize")
+        };
 
         Self {
-            version: v.as_u64().expect("version") as u32,
-            window: win.as_u64().expect("window") as usize,
-            dim: dim.as_u64().expect("dim") as usize,
-            ngram_lo: nlo.as_u64().expect("ngram_lo") as usize,
-            ngram_hi: nhi.as_u64().expect("ngram_hi") as usize,
-            top_k: tk.as_u64().expect("topK") as usize,
+            version: u32::try_from(v.as_u64().expect("version")).expect("version fits u32"),
+            window: count(win, "window"),
+            dim: count(dim, "dim"),
+            ngram_lo: count(nlo, "ngram_lo"),
+            ngram_hi: count(nhi, "ngram_hi"),
+            top_k: count(tk, "topK"),
             threshold: thr.as_f64().expect("threshold"),
             bias: bias.as_f64().expect("bias"),
             weights,
@@ -60,11 +68,16 @@ impl SurrogateModel {
     }
 
     /// Export current weights + bias for persistence.
+    #[must_use]
     pub fn export_weights(&self) -> (Vec<f64>, f64, u32) {
         (self.weights.clone(), self.bias, self.version)
     }
 
     /// Import weights + bias to update the model without reinitializing.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `weights` does not have the model's dimension.
     pub fn import_weights(&mut self, weights: Vec<f64>, bias: f64, version: u32) {
         assert_eq!(
             weights.len(),
@@ -78,16 +91,21 @@ impl SurrogateModel {
 
     /// Retrain on a sequence of feedback events.
     ///
-    /// For each true_positive, increases weights of matching features (LR).
-    /// For each false_positive, decreases them (L2 regularization).
-    /// For each false_negative, decreases bias (shifts decision boundary).
-    /// For each true_negative, slightly increases weights (confidence).
+    /// For each `true_positive`, increases weights of matching features (LR).
+    /// For each `false_positive`, decreases them (L2 regularization).
+    /// For each `false_negative`, decreases bias (shifts decision boundary).
+    /// For each `true_negative`, slightly increases weights (confidence).
     pub fn retrain(&mut self, events: &[crate::logger::FeedbackEvent], lr: f64, reg: f64) {
         if events.is_empty() {
             return;
         }
 
         let mut grads: Vec<f64> = vec![0.0f64; self.dim];
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "the model dimension (2048) is exact in f64"
+        )]
+        let dim = self.dim as f64;
 
         for event in events {
             let predicted = event.original_score;
@@ -100,7 +118,7 @@ impl SurrogateModel {
             // Adjust weights proportional to error (simplified)
             let scale = error * (1.0 + event.adjusted_score);
             for g in &mut grads {
-                *g += scale / (self.dim as f64);
+                *g += scale / dim;
             }
         }
 
@@ -113,6 +131,7 @@ impl SurrogateModel {
     }
 
     /// Tokenize text with `[a-z0-9_]+` regex.
+    #[must_use]
     pub fn tokenize(text: &str) -> Vec<String> {
         let text_lower = text.to_lowercase();
         let mut tokens = Vec::new();
@@ -133,6 +152,7 @@ impl SurrogateModel {
     /// Build a feature vector for a single text window.
     ///
     /// Uses md5 hashing of n-grams to map to dimension indices.
+    #[must_use]
     pub fn featurize(&self, text: &str) -> Vec<f64> {
         let mut v = vec![0.0f64; self.dim];
         let tokens = Self::tokenize(text);
@@ -143,14 +163,15 @@ impl SurrogateModel {
                 let digest = md5::compute(gram.as_bytes());
                 let hex = hex::encode(digest.as_ref());
 
-                let idx = u32::from_str_radix(&hex[0..8], 16).unwrap_or(0) % (self.dim as u32);
+                let hash = u32::from_str_radix(&hex[0..8], 16).unwrap_or(0);
+                let idx = usize::try_from(hash).unwrap_or(0) % self.dim;
                 let sign = if u32::from_str_radix(&hex[8..9], 16).unwrap_or(0) % 2 == 0 {
                     1.0
                 } else {
                     -1.0
                 };
 
-                v[idx as usize] += sign;
+                v[idx] += sign;
             }
         }
 
@@ -170,6 +191,7 @@ impl SurrogateModel {
     }
 
     /// Score a single window: `sigmoid(bias + dot(weights, features))`.
+    #[must_use]
     pub fn score_window(&self, features: &[f64]) -> f64 {
         let mut z = self.bias;
         for (w, f) in self.weights.iter().zip(features.iter()) {
@@ -185,6 +207,7 @@ impl SurrogateModel {
     /// before slicing: unlike JS `String.slice`, slicing a Rust `&str` at a
     /// byte index inside a multi-byte character panics, and a request body
     /// stride landing inside one (a smart quote, say) would crash the turn.
+    #[must_use]
     pub fn to_windows(text: &str, window_size: usize) -> Vec<String> {
         let mut out = Vec::new();
         let text_len = text.len();
@@ -217,6 +240,7 @@ impl SurrogateModel {
     }
 
     /// Body-level refusal probability = mean of the top-K hottest window scores.
+    #[must_use]
     pub fn score_body_text(&self, text: &str) -> f64 {
         let windows = Self::to_windows(text, self.window);
         if windows.is_empty() {
@@ -229,13 +253,19 @@ impl SurrogateModel {
         let mut sorted = scores.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let k = self.top_k.min(sorted.len());
-        sorted.iter().rev().take(k).sum::<f64>() / k as f64
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "k counts windows, far below f64's exact integer range"
+        )]
+        let k_count = k as f64;
+        sorted.iter().rev().take(k).sum::<f64>() / k_count
     }
 
     /// Extract semantic text from a request body (matches TS `extractBodyText`).
     ///
     /// Handles Anthropic message format: messages with `text`, `thinking`,
     /// `content` (array of parts), `tool_use` with `input`.
+    #[must_use]
     pub fn extract_body_text(body: &serde_json::Value) -> String {
         let mut parts: Vec<String> = Vec::new();
 
@@ -286,6 +316,7 @@ impl SurrogateModel {
     }
 
     /// True when the body is predicted likely to be refused.
+    #[must_use]
     pub fn predict_refusal(&self, body: &serde_json::Value) -> (f64, bool) {
         let text = Self::extract_body_text(body);
         let probability = self.score_body_text(&text);

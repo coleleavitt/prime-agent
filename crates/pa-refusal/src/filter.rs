@@ -7,7 +7,7 @@
 //! ## Algorithm
 //!
 //! 1. **Scoring**: sum weighted term matches across system prompt + messages.
-//! 2. **Rewrite**: if score above REWRITE_THRESHOLD, evict old turns by size
+//! 2. **Rewrite**: if score above `REWRITE_THRESHOLD`, evict old turns by size
 //!    (floor escalates with old-region size).
 //! 3. **Dynamic threshold**: at 100 cumulative score, thresholds reduce to 20%.
 //! 4. **Block contribution cap**: prevents one massive code dump from poisoning the score.
@@ -66,6 +66,11 @@ impl TermDict {
         clippy::should_implement_trait,
         reason = "legacy named fallback constructor kept beside the config loader; not the Default trait"
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the built-in term and rewrite table, one entry per line"
+    )]
+    #[must_use]
     pub fn default() -> Self {
         // Legacy defaults — kept for fallback if config.jsonc is missing.
         let mut bio: HashMap<String, f64> = HashMap::new();
@@ -280,7 +285,7 @@ impl TermDict {
         }
     }
 
-    /// Load a TermDict from a `config.jsonc` file.
+    /// Load a `TermDict` from a `config.jsonc` file.
     /// Returns the legacy default if the file is missing or malformed.
     pub fn from_jsonc(path: &Path) -> Self {
         let content = fs::read_to_string(path).unwrap_or_else(|e| {
@@ -373,6 +378,7 @@ impl TermDict {
 }
 
 /// Strip `//` and `/* ... */` comments from JSONC text.
+#[must_use]
 pub fn strip_comments(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_block = false;
@@ -441,6 +447,7 @@ pub struct ClassificationResult {
 
 impl ClassificationResult {
     /// Create a "pass" classification (score=0, recommendation=Pass).
+    #[must_use]
     pub fn pass() -> Self {
         Self {
             category: None,
@@ -480,13 +487,14 @@ pub struct ContentFilter {
     pub min_threshold_multiplier: f64,
     pub rewrite_threshold: f64,
     pub block_threshold: f64,
-    /// LRU cache: text_hash -> ClassificationResult. A `Mutex`, not a
+    /// LRU cache: `text_hash` -> `ClassificationResult`. A `Mutex`, not a
     /// `RefCell`, so the filter is `Sync`: `pa-ai`'s `ProviderRequestHooks`
     /// is `Send + Sync`, and the filter rides inside it.
     cache: std::sync::Mutex<HashMap<String, ClassificationResult>>,
 }
 
 impl ContentFilter {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -499,6 +507,19 @@ impl Default for ContentFilter {
 }
 
 impl ContentFilter {
+    /// Dynamic threshold scaling: past `dynamic_threshold_scale_max` the
+    /// thresholds shrink toward `min_threshold_multiplier`.
+    fn threshold_multiplier(&self, total_score: f64) -> f64 {
+        if total_score <= self.dynamic_threshold_scale_max {
+            return 1.0;
+        }
+        self.min_threshold_multiplier
+            + (1.0 - self.min_threshold_multiplier)
+                * (1.0
+                    - (total_score - self.dynamic_threshold_scale_max)
+                        / self.dynamic_threshold_scale_max)
+    }
+
     /// Classify text against term dictionaries, using an LRU score cache.
     pub fn classify(&self, text: &str) -> ClassificationResult {
         // Cache check: hash of text -> result
@@ -534,7 +555,7 @@ impl ContentFilter {
 
             for (term, weight) in dict {
                 if text_lower.contains(term.to_lowercase().as_str()) {
-                    println!("MATCHED: term={:?} weight={}", term, weight);
+                    println!("MATCHED: term={term:?} weight={weight}");
                     category_score += weight;
                     category_matches.push(term.clone());
                     matched_terms_with_score.push((category.to_string(), term.clone(), *weight));
@@ -564,17 +585,7 @@ impl ContentFilter {
             .sum::<f64>()
             .min(self.max_block_contribution);
 
-        // Dynamic threshold scaling
-        let threshold_multiplier = if total_score > self.dynamic_threshold_scale_max {
-            self.min_threshold_multiplier
-                + (1.0 - self.min_threshold_multiplier)
-                    * (1.0
-                        - (total_score - self.dynamic_threshold_scale_max)
-                            / self.dynamic_threshold_scale_max)
-        } else {
-            1.0
-        };
-
+        let threshold_multiplier = self.threshold_multiplier(total_score);
         let effective_rewrite_threshold = self.rewrite_threshold * threshold_multiplier;
         let effective_block_threshold = self.block_threshold * threshold_multiplier;
 
@@ -586,13 +597,13 @@ impl ContentFilter {
             Recommendation::Pass
         };
 
-        let category = if !scores.is_empty() {
+        let category = if scores.is_empty() {
+            None
+        } else {
             scores
                 .iter()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(k, _)| k.clone())
-        } else {
-            None
         };
 
         let result = ClassificationResult {
@@ -659,7 +670,7 @@ impl ContentFilter {
                                 for (pattern, replacement) in &self.terms.rewrite_rules {
                                     if s.contains(pattern) {
                                         new = new.replace(pattern, replacement);
-                                        changes.push(format!("{} -> {}", pattern, replacement));
+                                        changes.push(format!("{pattern} -> {replacement}"));
                                     }
                                 }
                                 *s = new;
@@ -678,8 +689,7 @@ impl ContentFilter {
                                                     if s.contains(pattern) {
                                                         new = new.replace(pattern, replacement);
                                                         changes.push(format!(
-                                                            "{} -> {}",
-                                                            pattern, replacement
+                                                            "{pattern} -> {replacement}"
                                                         ));
                                                     }
                                                 }
@@ -773,14 +783,14 @@ impl ContentFilter {
         result
     }
 
-    /// Alias for semantic_rewrite: applies rewrite_rules to replace dangerous terms.
+    /// Alias for `semantic_rewrite`: applies `rewrite_rules` to replace dangerous terms.
     pub fn rewrite(&self, text: &str) -> String {
         self.semantic_rewrite(text)
     }
 
     /// Semantic rewrite via a local LLM.
     ///
-    /// Calls a local OpenAI-compatible LLM endpoint (default: http://127.0.0.1:47631,
+    /// Calls a local OpenAI-compatible LLM endpoint (default: <http://127.0.0.1:47631>,
     /// the Qwen3.8-35B-A3B ablated model) to paraphrase the text into a lower-risk
     /// form, using the model's own language understanding rather than a fixed pool.
     #[expect(
@@ -795,10 +805,9 @@ impl ContentFilter {
             "Rewrite the following text to be less likely to trigger Anthropic's content              filter (sonnet/opus) while preserving the core meaning. Do NOT add explanations,              introductions, or fluff — just return the paraphrased text on its own line.
              Original text:
 ---
-{}
+{text}
 ---
-",
-            text
+"
         );
 
         // Call the local LLM via OpenAI-compatible API
@@ -877,7 +886,11 @@ impl ContentFilter {
         let mut evicted_terms = Vec::new();
 
         if let Some(messages) = result.get_mut("messages").and_then(|m| m.as_array_mut()) {
-            let terms_to_evict: Vec<&str> = best.matched_terms.iter().map(|s| s.as_str()).collect();
+            let terms_to_evict: Vec<&str> = best
+                .matched_terms
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
 
             let mut to_remove: Vec<usize> = Vec::new();
             for (idx, msg) in messages.iter().enumerate() {
@@ -1010,7 +1023,7 @@ impl ContentFilter {
                     let mut new = msg_text.to_string();
                     for (pattern, replacement) in &self.terms.rewrite_rules {
                         new = new.replace(pattern, replacement);
-                        changes.push(format!("{} -> {}", pattern, replacement));
+                        changes.push(format!("{pattern} -> {replacement}"));
                     }
                     messages[evict_idx] = serde_json::json!({
                         "role": "assistant",
@@ -1018,7 +1031,7 @@ impl ContentFilter {
                     });
                 }
 
-                changes.push(format!("#{} evicted (score={:.2})", evict_idx, evict_score));
+                changes.push(format!("#{evict_idx} evicted (score={evict_score:.2})"));
             }
         }
 
@@ -1038,8 +1051,13 @@ impl ContentFilter {
 
     /// Reload configuration from disk, updating the internal state.
     ///
-    /// Re-reads `config.jsonc` and updates category weights, rewrite_rules,
-    /// strip_patterns, and thresholds. Useful for hot-reloading at runtime.
+    /// Re-reads `config.jsonc` and updates category weights, `rewrite_rules`,
+    /// `strip_patterns`, and thresholds. Useful for hot-reloading at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error today: a missing or malformed file falls back
+    /// to the built-in defaults.
     pub fn reload_from(
         &mut self,
         path: &std::path::Path,
@@ -1087,6 +1105,7 @@ pub struct FilterResult {
 }
 
 impl FilterResult {
+    #[must_use]
     pub fn summary(&self) -> FilterSummary {
         FilterSummary {
             score_before: self.score_before,
@@ -1175,6 +1194,7 @@ mod tests {
 
 impl ContentFilter {
     /// Load from a specific config.jsonc path.
+    #[must_use]
     pub fn from_path(path: &std::path::Path) -> Self {
         let terms = TermDict::from_jsonc(path);
         // Read thresholds from the same file

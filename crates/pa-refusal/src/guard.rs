@@ -12,7 +12,7 @@ use crate::filter::{ContentFilter, FilterResult, FilterSummary, Recommendation};
 use crate::surrogate::SurrogateModel;
 
 /// Escalation ladder: each step forces a lower eviction floor (chars).
-/// The tool_use floor tracks at half the text floor (min 60).
+/// The `tool_use` floor tracks at half the text floor (min 60).
 // Loaded from config.jsonc at runtime (falls back to default if missing).
 const DEFAULT_FLOOR_LADDER: [usize; 5] = [800, 400, 200, 120, 60];
 
@@ -23,7 +23,7 @@ fn load_floor_ladder() -> Vec<usize> {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
     if let Some(arr) = v["eviction_floor_ladder"].as_array() {
         arr.iter()
-            .filter_map(|v| v.as_u64().map(|u| u as usize))
+            .filter_map(|v| v.as_u64().and_then(|u| usize::try_from(u).ok()))
             .collect()
     } else {
         DEFAULT_FLOOR_LADDER.to_vec()
@@ -58,6 +58,7 @@ impl Default for RefusalGuard {
 }
 
 impl RefusalGuard {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             filter: ContentFilter::new(),
@@ -155,7 +156,7 @@ impl RefusalGuard {
                                 for (pattern, replacement) in &self.filter.terms.rewrite_rules {
                                     if s.contains(pattern) {
                                         new = new.replace(pattern, replacement);
-                                        changes.push(format!("{} -> {}", pattern, replacement));
+                                        changes.push(format!("{pattern} -> {replacement}"));
                                     }
                                 }
                                 *s = new;
@@ -174,8 +175,7 @@ impl RefusalGuard {
                                                     if s.contains(pattern) {
                                                         new = new.replace(pattern, replacement);
                                                         changes.push(format!(
-                                                            "{} -> {}",
-                                                            pattern, replacement
+                                                            "{pattern} -> {replacement}"
                                                         ));
                                                     }
                                                 }
