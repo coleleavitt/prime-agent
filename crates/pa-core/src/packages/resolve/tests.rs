@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 use super::{MetadataSource, ResolvedResource, ResourceOrigin};
 use crate::packages::manager::BundledSkillsDir;
 use crate::packages::source::SourceScope;
-/// Environment mutations (HOME, `PI_OFFLINE`) are process-wide: tests that
-/// touch them, and tests that read the env-sensitive update flows,
-/// serialize through the shared packages lock.
+/// Environment mutations (`PI_OFFLINE`) are process-wide: tests that touch
+/// them, and tests that read the env-sensitive update flows, serialize
+/// through the shared packages lock. A test that sets HOME runs alone in a
+/// child process instead (`test_support::run_test_alone`): HOME reaches
+/// readers outside this module.
 use crate::packages::test_support::lock_env;
 use crate::packages::{PackageManager, PackageManagerOptions};
 use crate::settings::SettingsManager;
@@ -255,8 +257,14 @@ fn auto_discovers_project_prompts_with_overrides() {
 #[test]
 fn resolves_symlinked_user_and_project_resources_once() {
     use std::os::unix::fs::symlink;
-    let _guard = lock_env();
-    let previous_home = std::env::var("HOME").ok();
+    if !crate::test_support::in_alone_child() {
+        crate::test_support::run_test_alone(
+            "packages::resolve::tests::resolves_symlinked_user_and_project_resources_once",
+            &[],
+        );
+        return;
+    }
+    // Alone in its process: setting HOME cannot reach another test.
     let mut fixture = Fixture::new();
     std::env::set_var("HOME", &fixture.temp_dir);
 
@@ -281,11 +289,6 @@ fn resolves_symlinked_user_and_project_resources_once() {
     assert_eq!(result.skills[0].metadata.scope, SourceScope::Project);
     assert_eq!(result.prompts[0].metadata.scope, SourceScope::Project);
     assert_eq!(result.themes[0].metadata.scope, SourceScope::Project);
-
-    match previous_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]
@@ -378,8 +381,14 @@ fn agents_skills_ignores_root_markdown_files() {
 
 #[test]
 fn home_agents_skills_stays_user_scoped_when_cwd_is_under_home() {
-    let _guard = lock_env();
-    let previous_home = std::env::var("HOME").ok();
+    if !crate::test_support::in_alone_child() {
+        crate::test_support::run_test_alone(
+            "packages::resolve::tests::home_agents_skills_stays_user_scoped_when_cwd_is_under_home",
+            &[],
+        );
+        return;
+    }
+    // Alone in its process: setting HOME cannot reach another test.
     let fixture = Fixture::new();
     std::env::set_var("HOME", &fixture.temp_dir);
 
@@ -406,11 +415,6 @@ fn home_agents_skills_stays_user_scoped_when_cwd_is_under_home() {
     assert!(matching[0].enabled);
     assert_eq!(matching[0].metadata.scope, SourceScope::User);
     assert_eq!(matching[0].metadata.source, MetadataSource::Auto);
-
-    match previous_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 /// Unix symlink layout (see `resolves_symlinked_user_and_project_resources_once`).
@@ -418,8 +422,14 @@ fn home_agents_skills_stays_user_scoped_when_cwd_is_under_home() {
 #[test]
 fn user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills() {
     use std::os::unix::fs::symlink;
-    let _guard = lock_env();
-    let previous_home = std::env::var("HOME").ok();
+    if !crate::test_support::in_alone_child() {
+        crate::test_support::run_test_alone(
+            "packages::resolve::tests::user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills",
+            &[],
+        );
+        return;
+    }
+    // Alone in its process: setting HOME cannot reach another test.
     let mut fixture = Fixture::new();
     std::env::set_var("HOME", &fixture.temp_dir);
 
@@ -435,11 +445,6 @@ fn user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills() {
         .filter(|r| r.path.to_string_lossy().ends_with("foo/SKILL.md"))
         .collect();
     assert_eq!(foo.len(), 1);
-
-    match previous_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
-    }
 }
 
 #[test]

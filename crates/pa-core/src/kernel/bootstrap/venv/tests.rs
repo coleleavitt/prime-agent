@@ -622,43 +622,12 @@ fn disk_memo_late_write_after_invalidate_is_benign() {
     assert!(!super::super::disk_memo::disk_memo_path(&venv).exists());
 }
 
-/// Set in the child process that runs an env-mutating test alone.
-#[cfg(unix)]
-const ENV_CHILD: &str = "PA_CORE_KERNEL_ENV_TEST_CHILD";
-
-/// Run the test `name` alone in a child of this test binary, with `env`
-/// applied (`None` removes a variable). The process env is shared by every
-/// test in this binary: setting `HOME` or the runtime-source variables here
-/// would change what concurrent tests resolve (the runtime identity, the
-/// runtime extracted under `HOME`).
-#[cfg(unix)]
-async fn run_alone_with_env(name: &str, env: &[(&str, Option<&Path>)]) {
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
-    command
-        .args(["--exact", name, "--test-threads=1"])
-        .env(ENV_CHILD, "1");
-    for (key, value) in env {
-        match value {
-            Some(value) => command.env(key, value),
-            None => command.env_remove(key),
-        };
-    }
-    let output = command.output().await.unwrap();
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.status.success(), "{log}");
-    assert!(log.contains("test result: ok. 1 passed"), "{log}");
-}
-
 /// A caller-owned `PRIME_AGENT_KERNEL_PYTHON` override resolves through
 /// the DIRECT probe and never reads or writes any memo file.
 #[cfg(unix)]
 #[tokio::test]
 async fn custom_override_never_touches_the_disk_memo() {
-    if std::env::var_os(ENV_CHILD).is_some() {
+    if crate::test_support::in_alone_child() {
         let python = PathBuf::from(std::env::var_os("PRIME_AGENT_KERNEL_PYTHON").unwrap());
         let resolved =
             super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
@@ -680,15 +649,14 @@ async fn custom_override_never_touches_the_disk_memo() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    run_alone_with_env(
+    crate::test_support::run_test_alone(
         "kernel::bootstrap::venv::tests::custom_override_never_touches_the_disk_memo",
         &[
             ("HOME", Some(&home)),
             ("PRIME_AGENT_KERNEL_PYTHON", Some(&python)),
             ("PRIME_AGENT_KERNEL_VENV", None),
         ],
-    )
-    .await;
+    );
     let mut found: Vec<std::path::PathBuf> = Vec::new();
     collect_memo_files(dir.path(), &mut found);
     assert!(
@@ -703,7 +671,7 @@ async fn custom_override_never_touches_the_disk_memo() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv() {
-    if std::env::var_os(ENV_CHILD).is_some() {
+    if crate::test_support::in_alone_child() {
         let venv = PathBuf::from(std::env::var_os("PRIME_AGENT_KERNEL_VENV").unwrap());
         let missing_source = PathBuf::from(std::env::var_os(RUNTIME_SOURCE_ENV).unwrap());
         let resolved =
@@ -728,15 +696,14 @@ async fn a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv() {
         .path()
         .join("deleted-worktree")
         .join("prime-agent-runtime");
-    run_alone_with_env(
+    crate::test_support::run_test_alone(
         "kernel::bootstrap::venv::tests::a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv",
         &[
             ("PRIME_AGENT_KERNEL_PYTHON", None),
             ("PRIME_AGENT_KERNEL_VENV", Some(&venv)),
             (RUNTIME_SOURCE_ENV, Some(&missing_source)),
         ],
-    )
-    .await;
+    );
     assert_eq!(
         std::fs::read_to_string(venv.join("in-use-by-other-sessions")).ok(),
         Some("keep".to_string()),

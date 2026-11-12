@@ -33,3 +33,37 @@ impl ThreadTempDir {
 /// `rebase --exec` export), no user or system config, discovery stopped at the temp root, and a
 /// fixed identity.
 pub(crate) use crate::git_env::run_fixture_git as run_git;
+
+/// Set in the child [`run_test_alone`] starts.
+const ALONE_CHILD_ENV: &str = "PA_CORE_TEST_ALONE_CHILD";
+
+/// True in the child [`run_test_alone`] starts: the test runs its body there.
+pub(crate) fn in_alone_child() -> bool {
+    std::env::var_os(ALONE_CHILD_ENV).is_some()
+}
+
+/// Run the test `name` (its full path) alone in a child of this test binary, with `env` applied
+/// (`None` removes a variable), and assert it passed. For a test that changes the process env
+/// (`HOME`, the runtime-source variables): every test in this binary shares that env, and a
+/// change here alters what concurrent tests resolve. The child runs only this test, so its body
+/// may set the env itself.
+pub(crate) fn run_test_alone(name: &str, env: &[(&str, Option<&Path>)]) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", name, "--test-threads=1"])
+        .env(ALONE_CHILD_ENV, "1");
+    for (key, value) in env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    let output = command.output().unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{log}");
+    assert!(log.contains("test result: ok. 1 passed"), "{log}");
+}
