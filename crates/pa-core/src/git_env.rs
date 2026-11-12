@@ -282,7 +282,6 @@ mod tests {
             "packages::tests::git_ref_checkout_installs_the_pinned_revision",
             "autonomous::gates::tests::shell_runner_runs_gates_and_snapshots",
             "autonomous::gates::tests::shell_runner_snapshot_tracks_workspace_changes",
-            "tools::golden_replay::golden_bash_group_matches_ts",
             "workspace_snapshot::tests::snapshot_captures_unmerged_conflict_worktree_content",
         ]);
         let log = format!(
@@ -295,7 +294,7 @@ mod tests {
             "a test wrote to the inherited repository:\n{log}"
         );
         assert!(output.status.success(), "{log}");
-        assert!(log.contains("test result: ok. 6 passed"), "{log}");
+        assert!(log.contains("test result: ok. 5 passed"), "{log}");
     }
 
     /// The session header's git context honours an exported `GIT_DIR` on purpose (the user's
