@@ -121,6 +121,11 @@ fn classify_from(exe: Option<&Path>, own_exe: Option<&Path>) -> HolderFlavor {
     // The exe filename gate keeps a node/bun/deno runtime that merely runs
     // FROM a `prime-agent`-named directory from claiming this build: only
     // the payload binary named `prime-agent` is claimed.
+    let is_profile = |component: Option<&String>| {
+        component.is_some_and(|profile| {
+            matches!(profile.as_str(), "debug" | "release" | "bench" | "test")
+        })
+    };
     if let Some(index) = components
         .iter()
         .position(|component| component == "target")
@@ -129,16 +134,26 @@ fn classify_from(exe: Option<&Path>, own_exe: Option<&Path>) -> HolderFlavor {
         // (`<repo>/target/<profile>/...`, or `<repo>/target/<triple>/
         // <profile>/...` for a `--target` build); anything else named
         // `target` is not evidence about this product.
-        let is_profile = |component: Option<&String>| {
-            component.is_some_and(|profile| {
-                matches!(profile.as_str(), "debug" | "release" | "bench" | "test")
-            })
-        };
         let after = components.get(index + 1);
         let is_triple = after.is_some_and(|triple| triple.split('-').count() >= 3);
         if is_profile(after) || (is_triple && is_profile(components.get(index + 2))) {
             return HolderFlavor::ThisBuild;
         }
+    }
+    // A build tree under another name (`CARGO_TARGET_DIR`,
+    // `build.target-dir`): cargo tags its root with `CACHEDIR.TAG`, the
+    // profile directory sits right below it (or below the triple).
+    let tagged_by_cargo = |root: &Path| {
+        std::fs::read_to_string(root.join("CACHEDIR.TAG"))
+            .is_ok_and(|tag| tag.contains("created by cargo"))
+    };
+    if exe.ancestors().any(|dir| {
+        let name = dir
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase());
+        is_profile(name.as_ref()) && dir.ancestors().skip(1).take(2).any(tagged_by_cargo)
+    }) {
+        return HolderFlavor::ThisBuild;
     }
     let name = exe
         .file_name()
@@ -755,6 +770,30 @@ Session: ts01ab";
         // The own-exe equality wins even under the prime-agent substring.
         let dev = Path::new("/w/repo/target/debug/prime-agent");
         assert_eq!(classify_from(Some(dev), Some(dev)), HolderFlavor::ThisBuild);
+    }
+
+    /// A cargo tree under any name (`CARGO_TARGET_DIR`) is this build: cargo
+    /// tags its root with `CACHEDIR.TAG`.
+    #[test]
+    fn a_build_tree_under_another_name_is_this_build() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let tree = dir.path().join("target-e2e");
+        let exe = tree.join("debug/build/pa-daemon/1a2b/out/hold_refusal_e2e-1a2b");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        let own = Path::new("/opt/pa/prime-agent");
+        assert_eq!(
+            classify_from(Some(&exe), Some(own)),
+            HolderFlavor::AnotherProcess
+        );
+        std::fs::write(
+            tree.join("CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            classify_from(Some(&exe), Some(own)),
+            HolderFlavor::ThisBuild
+        );
     }
 
     #[test]
