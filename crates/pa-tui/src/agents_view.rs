@@ -50,6 +50,7 @@ use crate::interactive::{SessionPanel, SessionSelection};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::{pad_line, str_width};
 mod data_input;
+mod keys;
 
 mod open_incident;
 
