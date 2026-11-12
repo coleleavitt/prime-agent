@@ -278,8 +278,9 @@ Open:
   window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`) unless niri is the
   computer-use fork (`WindowGeometry`/`CaptureWindow`/`WindowAt`, contract in the niri fork's `CONTRACT.md`).
 - `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
-- `cargo deny` advisories fail on RUSTSEC-2026-0370/0371/0372 (`zbus_names`, `zvariant`, `zvariant_derive`
-  unmaintained, via `pa-computer-use`); licenses pass. Ignore in `deny.toml` or replace: the user's call.
+- `cargo deny` reports RUSTSEC-2026-0370/0371/0372 (`zbus_names`, `zvariant`, `zvariant_derive` unmaintained, via
+  `pa-computer-use`'s AT-SPI backend); `deny.toml` ignores them with a reason (the newest `atspi` 0.14 still needs
+  zbus 5). Drop the ignores when `atspi` ships a zbus-6 release.
 - The `attach-image` and `present-artifact` skill tests need Pillow (`PIL`), missing from the runtime venv.
 
 ## Working Rules
