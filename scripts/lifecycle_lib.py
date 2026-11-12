@@ -671,7 +671,13 @@ class DockScreen:
                     # do not paint or set a color; a legacy PTY may stay silent.
                     # Color-setting variants remain unsupported and fail closed.
                     color_query = payload in ('10;?', '11;?')
-                    if self.pending[1] != ']' or (not color_query and osc_kind not in ('0', '1', '2', '7', '8', '52', '133')):
+                    # A Kitty graphics support query (APC G with a=q) asks
+                    # without painting; a legacy PTY stays silent.
+                    graphics_query = (self.pending[1] == '_' and payload.startswith('G')
+                                      and 'a=q' in payload[1:].split(';', 1)[0].split(','))
+                    if graphics_query:
+                        pass
+                    elif self.pending[1] != ']' or (not color_query and osc_kind not in ('0', '1', '2', '7', '8', '52', '133')):
                         self.unsupported_terminal.append(sequence)
                     self.pending = self.pending[2 + end.end():]
                     continue
@@ -752,6 +758,8 @@ class DockScreen:
                         # Fixed fixture cell geometry: TS asks for this in
                         # image-capable terminals (CSI 16 t -> CSI 6;h;w t).
                         replies.append(b'\x1b[6;16;8t')
+                    elif command == 't' and nums[0] in (22, 23) and len(nums) <= 2:
+                        pass  # Window-title stack push/pop: no cells move.
                     elif command in 'hl' and params.startswith('?'):
                         for mode in nums:
                             if mode == 7:
