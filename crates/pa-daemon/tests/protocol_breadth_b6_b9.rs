@@ -184,14 +184,17 @@ impl Client {
         }
     }
 
-    /// `cancelOwned` for `admission_id`, with the lines that landed before its reply (the
-    /// cancelled wait's failure may come first). This port registers an admission in the dispatch
-    /// task, so a cancel that beats the registration answers `unknown` and withdraws nothing:
-    /// retry it until the answer changes.
-    fn cancel_owned_admission(
+    /// `cancelOwned` for `admission_id` once its prompt `message` shows in the worker's queue,
+    /// with the lines that landed before its reply (the cancelled wait's failure may come
+    /// first). A cancel that lands earlier races the prompt's routing: before the supervisor
+    /// registers the admission it answers `unknown`, before the worker commits the prompt it
+    /// answers `cancelled`. The worker enqueues and commits under one lock, so a queued prompt
+    /// is a committed one.
+    fn cancel_queued(
         &mut self,
         session_id: &str,
         admission_id: &str,
+        message: &str,
     ) -> (
         serde_json::Value,
         std::collections::VecDeque<serde_json::Value>,
@@ -199,15 +202,27 @@ impl Client {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             self.send_command(
-                "c-1",
-                &json!({ "type": "cancel_prompt_admission", "activeSessionId": session_id, "admissionId": admission_id, "cancelOwned": true }),
+                "q-0",
+                &json!({ "type": "get_queue", "activeSessionId": session_id }),
             );
-            let (response, lines) = self.read_response_and_lines("c-1");
-            if response["data"] != json!({ "status": "unknown" }) || Instant::now() >= deadline {
-                return (response, lines);
+            let response = self.read_response("q-0");
+            if ["steering", "followUp"]
+                .iter()
+                .any(|lane| response["data"][lane] == json!([message]))
+            {
+                break;
             }
+            assert!(
+                Instant::now() < deadline,
+                "the admitted prompt never queued: {response}"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
+        self.send_command(
+            "c-1",
+            &json!({ "type": "cancel_prompt_admission", "activeSessionId": session_id, "admissionId": admission_id, "cancelOwned": true }),
+        );
+        self.read_response_and_lines("c-1")
     }
 
     /// The first buffered-or-live outbound line of `line_type`; other types stay buffered or are
@@ -813,7 +828,7 @@ fn wave_b9_prompt_admission_wire_shapes() {
     );
     // The queued prompt committed at admission: cancelOwned withdraws
     // that item without aborting the unrelated slow turn.
-    let (response, mut lines) = client.cancel_owned_admission(&session_id, "adm-1");
+    let (response, mut lines) = client.cancel_queued(&session_id, "adm-1", "queued behind");
     assert_eq!(response["success"], true, "{response}");
     assert_eq!(response["data"], json!({ "status": "owned" }));
     // The cancelled prompt_and_wait fails its wait (the dropped queue item
