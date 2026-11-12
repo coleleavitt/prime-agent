@@ -21,6 +21,7 @@
 
 mod confirm;
 mod events;
+mod isolate;
 mod lifecycle;
 mod notice;
 mod permission_request;

@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::isolate::isolate_hook;
 use super::{
     AgentStopObservation,
     CompactionObservation,
@@ -32,11 +33,12 @@ pub(crate) async fn review_agent_stop(
     stop: &AgentStopObservation,
 ) -> Option<String> {
     joined(
-        futures::future::join_all(
-            features
-                .iter()
-                .map(|feature| feature.before_agent_stop(context, stop)),
-        )
+        futures::future::join_all(features.iter().map(|feature| {
+            isolate_hook(
+                "before_agent_stop",
+                feature.before_agent_stop(context, stop),
+            )
+        }))
         .await,
     )
 }
@@ -49,11 +51,9 @@ pub(crate) async fn review_tool_batch(
     batch: &ToolBatchObservation,
 ) -> Option<String> {
     joined(
-        futures::future::join_all(
-            features
-                .iter()
-                .map(|feature| feature.after_tool_batch(context, batch)),
-        )
+        futures::future::join_all(features.iter().map(|feature| {
+            isolate_hook("after_tool_batch", feature.after_tool_batch(context, batch))
+        }))
         .await,
     )
 }
@@ -66,11 +66,12 @@ pub(crate) async fn compaction_instructions(
     compaction: &CompactionObservation,
 ) -> Option<String> {
     let added = joined(
-        futures::future::join_all(
-            features
-                .iter()
-                .map(|feature| feature.before_compaction(context, compaction)),
-        )
+        futures::future::join_all(features.iter().map(|feature| {
+            isolate_hook(
+                "before_compaction",
+                feature.before_compaction(context, compaction),
+            )
+        }))
         .await,
     );
     joined(vec![compaction.custom_instructions.clone(), added])

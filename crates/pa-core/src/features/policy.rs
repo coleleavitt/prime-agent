@@ -20,6 +20,7 @@ use pa_agent::types::{
 use serde_json::Value;
 
 use super::confirm::{CONFIRMATION_TIMEOUT, ConfirmationAnswer, confirm};
+use super::isolate::isolate_hook;
 use super::permission_request::{ConfirmationSubject, with_confirmation_subject};
 use super::{
     FeatureReview,
@@ -172,7 +173,12 @@ pub(crate) fn tool_call_hooks(
             };
             let observers: Vec<_> = features
                 .iter()
-                .map(|feature| feature.before_tool_call(&context, &observation))
+                .map(|feature| {
+                    isolate_hook(
+                        "before_tool_call",
+                        feature.before_tool_call(&context, &observation),
+                    )
+                })
                 .collect();
             let reviews: Vec<_> = features
                 .iter()
@@ -241,7 +247,12 @@ pub(crate) fn tool_call_hooks(
             };
             let pending: Vec<_> = features
                 .iter()
-                .map(|feature| feature.after_tool_call(&context, &observation))
+                .map(|feature| {
+                    isolate_hook(
+                        "after_tool_call",
+                        feature.after_tool_call(&context, &observation),
+                    )
+                })
                 .collect();
             let notes = notes.clone();
             let mut blocks = call.result.content;
@@ -367,7 +378,12 @@ impl HostRequestPolicy for FeaturePolicy {
         let observers: Vec<_> = self
             .features
             .iter()
-            .map(|feature| feature.after_host_request(&self.context, &observation, outcome))
+            .map(|feature| {
+                isolate_hook(
+                    "after_host_request",
+                    feature.after_host_request(&self.context, &observation, outcome),
+                )
+            })
             .collect();
         let notes = self.notes.clone();
         Box::pin(async move {
