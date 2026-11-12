@@ -84,7 +84,7 @@ async fn supervisor_with_resident(
     PathBuf,
     crate::test_support::TestDir,
 ) {
-    let dir = crate::test_support::TestDir::new(&format!("pa-{worker_id}-"));
+    let dir = crate::test_support::TestDir::new_for_sockets(&format!("pa-{worker_id}-"));
     let socket_path = dir.join("worker.sock");
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -494,7 +494,7 @@ async fn an_ended_connection_never_installs_its_channel() {
 /// cannot outlive the connection it was sent on.
 #[tokio::test]
 async fn a_lost_worker_connection_fails_its_in_flight_route() {
-    let dir = crate::test_support::TestDir::new("pa-lost-");
+    let dir = crate::test_support::TestDir::new_for_sockets("pa-lost-");
     let socket_path = dir.join("worker.sock");
     let agent_dir = dir.join("agent");
     std::fs::create_dir_all(&agent_dir).unwrap();

@@ -104,7 +104,9 @@ impl Sandbox {
             .prefix("pa-update-e2e-")
             .tempdir()
             .expect("sandbox root");
-        let root = guard.path().to_path_buf();
+        // The installer reports resolved paths; macOS's temp dir sits behind
+        // the /var -> /private/var symlink.
+        let root = guard.path().canonicalize().expect("canonical sandbox root");
         let home = root.join("home");
         let session_file = home.join(".prime/agent/sessions/session.jsonl");
         std::fs::create_dir_all(session_file.parent().expect("session dir")).expect("session dir");

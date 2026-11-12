@@ -1189,7 +1189,7 @@ mod tests {
     }
 
     fn temp_socket(tag: &str) -> crate::test_support::InTestDir<std::path::PathBuf> {
-        let dir = crate::test_support::TestDir::new(&format!("pa-herdr-{tag}-"));
+        let dir = crate::test_support::TestDir::new_for_sockets(&format!("pa-herdr-{tag}-"));
         crate::test_support::InTestDir::new(dir.join("herdr.sock"), dir)
     }
 

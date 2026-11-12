@@ -465,6 +465,13 @@ fn run_route(route: Route, known_terminal: bool) {
         ),
     }
 
+    // macOS revokes the pty once the child (its session leader) exits, so
+    // the shell-side checks below cannot write to the master there.
+    if cfg!(not(target_os = "linux")) {
+        harness.finish();
+        return;
+    }
+
     // (2) The synthetic up arrow at the shell: the shadow emulator sends the
     // legacy form (write the armed form too, so the echo assertion has teeth).
     let echo_mark = harness.mark();
@@ -546,7 +553,15 @@ impl RouteHarness {
     }
 
     fn write(&mut self, payload: &[u8]) {
-        self.master.write(payload);
+        if let Err(error) = self.master.file.write_all(payload) {
+            // A write racing the child's own exit (the selector's auto-exit):
+            // Linux buffers it, macOS fails EIO once the session leader is gone.
+            let exited = self.child.try_wait().ok().flatten().is_some();
+            assert!(
+                exited && error.raw_os_error() == Some(libc::EIO),
+                "write to the pty: {error}"
+            );
+        }
     }
 
     fn wait_from_start(&mut self, needle: &[u8], what: &str) {
@@ -705,10 +720,6 @@ impl PtyReader {
         self.file.read(buffer)
     }
 
-    fn write(&mut self, payload: &[u8]) {
-        self.file.write_all(payload).expect("write to the pty");
-    }
-
     fn drain_until_quiet(&mut self, quiet_polls: usize) {
         let mut quiet = 0;
         while quiet < quiet_polls {
@@ -752,6 +763,8 @@ impl PtyReader {
 fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: bool) -> Child {
     fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
+        // TIOCSCTTY is already the request type on Linux and a `u32` on macOS.
+        #[allow(clippy::cast_lossless)]
         let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());

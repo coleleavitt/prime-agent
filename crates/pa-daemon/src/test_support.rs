@@ -47,6 +47,17 @@ impl TestDir {
         )
     }
 
+    /// [`TestDir::new`] under `/tmp`, for fixtures that bind unix sockets: macOS's `$TMPDIR`
+    /// pushes a socket path past the 104-byte `SUN_LEN` limit.
+    pub(crate) fn new_for_sockets(prefix: &str) -> Self {
+        Self::nested(
+            tempfile::Builder::new()
+                .prefix(prefix)
+                .tempdir_in("/tmp")
+                .expect("create a test temp dir"),
+        )
+    }
+
     fn nested(root: tempfile::TempDir) -> Self {
         let path = root
             .path()

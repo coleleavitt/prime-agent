@@ -3,7 +3,8 @@
 //! explicitly — a process exit runs no destructors, so a surviving kernel is orphaned forever.
 //! The process-table scans count only kernels running in the test's own temp dir (the
 //! session cwd), so kernels of other sessions, worktrees, or parallel runs never interfere.
-#![cfg(unix)]
+// The kernel census scans /proc: Linux only.
+#![cfg(target_os = "linux")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

@@ -468,7 +468,7 @@ mod tests {
     use crate::session_store::{SessionFile, session_file_name};
 
     fn temp_dir() -> crate::test_support::TestDir {
-        crate::test_support::TestDir::new("pa-stop-cleanup-")
+        crate::test_support::TestDir::new_canonical("pa-stop-cleanup-")
     }
 
     fn write_session(dir: &Path, name: Option<&str>) -> (String, PathBuf) {

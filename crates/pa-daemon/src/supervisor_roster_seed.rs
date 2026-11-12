@@ -609,7 +609,7 @@ pub(crate) mod tests {
         PathBuf,
         PathBuf,
     ) {
-        let dir = crate::test_support::TestDir::new("pa-roster-");
+        let dir = crate::test_support::TestDir::new_canonical("pa-roster-");
         let agent_dir = dir.join("agent");
         let sessions_dir = agent_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();

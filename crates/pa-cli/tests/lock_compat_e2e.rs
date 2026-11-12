@@ -22,7 +22,8 @@
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use pa_core::platform::LockDir;
 use support::ts_binary;
@@ -40,11 +41,10 @@ fn sandbox(prefix: &str) -> tempfile::TempDir {
     base
 }
 
+/// The child runs under a hang guard in-process: GNU `timeout` is not on macOS.
 fn run(binary: &Path, args: &[&str], sandbox: &Path) -> (Option<i32>, String, String) {
-    let output = pa_types::platform::test_isolation::TestState::new(sandbox)
-        .apply(&mut Command::new("timeout"))
-        .arg("30")
-        .arg(binary)
+    let child = pa_types::platform::test_isolation::TestState::new(sandbox)
+        .apply(&mut Command::new(binary))
         .args(args)
         // Fixture agent dir only: never the ambient installation.
         .env("PRIME_AGENT_CODING_AGENT_DIR", sandbox.join("agent"))
@@ -52,8 +52,21 @@ fn run(binary: &Path, args: &[&str], sandbox: &Path) -> (Option<i32>, String, St
         .env("TMPDIR", sandbox.join("tmp"))
         .env("PI_OFFLINE", "1")
         .current_dir(sandbox.join("cwd"))
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("failed to spawn binary under test");
+    let pid = child.id() as i32;
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || done_tx.send(child.wait_with_output()));
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(30))
+        .unwrap_or_else(|_| {
+            // SAFETY: `kill` takes plain integers; a reaped pid only yields ESRCH.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            done_rx.recv().expect("the waiter reports the killed child")
+        })
+        .expect("wait for binary under test");
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
