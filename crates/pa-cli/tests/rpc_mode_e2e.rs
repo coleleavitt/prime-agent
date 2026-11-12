@@ -387,12 +387,23 @@ fn rpc_parse_and_unknown_command_errors() {
 /// prompt's run folds the steer and delivers the follow-up (TS `runLoop`).
 #[test]
 fn rpc_steer_and_follow_up_queue_then_abort() {
+    // The slow request is the run's second turn. `runLoop` drains steering at the
+    // run's start and after every turn, so a steer sent while the first turn is
+    // still being admitted (`isStreaming` is already true then) joins that turn
+    // instead of queueing. The second `turn_start` is emitted after the poll
+    // that precedes its request, so a steer sent after it can only queue.
     let script = json!({
         "responses": [
-            { "text": "slow turn", "delayMs": 5000 },
-            { "text": "continue reply" },
-            { "text": "steer answer" },
+            { "content": [
+                { "type": "toolCall", "id": "call-1", "name": "missing_tool", "arguments": {} }
+            ] },
+            { "text": "reply", "delayMs": 5000 },
+            { "text": "reply" },
         ],
+        // The abort can land before or after the slow request reaches the
+        // provider, which decides whether its scripted step is consumed. Every
+        // later request answers "reply" either way.
+        "repeatLastResponse": true,
     });
     let mut client = RpcChild::spawn(&["--mode", "rpc", "--no-session"], &script);
     // Arm the stderr drain up front: a panic line would otherwise vanish with the pipe.
@@ -400,16 +411,16 @@ fn rpc_steer_and_follow_up_queue_then_abort() {
     // The settings default is "all"; this test needs "one-at-a-time" (TS `setSteeringMode`).
     let mode = client.request(&json!({ "type": "set_steering_mode", "mode": "one-at-a-time" }));
     assert_eq!(mode["success"], true, "the mode is set: {mode}");
-    let response = client.request(&json!({ "type": "prompt", "message": "go" }));
+    let prompt_id = client.command(&json!({ "type": "prompt", "message": "go" }));
+    let (response, mut seen) = client.wait_response(&prompt_id, TIMEOUT);
     assert_eq!(response["success"], true);
-    // The response fires at admission (TS `preflightResult`): wait until the turn is streaming.
-    let streaming_deadline = Instant::now() + Duration::from_secs(10);
-    while client.request(&json!({ "type": "get_state" }))["data"]["isStreaming"] != true {
-        assert!(
-            Instant::now() < streaming_deadline,
-            "the admitted turn never started streaming"
-        );
-        std::thread::sleep(Duration::from_millis(20));
+    while seen
+        .iter()
+        .filter(|frame| frame.get("type").and_then(Value::as_str) == Some("turn_start"))
+        .count()
+        < 2
+    {
+        seen.push(client.wait_event("turn_start", TIMEOUT));
     }
     let steer = client.request(&json!({ "type": "steer", "message": "steer this" }));
     assert_eq!(steer["success"], true, "steer queues: {steer}");
@@ -449,10 +460,14 @@ fn rpc_steer_and_follow_up_queue_then_abort() {
     let second = client.request(&json!({ "type": "prompt", "message": "continue" }));
     assert_eq!(second["success"], true);
     let end = client.wait_event("agent_end", TIMEOUT);
+    // Hidden harness rows (the `<total_tokens>` reminder once the first run
+    // recorded usage) ride the run too; the order under test is the
+    // conversation's.
     let texts = end["messages"]
         .as_array()
         .expect("the run's messages on agent_end")
         .iter()
+        .filter(|message| message["role"] != "custom")
         .map(|message| {
             message["content"]
                 .as_array()
@@ -464,18 +479,12 @@ fn rpc_steer_and_follow_up_queue_then_abort() {
         .collect::<Vec<_>>();
     assert_eq!(
         texts,
-        vec![
-            "continue",
-            "steer this",
-            "continue reply",
-            "fu this",
-            "steer answer"
-        ],
+        vec!["continue", "steer this", "reply", "fu this", "reply"],
         "the folded run carries the parked rows in TS order: {end}"
     );
     let text = client.request(&json!({ "type": "get_last_assistant_text" }));
     assert_eq!(
-        text["data"]["text"], "steer answer",
+        text["data"]["text"], "reply",
         "the folded follow-up turn ran last: {text}"
     );
     client.drain_stderr();
