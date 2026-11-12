@@ -27,7 +27,6 @@ pub use tools::ipython::{
     ExecuteStatus,
     IpythonKernelProvisioner,
     IpythonToolOptions,
-    IpythonToolUi,
     KernelAttachment,
     KernelBusyAfterInterruptError,
     KernelErrorInfo,

@@ -64,7 +64,6 @@ impl Harness {
             "/tmp",
             IpythonToolOptions {
                 provisioner: Arc::new(provisioner),
-                ui: None,
                 on_late_sent_agent_message: None,
                 cell_timeout_ms,
                 auto_background_ms: None,

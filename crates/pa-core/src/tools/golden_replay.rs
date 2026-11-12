@@ -17,7 +17,6 @@ use crate::tools::ipython::{
     ExecuteStatus,
     IpythonKernelProvisioner,
     IpythonToolOptions,
-    IpythonToolUi,
     KernelAttachment,
     KernelBusyAfterInterruptError,
     KernelErrorInfo,
@@ -129,25 +128,6 @@ impl IpythonKernelProvisioner for MockProvisioner {
     }
 }
 
-struct KillChoiceUi;
-
-impl IpythonToolUi for KillChoiceUi {
-    fn select(
-        &self,
-        _prompt: &str,
-        choices: &[&str],
-        _signal: Option<&crate::tools::tool_definition::AbortSignal>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>> {
-        let choice = choices
-            .iter()
-            .find(|c| **c == ipython::BUSY_KERNEL_KILL_CHOICE)
-            .map(std::string::ToString::to_string);
-        Box::pin(std::future::ready(choice))
-    }
-
-    fn set_working_message(&self, _message: Option<&str>) {}
-}
-
 fn mock_execution(entry: &serde_json::Value) -> MockOutcome {
     if entry.get("thrown").is_some() {
         return MockOutcome::Busy;
@@ -223,11 +203,6 @@ async fn golden_ipython_group_matches_ts() {
         });
         let options = IpythonToolOptions {
             provisioner: provisioner.clone(),
-            ui: if case["ctxMode"].as_str() == Some("ui-kill") {
-                Some(Arc::new(KillChoiceUi))
-            } else {
-                None
-            },
             cell_timeout_ms: None,
             auto_background_ms: None,
             on_late_sent_agent_message: None,
@@ -310,7 +285,6 @@ async fn ipython_details_carry_the_cell_edit_diffs() {
             ensure_calls: AtomicUsize::new(0),
             kill_calls: AtomicUsize::new(0),
         }),
-        ui: None,
         cell_timeout_ms: None,
         auto_background_ms: None,
         on_late_sent_agent_message: None,
@@ -347,7 +321,6 @@ fn golden_schema_group_matches_ts() {
                         ensure_calls: AtomicUsize::new(0),
                         kill_calls: AtomicUsize::new(0),
                     }),
-                    ui: None,
                     cell_timeout_ms: None,
                     auto_background_ms: None,
                 },

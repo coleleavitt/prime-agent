@@ -673,7 +673,6 @@ pub fn ipython_tool_options(
 ) -> IpythonToolOptions {
     IpythonToolOptions {
         provisioner,
-        ui: None,
         on_late_sent_agent_message,
         cell_timeout_ms: crate::tools::ipython::resolve_cell_timeout_ms(
             std::env::var(crate::tools::ipython::IPYTHON_CELL_TIMEOUT_ENV)
@@ -694,8 +693,8 @@ mod tests {
 
     #[test]
     fn the_managers_busy_after_interrupt_failure_reaches_the_tool_typed() {
-        // Untyped, the tool's busy-kernel handling (wait/kill choice, or
-        // the headless replacement) never ran: every later call failed.
+        // Untyped, the tool's busy-kernel replacement never ran: every
+        // later call failed.
         let busy = classify_execute_error(anyhow::Error::new(
             crate::kernel::shared::KernelBusyAfterInterruptError,
         ));
