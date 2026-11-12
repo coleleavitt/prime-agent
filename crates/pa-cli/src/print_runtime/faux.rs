@@ -1,16 +1,17 @@
 //! The faux-script verification seam (`PRIME_AGENT_FAUX_SCRIPT`): the
-//! script env parse, one per-child response queue per spawned child, the
-//! scripted engine build, and the response-step parser. Never set by the
-//! product.
+//! script env parse and the scripted engine build (the response steps
+//! parse in pa-core, shared with the inline children's queues). Never set
+//! by the product.
 
+use pa_core::session_engine::headless::faux_response_steps;
 use pa_core::session_engine::provider_adapter::{
     ProviderTarget,
     json_round_trip,
     switchable_stream_fn,
 };
+use pa_core::session_engine::rlm_in_process::ChildLane;
 
 use crate::print_runtime::{
-    ChildLane,
     HeadlessEmbedding,
     HeadlessEmbeddingFields,
     HeadlessEngine,
@@ -28,14 +29,6 @@ pub(crate) fn faux_script_env() -> Result<Option<serde_json::Value>, String> {
             .map_err(|error| format!("invalid PRIME_AGENT_FAUX_SCRIPT: {error}")),
         Err(_) => Ok(None),
     }
-}
-
-/// The per-child faux queue: its own registered provider (keyed by the
-/// child id, so siblings never share a response lane) and its steps.
-pub(crate) struct FauxChildQueue {
-    pub child_id: String,
-    pub steps: Vec<pa_ai::faux::FauxResponseStep>,
-    pub repeat_last: bool,
 }
 
 /// The faux-script engine: identical session assembly, scripted provider.
@@ -209,83 +202,4 @@ pub(crate) async fn build_faux_engine_with(
         provider_target,
         rpc_bash_wake,
     })
-}
-
-/// The text of the request's user messages that are harness context rows.
-fn context_reminder_rows<T: serde::Serialize>(messages: &[T]) -> Vec<String> {
-    messages
-        .iter()
-        .filter_map(|message| serde_json::to_value(message).ok())
-        .filter(|message| message["role"] == "user")
-        .flat_map(|message| {
-            let content = &message["content"];
-            match content {
-                serde_json::Value::String(text) => vec![text.clone()],
-                serde_json::Value::Array(parts) => parts
-                    .iter()
-                    .filter_map(|part| part["text"].as_str().map(str::to_string))
-                    .collect(),
-                _ => Vec::new(),
-            }
-        })
-        .filter(|text| text.starts_with("<system-reminder>"))
-        .collect()
-}
-
-/// One scripted response entry: a plain string answers with fixed text;
-/// `{"systemPrompt": true}` answers with the request's system prompt and its
-/// harness context rows; other objects go through the shared faux-script parser.
-pub(crate) fn faux_response_steps(
-    entries: &[serde_json::Value],
-) -> Result<Vec<pa_ai::faux::FauxResponseStep>, String> {
-    entries
-        .iter()
-        .map(|entry| match entry {
-            serde_json::Value::String(text) => Ok(pa_ai::faux::FauxResponseStep::Message(
-                pa_ai::faux::faux_assistant_text_message(
-                    text,
-                    pa_ai::faux::FauxAssistantMessageOptions::default(),
-                ),
-            )),
-            serde_json::Value::Object(map)
-                if map.get("systemPrompt").and_then(serde_json::Value::as_bool) == Some(true) =>
-            {
-                Ok(pa_ai::faux::FauxResponseStep::Factory(std::sync::Arc::new(
-                    |context, _options, _call, _model| {
-                        // What the model is told: the system prompt, then the
-                        // harness context rows (`<system-reminder>` user
-                        // messages: instruction files, skills, environment).
-                        let mut text = context.system_prompt.clone().unwrap_or_default();
-                        for row in context_reminder_rows(&context.messages) {
-                            text.push_str("\n\n");
-                            text.push_str(&row);
-                        }
-                        Ok(pa_ai::faux::faux_assistant_text_message(
-                            &text,
-                            pa_ai::faux::FauxAssistantMessageOptions::default(),
-                        ))
-                    },
-                )))
-            }
-            serde_json::Value::Object(_) => {
-                pa_ai::faux::script::parse_faux_script(&serde_json::json!({
-                    "responses": [entry]
-                }))
-                .map(|parsed| {
-                    let mut steps = parsed.responses.into_iter();
-                    let first = steps
-                        .next()
-                        .expect("an object entry parses into one response step");
-                    debug_assert!(steps.next().is_none());
-                    first
-                })
-            }
-            _ => Ok(pa_ai::faux::FauxResponseStep::Message(
-                pa_ai::faux::faux_assistant_text_message(
-                    "",
-                    pa_ai::faux::FauxAssistantMessageOptions::default(),
-                ),
-            )),
-        })
-        .collect()
 }

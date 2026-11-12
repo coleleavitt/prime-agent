@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 use pa_agent::agent::Agent;
 use pa_agent::types::AgentMessage;
-use pa_core::session_engine::engine::SessionEngine;
 use pa_types::ai::Model;
 
-use crate::headless_autonomous::HeadlessAutonomous;
-use crate::print_goal::{NaturalContinuation, PrintGoalSurface};
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::headless::autonomous::HeadlessAutonomous;
+use crate::session_engine::headless::goal::{NaturalContinuation, PrintGoalSurface};
 
 /// Install the composed natural-turn-end continuation hook: the goal
 /// arm first, the autonomous arm on the fall-through. Both defer behind
@@ -26,7 +26,7 @@ pub(crate) fn wire_continuation_hook(
     model: &Model,
     goal: &Arc<PrintGoalSurface>,
     autonomous: &Arc<HeadlessAutonomous>,
-    root_node: Option<&Arc<crate::print_rlm::InlineSessionNode>>,
+    root_node: Option<&Arc<crate::session_engine::rlm_in_process::inline::InlineSessionNode>>,
 ) {
     let weak_engine = Arc::downgrade(engine);
     let weak_goal = Arc::downgrade(goal);
@@ -50,7 +50,10 @@ pub(crate) fn wire_continuation_hook(
             // Without the inline-subagent runtime no descendant work
             // exists: both arms mint as before.
             let unsettled_rlm_work = match weak_root.as_ref().and_then(std::sync::Weak::upgrade) {
-                Some(root) => crate::print_rlm::has_unsettled_rlm_work(&root).await,
+                Some(root) => {
+                    crate::session_engine::rlm_in_process::inline::has_unsettled_rlm_work(&root)
+                        .await
+                }
                 None => false,
             };
             match goal
@@ -102,5 +105,5 @@ pub(crate) fn wire_continuation_hook(
 
 /// The continuation user row for the agent loop.
 fn autonomous_continuation_row(text: &str) -> AgentMessage {
-    pa_core::autonomous::autonomous_continuation_loop_row(text, pa_core::autonomous::now_millis())
+    crate::autonomous::autonomous_continuation_loop_row(text, crate::autonomous::now_millis())
 }

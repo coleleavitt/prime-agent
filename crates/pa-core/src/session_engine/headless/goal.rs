@@ -7,17 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use pa_agent::agent::Agent;
 use pa_agent::types::{AgentEvent, AgentMessage, Message};
-use pa_core::session_engine::engine::SessionEngine;
-use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
-use pa_core::session_engine::goal_driver::UsageOutcome;
-use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_types::session::CustomMessage;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-/// Where the boundary's json events go: stdout in the product, a captured buffer in tests (the same
-/// sink contract `print_boundary` uses).
-pub(crate) type EventSink = std::sync::Arc<dyn Fn(&Value) + Send + Sync>;
+use super::EventSink;
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::goal_boundary::custom_message_to_loop_row;
+use crate::session_engine::goal_driver::UsageOutcome;
+use crate::session_engine::provider_adapter::json_round_trip;
 
 /// Collapse whitespace, cap at 160 chars with a trailing `...` (the session-action label form).
 fn compact_rlm_text(text: &str, max_length: usize) -> String {
@@ -111,22 +109,17 @@ pub(crate) struct PrintGoalSurface {
 }
 
 impl PrintGoalSurface {
-    pub(crate) fn new(json_mode: bool) -> Self {
-        Self {
-            json_mode,
-            sink: Arc::new(|event| println!("{event}")),
-            budget_crossed: AtomicBool::new(false),
-            queued: Mutex::new(None),
-            active_label: Mutex::new(None),
-            running_frame_at_turn_start: AtomicBool::new(false),
-            last_action_snapshot: Mutex::new(Value::Null),
-            last_published_goal: Mutex::new(pa_types::goal::empty_goal_state()),
-        }
+    /// A text-mode surface: the goal loop runs, no frames stream.
+    pub(crate) fn text() -> Self {
+        Self::with_output(/*json_mode*/ false, Arc::new(|_| {}))
     }
 
-    /// A surface with an explicit event sink (json-mode verifiers).
-    #[cfg(test)]
-    pub(crate) fn with_sink(json_mode: bool, sink: EventSink) -> Self {
+    /// A json-mode surface streaming its frames to `sink`.
+    pub(crate) fn json(sink: EventSink) -> Self {
+        Self::with_output(/*json_mode*/ true, sink)
+    }
+
+    fn with_output(json_mode: bool, sink: EventSink) -> Self {
         Self {
             json_mode,
             sink,
@@ -157,8 +150,8 @@ impl PrintGoalSurface {
             let mut last = self.last_published_goal.lock().await;
             // The dedupe is age-invariant: the timer's age ticks with the wall
             // clock (a boundary between reads must not re-emit an unchanged goal).
-            if pa_core::goals::goal_update_dedupe_projection(&last)
-                == pa_core::goals::goal_update_dedupe_projection(&goal)
+            if crate::goals::goal_update_dedupe_projection(&last)
+                == crate::goals::goal_update_dedupe_projection(&goal)
             {
                 false
             } else {
@@ -344,7 +337,7 @@ impl PrintGoalSurface {
 
     /// One durable row's `message_start`/`message_end` pair (rows appended outside the agent loop).
     pub(crate) fn emit_row_pair(&self, row: &CustomMessage) {
-        let value = crate::headless_autonomous::custom_row_wire_value(row);
+        let value = crate::session_engine::headless::custom_row_wire_value(row);
         for event_type in ["message_start", "message_end"] {
             self.emit(&json!({ "type": event_type, "message": value }));
         }
@@ -409,7 +402,7 @@ impl PrintGoalSurface {
                             // discarded empty attempts; the crossing flips the goal to
                             // `budget_limited` and arms the steer.
                             if let Some(usage) =
-                                pa_core::session_engine::rlm_usage::chargeable_turn_usage(&wire)
+                                crate::session_engine::rlm_usage::chargeable_turn_usage(&wire)
                             {
                                 // The message identity for the double-counting guard: the loop does
                                 // not assign message ids in-process.
@@ -523,7 +516,7 @@ impl PrintGoalSurface {
     pub(crate) async fn drive_boundary(
         &self,
         engine: &SessionEngine,
-        boundary: &mut crate::print_boundary::TurnBoundary,
+        boundary: &mut crate::session_engine::headless::boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
@@ -559,7 +552,8 @@ impl PrintGoalSurface {
                 ran = true;
                 continue;
             }
-            if let Some(message) = crate::headless_autonomous::latest_assistant_error(engine).await
+            if let Some(message) =
+                crate::session_engine::headless::autonomous::latest_assistant_error(engine).await
             {
                 engine
                     .fail_goal_for_terminal_error(message.as_deref())
@@ -569,7 +563,7 @@ impl PrintGoalSurface {
             }
             if let Some(wake_at) = engine.take_goal_backoff_wake_at().await {
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    wake_at.saturating_sub(pa_core::autonomous::now_millis()),
+                    wake_at.saturating_sub(crate::autonomous::now_millis()),
                 ))
                 .await;
                 boundary
@@ -577,7 +571,7 @@ impl PrintGoalSurface {
                         engine,
                         model,
                         api_key.clone(),
-                        pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT,
+                        crate::session_engine::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT,
                         global_harness_dir.clone(),
                     )
                     .await?;
@@ -594,7 +588,7 @@ impl PrintGoalSurface {
     pub(crate) async fn run_session_command_continuation(
         &self,
         engine: &SessionEngine,
-        boundary: &mut crate::print_boundary::TurnBoundary,
+        boundary: &mut crate::session_engine::headless::boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
@@ -617,7 +611,7 @@ impl PrintGoalSurface {
             .run_at_settled_turn(engine, model, api_key.clone(), global_harness_dir)
             .await?;
         if let Some(error_message) =
-            crate::headless_autonomous::latest_assistant_error(engine).await
+            crate::session_engine::headless::autonomous::latest_assistant_error(engine).await
         {
             engine
                 .fail_goal_for_terminal_error(error_message.as_deref())
@@ -635,7 +629,7 @@ impl PrintGoalSurface {
     pub(crate) async fn run_queued_turn(
         &self,
         engine: &SessionEngine,
-        boundary: &mut crate::print_boundary::TurnBoundary,
+        boundary: &mut crate::session_engine::headless::boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
@@ -667,10 +661,10 @@ impl PrintGoalSurface {
 #[cfg(test)]
 // The faux provider registry is process-global: one std lock serializes every test that drives it.
 mod tests {
-    use pa_core::session_engine::provider_adapter::json_round_trip;
     use serde_json::json;
 
     use super::*;
+    use crate::session_engine::provider_adapter::json_round_trip;
 
     /// One test at a time over the global faux registry.
     static FAUX_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -750,7 +744,7 @@ mod tests {
                     return false;
                 };
                 user.content.text()
-                    == pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT
+                    == crate::session_engine::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT
             })
             .count()
     }
@@ -822,16 +816,16 @@ mod tests {
         registration.set_repeat_last_response(parsed.repeat_last_response);
         let model = registration.get_model();
         let stream_fn =
-            pa_core::session_engine::provider_adapter::real_stream_fn(None, model.clone());
+            crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
         let agent_model: pa_agent::types::Model =
             json_round_trip(&model).expect("the faux model crosses the loop boundary");
-        let session_manager = pa_core::session::manager::SessionManager::persisted(
+        let session_manager = crate::session::manager::SessionManager::persisted(
             dir.path(),
             &dir.path().join("sessions"),
         );
         let engine = Arc::new(
-            pa_core::session_engine::engine::create_session(
-                pa_core::session_engine::engine::SessionEngineConfig {
+            crate::session_engine::engine::create_session(
+                crate::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
                     additional_directories: Vec::new(),
                     plan_mode: None,
@@ -891,15 +885,15 @@ mod tests {
                 .expect("the seed validates");
         }
         let (frames, sink) = capture_sink();
-        let surface = Arc::new(PrintGoalSurface::with_sink(true, sink));
+        let surface = Arc::new(PrintGoalSurface::json(sink));
         surface.seed_publish_baseline(&engine).await;
         let accounting = surface
             .wire_accounting(&engine, engine.session.agent())
             .await;
         let autonomous_run = std::sync::Arc::new(
-            crate::headless_autonomous::HeadlessAutonomous::disabled(dir.path()),
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
         );
-        crate::print_autonomous::wire_continuation_hook(
+        crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,
             engine.session.agent(),
             &model,
@@ -929,7 +923,7 @@ mod tests {
         _accounting: pa_agent::agent::Subscription,
         /// Keeps the composed hook's autonomous arm alive for the bed's lifetime (the hook holds it
         /// weakly).
-        _autonomous_run: Arc<crate::headless_autonomous::HeadlessAutonomous>,
+        _autonomous_run: Arc<crate::session_engine::headless::autonomous::HeadlessAutonomous>,
         _dir: tempfile::TempDir,
     }
 
@@ -937,14 +931,14 @@ mod tests {
         /// Admit one prompt through the same driver path the print runtime uses
         /// (the in-loop hook runs the natural continuations inside the one run).
         async fn prompt(&self, text: &str) -> bool {
-            let mut boundary = crate::print_boundary::TurnBoundary::new(false);
+            let mut boundary = crate::session_engine::headless::boundary::TurnBoundary::text();
             boundary
                 .run_pre_turn(&self.engine, &self.model, None)
                 .await
                 .unwrap();
             self.engine
                 .session
-                .prompt(text, pa_core::session_engine::PromptOptions::default())
+                .prompt(text, crate::session_engine::PromptOptions::default())
                 .await
                 .unwrap();
             self.engine.session.agent().wait_for_idle().await;
@@ -1023,7 +1017,7 @@ mod tests {
         for entry in &entries {
             match entry {
                 pa_types::session::FileEntry::CustomMessage { payload, .. }
-                    if payload.custom_type == pa_core::goals::GOAL_CONTEXT_CUSTOM_TYPE =>
+                    if payload.custom_type == crate::goals::GOAL_CONTEXT_CUSTOM_TYPE =>
                 {
                     let details = payload.details.as_ref().unwrap();
                     kinds.push(format!(
@@ -1213,7 +1207,7 @@ mod tests {
         assert_eq!(goal.status, pa_types::goal::GoalStatus::Error);
         assert_eq!(
             goal.last_error.as_deref(),
-            Some(pa_core::session_engine::goal_driver::CONTINUATION_NO_PROGRESS_CAP_REASON)
+            Some(crate::session_engine::goal_driver::CONTINUATION_NO_PROGRESS_CAP_REASON)
         );
         assert_eq!(goal.no_progress_streak, Some(3));
     }
@@ -1344,7 +1338,7 @@ mod tests {
                 // The goal-state rows are `Custom` entries (`data` carries the state);
                 // the context rows are `CustomMessage` entries (`details` carries the slot).
                 pa_types::session::FileEntry::Custom { payload, .. }
-                    if payload.custom_type == pa_core::goals::GOAL_STATE_CUSTOM_TYPE =>
+                    if payload.custom_type == crate::goals::GOAL_STATE_CUSTOM_TYPE =>
                 {
                     let slot = payload
                         .data
@@ -1358,9 +1352,9 @@ mod tests {
                 pa_types::session::FileEntry::CustomMessage { payload, .. }
                     if matches!(
                         payload.custom_type.as_str(),
-                        pa_core::session_engine::context_rows::SESSION_CONTEXT_CUSTOM_TYPE
-                            | pa_core::session_engine::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE
-                            | pa_core::session_engine::reminders::SYSTEM_REMINDER_CUSTOM_TYPE
+                        crate::session_engine::context_rows::SESSION_CONTEXT_CUSTOM_TYPE
+                            | crate::session_engine::context_rows::SESSION_CONTEXT_UPDATE_CUSTOM_TYPE
+                            | crate::session_engine::reminders::SYSTEM_REMINDER_CUSTOM_TYPE
                     ) => {}
                 pa_types::session::FileEntry::CustomMessage { payload, .. } => {
                     let slot = payload
@@ -1382,14 +1376,14 @@ mod tests {
             .expect("the threshold arm compacted");
         assert_eq!(
             marks[compaction - 1],
-            (pa_core::goals::GOAL_STATE_CUSTOM_TYPE.to_string(), 1),
+            (crate::goals::GOAL_STATE_CUSTOM_TYPE.to_string(), 1),
             "the mint's slot bump immediately precedes the compaction"
         );
         // The live CompactionSummary prevents a second threshold check from
         // writing a spurious skipped `compaction_outcome` before this turn.
         assert_eq!(
             marks[compaction + 1],
-            (pa_core::goals::GOAL_CONTEXT_CUSTOM_TYPE.to_string(), 1),
+            (crate::goals::GOAL_CONTEXT_CUSTOM_TYPE.to_string(), 1),
             "the held context row follows the compaction as the next turn"
         );
         assert!(
@@ -1438,12 +1432,12 @@ mod tests {
         registration.set_repeat_last_response(parsed.repeat_last_response);
         let model = registration.get_model();
         let stream_fn =
-            pa_core::session_engine::provider_adapter::real_stream_fn(None, model.clone());
+            crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
         let agent_model: pa_agent::types::Model =
             json_round_trip(&model).expect("the faux model crosses the loop boundary");
         // The resumed session: one history turn (a user row and a settled assistant reply), then
         // the active goal state.
-        let mut session_manager = pa_core::session::manager::SessionManager::persisted(
+        let mut session_manager = crate::session::manager::SessionManager::persisted(
             dir.path(),
             &dir.path().join("sessions"),
         );
@@ -1481,14 +1475,14 @@ mod tests {
         ))
             .expect("the resumed history reply appends");
         {
-            let mut driver = pa_core::session_engine::goal_driver::GoalDriver::new();
+            let mut driver = crate::session_engine::goal_driver::GoalDriver::new();
             driver
                 .start(&mut session_manager, "finish the work", Some(1_000_000))
                 .unwrap();
         }
         let engine = Arc::new(
-            pa_core::session_engine::engine::create_session(
-                pa_core::session_engine::engine::SessionEngineConfig {
+            crate::session_engine::engine::create_session(
+                crate::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
                     additional_directories: Vec::new(),
                     plan_mode: None,
@@ -1547,15 +1541,15 @@ mod tests {
             "the persisted goal state loads at construction"
         );
         let (frames, sink) = capture_sink();
-        let surface = Arc::new(PrintGoalSurface::with_sink(true, sink));
+        let surface = Arc::new(PrintGoalSurface::json(sink));
         surface.seed_publish_baseline(&engine).await;
         let accounting = surface
             .wire_accounting(&engine, engine.session.agent())
             .await;
         let autonomous_run = std::sync::Arc::new(
-            crate::headless_autonomous::HeadlessAutonomous::disabled(dir.path()),
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
         );
-        crate::print_autonomous::wire_continuation_hook(
+        crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,
             engine.session.agent(),
             &model,

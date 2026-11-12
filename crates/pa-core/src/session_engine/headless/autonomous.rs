@@ -1,13 +1,15 @@
 //! The autonomous run state for headless print/json runs — the verifier and
 //! eval composition surface. After every settled turn the [`ShellAutonomousDriver`]
 //! runs the gate commands in the session cwd (the #98 seams, unmodified); the
-//! continuation rides the natural-turn-end hook ([`crate::print_autonomous`]),
+//! continuation rides the natural-turn-end hook ([`super::continuation`]),
 //! a stop surfaces only through the exit code and its stderr line.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pa_core::autonomous::{
+use pa_types::ai::Model;
+
+use crate::autonomous::{
     AgentAutonomousConfig,
     AutonomousDriver,
     AutonomousFollowUp,
@@ -20,37 +22,11 @@ use pa_core::autonomous::{
     latest_autonomous_gate_attempt,
     now_millis,
 };
-use pa_core::session_engine::engine::SessionEngine;
-use pa_core::session_engine::provider_adapter::json_round_trip;
-use pa_types::ai::Model;
-use pa_types::session::CustomMessage;
-
-use crate::args::AutonomousConfig;
-
-/// The autonomous runtime config from the typed CLI flags: any
-/// autonomous flag enables the run.
-pub fn autonomous_runtime_config(config: &AutonomousConfig) -> AgentAutonomousConfig {
-    AgentAutonomousConfig {
-        enabled: Some(true),
-        max_continuations: config.max_continuations.map(u64::from),
-        max_turns: config.max_turns.map(u64::from),
-        max_tokens: config.max_tokens,
-        timeout_ms: config.timeout_ms,
-        continuation_prompt: None,
-        gates: config
-            .gates
-            .as_ref()
-            .map(|gates| pa_core::autonomous::AgentAutonomousGateConfig {
-                commands: Some(gates.commands.clone()),
-                max_retries: gates.max_retries.map(u64::from),
-                timeout_ms: gates.timeout_ms,
-            }),
-        subagent_keep_alive_ms: None,
-    }
-}
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::provider_adapter::json_round_trip;
 
 /// One headless autonomous run: the runtime state plus the shell-gate driver.
-pub struct HeadlessAutonomous {
+pub(crate) struct HeadlessAutonomous {
     state: Arc<tokio::sync::Mutex<AutonomousRuntimeState>>,
     driver: ShellAutonomousDriver,
     /// The continuation the threshold arm minted ahead of its compaction,
@@ -63,16 +39,16 @@ pub struct HeadlessAutonomous {
 }
 
 impl HeadlessAutonomous {
-    /// Build the run from the CLI flags; the gates run in the session cwd.
-    pub fn from_cli(config: &AutonomousConfig, cwd: impl Into<PathBuf>) -> Self {
-        let runtime_config = autonomous_runtime_config(config);
-        let state = create_autonomous_runtime_state(Some(&runtime_config), None);
+    /// Build the run from an explicit config (the CLI flags'); the gates
+    /// run in the session cwd.
+    pub(crate) fn from_config(config: &AgentAutonomousConfig, cwd: impl Into<PathBuf>) -> Self {
+        let state = create_autonomous_runtime_state(Some(config), None);
         Self::from_state(state, cwd)
     }
 
     /// The session's default run: a print run without CLI flags starts
     /// disabled, and `/autonomous on` rewrites it live.
-    pub fn disabled(cwd: impl Into<PathBuf>) -> Self {
+    pub(crate) fn disabled(cwd: impl Into<PathBuf>) -> Self {
         let state = create_autonomous_runtime_state(None, None);
         Self::from_state(state, cwd)
     }
@@ -94,7 +70,7 @@ impl HeadlessAutonomous {
 
     /// Per-message usage accounting: every settled assistant message forwards to
     /// the driver as it arrives (the daemon worker runs the same policy).
-    pub async fn wire_accounting(
+    pub(crate) async fn wire_accounting(
         &self,
         agent: &Arc<pa_agent::agent::Agent>,
     ) -> pa_agent::agent::Subscription {
@@ -171,7 +147,7 @@ impl HeadlessAutonomous {
     pub(crate) async fn deliver_rlm_continuation(
         &self,
         engine: &SessionEngine,
-        boundary: &mut crate::print_boundary::TurnBoundary,
+        boundary: &mut crate::session_engine::headless::boundary::TurnBoundary,
         model: &Model,
         api_key: Option<String>,
         global_harness_dir: PathBuf,
@@ -205,7 +181,7 @@ impl HeadlessAutonomous {
     pub(crate) async fn drive_boundary(
         &self,
         engine: &SessionEngine,
-        boundary: &mut crate::print_boundary::TurnBoundary,
+        boundary: &mut crate::session_engine::headless::boundary::TurnBoundary,
         model: &Model,
         api_key: Option<String>,
         global_harness_dir: PathBuf,
@@ -230,7 +206,7 @@ impl HeadlessAutonomous {
     /// non-zero — a configured gate still failing (after its retry window or
     /// an autonomous limit), or an ungated run stopping before terminal
     /// evidence.
-    pub async fn exit_stderr(&self) -> Option<String> {
+    pub(crate) async fn exit_stderr(&self) -> Option<String> {
         let state = self.state.lock().await;
         let status = autonomous_status(&state);
         let now = now_millis();
@@ -289,11 +265,4 @@ pub(crate) async fn latest_assistant_error(engine: &SessionEngine) -> Option<Opt
         (message.stop_reason == pa_types::ai::StopReason::Error)
             .then(|| message.error_message.clone())
     })
-}
-
-/// The wire shape of one durable custom row for the json event stream: the
-/// custom message in the shared message wire form.
-pub fn custom_row_wire_value(row: &CustomMessage) -> serde_json::Value {
-    serde_json::to_value(pa_types::session::AgentMessage::Custom(row.clone()))
-        .unwrap_or(serde_json::Value::Null)
 }

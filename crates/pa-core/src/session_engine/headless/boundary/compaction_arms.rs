@@ -137,7 +137,7 @@ impl TurnBoundary {
                     match engine
                         .session
                         .compact_with_trigger(
-                            pa_core::features::CompactionTrigger::Auto,
+                            crate::features::CompactionTrigger::Auto,
                             None,
                             model,
                             api_key,
@@ -269,7 +269,7 @@ impl TurnBoundary {
         let outcome = engine
             .session
             .compact_with_trigger(
-                pa_core::features::CompactionTrigger::Auto,
+                crate::features::CompactionTrigger::Auto,
                 custom_instructions.as_deref(),
                 model,
                 api_key,

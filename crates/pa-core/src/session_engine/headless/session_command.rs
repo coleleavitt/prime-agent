@@ -5,19 +5,19 @@
 
 use std::sync::Arc;
 
-use pa_core::autonomous::AutonomousRuntimeState;
-use pa_core::session_engine::engine::SessionEngine;
-use pa_core::session_engine::session_commands::{
+use pa_types::ai::Model;
+use serde_json::{Value, json};
+
+use crate::autonomous::AutonomousRuntimeState;
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::headless::goal::PrintGoalSurface;
+use crate::session_engine::session_commands::{
     SessionCommandExecution,
     SessionCommandParams,
     execute_session_command,
     session_command_echo_row,
 };
-use pa_core::session_engine::slash_commands::SessionSlashCommand;
-use pa_types::ai::Model;
-use serde_json::{Value, json};
-
-use crate::print_goal::PrintGoalSurface;
+use crate::session_engine::slash_commands::SessionSlashCommand;
 
 /// `/compact <args>`: the args are the summary-focus instructions.
 fn compact_custom_instructions(command: &SessionSlashCommand) -> Option<String> {
@@ -148,8 +148,11 @@ pub(crate) async fn execute_prompt_session_command(
     // `/refine`: the durable refinement rows stream as message pairs, then
     // `refine_complete` (or `refine_failed`), before the result row.
     if command.name == "refine" {
-        for row in
-            crate::print_boundary::TurnBoundary::refinement_rows_since(engine, entries_before).await
+        for row in crate::session_engine::headless::boundary::TurnBoundary::refinement_rows_since(
+            engine,
+            entries_before,
+        )
+        .await
         {
             goal.emit_row_pair(&row);
         }
@@ -188,22 +191,22 @@ pub(crate) async fn execute_prompt_session_command(
 
 #[cfg(test)]
 mod tests {
-    use pa_core::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
     use serde_json::json;
 
     use super::*;
-    use crate::print_boundary::TurnBoundary;
-    use crate::print_goal::PrintGoalSurface;
+    use crate::session_engine::headless::boundary::TurnBoundary;
+    use crate::session_engine::headless::goal::PrintGoalSurface;
+    use crate::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 
-    /// One test at a time over the global faux registry (the same contract `print_goal` and
-    /// `print_boundary` tests hold).
+    /// One test at a time over the global faux registry (the same contract the `goal` and
+    /// `boundary` tests hold).
     static FAUX_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     type Frames = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
 
-    fn capture_sink() -> (Frames, crate::print_goal::EventSink) {
+    fn capture_sink() -> (Frames, crate::session_engine::headless::EventSink) {
         let frames: Frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let sink: crate::print_goal::EventSink = {
+        let sink: crate::session_engine::headless::EventSink = {
             let frames = Arc::clone(&frames);
             Arc::new(move |event: &Value| {
                 frames.lock().unwrap().push(event.clone());
@@ -292,11 +295,11 @@ mod tests {
         harness_dir: std::path::PathBuf,
         /// Keeps the composed hook's autonomous arm alive for the bed's lifetime (the hook holds it
         /// weakly).
-        _run: Arc<crate::headless_autonomous::HeadlessAutonomous>,
+        _run: Arc<crate::session_engine::headless::autonomous::HeadlessAutonomous>,
         _dir: tempfile::TempDir,
     }
 
-    /// The faux engine bed (the `print_goal` test pattern): a persisted session
+    /// The faux engine bed (the `goal` test pattern): a persisted session
     /// over its own tempdir, the wired goal surface, the default autonomous state.
     async fn bed(script: Value) -> Bed {
         bed_with_settings(script, json!({})).await
@@ -317,16 +320,16 @@ mod tests {
         registration.set_repeat_last_response(parsed.repeat_last_response);
         let model = registration.get_model();
         let stream_fn =
-            pa_core::session_engine::provider_adapter::real_stream_fn(None, model.clone());
+            crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
         let agent_model: pa_agent::types::Model =
             serde_json::from_value(serde_json::to_value(&model).unwrap()).unwrap();
-        let session_manager = pa_core::session::manager::SessionManager::persisted(
+        let session_manager = crate::session::manager::SessionManager::persisted(
             dir.path(),
             &dir.path().join("sessions"),
         );
         let engine = Arc::new(
-            pa_core::session_engine::engine::create_session(
-                pa_core::session_engine::engine::SessionEngineConfig {
+            crate::session_engine::engine::create_session(
+                crate::session_engine::engine::SessionEngineConfig {
                     sandbox_mode: None,
                     additional_directories: Vec::new(),
                     plan_mode: None,
@@ -380,13 +383,13 @@ mod tests {
             .unwrap(),
         );
         let (frames, sink) = capture_sink();
-        let goal = Arc::new(PrintGoalSurface::with_sink(true, sink));
+        let goal = Arc::new(PrintGoalSurface::json(sink));
         goal.seed_publish_baseline(&engine).await;
         let _accounting = goal.wire_accounting(&engine, engine.session.agent()).await;
-        let run = Arc::new(crate::headless_autonomous::HeadlessAutonomous::disabled(
-            dir.path(),
-        ));
-        crate::print_autonomous::wire_continuation_hook(
+        let run = Arc::new(
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
+        );
+        crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,
             engine.session.agent(),
             &model,
@@ -429,7 +432,7 @@ mod tests {
             return execution.error;
         }
         if let Some(continuation) = execution.continuation_message {
-            let mut boundary = TurnBoundary::new(false);
+            let mut boundary = TurnBoundary::text();
             bed.goal
                 .run_session_command_continuation(
                     &bed.engine,
@@ -442,7 +445,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let mut boundary = TurnBoundary::new(false);
+        let mut boundary = TurnBoundary::text();
         bed.goal
             .drive_boundary(
                 &bed.engine,
@@ -503,9 +506,9 @@ mod tests {
         let messages: Vec<pa_types::session::AgentMessage> = state
             .messages
             .iter()
-            .filter_map(pa_core::session_engine::provider_adapter::json_round_trip)
+            .filter_map(crate::session_engine::provider_adapter::json_round_trip)
             .collect();
-        let result = pa_core::session_engine::headless::select_headless_terminal_result(&messages);
+        let result = crate::session_engine::headless::select_headless_terminal_result(&messages);
         let primary = result.primary.expect("the result row is the primary");
         assert_eq!(primary.stdout_text().as_deref(), Some("No active goal."));
     }
@@ -628,10 +631,7 @@ mod tests {
         let long_seed = "seed turn one ".to_string() + &"x".repeat(15000);
         test.engine
             .session
-            .prompt(
-                &long_seed,
-                pa_core::session_engine::PromptOptions::default(),
-            )
+            .prompt(&long_seed, crate::session_engine::PromptOptions::default())
             .await
             .unwrap();
         test.engine.session.agent().wait_for_idle().await;
@@ -640,7 +640,7 @@ mod tests {
             .session
             .prompt(
                 &long_seed_two,
-                pa_core::session_engine::PromptOptions::default(),
+                crate::session_engine::PromptOptions::default(),
             )
             .await
             .unwrap();

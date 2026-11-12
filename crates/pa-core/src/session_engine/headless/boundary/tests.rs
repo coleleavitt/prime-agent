@@ -1,9 +1,9 @@
-use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
 use pa_types::session::FileEntry;
 use serde_json::json;
 
 use super::*;
+use crate::session::manager::SessionManager;
+use crate::session_engine::engine::{SessionEngineConfig, create_session};
 
 /// The faux model's per-request output budget: threshold fixtures
 /// subtract it from the window alongside the headroom.
@@ -63,7 +63,7 @@ async fn faux_engine_with_mock_telemetry(
     config.flush_interval = std::time::Duration::from_mins(10);
     config.sinks = vec![mock.clone() as std::sync::Arc<dyn pa_telemetry::TelemetrySink>];
     let client = pa_telemetry::TelemetryClient::spawn(config).expect("spawn client");
-    let telemetry = pa_core::session_engine::telemetry::TelemetryWiring {
+    let telemetry = crate::session_engine::telemetry::TelemetryWiring {
         client,
         execution_mode: Some("print".to_string()),
         now: None,
@@ -78,7 +78,7 @@ async fn faux_engine_with_telemetry(
     script: Value,
     settings: Value,
     session_manager: Option<SessionManager>,
-    telemetry: Option<pa_core::session_engine::telemetry::TelemetryWiring>,
+    telemetry: Option<crate::session_engine::telemetry::TelemetryWiring>,
 ) -> (SessionEngine, tempfile::TempDir, Model) {
     let dir = tempfile::TempDir::new().unwrap();
     let agent_dir = dir.path().join("agent");
@@ -93,7 +93,7 @@ async fn faux_engine_with_telemetry(
     registration.set_responses(parsed.responses);
     registration.set_repeat_last_response(parsed.repeat_last_response);
     let model = registration.get_model();
-    let stream_fn = pa_core::session_engine::provider_adapter::real_stream_fn(None, model.clone());
+    let stream_fn = crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
     let agent_model: pa_agent::types::Model =
         json_round_trip(&model).expect("the faux model crosses the loop boundary");
     let session_manager = session_manager
@@ -200,7 +200,7 @@ async fn admit_with_harness_dir(
     boundary.run_pre_turn(engine, model, None).await?;
     engine
         .session
-        .prompt(&prompt, pa_core::session_engine::PromptOptions::default())
+        .prompt(&prompt, crate::session_engine::PromptOptions::default())
         .await
         .expect("the prompt admits");
     engine.session.agent().wait_for_idle().await;
@@ -220,7 +220,7 @@ async fn admit_turn_with_scheduled_request(
 ) -> Result<(), String> {
     engine
         .session
-        .prompt(&prompt, pa_core::session_engine::PromptOptions::default())
+        .prompt(&prompt, crate::session_engine::PromptOptions::default())
         .await
         .expect("the prompt admits");
     engine.session.agent().wait_for_idle().await;
@@ -298,7 +298,7 @@ async fn overflow_compacts_retries_once_then_reports_the_failure() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     // A large seed turn, so the recovery has pre-cut history to
     // summarize.
     admit(
@@ -350,7 +350,7 @@ async fn overflow_retry_succeeds_on_the_compacted_context() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(
         &mut boundary,
         &engine,
@@ -404,7 +404,7 @@ async fn overflow_recovery_skip_surfaces_the_warning_row() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -448,7 +448,7 @@ async fn stale_overflow_error_recovers_before_the_next_prompt_after_a_resume() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(
         &mut boundary,
         &engine_a,
@@ -491,7 +491,7 @@ async fn stale_overflow_error_recovers_before_the_next_prompt_after_a_resume() {
         Some(resumed),
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     boundary
         .run_pre_turn(&engine_b, &model_b, None)
         .await
@@ -540,19 +540,22 @@ async fn autonomous_continuation_turns_cross_the_boundary_arms() {
     )
     .await;
     let engine = std::sync::Arc::new(built);
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     // The autonomous run with the in-run hook wired: the seed turn mints the
     // continuation inside the same agent run.
-    let run = std::sync::Arc::new(crate::headless_autonomous::HeadlessAutonomous::from_cli(
-        &crate::args::AutonomousConfig {
-            max_continuations: Some(1),
-            ..Default::default()
-        },
-        dir.path(),
-    ));
+    let run = std::sync::Arc::new(
+        crate::session_engine::headless::autonomous::HeadlessAutonomous::from_config(
+            &crate::autonomous::AgentAutonomousConfig {
+                enabled: Some(true),
+                max_continuations: Some(1),
+                ..Default::default()
+            },
+            dir.path(),
+        ),
+    );
     let _accounting = run.wire_accounting(engine.session.agent()).await;
-    let goal = std::sync::Arc::new(crate::print_goal::PrintGoalSurface::new(false));
-    crate::print_autonomous::wire_continuation_hook(
+    let goal = std::sync::Arc::new(crate::session_engine::headless::goal::PrintGoalSurface::text());
+    crate::session_engine::headless::continuation::wire_continuation_hook(
         &engine,
         engine.session.agent(),
         &model,
@@ -631,7 +634,7 @@ async fn refine_rows(engine: &SessionEngine) -> Vec<pa_types::session::CustomMes
                     timestamp: base
                         .timestamp
                         .as_deref()
-                        .map(pa_core::session::timestamp_to_millis)
+                        .map(crate::session::timestamp_to_millis)
                         .unwrap_or_default(),
                     rest: payload.rest,
                 };
@@ -659,7 +662,7 @@ async fn requested_compaction_streams_the_ts_event_pair() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit(
         &mut boundary,
         &engine,
@@ -739,7 +742,7 @@ async fn requested_compaction_skip_streams_the_warning_row_and_end_event() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     engine.turn_boundary.schedule_compaction(None).await;
     admit_turn_with_scheduled_request(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
@@ -784,7 +787,7 @@ async fn requested_compaction_counts_into_the_run_telemetry() {
         compactable_settings(),
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(
         &mut boundary,
         &engine,
@@ -826,7 +829,7 @@ async fn threshold_compaction_counts_into_the_run_telemetry() {
         None,
     )
     .await;
-    let mut probe_boundary = TurnBoundary::new(false);
+    let mut probe_boundary = TurnBoundary::text();
     admit(
         &mut probe_boundary,
         &probe,
@@ -862,7 +865,7 @@ async fn threshold_compaction_counts_into_the_run_telemetry() {
         }),
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -901,7 +904,7 @@ async fn multi_compaction_run_counts_every_arm() {
         None,
     )
     .await;
-    let mut probe_boundary = TurnBoundary::new(false);
+    let mut probe_boundary = TurnBoundary::text();
     admit(
         &mut probe_boundary,
         &probe,
@@ -939,7 +942,7 @@ async fn multi_compaction_run_counts_every_arm() {
         }),
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -989,7 +992,7 @@ async fn threshold_compaction_streams_the_ts_event_pair() {
         None,
     )
     .await;
-    let mut probe_boundary = TurnBoundary::new(false);
+    let mut probe_boundary = TurnBoundary::text();
     admit(
         &mut probe_boundary,
         &probe,
@@ -1028,7 +1031,7 @@ async fn threshold_compaction_streams_the_ts_event_pair() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -1085,7 +1088,7 @@ async fn pre_turn_check_consumes_a_pending_request_before_the_prompt() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     // A large seed turn, so the pre-turn compaction has pre-cut
     // history to summarize.
     admit(
@@ -1180,7 +1183,7 @@ async fn pre_turn_threshold_arm_compacts_a_resumed_session_before_the_prompt() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine_a, &model_a, "seed turn".to_string())
         .await
         .unwrap();
@@ -1220,7 +1223,7 @@ async fn pre_turn_threshold_arm_compacts_a_resumed_session_before_the_prompt() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     boundary
         .run_pre_turn(&engine_b, &model_b, None)
         .await
@@ -1267,7 +1270,7 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
     )
     .await;
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -1282,7 +1285,7 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
         .await;
     engine
         .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
+        .schedule_refine(crate::session_engine::turn_boundary::PendingRefine {
             instructions: None,
             global: false,
             trigger: None,
@@ -1318,10 +1321,10 @@ async fn requested_refinement_failure_emits_the_refine_failed_event() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     engine
         .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
+        .schedule_refine(crate::session_engine::turn_boundary::PendingRefine {
             instructions: None,
             global: true,
             trigger: None,
@@ -1365,10 +1368,10 @@ async fn requested_refinement_streams_rows_and_refine_complete() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     engine
         .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
+        .schedule_refine(crate::session_engine::turn_boundary::PendingRefine {
             instructions: None,
             global: true,
             trigger: None,
@@ -1438,7 +1441,7 @@ async fn compact_trigger_auto_refine_streams_at_the_next_boundary() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit_with_harness_dir(
         &mut boundary,
         &engine,
@@ -1528,7 +1531,7 @@ async fn overflow_retry_compact_trigger_streams_the_ts_surface() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit_with_harness_dir(
         &mut boundary,
         &engine,
@@ -1598,7 +1601,7 @@ async fn compact_trigger_drains_at_disposal_off_the_stream() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit_with_harness_dir(
         &mut boundary,
         &engine,
@@ -1666,7 +1669,7 @@ async fn auto_refine_review_decline_surfaces_nothing() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit_with_harness_dir(
         &mut boundary,
         &engine,
@@ -1735,7 +1738,7 @@ async fn auto_refine_disabled_settings_drop_the_trigger() {
     let global_guard = tempfile::TempDir::new().unwrap();
     let global_dir = global_guard.path().to_path_buf();
     let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
+    let mut boundary = TurnBoundary::json(sink);
     admit_with_harness_dir(
         &mut boundary,
         &engine,
@@ -1788,7 +1791,7 @@ async fn non_overflow_error_never_triggers_the_arm() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();
@@ -1820,7 +1823,7 @@ async fn overflow_error_with_compaction_disabled_ends_without_recovery() {
         None,
     )
     .await;
-    let mut boundary = TurnBoundary::new(false);
+    let mut boundary = TurnBoundary::text();
     admit(&mut boundary, &engine, &model, "seed turn".to_string())
         .await
         .unwrap();

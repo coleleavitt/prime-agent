@@ -145,7 +145,7 @@ impl TurnBoundary {
     pub(super) async fn stream_refinement_outcome(
         &self,
         engine: &SessionEngine,
-        outcome: &anyhow::Result<pa_core::refinement::RefinementResult>,
+        outcome: &anyhow::Result<crate::refinement::RefinementResult>,
         entries_before: usize,
         emit: bool,
         kind: &str,
@@ -156,7 +156,7 @@ impl TurnBoundary {
                     // The refinement rows this run appended: the outcome row always, the
                     // model-facing notice when edits applied.
                     for row in Self::refinement_rows_since(engine, entries_before).await {
-                        let value = crate::headless_autonomous::custom_row_wire_value(&row);
+                        let value = crate::session_engine::headless::custom_row_wire_value(&row);
                         for event_type in ["message_start", "message_end"] {
                             (self.sink)(&json!({ "type": event_type, "message": value }));
                         }
@@ -198,9 +198,9 @@ impl TurnBoundary {
             .filter_map(|entry| match entry {
                 pa_types::session::FileEntry::CustomMessage { payload, base }
                     if payload.custom_type
-                        == pa_core::session_engine::refine::REFINEMENT_OUTCOME_CUSTOM_TYPE
+                        == crate::session_engine::refine::REFINEMENT_OUTCOME_CUSTOM_TYPE
                         || payload.custom_type
-                            == pa_core::session_engine::refine::REFINEMENT_NOTICE_CUSTOM_TYPE =>
+                            == crate::session_engine::refine::REFINEMENT_NOTICE_CUSTOM_TYPE =>
                 {
                     Some(pa_types::session::CustomMessage {
                         custom_type: payload.custom_type.clone(),
@@ -210,7 +210,7 @@ impl TurnBoundary {
                         timestamp: base
                             .timestamp
                             .as_deref()
-                            .map(pa_core::session::timestamp_to_millis)
+                            .map(crate::session::timestamp_to_millis)
                             .unwrap_or_default(),
                         rest: payload.rest,
                     })

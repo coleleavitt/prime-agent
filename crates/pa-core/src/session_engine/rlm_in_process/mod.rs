@@ -44,6 +44,7 @@
 //! teardown the run tasks perform on an engine drop.
 
 mod family;
+pub(crate) mod inline;
 mod model;
 mod notices;
 mod registry;
@@ -62,6 +63,21 @@ pub use family::{
     InProcessFamilyController,
     RlmRemoteFamily,
     family_host_handlers,
+};
+pub use inline::{
+    ChildEngineOverrides,
+    ChildLane,
+    FauxChildQueue,
+    InlineBuiltEngine,
+    InlineChildBuild,
+    InlineChildEngineBuilder,
+    InlineEngineWiring,
+    InlineRecipe,
+    InlineSessionNode,
+    adopt_built_engine,
+    dispose_inline_subagents,
+    inline_engine_wiring,
+    inline_root_node,
 };
 pub use model::{
     ResolvedChildModel,

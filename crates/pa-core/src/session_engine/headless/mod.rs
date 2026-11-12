@@ -1,10 +1,38 @@
-//! Headless completion and print-mode terminal selection: pick the
-//! terminal result from a headless run and turn it into
-//! stdout/stderr/exit-code.
+//! The daemonless print runtime and its terminal selection. A print/json
+//! invocation drives one in-process session (`print_run`): the prompt loop
+//! with session commands (`session_command`), the turn-boundary compaction
+//! arms and compact-trigger auto-refine (`boundary`), the goal and
+//! autonomous continuation loops (`goal`, `autonomous`, `continuation`),
+//! and the RLM quiescence drive over the inline subagent host
+//! (`rlm_in_process::inline`). The terminal selection picks the run's
+//! result for the embedding's stdout/stderr/exit-code rendering. The
+//! composition root owns the engine assembly, the output streams, and
+//! the exit code.
 
-use pa_types::session::{AgentMessage, FileEntry};
+use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
 
 use super::messages::SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE;
+
+mod autonomous;
+pub(crate) mod boundary;
+mod continuation;
+mod faux;
+pub(crate) mod goal;
+mod print_run;
+mod session_command;
+
+pub use faux::faux_response_steps;
+pub use print_run::{PrintRun, PrintRunConfig, PrintRunOutcome};
+
+/// Where a json-mode run's session events go: the embedding's output
+/// stream (stdout for the CLI), a captured buffer in tests.
+pub type EventSink = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
+
+/// The wire shape of one durable custom row for the json event stream: the
+/// custom message in the shared message wire form.
+pub(crate) fn custom_row_wire_value(row: &CustomMessage) -> serde_json::Value {
+    serde_json::to_value(AgentMessage::Custom(row.clone())).unwrap_or(serde_json::Value::Null)
+}
 
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
 pub const HARNESS_DIGEST_CUSTOM_TYPE: &str = "harness_digest";

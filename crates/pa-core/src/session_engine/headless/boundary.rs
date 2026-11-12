@@ -6,15 +6,17 @@
 
 use std::path::PathBuf;
 
-use pa_core::session_engine::TrailingAssistantFilter;
-use pa_core::session_engine::compact_session::{CompactOutcome, CompactRun};
-use pa_core::session_engine::engine::SessionEngine;
-use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
-use pa_core::session_engine::provider_adapter::json_round_trip;
-use pa_core::session_engine::provider_retry::is_context_overflow_failure;
 use pa_types::ai::Model;
 use pa_types::session::AgentMessage as SessionAgentMessage;
 use serde_json::{Value, json};
+
+use super::EventSink;
+use crate::session_engine::TrailingAssistantFilter;
+use crate::session_engine::compact_session::{CompactOutcome, CompactRun};
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
+use crate::session_engine::provider_adapter::json_round_trip;
+use crate::session_engine::provider_retry::is_context_overflow_failure;
 
 mod events;
 
@@ -29,10 +31,6 @@ use compaction_arms::{OverflowBoundary, OverflowOutcome, OverflowRecovery};
 mod autorefine;
 
 use autorefine::RefineSurface;
-
-/// Where the boundary's json events go: stdout in the product, a captured
-/// buffer in tests.
-type EventSink = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
 
 /// The print loop's turn-boundary state: the one-attempt overflow machine, the
 /// compact-trigger auto-refine bookkeeping, and the json/text output mode.
@@ -50,29 +48,24 @@ pub(crate) struct TurnBoundary {
     /// The entry-count baseline the turn counter diffs against; set at
     /// the first pre-turn check, so resumed history never counts.
     entry_baseline: Option<usize>,
-    /// json mode streams the session events on stdout; text mode reads
+    /// json mode streams the session events to the sink; text mode reads
     /// the durable rows through the headless terminal result.
     json_mode: bool,
     sink: EventSink,
 }
 
 impl TurnBoundary {
-    pub(crate) fn new(json_mode: bool) -> Self {
-        Self {
-            recovery: OverflowRecovery::Idle,
-            compact_auto_refine_pending: false,
-            last_auto_refine_review_at: None,
-            assistant_turns_since_review: 0,
-            entry_baseline: None,
-            json_mode,
-            sink: std::sync::Arc::new(|event| println!("{event}")),
-        }
+    /// A text-mode boundary: no session events stream.
+    pub(crate) fn text() -> Self {
+        Self::with_output(/*json_mode*/ false, std::sync::Arc::new(|_| {}))
     }
 
-    /// A boundary with an explicit event sink (json-mode event-capture
-    /// verifiers; the product path always uses [`TurnBoundary::new`]).
-    #[cfg(test)]
-    pub(crate) fn with_sink(json_mode: bool, sink: EventSink) -> Self {
+    /// A json-mode boundary streaming its session events to `sink`.
+    pub(crate) fn json(sink: EventSink) -> Self {
+        Self::with_output(/*json_mode*/ true, sink)
+    }
+
+    fn with_output(json_mode: bool, sink: EventSink) -> Self {
         Self {
             recovery: OverflowRecovery::Idle,
             compact_auto_refine_pending: false,
@@ -192,8 +185,8 @@ impl TurnBoundary {
             .session
             .prompt(
                 prompt,
-                pa_core::session_engine::PromptOptions {
-                    streaming_behavior: Some(pa_core::session_engine::StreamingBehavior::FollowUp),
+                crate::session_engine::PromptOptions {
+                    streaming_behavior: Some(crate::session_engine::StreamingBehavior::FollowUp),
                     queue_if_busy: true,
                     ..Default::default()
                 },

@@ -5,11 +5,25 @@
 //! the exit disposal. TS parity is `_createInlineRlmSubagentRuntime` +
 //! `waitForRlmQuiescence` minus the #2270 bug (print must wait for RLM
 //! quiescence, not just headless idle).
+//!
+//! Unlike [`super::InProcessRlmHost`] (children run their task through
+//! the engine's own run task and report through the parent's terminal
+//! inbox), an inline child is driven turn by turn through the print
+//! runtime's turn boundary (`headless::boundary`) and its notices steer
+//! into the parent's lane. The composition root builds every child's
+//! engine through the [`InlineChildEngineBuilder`] seam, the same
+//! assembly it uses for the print root.
 
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
-use pa_core::session_engine::agent_messaging::{
+use pa_types::ai::Model;
+use pa_types::session::CustomMessage;
+use serde_json::{Value, json};
+use tokio::sync::{Mutex, Notify};
+
+use super::{ANSWER_TEXT_MAX_CHARS, cap_text, compact_rlm_text};
+use crate::session_engine::agent_messaging::{
     AgentFamilyMember,
     AgentFamilyRelationship,
     AgentMessageController,
@@ -22,10 +36,11 @@ use pa_core::session_engine::agent_messaging::{
     create_agent_session_message_prompt,
     create_agent_session_message_row,
 };
-use pa_core::session_engine::engine::SessionEngine;
-use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
-use pa_core::session_engine::provider_adapter::model_thinking_level;
-use pa_core::session_engine::rlm_host::{
+use crate::session_engine::engine::SessionEngine;
+use crate::session_engine::goal_boundary::custom_message_to_loop_row;
+use crate::session_engine::headless::boundary::TurnBoundary;
+use crate::session_engine::provider_adapter::model_thinking_level;
+use crate::session_engine::rlm_host::{
     RlmChildResult,
     RlmCreateSessionHandle,
     RlmCreateSessionRequest,
@@ -42,33 +57,108 @@ use pa_core::session_engine::rlm_host::{
     rlm_depth_limit_error,
     spawn_name_unavailable_error,
 };
-use pa_core::session_engine::rlm_in_process::{ANSWER_TEXT_MAX_CHARS, cap_text, compact_rlm_text};
-use pa_core::session_engine::rlm_notices::{
+use crate::session_engine::rlm_notices::{
     RlmChildTerminalNotice,
     create_rlm_child_failure_message,
     create_rlm_child_terminal_notice,
 };
-use pa_types::ai::Model;
-use pa_types::session::CustomMessage;
-use serde_json::{Value, json};
-use tokio::sync::{Mutex, Notify};
-
-use crate::print_boundary::TurnBoundary;
-use crate::print_runtime::{ChildEngineOverrides, ChildLane, FauxChildQueue, HeadlessEmbedding};
 
 /// Everything a spawned child inherits from the print invocation: the
-/// invocation's own config (cwd, agent dir, prompt/skill paths) and the
-/// parsed faux script when the run is scripted. A child spawned with a
-/// `cwd` gets a copy carrying that cwd.
-pub(crate) struct PrintRecipe {
-    pub options: crate::mode::RunOptions,
+/// invocation's working directory and agent dir, the parsed faux script
+/// when the run is scripted, and the composition root's engine assembly.
+/// A child spawned with a `cwd` gets a copy carrying that cwd.
+#[derive(Clone)]
+pub struct InlineRecipe {
+    pub cwd: std::path::PathBuf,
+    pub agent_dir: std::path::PathBuf,
     pub faux: Option<Value>,
+    pub build_child: InlineChildEngineBuilder,
+}
+
+/// The composition root's engine assembly for one admitted inline child:
+/// the same session assembly as the print root, over the child's own
+/// session manager and the [`ChildEngineOverrides`] deltas. The error is
+/// the user-facing build failure.
+pub type InlineChildEngineBuilder = Arc<
+    dyn Fn(
+            InlineChildBuild,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<InlineBuiltEngine, String>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+/// One child engine build request: the child's working directory, its
+/// session (persisted under the parent's artifacts tree, or in memory for
+/// a no-session parent), and the per-child engine deltas.
+pub struct InlineChildBuild {
+    pub cwd: std::path::PathBuf,
+    pub session_manager: crate::session::manager::SessionManager,
+    pub overrides: ChildEngineOverrides,
+}
+
+/// One spawned inline child's engine deltas: its model lane, the
+/// thinking level it runs, and the parent-edge identity.
+pub struct ChildEngineOverrides {
+    /// The child's node: its engine wiring comes from
+    /// [`inline_engine_wiring`].
+    pub node: Arc<InlineSessionNode>,
+    /// The child's session directory (its semantic-edge ledger lives there).
+    pub session_dir: std::path::PathBuf,
+    pub lane: ChildLane,
+    pub thinking: pa_types::ai::ModelThinkingLevel,
+    pub semantic_parent_session_id: Option<String>,
+    pub spawned_by_request_id: Option<String>,
+    /// The parent's plan mode at spawn; the child starts in it.
+    pub plan_mode: bool,
+    /// The child's delegation grant (`rlm.spawn(token_budget=...)`).
+    pub token_budget: Option<u64>,
+    /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
+    pub agent_definition: Option<crate::agents::AgentDefinition>,
+    /// The spawn carried a factory run tag.
+    pub factory_child: bool,
+}
+
+/// A child's model source: a real-provider child carries its resolved
+/// model; a scripted child runs its own faux queue.
+pub enum ChildLane {
+    Real(Box<Model>),
+    Faux(FauxChildQueue),
+}
+
+/// The per-child faux queue: its own registered provider (keyed by the
+/// child id, so siblings never share a response lane) and its steps.
+pub struct FauxChildQueue {
+    pub child_id: String,
+    pub steps: Vec<pa_ai::faux::FauxResponseStep>,
+    pub repeat_last: bool,
+}
+
+/// One built inline session: the engine, the model it runs, and the
+/// request auth its boundary calls (compaction, refinement) use.
+pub struct InlineBuiltEngine {
+    pub engine: SessionEngine,
+    pub model: Model,
+    pub api_key: Option<String>,
+}
+
+/// What one engine build wires over its inline node (the print root and
+/// every child): the inline host, the agent-message handlers, the RLM
+/// depth (`None` at the root), the background-bash wake (every quiescence
+/// park listens on the node's activity), and the late `agent_message.send`
+/// receipt sink.
+pub struct InlineEngineWiring {
+    pub rlm_subagent_host: Arc<dyn RlmSubagentHost>,
+    pub extra_host_handlers: crate::kernel::shared::HostRequestHandlers,
+    pub rlm_depth: Option<u32>,
+    pub bash_wake: crate::session_engine::bash_notices::BashNoticeWake,
+    pub on_late_sent_agent_message: crate::LateSentAgentMessageHandler,
 }
 
 /// One inline session in the print process: the root print session or a
 /// spawned child. The node tree is the one ownership graph behind the
 /// host, the messaging controller, and the quiescence drive.
-pub(crate) struct InlineSessionNode {
+pub struct InlineSessionNode {
     /// The durable session id (family addressing, the artifacts tree).
     pub(crate) session_id: String,
     pub(crate) session_file: Option<String>,
@@ -98,7 +188,7 @@ pub(crate) struct InlineSessionNode {
     /// Fired on every event the quiescence drive waits for: a delivered
     /// message, a child's settle, a re-run, a disposal.
     pub(crate) activity: Notify,
-    pub(crate) recipe: Arc<PrintRecipe>,
+    pub(crate) recipe: Arc<InlineRecipe>,
     /// Set by `rlm.delete_subagent` and the exit disposal: the drive
     /// loops and the driver task observe it and stop.
     disposed: std::sync::atomic::AtomicBool,
@@ -207,10 +297,10 @@ struct InlineChildState {
 /// The print root's node: the max-depth bound resolves here (chat
 /// override > global setting > env > default — the print root inherits
 /// nothing).
-pub(crate) fn root_node(
-    options: &crate::mode::RunOptions,
-    session_manager: &pa_core::session::manager::SessionManager,
-    faux: Option<Value>,
+#[must_use]
+pub fn inline_root_node(
+    session_manager: &crate::session::manager::SessionManager,
+    recipe: InlineRecipe,
 ) -> Arc<InlineSessionNode> {
     let (max_depth, _) = resolve_rlm_max_depth(
         session_manager
@@ -218,8 +308,8 @@ pub(crate) fn root_node(
             .map(|path| path.display().to_string())
             .as_deref(),
         /*inherited*/ None,
-        &options.config.cwd,
-        &options.config.agent_dir,
+        &recipe.cwd,
+        &recipe.agent_dir,
     );
     Arc::new(InlineSessionNode {
         session_id: session_manager.get_session_id().to_string(),
@@ -240,17 +330,18 @@ pub(crate) fn root_node(
         pending_receipts: std::sync::atomic::AtomicUsize::new(0),
         late_receipt_error: std::sync::Mutex::new(None),
         activity: Notify::new(),
-        recipe: Arc::new(PrintRecipe {
-            options: options.clone(),
-            faux,
-        }),
+        recipe: Arc::new(recipe),
         disposed: std::sync::atomic::AtomicBool::new(false),
     })
 }
 
 /// Publish the built engine onto its node: the host and the messaging
 /// controller reach the session through this weak edge.
-pub(crate) async fn adopt_built_engine(
+///
+/// # Panics
+///
+/// Panics if a node lock is poisoned (a panic while another task held it).
+pub async fn adopt_built_engine(
     node: &Arc<InlineSessionNode>,
     engine: &Arc<SessionEngine>,
     model: &Model,
@@ -261,28 +352,31 @@ pub(crate) async fn adopt_built_engine(
     *node.thinking.lock().unwrap() = Some(model_thinking_level(level));
 }
 
-/// The inline host and the agent-message handlers one engine build wires
-/// over its node (the root and every child get both).
-pub(crate) fn inline_subagent_wiring(
-    node: &Arc<InlineSessionNode>,
-) -> (
-    Arc<dyn RlmSubagentHost>,
-    pa_core::kernel::shared::HostRequestHandlers,
-) {
-    let mut handlers = pa_core::kernel::shared::HostRequestHandlers::default();
-    pa_core::session_engine::agent_messaging::register_agent_message_host_handlers(
+/// The wiring one engine build installs over its node (the root and
+/// every child get the same set).
+#[must_use]
+pub fn inline_engine_wiring(node: &Arc<InlineSessionNode>) -> InlineEngineWiring {
+    let mut handlers = crate::kernel::shared::HostRequestHandlers::default();
+    crate::session_engine::agent_messaging::register_agent_message_host_handlers(
         std::sync::Arc::new(InlineMessages(Arc::clone(node))),
         &mut handlers,
     );
-    (Arc::new(InlineHost(Arc::clone(node))), handlers)
+    let wake_node = Arc::clone(node);
+    InlineEngineWiring {
+        rlm_subagent_host: Arc::new(InlineHost(Arc::clone(node))),
+        extra_host_handlers: handlers,
+        rlm_depth: (node.depth > 0).then_some(node.depth),
+        bash_wake: Arc::new(move || wake_node.activity.notify_waiters()),
+        on_late_sent_agent_message: late_sent_agent_message_sink(node),
+    }
 }
 
 /// The late fire-and-forget `agent_message.send` receipt sink: the
 /// receipt records through the node's adopted engine (the engine is
 /// published by `adopt_built_engine` right after the build).
-pub(crate) fn late_sent_agent_message_sink(
+fn late_sent_agent_message_sink(
     node: &Arc<InlineSessionNode>,
-) -> pa_core::LateSentAgentMessageHandler {
+) -> crate::LateSentAgentMessageHandler {
     let node = Arc::clone(node);
     Arc::new(move |tool_call_id, message| {
         // Account on the whole ancestor chain before spawning: even a previously
@@ -324,7 +418,7 @@ pub(crate) fn late_sent_agent_message_sink(
 async fn record_late_sent_receipt(
     node: Arc<InlineSessionNode>,
     tool_call_id: String,
-    message: pa_core::kernel::shared::KernelSentAgentMessage,
+    message: crate::kernel::shared::KernelSentAgentMessage,
 ) -> anyhow::Result<()> {
     let Some(engine) = node.engine.get().and_then(Weak::upgrade) else {
         anyhow::bail!("late receipt arrived without a live print session engine");
@@ -455,11 +549,10 @@ pub(crate) async fn drive_to_quiescence(
 /// keep listening — a settled child re-runs on a later message until it
 /// is disposed or deleted (TS `child.isSessionActive`).
 async fn drive_child(child: Arc<InlineChild>) {
-    let global_harness_dir = pa_core::refinement::get_global_harness_state_dir(
-        &child.node.recipe.options.config.agent_dir,
-    );
+    let global_harness_dir =
+        crate::refinement::get_global_harness_state_dir(&child.node.recipe.agent_dir);
     loop {
-        let mut boundary = TurnBoundary::new(/*json_mode*/ false);
+        let mut boundary = TurnBoundary::text();
         let run_error = drive_to_quiescence(
             &child.node,
             &child.engine,
@@ -491,7 +584,7 @@ async fn drive_child(child: Arc<InlineChild>) {
         let mut state = child.state.lock().await;
         state.settled = false;
         state.status = "running";
-        state.started_at_ms = crate::util_time::now_ms();
+        state.started_at_ms = super::now_ms();
         state.error = None;
     }
 }
@@ -553,7 +646,7 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
                 &child.rlm_child_id,
                 &name,
                 &error,
-                crate::util_time::now_ms(),
+                super::now_ms(),
             ))
         } else {
             state.status = "done";
@@ -567,7 +660,7 @@ async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
                             .as_deref()
                             .map(compact_rlm_text),
                     },
-                    crate::util_time::now_ms(),
+                    super::now_ms(),
                 )
             })
         };
@@ -645,7 +738,12 @@ async fn dispose_child(child: &Arc<InlineChild>) {
 }
 
 /// Tear every inline descendant of the root down.
-pub(crate) async fn dispose_inline_subagents(root: &Arc<InlineSessionNode>) {
+///
+/// # Panics
+///
+/// Panics if the root's delivery gate is poisoned (a panic while another
+/// task held it).
+pub async fn dispose_inline_subagents(root: &Arc<InlineSessionNode>) {
     {
         let _delivery_guard = root.delivery_gate.lock().unwrap();
         root.disposed
@@ -679,20 +777,13 @@ impl RlmSubagentHost for InlineHost {
             let recipe = match request.cwd.as_deref() {
                 None => Arc::clone(&node.recipe),
                 Some(requested) => {
-                    let mut options = node.recipe.options.clone();
-                    options.config.cwd =
-                        pa_core::session_engine::rlm_in_process::resolve_child_cwd(
-                            &options.config.cwd,
-                            Some(requested),
-                            "rlm.spawn",
-                        )?;
-                    Arc::new(PrintRecipe {
-                        options,
-                        faux: node.recipe.faux.clone(),
-                    })
+                    let mut recipe = InlineRecipe::clone(&node.recipe);
+                    recipe.cwd =
+                        super::resolve_child_cwd(&recipe.cwd, Some(requested), "rlm.spawn")?;
+                    Arc::new(recipe)
                 }
             };
-            let config = &recipe.options.config;
+            let config = &*recipe;
             // Every inline child shares the invocation's directory: a child
             // placed elsewhere (`cwd=`, `isolation="worktree"`) needs the
             // daemon's per-child workers.
@@ -706,7 +797,7 @@ impl RlmSubagentHost for InlineHost {
             }
             let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
             let name = request.name.clone().unwrap_or_else(|| {
-                pa_core::kernel::rlm_runtime::create_default_rlm_subagent_session_name(
+                crate::kernel::rlm_runtime::create_default_rlm_subagent_session_name(
                     &request.prompt,
                     &child_id,
                 )
@@ -748,7 +839,7 @@ impl RlmSubagentHost for InlineHost {
                          must script every spawned child"
                     )
                 })?;
-                let steps = crate::print_runtime::faux_response_steps(
+                let steps = crate::session_engine::headless::faux_response_steps(
                     queue
                         .get("responses")
                         .and_then(Value::as_array)
@@ -773,28 +864,24 @@ impl RlmSubagentHost for InlineHost {
                     thinking,
                 )
             } else {
-                let auth = pa_core::auth::AuthStorage::create(&config.agent_dir);
-                let mut registry = pa_core::models::ModelRegistry::create(
+                let auth = crate::auth::AuthStorage::create(&config.agent_dir);
+                let mut registry = crate::models::ModelRegistry::create(
                     auth,
                     config.agent_dir.join("models.json"),
                 );
                 registry.load_private_authorization_from_cache();
-                let selector = pa_core::session_engine::rlm_in_process::resolve_child_selector(
+                let selector = super::resolve_child_selector(
                     &registry,
                     request.model.as_deref(),
                     node.model_selector.lock().unwrap().as_deref(),
                     "subagent",
                 )
                 .map_err(|error| anyhow::anyhow!("{error:#}"))?;
-                pa_core::session_engine::rlm_in_process::assert_thinking_supported(
-                    &registry,
-                    request.thinking.as_deref(),
-                    &selector,
-                )
-                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                super::assert_thinking_supported(&registry, request.thinking.as_deref(), &selector)
+                    .map_err(|error| anyhow::anyhow!("{error:#}"))?;
                 let all: Vec<Model> = registry.get_all().to_vec();
                 let resolved =
-                    pa_core::models::resolve_cli_model(/*cli_provider*/ None, &selector, &all);
+                    crate::models::resolve_cli_model(/*cli_provider*/ None, &selector, &all);
                 if let Some(error) = resolved.error {
                     return Err(anyhow::Error::msg(error));
                 }
@@ -819,15 +906,15 @@ impl RlmSubagentHost for InlineHost {
             )?;
             let mut child_manager = if let Some(parent_file) = &node.session_file {
                 let mut manager =
-                    pa_core::session::manager::SessionManager::persisted(&config.cwd, &child_dir);
-                manager.new_session(&pa_core::session::manager::NewSessionOptions {
+                    crate::session::manager::SessionManager::persisted(&config.cwd, &child_dir);
+                manager.new_session(&crate::session::manager::NewSessionOptions {
                     parent_session: Some(parent_file.clone()),
                     rlm_depth: Some(u64::from(node.depth + 1)),
                     ..Default::default()
                 });
                 manager
             } else {
-                pa_core::session::manager::SessionManager::in_memory_in_session_dir(
+                crate::session::manager::SessionManager::in_memory_in_session_dir(
                     &config.cwd,
                     &child_dir,
                 )
@@ -859,6 +946,7 @@ impl RlmSubagentHost for InlineHost {
             });
             let overrides = ChildEngineOverrides {
                 node: Arc::clone(&child_node),
+                session_dir: child_dir.clone(),
                 lane,
                 thinking,
                 semantic_parent_session_id: Some(node.session_id.clone()),
@@ -868,13 +956,11 @@ impl RlmSubagentHost for InlineHost {
                 agent_definition: request.agent.clone(),
                 factory_child: request.factory.is_some(),
             };
-            let headless = crate::print_runtime::build_engine(
-                &recipe.options,
-                recipe.faux.as_ref(),
-                Some(child_manager),
-                "subagent",
-                &HeadlessEmbedding::Child(Box::new(overrides)),
-            )
+            let headless = (recipe.build_child)(InlineChildBuild {
+                cwd: recipe.cwd.clone(),
+                session_manager: child_manager,
+                overrides,
+            })
             .await
             .map_err(anyhow::Error::msg)?;
             let engine = Arc::new(headless.engine);
@@ -892,7 +978,7 @@ impl RlmSubagentHost for InlineHost {
                     settled: false,
                     answer_text: None,
                     error: None,
-                    started_at_ms: crate::util_time::now_ms(),
+                    started_at_ms: super::now_ms(),
                     replied_since_task: false,
                     interrupted: false,
                 }),
@@ -919,7 +1005,7 @@ impl RlmSubagentHost for InlineHost {
                 from: &node.endpoint(),
                 from_relationship: Some(AgentFamilyRelationship::Parent),
                 target: None,
-                timestamp: crate::util_time::now_ms(),
+                timestamp: super::now_ms(),
             });
             deliver_row(&child_node, kickoff_row)?;
             let driver = tokio::spawn(drive_child(Arc::clone(&child)));
@@ -1055,9 +1141,7 @@ impl RlmSubagentHost for InlineHost {
                         answer_preview: state.answer_text.as_deref().map(compact_rlm_text),
                         answer_text: state.answer_text.clone(),
                         error: state.error.clone(),
-                        duration_ms: Some(
-                            crate::util_time::now_ms().saturating_sub(state.started_at_ms),
-                        ),
+                        duration_ms: Some(super::now_ms().saturating_sub(state.started_at_ms)),
                         tool_use_count: None,
                         replied_since_task: Some(state.replied_since_task),
                     });
@@ -1164,7 +1248,7 @@ fn roster_entry(
         },
         activity: None,
         tool_use_count: None,
-        duration_ms: Some(crate::util_time::now_ms().saturating_sub(state.started_at_ms)),
+        duration_ms: Some(super::now_ms().saturating_sub(state.started_at_ms)),
         answer_preview: state.answer_text.as_deref().map(compact_rlm_text),
         replied_since_task: Some(state.replied_since_task),
         progress_note: None,
@@ -1281,7 +1365,7 @@ impl AgentMessageController for InlineMessages {
         }
         // The accept stamp: the prompt's `Sent:` line and the receipt's
         // delivered/queued time are the same instant.
-        let sent_at = crate::util_time::now_iso8601();
+        let sent_at = crate::session::manager::format_iso_now();
         let prompt = create_agent_session_message_prompt(&AgentMessagePromptPayload {
             message: input.message.clone(),
             sender_name: node.sender_name(),
@@ -1296,7 +1380,7 @@ impl AgentMessageController for InlineMessages {
             from: &node.endpoint(),
             from_relationship: Some(relationship),
             target: Some(&target_node.endpoint()),
-            timestamp: crate::util_time::now_ms(),
+            timestamp: super::now_ms(),
         });
         let engine = target_node
             .engine
@@ -1331,361 +1415,4 @@ impl AgentMessageController for InlineMessages {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn run_options(directory: &std::path::Path) -> crate::mode::RunOptions {
-        crate::mode::RunOptions {
-            app_mode: crate::mode::AppMode::Print,
-            config: crate::mode::RuntimeConfig {
-                cwd: directory.to_path_buf(),
-                agent_dir: directory.join("agent"),
-                ..Default::default()
-            },
-            session: crate::mode::SessionOptions::default(),
-            messages: Vec::new(),
-            file_args: Vec::new(),
-            daemon_socket: None,
-            daemon_port: None,
-            daemon_bind_host: None,
-            list_models: None,
-            initial_message: None,
-            initial_images: Vec::new(),
-            verbose: false,
-            offline: true,
-            agents_view_requested: false,
-            attach_agent: None,
-            worktree: None,
-            cc: crate::args_cc::CcFlags::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn spawn_waiting_for_admission_rejects_a_disposed_parent() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = run_options(directory.path());
-        std::fs::create_dir_all(&options.config.agent_dir).unwrap();
-        let manager = pa_core::session::manager::SessionManager::in_memory(directory.path());
-        let mut node = root_node(
-            &options,
-            &manager,
-            Some(json!({
-                "responses": ["parent"],
-                "children": { "late": { "responses": ["child"] } },
-            })),
-        );
-        Arc::get_mut(&mut node).unwrap().max_depth = 2;
-        let gate = node.spawn_gate.lock().await;
-        let mut spawn = InlineHost(Arc::clone(&node)).spawn(RlmSpawnRequest {
-            prompt: "finish the task".to_string(),
-            name: Some("late".to_string()),
-            model: None,
-            thinking: None,
-            cwd: None,
-            spawned_by_request_id: None,
-            target: pa_core::session_engine::rlm_host::RlmSpawnTarget::Local,
-            plan_mode: false,
-            token_budget: None,
-            agent: None,
-            worktree: None,
-            factory: None,
-        });
-        std::future::poll_fn(|context| {
-            assert!(spawn.as_mut().poll(context).is_pending());
-            std::task::Poll::Ready(())
-        })
-        .await;
-        node.disposed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        drop(gate);
-        let result = spawn.await;
-        let admitted = node.children.lock().await.len();
-        dispose_inline_subagents(&node).await;
-        let error = result.expect_err("a disposed parent must not admit a queued spawn");
-        assert!(error.to_string().contains("disposed"), "{error:#}");
-        assert_eq!(admitted, 0);
-    }
-
-    /// The fake python tool of the landing test: records one late receipt
-    /// through the print path (the factored async fn) while its cell's
-    /// result row has not landed.
-    struct LateReceiptPythonTool {
-        node: Arc<InlineSessionNode>,
-    }
-
-    impl pa_agent::types::AgentTool for LateReceiptPythonTool {
-        fn name(&self) -> &'static str {
-            "python_repl"
-        }
-
-        fn description(&self) -> &'static str {
-            "Runs a python cell."
-        }
-
-        fn parameters(&self) -> &serde_json::Value {
-            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
-            SCHEMA.get_or_init(|| serde_json::json!({ "type": "object", "properties": {} }))
-        }
-
-        fn execute(
-            self: Arc<Self>,
-            tool_call_id: String,
-            _params: serde_json::Value,
-            _signal: pa_agent::abort::AbortSignal,
-            _on_update: pa_agent::types::AgentToolUpdateCallback,
-        ) -> pa_agent::BoxFut<'static, anyhow::Result<pa_agent::types::AgentToolResult>> {
-            let node = Arc::clone(&self.node);
-            Box::pin(async move {
-                record_late_sent_receipt(
-                    node,
-                    tool_call_id,
-                    pa_core::kernel::shared::KernelSentAgentMessage {
-                        id: "agentmsg_1".to_string(),
-                        message: "Ping.".to_string(),
-                        delivery_status: pa_core::kernel::shared::SentDeliveryStatus::Delivered,
-                        receiver_role: Some(pa_core::kernel::shared::ReceiverRole::Parent),
-                        target: pa_core::kernel::shared::SentAgentMessageTarget {
-                            active_session_id: "a1".to_string(),
-                            session_id: "s1".to_string(),
-                            session_name: Some("Worker".to_string()),
-                        },
-                    },
-                )
-                .await?;
-                Ok(pa_agent::types::AgentToolResult::text("cell done"))
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn detached_receipt_failure_holds_quiescence_and_wakes_the_error_path() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = run_options(directory.path());
-        let manager = pa_core::session::manager::SessionManager::in_memory(directory.path());
-        let node = root_node(&options, &manager, None);
-        let notified = node.activity.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        let sink = late_sent_agent_message_sink(&node);
-        sink(
-            "call-1",
-            pa_core::kernel::shared::KernelSentAgentMessage {
-                id: "agentmsg_1".to_string(),
-                message: "Ping.".to_string(),
-                delivery_status: pa_core::kernel::shared::SentDeliveryStatus::Delivered,
-                receiver_role: Some(pa_core::kernel::shared::ReceiverRole::Parent),
-                target: pa_core::kernel::shared::SentAgentMessageTarget {
-                    active_session_id: "a1".to_string(),
-                    session_id: "s1".to_string(),
-                    session_name: None,
-                },
-            },
-        );
-        assert!(has_unsettled_rlm_work(&node).await);
-        assert!(
-            tokio::time::timeout(std::time::Duration::ZERO, notified)
-                .await
-                .is_ok(),
-            "admission must wake an armed quiescence scan before the recorder runs"
-        );
-        let completed = node.activity.notified();
-        tokio::pin!(completed);
-        completed.as_mut().enable();
-        tokio::time::timeout(std::time::Duration::from_secs(5), completed)
-            .await
-            .expect("receipt completion must wake the parked drive");
-        assert_eq!(
-            node.pending_receipts
-                .load(std::sync::atomic::Ordering::SeqCst),
-            0
-        );
-        assert!(
-            node.late_receipt_error
-                .lock()
-                .unwrap()
-                .as_deref()
-                .unwrap()
-                .contains("without a live print session engine")
-        );
-    }
-
-    #[tokio::test]
-    async fn a_receipt_on_an_idle_child_holds_and_wakes_ancestor_quiescence() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = run_options(directory.path());
-        let manager = pa_core::session::manager::SessionManager::in_memory(directory.path());
-        let root = root_node(&options, &manager, None);
-        let mut child = root_node(&options, &manager, None);
-        Arc::get_mut(&mut child).unwrap().parent = Some(Arc::downgrade(&root));
-        let notified = root.activity.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        late_sent_agent_message_sink(&child)(
-            "call-1",
-            pa_core::kernel::shared::KernelSentAgentMessage {
-                id: "agentmsg_1".to_string(),
-                message: "Ping.".to_string(),
-                delivery_status: pa_core::kernel::shared::SentDeliveryStatus::Delivered,
-                receiver_role: Some(pa_core::kernel::shared::ReceiverRole::Parent),
-                target: pa_core::kernel::shared::SentAgentMessageTarget {
-                    active_session_id: "a1".to_string(),
-                    session_id: "s1".to_string(),
-                    session_name: None,
-                },
-            },
-        );
-        // Even with no active child turn in the root's roster, pending work holds it.
-        assert!(has_unsettled_rlm_work(&root).await);
-        assert!(
-            tokio::time::timeout(std::time::Duration::ZERO, notified)
-                .await
-                .is_ok(),
-            "child receipt admission must wake the ancestor before recording starts"
-        );
-        let completed = root.activity.notified();
-        tokio::pin!(completed);
-        completed.as_mut().enable();
-        tokio::time::timeout(std::time::Duration::from_secs(5), completed)
-            .await
-            .expect("a child's completed recorder must wake its ancestor");
-        assert_eq!(
-            root.pending_receipts
-                .load(std::sync::atomic::Ordering::SeqCst),
-            0
-        );
-        assert!(
-            root.late_receipt_error
-                .lock()
-                .unwrap()
-                .as_deref()
-                .unwrap()
-                .contains("without a live print session engine")
-        );
-    }
-
-    #[tokio::test]
-    async fn late_receipts_record_through_the_print_path_apply_on_landing() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = run_options(directory.path());
-        std::fs::create_dir_all(&options.config.agent_dir).unwrap();
-        let manager = pa_core::session::manager::SessionManager::persisted(
-            directory.path(),
-            &directory.path().join("sessions"),
-        );
-        let script = json!({
-            "responses": [
-                { "content": [
-                    { "type": "toolCall", "id": "call-1", "name": "python_repl", "arguments": {} }
-                ] },
-                "all done",
-            ],
-        });
-        let node = root_node(&options, &manager, Some(script.clone()));
-        let headless = crate::print_runtime::build_engine(
-            &options,
-            Some(&script),
-            Some(manager),
-            "print",
-            &HeadlessEmbedding::Root {
-                node: Arc::clone(&node),
-            },
-        )
-        .await
-        .unwrap();
-        let engine = Arc::new(headless.engine);
-        adopt_built_engine(&node, &engine, &headless.model).await;
-        // The scripted turn runs a fake python tool in place of the
-        // kernel-backed one: the tool records the receipt while its cell's
-        // result row has not landed.
-        engine
-            .session
-            .agent()
-            .set_tools(vec![Arc::new(LateReceiptPythonTool {
-                node: Arc::clone(&node),
-            })])
-            .await;
-
-        let outcome = engine
-            .prompt(
-                "run the cell",
-                pa_core::session_engine::PromptOptions::default(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(outcome, pa_core::session_engine::PromptOutcome::Prompt);
-        engine.session.agent().wait_for_idle().await;
-
-        // The landed row carries the receipt in live state.
-        let state = engine.session.agent().state().await;
-        let result = state
-            .messages
-            .iter()
-            .find_map(|row| match row {
-                pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::ToolResult(
-                    result,
-                )) if result.tool_call_id == "call-1" => Some(result.clone()),
-                _ => None,
-            })
-            .expect("the landed tool result");
-        let details = result.details.as_ref().expect("the receipt rides the row");
-        assert_eq!(
-            details["sentAgentMessages"][0]["id"], "agentmsg_1",
-            "the live state row carries the receipt"
-        );
-
-        let entries = engine.session.entries().await;
-        assert!(
-            entries.iter().any(|entry| matches!(
-                entry,
-                pa_types::session::FileEntry::Custom { payload, .. }
-                    if payload.custom_type == "ipython_sent_agent_message"
-            )),
-            "the receipt persists as a custom entry"
-        );
-        engine.dispose_kernel().await;
-    }
-
-    #[tokio::test]
-    async fn delivery_to_a_disposed_session_rejects_without_queuing() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = run_options(directory.path());
-        std::fs::create_dir_all(&options.config.agent_dir).unwrap();
-        let manager = pa_core::session::manager::SessionManager::in_memory(directory.path());
-        let script = json!({ "responses": ["parent"] });
-        let node = root_node(&options, &manager, Some(script.clone()));
-        let headless = crate::print_runtime::build_engine(
-            &options,
-            Some(&script),
-            Some(manager),
-            "print",
-            &HeadlessEmbedding::Root {
-                node: Arc::clone(&node),
-            },
-        )
-        .await
-        .unwrap();
-        let engine = Arc::new(headless.engine);
-        adopt_built_engine(&node, &engine, &headless.model).await;
-        let endpoint = node.endpoint();
-        let row = create_agent_session_message_row(&AgentSessionMessageRowPayload {
-            id: "late-message",
-            prompt: "late message",
-            message: "late message",
-            from: &endpoint,
-            from_relationship: None,
-            target: Some(&endpoint),
-            timestamp: 0,
-        });
-        dispose_inline_subagents(&node).await;
-        assert!(!engine.session.agent().has_queued_messages());
-        let result = deliver_row(&node, row);
-        let queued = engine.session.agent().has_queued_messages();
-        engine.dispose_kernel().await;
-        let error = result.expect_err("a disposed session must reject a retained delivery target");
-        assert!(error.to_string().contains("disposed"), "{error:#}");
-        assert!(
-            !queued,
-            "rejected delivery must not enqueue an unread message"
-        );
-    }
-}
+mod tests;

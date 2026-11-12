@@ -11,6 +11,7 @@ use pa_core::session::discovery::{
     find_most_recent_session_for_cwd,
     resolve_session_path,
 };
+use pa_core::session_engine::headless::{PrintRun, PrintRunConfig, PrintRunOutcome};
 use pa_core::session_engine::provider_adapter::{
     ProviderTarget,
     json_round_trip,
@@ -18,12 +19,23 @@ use pa_core::session_engine::provider_adapter::{
     stream_once,
     switchable_stream_fn,
 };
+use pa_core::session_engine::rlm_in_process::{
+    ChildEngineOverrides,
+    ChildLane,
+    InlineBuiltEngine,
+    InlineChildEngineBuilder,
+    InlineRecipe,
+    InlineSessionNode,
+    adopt_built_engine,
+    dispose_inline_subagents,
+    inline_engine_wiring,
+    inline_root_node,
+};
 use pa_core::session_engine::session_events::agent_event_json;
 use pa_types::ai::Model;
 use pa_types::sync::{MutexExt, RwLockExt};
 use tokio::sync::Notify;
 
-use crate::headless_autonomous::{HeadlessAutonomous, autonomous_runtime_config};
 use crate::mode::{AppMode, MissingSubsystem, RunOptions};
 
 pub struct PrintRuntime;
@@ -88,6 +100,30 @@ impl crate::mode::Runtime for PrintRuntime {
                 }
             },
         }
+    }
+}
+
+/// The autonomous runtime config from the typed CLI flags: any
+/// autonomous flag enables the run.
+fn autonomous_runtime_config(
+    config: &crate::args::AutonomousConfig,
+) -> pa_core::autonomous::AgentAutonomousConfig {
+    pa_core::autonomous::AgentAutonomousConfig {
+        enabled: Some(true),
+        max_continuations: config.max_continuations.map(u64::from),
+        max_turns: config.max_turns.map(u64::from),
+        max_tokens: config.max_tokens,
+        timeout_ms: config.timeout_ms,
+        continuation_prompt: None,
+        gates: config
+            .gates
+            .as_ref()
+            .map(|gates| pa_core::autonomous::AgentAutonomousGateConfig {
+                commands: Some(gates.commands.clone()),
+                max_retries: gates.max_retries.map(u64::from),
+                timeout_ms: gates.timeout_ms,
+            }),
+        subagent_keep_alive_ms: None,
     }
 }
 
@@ -461,9 +497,18 @@ async fn print_mode_main(
     });
     // The print root's inline-subagent node: the quiescence drive, the
     // host, and the messaging controller all hang off it. The faux
-    // script (when scripted) rides the recipe down to every child.
+    // script (when scripted) rides the recipe down to every child, and
+    // every child's engine builds through this same assembly.
     let faux = faux_script_env()?;
-    let root_node = crate::print_rlm::root_node(options, &session_manager, faux.clone());
+    let root_node = inline_root_node(
+        &session_manager,
+        InlineRecipe {
+            cwd: options.config.cwd.clone(),
+            agent_dir: options.config.agent_dir.clone(),
+            faux: faux.clone(),
+            build_child: inline_child_engine_builder(options, faux.clone()),
+        },
+    );
     let headless = build_engine(
         options,
         faux.as_ref(),
@@ -475,7 +520,7 @@ async fn print_mode_main(
     )
     .await?;
     let engine = std::sync::Arc::new(headless.engine);
-    crate::print_rlm::adopt_built_engine(&root_node, &engine, &headless.model).await;
+    adopt_built_engine(&root_node, &engine, &headless.model).await;
     // The CLI `--goal` seed: a fresh root branch starts the goal; a resumed
     // branch keeps its persisted goal. Depth 0 only — the print session is a root.
     if let Some(goal) = &options.config.initial_goal {
@@ -494,8 +539,37 @@ async fn print_mode_main(
     .await;
     // No inline descendant outlives the print process: kernels get their
     // final snapshot, drivers join, runs abort (every exit path).
-    crate::print_rlm::dispose_inline_subagents(&root_node).await;
+    dispose_inline_subagents(&root_node).await;
     exit
+}
+
+/// Every inline child's engine: the invocation's own assembly at the
+/// child's cwd, scripted when the run is.
+fn inline_child_engine_builder(
+    options: &RunOptions,
+    faux: Option<serde_json::Value>,
+) -> InlineChildEngineBuilder {
+    let options = options.clone();
+    std::sync::Arc::new(move |build| {
+        let mut options = options.clone();
+        options.config.cwd = build.cwd;
+        let faux = faux.clone();
+        Box::pin(async move {
+            let headless = build_engine(
+                &options,
+                faux.as_ref(),
+                Some(build.session_manager),
+                "subagent",
+                &HeadlessEmbedding::Child(Box::new(build.overrides)),
+            )
+            .await?;
+            Ok(InlineBuiltEngine {
+                engine: headless.engine,
+                model: headless.model,
+                api_key: headless.api_key,
+            })
+        })
+    })
 }
 
 /// One engine build for every headless embedding: the scripted
@@ -520,16 +594,11 @@ pub(crate) async fn build_engine(
 }
 
 /// The faux-script verification seam (`PRIME_AGENT_FAUX_SCRIPT`; never
-/// set by the product): the script env parse, the per-child queues, and
-/// the scripted engine build.
+/// set by the product): the script env parse and the scripted engine
+/// build.
 mod faux;
 
-pub(crate) use faux::{
-    FauxChildQueue,
-    build_faux_engine_with,
-    faux_response_steps,
-    faux_script_env,
-};
+pub(crate) use faux::{build_faux_engine_with, faux_script_env};
 
 /// The switchable provider target the session's stream reads per call
 /// (shared with the RPC mode, whose picker model switches swap it live).
@@ -541,38 +610,13 @@ pub type ProviderTargetSlot = std::sync::Arc<std::sync::RwLock<Option<ProviderTa
 /// behavior).
 pub(crate) enum HeadlessEmbedding {
     Root {
-        node: std::sync::Arc<crate::print_rlm::InlineSessionNode>,
+        node: std::sync::Arc<InlineSessionNode>,
     },
     Child(Box<ChildEngineOverrides>),
     Rpc {
         /// A same-path reopen's gate: the replaced kernel's final snapshot flush.
         kernel_ready_gate: Option<pa_core::kernel::provisioner::KernelReadyGate>,
     },
-}
-
-/// One spawned inline child's engine deltas: its model lane, the
-/// thinking level it runs, and the parent-edge identity.
-pub(crate) struct ChildEngineOverrides {
-    pub node: std::sync::Arc<crate::print_rlm::InlineSessionNode>,
-    pub lane: ChildLane,
-    pub thinking: pa_types::ai::ModelThinkingLevel,
-    pub semantic_parent_session_id: Option<String>,
-    pub spawned_by_request_id: Option<String>,
-    /// The parent's plan mode at spawn; the child starts in it.
-    pub plan_mode: bool,
-    /// The child's delegation grant (`rlm.spawn(token_budget=...)`).
-    pub token_budget: Option<u64>,
-    /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
-    pub agent_definition: Option<pa_core::agents::AgentDefinition>,
-    /// The spawn carried a factory run tag.
-    pub factory_child: bool,
-}
-
-/// A child's model source: a real-provider child carries its resolved
-/// model; a scripted child runs its own faux queue.
-pub(crate) enum ChildLane {
-    Real(Box<Model>),
-    Faux(FauxChildQueue),
 }
 
 /// The per-embedding fields both headless builders (the real provider
@@ -598,58 +642,44 @@ pub(crate) struct HeadlessEmbeddingFields {
 }
 
 /// The embedding-owned fields for one headless engine build: print
-/// sessions wake on the inline node's activity (every quiescence park
-/// listens on it), the RPC mode on the built handle's notify.
+/// sessions take the inline node's wiring (every quiescence park listens
+/// on its activity), the RPC mode wakes the built handle's notify.
 pub(crate) fn headless_embedding_fields(embedding: &HeadlessEmbedding) -> HeadlessEmbeddingFields {
     let node = match embedding {
-        HeadlessEmbedding::Root { node } => Some(Arc::clone(node)),
-        HeadlessEmbedding::Child(overrides) => Some(Arc::clone(&overrides.node)),
-        HeadlessEmbedding::Rpc { .. } => None,
-    };
-    let (rlm_subagent_host, extra_host_handlers) = match &node {
-        Some(node) => {
-            let (host, handlers) = crate::print_rlm::inline_subagent_wiring(node);
-            (Some(host), Some(handlers))
+        HeadlessEmbedding::Root { node } => node,
+        HeadlessEmbedding::Child(overrides) => &overrides.node,
+        HeadlessEmbedding::Rpc { kernel_ready_gate } => {
+            let notify = Arc::new(Notify::new());
+            let wake = {
+                let notify = Arc::clone(&notify);
+                Arc::new(move || notify.notify_waiters())
+                    as pa_core::session_engine::bash_notices::BashNoticeWake
+            };
+            return HeadlessEmbeddingFields {
+                rlm_subagent_host: None,
+                extra_host_handlers: None,
+                rlm_depth: None,
+                factory_child: false,
+                bash_wake: wake,
+                rpc_bash_wake: Some(notify),
+                on_late_sent_agent_message: None,
+                kernel_ready_gate: kernel_ready_gate.clone(),
+            };
         }
-        None => (None, None),
     };
-    let (bash_wake, rpc_bash_wake) = if let Some(node) = &node {
-        let node = Arc::clone(node);
-        (
-            Arc::new(move || node.activity.notify_waiters())
-                as pa_core::session_engine::bash_notices::BashNoticeWake,
-            None,
-        )
-    } else {
-        let notify = Arc::new(Notify::new());
-        let wake = {
-            let notify = Arc::clone(&notify);
-            Arc::new(move || notify.notify_waiters())
-                as pa_core::session_engine::bash_notices::BashNoticeWake
-        };
-        (wake, Some(notify))
-    };
-    let on_late_sent_agent_message = node
-        .as_ref()
-        .map(crate::print_rlm::late_sent_agent_message_sink);
+    let wiring = inline_engine_wiring(node);
     HeadlessEmbeddingFields {
-        rlm_subagent_host,
-        extra_host_handlers,
-        rlm_depth: match embedding {
-            HeadlessEmbedding::Child(overrides) => Some(overrides.node.depth),
-            HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => None,
-        },
+        rlm_subagent_host: Some(wiring.rlm_subagent_host),
+        extra_host_handlers: Some(wiring.extra_host_handlers),
+        rlm_depth: wiring.rlm_depth,
         factory_child: matches!(
             embedding,
             HeadlessEmbedding::Child(overrides) if overrides.factory_child
         ),
-        bash_wake,
-        rpc_bash_wake,
-        on_late_sent_agent_message,
-        kernel_ready_gate: match embedding {
-            HeadlessEmbedding::Rpc { kernel_ready_gate } => kernel_ready_gate.clone(),
-            HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Child(_) => None,
-        },
+        bash_wake: wiring.bash_wake,
+        rpc_bash_wake: None,
+        on_late_sent_agent_message: Some(wiring.on_late_sent_agent_message),
+        kernel_ready_gate: None,
     }
 }
 
@@ -862,7 +892,7 @@ pub(crate) async fn build_headless_engine_with(
                     session_id: session_manager.get_session_id().to_string(),
                     // A spawned child's ledger lives in its rlm session dir.
                     ledger_path: pa_core::session_engine::semantic_edges::semantic_edge_ledger_path(
-                        Some(std::path::Path::new(&overrides.node.session_dir)),
+                        Some(&overrides.session_dir),
                         session_manager.get_session_artifact_dir().as_deref(),
                     ),
                     parent_session_id: overrides.semantic_parent_session_id.clone(),
@@ -1645,7 +1675,7 @@ async fn run_prompts_and_emit(
     model: &Model,
     api_key: Option<String>,
     options: &RunOptions,
-    root_node: &std::sync::Arc<crate::print_rlm::InlineSessionNode>,
+    root_node: &std::sync::Arc<InlineSessionNode>,
 ) -> Result<i32, String> {
     let json_mode = options.app_mode == AppMode::Json;
     // Non-fatal auth notices (a login that could not be saved, a revoked
@@ -1686,246 +1716,53 @@ async fn run_prompts_and_emit(
                 .await,
         );
     }
-    // The goal continuation surface: wired in every output mode — the loop runs in text mode too,
-    // only silently.
-    let goal = std::sync::Arc::new(crate::print_goal::PrintGoalSurface::new(json_mode));
-    goal.seed_publish_baseline(engine).await;
-    let goal_updated_at_start = engine.goal_state().await.updated_at;
-    let goal_accounting = goal.wire_accounting(engine, engine.session.agent()).await;
-    // The autonomous run: the CLI flags enable it, a no-flag session starts disabled and
-    // `/autonomous` rewrites it live.
-    let autonomous = std::sync::Arc::new(match options.config.autonomous.as_ref() {
-        Some(config) => HeadlessAutonomous::from_cli(config, &options.config.cwd),
-        None => HeadlessAutonomous::disabled(&options.config.cwd),
-    });
-    let accounting = autonomous.wire_accounting(engine.session.agent()).await;
-    // The composed natural-turn-end hook: the goal arm first (exclusive priority), the
-    // autonomous arm on the fall-through; both arms defer while inline-subagent work is
-    // unsettled.
-    crate::print_autonomous::wire_continuation_hook(
+    let events: Option<pa_core::session_engine::headless::EventSink> = json_mode
+        .then(|| std::sync::Arc::new(|event: &serde_json::Value| println!("{event}")) as _);
+    let mut run = PrintRun::start(
         engine,
-        engine.session.agent(),
         model,
-        &goal,
-        &autonomous,
-        Some(root_node),
-    );
-    let global_harness_dir =
-        pa_core::refinement::get_global_harness_state_dir(&options.config.agent_dir);
-    // `refine.preview` plans with the same model, key, and store the
-    // boundary's refinement applies with (upstream #899).
-    let refine_session_id = engine.session.session_id().await;
-    engine
-        .turn_boundary
-        .set_refine_planning_source(std::sync::Arc::new({
-            let model = model.clone();
-            let api_key = api_key.clone();
-            let global_harness_dir = global_harness_dir.clone();
-            let session_id = refine_session_id;
-            move || {
-                Some(
-                    pa_core::session_engine::turn_boundary::RefinePlanningContext {
-                        model: model.clone(),
-                        global_harness_dir: global_harness_dir.clone(),
-                        refine_call: pa_core::session_engine::refine::default_refiner_call(
-                            api_key.clone(),
-                            None,
-                            session_id.clone(),
-                        ),
-                    },
-                )
-            }
-        }));
-    let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode);
-    // The autonomous runtime state the session-command executor mutates —
-    // `/autonomous` rewrites what the hook, accounting, and exit contract read.
-    let autonomous_state = autonomous.state_handle();
-    // A failed session command rejects the prompt wait: the raw error prints to stderr and the run
-    // exits 1.
-    let mut command_failure: Option<String> = None;
+        api_key,
+        root_node,
+        PrintRunConfig {
+            events,
+            autonomous: options
+                .config
+                .autonomous
+                .as_ref()
+                .map(autonomous_runtime_config),
+            cwd: options.config.cwd.clone(),
+            agent_dir: options.config.agent_dir.clone(),
+        },
+    )
+    .await;
     // The `@file` image attachments ride the initial prompt only; the later CLI messages stay text.
-    'prompts: for (prompt, images) in options
+    let prompts = options
         .initial_message
         .iter()
-        .map(|prompt| (prompt, options.initial_images.clone()))
-        .chain(options.messages.iter().map(|prompt| (prompt, Vec::new())))
-    {
-        // Session commands never reach the model loop: the pre-turn boundary stays theirs to skip
-        // and the prompt's turn never exists.
-        if let Some(command) = engine.session.classify_session_command(prompt) {
-            let execution = crate::print_session_command::execute_prompt_session_command(
-                engine,
-                &goal,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-                &autonomous_state,
-                &command,
-                &images,
-            )
-            .await;
-            if let Some(error) = execution.error {
-                command_failure = Some(error);
-                break 'prompts;
-            }
-            // A `/goal` start scheduled its continuation as queued session input: the prompt wait
-            // drains it inside the same wait.
-            if let Some(continuation) = execution.continuation_message {
-                goal.run_session_command_continuation(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                    &continuation,
-                )
-                .await?;
-            }
-            // The same queue drain a settled turn gets: held continuations and armed steers run as
-            // this prompt's follow-up turns.
-            goal.drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
-            .await?;
-            continue;
-        }
-        boundary
-            .run_pre_turn(engine, model, api_key.clone())
-            .await?;
-        engine
-            .session
-            .prompt_with_images(
-                prompt,
-                images,
-                pa_core::session_engine::PromptOptions::default(),
-            )
-            .await
-            .map_err(|error| format!("{error:#}"))?;
-        engine.session.agent().wait_for_idle().await;
-        boundary
-            .run_at_settled_turn(engine, model, api_key.clone(), global_harness_dir.clone())
-            .await?;
-        goal.drive_boundary(
-            engine,
-            &mut boundary,
-            model,
-            api_key.clone(),
-            global_harness_dir.clone(),
+        .map(|prompt| (prompt.clone(), options.initial_images.clone()))
+        .chain(
+            options
+                .messages
+                .iter()
+                .map(|prompt| (prompt.clone(), Vec::new())),
         )
-        .await?;
-        // The autonomous arm runs only when the goal does not own the boundary (the goal arm takes
-        // exclusive priority).
-        if !engine.goal_owns_continuation_wakeup().await {
-            // The held threshold continuation drains as this invocation's follow-up
-            // turn; the stop surfaces only through the exit contract.
-            autonomous
-                .drive_boundary(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                )
-                .await
-                .map_err(|error| format!("{error:#}"))?;
+        .collect();
+    let (goal_no_progress_cap, autonomous_stderr) = match run.run(prompts).await? {
+        // The rejected prompt wait: print the raw command error to stderr and
+        // exit 1 — no later prompts ran, and the disposal drain still runs.
+        PrintRunOutcome::CommandFailed(error) => {
+            eprintln!("{error}");
+            if let Some(subscription) = unsubscribe {
+                subscription.unsubscribe().await;
+            }
+            run.finish().await;
+            return Ok(1);
         }
-    }
-    // The rejected prompt wait: print the raw command error to stderr and
-    // exit 1 — no later prompts ran, and the disposal drain still runs.
-    if let Some(error) = command_failure {
-        eprintln!("{error}");
-        goal_accounting.unsubscribe().await;
-        accounting.unsubscribe().await;
-        if let Some(subscription) = unsubscribe {
-            subscription.unsubscribe().await;
-        }
-        boundary
-            .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-            .await;
-        return Ok(1);
-    }
-    // The #2270 fix: print waits for RLM quiescence — every admitted
-    // descendant settles and its replies and notices drain as turns —
-    // before the terminal result is selected (json mode keeps streaming;
-    // the subscription lives until after the drive). One drive loop then
-    // keeps the run alive while deferred work exists: the deferred
-    // goal/autonomous continuations deliver after the settle ("no
-    // front": the settling child's terminal notice is read first), and
-    // the boundary drain runs whatever turns it drained armed — a
-    // threshold continuation, a budget steer, more descendants.
-    loop {
-        if crate::print_rlm::drive_to_quiescence(
-            root_node,
-            engine,
-            &mut boundary,
-            model,
-            api_key.clone(),
-            global_harness_dir.clone(),
-        )
-        .await?
-        {
-            continue;
-        }
-        if let Some(continuation) = engine.take_owed_goal_continuation().await {
-            goal.publish_goal_update(engine).await;
-            goal.run_queued_turn(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-                &continuation,
-            )
-            .await?;
-            continue;
-        }
-        if autonomous
-            .deliver_rlm_continuation(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
-            .await?
-        {
-            continue;
-        }
-        // The boundary drain: turns it ran may spawn descendants or arm
-        // more holds, so it reports whether it ran and the loop goes
-        // around — the leading quiescence pass then waits for whatever
-        // they left behind.
-        let mut boundary_ran = goal
-            .drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
-            .await?;
-        if !engine.goal_owns_continuation_wakeup().await {
-            boundary_ran |= autonomous
-                .drive_boundary(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                )
-                .await?;
-        }
-        if boundary_ran {
-            continue;
-        }
-        break;
-    }
-    goal_accounting.unsubscribe().await;
-    accounting.unsubscribe().await;
+        PrintRunOutcome::Settled {
+            goal_no_progress_cap,
+            autonomous_stderr,
+        } => (goal_no_progress_cap, autonomous_stderr),
+    };
     if let Some(subscription) = unsubscribe {
         subscription.unsubscribe().await;
     }
@@ -1939,16 +1776,12 @@ async fn run_prompts_and_emit(
     // error to stderr, the settled answer to stdout, and the compaction outcomes to
     // stderr; json mode already streamed the events and prints nothing more.
     let mut exit_code = 0;
-    if !json_mode {
-        let goal = engine.goal_state().await;
-        let cap_reason = pa_core::session_engine::goal_driver::CONTINUATION_NO_PROGRESS_CAP_REASON;
-        if goal.status == pa_types::goal::GoalStatus::Error
-            && goal.last_error.as_deref() == Some(cap_reason)
-            && goal.updated_at != goal_updated_at_start
-        {
-            eprintln!("{cap_reason}");
-            exit_code = 1;
-        }
+    if !json_mode && goal_no_progress_cap {
+        eprintln!(
+            "{}",
+            pa_core::session_engine::goal_driver::CONTINUATION_NO_PROGRESS_CAP_REASON
+        );
+        exit_code = 1;
     }
     if let Some(primary) = result.primary {
         let stderr = primary.stderr_text(&mut exit_code);
@@ -1972,15 +1805,13 @@ async fn run_prompts_and_emit(
         }
     }
     // The autonomous contract applies to both output modes.
-    if let Some(stderr) = autonomous.exit_stderr().await {
+    if let Some(stderr) = autonomous_stderr {
         eprintln!("{stderr}");
         exit_code = 1;
     }
     // The disposal order: the exit code first, then the teardown drains a
     // compact-trigger auto-refine no later boundary consumed.
-    boundary
-        .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-        .await;
+    run.finish().await;
     Ok(exit_code)
 }
 
