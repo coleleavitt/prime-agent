@@ -44,16 +44,11 @@ use render::{
 mod reconnect;
 
 #[cfg(test)]
-use reconnect::{DAEMON_SHUTDOWN_RECONNECT_WINDOW, SHUTDOWN_RECONNECT_RETRY};
-use reconnect::{
-    ReconnectConnect,
-    ReconnectLoop,
-    SESSION_RECONNECT_ATTEMPT_TIMEOUT_S,
-    SessionReconnect,
-    arm_shutdown_recovery,
-};
+use reconnect::{DAEMON_SHUTDOWN_RECONNECT_WINDOW, ReconnectLoop, SHUTDOWN_RECONNECT_RETRY};
 
+mod opening;
 mod run;
+mod run_loop;
 
 use crossterm::event::KeyEvent;
 use crossterm::terminal;
