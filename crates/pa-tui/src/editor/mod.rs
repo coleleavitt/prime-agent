@@ -11,6 +11,7 @@ use crate::width::is_whitespace_char;
 
 mod autocomplete;
 mod click;
+mod emoji;
 mod input;
 mod kill_ring;
 mod layout;
@@ -127,6 +128,9 @@ pub struct Editor {
     /// The in-flight `@` file search with the editor state it answers: a
     /// result that lands after the lines or cursor moved is dropped.
     autocomplete_search: Option<AutocompleteSearch>,
+    /// Typing `:name` suggests emoji (the host enables it from the
+    /// `emojiShortcodes` setting).
+    emoji_shortcodes: bool,
     events: Vec<EditorEvent>,
     /// Vim editing mode (`editorMode: "vim"`); `None` keeps the default keys.
     vim: Option<vim::VimState>,
@@ -185,6 +189,7 @@ impl Editor {
             autocomplete: None,
             pending_autocomplete: None,
             autocomplete_search: None,
+            emoji_shortcodes: false,
             events: Vec::new(),
             vim: None,
         }

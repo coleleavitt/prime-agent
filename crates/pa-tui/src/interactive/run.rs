@@ -342,6 +342,12 @@ fn startup_view(options: &InteractiveOptions) -> AgentView {
     view.editor.set_autocomplete_provider(Box::new(provider));
     view.editor.set_keybindings(options.keybindings.clone());
     view.show_images = options.show_images;
+    view.editor.set_emoji_shortcodes(
+        options
+            .client_settings
+            .as_ref()
+            .is_none_or(|settings| settings.emoji_shortcodes()),
+    );
     if let Some(settings) = &options.client_settings {
         view.show_hardware_cursor = settings.show_hardware_cursor();
         view.editor
