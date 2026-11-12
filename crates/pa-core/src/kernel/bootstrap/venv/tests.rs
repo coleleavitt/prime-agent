@@ -622,17 +622,55 @@ fn disk_memo_late_write_after_invalidate_is_benign() {
     assert!(!super::super::disk_memo::disk_memo_path(&venv).exists());
 }
 
-/// Env-mutating tests serialize on this lock: the process env is global.
-/// Unix only: its takers are the unix env-override tests.
+/// Set in the child process that runs an env-mutating test alone.
 #[cfg(unix)]
-static PRIME_AGENT_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const ENV_CHILD: &str = "PA_CORE_KERNEL_ENV_TEST_CHILD";
+
+/// Run the test `name` alone in a child of this test binary, with `env`
+/// applied (`None` removes a variable). The process env is shared by every
+/// test in this binary: setting `HOME` or the runtime-source variables here
+/// would change what concurrent tests resolve (the runtime identity, the
+/// runtime extracted under `HOME`).
+#[cfg(unix)]
+async fn run_alone_with_env(name: &str, env: &[(&str, Option<&Path>)]) {
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", name, "--test-threads=1"])
+        .env(ENV_CHILD, "1");
+    for (key, value) in env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    let output = command.output().await.unwrap();
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{log}");
+    assert!(log.contains("test result: ok. 1 passed"), "{log}");
+}
 
 /// A caller-owned `PRIME_AGENT_KERNEL_PYTHON` override resolves through
 /// the DIRECT probe and never reads or writes any memo file.
 #[cfg(unix)]
 #[tokio::test]
 async fn custom_override_never_touches_the_disk_memo() {
-    let _guard = PRIME_AGENT_ENV_LOCK.lock().await;
+    if std::env::var_os(ENV_CHILD).is_some() {
+        let python = PathBuf::from(std::env::var_os("PRIME_AGENT_KERNEL_PYTHON").unwrap());
+        let resolved =
+            super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
+                .await;
+        assert!(resolved.is_ok(), "the override resolves: {resolved:?}");
+        assert_eq!(
+            resolved.unwrap(),
+            python,
+            "the override python is returned as-is"
+        );
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -642,33 +680,15 @@ async fn custom_override_never_touches_the_disk_memo() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let previous_home = std::env::var("HOME").ok();
-    let previous_override = std::env::var("PRIME_AGENT_KERNEL_PYTHON").ok();
-    let previous_venv = std::env::var("PRIME_AGENT_KERNEL_VENV").ok();
-    std::env::set_var("HOME", &home);
-    std::env::set_var("PRIME_AGENT_KERNEL_PYTHON", &python);
-    std::env::remove_var("PRIME_AGENT_KERNEL_VENV");
-    let resolved =
-        super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
-            .await;
-    match previous_venv {
-        Some(value) => std::env::set_var("PRIME_AGENT_KERNEL_VENV", value),
-        None => std::env::remove_var("PRIME_AGENT_KERNEL_VENV"),
-    }
-    match previous_override {
-        Some(value) => std::env::set_var("PRIME_AGENT_KERNEL_PYTHON", value),
-        None => std::env::remove_var("PRIME_AGENT_KERNEL_PYTHON"),
-    }
-    match previous_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
-    assert!(resolved.is_ok(), "the override resolves: {resolved:?}");
-    assert_eq!(
-        resolved.unwrap(),
-        python,
-        "the override python is returned as-is"
-    );
+    run_alone_with_env(
+        "kernel::bootstrap::venv::tests::custom_override_never_touches_the_disk_memo",
+        &[
+            ("HOME", Some(&home)),
+            ("PRIME_AGENT_KERNEL_PYTHON", Some(&python)),
+            ("PRIME_AGENT_KERNEL_VENV", None),
+        ],
+    )
+    .await;
     let mut found: Vec<std::path::PathBuf> = Vec::new();
     collect_memo_files(dir.path(), &mut found);
     assert!(
@@ -683,7 +703,23 @@ async fn custom_override_never_touches_the_disk_memo() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv() {
-    let _guard = PRIME_AGENT_ENV_LOCK.lock().await;
+    if std::env::var_os(ENV_CHILD).is_some() {
+        let venv = PathBuf::from(std::env::var_os("PRIME_AGENT_KERNEL_VENV").unwrap());
+        let missing_source = PathBuf::from(std::env::var_os(RUNTIME_SOURCE_ENV).unwrap());
+        let resolved =
+            super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
+                .await;
+        let message = format!("{:#}", resolved.expect_err("no runtime source to install"));
+        assert!(
+            message.starts_with(&format!(
+                "Failed to set up the Python kernel runtime: the prime-agent-runtime source directory was not found. Searched:\n  {}\nThe existing kernel venv at {} was left untouched.",
+                missing_source.display(),
+                venv.display()
+            )),
+            "{message}"
+        );
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let venv = dir.path().join("kernel-venv");
     std::fs::create_dir_all(venv.join("bin")).unwrap();
@@ -692,35 +728,15 @@ async fn a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv() {
         .path()
         .join("deleted-worktree")
         .join("prime-agent-runtime");
-    let saved: Vec<(&str, Option<String>)> = [
-        "PRIME_AGENT_KERNEL_PYTHON",
-        "PRIME_AGENT_KERNEL_VENV",
-        RUNTIME_SOURCE_ENV,
-    ]
-    .into_iter()
-    .map(|key| (key, std::env::var(key).ok()))
-    .collect();
-    std::env::remove_var("PRIME_AGENT_KERNEL_PYTHON");
-    std::env::set_var("PRIME_AGENT_KERNEL_VENV", &venv);
-    std::env::set_var(RUNTIME_SOURCE_ENV, &missing_source);
-    let resolved =
-        super::super::ensure_kernel_python(super::super::EnsureKernelPythonOptions::default())
-            .await;
-    for (key, value) in saved {
-        match value {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-    }
-    let message = format!("{:#}", resolved.expect_err("no runtime source to install"));
-    assert!(
-        message.starts_with(&format!(
-            "Failed to set up the Python kernel runtime: the prime-agent-runtime source directory was not found. Searched:\n  {}\nThe existing kernel venv at {} was left untouched.",
-            missing_source.display(),
-            venv.display()
-        )),
-        "{message}"
-    );
+    run_alone_with_env(
+        "kernel::bootstrap::venv::tests::a_missing_runtime_source_fails_clearly_and_keeps_the_shared_venv",
+        &[
+            ("PRIME_AGENT_KERNEL_PYTHON", None),
+            ("PRIME_AGENT_KERNEL_VENV", Some(&venv)),
+            (RUNTIME_SOURCE_ENV, Some(&missing_source)),
+        ],
+    )
+    .await;
     assert_eq!(
         std::fs::read_to_string(venv.join("in-use-by-other-sessions")).ok(),
         Some("keep".to_string()),
