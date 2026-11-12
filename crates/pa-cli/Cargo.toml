@@ -14,6 +14,7 @@ default = [
     "cc-import",
     "dream",
     "hooks",
+    "guards",
     "learning",
     "ledger",
     "lsp",
@@ -51,6 +52,9 @@ dream = ["dep:pa-dream"]
 # key runs commands on SessionStart, UserPromptSubmit, PreToolUse, PostToolUse
 # and Stop; the kernel's bash() is the `Bash` tool.
 hooks = ["dep:pa-hooks"]
+# Quality guards (crates/pa-guards): slop guard on cell file writes + the
+# self-continuation decision at agent stop.
+guards = ["dep:pa-guards"]
 # The continual-learning gate: the learning index, `prime-agent learning`, and
 # the Engineer Trajectory Index's digest hook and RAVO recurrence filter
 # (crates/pa-learning).
@@ -135,6 +139,7 @@ pa-advisor = { path = "../pa-advisor", optional = true }
 pa-cc-import = { path = "../pa-cc-import", optional = true }
 pa-plugins = { path = "../pa-plugins", optional = true }
 pa-hooks = { path = "../pa-hooks", optional = true }
+pa-guards = { path = "../pa-guards", optional = true }
 pa-web = { path = "../pa-web", optional = true }
 pa-lsp = { path = "../pa-lsp", optional = true }
 pa-permissions = { path = "../pa-permissions", optional = true }

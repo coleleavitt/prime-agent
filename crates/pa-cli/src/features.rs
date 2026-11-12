@@ -70,6 +70,11 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     // `advisor` skill where an advisor model is configured.
     #[cfg(feature = "advisor")]
     features.push(Arc::new(pa_advisor::AdvisorFeature::new()));
+    // Quality guards (crates/pa-guards): the slop guard on each cell's file
+    // writes (appended to the result the model sees) and the self-continuation
+    // decision at agent stop (keeps the agent going when it stalled).
+    #[cfg(feature = "guards")]
+    features.push(Arc::new(pa_guards::GuardsFeature::new()));
     features
 }
 

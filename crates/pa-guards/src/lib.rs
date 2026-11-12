@@ -29,7 +29,10 @@
 #![allow(clippy::format_push_string)]
 
 pub mod continuation;
+mod feature;
 mod rust_lex;
 pub mod scaffold_detector;
 pub mod slop_guard;
 pub mod work_quality;
+
+pub use feature::GuardsFeature;

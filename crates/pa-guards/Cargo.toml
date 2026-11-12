@@ -6,9 +6,12 @@ license.workspace = true
 description = "Post-edit slop checks, the task-completion scaffold gate, and the self-continuation decision for Prime Agent. Pure logic; the runtime wires it into the post-cell and Stop paths."
 
 [dependencies]
+pa-core = { path = "../pa-core" }
+pa-types = { workspace = true }
 ignore = "0.4"
 regex = "1"
 serde_json.workspace = true
+tracing = { workspace = true }
 
 [lints]
 workspace = true

@@ -2734,6 +2734,7 @@ dependencies = [
  "pa-core",
  "pa-daemon",
  "pa-dream",
+ "pa-guards",
  "pa-hooks",
  "pa-learning",
  "pa-ledger",
@@ -2897,8 +2898,11 @@ name = "pa-guards"
 version = "0.10.3"
 dependencies = [
  "ignore",
+ "pa-core",
+ "pa-types",
  "regex",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
