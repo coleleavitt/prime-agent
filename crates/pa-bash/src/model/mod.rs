@@ -10,6 +10,7 @@
 //! carries the rule's evidence ([`evidence`]): running code the guard cannot
 //! read is ordinary work, and the OS sandbox contains it.
 
+mod builtins;
 mod commands;
 pub(crate) mod evidence;
 pub(crate) mod files;

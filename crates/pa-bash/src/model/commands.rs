@@ -1,13 +1,14 @@
 //! Running one command in the model: taking wrappers off (`env`, `sudo`,
 //! `timeout`, `xargs`, `find -exec`, ...), applying what builtins change
-//! (`cd`, `export`, `alias`, `hash -p`, function definitions), and
-//! descending into the code shells, `eval`, `source`, `ssh`, `watch` and
-//! `su -c` run.
+//! (see [`super::builtins`]), and descending into the code shells, `eval`,
+//! `source`, `ssh`, `watch` and `su -c` run.
 
 use std::ops::Range;
+use std::path::PathBuf;
 
+use super::builtins::{Builtin, relocate};
 use super::files::{expand, join, read_script};
-use super::value::{self, Arg, Lookup, Unknown, Var};
+use super::value::{self, Arg, Lookup, Unknown};
 use super::walker::{
     Call,
     Feed,
@@ -20,7 +21,7 @@ use super::walker::{
     Walker,
     shown_fields,
 };
-use super::wrappers::{self, CodeArg, ShellCode};
+use super::wrappers::{self, CodeArg, ShellCode, Unwrapped};
 use super::{Cwd, Layer, Opaque, OpaqueKind, Via};
 use crate::syntax::parse::parse;
 
@@ -33,907 +34,695 @@ fn lower_base(text: &str) -> String {
     text.rsplit('/').next().unwrap_or(text).to_lowercase()
 }
 
+/// A command the walk is taking apart: its fields, the wrappers already
+/// taken off it, its call, and the directory a wrapper moved it to.
+pub(super) struct Pending<'w> {
+    pub fields: Vec<Field<'w>>,
+    pub layers: Vec<Layer>,
+    pub call: Call,
+    pub cwd: Option<Cwd>,
+}
+
+/// What taking one layer off a command left to do.
+enum Next {
+    /// The command word changed: look at it again.
+    Again,
+    /// The command is fully handled.
+    Done,
+    /// The command word names the program that runs.
+    Run,
+}
+
 impl Walker {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one dispatch over every program the model knows"
-    )]
     pub(super) fn run(
         &mut self,
-        mut fields: Vec<Field<'_>>,
-        mut layers: Vec<Layer>,
-        mut call: Call,
+        fields: Vec<Field<'_>>,
+        layers: Vec<Layer>,
+        call: Call,
         state: &mut State<'_>,
     ) {
-        let mut cwd_override: Option<Cwd> = None;
+        let mut command = Pending {
+            fields,
+            layers,
+            call,
+            cwd: None,
+        };
         loop {
-            let Some(first) = fields.first() else {
-                return;
-            };
-            let name = match &first.arg {
-                Arg::Known(text) => lower_base(text),
-                Arg::Pattern(pattern) => {
-                    // A command word the shell expands against the filesystem.
-                    let dir = state
-                        .cwd
-                        .dirs
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| self.workspace.clone());
-                    match expand(&dir, pattern) {
-                        Some(matches) if !matches.is_empty() => {
-                            // The command word as written: a rule may read
-                            // which names its pattern can produce.
-                            self.record(
-                                &fields,
-                                layers.clone(),
-                                &call,
-                                state,
-                                cwd_override.as_ref(),
-                                false,
-                                Vec::new(),
-                            );
-                            let mut replaced: Vec<Field<'_>> = matches
-                                .iter()
-                                .map(|path| Field::of(Arg::Known(path.display().to_string())))
-                                .collect();
-                            replaced.extend(fields.drain(1..));
-                            fields = replaced;
-                            continue;
-                        }
-                        Some(_) | None => {
-                            self.record(
-                                &fields,
-                                layers,
-                                &call,
-                                state,
-                                cwd_override.as_ref(),
-                                false,
-                                Vec::new(),
-                            );
-                            return;
-                        }
-                    }
-                }
-                Arg::Unknown(unknown) => {
-                    let evidence: Vec<String> =
-                        fields.iter().map(|field| field.arg.evidence()).collect();
-                    let env: Vec<String> =
-                        call.env.iter().map(|(_, value)| value.evidence()).collect();
-                    // A value spliced into code (`eval "$x"`, `sh -c "$(cat f)"`)
-                    // is code assembled at run time.
-                    let kind = if unknown.written.contains("__PA_FRAGMENT_") {
-                        OpaqueKind::Dynamic
-                    } else {
-                        OpaqueKind::CommandWord
-                    };
-                    self.model.opaques.push(Opaque {
-                        kind,
-                        shown: self.show_code(&shown_fields(&fields)),
-                        evidence: format!("{} {}", evidence.join(" "), env.join(" ")),
-                        context: self.via.clone(),
-                    });
-                    self.record(
-                        &fields,
-                        layers,
-                        &call,
-                        state,
-                        cwd_override.as_ref(),
-                        false,
-                        Vec::new(),
-                    );
-                    return;
-                }
-            };
-            let bare = first.arg.known().is_some_and(|text| !text.contains('/'));
-            // Aliases, functions and hash entries replace a bare command word.
-            if bare && layers.is_empty() && !SHADOW_PROOF.contains(&name.as_str()) {
-                let word = first.arg.known().unwrap_or_default().to_string();
-                if !self.expanding.contains(&word) {
-                    if let Some(body) = state.aliases.get(&word).cloned() {
-                        // Bash does not expand an alias inside its own
-                        // expansion.
-                        let rest = self.joined_code(&fields[1..], state, &call.pieces);
-                        let feed = self.current_feed(&call);
-                        self.expanding.push(word.clone());
-                        let via = Via::Alias { name: word.clone() };
-                        let expanded_only = state.expand_aliases;
-                        self.code(
-                            &format!("{body} {rest}"),
-                            via,
-                            state,
-                            Share::Shared,
-                            Some(feed),
-                            None,
-                        );
-                        self.expanding.pop();
-                        if expanded_only {
-                            return;
-                        }
-                    }
-                }
-                if let Some(body) = state.functions.get(&word).cloned() {
-                    let walks = self.function_walks.entry(word.clone()).or_insert(0);
-                    *walks += 1;
-                    if self.depth >= MAX_CODE_DEPTH
-                        || *walks > MAX_FUNCTION_WALKS
-                        || self.model.invocations.len() >= MAX_INVOCATIONS
-                    {
-                        // Past the bounds the body is judged on its visible
-                        // text, once per function.
-                        if self.unwalked.insert(word.clone()) {
-                            self.model.opaques.push(Opaque {
-                                kind: OpaqueKind::Unparsed,
-                                shown: format!("{word} (a function called past the walk bounds)"),
-                                evidence: function_text(&word, &state.functions),
-                                context: self.via.clone(),
-                            });
-                        }
-                        self.record(
-                            &fields,
-                            layers,
-                            &call,
-                            state,
-                            cwd_override.as_ref(),
-                            false,
-                            Vec::new(),
-                        );
-                        return;
-                    }
-                    let args: Vec<Arg> =
-                        fields[1..].iter().map(|field| field.arg.clone()).collect();
-                    let saved = std::mem::replace(&mut state.positional, args);
-                    let feed = self.current_feed(&call);
-                    self.depth += 1;
-                    self.via.push(Via::Function { name: word });
-                    self.stdin.push(feed);
-                    self.stage_depth += 1;
-                    let scope = state.vars.begin_scope(&call.env);
-                    self.walk_command(&body, state);
-                    state.vars.end_scope(scope);
-                    self.stage_depth -= 1;
-                    self.stdin.pop();
-                    self.via.pop();
-                    self.depth -= 1;
-                    state.positional = saved;
-                    return;
-                }
-                if let Some(path) = state.hashed.get(&word).cloned() {
-                    fields[0] = Field::of(path);
-                    continue;
-                }
+            match self.take_off_layer(&mut command, state) {
+                Next::Again => {}
+                Next::Done => return,
+                Next::Run => break,
             }
-            let args: Vec<Arg> = fields.iter().map(|field| field.arg.clone()).collect();
-            if let Some(unwrapped) = wrappers::unwrap(&name, &args) {
-                let has_command = unwrapped.consumed < fields.len();
-                if unwrapped.runs_nothing {
-                    self.record(
-                        &fields,
-                        layers,
-                        &call,
-                        state,
-                        cwd_override.as_ref(),
-                        false,
-                        Vec::new(),
-                    );
-                    return;
-                }
-                if !has_command {
-                    if unwrapped.shell {
-                        layers.push(Layer {
-                            name: name.clone(),
-                            args: args[1..].to_vec(),
-                        });
-                        let feed = self.current_feed(&call);
-                        self.record(
-                            &fields[..0],
-                            layers,
-                            &call,
-                            state,
-                            cwd_override.as_ref(),
-                            true,
-                            Vec::new(),
-                        );
-                        self.shell_stdin(feed, &name, state);
-                        return;
-                    }
-                    if let Some(split) = unwrapped.split.clone() {
-                        self.env_split(split, &fields, layers, call, state);
-                        return;
-                    }
-                    self.record(
-                        &fields,
-                        layers,
-                        &call,
-                        state,
-                        cwd_override.as_ref(),
-                        false,
-                        Vec::new(),
-                    );
-                    return;
-                }
-                layers.push(Layer {
-                    name: name.clone(),
-                    args: args[1..unwrapped.consumed].to_vec(),
-                });
-                call.env.extend(unwrapped.assignments);
-                if let Some(dir) = unwrapped.chdir {
-                    let from = cwd_override.clone().unwrap_or_else(|| state.cwd.clone());
-                    cwd_override = Some(relocate(&from, &dir, state));
-                }
-                if name == "chroot" {
-                    cwd_override = Some(Cwd {
-                        dirs: Vec::new(),
-                        unknown: Some(shown_fields(&fields[..unwrapped.consumed])),
-                    });
-                }
-                fields.drain(..unwrapped.consumed);
-                continue;
+        }
+        self.dispatch(command, state);
+    }
+
+    /// Record `command` as it runs (not reading code from stdin).
+    fn record_command(
+        &mut self,
+        command: &Pending<'_>,
+        state: &State<'_>,
+        code_substitutions: Vec<Range<usize>>,
+    ) {
+        self.record(
+            &command.fields,
+            command.layers.clone(),
+            &command.call,
+            state,
+            command.cwd.as_ref(),
+            false,
+            code_substitutions,
+        );
+    }
+
+    /// One step of finding the program a command runs: expand its command
+    /// word, follow an alias, function or hash entry, or take a wrapper off.
+    fn take_off_layer(&mut self, command: &mut Pending<'_>, state: &mut State<'_>) -> Next {
+        let Some(first) = command.fields.first() else {
+            return Next::Done;
+        };
+        let name = match &first.arg {
+            Arg::Known(text) => lower_base(text),
+            Arg::Pattern(pattern) => {
+                // A command word the shell expands against the filesystem.
+                let dir = state
+                    .cwd
+                    .dirs
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| self.workspace.clone());
+                let matches = expand(&dir, pattern);
+                // The command word as written: a rule may read which names
+                // its pattern can produce.
+                self.record_command(command, state, Vec::new());
+                let Some(matches) = matches.filter(|matches| !matches.is_empty()) else {
+                    return Next::Done;
+                };
+                let mut replaced: Vec<Field<'_>> = matches
+                    .iter()
+                    .map(|path| Field::of(Arg::Known(path.display().to_string())))
+                    .collect();
+                replaced.extend(command.fields.drain(1..));
+                command.fields = replaced;
+                return Next::Again;
             }
-            match name.as_str() {
-                "rtk" => {
-                    let skip = if fields.get(1).and_then(|field| field.arg.known()) == Some("proxy")
-                    {
+            Arg::Unknown(unknown) => {
+                // A value spliced into code (`eval "$x"`, `sh -c "$(cat f)"`)
+                // is code assembled at run time.
+                let kind = if unknown.written.contains("__PA_FRAGMENT_") {
+                    OpaqueKind::Dynamic
+                } else {
+                    OpaqueKind::CommandWord
+                };
+                self.opaque_command_word(kind, command, state);
+                return Next::Done;
+            }
+        };
+        let bare = first.arg.known().is_some_and(|text| !text.contains('/'));
+        if bare && command.layers.is_empty() && !SHADOW_PROOF.contains(&name.as_str()) {
+            let word = first.arg.known().unwrap_or_default().to_string();
+            if let Some(next) = self.shadowing_definition(word, command, state) {
+                return next;
+            }
+        }
+        let args: Vec<Arg> = command
+            .fields
+            .iter()
+            .map(|field| field.arg.clone())
+            .collect();
+        if let Some(unwrapped) = wrappers::unwrap(&name, &args) {
+            return self.take_off_wrapper(&name, &args, unwrapped, command, state);
+        }
+        match name.as_str() {
+            "rtk" => {
+                let skip =
+                    if command.fields.get(1).and_then(|field| field.arg.known()) == Some("proxy") {
                         2
                     } else {
                         1
                     };
-                    let skip = skip.min(fields.len());
-                    layers.push(Layer {
-                        name,
-                        args: args[1..skip].to_vec(),
-                    });
-                    fields.drain(..skip);
-                    continue;
-                }
-                "xargs" | "parallel" => {
-                    let (start, replace) = xargs_command(&name, &args);
-                    let start = start.min(fields.len());
-                    layers.push(Layer {
-                        name: name.clone(),
-                        args: args[1..start].to_vec(),
-                    });
-                    let input = Unknown {
-                        prefix: String::new(),
-                        written: format!("<arguments {name} reads from its stdin>"),
-                        source: self.producer_text(),
-                        input: true,
-                    };
-                    fields.drain(..start);
-                    if fields.is_empty() {
-                        fields.push(Field::of(Arg::Known("echo".to_string())));
-                    }
-                    if let Feed::Code(text) = self.current_feed(&call) {
-                        // The input is text the command fixes (`printf ... |
-                        // xargs bash`): run the command with it.
-                        self.xargs_known(&text, replace.as_deref(), &fields, &layers, &call, state);
-                        return;
-                    }
-                    match replace {
-                        Some(token) => {
-                            // Each input line replaces the token: a field that
-                            // is exactly the token is data; a token inside a
-                            // longer field (`sh -c 'u="{}"; ...'`) is a value
-                            // spliced into that text.
-                            let mut spliced = None;
-                            for field in &mut fields {
-                                let Some(text) = field.arg.known().map(str::to_string) else {
-                                    continue;
-                                };
-                                if text == token {
-                                    *field = Field::of(Arg::Unknown(Unknown {
-                                        written: text,
-                                        ..input.clone()
-                                    }));
-                                } else if text.contains(&token) {
-                                    let placeholder = spliced
-                                        .get_or_insert_with(|| {
-                                            self.placeholder(input.source.clone())
-                                        })
-                                        .clone();
-                                    *field = Field {
-                                        code: Some(text.replace(&token, &placeholder)),
-                                        ..Field::of(Arg::Unknown(Unknown {
-                                            prefix: text
-                                                .split(&token)
-                                                .next()
-                                                .unwrap_or_default()
-                                                .to_string(),
-                                            written: text.clone(),
-                                            ..input.clone()
-                                        }))
-                                    };
-                                }
-                            }
-                        }
-                        None => fields.push(Field::of(Arg::Unknown(input))),
-                    }
-                    continue;
-                }
-                "find" | "fd" | "fdfind" => {
-                    self.record(
-                        &fields,
-                        layers.clone(),
-                        &call,
-                        state,
-                        cwd_override.as_ref(),
-                        false,
-                        Vec::new(),
-                    );
-                    self.find_exec(&fields, &layers, &call, state, cwd_override.as_ref());
-                    return;
-                }
-                "docker" | "podman" | "kubectl" | "oc" => {
-                    if let Some(start) = container_command(&args) {
-                        layers.push(Layer {
-                            name: name.clone(),
-                            args: args[1..start].to_vec(),
-                        });
-                        cwd_override = Some(Cwd {
-                            dirs: Vec::new(),
-                            unknown: Some(format!("{name} exec")),
-                        });
-                        fields.drain(..start);
-                        continue;
-                    }
-                }
-                _ => {}
+                let skip = skip.min(command.fields.len());
+                command.layers.push(Layer {
+                    name,
+                    args: args[1..skip].to_vec(),
+                });
+                command.fields.drain(..skip);
+                Next::Again
             }
-            break;
+            "xargs" | "parallel" => self.take_off_xargs(&name, &args, command, state),
+            "find" | "fd" | "fdfind" => {
+                self.record_command(command, state, Vec::new());
+                self.find_exec(
+                    &command.fields,
+                    &command.layers,
+                    &command.call,
+                    state,
+                    command.cwd.as_ref(),
+                );
+                Next::Done
+            }
+            "docker" | "podman" | "kubectl" | "oc" => {
+                let Some(start) = container_command(&args) else {
+                    return Next::Run;
+                };
+                command.layers.push(Layer {
+                    name: name.clone(),
+                    args: args[1..start].to_vec(),
+                });
+                command.cwd = Some(Cwd {
+                    dirs: Vec::new(),
+                    unknown: Some(format!("{name} exec")),
+                });
+                command.fields.drain(..start);
+                Next::Again
+            }
+            _ => Next::Run,
         }
-        let name = fields
+    }
+
+    /// A command word the walk cannot know: opaque, recorded as written.
+    fn opaque_command_word(&mut self, kind: OpaqueKind, command: &Pending<'_>, state: &State<'_>) {
+        let evidence: Vec<String> = command
+            .fields
+            .iter()
+            .map(|field| field.arg.evidence())
+            .collect();
+        let env: Vec<String> = command
+            .call
+            .env
+            .iter()
+            .map(|(_, value)| value.evidence())
+            .collect();
+        self.model.opaques.push(Opaque {
+            kind,
+            shown: self.show_code(&shown_fields(&command.fields)),
+            evidence: format!("{} {}", evidence.join(" "), env.join(" ")),
+            context: self.via.clone(),
+        });
+        self.record_command(command, state, Vec::new());
+    }
+
+    /// Aliases, functions and hash entries replace a bare command word;
+    /// `None` when none of them does.
+    fn shadowing_definition(
+        &mut self,
+        word: String,
+        command: &mut Pending<'_>,
+        state: &mut State<'_>,
+    ) -> Option<Next> {
+        if !self.expanding.contains(&word) {
+            if let Some(body) = state.aliases.get(&word).cloned() {
+                // Bash does not expand an alias inside its own expansion.
+                let rest = self.joined_code(&command.fields[1..], state, &command.call.pieces);
+                let feed = self.current_feed(&command.call);
+                self.expanding.push(word.clone());
+                let via = Via::Alias { name: word.clone() };
+                let expanded_only = state.expand_aliases;
+                self.code(
+                    &format!("{body} {rest}"),
+                    via,
+                    state,
+                    Share::Shared,
+                    Some(feed),
+                    None,
+                );
+                self.expanding.pop();
+                if expanded_only {
+                    return Some(Next::Done);
+                }
+            }
+        }
+        if let Some(body) = state.functions.get(&word).cloned() {
+            self.call_function(word, &body, command, state);
+            return Some(Next::Done);
+        }
+        let path = state.hashed.get(&word).cloned()?;
+        command.fields[0] = Field::of(path);
+        Some(Next::Again)
+    }
+
+    /// A call of the shell function `word`: its body walked with the call's
+    /// arguments, or judged on its visible text past the walk bounds.
+    fn call_function(
+        &mut self,
+        word: String,
+        body: &crate::syntax::ast::Command,
+        command: &Pending<'_>,
+        state: &mut State<'_>,
+    ) {
+        let walks = self.function_walks.entry(word.clone()).or_insert(0);
+        *walks += 1;
+        if self.depth >= MAX_CODE_DEPTH
+            || *walks > MAX_FUNCTION_WALKS
+            || self.model.invocations.len() >= MAX_INVOCATIONS
+        {
+            // Past the bounds the body is judged on its visible text, once
+            // per function.
+            if self.unwalked.insert(word.clone()) {
+                self.model.opaques.push(Opaque {
+                    kind: OpaqueKind::Unparsed,
+                    shown: format!("{word} (a function called past the walk bounds)"),
+                    evidence: function_text(&word, &state.functions),
+                    context: self.via.clone(),
+                });
+            }
+            self.record_command(command, state, Vec::new());
+            return;
+        }
+        let args: Vec<Arg> = command.fields[1..]
+            .iter()
+            .map(|field| field.arg.clone())
+            .collect();
+        let saved = std::mem::replace(&mut state.positional, args);
+        let feed = self.current_feed(&command.call);
+        self.depth += 1;
+        self.via.push(Via::Function { name: word });
+        self.stdin.push(feed);
+        self.stage_depth += 1;
+        let scope = state.vars.begin_scope(&command.call.env);
+        self.walk_command(body, state);
+        state.vars.end_scope(scope);
+        self.stage_depth -= 1;
+        self.stdin.pop();
+        self.via.pop();
+        self.depth -= 1;
+        state.positional = saved;
+    }
+
+    /// A wrapper (`env`, `sudo`, `timeout`, ...) taken off: its options
+    /// become a layer and apply to the command it runs.
+    fn take_off_wrapper(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        unwrapped: Unwrapped,
+        command: &mut Pending<'_>,
+        state: &mut State<'_>,
+    ) -> Next {
+        if unwrapped.runs_nothing {
+            self.record_command(command, state, Vec::new());
+            return Next::Done;
+        }
+        if unwrapped.consumed >= command.fields.len() {
+            if unwrapped.shell {
+                command.layers.push(Layer {
+                    name: name.to_string(),
+                    args: args[1..].to_vec(),
+                });
+                let feed = self.current_feed(&command.call);
+                self.record(
+                    &command.fields[..0],
+                    command.layers.clone(),
+                    &command.call,
+                    state,
+                    command.cwd.as_ref(),
+                    true,
+                    Vec::new(),
+                );
+                self.shell_stdin(feed, name, state);
+                return Next::Done;
+            }
+            if let Some(split) = unwrapped.split {
+                let call = std::mem::replace(&mut command.call, Call::bare());
+                let layers = std::mem::take(&mut command.layers);
+                self.env_split(split, &command.fields, layers, call, state);
+                return Next::Done;
+            }
+            self.record_command(command, state, Vec::new());
+            return Next::Done;
+        }
+        command.layers.push(Layer {
+            name: name.to_string(),
+            args: args[1..unwrapped.consumed].to_vec(),
+        });
+        command.call.env.extend(unwrapped.assignments);
+        if let Some(dir) = unwrapped.chdir {
+            let from = command.cwd.clone().unwrap_or_else(|| state.cwd.clone());
+            command.cwd = Some(relocate(&from, &dir, state));
+        }
+        if name == "chroot" {
+            command.cwd = Some(Cwd {
+                dirs: Vec::new(),
+                unknown: Some(shown_fields(&command.fields[..unwrapped.consumed])),
+            });
+        }
+        command.fields.drain(..unwrapped.consumed);
+        Next::Again
+    }
+
+    /// `xargs` / `parallel` taken off: the command runs with the arguments
+    /// it reads from stdin, or with the text the command fixes as its input.
+    fn take_off_xargs(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        command: &mut Pending<'_>,
+        state: &mut State<'_>,
+    ) -> Next {
+        let (start, replace) = xargs_command(name, args);
+        let start = start.min(command.fields.len());
+        command.layers.push(Layer {
+            name: name.to_string(),
+            args: args[1..start].to_vec(),
+        });
+        let input = Unknown {
+            prefix: String::new(),
+            written: format!("<arguments {name} reads from its stdin>"),
+            source: self.producer_text(),
+            input: true,
+        };
+        command.fields.drain(..start);
+        if command.fields.is_empty() {
+            command
+                .fields
+                .push(Field::of(Arg::Known("echo".to_string())));
+        }
+        if let Feed::Code(text) = self.current_feed(&command.call) {
+            // The input is text the command fixes (`printf ... | xargs
+            // bash`): run the command with it.
+            self.xargs_known(
+                &text,
+                replace.as_deref(),
+                &command.fields,
+                &command.layers,
+                &command.call,
+                state,
+            );
+            return Next::Done;
+        }
+        let Some(token) = replace else {
+            command.fields.push(Field::of(Arg::Unknown(input)));
+            return Next::Again;
+        };
+        // Each input line replaces the token: a field that is exactly the
+        // token is data; a token inside a longer field (`sh -c 'u="{}";
+        // ...'`) is a value spliced into that text.
+        let mut spliced = None;
+        for field in &mut command.fields {
+            let Some(text) = field.arg.known().map(str::to_string) else {
+                continue;
+            };
+            if text == token {
+                *field = Field::of(Arg::Unknown(Unknown {
+                    written: text,
+                    ..input.clone()
+                }));
+            } else if text.contains(&token) {
+                let placeholder = spliced
+                    .get_or_insert_with(|| self.placeholder(input.source.clone()))
+                    .clone();
+                *field = Field {
+                    code: Some(text.replace(&token, &placeholder)),
+                    ..Field::of(Arg::Unknown(Unknown {
+                        prefix: text.split(&token).next().unwrap_or_default().to_string(),
+                        written: text.clone(),
+                        ..input.clone()
+                    }))
+                };
+            }
+        }
+        Next::Again
+    }
+
+    /// Run the program a command resolved to: a builtin's effect on the
+    /// walk's state, or the code the program runs.
+    fn dispatch(&mut self, command: Pending<'_>, state: &mut State<'_>) {
+        let name = command
+            .fields
             .first()
             .and_then(|field| field.arg.known())
             .map_or_else(String::new, lower_base);
-        let cwd = cwd_override.clone();
+        if let Some(builtin) = Builtin::of(&name) {
+            self.record_command(&command, state, Vec::new());
+            self.apply_builtin(builtin, &name, &command, state);
+            return;
+        }
         match name.as_str() {
-            "cd" | "pushd" | "popd" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                change_directory(&name, &fields, &call.env, state);
-            }
-            "export" | "declare" | "typeset" | "local" | "readonly" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let flags = || {
-                    fields[1..]
-                        .iter()
-                        .filter_map(|field| field.arg.known())
-                        .filter(|text| text.starts_with('-'))
-                };
-                let export = match name.as_str() {
-                    "export" => !flags().any(|flag| flag.contains('n')),
-                    "declare" | "typeset" => flags().any(|flag| flag.contains('x')),
-                    _ => false,
-                };
-                for field in &fields[1..] {
-                    declare(field, state, export);
-                }
-            }
-            "unset" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                for field in &fields[1..] {
-                    if let Some(variable) = field.arg.known().filter(|text| !text.starts_with('-'))
-                    {
-                        state.vars.unset(variable);
-                        state.functions.remove(variable);
-                    }
-                }
-            }
-            "shopt" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let words: Vec<&str> = fields[1..]
-                    .iter()
-                    .filter_map(|field| field.arg.known())
-                    .collect();
-                if words.contains(&"expand_aliases") {
-                    if words.contains(&"-s") {
-                        state.expand_aliases = true;
-                    } else if words.contains(&"-u") {
-                        state.expand_aliases = false;
-                    }
-                }
-            }
-            "unalias" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                // bash's `unalias` takes only `-a`; any other option is a
-                // usage error that removes nothing.
-                let mut options_done = false;
-                let mut valid = true;
-                for field in &fields[1..] {
-                    match field.arg.known() {
-                        Some("--") if !options_done => options_done = true,
-                        Some(flag) if !options_done && flag.starts_with('-') && flag.len() > 1 => {
-                            valid &= flag[1..].chars().all(|letter| letter == 'a');
-                        }
-                        Some(_) | None => options_done = true,
-                    }
-                }
-                if !valid {
-                    return;
-                }
-                for field in &fields[1..] {
-                    match field.arg.known() {
-                        Some(flag)
-                            if flag.len() > 1
-                                && flag.starts_with('-')
-                                && flag[1..].chars().all(|letter| letter == 'a') =>
-                        {
-                            state.aliases.clear();
-                        }
-                        Some(alias) if !alias.starts_with('-') => {
-                            state.aliases.remove(alias);
-                        }
-                        Some(_) | None => {}
-                    }
-                }
-            }
-            "read" | "mapfile" | "readarray" | "getopts" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let source = match &call.feed {
-                    Some(Feed::Code(text) | Feed::Hidden(text) | Feed::Piped(text)) => text.clone(),
-                    Some(Feed::File(path)) => path.evidence(),
-                    Some(Feed::Kernel | Feed::Pipe) | None => self.producer_text(),
-                };
-                let mut skip = false;
-                for field in &fields[1..] {
-                    if skip {
-                        skip = false;
-                        continue;
-                    }
-                    match field.arg.known() {
-                        Some(flag) if flag.starts_with('-') => {
-                            skip = matches!(
-                                flag,
-                                "-a" | "-d"
-                                    | "-n"
-                                    | "-N"
-                                    | "-p"
-                                    | "-t"
-                                    | "-u"
-                                    | "-i"
-                                    | "-C"
-                                    | "-c"
-                                    | "-O"
-                                    | "-s"
-                            );
-                        }
-                        Some(variable) if wrappers::is_name(variable) => state.vars.assign(
-                            variable,
-                            Var {
-                                value: None,
-                                source: source.clone(),
-                            },
-                        ),
-                        Some(_) | None => {}
-                    }
-                }
-                if fields.len() == 1 || name != "read" {
-                    state.vars.assign(
-                        if name == "read" { "REPLY" } else { "MAPFILE" },
-                        Var {
-                            value: None,
-                            source,
-                        },
-                    );
-                }
-            }
-            "set" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let mut positional = None;
-                for (at, field) in fields.iter().enumerate().skip(1) {
-                    match field.arg.known() {
-                        Some("--") => {
-                            positional = Some(at + 1);
-                            break;
-                        }
-                        Some("-o")
-                            if fields.get(at + 1).and_then(|field| field.arg.known())
-                                == Some("allexport") =>
-                        {
-                            state.vars.set_allexport(true);
-                        }
-                        Some("+o")
-                            if fields.get(at + 1).and_then(|field| field.arg.known())
-                                == Some("allexport") =>
-                        {
-                            state.vars.set_allexport(false);
-                        }
-                        Some(flag) if flag.starts_with('-') && !flag.starts_with("--") => {
-                            if flag.contains('e') {
-                                self.errexit = true;
-                            }
-                            if flag.contains('a') {
-                                state.vars.set_allexport(true);
-                            }
-                        }
-                        Some(flag) if flag.starts_with('+') && flag.contains('a') => {
-                            state.vars.set_allexport(false);
-                        }
-                        Some(_) | None => {}
-                    }
-                }
-                if let Some(at) = positional {
-                    state.positional = fields[at..].iter().map(|field| field.arg.clone()).collect();
-                }
-            }
-            "hash" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                if fields[1..].iter().any(|field| {
-                    field
-                        .arg
-                        .known()
-                        .is_some_and(|flag| flag.starts_with('-') && flag.contains('r'))
-                }) {
-                    state.hashed.clear();
-                }
-                if let Some((path, names)) = hash_registration(&fields) {
-                    for registered in names {
-                        state.hashed.insert(registered, path.clone());
-                    }
-                }
-            }
             "eval" => {
-                let subs = Self::field_subs(&fields[1..], &call);
-                let code = self.joined_code(&fields[1..], state, &call.pieces);
-                self.record(&fields, layers, &call, state, cwd.as_ref(), false, subs);
-                let feed = self.current_feed(&call);
-                let scope = state.vars.begin_scope(&call.env);
-                self.code(&code, Via::Eval, state, Share::Shared, Some(feed), cwd);
+                let subs = Self::field_subs(&command.fields[1..], &command.call);
+                let code = self.joined_code(&command.fields[1..], state, &command.call.pieces);
+                self.record_command(&command, state, subs);
+                let feed = self.current_feed(&command.call);
+                let scope = state.vars.begin_scope(&command.call.env);
+                self.code(
+                    &code,
+                    Via::Eval,
+                    state,
+                    Share::Shared,
+                    Some(feed),
+                    command.cwd,
+                );
                 state.vars.end_scope(scope);
             }
-            "source" | "." => {
-                let subs = Self::field_subs(&fields[1..fields.len().min(2)], &call);
-                let shown = shown_fields(&fields);
-                self.record(&fields, layers, &call, state, cwd.as_ref(), false, subs);
-                if let Some(path) = fields.get(1).cloned() {
-                    let args = fields[2..].iter().map(|field| field.arg.clone()).collect();
-                    let feed = self.current_feed(&call);
-                    let scope = state.vars.begin_scope(&call.env);
-                    self.script_file(
-                        &path.arg,
-                        shown,
-                        state,
-                        Share::Shared,
-                        cwd,
-                        feed,
-                        args,
-                        Search::PathThenCwd,
-                    );
-                    state.vars.end_scope(scope);
-                }
-            }
-            "alias" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                for field in &fields[1..] {
-                    // A definition runs nothing: the body is judged where the
-                    // alias is used.
-                    if let Some((alias, body)) =
-                        field.arg.known().and_then(|text| text.split_once('='))
-                    {
-                        state.aliases.insert(alias.to_string(), body.to_string());
-                    }
-                }
-            }
-            "trap" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let action = fields[1..]
-                    .iter()
-                    .find(|field| field.arg.known() != Some("--"));
-                if let Some(action) = action {
-                    if action.arg.known().is_none_or(|text| !text.starts_with('-')) {
-                        let code = self.field_code(action, state, &call.pieces);
-                        // The handler may run before any later command (a
-                        // DEBUG or EXIT trap): what it changes may hold.
-                        let mut child = state.clone();
-                        self.code(&code, Via::Trap, &mut child, Share::Shared, None, None);
-                        state.cwd.union(&child.cwd);
-                    }
-                }
-            }
+            "source" | "." => self.run_source(&command, state),
             "watch" => {
-                let start = watch_command(&fields);
-                let code = self.joined_code(&fields[start..], state, &call.pieces);
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
+                let start = watch_command(&command.fields);
+                let code = self.joined_code(&command.fields[start..], state, &command.call.pieces);
+                self.record_command(&command, state, Vec::new());
                 let via = Via::Payload {
                     runner: "watch".to_string(),
                 };
-                self.code(&code, via, state, Share::Copy, None, cwd);
+                self.code(&code, via, state, Share::Copy, None, command.cwd);
             }
             "su" | "runuser" | "flock" | "script" => {
-                let flag = fields[1..].iter().position(|field| {
-                    matches!(
-                        field.arg.known(),
-                        Some("-c" | "--command" | "--session-command")
-                    )
-                });
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                if let Some(field) = flag.and_then(|at| fields.get(at + 2)) {
-                    let code = self.field_code(field, state, &call.pieces);
-                    let via = Via::Payload {
-                        runner: format!("{name} -c"),
-                    };
-                    let feed = self.current_feed(&call);
-                    self.code(&code, via, state, Share::Copy, Some(feed), cwd);
-                }
+                self.run_command_option(&name, &command, state);
             }
-            "ssh" | "autossh" => {
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
-                    state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
-                );
-                let args: Vec<Arg> = fields.iter().map(|field| field.arg.clone()).collect();
-                if let Some((host, start)) = wrappers::ssh_command(&args) {
-                    if start < fields.len() {
-                        let code = self.joined_code(&fields[start..], state, &call.pieces);
-                        let feed = self.current_feed(&call);
-                        let host = fields[host].arg.shown();
-                        let remote = Cwd {
-                            dirs: Vec::new(),
-                            unknown: Some(format!("ssh {host}")),
-                        };
-                        self.code(
-                            &code,
-                            Via::Remote { host },
-                            state,
-                            Share::Copy,
-                            Some(feed),
-                            Some(remote),
-                        );
-                    }
-                }
-            }
-            shell if wrappers::is_shell(shell) => {
-                let args: Vec<Arg> = fields.iter().map(|field| field.arg.clone()).collect();
-                // A login or interactive shell runs its startup files first.
-                let bash_env = call
-                    .env
+            "ssh" | "autossh" => self.run_ssh(&command, state),
+            shell if wrappers::is_shell(shell) => self.run_shell(shell, &command, state),
+            _ => self.run_program(&command, state),
+        }
+    }
+
+    /// `source FILE ARGS...`: the file's code runs in this shell.
+    fn run_source(&mut self, command: &Pending<'_>, state: &mut State<'_>) {
+        let fields = &command.fields;
+        let subs = Self::field_subs(&fields[1..fields.len().min(2)], &command.call);
+        let shown = shown_fields(fields);
+        self.record_command(command, state, subs);
+        let Some(path) = fields.get(1) else {
+            return;
+        };
+        let args = fields[2..].iter().map(|field| field.arg.clone()).collect();
+        let feed = self.current_feed(&command.call);
+        let scope = state.vars.begin_scope(&command.call.env);
+        self.script_file(
+            &path.arg,
+            shown,
+            state,
+            Share::Shared,
+            command.cwd.clone(),
+            feed,
+            args,
+            Search::PathThenCwd,
+        );
+        state.vars.end_scope(scope);
+    }
+
+    /// `su -c CODE`, `runuser`, `flock`, `script`: the code their `-c`
+    /// option runs.
+    fn run_command_option(&mut self, name: &str, command: &Pending<'_>, state: &mut State<'_>) {
+        let flag = command.fields[1..].iter().position(|field| {
+            matches!(
+                field.arg.known(),
+                Some("-c" | "--command" | "--session-command")
+            )
+        });
+        self.record_command(command, state, Vec::new());
+        if let Some(field) = flag.and_then(|at| command.fields.get(at + 2)) {
+            let code = self.field_code(field, state, &command.call.pieces);
+            let via = Via::Payload {
+                runner: format!("{name} -c"),
+            };
+            let feed = self.current_feed(&command.call);
+            self.code(
+                &code,
+                via,
+                state,
+                Share::Copy,
+                Some(feed),
+                command.cwd.clone(),
+            );
+        }
+    }
+
+    /// `ssh HOST CODE`: the code runs on the remote host.
+    fn run_ssh(&mut self, command: &Pending<'_>, state: &mut State<'_>) {
+        self.record_command(command, state, Vec::new());
+        let fields = &command.fields;
+        let args: Vec<Arg> = fields.iter().map(|field| field.arg.clone()).collect();
+        let Some((host, start)) = wrappers::ssh_command(&args) else {
+            return;
+        };
+        if start >= fields.len() {
+            return;
+        }
+        let code = self.joined_code(&fields[start..], state, &command.call.pieces);
+        let feed = self.current_feed(&command.call);
+        let host = fields[host].arg.shown();
+        let remote = Cwd {
+            dirs: Vec::new(),
+            unknown: Some(format!("ssh {host}")),
+        };
+        self.code(
+            &code,
+            Via::Remote { host },
+            state,
+            Share::Copy,
+            Some(feed),
+            Some(remote),
+        );
+    }
+
+    /// A shell: its startup files, then the code it runs (`-c` strings, a
+    /// script file, or its stdin).
+    fn run_shell(&mut self, shell: &str, command: &Pending<'_>, state: &mut State<'_>) {
+        let fields = &command.fields;
+        let args: Vec<Arg> = fields.iter().map(|field| field.arg.clone()).collect();
+        // A login or interactive shell runs its startup files first.
+        let bash_env = bash_env(&command.call.env, state);
+        for startup in startup_files(shell, &args, state.home().as_deref(), bash_env) {
+            let shown = format!(
+                "{} (startup file {})",
+                shown_fields(fields),
+                startup.shown()
+            );
+            self.script_file(
+                &startup,
+                shown,
+                state,
+                Share::Copy,
+                command.cwd.clone(),
+                Feed::Kernel,
+                Vec::new(),
+                Search::Literal,
+            );
+        }
+        match wrappers::shell_code(&args) {
+            ShellCode::Strings(codes) => self.run_shell_strings(&codes, command, state),
+            ShellCode::File(at) => {
+                let subs = Self::field_subs(&fields[at..=at], &command.call);
+                let shown = shown_fields(fields);
+                self.record_command(command, state, subs);
+                let script = fields[at].arg.clone();
+                let args = fields[at + 1..]
                     .iter()
-                    .rev()
-                    .find(|(name, _)| name == "BASH_ENV")
-                    .map(|(_, value)| value.clone())
-                    .or_else(|| match state.vars.get("BASH_ENV") {
-                        Lookup::Value(value) if !value.is_empty() => Some(Arg::Known(value)),
-                        Lookup::Value(_) | Lookup::Unset => None,
-                        Lookup::Unknown(source) => Some(Arg::Unknown(Unknown {
-                            prefix: String::new(),
-                            written: "$BASH_ENV".to_string(),
-                            source,
-                            input: false,
-                        })),
-                    });
-                for startup in startup_files(shell, &args, state.home().as_deref(), bash_env) {
-                    let shown = format!(
-                        "{} (startup file {})",
-                        shown_fields(&fields),
-                        startup.shown()
-                    );
-                    self.script_file(
-                        &startup,
-                        shown,
-                        state,
-                        Share::Copy,
-                        cwd.clone(),
-                        Feed::Kernel,
-                        Vec::new(),
-                        Search::Literal,
-                    );
-                }
-                match wrappers::shell_code(&args) {
-                    ShellCode::Strings(codes) => {
-                        let mut subs = Vec::new();
-                        let mut texts = Vec::new();
-                        for code in &codes {
-                            match code {
-                                CodeArg::Field(at) => {
-                                    subs.extend(Self::field_subs(&fields[*at..=*at], &call));
-                                    texts.push(self.field_code(&fields[*at], state, &call.pieces));
-                                }
-                                CodeArg::Glued(text) => texts.push(text.clone()),
-                            }
-                        }
-                        let first = codes.iter().find_map(|code| match code {
-                            CodeArg::Field(at) => Some(*at),
-                            CodeArg::Glued(_) => None,
-                        });
-                        let runner = shown_fields(
-                            &fields[..first.unwrap_or(fields.len()).min(fields.len())],
-                        );
-                        let after = first.map_or(fields.len(), |at| at + 1);
-                        let positional: Vec<Arg> = fields[after.min(fields.len())..]
-                            .iter()
-                            .skip(1)
-                            .map(|field| field.arg.clone())
-                            .collect();
-                        self.record(&fields, layers, &call, state, cwd.as_ref(), false, subs);
-                        let feed = self.current_feed(&call);
-                        for text in texts {
-                            let mut child = state.clone();
-                            child.positional.clone_from(&positional);
-                            let via = Via::Payload {
-                                runner: runner.clone(),
-                            };
-                            self.code(
-                                &text,
-                                via,
-                                &mut child,
-                                Share::Copy,
-                                Some(feed.clone()),
-                                cwd.clone(),
-                            );
-                        }
-                    }
-                    ShellCode::File(at) => {
-                        let subs = Self::field_subs(&fields[at..=at], &call);
-                        let shown = shown_fields(&fields);
-                        self.record(&fields, layers, &call, state, cwd.as_ref(), false, subs);
-                        let script = fields[at].arg.clone();
-                        let args = fields[at + 1..]
-                            .iter()
-                            .map(|field| field.arg.clone())
-                            .collect();
-                        let feed = self.current_feed(&call);
-                        self.script_file(
-                            &script,
-                            shown,
-                            state,
-                            Share::Copy,
-                            cwd,
-                            feed,
-                            args,
-                            Search::CwdThenPath,
-                        );
-                    }
-                    ShellCode::Stdin => {
-                        let feed = self.current_feed(&call);
-                        let subs = call.redirect_subs.clone();
-                        self.record(&fields, layers, &call, state, cwd.as_ref(), true, subs);
-                        self.shell_stdin(feed, &shown_fields(&fields), state);
-                    }
-                }
-            }
-            _ => {
-                self.note_write(&fields, &call, state);
-                self.record(
-                    &fields,
-                    layers,
-                    &call,
+                    .map(|field| field.arg.clone())
+                    .collect();
+                let feed = self.current_feed(&command.call);
+                self.script_file(
+                    &script,
+                    shown,
                     state,
-                    cwd.as_ref(),
-                    false,
-                    Vec::new(),
+                    Share::Copy,
+                    command.cwd.clone(),
+                    feed,
+                    args,
+                    Search::CwdThenPath,
                 );
-                // A shell script run by its path is read like `bash path`.
-                if let Some(word) = fields[0].arg.known().filter(|word| word.contains('/')) {
-                    let base = cwd.clone().unwrap_or_else(|| state.cwd.clone());
-                    let script = if word.starts_with('/') {
-                        Some(std::path::PathBuf::from(word))
-                    } else {
-                        base.dirs
-                            .iter()
-                            .map(|dir| join(dir, word))
-                            .find(|full| full.is_file())
-                    };
-                    if let Some(script) =
-                        script.filter(|full| !is_installed(full) && runs_as_shell_script(full))
-                    {
-                        let shown = shown_fields(&fields);
-                        let args = fields[1..].iter().map(|field| field.arg.clone()).collect();
-                        let feed = self.current_feed(&call);
-                        let path = Arg::Known(script.display().to_string());
-                        self.script_file(
-                            &path,
-                            shown,
-                            state,
-                            Share::Copy,
-                            cwd,
-                            feed,
-                            args,
-                            Search::Literal,
-                        );
-                    }
-                }
+            }
+            ShellCode::Stdin => {
+                let feed = self.current_feed(&command.call);
+                let subs = command.call.redirect_subs.clone();
+                self.record(
+                    fields,
+                    command.layers.clone(),
+                    &command.call,
+                    state,
+                    command.cwd.as_ref(),
+                    true,
+                    subs,
+                );
+                self.shell_stdin(feed, &shown_fields(fields), state);
             }
         }
+    }
+
+    /// A shell's `-c` strings, each run in a copy of the state with the
+    /// arguments after the code as its positional parameters.
+    fn run_shell_strings(
+        &mut self,
+        codes: &[CodeArg],
+        command: &Pending<'_>,
+        state: &mut State<'_>,
+    ) {
+        let fields = &command.fields;
+        let mut subs = Vec::new();
+        let mut texts = Vec::new();
+        for code in codes {
+            match code {
+                CodeArg::Field(at) => {
+                    subs.extend(Self::field_subs(&fields[*at..=*at], &command.call));
+                    texts.push(self.field_code(&fields[*at], state, &command.call.pieces));
+                }
+                CodeArg::Glued(text) => texts.push(text.clone()),
+            }
+        }
+        let first = codes.iter().find_map(|code| match code {
+            CodeArg::Field(at) => Some(*at),
+            CodeArg::Glued(_) => None,
+        });
+        let runner = shown_fields(&fields[..first.unwrap_or(fields.len()).min(fields.len())]);
+        let after = first.map_or(fields.len(), |at| at + 1);
+        let positional: Vec<Arg> = fields[after.min(fields.len())..]
+            .iter()
+            .skip(1)
+            .map(|field| field.arg.clone())
+            .collect();
+        self.record_command(command, state, subs);
+        let feed = self.current_feed(&command.call);
+        for text in texts {
+            let mut child = state.clone();
+            child.positional.clone_from(&positional);
+            let via = Via::Payload {
+                runner: runner.clone(),
+            };
+            self.code(
+                &text,
+                via,
+                &mut child,
+                Share::Copy,
+                Some(feed.clone()),
+                command.cwd.clone(),
+            );
+        }
+    }
+
+    /// Any other program: what it writes is noted, and a shell script run
+    /// by its path is read like `bash path`.
+    fn run_program(&mut self, command: &Pending<'_>, state: &mut State<'_>) {
+        let fields = &command.fields;
+        self.note_write(fields, &command.call, state);
+        self.record_command(command, state, Vec::new());
+        let Some(word) = fields[0].arg.known().filter(|word| word.contains('/')) else {
+            return;
+        };
+        let base = command.cwd.clone().unwrap_or_else(|| state.cwd.clone());
+        let script = if word.starts_with('/') {
+            Some(PathBuf::from(word))
+        } else {
+            base.dirs
+                .iter()
+                .map(|dir| join(dir, word))
+                .find(|full| full.is_file())
+        };
+        let Some(script) = script.filter(|full| !is_installed(full) && runs_as_shell_script(full))
+        else {
+            return;
+        };
+        let shown = shown_fields(fields);
+        let args = fields[1..].iter().map(|field| field.arg.clone()).collect();
+        let feed = self.current_feed(&command.call);
+        let path = Arg::Known(script.display().to_string());
+        self.script_file(
+            &path,
+            shown,
+            state,
+            Share::Copy,
+            command.cwd.clone(),
+            feed,
+            args,
+            Search::Literal,
+        );
     }
 
     /// `xargs` over input text the command fixes: one run per line with
@@ -1009,7 +798,7 @@ impl Walker {
 
     /// One field as code: its word's text with unknown parts as
     /// placeholders when the word made exactly this field.
-    fn field_code(
+    pub(super) fn field_code(
         &mut self,
         field: &Field<'_>,
         state: &State<'_>,
@@ -1358,178 +1147,23 @@ impl Walker {
     }
 }
 
-fn change_directory(
-    name: &str,
-    fields: &[Field<'_>],
-    env: &[(String, Arg)],
-    state: &mut State<'_>,
-) {
-    if name == "popd" {
-        state.cwd = Cwd {
-            dirs: Vec::new(),
-            unknown: Some("popd".to_string()),
-        };
-        return;
-    }
-    let target = fields[1..]
-        .iter()
-        .find(|field| {
-            field
-                .arg
-                .known()
-                .is_none_or(|text| !text.starts_with('-') || text == "-")
-        })
-        .map(|field| field.arg.clone());
-    // `HOME=dir cd` goes to the HOME of its own prefix.
-    let prefixed = env
-        .iter()
+/// The `$BASH_ENV` a non-interactive bash sources: the call's own prefix
+/// assignment, else the variable.
+fn bash_env(env: &[(String, Arg)], state: &State<'_>) -> Option<Arg> {
+    env.iter()
         .rev()
-        .find(|(name, _)| name == "HOME")
-        .map(|(_, value)| value.clone());
-    let target = target
-        .or(prefixed)
-        .unwrap_or_else(|| match state.vars.get("HOME") {
-            Lookup::Value(home) => Arg::Known(home),
-            Lookup::Unknown(source) => Arg::Unknown(Unknown {
+        .find(|(name, _)| name == "BASH_ENV")
+        .map(|(_, value)| value.clone())
+        .or_else(|| match state.vars.get("BASH_ENV") {
+            Lookup::Value(value) if !value.is_empty() => Some(Arg::Known(value)),
+            Lookup::Value(_) | Lookup::Unset => None,
+            Lookup::Unknown(source) => Some(Arg::Unknown(Unknown {
                 prefix: String::new(),
-                written: "cd ($HOME)".to_string(),
+                written: "$BASH_ENV".to_string(),
                 source,
                 input: false,
-            }),
-            Lookup::Unset => Arg::Known(String::new()),
-        });
-    let next = relocate(&state.cwd, &target, state);
-    state.cwd = next;
-}
-
-/// The directory `target` names from `base` (`cd` semantics, CDPATH
-/// included).
-fn relocate(base: &Cwd, target: &Arg, state: &State<'_>) -> Cwd {
-    let unknown = |why: String| Cwd {
-        dirs: Vec::new(),
-        unknown: Some(why),
-    };
-    let Arg::Known(text) = target else {
-        return unknown(format!("cd {}", target.shown()));
-    };
-    if text == "-" {
-        return unknown("cd -".to_string());
-    }
-    if text.is_empty() {
-        return base.clone();
-    }
-    let cdpath = match state.vars.get("CDPATH") {
-        Lookup::Value(value) => Some(value),
-        Lookup::Unknown(_) if !text.starts_with('/') && !text.starts_with('.') => {
-            return unknown(format!("cd {text} (CDPATH is set)"));
-        }
-        Lookup::Unknown(_) | Lookup::Unset => None,
-    };
-    let mut dirs = Vec::new();
-    for dir in &base.dirs {
-        let mut found = None;
-        if let Some(cdpath) = cdpath.as_deref().filter(|cdpath| !cdpath.is_empty()) {
-            let plain = !text.starts_with('/')
-                && !text.starts_with("./")
-                && !text.starts_with("../")
-                && text != "."
-                && text != "..";
-            if plain {
-                for entry in cdpath.split(':') {
-                    let root = if entry.is_empty() {
-                        dir.clone()
-                    } else {
-                        join(dir, entry)
-                    };
-                    let candidate = join(&root, text);
-                    if candidate.is_dir() {
-                        found = Some(candidate);
-                        break;
-                    }
-                }
-            }
-        }
-        let next = found.unwrap_or_else(|| join(dir, text));
-        if !dirs.contains(&next) {
-            dirs.push(next);
-        }
-    }
-    Cwd {
-        dirs,
-        unknown: base.unknown.clone(),
-    }
-}
-
-/// `export NAME=value` and friends; `export` marks the name exported.
-fn declare(field: &Field<'_>, state: &mut State<'_>, export: bool) {
-    let text = match &field.arg {
-        Arg::Known(text) => text.clone(),
-        Arg::Pattern(_) => return,
-        Arg::Unknown(unknown) => {
-            if let Some((name, _)) = unknown.prefix.split_once('=') {
-                let name = name.strip_suffix('+').unwrap_or(name);
-                if wrappers::is_name(name) {
-                    state.vars.assign(
-                        name,
-                        Var {
-                            value: None,
-                            source: format!("{} {}", unknown.written, unknown.source),
-                        },
-                    );
-                    if export {
-                        state.vars.export(name);
-                    }
-                }
-            }
-            return;
-        }
-    };
-    if let Some((name, value)) = text.split_once('=') {
-        let (name, append) = match name.strip_suffix('+') {
-            Some(name) => (name, true),
-            None => (name, false),
-        };
-        if wrappers::is_name(name) {
-            state.vars.assign(
-                name,
-                Var {
-                    value: (!append).then(|| value.to_string()),
-                    source: value.to_string(),
-                },
-            );
-            if export {
-                state.vars.export(name);
-            }
-        }
-    } else if export && wrappers::is_name(&text) {
-        state.vars.export(&text);
-    }
-}
-
-/// `hash -p PATH NAME...`.
-fn hash_registration(fields: &[Field<'_>]) -> Option<(Arg, Vec<String>)> {
-    let mut args = fields[1..].iter().map(|field| &field.arg);
-    let mut path = None;
-    while let Some(arg) = args.next() {
-        let text = arg.known()?;
-        if let Some(flags) = text.strip_prefix('-') {
-            if let Some(at) = flags.find('p') {
-                let glued = &flags[at + 1..];
-                path = if glued.is_empty() {
-                    args.next().cloned()
-                } else {
-                    Some(Arg::Known(glued.to_string()))
-                };
-                break;
-            }
-            continue;
-        }
-        return None;
-    }
-    let names = args
-        .filter_map(|arg| arg.known().map(str::to_string))
-        .collect();
-    Some((path?, names))
+            })),
+        })
 }
 
 /// Whether `path` is an installed program (under a system directory): run
