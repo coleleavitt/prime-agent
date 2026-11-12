@@ -213,6 +213,7 @@ impl TestRig {
 
 fn spawn_request(name: Option<&str>, model: Option<&str>) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        child_id: None,
         plan_mode: false,
         prompt: "ship the lane".to_string(),
         name: name.map(str::to_string),

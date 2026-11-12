@@ -272,6 +272,7 @@ async fn a_settled_child_passivates_stays_listable_and_revives_by_agent_message(
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("parked-kid".to_string()),
@@ -594,6 +595,7 @@ async fn a_parent_rename_after_a_revival_and_second_passivation_reaches_the_chil
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("parked-kid".to_string()),

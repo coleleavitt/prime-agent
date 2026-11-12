@@ -434,6 +434,7 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
@@ -766,6 +767,7 @@ async fn family_edges_never_cross_families_end_to_end() {
         });
         let handle = children
             .spawn(RlmSpawnRequest {
+                child_id: None,
                 plan_mode: false,
                 prompt: "work on the lane".to_string(),
                 name: Some(kid_name.to_string()),
@@ -914,6 +916,7 @@ async fn family_edges_never_cross_families_end_to_end() {
     });
     let grandkid_handle = kid_children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "grandkid work".to_string(),
             name: Some("grandkid".to_string()),
@@ -1202,6 +1205,7 @@ async fn parent_renames_a_child_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
@@ -1601,6 +1605,7 @@ async fn passivated_child_recent_messages_reads_its_file_end_to_end() {
     });
     children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "kid-a work".to_string(),
             name: Some("kid-a".to_string()),
@@ -1778,6 +1783,7 @@ async fn family_members_read_each_others_transcripts_end_to_end() {
         for kid in kids {
             let handle = children
                 .spawn(RlmSpawnRequest {
+                    child_id: None,
                     plan_mode: false,
                     prompt: format!("{kid} work"),
                     name: Some((*kid).to_string()),

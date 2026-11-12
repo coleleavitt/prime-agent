@@ -207,9 +207,31 @@ pub struct RlmChildResult {
 
 // Requests into the host
 
+/// The refusal for a pre-picked child id the host cannot place: its
+/// admission may have started before a restart, and the host keeps no
+/// record of it, so spawning it again could run its work twice. Callers
+/// match [`RLM_ADMISSION_UNKNOWN`] and leave the decision to the user.
+#[must_use]
+pub fn rlm_admission_unknown(child_id: &str) -> String {
+    format!(
+        "rlm.spawn: {RLM_ADMISSION_UNKNOWN}: child {child_id} may have been admitted before a \
+         restart, and this session keeps no record of it; it was not started again"
+    )
+}
+
+/// The marker of [`rlm_admission_unknown`]'s refusal.
+pub const RLM_ADMISSION_UNKNOWN: &str = "admission unknown";
+
 /// Validated `rlm.spawn` request handed to the child-session host.
 #[derive(Debug, Clone)]
 pub struct RlmSpawnRequest {
+    /// The child id the caller picked and recorded before the spawn (the
+    /// factory's run record, the workflow journal): a host that already
+    /// knows the child answers its handle instead of spawning again, and
+    /// one that may have admitted it before a restart without keeping a
+    /// record refuses with [`rlm_admission_unknown`]. `None`: the host
+    /// picks a fresh id.
+    pub child_id: Option<String>,
     pub prompt: String,
     /// Explicit session name; the host derives a default when absent.
     pub name: Option<String>,
@@ -423,17 +445,29 @@ pub fn rlm_child_session_dir(
     parent_session_id: Option<&str>,
     child_id: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
-    let base = match parent_session_id {
+    let base = rlm_child_session_dir_path(agent_dir, parent_session_id, child_id);
+    std::fs::create_dir_all(&base).map_err(|error| {
+        anyhow::anyhow!("create RLM child session dir {}: {error}", base.display())
+    })?;
+    Ok(base)
+}
+
+/// Where [`rlm_child_session_dir`] puts a child's session dir, without
+/// creating it: a spawn creates the dir before it creates the child, so
+/// its existence tells whether an admission got that far.
+#[must_use]
+pub fn rlm_child_session_dir_path(
+    agent_dir: &std::path::Path,
+    parent_session_id: Option<&str>,
+    child_id: &str,
+) -> std::path::PathBuf {
+    match parent_session_id {
         Some(session_id) => agent_dir
             .join("session-artifacts")
             .join(session_id)
             .join(child_id),
         None => std::env::temp_dir().join(format!("prime-agent-rlm-{child_id}")),
-    };
-    std::fs::create_dir_all(&base).map_err(|error| {
-        anyhow::anyhow!("create RLM child session dir {}: {error}", base.display())
-    })?;
-    Ok(base)
+    }
 }
 
 /// The last persisted `rlm_max_depth_state` custom entry in a session
@@ -866,6 +900,7 @@ fn spawn_request_from_payload(
             "model",
             "thinking",
             "target",
+            "child_id",
             "agent",
             "isolation",
             "cwd",
@@ -888,6 +923,17 @@ fn spawn_request_from_payload(
     // refuses until the backend exists.
     let target = optional_string_kwarg(&kwargs, "target", OPERATION)?;
     let target = normalize_requested_rlm_spawn_target(target, OPERATION)?;
+    let child_id = optional_string_kwarg(&kwargs, "child_id", OPERATION)?.map(str::to_string);
+    if let Some(child_id) = &child_id {
+        let hex = child_id.strip_prefix("sub-").unwrap_or_default();
+        if !(8..=32).contains(&hex.len())
+            || !hex
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            anyhow::bail!("{OPERATION} child_id must be \"sub-\" and 8 to 32 lowercase hex digits");
+        }
+    }
     let factory = match kwargs.get("factory") {
         None | Some(Value::Null) => None,
         Some(tag) => Some(serde_json::from_value(tag.clone()).map_err(|_| {
@@ -898,6 +944,7 @@ fn spawn_request_from_payload(
     };
     Ok((
         RlmSpawnRequest {
+            child_id,
             prompt: prompt.to_string(),
             name,
             model,

@@ -426,6 +426,7 @@ async fn rlm_children_key_the_roster_by_parent_path_and_child_id() {
 
     let handle = children
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "ship the roster lane".to_string(),
             name: Some("child-a".to_string()),

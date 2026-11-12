@@ -171,6 +171,7 @@ mod tests {
 
     fn request() -> RlmSpawnRequest {
         RlmSpawnRequest {
+            child_id: None,
             prompt: "task".into(),
             name: Some("kid".into()),
             model: None,

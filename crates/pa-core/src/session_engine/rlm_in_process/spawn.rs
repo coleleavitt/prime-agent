@@ -35,7 +35,26 @@ pub(super) fn spawn(
         let parent_engine = parent_engine
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("the parent session is no longer running"))?;
-        let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        // A pre-picked id the host already holds is adopted (the caller
+        // re-spawns after its own restart); the in-process children live
+        // and die with this host, so an unknown id is a fresh spawn.
+        let child_id = match request.child_id.clone() {
+            Some(child_id) => {
+                for record in host.children().await {
+                    if record.rlm_child_id == child_id {
+                        let model = record.engine.session.agent().state().await.model;
+                        return Ok(RlmSpawnHandle {
+                            rlm_child_id: child_id,
+                            name: record.session_name.clone(),
+                            session_dir: record.session_dir.clone(),
+                            model: format!("{}/{}", model.provider, model.id),
+                        });
+                    }
+                }
+                child_id
+            }
+            None => format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
+        };
         let name = request.name.clone().unwrap_or_else(|| {
             create_default_rlm_subagent_session_name(&request.prompt, &child_id)
         });

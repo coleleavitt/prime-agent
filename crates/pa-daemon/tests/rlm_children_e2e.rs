@@ -235,6 +235,7 @@ fn wait_until<T>(deadline: Duration, mut probe: impl FnMut() -> Option<T>) -> T 
 
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        child_id: None,
         plan_mode: false,
         prompt: prompt.to_string(),
         name: Some(name.to_string()),

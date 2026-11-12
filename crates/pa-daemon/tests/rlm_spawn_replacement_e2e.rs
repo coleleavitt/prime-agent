@@ -231,6 +231,7 @@ fn children(socket: &Path, agent_dir: &Path, script: &Path) -> SupervisorChildSe
 
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        child_id: None,
         plan_mode: false,
         prompt: prompt.to_string(),
         name: Some(name.to_string()),

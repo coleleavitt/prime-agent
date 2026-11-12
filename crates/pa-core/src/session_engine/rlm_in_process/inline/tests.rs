@@ -91,6 +91,7 @@ async fn spawn_waiting_for_admission_rejects_a_disposed_parent() {
     Arc::get_mut(&mut node).unwrap().max_depth = 2;
     let gate = node.spawn_gate.lock().await;
     let mut spawn = InlineHost(Arc::clone(&node)).spawn(RlmSpawnRequest {
+        child_id: None,
         prompt: "finish the task".to_string(),
         name: Some("late".to_string()),
         model: None,

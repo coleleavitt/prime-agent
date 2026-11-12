@@ -160,6 +160,7 @@ async fn sessions_with_gated_supervisor(
 
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        child_id: None,
         plan_mode: false,
         prompt: prompt.to_string(),
         name: Some(name.to_string()),
@@ -613,5 +614,64 @@ async fn a_child_create_inherits_the_parents_resource_exclusions() {
             (Value::Null, Value::Null, Value::Null),
             (Value::Null, json!(true), json!(true)),
         ]
+    );
+}
+
+/// A pre-picked child id is idempotent: a spawn that repeats a known id
+/// adopts the child (the same handle, no second create), and an unknown id
+/// whose child dir exists may have been admitted before a restart, so it is
+/// refused without a create.
+#[tokio::test]
+async fn a_pre_picked_child_id_adopts_a_known_child_and_refuses_an_unknown_admission() {
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions =
+        sessions_with_gated_supervisor(create_seen_tx, verdict_rx, rename_seen_tx, None).await;
+    let root = sessions.inner.agent_dir.clone();
+    sessions.set_identity(ParentIdentity {
+        model: Some("mock/mock-1".to_string()),
+        cwd: Some(root.to_string_lossy().to_string()),
+        session_id: Some("parent-file".to_string()),
+        ..ParentIdentity::with_default_depth()
+    });
+    let picked = |child_id: &str, name: &str| RlmSpawnRequest {
+        child_id: Some(child_id.to_string()),
+        ..spawn_request(name, "the task")
+    };
+    verdict_tx.send(true).unwrap();
+    let first = sessions
+        .spawn(picked("sub-0123abcd", "adopted"))
+        .await
+        .expect("the first spawn admits");
+    create_seen_rx.recv().await.expect("one create");
+    let again = sessions
+        .spawn(picked("sub-0123abcd", "adopted"))
+        .await
+        .expect("the repeated id adopts");
+    assert_eq!(
+        (again.rlm_child_id, again.name, again.session_dir),
+        (first.rlm_child_id, first.name, first.session_dir)
+    );
+
+    std::fs::create_dir_all(
+        pa_core::session_engine::rlm_host::rlm_child_session_dir_path(
+            &root,
+            Some("parent-file"),
+            "sub-89abcdef",
+        ),
+    )
+    .unwrap();
+    let refused = sessions
+        .spawn(picked("sub-89abcdef", "lost"))
+        .await
+        .expect_err("an unknown admission is refused");
+    assert_eq!(
+        refused.to_string(),
+        pa_core::session_engine::rlm_host::rlm_admission_unknown("sub-89abcdef")
+    );
+    assert!(
+        create_seen_rx.try_recv().is_err(),
+        "neither the adoption nor the refusal creates a child"
     );
 }

@@ -793,7 +793,20 @@ impl RlmSubagentHost for InlineHost {
                     );
                 }
             }
-            let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+            let child_id = request.child_id.clone().unwrap_or_else(|| {
+                format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8])
+            });
+            // A pre-picked id this run already holds is adopted, never spawned twice.
+            for child in node.children.lock().await.iter() {
+                if child.rlm_child_id == child_id {
+                    return Ok(RlmSpawnHandle {
+                        rlm_child_id: child_id,
+                        name: child.node.session_name().unwrap_or_default(),
+                        session_dir: child.node.session_dir.clone(),
+                        model: format!("{}/{}", child.model.provider, child.model.id),
+                    });
+                }
+            }
             let name = request.name.clone().unwrap_or_else(|| {
                 crate::kernel::rlm_runtime::create_default_rlm_subagent_session_name(
                     &request.prompt,

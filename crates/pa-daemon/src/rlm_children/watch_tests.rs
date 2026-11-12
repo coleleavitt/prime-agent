@@ -481,6 +481,7 @@ async fn sessions_with_fake_child_subagents(
 async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
     sessions
         .spawn(RlmSpawnRequest {
+            child_id: None,
             plan_mode: false,
             prompt: "f20 child task".to_string(),
             name: Some("f20-worker".to_string()),
@@ -523,6 +524,7 @@ async fn a_factory_child_settles_without_a_parent_notice() {
         sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
     sessions
         .spawn(RlmSpawnRequest {
+            child_id: None,
             prompt: "f20 child task".to_string(),
             name: Some("f20-worker".to_string()),
             model: None,

@@ -136,7 +136,39 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     identity.rlm_max_depth
                 ));
             }
-            let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+            // A caller that recorded its child id before the spawn (the
+            // factory record, the workflow journal) re-spawns with it after
+            // a restart: a child this host knows is adopted, never spawned
+            // twice; one whose dir exists without a record may have been
+            // admitted mid-crash, and the caller decides.
+            let child_id = match request.child_id.clone() {
+                Some(child_id) => {
+                    for record in this.children.lock().await.iter() {
+                        let record = record.lock().await;
+                        if record.rlm_child_id == child_id {
+                            return Ok(RlmSpawnHandle {
+                                rlm_child_id: child_id,
+                                name: record.session_name.clone(),
+                                session_dir: record.session_dir.clone(),
+                                model: record.model.clone(),
+                            });
+                        }
+                    }
+                    if pa_core::session_engine::rlm_host::rlm_child_session_dir_path(
+                        &this.agent_dir,
+                        identity.session_id.as_deref(),
+                        &child_id,
+                    )
+                    .exists()
+                    {
+                        bail!(pa_core::session_engine::rlm_host::rlm_admission_unknown(
+                            &child_id
+                        ));
+                    }
+                    child_id
+                }
+                None => format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
+            };
             let name = request.name.clone().unwrap_or_else(|| {
                 create_default_rlm_subagent_session_name(&request.prompt, &child_id)
             });
