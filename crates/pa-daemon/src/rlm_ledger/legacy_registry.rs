@@ -68,6 +68,19 @@ pub struct RlmSubagentDisplayEntry {
     pub status: String,
     #[serde(default)]
     pub created_at: u64,
+    /// How many restarted parents adopted this child while it still ran
+    /// (written before each adoption; capped like Claude Code's
+    /// `restartResumes`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub restart_adoptions: u32,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip predicate takes the field by reference"
+)]
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 /// Read one child's display entry; `None` when absent, unreadable, or not

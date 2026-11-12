@@ -532,33 +532,98 @@ impl SupervisorChildSessionsInner {
     /// Rebuild the children registry from the spawn ledger (TS
     /// `listPassiveRlmSubagents`): a restarted parent worker lists its
     /// non-deleted ledger children again, addressed by their durable
-    /// session ids. Every reseeded row is settled (nothing is owed), and
-    /// its usage cursor starts lazy: the first delivery primes it at the
-    /// file's tail.
-    pub(super) async fn reseed_from_ledger(&self) {
-        let Some(parent_file) = self.identity.lock_or_recover().session_file.clone() else {
+    /// session ids, and its usage cursor starts lazy: the first delivery
+    /// primes it at the file's tail.
+    ///
+    /// A child whose run never completed (its display still reads
+    /// `running`) and whose worker is still reachable survived the parent's
+    /// restart: it is adopted (Claude Code resumes a cut-off agent instead of
+    /// launching a new one), so its watcher settles it - at once when it
+    /// finished while the parent was down - its answer is captured and its
+    /// notice is owed again. Every other row is settled from its display
+    /// verdict. The adoption count is
+    /// written to the child's display before the adoption, and a child
+    /// adopted [`RLM_RESTART_ADOPTIONS_MAX`] times is not adopted again
+    /// (Claude Code's `restartResumes` cap), so a crash loop cannot adopt
+    /// it forever.
+    pub(super) async fn reseed_from_ledger(this: &Arc<Self>) {
+        let Some(parent_file) = this.identity.lock_or_recover().session_file.clone() else {
             return;
         };
-        let agent_dir = self.agent_dir.clone();
-        let supervisor_socket = self.link.socket_path().clone();
+        let agent_dir = this.agent_dir.clone();
+        let supervisor_socket = this.link.socket_path().clone();
         let parent_file_read = parent_file.clone();
-        let records = tokio::task::spawn_blocking(move || {
+        let records: Vec<_> = tokio::task::spawn_blocking(move || {
             ledger_child_records(&agent_dir, &supervisor_socket, Path::new(&parent_file_read))
         })
         .await
-        .unwrap_or_default();
-        let mut children = self.children.lock().await;
-        // A swap rebound the identity mid-read: its own reseed lists the new session's children.
-        if self.identity.lock_or_recover().session_file.as_deref() != Some(parent_file.as_str()) {
-            return;
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| Arc::new(Mutex::new(record)))
+        .collect();
+        {
+            let mut children = this.children.lock().await;
+            // A swap rebound the identity mid-read: its own reseed lists the new session's children.
+            if this.identity.lock_or_recover().session_file.as_deref() != Some(parent_file.as_str())
+            {
+                return;
+            }
+            children.extend(records.iter().map(Arc::clone));
         }
-        children.extend(
-            records
-                .into_iter()
-                .map(|record| Arc::new(Mutex::new(record))),
-        );
+        for record in records {
+            // A display still `running` relists as `error`: the run never
+            // completed, so its child may still be working.
+            let (active_session_id, session_dir, child_id) = {
+                let record = record.lock().await;
+                if record.settled_status != Some("error") {
+                    continue;
+                }
+                (
+                    record.active_session_id.clone(),
+                    record.session_dir.clone(),
+                    record.rlm_child_id.clone(),
+                )
+            };
+            // A reachable worker survived the restart (busy, or idle with a
+            // run whose settle the old parent never finished); an
+            // unreachable one died, and its relisted verdict stands.
+            if this.child_busy(&active_session_id).await.is_err() {
+                continue;
+            }
+            let counted = tokio::task::spawn_blocking(move || {
+                let mut display =
+                    crate::rlm_ledger::read_rlm_subagent_display(Path::new(&session_dir))?;
+                if display.child_id != child_id
+                    || display.restart_adoptions >= RLM_RESTART_ADOPTIONS_MAX
+                {
+                    return None;
+                }
+                display.restart_adoptions += 1;
+                crate::rlm_ledger::write_rlm_subagent_display(&display).ok()
+            })
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+            if !counted {
+                continue;
+            }
+            {
+                let mut record = record.lock().await;
+                record.settled_status = None;
+                record.settled = false;
+                record.notice_delivered = false;
+            }
+            this.emit_child_update(&record).await;
+            let watcher = Arc::clone(this);
+            tokio::spawn(async move { watcher.watch_child_settle(&record).await });
+        }
     }
 }
+
+/// How many parent restarts may adopt one still-running child (Claude
+/// Code's `restartResumes` cap).
+pub(crate) const RLM_RESTART_ADOPTIONS_MAX: u32 = 5;
 
 /// One parent file's non-deleted ledger edges as settled registry rows
 /// (TS `listPassiveRlmSubagents`), read from the ledger the supervisor

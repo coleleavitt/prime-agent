@@ -614,6 +614,7 @@ impl Supervisor {
         // best-effort because the ledger tombstone is the authority.
         let display = crate::rlm_ledger::read_rlm_subagent_display(Path::new(&session_dir));
         let tombstone = crate::rlm_ledger::RlmSubagentDisplayEntry {
+            restart_adoptions: 0,
             type_tag: "rlm_subagent".to_string(),
             child_id: child_id.clone(),
             session_name: display

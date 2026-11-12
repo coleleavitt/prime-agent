@@ -3585,3 +3585,122 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
     assert_eq!(record.answer_text.as_deref(), Some("the captured say"));
     assert!(record.answer_captured);
 }
+
+/// A child still working when its parent's worker restarted survived the
+/// restart: the reseed adopts it (its watcher settles it and its notice
+/// carries its answer) and counts the adoption on its display first; a child
+/// already adopted [`super::registry::RLM_RESTART_ADOPTIONS_MAX`] times is
+/// relisted as interrupted instead (Claude Code's `restartResumes` cap).
+#[tokio::test]
+async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let child_subagents = Arc::new(FakeChildSubagents::default());
+    *child_subagents.live_state.lock().unwrap() = Some(json!({
+        "isStreaming": true,
+        "sessionActions": { "queuedCount": 0 },
+    }));
+    let (sessions, _kill_rx) = sessions_with_fake_child_subagents(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::Healthy,
+        Arc::clone(&child_subagents),
+    )
+    .await;
+    let agent = sessions.inner.agent_dir.clone();
+    let daemon_sessions = agent.join("daemon-sessions");
+    let parent = daemon_sessions.join("P.jsonl");
+    std::fs::create_dir_all(&daemon_sessions).unwrap();
+    std::fs::write(&parent, "").unwrap();
+    let parent = parent.display().to_string();
+    let mut ledger = vec![r#"{"v":1,"op":"meta","at":"2026-09-30T00:00:00Z"}"#.to_string()];
+    for (child_id, stem, adoptions) in [
+        ("sub-run", "child-live", 0),
+        ("sub-capped", "child-capped", 5),
+    ] {
+        let session_dir = agent.join("session-artifacts/P").join(child_id);
+        let child = session_dir.join(format!("{stem}.jsonl"));
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(&child, "").unwrap();
+        let child = child.display().to_string();
+        crate::rlm_ledger::write_rlm_subagent_display(
+            &crate::rlm_ledger::RlmSubagentDisplayEntry {
+                type_tag: "rlm_subagent".to_string(),
+                child_id: child_id.to_string(),
+                session_name: child_id.to_string(),
+                session_dir: session_dir.display().to_string(),
+                session_file: child.clone(),
+                rlm_parent_node_id: None,
+                prompt: None,
+                spawn_code: None,
+                model: None,
+                status: "running".to_string(),
+                created_at: 1234,
+                restart_adoptions: adoptions,
+            },
+        )
+        .unwrap();
+        ledger.push(format!(
+            r#"{{"v":1,"op":"spawn","at":"2026-09-30T00:00:00Z","childId":"{child_id}","parent":"{parent}","child":"{child}","depth":1,"name":"{child_id}"}}"#
+        ));
+    }
+    let ledger_path = crate::rlm_ledger::rlm_ledger_path(&agent, &daemon_sessions);
+    std::fs::create_dir_all(ledger_path.parent().expect("ledger dir")).unwrap();
+    std::fs::write(ledger_path, ledger.join("\n")).unwrap();
+    let supervisor_socket = sessions.inner.link.socket_path().clone();
+    crate::descriptor::persist_supervisor_config(
+        &crate::descriptor::descriptor_dir(&agent, &supervisor_socket)
+            .join(crate::descriptor::SUPERVISOR_CONFIG_FILE_NAME),
+        &crate::descriptor::PersistedSupervisorConfig {
+            version: 1,
+            socket_path: supervisor_socket.to_string_lossy().to_string(),
+            default_session_dir: Some(daemon_sessions.display().to_string()),
+        },
+    )
+    .unwrap();
+    sessions.set_identity(ParentIdentity {
+        session_file: Some(parent),
+        ..ParentIdentity::with_default_depth()
+    });
+
+    sessions.reseed_from_ledger().await;
+    let roster: Vec<(String, &str)> = sessions
+        .list_subagents()
+        .await
+        .expect("the roster read")
+        .into_iter()
+        .map(|row| (row.rlm_child_id, row.status))
+        .collect();
+    assert_eq!(
+        roster,
+        [
+            ("sub-run".to_string(), "running"),
+            ("sub-capped".to_string(), "error")
+        ]
+    );
+    let adoptions = |child_id: &str| {
+        crate::rlm_ledger::read_rlm_subagent_display(
+            &agent.join("session-artifacts/P").join(child_id),
+        )
+        .map(|display| display.restart_adoptions)
+    };
+    assert_eq!(
+        (adoptions("sub-run"), adoptions("sub-capped")),
+        (Some(1), Some(5))
+    );
+
+    // The adopted child finishes: its watcher delivers the owed notice.
+    *child_subagents.live_state.lock().unwrap() = None;
+    let notice = tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the adopted child's notice")
+        .expect("follow-up channel open");
+    let content = notice["customMessage"]["content"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        content.contains("<task-id>sub-run</task-id>")
+            && content.contains("<result>the child final answer</result>"),
+        "{content}"
+    );
+}

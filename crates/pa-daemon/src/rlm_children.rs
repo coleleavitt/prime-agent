@@ -690,7 +690,7 @@ impl SupervisorChildSessions {
     /// Rebuild the children registry from the spawn ledger (a restarted
     /// parent lists its ledger children again).
     pub async fn reseed_from_ledger(&self) {
-        self.inner.reseed_from_ledger().await;
+        SupervisorChildSessionsInner::reseed_from_ledger(&self.inner).await;
     }
 
     /// The inherited RLM depth bound (TS `getRlmMaxDepthStatus().maxDepth`
