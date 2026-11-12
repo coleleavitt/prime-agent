@@ -136,7 +136,7 @@ impl RefusalGuard {
         body: &serde_json::Value,
         _override_floor: Option<usize>,
     ) -> FilterResult {
-        let text = Self::extract_body_text(body);
+        let text = SurrogateModel::extract_body_text(body);
         let classification = self.filter.classify(&text);
 
         let (rewritten, rewrites_applied) = if matches!(
@@ -197,7 +197,7 @@ impl RefusalGuard {
         };
 
         let score_after = rewritten.as_ref().map_or(classification.score, |w| {
-            let retext = Self::extract_body_text(w);
+            let retext = SurrogateModel::extract_body_text(w);
             self.filter.classify(&retext).score
         });
 
@@ -209,48 +209,6 @@ impl RefusalGuard {
             score_after,
             classification,
         }
-    }
-
-    fn extract_body_text(body: &serde_json::Value) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
-            for message in messages {
-                let c = message.get("content");
-                match c {
-                    Some(serde_json::Value::String(s)) => parts.push(s.clone()),
-                    Some(serde_json::Value::Array(arr)) => {
-                        for block in arr {
-                            if let Some(b) = block.as_object() {
-                                if let Some(s) = b.get("text").and_then(|t| t.as_str()) {
-                                    parts.push(s.to_string());
-                                }
-                                if let Some(s) = b.get("thinking").and_then(|t| t.as_str()) {
-                                    parts.push(s.to_string());
-                                }
-                                if let Some(s) = b.get("content").and_then(|t| t.as_str()) {
-                                    parts.push(s.to_string());
-                                } else if let Some(content_arr) =
-                                    b.get("content").and_then(|t| t.as_array())
-                                {
-                                    for part in content_arr {
-                                        if let Some(s) = part.as_str() {
-                                            parts.push(s.to_string());
-                                        }
-                                    }
-                                }
-                                if b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                                    && let Some(input) = b.get("input")
-                                {
-                                    parts.push(serde_json::to_string(input).unwrap_or_default());
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        parts.join("\n")
     }
 }
 
