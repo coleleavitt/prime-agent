@@ -594,6 +594,7 @@ impl SupervisorChildSessionsInner {
                 let mut display =
                     crate::rlm_ledger::read_rlm_subagent_display(Path::new(&session_dir))?;
                 if display.child_id != child_id
+                    || display.notified
                     || display.restart_adoptions >= RLM_RESTART_ADOPTIONS_MAX
                 {
                     return None;

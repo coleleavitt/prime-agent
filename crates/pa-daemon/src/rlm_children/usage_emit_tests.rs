@@ -263,6 +263,7 @@ async fn reseed_lists_live_ledger_children_settled_and_bills_only_after_a_delive
     ] {
         crate::rlm_ledger::write_rlm_subagent_display(
             &crate::rlm_ledger::RlmSubagentDisplayEntry {
+                notified: false,
                 restart_adoptions: 0,
                 type_tag: "rlm_subagent".to_string(),
                 child_id: child_id.to_string(),

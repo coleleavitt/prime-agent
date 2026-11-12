@@ -755,6 +755,7 @@ fn display_entries_round_trip_and_tombstones_stick() {
     let child_dir = dir.join("sub-1");
     fs::create_dir_all(&child_dir).unwrap();
     let entry = RlmSubagentDisplayEntry {
+        notified: false,
         restart_adoptions: 0,
         type_tag: "rlm_subagent".into(),
         child_id: "sub-1".into(),
@@ -784,6 +785,7 @@ fn display_entry_file_is_owner_only() {
     let child_dir = dir.join("sub-1");
     fs::create_dir_all(&child_dir).unwrap();
     let entry = RlmSubagentDisplayEntry {
+        notified: false,
         restart_adoptions: 0,
         type_tag: "rlm_subagent".into(),
         child_id: "sub-1".into(),

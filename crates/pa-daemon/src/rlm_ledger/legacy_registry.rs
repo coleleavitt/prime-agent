@@ -73,6 +73,11 @@ pub struct RlmSubagentDisplayEntry {
     /// `restartResumes`).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub restart_adoptions: u32,
+    /// The parent claimed this run's terminal notice (Claude Code's one-shot
+    /// `notified` claim, made durable): a restarted parent never adopts the
+    /// run again, so it never notifies twice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notified: bool,
 }
 
 #[expect(

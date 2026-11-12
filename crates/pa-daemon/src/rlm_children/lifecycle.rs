@@ -1008,7 +1008,35 @@ impl SupervisorChildSessionsInner {
         record: &Arc<Mutex<ChildRecord>>,
         message: CustomMessage,
     ) {
-        if record.lock().await.factory {
+        // The claim is durable before the delivery (Claude Code's one-shot
+        // `notified` claim): a parent that restarts after this point never
+        // adopts the run again, so it never notifies twice.
+        let (session_dir, child_id, factory) = {
+            let record = record.lock().await;
+            (
+                record.session_dir.clone(),
+                record.rlm_child_id.clone(),
+                record.factory,
+            )
+        };
+        let persisted = tokio::task::spawn_blocking(move || {
+            let Some(mut display) =
+                crate::rlm_ledger::read_rlm_subagent_display(Path::new(&session_dir))
+            else {
+                return Ok(false);
+            };
+            if display.child_id != child_id || display.notified {
+                return Ok(false);
+            }
+            display.notified = true;
+            crate::rlm_ledger::write_rlm_subagent_display(&display)
+        })
+        .await
+        .unwrap_or_else(|error| Err(anyhow!(error)));
+        if let Err(error) = persisted {
+            eprintln!("pa-daemon: RLM child notice claim was not persisted: {error:#}");
+        }
+        if factory {
             return;
         }
         let Some(content) = custom_message_text(&message) else {

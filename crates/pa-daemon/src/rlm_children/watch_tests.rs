@@ -3590,9 +3590,11 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
 /// restart: the reseed adopts it (its watcher settles it and its notice
 /// carries its answer) and counts the adoption on its display first; a child
 /// already adopted [`super::registry::RLM_RESTART_ADOPTIONS_MAX`] times is
-/// relisted as interrupted instead (Claude Code's `restartResumes` cap).
+/// relisted as interrupted instead (Claude Code's `restartResumes` cap), and so
+/// is a child whose notice the old parent already claimed (never notified
+/// twice).
 #[tokio::test]
-async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
+async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap_but_never_a_notified_one() {
     let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
     let child_subagents = Arc::new(FakeChildSubagents::default());
     *child_subagents.live_state.lock().unwrap() = Some(json!({
@@ -3614,9 +3616,10 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
     std::fs::write(&parent, "").unwrap();
     let parent = parent.display().to_string();
     let mut ledger = vec![r#"{"v":1,"op":"meta","at":"2026-09-30T00:00:00Z"}"#.to_string()];
-    for (child_id, stem, adoptions) in [
-        ("sub-run", "child-live", 0),
-        ("sub-capped", "child-capped", 5),
+    for (child_id, stem, adoptions, notified) in [
+        ("sub-run", "child-live", 0, false),
+        ("sub-capped", "child-capped", 5, false),
+        ("sub-noticed", "child-noticed", 0, true),
     ] {
         let session_dir = agent.join("session-artifacts/P").join(child_id);
         let child = session_dir.join(format!("{stem}.jsonl"));
@@ -3637,6 +3640,7 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
                 status: "running".to_string(),
                 created_at: 1234,
                 restart_adoptions: adoptions,
+                notified,
             },
         )
         .unwrap();
@@ -3675,7 +3679,8 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
         roster,
         [
             ("sub-run".to_string(), "running"),
-            ("sub-capped".to_string(), "error")
+            ("sub-capped".to_string(), "error"),
+            ("sub-noticed".to_string(), "error")
         ]
     );
     let adoptions = |child_id: &str| {
@@ -3685,8 +3690,12 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
         .map(|display| display.restart_adoptions)
     };
     assert_eq!(
-        (adoptions("sub-run"), adoptions("sub-capped")),
-        (Some(1), Some(5))
+        (
+            adoptions("sub-run"),
+            adoptions("sub-capped"),
+            adoptions("sub-noticed")
+        ),
+        (Some(1), Some(5), Some(0))
     );
 
     // The adopted child finishes: its watcher delivers the owed notice.
@@ -3703,4 +3712,45 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap() {
             && content.contains("<result>the child final answer</result>"),
         "{content}"
     );
+}
+
+/// The notice claim is durable (Claude Code's one-shot `notified` claim): the
+/// parent marks the child's display before it delivers a failure notice, so a
+/// parent restarted afterwards never adopts the run and notifies it again.
+#[tokio::test]
+async fn a_delivered_failure_notice_marks_the_childs_display_notified() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) = sessions_with_fake_supervisor(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::FinalTurnFails,
+    )
+    .await;
+    let handle = spawn_child(&sessions).await;
+    let display = crate::rlm_ledger::RlmSubagentDisplayEntry {
+        type_tag: "rlm_subagent".to_string(),
+        child_id: handle.rlm_child_id.clone(),
+        session_name: handle.name.clone(),
+        session_dir: handle.session_dir.clone(),
+        session_file: String::new(),
+        rlm_parent_node_id: None,
+        prompt: None,
+        spawn_code: None,
+        model: None,
+        status: "running".to_string(),
+        created_at: 1234,
+        restart_adoptions: 0,
+        notified: false,
+    };
+    crate::rlm_ledger::write_rlm_subagent_display(&display).unwrap();
+    sessions.notify_turn_done();
+    tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the failure notice")
+        .expect("follow-up channel open");
+    let read = crate::rlm_ledger::read_rlm_subagent_display(Path::new(&handle.session_dir))
+        .expect("the display stays");
+    assert_eq!((read.status.as_str(), read.notified), ("running", true));
+    let _ = std::fs::remove_dir_all(&handle.session_dir);
 }
