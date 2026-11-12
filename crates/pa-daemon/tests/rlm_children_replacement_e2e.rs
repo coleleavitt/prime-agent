@@ -561,8 +561,11 @@ fn a_daemon_restart_relists_and_wakes_the_parents_child() {
     restart_relists_child(0, "completed");
 }
 
+/// A daemon shutdown stops a child mid-run, and the restarted daemon revives
+/// it to continue its task: the reattached parent adopts the child instead of
+/// relisting it as failed.
 #[test]
-fn a_daemon_restart_marks_a_still_running_child_as_failed() {
+fn a_daemon_restart_adopts_a_child_the_boot_revives() {
     restart_relists_child(30_000, "running");
 }
 
@@ -731,21 +734,14 @@ fn restart_relists_child(delay_ms: u64, display_status: &str) {
         "the probe cell failed: {}",
         std::fs::read_to_string(&probe_error).unwrap_or_default()
     );
-    // (a) relisted
+    // (a) relisted: a completed child with its persisted status, a revived
+    // one adopted as still running
     let rows: Value =
         serde_json::from_str(&await_receipt(&list_receipt)).expect("list receipt json");
     assert_eq!(
         rows,
-        json!([[
-            child_id,
-            if display_status == "completed" {
-                "completed"
-            } else {
-                "error"
-            },
-            child_session_id
-        ]]),
-        "the restarted parent must relist its ledger child with its persisted status"
+        json!([[child_id, display_status, child_session_id]]),
+        "the restarted parent must relist its ledger child"
     );
     // (b) send receipt
     let _send: Value =
