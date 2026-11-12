@@ -25,6 +25,7 @@ members = [
     "crates/pa-anthropic-auth",
     "crates/pa-computer-use",
     "crates/pa-plugins",
+    "crates/pa-guards",
     "crates/pa-hooks",
     "crates/pa-refusal",
     "crates/pa-web",

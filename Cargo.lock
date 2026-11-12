@@ -2893,6 +2893,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-guards"
+version = "0.10.3"
+dependencies = [
+ "ignore",
+ "regex",
+ "serde_json",
+]
+
+[[package]]
 name = "pa-hooks"
 version = "0.10.3"
 dependencies = [

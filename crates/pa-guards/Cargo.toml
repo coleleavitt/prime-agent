@@ -1,0 +1,14 @@
+[package]
+name = "pa-guards"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Post-edit slop checks, the task-completion scaffold gate, and the self-continuation decision for Prime Agent. Pure logic; the runtime wires it into the post-cell and Stop paths."
+
+[dependencies]
+ignore = "0.4"
+regex = "1"
+serde_json.workspace = true
+
+[lints]
+workspace = true
