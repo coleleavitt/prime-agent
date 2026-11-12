@@ -598,57 +598,49 @@ async fn drive_child(child: Arc<InlineChild>) {
 /// assistant row that stopped on a provider error settles failed like a
 /// drive error (the run path itself returns `Ok` for it).
 async fn settle_child(child: &Arc<InlineChild>, run_error: Option<String>) {
-    // The last assistant row: its text is the answer the collect envelope
-    // and the no-reply notice carry (trailing non-assistant rows are
-    // skipped); a provider-error stop on it is the terminal error.
-    let (answer, terminal_error) =
-        if let Some(pa_types::session::AgentMessage::Assistant(assistant)) =
-            child.engine.session.last_assistant_message().await
-        {
-            let text = assistant
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    pa_types::ai::AssistantContentBlock::Text(text) => Some(text.text.clone()),
-                    pa_types::ai::AssistantContentBlock::Thinking(_)
-                    | pa_types::ai::AssistantContentBlock::ToolCall(_) => None,
-                })
-                .collect::<String>();
-            let terminal_error = if assistant.stop_reason == pa_types::ai::StopReason::Error {
-                Some(
-                    assistant
-                        .error_message
-                        .unwrap_or_else(|| "Assistant response failed".to_string()),
-                )
-            } else {
-                None
-            };
-            ((!text.is_empty()).then_some(text), terminal_error)
-        } else {
-            (None, None)
+    // One walk over the child's assistant rows, newest first. The answer is
+    // the newest assistant text (an ended turn's last row may hold only its
+    // `rlm.end_turn()` call; the daemon worker's rule and Claude Code's
+    // `pkn` walk-back); a provider-error stop on the last row is the
+    // terminal error; every call folds into Claude Code's `<usage>`, the
+    // daemon host's numbers (`subagent_tokens` and the tool calls).
+    let mut answer = None;
+    let mut terminal_error = None;
+    let mut last_row = true;
+    let mut tokens = crate::session_engine::rlm_usage::SubagentTokens::default();
+    let mut tool_uses = 0_u64;
+    let messages = child.engine.session.agent().state().await.messages;
+    for message in messages.iter().rev() {
+        let Some(pa_types::session::AgentMessage::Assistant(assistant)) =
+            serde_json::to_value(message)
+                .ok()
+                .and_then(|value| serde_json::from_value(value).ok())
+        else {
+            continue;
         };
-    // Claude Code's `<usage>`, the daemon host's numbers: every assistant
-    // call folded into `subagent_tokens`, and the tool calls they made.
-    let (subagent_tokens, tool_uses) = {
-        let mut tokens = crate::session_engine::rlm_usage::SubagentTokens::default();
-        let mut tool_uses = 0_u64;
-        for message in &child.engine.session.agent().state().await.messages {
-            let Some(pa_types::session::AgentMessage::Assistant(assistant)) =
-                serde_json::to_value(message)
-                    .ok()
-                    .and_then(|value| serde_json::from_value(value).ok())
-            else {
-                continue;
-            };
-            tokens.add(&assistant.usage);
-            tool_uses += assistant
-                .content
-                .iter()
-                .filter(|block| matches!(block, pa_types::ai::AssistantContentBlock::ToolCall(_)))
-                .count() as u64;
+        if std::mem::take(&mut last_row) && assistant.stop_reason == pa_types::ai::StopReason::Error
+        {
+            terminal_error = Some(
+                assistant
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| "Assistant response failed".to_string()),
+            );
         }
-        (tokens.total(), tool_uses)
-    };
+        let mut text = String::new();
+        for block in &assistant.content {
+            match block {
+                pa_types::ai::AssistantContentBlock::Text(block) => text.push_str(&block.text),
+                pa_types::ai::AssistantContentBlock::ToolCall(_) => tool_uses += 1,
+                pa_types::ai::AssistantContentBlock::Thinking(_) => {}
+            }
+        }
+        if answer.is_none() && !text.is_empty() {
+            answer = Some(text);
+        }
+        tokens.add(&assistant.usage);
+    }
+    let subagent_tokens = tokens.total();
     let name = child
         .node
         .session_name()

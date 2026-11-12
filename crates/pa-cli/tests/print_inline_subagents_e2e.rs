@@ -1289,3 +1289,45 @@ fn print_inline_child_wakes_on_a_background_bash_completion() {
         "the child's row carries the finished exit code: {row}"
     );
 }
+
+/// A child's last assistant row can carry no text (here its run failed after
+/// a tool call: the provider error row): the inline host's answer walks back
+/// to the newest assistant text, the daemon host's rule, so `rlm.collect`
+/// still reads the child's answer.
+#[test]
+fn print_inline_child_answer_walks_back_over_a_textless_last_row() {
+    let lane = lane();
+    let kernel = PrintLane::kernel_python();
+    let script = serde_json::json!({
+        "responses": [
+            { "content": [
+                { "type": "toolCall", "name": "ipython",
+                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")" } },
+            ] },
+            { "content": [
+                { "type": "toolCall", "name": "ipython",
+                  "arguments": { "code": "rows = await rlm.collect(kid, timeout_ms=60000)\nprint(\"ANSWER\", rows[0].answer_text)" } },
+            ] },
+            "PARENT DONE",
+        ],
+        "repeatLastResponse": true,
+        "children": {
+            // The kid answers beside a tool call; its next model call finds
+            // no scripted response and fails with a textless error row.
+            "kid": { "responses": [
+                { "content": [
+                    { "type": "text", "text": "KID ANSWER" },
+                    { "type": "toolCall", "name": "ipython", "arguments": { "code": "print(1)" } },
+                ] },
+            ] },
+        },
+    });
+    let (stdout, stderr, code) = lane.run(&["-p", "delegate once"], &script, &kernel, &[]);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout: {stdout}");
+    let parent_text =
+        serde_json::to_string(&PrintLane::entries(&lane.parent_session_file())).unwrap();
+    assert!(
+        parent_text.contains("ANSWER KID ANSWER"),
+        "collect reads the kid's answer: {parent_text}"
+    );
+}
