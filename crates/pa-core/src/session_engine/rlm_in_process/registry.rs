@@ -539,13 +539,17 @@ pub(crate) fn record_matches(record: &InProcessChildRecord, target: &str) -> boo
     record.rlm_child_id == target || record.session_id == target || record.session_name == target
 }
 
-/// The collect envelope's full-answer cap (the daemon host's
-/// `ANSWER_TEXT_MAX_CHARS`).
-pub(crate) const ANSWER_TEXT_MAX_CHARS: usize = 65_536;
+/// Cap on the FULL final-answer text the collect envelope carries (the
+/// settle-binding data plane): the roster preview stays
+/// [`ANSWER_PREVIEW_MAX_CHARS`], while a consumer that binds outputs from
+/// the answer (the factory's output ports) needs the whole fenced JSON,
+/// so the lane is bounded instead of unbounded, never ballooning the
+/// collect reply for a runaway answer. Every host caps with it.
+pub const ANSWER_TEXT_MAX_CHARS: usize = 65_536;
 
 /// Collapse whitespace and cap at the roster limit (TS `compactRlmText`).
 #[must_use]
-pub(crate) fn compact_rlm_text(text: &str) -> String {
+pub fn compact_rlm_text(text: &str) -> String {
     let compact: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     cap_text(&compact, ANSWER_PREVIEW_MAX_CHARS)
 }
@@ -553,7 +557,7 @@ pub(crate) fn compact_rlm_text(text: &str) -> String {
 /// One-line task label: collapsed prompt, capped for roster rows (TS
 /// `rlmChildLabel`).
 #[must_use]
-pub(crate) fn rlm_child_label(prompt: &str) -> String {
+pub fn rlm_child_label(prompt: &str) -> String {
     let collapsed: String = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
     let collapsed = if collapsed.is_empty() {
         "child agent".to_string()
@@ -564,7 +568,8 @@ pub(crate) fn rlm_child_label(prompt: &str) -> String {
 }
 
 /// Whitespace-collapsed text capped at `max` chars with an ellipsis.
-fn cap_text(text: &str, max: usize) -> String {
+#[must_use]
+pub fn cap_text(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
     }
@@ -661,4 +666,44 @@ pub(crate) fn spawn_name_unavailable(name: &str, depth: u32) -> String {
     format!(
         "Agent name \"{name}\" is unavailable: an agent of that name already exists at depth {depth} under this parent"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roster_text_is_collapsed_and_capped() {
+        let label = rlm_child_label("  ship   the\nlane  ");
+        assert_eq!(label, "ship the lane");
+        let long = "word ".repeat(100);
+        let label = rlm_child_label(&long);
+        assert!(label.chars().count() <= LABEL_MAX_CHARS);
+        assert!(label.ends_with("..."));
+        let preview = compact_rlm_text("  a\nshort   answer ");
+        assert_eq!(preview, "a short answer");
+        let long_answer = "x".repeat(ANSWER_PREVIEW_MAX_CHARS + 50);
+        let preview = compact_rlm_text(&long_answer);
+        assert_eq!(preview.chars().count(), ANSWER_PREVIEW_MAX_CHARS);
+        assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn the_binding_lane_keeps_far_more_than_the_preview_cap() {
+        // The collect envelope's full-answer lane: a fenced JSON output
+        // longer than the 160-character roster preview binds whole from
+        // it, so the bound stays far above the preview cap and only a
+        // genuinely oversized payload (over ANSWER_TEXT_MAX_CHARS) sees
+        // the ellipsis.
+        let long = "y".repeat(ANSWER_TEXT_MAX_CHARS + 50);
+        let capped = cap_text(&long, ANSWER_TEXT_MAX_CHARS);
+        assert_eq!(capped.chars().count(), ANSWER_TEXT_MAX_CHARS);
+        assert!(capped.ends_with("..."));
+        let wide_json = format!(
+            "{{\"blob\": \"{}\"}}",
+            "z".repeat(ANSWER_PREVIEW_MAX_CHARS * 4)
+        );
+        let lane = cap_text(&wide_json, ANSWER_TEXT_MAX_CHARS);
+        assert_eq!(lane, wide_json, "a wide-but-bounded JSON keeps its tail");
+    }
 }

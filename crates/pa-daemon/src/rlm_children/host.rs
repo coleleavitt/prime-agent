@@ -2,6 +2,7 @@
 //! (`spawn`, `create_session`, `list_subagents`, `interrupt_subagent`, `delete_subagent`,
 //! `collect`, `rename`) over the supervisor's child-sessions registry,
 //! with the spawn-admission helpers only this surface uses.
+use pa_core::session_engine::rlm_in_process::assert_thinking_supported;
 use pa_types::sync::MutexExt;
 
 use super::{
@@ -35,7 +36,6 @@ use super::{
     SupervisorChildSessionsInner,
     Value,
     WATCH_SETTLE_GRACE_MS,
-    assert_thinking_supported,
     bail,
     create_default_rlm_subagent_session_name,
     json,
@@ -166,13 +166,17 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     "subagent",
                 )
                 .await?;
-                assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
+                assert_thinking_supported(
+                    &crate::state_getters::worker_model_registry(&this.agent_dir),
+                    request.thinking.as_deref(),
+                    &model,
+                )?;
                 let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
                 // `cwd=` or the child's worktree (relative to the parent's,
                 // canonicalized: project-context discovery walks its
                 // ancestors), else the parent's.
-                let cwd = crate::rlm_child_model::resolve_child_cwd(
+                let cwd = pa_core::session_engine::rlm_in_process::resolve_child_cwd(
                     Path::new(identity.cwd.as_deref().unwrap_or("/")),
                     request.cwd.as_deref(),
                     "rlm.spawn",
@@ -431,10 +435,14 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 "top-level session",
             )
             .await?;
-            assert_thinking_supported(&this.agent_dir, request.thinking.as_deref(), &model)?;
+            assert_thinking_supported(
+                &crate::state_getters::worker_model_registry(&this.agent_dir),
+                request.thinking.as_deref(),
+                &model,
+            )?;
             // A depth-0 resident session is created exactly like a client
             // `create`: the shared sessions dir and the requested cwd.
-            let cwd = crate::rlm_child_model::resolve_child_cwd(
+            let cwd = pa_core::session_engine::rlm_in_process::resolve_child_cwd(
                 Path::new(identity.cwd.as_deref().unwrap_or("/")),
                 request.cwd.as_deref(),
                 "rlm.create_session",

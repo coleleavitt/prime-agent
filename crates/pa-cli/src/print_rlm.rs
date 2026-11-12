@@ -42,12 +42,12 @@ use pa_core::session_engine::rlm_host::{
     rlm_depth_limit_error,
     spawn_name_unavailable_error,
 };
+use pa_core::session_engine::rlm_in_process::{ANSWER_TEXT_MAX_CHARS, cap_text, compact_rlm_text};
 use pa_core::session_engine::rlm_notices::{
     RlmChildTerminalNotice,
     create_rlm_child_failure_message,
     create_rlm_child_terminal_notice,
 };
-use pa_daemon::rlm_child_model::{ANSWER_TEXT_MAX_CHARS, cap_text, compact_rlm_text};
 use pa_types::ai::Model;
 use pa_types::session::CustomMessage;
 use serde_json::{Value, json};
@@ -680,11 +680,12 @@ impl RlmSubagentHost for InlineHost {
                 None => Arc::clone(&node.recipe),
                 Some(requested) => {
                     let mut options = node.recipe.options.clone();
-                    options.config.cwd = pa_daemon::rlm_child_model::resolve_child_cwd(
-                        &options.config.cwd,
-                        Some(requested),
-                        "rlm.spawn",
-                    )?;
+                    options.config.cwd =
+                        pa_core::session_engine::rlm_in_process::resolve_child_cwd(
+                            &options.config.cwd,
+                            Some(requested),
+                            "rlm.spawn",
+                        )?;
                     Arc::new(PrintRecipe {
                         options,
                         faux: node.recipe.faux.clone(),
@@ -772,25 +773,25 @@ impl RlmSubagentHost for InlineHost {
                     thinking,
                 )
             } else {
-                let selector = pa_daemon::rlm_child_model::resolve_child_model_unchecked(
-                    &config.agent_dir,
-                    request.model.as_deref(),
-                    node.model_selector.lock().unwrap().as_deref(),
-                    "subagent",
-                )
-                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
-                pa_daemon::rlm_child_model::assert_thinking_supported(
-                    &config.agent_dir,
-                    request.thinking.as_deref(),
-                    &selector,
-                )
-                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
                 let auth = pa_core::auth::AuthStorage::create(&config.agent_dir);
                 let mut registry = pa_core::models::ModelRegistry::create(
                     auth,
                     config.agent_dir.join("models.json"),
                 );
                 registry.load_private_authorization_from_cache();
+                let selector = pa_core::session_engine::rlm_in_process::resolve_child_selector(
+                    &registry,
+                    request.model.as_deref(),
+                    node.model_selector.lock().unwrap().as_deref(),
+                    "subagent",
+                )
+                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                pa_core::session_engine::rlm_in_process::assert_thinking_supported(
+                    &registry,
+                    request.thinking.as_deref(),
+                    &selector,
+                )
+                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
                 let all: Vec<Model> = registry.get_all().to_vec();
                 let resolved =
                     pa_core::models::resolve_cli_model(/*cli_provider*/ None, &selector, &all);

@@ -63,11 +63,24 @@ pub use family::{
     RlmRemoteFamily,
     family_host_handlers,
 };
-pub use model::{ResolvedChildModel, assert_thinking_supported, resolve_child_model};
+pub use model::{
+    ResolvedChildModel,
+    assert_thinking_supported,
+    resolve_child_cwd,
+    resolve_child_model,
+    resolve_child_selector,
+};
 use pa_agent::stream::StreamFn;
 use pa_agent::types::Model as AgentModel;
 use pa_types::sync::{MutexExt, RwLockExt};
-pub use registry::{ChildIdentity, InProcessChildRecord};
+pub use registry::{
+    ANSWER_TEXT_MAX_CHARS,
+    ChildIdentity,
+    InProcessChildRecord,
+    cap_text,
+    compact_rlm_text,
+    rlm_child_label,
+};
 use tokio::sync::Mutex;
 
 use super::engine::SessionEngine;

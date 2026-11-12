@@ -26,6 +26,12 @@ use pa_core::session_engine::rlm_host::{
     rlm_depth_limit_error,
     spawn_name_unavailable_error,
 };
+use pa_core::session_engine::rlm_in_process::{
+    ANSWER_TEXT_MAX_CHARS,
+    cap_text,
+    compact_rlm_text,
+    rlm_child_label,
+};
 use pa_core::session_engine::rlm_notices::{
     RlmChildTerminalNotice,
     create_rlm_child_failure_message_with,
@@ -38,14 +44,7 @@ use pa_types::sync::MutexExt;
 use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
-use crate::rlm_child_model::{
-    ANSWER_TEXT_MAX_CHARS,
-    assert_thinking_supported,
-    cap_text,
-    compact_rlm_text,
-    resolve_child_model,
-    rlm_child_label,
-};
+use crate::rlm_child_model::resolve_child_model;
 use crate::supervisor_link::SupervisorLink;
 use crate::util::now_ms;
 
