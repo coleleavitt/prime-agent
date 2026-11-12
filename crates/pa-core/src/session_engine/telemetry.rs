@@ -61,6 +61,7 @@ pub use classify::provider_category;
 mod status;
 use classify::{error_category, model_category, opt_value, run_outcome};
 pub use status::{
+    TELEMETRY_SWITCH_VARS,
     TelemetrySwitch,
     set_telemetry_enabled_text,
     telemetry_endpoint,
