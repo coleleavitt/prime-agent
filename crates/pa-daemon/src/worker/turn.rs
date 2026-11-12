@@ -4,13 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use pa_types::sync::MutexExt;
 
-use super::session_core::SEND_NOW_CUT_MESSAGE;
 use super::{
-    ABORTED_TURN_SETTLE_ERROR,
     AgentMessageDigest,
-    AssistantSnapshot,
     DaemonOutbound,
-    EngineEvent,
     EventPump,
     Lane,
     Map,
@@ -36,6 +32,8 @@ use super::{
     oneshot,
     session_snapshot,
 };
+
+mod emit;
 
 pub(super) struct TurnRunner {
     pub(crate) core: Arc<Mutex<SessionCore>>,
@@ -414,9 +412,6 @@ impl TurnRunner {
             agent_message_id: None,
             custom_message: first.custom_message.clone(),
         };
-        // `message_update` frames park in a single slot; other frames go
-        // out direct, flushing the parked update first (wire order matches
-        // event-sequence order).
         let coalescer = {
             let core = self.core.lock_or_recover();
             Arc::new(crate::streaming::TurnStreamCoalescer::new(
@@ -436,16 +431,8 @@ impl TurnRunner {
                 }
             })
         };
-        let engine = engine.clone();
-        let core = Arc::clone(&self.core);
-        let events = self.events.clone();
-        let turn_coalescer = Arc::clone(&coalescer);
-        let herdr = std::sync::Arc::clone(&self.herdr);
-        let agent_dir = crate::paths::agent_dir().unwrap_or_default();
         // Own engine clone, fenced on the session identity it serviced:
         // a branch move or replacement swaps the store mid-review.
-        let review_engine = std::sync::Arc::clone(&engine);
-        let settle_engine = std::sync::Arc::clone(&engine);
         let review_session_id = {
             let core = self.core.lock_or_recover();
             core.store
@@ -453,57 +440,23 @@ impl TurnRunner {
                 .map(|store| store.session_id().to_string())
                 .unwrap_or_default()
         };
-        // The settled outcome reaches the waiting prompt only at full
-        // settle: resolving at `Done` queued a follow-up behind the
-        // indefinite suspension.
         let settled_admissions: Vec<String> = items
             .iter()
             .filter_map(|item| item.admission_id.clone())
             .collect();
-        // The digest lane's turn counters (swarm PR D): this turn counts as
-        // an ingestion turn when its primary item was an agent-message
-        // delivery (the TS ingestion tag: the run's primary input was an
-        // agent message). Computed before the batched borrow ends and the
-        // items are consumed.
-        let ingestion_turn = first.agent_message.is_some();
-        let turn_traceparent = first.traceparent.clone();
-        let items_done_count = items.len();
-        // The done senders leave the items behind (done = None): on
-        // shutdown, the batch's unaccepted tail returns to its lane below.
-        let items_done: Vec<oneshot::Sender<TurnSettle>> = items
-            .iter_mut()
-            .filter_map(|item| item.done.take())
-            .collect();
-        let turn_outcome = Arc::new(std::sync::Mutex::new(None::<TurnSettle>));
-        let turn_outcome_slot = Arc::clone(&turn_outcome);
-        // Whether the engine surfaced any `agent_end` this run (the
-        // trailing synthesized frame is only a fallback).
-        let engine_agent_end = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let engine_agent_end_seen = Arc::clone(&engine_agent_end);
-        let agent_digest = Arc::clone(&self.agent_digest);
-        // The pane reporter's settle hold: a run that FAILED without the
-        // engine's `agent_end` (a provider error before any terminal
-        // assistant row) still parks its error here, so the settle's
-        // fallback report can block the pane with the message instead
-        // of a false idle.
-        let herdr_settle_error = Arc::new(std::sync::Mutex::new(None::<String>));
-        let herdr_settle_error_seen = Arc::clone(&herdr_settle_error);
-        // Whether the PANE REPORTER already received this run's end —
-        // set only where `run_ended` is actually called (the engine
-        // `agent_end` flag above is set on SIGHT, before the abort gate
-        // can drop the event, so a swallowed `agent_end` must not make
-        // the settle's pane fallback skip and strand the pane working).
-        let herdr_run_end = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let herdr_run_end_seen = Arc::clone(&herdr_run_end);
-        // Whether the abort gate ever observed the delivery's cancel flag
-        // DURING this turn (the per-event read below): the fallback
-        // `agent_end` keys its silence on THIS association — an abort
-        // landing after the turn's last emitted event (a late abort
-        // racing the settle) never armed the gate and must not suppress
-        // the completed run's fallback (the macroscope finding: the
-        // post-join flag read raced `handle_abort`).
-        let abort_gate_armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let abort_gate_armed_seen = Arc::clone(&abort_gate_armed);
+        let signals = Arc::new(emit::TurnSignals::default());
+        let emitter = emit::TurnEmitter::new(emit::EmitContext {
+            core: Arc::clone(&self.core),
+            engine: Arc::clone(&engine),
+            events: self.events.clone(),
+            coalescer: Arc::clone(&coalescer),
+            herdr: Arc::clone(&self.herdr),
+            agent_digest: Arc::clone(&self.agent_digest),
+            agent_dir: crate::paths::agent_dir().unwrap_or_default(),
+            signals: Arc::clone(&signals),
+            ingestion_turn: first.agent_message.is_some(),
+            batch_len: items.len(),
+        });
         // `agent.prompt`: the delivered turn, a child of the submitting
         // client's span when the prompt carried its `traceparent`; the
         // engine's turn, request and tool spans nest under it.
@@ -511,717 +464,32 @@ impl TurnRunner {
             target: "pa_daemon::turn",
             "agent.prompt",
             session.id = review_session_id.as_str(),
-            prompt.batch = items_done_count,
-            traceparent = turn_traceparent.as_deref(),
+            prompt.batch = items.len(),
+            traceparent = first.traceparent.as_deref(),
         );
-        let batch_len = items.len();
-        // The accepted prefix must survive an engine panic after persistence.
-        let accepted_prefix = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let accepted_prefix_seen = Arc::clone(&accepted_prefix);
-        let turn = tokio::task::spawn_blocking(move || {
-            let _prompt_span = prompt_span.enter();
-            // The engine's own terminal `turn_end` frame keeps the
-            // trailing `Done` fallback silent.
-            let mut engine_turn_ended = false;
-            // The picked batch's accepted rows (primary, then one per
-            // batched item) that passed the abort gate and persisted.
-            let mut accepted_rows = 0usize;
-            let mut active_running = false;
-            // Restored next-turn rows are PREFIX rows: the "Starting" row
-            // drops at the accepted row. The flip closure reads the flag
-            // while the prefix loop writes it, hence the Cell.
-            let emitting_prefix_rows = std::cell::Cell::new(false);
-            // The outcome row names the last `auto_retry_start` error on
-            // success too: one row replaces TS's per-attempt error rows
-            // (operator ruling 2026-09-23).
-            let mut last_retry_error: Option<String> = None;
-            let mut emit = |mut event: EngineEvent| -> bool {
-                // A cancelled turn stops consuming its own events, except the frames
-                // TS still broadcasts for an interrupted turn: aborted row/tool settle
-                // frames and the trailing `Done` (a dropped Done hung `prompt_and_wait`
-                // forever).
-                if matches!(event, EngineEvent::TurnEnd { .. }) {
-                    engine_turn_ended = true;
-                }
-                if matches!(event, EngineEvent::AgentEnd { .. }) {
-                    engine_agent_end_seen.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-                let aborted_row = matches!(
-                    &event,
-                    EngineEvent::AssistantMessage(message)
-                        | EngineEvent::AssistantUpdate { message: AssistantSnapshot::Wire(message), .. }
-                        | EngineEvent::TurnEnd { message, .. }
-                        if message.get("stopReason").and_then(Value::as_str) == Some("aborted")
-                ) || matches!(
-                    &event,
-                    EngineEvent::AssistantUpdate { message: AssistantSnapshot::Loop(message), .. }
-                        if matches!(
-                            &**message,
-                            pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::Assistant(
-                                assistant,
-                            )) if assistant.stop_reason == pa_agent::types::StopReason::Aborted
-                        )
-                ) || matches!(
-                    &event,
-                    EngineEvent::AgentEnd { messages }
-                        if messages.iter().any(|message| {
-                            message.get("stopReason").and_then(Value::as_str) == Some("aborted")
-                        })
-                );
-                // `auto_retry_end` settles an abort that lands between
-                // attempts (TS `abortRetry`'s "Retry cancelled"): no run is
-                // live then, so no aborted row or `turn_end` follows, and a
-                // swallowed end leaves clients counting down a retry that
-                // will never come.
-                let abort_settle = matches!(
-                    &event,
-                    EngineEvent::ModelChange(_)
-                        | EngineEvent::AutoRetryEnd { .. }
-                        | EngineEvent::ToolExecutionEnd { .. }
-                        | EngineEvent::ToolResultMessage(_)
-                        | EngineEvent::TurnEnd { .. }
-                        | EngineEvent::AgentEnd { .. }
-                        | EngineEvent::Done(_)
-                        | EngineEvent::DoneAborted
-                );
-                let mut core = core.lock_or_recover();
-                // The run's TRUE end — an `agent_end` with no queued work
-                // taking the next turn — keys both the note clear here and
-                // the pane's idle debounce below. An internal boundary that
-                // hands the next turn to queued work (the async bash
-                // completion that cut this run) keeps the note for the work
-                // continuing in the next delivery. Clear before the frame:
-                // its roster flush must not publish the stale note.
-                let agent_end = matches!(event, EngineEvent::AgentEnd { .. });
-                let more_queued =
-                    agent_end && (!core.steering.is_empty() || !core.follow_up.is_empty());
-                if agent_end && !more_queued {
-                    engine.clear_progress_note();
-                }
-                // The turn boundary releases RLM child prompt tasks waiting on
-                // it, also when the abort gate below swallows the frame.
-                if matches!(event, EngineEvent::Done(_) | EngineEvent::DoneAborted) {
-                    engine.on_turn_done();
-                }
-                // Durable model cleanup is independent of visual abort-row
-                // suppression and emits no client-facing frame.
-                if core.abort_requested && !matches!(&event, EngineEvent::ModelChange(_)) {
-                    // The sighting arms the fallback's silence only when
-                    // load-bearing: a sighting on a run that completed on its own
-                    // cancels nothing.
-                    if core.suppress_aborted_row || !(abort_settle || aborted_row) {
-                        abort_gate_armed_seen.store(true, std::sync::atomic::Ordering::SeqCst);
-                        return false;
-                    }
-                    if aborted_row || matches!(&event, EngineEvent::DoneAborted) {
-                        abort_gate_armed_seen.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-                }
-                // The session's messaging step counters (upstream #2352,
-                // read by the digest lane's controller): one model step per
-                // assistant row the persist path accepts (an `error` stop
-                // is not a completed step, TS `stopReason !== "error"`)
-                // with its usage tokens; the ingestion flag rides the turn.
-                // Counted only AFTER the abort/suppression gate accepts
-                // the event — a suppressed row is not a step — and the
-                // stats' leaf mutex keeps the count safe under the core
-                // lock the counter readers hold.
-                if let EngineEvent::AssistantMessage(message) = &event {
-                    if message.get("stopReason").and_then(Value::as_str) != Some("error") {
-                        let tokens = message
-                            .get("usage")
-                            .and_then(|usage| usage.get("totalTokens"))
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
-                        agent_digest.note_model_step(tokens, ingestion_turn);
-                    }
-                }
-                // The pane reporter's engine boundaries (the TS
-                // `agent_start` / `agent_end` hooks and the auto-retry
-                // hold): a run start or a retry keeps the pane working,
-                // and the run's end settles it — an error end holds
-                // working through the retry grace first, a queued-work
-                // end debounces the idle. A run whose `agent_end` the
-                // abort gate swallowed above never reaches here, so the
-                // pane keeps its last state exactly like the TS detached
-                // run.
-                match &event {
-                    EngineEvent::AgentStart => {
-                        herdr.lock_or_recover().run_started();
-                        // A later run in the same turn (the retry, the
-                        // continuation) re-opens its own end: the settle
-                        // fallback keys on the flag, so a run start must
-                        // clear it or an end-swallowed abort of the
-                        // LATER run would skip the settle and strand the
-                        // pane working.
-                        herdr_run_end_seen.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    EngineEvent::AgentEnd { messages } => {
-                        herdr
-                            .lock_or_recover()
-                            .run_ended(crate::herdr::error_hold_message(messages), more_queued);
-                        herdr_run_end_seen.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    EngineEvent::AutoRetryStart { .. } => {
-                        herdr.lock_or_recover().retry_started();
-                        // The retry re-runs the turn body: its end (when
-                        // the abort gate lets it through) re-sets the
-                        // flag; clearing here lets a swallowed retry end
-                        // still settle at the turn's close.
-                        herdr_run_end_seen.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    _ => {}
-                }
-                // The engine cuts its in-memory entries; its
-                // `firstKeptEntryId` never matches this store's file ids,
-                // so a verbatim copy retains nothing on the durable read.
-                // Re-pin the boundary to the durable cut (TS: one store,
-                // ids match by construction) before persist + broadcast.
-                if let EngineEvent::Compaction {
-                    ref mut entry,
-                    event: ref mut payload,
-                } = event
-                {
-                    if !entry.is_null() {
-                        let repin_started = std::time::Instant::now();
-                        let durable_entries = core
-                            .store
-                            .as_ref()
-                            .and_then(|store| store.branch().len().checked_sub(1))
-                            .unwrap_or(0);
-                        if let Some(id) = core.store.as_ref().and_then(|store| {
-                            store.durable_first_kept_entry_id(keep_recent_tokens(
-                                &core.cwd, &agent_dir,
-                            ))
-                        }) {
-                            entry["firstKeptEntryId"] = json!(id);
-                            if let Some(result) =
-                                payload.get_mut("result").and_then(Value::as_object_mut)
-                            {
-                                result.insert("firstKeptEntryId".to_string(), json!(id));
-                            }
-                        }
-                        pa_core::session_engine::compaction_trace::trace(
-                            "emit.compaction_repin",
-                            &serde_json::json!({
-                                "durableEntries": durable_entries,
-                                "micros": repin_started.elapsed().as_micros(),
-                            }),
-                        );
-                    }
-                }
-                // Send-now's cut row says why it stopped, durably and on the
-                // wire alike.
-                if core.send_now_cut {
-                    if let EngineEvent::AssistantMessage(message) = &mut event {
-                        if message.get("stopReason").and_then(Value::as_str) == Some("aborted") {
-                            message["errorMessage"] = json!(SEND_NOW_CUT_MESSAGE);
-                        }
-                    }
-                }
-                match &event {
-                    EngineEvent::ModelChange(change) => {
-                        if let Some(Err(error)) = core.store.as_mut().map(|store| {
-                            store.persist_entry(
-                                "model_change",
-                                json!({
-                                    "provider": change.provider, "modelId": change.model_id,
-                                }),
-                            )
-                        }) {
-                            eprintln!("pa-daemon: model-change persistence failed: {error:#}");
-                            return false;
-                        }
-                    }
-                    // A `message` entry per row (TS's appendMessage path).
-                    EngineEvent::UserMessage(message)
-                    | EngineEvent::AssistantMessage(message)
-                    | EngineEvent::ToolResultMessage(message) => {
-                        if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry("message", json!({ "message": message }));
-                        }
-                    }
-                    // The in-flight tool-call set, updated under the same core lock
-                    // the frames sequence under: the roster feed never reads a
-                    // half-applied transition. The session's tool counter bumps
-                    // with the same set, so the summary a roster push composes
-                    // from this event already carries it.
-                    EngineEvent::ToolExecutionStart { tool_call_id, .. } => {
-                        core.running_tool_calls
-                            .insert(tool_call_id.clone(), crate::util::now_ms());
-                        core.tool_use_count += 1;
-                    }
-                    EngineEvent::ToolExecutionEnd { tool_call_id, .. } => {
-                        core.running_tool_calls.remove(tool_call_id);
-                    }
-                    EngineEvent::CustomMessage(message) => {
-                        if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry(
-                                "custom_message",
-                                json!({
-                                    "customType": message.get("customType").cloned().unwrap_or(Value::Null),
-                                    "content": message.get("content").cloned().unwrap_or(Value::Null),
-                                    "display": message.get("display").cloned().unwrap_or(Value::Bool(true)),
-                                    "details": message.get("details").cloned().unwrap_or(Value::Null),
-                                }),
-                            );
-                        }
-                    }
-                    EngineEvent::Compaction { entry, .. } => {
-                        // A skipped compaction carries a null entry:
-                        // publish the event, never persist it.
-                        if let Some(store) = core.store.as_mut().filter(|_| !entry.is_null()) {
-                            let persist_started = std::time::Instant::now();
-                            let _ = store.persist_entry("compaction", entry.clone());
-                            pa_core::session_engine::compaction_trace::trace(
-                                "emit.compaction_persist",
-                                &serde_json::json!({
-                                    "micros": persist_started.elapsed().as_micros(),
-                                }),
-                            );
-                        }
-                    }
-                    // The durable mirror of a goal-state change: each row is the new state.
-                    EngineEvent::GoalUpdate { goal } => {
-                        if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry(
-                                "custom",
-                                json!({
-                                    "customType": pa_core::goals::GOAL_STATE_CUSTOM_TYPE,
-                                    "data": goal,
-                                }),
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-                // The `committing`/`running` transitions ride the events that mark the moments.
-                let mut action_frame: Option<SessionActionSnapshot> = None;
-                if !emitting_prefix_rows.get()
-                    && accepted_rows < batch_len
-                    && matches!(
-                        event,
-                        EngineEvent::UserMessage(_) | EngineEvent::CustomMessage(_)
-                    )
-                {
-                    accepted_rows += 1;
-                    accepted_prefix_seen.store(accepted_rows, std::sync::atomic::Ordering::SeqCst);
-                    if accepted_rows == 1 {
-                        if let Some(active) = core.active_action.as_mut() {
-                            active.phase = "committing".to_string();
-                        }
-                        action_frame = Some(session_snapshot(&core));
-                    }
-                } else if !active_running
-                    && matches!(
-                        event,
-                        EngineEvent::AssistantUpdate { .. } | EngineEvent::AssistantMessage(_)
-                    )
-                {
-                    active_running = true;
-                    if let Some(active) = core.active_action.as_mut() {
-                        active.phase = "running".to_string();
-                    }
-                    action_frame = Some(session_snapshot(&core));
-                }
-                let done_result = match &event {
-                    EngineEvent::Done(result) => {
-                        if result.is_ok() {
-                            core.turn_completed = true;
-                        }
-                        pa_core::session_engine::compaction_trace::trace(
-                            "turn.done_emitted",
-                            &serde_json::json!({
-                                "ok": matches!(result, Ok(())),
-                            }),
-                        );
-                        Some(match result {
-                            Ok(()) => TurnSettle::Completed,
-                            Err(error) => TurnSettle::Failed(error.clone()),
-                        })
-                    }
-                    // The aborted settle carries its classification
-                    // structurally, not through the error text.
-                    EngineEvent::DoneAborted => Some(TurnSettle::Aborted),
-                    _ => None,
-                };
-                // One event may map to several wire frames (a custom row
-                // is a message_start + message_end pair).
-                let mut frames: Vec<Value> = match event {
-                    EngineEvent::UserMessage(message) => {
-                        vec![
-                            json!({ "type": "message_start", "message": message }),
-                            json!({ "type": "message_end", "message": message }),
-                        ]
-                    }
-                    EngineEvent::AssistantUpdate {
-                        message,
-                        stream_event,
-                    } => {
-                        let stream_kind = stream_event
-                            .as_ref()
-                            .and_then(|event| event.get("type"))
-                            .and_then(Value::as_str);
-                        let starts_message = stream_kind == Some("start");
-                        // A block-end event settles the parked delta run, so it travels
-                        // direct (flushing the parked update first, in order).
-                        let settles_run = matches!(
-                            stream_kind,
-                            Some("text_end" | "thinking_end" | "toolcall_end")
-                        );
-                        if !starts_message && !settles_run {
-                            // Streaming updates park in the coalescer; `park_update` only
-                            // returns false after the turn joined, which cannot race this closure.
-                            if let Ok(path) = std::env::var("PA_DAEMON_EVENT_LOG") {
-                                use std::io::Write;
-                                if let Some(value) = message.clone().into_wire() {
-                                    if let Ok(mut file) = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(&path)
-                                    {
-                                        let mut event = json!({
-                                            "type": "message_update",
-                                            "message": value,
-                                        });
-                                        if let Some(stream_event) = &stream_event {
-                                            event["assistantMessageEvent"] = stream_event.clone();
-                                        }
-                                        let _ = writeln!(file, "{event}");
-                                    }
-                                }
-                            }
-                            let sequence = core.last_event_sequence + 1;
-                            core.last_event_sequence = sequence;
-                            let delta = stream_event
-                                .as_ref()
-                                .and_then(|event| event.get("delta"))
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            if !turn_coalescer.park_update(
-                                message,
-                                stream_kind.unwrap_or_default(),
-                                delta,
-                                sequence,
-                            ) {
-                                return false;
-                            }
-                            Vec::new()
-                        } else {
-                            match message.into_wire() {
-                                Some(value) => {
-                                    let mut event = json!({
-                                        "type": if starts_message { "message_start" } else { "message_update" },
-                                        "message": value,
-                                    });
-                                    if let Some(stream_event) = stream_event {
-                                        event["assistantMessageEvent"] = stream_event;
-                                    }
-                                    vec![event]
-                                }
-                                // Unreachable for streamed partials; a
-                                // failed conversion frames nothing.
-                                None => Vec::new(),
-                            }
-                        }
-                    }
-                    EngineEvent::AssistantMessage(message) => {
-                        vec![json!({ "type": "message_end", "message": message })]
-                    }
-                    EngineEvent::ToolExecutionStart {
-                        tool_call_id,
-                        tool_name,
-                        args,
-                    } => vec![json!({
-                        "type": "tool_execution_start",
-                        "toolCallId": tool_call_id,
-                        "toolName": tool_name,
-                        "args": args,
-                    })],
-                    EngineEvent::ToolExecutionUpdate {
-                        tool_call_id,
-                        partial_result,
-                    } => vec![json!({
-                        "type": "tool_execution_update",
-                        "toolCallId": tool_call_id,
-                        "partialResult": partial_result,
-                    })],
-                    EngineEvent::ToolExecutionEnd {
-                        tool_call_id,
-                        result,
-                        is_error,
-                    } => vec![json!({
-                        "type": "tool_execution_end",
-                        "toolCallId": tool_call_id,
-                        "result": result,
-                        "isError": is_error,
-                    })],
-                    EngineEvent::ToolResultMessage(message)
-                    | EngineEvent::CustomMessage(message) => vec![
-                        json!({ "type": "message_start", "message": message }),
-                        json!({ "type": "message_end", "message": message }),
-                    ],
-                    EngineEvent::CompactionStart { event }
-                    | EngineEvent::Compaction { event, .. } => vec![event],
-                    EngineEvent::GoalUpdate { goal } => vec![json!({
-                        "type": "goal_update",
-                        "goal": goal,
-                    })],
-                    EngineEvent::RefineComplete { result } => vec![json!({
-                        "type": "refine_complete",
-                        "result": result,
-                    })],
-                    EngineEvent::RefineFailed { error } => vec![json!({
-                        "type": "refine_failed",
-                        "error": error,
-                    })],
-                    // The loop's run-boundary frames (TS `agent_start`/
-                    // `agent_end`): the run's whole message set rides
-                    // `agent_end` (one frame per agent run — retried and
-                    // continued runs included); the rows themselves
-                    // already went out through their own events, so no
-                    // persist here.
-                    EngineEvent::AgentStart => vec![json!({ "type": "agent_start" })],
-                    EngineEvent::AgentEnd { messages } => vec![json!({
-                        "type": "agent_end",
-                        "messages": messages,
-                    })],
-                    // Turn-boundary frames: the terminal message and tool
-                    // results ride `turn_end`; no persist here.
-                    EngineEvent::TurnStart => vec![json!({ "type": "turn_start" })],
-                    EngineEvent::TurnEnd {
-                        message,
-                        tool_results,
-                    } => vec![json!({
-                        "type": "turn_end",
-                        "message": message,
-                        "toolResults": tool_results,
-                    })],
-                    // The fallback terminal frame, silent once the
-                    // engine's own frame covered the run.
-                    EngineEvent::Done(Ok(())) if !engine_turn_ended => {
-                        vec![json!({ "type": "turn_end" })]
-                    }
-                    EngineEvent::Done(Err(error)) if !engine_turn_ended => {
-                        herdr_settle_error_seen
-                            .lock_or_recover()
-                            .replace(error.clone());
-                        vec![json!({ "type": "turn_end", "error": error })]
-                    }
-                    EngineEvent::DoneAborted if !engine_turn_ended => vec![json!({
-                        "type": "turn_end",
-                        "error": ABORTED_TURN_SETTLE_ERROR,
-                    })],
-                    EngineEvent::ModelChange(_)
-                    | EngineEvent::Done(Ok(()) | Err(_))
-                    | EngineEvent::DoneAborted => Vec::new(),
-                    EngineEvent::AutoRetryStart {
-                        attempt,
-                        max_attempts,
-                        delay_ms,
-                        error_message,
-                        reason,
-                    } => {
-                        last_retry_error = Some(error_message.clone());
-                        let mut event = json!({
-                            "type": "auto_retry_start",
-                            "attempt": attempt,
-                            "maxAttempts": max_attempts,
-                            "delayMs": delay_ms,
-                            "errorMessage": error_message,
-                        });
-                        match reason {
-                            pa_core::session_engine::auto_retry::RetryStartReason::Quick => {}
-                            pa_core::session_engine::auto_retry::RetryStartReason::Backup {
-                                backup_model,
-                            } => {
-                                event["reason"] = json!("backup");
-                                event["backupModel"] = json!(backup_model);
-                            }
-                        }
-                        vec![event]
-                    }
-                    EngineEvent::AutoRetryEnd {
-                        success,
-                        attempt,
-                        final_error,
-                        restored_model,
-                    } => {
-                        let mut event = json!({
-                            "type": "auto_retry_end",
-                            "success": success,
-                            "attempt": attempt,
-                        });
-                        if let Some(final_error) = &final_error {
-                            event["finalError"] = json!(final_error);
-                        }
-                        if let Some(restored_model) = restored_model {
-                            event["restoredModel"] = json!(restored_model);
-                        }
-                        // The episode's ONE durable outcome row (operator ruling
-                        // 2026-09-23), instead of one error row per failed attempt.
-                        let error = final_error
-                            .or_else(|| last_retry_error.take())
-                            .unwrap_or_else(|| "Unknown error".to_string());
-                        last_retry_error = None;
-                        let outcome = pa_core::session_engine::messages::
-                            create_provider_retry_outcome_message(success, attempt, &error);
-                        let outcome = crate::session_commands::custom_message_value(&outcome);
-                        if outcome.is_object() {
-                            if let Some(store) = core.store.as_mut() {
-                                let _ = store.persist_entry(
-                                    "custom_message",
-                                    json!({
-                                        "customType": outcome.get("customType").cloned().unwrap_or(Value::Null),
-                                        "content": outcome.get("content").cloned().unwrap_or(Value::Null),
-                                        "display": outcome.get("display").cloned().unwrap_or(Value::Bool(true)),
-                                        "details": outcome.get("details").cloned().unwrap_or(Value::Null),
-                                    }),
-                                );
-                            }
-                        }
-                        vec![
-                            event,
-                            json!({ "type": "message_start", "message": outcome }),
-                            json!({ "type": "message_end", "message": outcome }),
-                        ]
-                    }
-                };
-                // The phase flip's queue-update frame rides the same batch,
-                // after the row frames it follows; an unchanged projection
-                // stays silent.
-                if let Some(snapshot) = action_frame {
-                    if core.last_action_snapshot.as_ref() != Some(&snapshot) {
-                        core.last_action_snapshot = Some(snapshot.clone());
-                        frames.push(json!({
-                            "type": "session_action_update",
-                            "actions": snapshot,
-                        }));
-                    }
-                }
-                // Verification seam: dump the emitted session events for
-                // harness debugging (PA_DAEMON_EVENT_LOG=<path>).
-                if let Ok(path) = std::env::var("PA_DAEMON_EVENT_LOG") {
-                    use std::io::Write;
-                    if let Ok(mut file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&path)
-                    {
-                        for frame in &frames {
-                            let _ = writeln!(file, "{frame}");
-                        }
-                    }
-                }
-                let mut direct_payloads: Vec<Vec<u8>> = Vec::new();
-                for event_json in frames {
-                    let sequence = core.last_event_sequence + 1;
-                    core.last_event_sequence = sequence;
-                    let meta = create_daemon_event_meta(
-                        &core.active_session_id,
-                        sequence,
-                        None,
-                        Some(&core.generation),
-                    );
-                    let outbound = DaemonOutbound::SessionEvent {
-                        active_session_id: core.active_session_id.clone(),
-                        event: event_json,
-                        meta: Some(meta),
-                        rest: Map::default(),
-                    };
-                    let payload = serde_json::to_vec(&outbound).unwrap_or_default();
-                    direct_payloads.push(payload);
-                }
-                // Direct frames go out while their sequence still owns the
-                // store lock, so another row cannot overtake them.
-                // Flush the parked update first; pure updates stay parked.
-                if !direct_payloads.is_empty() {
-                    turn_coalescer.send_direct(&direct_payloads, &events);
-                }
-                drop(core);
-                // The waiting response must observe the frames'
-                // sequences and resolves only after the idle flip.
-                if let Some(result) = done_result {
-                    *turn_outcome_slot.lock_or_recover() = Some(result);
-                }
-                true
-            };
-            let aborted_probe = {
-                let core = Arc::clone(&core);
-                // `abort_retry` stops an in-flight retry without
-                // aborting the turn itself.
-                move || {
-                    core.lock_or_recover().abort_requested
-                        || core.lock_or_recover().retry_abort_requested
-                }
-            };
-            let parked = {
-                let mut core = core.lock_or_recover();
-                std::mem::take(&mut core.pending_next_turn)
-            };
-            emitting_prefix_rows.set(!parked.is_empty());
-            for row in parked {
-                if !emit(EngineEvent::CustomMessage(row)) {
-                    break;
-                }
+        // The done senders leave the items behind (done = None): on
+        // shutdown, the batch's unaccepted tail returns to its lane below.
+        let items_done: Vec<oneshot::Sender<TurnSettle>> = items
+            .iter_mut()
+            .filter_map(|item| item.done.take())
+            .collect();
+        let turn = tokio::task::spawn_blocking({
+            let core = Arc::clone(&self.core);
+            let engine = Arc::clone(&engine);
+            move || {
+                let _prompt_span = prompt_span.enter();
+                run_prompt(&core, engine.as_ref(), emitter, prompt_index, request);
             }
-            emitting_prefix_rows.set(false);
-            // Sample the worker-owned leaf in memory before accepted rows
-            // persist. The engine stays lazy and the accepted event stays first.
-            let (file_backed, prompt_context_leaf) = {
-                let core = core.lock().unwrap();
-                core.store.as_ref().map_or((false, None), |store| {
-                    (
-                        !store.path.as_os_str().is_empty(),
-                        store.leaf_id().map(str::to_string),
-                    )
-                })
-            };
-            // noSession's in-memory prefix IDs do not identify any durable
-            // context the engine can restore. Only file-backed stores supply
-            // this boundary; their missing-ID validation remains strict.
-            if file_backed {
-                engine.set_prompt_context_boundary(prompt_context_leaf);
-            }
-            engine.run_prompt(prompt_index, request, &aborted_probe, &mut emit);
         });
         let _ = turn.await;
-        let accepted_rows = accepted_prefix.load(std::sync::atomic::Ordering::SeqCst);
         // The emit path is joined: a stale parked partial must not
         // surface after the settle events.
         coalescer.close();
         flusher.abort();
-
-        let engine_reported_run_end = engine_agent_end.load(std::sync::atomic::Ordering::SeqCst);
-        let more_queued = {
-            let mut core = self.core.lock_or_recover();
-            // A shutdown never loses admitted input: the batch items whose
-            // transcript row never persisted exist nowhere else, so they
-            // return to the front of their lane, in order.
-            if core.shutdown_requested && !core.turn_cancelled {
-                let lane_items = match lane {
-                    Lane::Steering => &mut core.steering,
-                    Lane::FollowUp => &mut core.follow_up,
-                };
-                for item in items.into_iter().skip(accepted_rows).rev() {
-                    lane_items.push_front(item);
-                }
-            }
-            let more_queued = !core.steering.is_empty() || !core.follow_up.is_empty();
-            // Publish the note clear and idle transition atomically to
-            // roster readers, which capture core then the engine note.
-            // An abort-gated run may emit no later event to repair a
-            // roster push that observes idle with its old note.
-            // AgentEnd may have retained the note for work withdrawn before
-            // this settle. Recheck the lanes even when that frame was observed.
-            if !more_queued {
-                settle_engine.clear_progress_note();
-            }
-            core.busy = false;
-            core.active_action = None;
-            core.running_admission_ids.clear();
-            more_queued
-        };
+        let accepted_rows = signals
+            .accepted_prefix
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let more_queued = self.settle_lanes(lane, items, accepted_rows, engine.as_ref());
         self.push_roster_delta();
         // The fallback `agent_end` for runs that ended without a model
         // turn (session commands, pre-model failures): the engine's own
@@ -1241,39 +509,111 @@ impl TurnRunner {
         // (the flag stays armed until the next pickup — a settle-time
         // re-read would race `handle_abort` and silence a completed
         // session-command or pre-model-failure run).
-        if !engine_reported_run_end && !abort_gate_armed.load(std::sync::atomic::Ordering::SeqCst) {
+        if !signals
+            .engine_agent_end
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && !signals
+                .abort_gate_armed
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
             self.emit_turn_event(json!({ "type": "agent_end" }));
         }
+        // The settle's boundary state: the run's own `agent_end`
+        // already reported (inside the emit path) — the pane
+        // flag, not the engine's sight flag, so an `agent_end` the
+        // abort gate swallowed still settles here too; a run that
+        // ended without one reports here — the TS fallback arm.
+        // This includes the aborted settle: the run's `agent_start`
+        // already flipped the pane working, so suppressing the end
+        // would strand the pane working forever (the wire emit's
+        // abort-gate suppression is about the TUI's frames, not the
+        // pane). A failed run (Done(Err) with no `agent_end`) parks
+        // its error in the settle cell and blocks like the TS
+        // error-hold arm instead of reporting a false idle.
+        // `core.busy` flipped to false above; queued lanes still
+        // holding items keep the settle debounced so the next pickup
+        // cancels the idle flip.
+        let error_hold = signals.herdr_settle_error.lock_or_recover().take();
+        if !signals
+            .herdr_run_end
+            .load(std::sync::atomic::Ordering::SeqCst)
         {
-            // The settle's boundary state: the run's own `agent_end`
-            // already reported (inside the emit closure) — the pane
-            // flag, not the engine's sight flag, so an `agent_end` the
-            // abort gate swallowed still settles here too; a run that
-            // ended without one reports here — the TS fallback arm.
-            // This includes the aborted settle: the run's `agent_start`
-            // already flipped the pane working, so suppressing the end
-            // would strand the pane working forever (the wire emit's
-            // abort-gate suppression is about the TUI's frames, not the
-            // pane). A failed run (Done(Err) with no `agent_end`) parks
-            // its error in the settle cell and blocks like the TS
-            // error-hold arm instead of reporting a false idle.
-            // `core.busy` flipped to false above; queued lanes still
-            // holding items keep the settle debounced so the next pickup
-            // cancels the idle flip.
-            let error_hold = herdr_settle_error.lock_or_recover().take();
-            if !herdr_run_end.load(std::sync::atomic::Ordering::SeqCst) {
-                self.herdr
-                    .lock_or_recover()
-                    .run_ended(error_hold, more_queued);
+            self.herdr
+                .lock_or_recover()
+                .run_ended(error_hold, more_queued);
+        }
+        self.publish_settle().await;
+        // Steers folded into this run settle with it.
+        let (folded_done, folded_admissions) = {
+            let mut core = self.core.lock_or_recover();
+            (
+                std::mem::take(&mut core.steer_fold.done),
+                std::mem::take(&mut core.steer_fold.admissions),
+            )
+        };
+        for admission_id in settled_admissions.into_iter().chain(folded_admissions) {
+            self.prompt_admissions.clear(&admission_id);
+        }
+        // The turn is fully unwound: the waiting prompt now resolves, so
+        // a client's next request always observes the idle session.
+        let settled_outcome = signals.outcome.lock_or_recover().take();
+        if !more_queued && matches!(settled_outcome, Some(TurnSettle::Completed)) {
+            self.after_completed_turn(&engine, turn_started_at);
+        }
+        if let Some(result) = settled_outcome {
+            for done in items_done.into_iter().chain(folded_done) {
+                let _ = done.send(result.clone());
             }
         }
+        self.spawn_compact_auto_refine_review(engine, review_session_id);
+    }
+
+    /// The settle's lanes: a shutdown never loses admitted input (the batch items whose
+    /// transcript row never persisted exist nowhere else, so they return to the front of
+    /// their lane, in order), and the session flips idle. Returns whether queued work
+    /// takes the next turn.
+    fn settle_lanes(
+        &self,
+        lane: Lane,
+        items: Vec<QueuedItem>,
+        accepted_rows: usize,
+        engine: &dyn SessionEngine,
+    ) -> bool {
+        let mut core = self.core.lock_or_recover();
+        if core.shutdown_requested && !core.turn_cancelled {
+            let lane_items = match lane {
+                Lane::Steering => &mut core.steering,
+                Lane::FollowUp => &mut core.follow_up,
+            };
+            for item in items.into_iter().skip(accepted_rows).rev() {
+                lane_items.push_front(item);
+            }
+        }
+        let more_queued = !core.steering.is_empty() || !core.follow_up.is_empty();
+        // Publish the note clear and idle transition atomically to
+        // roster readers, which capture core then the engine note.
+        // An abort-gated run may emit no later event to repair a
+        // roster push that observes idle with its old note.
+        // AgentEnd may have retained the note for work withdrawn before
+        // this settle. Recheck the lanes even when that frame was observed.
+        if !more_queued {
+            engine.clear_progress_note();
+        }
+        core.busy = false;
+        core.active_action = None;
+        core.running_admission_ids.clear();
+        more_queued
+    }
+
+    /// The idle settle's durable and visible tail: the settle checkpoint (the idle flip
+    /// precedes it, so an unclean kill from here on must NOT read as interrupted work;
+    /// undelivered lanes stay busy — admitted work a revive must redeliver), the session
+    /// file's sync, the queue projection, and the idle wake.
+    async fn publish_settle(&self) {
         let snapshot = {
             let core = self.core.lock_or_recover();
             Self::snapshot_from(&core)
         };
-        // The settle checkpoint: the idle flip precedes it, so an unclean
-        // kill from here on must NOT read as interrupted work; undelivered
-        // lanes stay busy (admitted work a revive must redeliver).
         checkpoint_queue_recovery(
             &self.recovery,
             &self.core,
@@ -1292,128 +632,114 @@ impl TurnRunner {
         }
         let _ = self.emit_action_update(&snapshot);
         self.idle_notify.notify_waiters();
-        // Steers folded into this run settle with it.
-        let (folded_done, folded_admissions) = {
-            let mut core = self.core.lock_or_recover();
-            (
-                std::mem::take(&mut core.steer_fold.done),
-                std::mem::take(&mut core.steer_fold.admissions),
+    }
+
+    /// The side work a completed run with nothing queued behind it starts: Claude Code's
+    /// prompt suggestion (predicting the user's next prompt), recap, tool-use label,
+    /// per-turn memory extraction and turn-duration row.
+    fn after_completed_turn(
+        &self,
+        engine: &std::sync::Arc<dyn SessionEngine>,
+        turn_started_at: std::time::Instant,
+    ) {
+        self.maybe_suggest_prompt(engine);
+        self.maybe_generate_recap(engine);
+        self.maybe_generate_tool_use_label(engine);
+        // Claude Code's `[extractMemories]`: the per-turn memory
+        // extractor fires at every settled turn. The engine-side
+        // gate (`experimental.perTurnMemory`) + RAVO keep it cheap
+        // by default; the marker on the session skips the next
+        // tick when no new user prose landed.
+        let user_message_count = {
+            let core = self.core.lock_or_recover();
+            u32::try_from(
+                core.store
+                    .as_ref()
+                    .map_or(0, crate::session_store::SessionFile::message_count)
+                    / 2,
             )
+            .unwrap_or(u32::MAX)
         };
-        for admission_id in settled_admissions.into_iter().chain(folded_admissions) {
-            self.prompt_admissions.clear(&admission_id);
-        }
-        // The turn is fully unwound: the waiting prompt now resolves, so
-        // a client's next request always observes the idle session.
-        let settled_outcome = turn_outcome.lock_or_recover().take();
-        // Claude Code's prompt suggestion: a completed run with nothing
-        // queued behind it predicts the user's next prompt.
-        if !more_queued && matches!(settled_outcome, Some(TurnSettle::Completed)) {
-            self.maybe_suggest_prompt(&settle_engine);
-            self.maybe_generate_recap(&settle_engine);
-            self.maybe_generate_tool_use_label(&settle_engine);
-            // Claude Code's `[extractMemories]`: the per-turn memory
-            // extractor fires at every settled turn. The engine-side
-            // gate (`experimental.perTurnMemory`) + RAVO keep it cheap
-            // by default; the marker on the session skips the next
-            // tick when no new user prose landed.
-            let user_message_count = {
-                let core = self.core.lock_or_recover();
-                u32::try_from(
-                    core.store
-                        .as_ref()
-                        .map_or(0, crate::session_store::SessionFile::message_count)
-                        / 2,
-                )
-                .unwrap_or(u32::MAX)
-            };
-            self.maybe_extract_memories(&settle_engine, user_message_count);
-            // Claude Code's `showTurnDuration` row: a dim in-stream
-            // `${verb} for ${d} \u{00B7} done ${clock}` line below the
-            // assistant turn. Gated by `experimental.showTurnDuration`
-            // (on by default); emits a durable `turn_duration` custom row
-            // so replays carry it too.
-            self.maybe_emit_turn_duration(turn_started_at);
-        }
-        if let Some(result) = settled_outcome {
-            for done in items_done.into_iter().chain(folded_done) {
-                let _ = done.send(result.clone());
-            }
-        }
-        // The compact-trigger review services off the settle as a
-        // background round: the queued next prompt's admission never
-        // waits on it.
-        {
-            let engine = review_engine;
-            let core = Arc::clone(&self.core);
-            let events = self.events.clone();
-            let review_session_id = review_session_id.clone();
-            tokio::spawn(async move {
-                // The round takes the engine's session mutex on the blocking
-                // pool, never on this async task: a `blocking_lock` from the
-                // runtime thread deadlocks.
-                let refined = tokio::task::spawn_blocking(move || {
-                    pa_core::session_engine::compaction_trace::trace(
-                        "autorefine.review_started",
-                        &serde_json::Value::Null,
-                    );
-                    let outcome = engine.consume_compact_auto_refine();
-                    pa_core::session_engine::compaction_trace::trace(
-                        "autorefine.review_done",
-                        &serde_json::json!({ "ran": outcome.is_ok() }),
-                    );
-                    outcome
-                })
-                .await
-                .unwrap_or_else(|error| {
-                    Err(anyhow::anyhow!("auto-refinement task failed: {error}"))
-                });
-                match refined {
-                    Ok(Some(result)) => {
-                        // The outcome row and the model-facing notice (when edits
-                        // applied) persist like the `/refine` command's rows, fenced on
-                        // the serviced session.
-                        let outcome_row =
-                            pa_core::session_engine::refine::create_refinement_outcome_message(
+        self.maybe_extract_memories(engine, user_message_count);
+        // Claude Code's `showTurnDuration` row: a dim in-stream
+        // `${verb} for ${d} \u{00B7} done ${clock}` line below the
+        // assistant turn. Gated by `experimental.showTurnDuration`
+        // (on by default); emits a durable `turn_duration` custom row
+        // so replays carry it too.
+        self.maybe_emit_turn_duration(turn_started_at);
+    }
+
+    /// The compact-trigger review services off the settle as a
+    /// background round: the queued next prompt's admission never
+    /// waits on it.
+    fn spawn_compact_auto_refine_review(
+        &self,
+        engine: std::sync::Arc<dyn SessionEngine>,
+        review_session_id: String,
+    ) {
+        let core = Arc::clone(&self.core);
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            // The round takes the engine's session mutex on the blocking
+            // pool, never on this async task: a `blocking_lock` from the
+            // runtime thread deadlocks.
+            let refined = tokio::task::spawn_blocking(move || {
+                pa_core::session_engine::compaction_trace::trace(
+                    "autorefine.review_started",
+                    &serde_json::Value::Null,
+                );
+                let outcome = engine.consume_compact_auto_refine();
+                pa_core::session_engine::compaction_trace::trace(
+                    "autorefine.review_done",
+                    &serde_json::json!({ "ran": outcome.is_ok() }),
+                );
+                outcome
+            })
+            .await
+            .unwrap_or_else(|error| Err(anyhow::anyhow!("auto-refinement task failed: {error}")));
+            match refined {
+                Ok(Some(result)) => {
+                    // The outcome row and the model-facing notice (when edits
+                    // applied) persist like the `/refine` command's rows, fenced on
+                    // the serviced session.
+                    let outcome_row =
+                        pa_core::session_engine::refine::create_refinement_outcome_message(&result);
+                    if let Ok(value) =
+                        serde_json::to_value(pa_types::session::AgentMessage::Custom(outcome_row))
+                    {
+                        emit_refinement_row(&core, &events, &review_session_id, &value);
+                    }
+                    if result.applied_edits.iter().any(|edit| edit.applied) {
+                        let notice =
+                            pa_core::session_engine::refine::create_refinement_notice_message(
                                 &result,
+                                pa_core::session_engine::refine::RefinementSource::Auto,
                             );
-                        if let Ok(value) = serde_json::to_value(
-                            pa_types::session::AgentMessage::Custom(outcome_row),
-                        ) {
+                        if let Ok(value) =
+                            serde_json::to_value(pa_types::session::AgentMessage::Custom(notice))
+                        {
                             emit_refinement_row(&core, &events, &review_session_id, &value);
                         }
-                        if result.applied_edits.iter().any(|edit| edit.applied) {
-                            let notice =
-                                pa_core::session_engine::refine::create_refinement_notice_message(
-                                    &result,
-                                    pa_core::session_engine::refine::RefinementSource::Auto,
-                                );
-                            if let Ok(value) = serde_json::to_value(
-                                pa_types::session::AgentMessage::Custom(notice),
-                            ) {
-                                emit_refinement_row(&core, &events, &review_session_id, &value);
-                            }
-                        }
-                        emit_refinement_event_for_session(
-                            &core,
-                            &events,
-                            &review_session_id,
-                            crate::worker::refine_complete_event(&result),
-                        );
                     }
-                    Ok(None) => {}
-                    Err(error) => {
-                        eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
-                        emit_refinement_event_for_session(
-                            &core,
-                            &events,
-                            &review_session_id,
-                            json!({ "type": "refine_failed", "error": format!("{error:#}") }),
-                        );
-                    }
+                    emit_refinement_event_for_session(
+                        &core,
+                        &events,
+                        &review_session_id,
+                        crate::worker::refine_complete_event(&result),
+                    );
                 }
-            });
-        }
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
+                    emit_refinement_event_for_session(
+                        &core,
+                        &events,
+                        &review_session_id,
+                        json!({ "type": "refine_failed", "error": format!("{error:#}") }),
+                    );
+                }
+            }
+        });
     }
 
     /// The post-turn queue projection: an unchanged snapshot stays
@@ -1470,14 +796,38 @@ impl TurnRunner {
     }
 }
 
-/// The compaction cut budget the engine ran with: the durable boundary
-/// re-cut in the turn callback must pin the same cut.
-fn keep_recent_tokens(cwd: &str, agent_dir: &std::path::Path) -> u64 {
-    pa_core::settings::SettingsManager::create(cwd, agent_dir)
-        .settings()
-        .compaction
-        .clone()
-        .unwrap_or_default()
-        .keep_recent_tokens
-        .unwrap_or(pa_core::session_engine::compaction::DEFAULT_KEEP_RECENT_TOKENS)
+/// The turn's engine run on the blocking pool: the restored next-turn prefix rows, the
+/// prompt-context boundary, then the prompt itself through the turn's emitter.
+fn run_prompt(
+    core: &Arc<Mutex<SessionCore>>,
+    engine: &dyn SessionEngine,
+    mut emitter: emit::TurnEmitter,
+    prompt_index: usize,
+    request: PromptRequest,
+) {
+    // `abort_retry` stops an in-flight retry without aborting the turn itself.
+    let aborted_probe =
+        || core.lock_or_recover().abort_requested || core.lock_or_recover().retry_abort_requested;
+    let parked = std::mem::take(&mut core.lock_or_recover().pending_next_turn);
+    emitter.emit_prefix_rows(parked);
+    // Sample the worker-owned leaf in memory before accepted rows
+    // persist. The engine stays lazy and the accepted event stays first.
+    let (file_backed, prompt_context_leaf) = {
+        let core = core.lock().unwrap();
+        core.store.as_ref().map_or((false, None), |store| {
+            (
+                !store.path.as_os_str().is_empty(),
+                store.leaf_id().map(str::to_string),
+            )
+        })
+    };
+    // noSession's in-memory prefix IDs do not identify any durable
+    // context the engine can restore. Only file-backed stores supply
+    // this boundary; their missing-ID validation remains strict.
+    if file_backed {
+        engine.set_prompt_context_boundary(prompt_context_leaf);
+    }
+    engine.run_prompt(prompt_index, request, &aborted_probe, &mut |event| {
+        emitter.emit(event)
+    });
 }
