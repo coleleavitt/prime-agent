@@ -204,6 +204,296 @@ fn hash_window(lines: &[&str]) -> u64 {
     hasher.finish()
 }
 
+/// Return true when `file_path` or `file_content` identifies a test scope:
+/// test code is allowed to use `unwrap`/`expect`, long descriptive test
+/// names, and other patterns that would otherwise be flagged. Separately
+/// from the inline `#[cfg(test)] mod tests { ... }` convention this picks
+/// up the "whole file is a test module" case where a parent declares
+/// `mod tests;` and the sibling file has no `#[cfg(test)]` attribute of
+/// its own.
+///
+/// Signals, in order:
+/// - filename is `test.rs`/`tests.rs` or ends in `_test.rs`/`_tests.rs`
+/// - path has a `tests/` directory component (cargo integration-test
+///   convention)
+/// - content starts with `#![cfg(test)]` (inner attribute, whole file)
+/// - content has any `#[cfg(test)]` (inline test module, pre-existing signal)
+fn is_test_scope_file(file_path: Option<&Path>, file_content: &str) -> bool {
+    if let Some(path) = file_path {
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && (name == "test.rs"
+                || name == "tests.rs"
+                || name.ends_with("_test.rs")
+                || name.ends_with("_tests.rs"))
+        {
+            return true;
+        }
+        if path.components().any(|c| c.as_os_str() == "tests") {
+            return true;
+        }
+    }
+    let trimmed = file_content.trim_start();
+    if trimmed.starts_with("#![cfg(test)]") {
+        return true;
+    }
+    file_content.contains("#[cfg(test)]")
+}
+
+/// Return `source` rewritten so that every byte inside a string literal,
+/// raw string, char literal, line comment, or block comment is replaced
+/// with ' '. Newlines are preserved so line numbers survive and `'{'`
+/// / `'}'` / `"{"` /  `"\n}"` no longer trip a structural brace counter.
+///
+/// Block comments nest as rustc nests them; raw strings are closed by the
+/// matching `"` with the right number of trailing `#`s.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one flat state-machine match reads better than scattered mini-helpers"
+)]
+fn code_only(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum Lex {
+        Normal,
+        LineCmt,
+        BlockCmt(u32),
+        Str,
+        StrEsc,
+        RawStr(u32),
+    }
+    let bytes = source.as_bytes();
+    let mut out: Vec<u8> = vec![b' '; bytes.len()];
+    let mut state = Lex::Normal;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match state {
+            Lex::Normal => {
+                if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    state = Lex::LineCmt;
+                    i += 2;
+                    continue;
+                }
+                if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    state = Lex::BlockCmt(1);
+                    i += 2;
+                    continue;
+                }
+                if b == b'"' {
+                    state = Lex::Str;
+                    i += 1;
+                    continue;
+                }
+                if b == b'r'
+                    && i + 1 < bytes.len()
+                    && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#')
+                {
+                    let mut hashes = 0u32;
+                    let mut k = i + 1;
+                    while k < bytes.len() && bytes[k] == b'#' {
+                        hashes += 1;
+                        k += 1;
+                    }
+                    if k < bytes.len() && bytes[k] == b'"' {
+                        state = Lex::RawStr(hashes);
+                        i = k + 1;
+                        continue;
+                    }
+                }
+                if b == b'\'' {
+                    if let Some(close_off) = char_literal_end(&bytes[i + 1..]) {
+                        // Char literal: consume everything up to and including
+                        // the closing `'`, dropping its bytes so a `'{'`
+                        // doesn't bump the brace counter.
+                        i += 1 + close_off + 1;
+                        continue;
+                    }
+                    // Lifetime (`'a`), not a char literal — leave it visible.
+                    out[i] = b;
+                    i += 1;
+                    continue;
+                }
+                out[i] = b;
+                i += 1;
+            }
+            Lex::LineCmt => {
+                if b == b'\n' {
+                    out[i] = b'\n';
+                    state = Lex::Normal;
+                }
+                i += 1;
+            }
+            Lex::BlockCmt(d) => {
+                if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    state = Lex::BlockCmt(d + 1);
+                    i += 2;
+                    continue;
+                }
+                if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    state = if d == 1 {
+                        Lex::Normal
+                    } else {
+                        Lex::BlockCmt(d - 1)
+                    };
+                    i += 2;
+                    continue;
+                }
+                if b == b'\n' {
+                    out[i] = b'\n';
+                }
+                i += 1;
+            }
+            Lex::Str => {
+                match b {
+                    b'\\' => state = Lex::StrEsc,
+                    b'"' => state = Lex::Normal,
+                    b'\n' => out[i] = b'\n',
+                    _ => {}
+                }
+                i += 1;
+            }
+            Lex::StrEsc => {
+                if b == b'\n' {
+                    out[i] = b'\n';
+                }
+                state = Lex::Str;
+                i += 1;
+            }
+            Lex::RawStr(h) => {
+                if b == b'"' {
+                    // Need `h` trailing `#` to close.
+                    let mut seen = 0u32;
+                    let mut k = i + 1;
+                    while k < bytes.len() && bytes[k] == b'#' && seen < h {
+                        seen += 1;
+                        k += 1;
+                    }
+                    if seen == h {
+                        state = Lex::Normal;
+                        i = k;
+                        continue;
+                    }
+                }
+                if b == b'\n' {
+                    out[i] = b'\n';
+                }
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Return the byte offset (relative to the opening `'`) of the closing
+/// `'` of a char literal starting at `rest[0]`, or `None` if the opening
+/// `'` is part of a lifetime (`'a`) rather than a char literal. Covers
+/// `'x'`, `'\n'`, `'\\'`, `'\''`, `'\0'`, `'\xHH'`, `'\u{...}'`, and
+/// multi-byte UTF-8 chars.
+fn char_literal_end(rest: &[u8]) -> Option<usize> {
+    if rest.is_empty() {
+        return None;
+    }
+    if rest[0] == b'\\' {
+        if rest.len() < 3 {
+            return None;
+        }
+        match rest[1] {
+            b'x' => {
+                // `\xHH` → 4 bytes before closing `'`.
+                if rest.len() >= 5 && rest[4] == b'\'' {
+                    Some(4)
+                } else {
+                    None
+                }
+            }
+            b'u' => {
+                // `\u{HHHH..}` → variable length.
+                if rest[2] != b'{' {
+                    return None;
+                }
+                let mut k = 3;
+                while k < rest.len() && rest[k] != b'}' {
+                    k += 1;
+                }
+                if k + 1 < rest.len() && rest[k + 1] == b'\'' {
+                    Some(k + 1)
+                } else {
+                    None
+                }
+            }
+            _ => {
+                // Simple escape: `\n`, `\t`, `\\`, `\'`, `\"`, `\0`, etc.
+                if rest[2] == b'\'' { Some(2) } else { None }
+            }
+        }
+    } else {
+        // Non-escape: a single char (one Unicode scalar).
+        let char_len = utf8_char_len(rest[0]);
+        if rest.len() > char_len && rest[char_len] == b'\'' {
+            Some(char_len)
+        } else {
+            // Opening `'` isn't followed by a scalar + `'`; treat as a
+            // lifetime (e.g. `'a`), not a char literal.
+            None
+        }
+    }
+}
+
+fn utf8_char_len(first: u8) -> usize {
+    // ASCII and continuation / invalid leading bytes read as one byte; a
+    // leading byte with 2/3/4 high bits set names a 2/3/4-byte codepoint.
+    if first < 0xC0 {
+        1
+    } else if first < 0xE0 {
+        2
+    } else if first < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Is `line` substantive enough to count toward a 5-line "duplicated"
+/// block? Bare closing braces, attribute lines, and plain `use`/`mod`
+/// declarations are all shapes LLMs legitimately re-emit without
+/// duplicating any logic, so a 5-line block that is only such lines is
+/// never a real duplicate.
+fn is_substantive_dup_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.len() < 4 {
+        return false;
+    }
+    if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+        return false;
+    }
+    if trimmed.starts_with("#[") || trimmed.starts_with("#![") {
+        return false;
+    }
+    let is_import_or_mod = trimmed.starts_with("use ")
+        || trimmed.starts_with("pub use ")
+        || trimmed.starts_with("pub(crate) use ")
+        || trimmed.starts_with("pub(super) use ")
+        || trimmed.starts_with("mod ")
+        || trimmed.starts_with("pub mod ")
+        || trimmed.starts_with("pub(crate) mod ")
+        || trimmed.starts_with("extern crate ")
+        || trimmed.starts_with("extern ");
+    if is_import_or_mod {
+        return false;
+    }
+    let non_punct = trimmed
+        .chars()
+        .filter(|c| !c.is_ascii_punctuation() && !c.is_whitespace())
+        .count();
+    if non_punct < 3 {
+        return false;
+    }
+    let ident_chars = trimmed
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .count();
+    ident_chars >= 3
+}
+
 /// Find 5+ line blocks in `new_content` that already exist in other files
 /// under `cwd`. Returns (`existing_file`, `existing_line`, `matched_text_preview`).
 #[must_use]
@@ -230,9 +520,14 @@ pub fn check_duplication_scoped(
     // Build hashes for all windows in the new file.
     let mut new_hashes: HashSet<u64> = HashSet::new();
     for (start, window) in new_lines.windows(DUP_WINDOW).enumerate() {
-        // Skip trivial windows (blank lines, single-char lines, braces-only).
-        let non_trivial = window.iter().filter(|l| l.trim().len() > 3).count();
-        if non_trivial < 3 {
+        // Skip windows whose content is mostly boilerplate. The previous
+        // "trim.len() > 3" heuristic let in windows of just closing
+        // braces, `#[derive(...)]`, bare `use` lines and `#[cfg(test)]`,
+        // which clustered 1,296 false positives across one real repo
+        // (every Orion decoder's `use serde::Serialize;\n#[derive(...)]`
+        // header matched every other decoder's).
+        let substantive = window.iter().filter(|l| is_substantive_dup_line(l)).count();
+        if substantive < 3 {
             continue;
         }
         // When scoped, only consider windows that overlap a changed line.
@@ -278,8 +573,8 @@ pub fn check_duplication_scoped(
             continue;
         }
         for (i, window) in lines.windows(DUP_WINDOW).enumerate() {
-            let non_trivial = window.iter().filter(|l| l.trim().len() > 3).count();
-            if non_trivial < 3 {
+            let substantive = window.iter().filter(|l| is_substantive_dup_line(l)).count();
+            if substantive < 3 {
                 continue;
             }
             let h = hash_window(window);
@@ -397,7 +692,12 @@ pub fn check_dead_code(cwd: &Path) -> Vec<SlopFinding> {
 #[must_use]
 pub fn check_coherence(file_content: &str, file_path: &Path) -> Vec<SlopFinding> {
     let mut findings = Vec::new();
-    let is_test = file_content.contains("#[cfg(test)]");
+    // Treat external test modules (sibling `tests.rs`, `_tests.rs`, files
+    // under `tests/`) as a test scope too — the pre-existing
+    // `file_content.contains("#[cfg(test)]")` only caught the inline
+    // `#[cfg(test)] mod tests { ... }` convention and flagged every
+    // `unwrap()` in `tests.rs` files as production code.
+    let is_test = is_test_scope_file(Some(file_path), file_content);
     let is_lib = file_path
         .to_str()
         .map(|s| !s.contains("/main.rs") && !s.contains("/bin/"))
@@ -677,6 +977,13 @@ fn clone_on_literal(line: &str) -> Option<&'static str> {
 pub fn check_complexity(file_content: &str) -> Vec<SlopFinding> {
     let mut findings = Vec::new();
     let lines: Vec<&str> = file_content.lines().collect();
+    // Count braces on a copy of the source with string literals, char
+    // literals, line comments, and block comments blanked out. The naive
+    // `for ch in l.chars()` loop treated `'{'` and `"{"` as structural
+    // opens, which inflated `parse_from_reader` in ers-rs `proformex.rs`
+    // from its real 28 lines to a reported 886.
+    let cleaned = code_only(file_content);
+    let cleaned_lines: Vec<&str> = cleaned.lines().collect();
 
     let mut i = 0;
     while i < lines.len() {
@@ -696,14 +1003,15 @@ pub fn check_complexity(file_content: &str) -> Vec<SlopFinding> {
                 .unwrap_or("?")
                 .trim();
 
-            // Count LOC and max nesting depth until matching closing brace.
+            // Count LOC and max nesting depth until matching closing
+            // brace, using the lexed (literal/comment-stripped) view.
             let mut depth: i32 = 0;
             let mut max_depth: i32 = 0;
             let mut fn_loc = 0;
             let mut started = false;
             let mut j = i;
-            while j < lines.len() {
-                let l = lines[j];
+            while j < cleaned_lines.len() {
+                let l = cleaned_lines[j];
                 for ch in l.chars() {
                     if ch == '{' {
                         depth += 1;
@@ -1210,6 +1518,19 @@ pub fn check_conditional_tests(file_content: &str) -> Vec<SlopFinding> {
 /// Flag poor identifier naming patterns in newly written code.
 #[must_use]
 pub fn check_naming_quality(file_content: &str) -> Vec<SlopFinding> {
+    naming_quality_impl(file_content, None)
+}
+
+/// `check_naming_quality` with the file path available, so test-only
+/// files (`tests.rs`, `*_tests.rs`, files under `tests/`) skip the
+/// long-identifier check without having to carry an inline
+/// `#[cfg(test)]` attribute of their own.
+#[must_use]
+pub fn check_naming_quality_with_path(file_content: &str, file_path: &Path) -> Vec<SlopFinding> {
+    naming_quality_impl(file_content, Some(file_path))
+}
+
+fn naming_quality_impl(file_content: &str, file_path: Option<&Path>) -> Vec<SlopFinding> {
     let mut findings = Vec::new();
 
     let vague_names: &[&str] = &[
@@ -1232,7 +1553,18 @@ pub fn check_naming_quality(file_content: &str) -> Vec<SlopFinding> {
     let binding_re =
         regex::Regex::new(r"(?:let|const|static|fn)\s+(mut\s+)?([a-z_][a-z0-9_]*)").unwrap();
 
+    // Whole-file test scope: a sibling `tests.rs`/`_tests.rs`/`tests/`
+    // file loaded via `mod tests;` from a parent has no inline
+    // `#[cfg(test)]` of its own, so the per-position region check below
+    // would never fire on it. Short-circuit the whole file in that case.
+    let whole_file_is_test = is_test_scope_file(file_path, file_content)
+        && !file_content.contains("#[cfg(test)]\nmod ")
+        && !file_content.contains("#[cfg(test)]\npub mod ");
+
     let is_test_region = |pos: usize| -> bool {
+        if whole_file_is_test {
+            return true;
+        }
         file_content[..pos].rfind("#[cfg(test)]").is_some()
             && file_content[..pos]
                 .rfind("\nmod ")
@@ -2066,7 +2398,7 @@ pub fn run_all_checks_scoped(
         scoped.extend(check_coherence(file_content, file_path));
         scoped.extend(check_silent_failure(file_content, file_path));
         scoped.extend(check_borrow_clone(file_content));
-        scoped.extend(check_naming_quality(file_content));
+        scoped.extend(check_naming_quality_with_path(file_content, file_path));
         scoped.extend(check_resource_leaks(file_content));
         scoped.extend(check_blocking_in_async(file_content));
     }
@@ -2719,6 +3051,133 @@ async fn poll() {
         assert!(
             findings.iter().any(|f| f.rule == "test_quality"),
             "a genuinely assertion-free test must still flag, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn duplication_ignores_bare_closing_brace_and_boilerplate_use_lines() {
+        // `is_substantive_dup_line` filters the per-window counter in
+        // `check_duplication_scoped`: a window is only cross-checked
+        // when at least 3 of its 5 lines are substantive. The old
+        // `trim.len() > 3` heuristic counted trim lengths 4-13 as
+        // content (closing braces, derives, use lines, `#[cfg(test)]`,
+        // and `}` + next line), which cross-matched unrelated Orion
+        // decoders in ers-rs (`bundle_reference.rs` /
+        // `billing_reference.rs` / …) and produced 1,296 findings that
+        // pointed at files sharing only their header.
+        let boilerplate = [
+            "}",
+            "};",
+            "});",
+            ")?;",
+            "    }",
+            "#[cfg(test)]",
+            "#[derive(Serialize)]",
+            "#[derive(Debug, Clone)]",
+            "use serde::Serialize;",
+            "use std::sync::Arc;",
+            "pub use foo::bar;",
+            "mod tests;",
+            "pub mod inner;",
+            "extern crate alloc;",
+            "// comment",
+            "/// doc comment",
+            "    /// doc comment",
+            "{",
+            "",
+            "    ",
+        ];
+        for line in boilerplate {
+            assert!(
+                !is_substantive_dup_line(line),
+                "line {line:?} must count as boilerplate"
+            );
+        }
+        let real = [
+            "let open = detail.get(\"PolicyUuid\").and_then(str_field);",
+            "fn extract_persons(value: &Value) -> Vec<Person> {",
+            "    book.persons.extend(extract_persons(&value));",
+            "    return Err(Error::UnknownRecord { kind });",
+            "    Err(e) => { tracing::warn!(?e, \"skipped\"); }",
+        ];
+        for line in real {
+            assert!(
+                is_substantive_dup_line(line),
+                "line {line:?} must count as substantive"
+            );
+        }
+    }
+
+    #[test]
+    fn complexity_counts_structural_braces_only_not_char_literals_or_strings() {
+        // Regression: a 36-line `parse_from_reader` in ers-rs's
+        // `proformex.rs` had a `line.starts_with('{')` check whose `'{'`
+        // bumped the brace counter, inflating the reported size to 886.
+        // The function below contains `'{'` twice and `"{nested}"` once;
+        // its real body is 4 lines inside a single `{...}` pair.
+        let code = "fn small() {\n    let open = '{';\n    let close = '}';\n    let s = \"{nested}\";\n    println!(\"{s}\");\n}\n";
+        let findings = check_complexity(code);
+        assert!(
+            findings.iter().all(|f| f.rule != "complexity"),
+            "a 6-line function with brace literals must not be flagged, got {findings:?}",
+        );
+    }
+
+    #[test]
+    fn coherence_treats_external_test_modules_and_test_file_naming_as_test_regions() {
+        // `otlp/tests.rs` is loaded by its parent through `mod tests;`
+        // and has no `#[cfg(test)]` of its own. The pre-existing content
+        // check would mark it as production, and its many `.unwrap()`
+        // calls would flag under `coherence`.
+        let code = "\n\
+#[test]\n\
+fn a() {\n\
+    let x = Some(1).unwrap();\n\
+    let y = Some(2).unwrap();\n\
+    let z = Some(3).unwrap();\n\
+    let w = Some(4).unwrap();\n\
+    let v = Some(5).unwrap();\n\
+    let u = Some(6).unwrap();\n\
+    let t = Some(7).unwrap();\n\
+}\n";
+        let path = Path::new("/tmp/pkg/src/otlp/tests.rs");
+        let findings = check_coherence(code, path);
+        assert!(
+            findings
+                .iter()
+                .all(|f| !f.message.contains("unwrap()/expect()")),
+            "external `tests.rs` must count as a test scope, got {findings:?}",
+        );
+    }
+
+    #[test]
+    fn naming_quality_raises_the_length_threshold_for_test_items() {
+        // A 54-char test fn identifier in an external test file was
+        // flagged under `naming_quality` (342 findings in ers-rs across
+        // `tests.rs`, `*_tests.rs`, and the `tests/` directory). With
+        // the test-scope detection the whole file counts as test and
+        // the long-name check skips.
+        let code = "#[test]\nfn the_crate_classifier_delegates_through_the_router_and_lands() { assert!(true); }\n";
+        let path = Path::new("/tmp/pkg/src/otlp/tests.rs");
+        let findings = check_naming_quality_with_path(code, path);
+        assert!(
+            findings.iter().all(|f| f.rule != "naming_quality"),
+            "long test-fn names in test files must not flag naming_quality, got {findings:?}",
+        );
+        // Regression: the inline `#[cfg(test)]` region path still skips.
+        let inline = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn the_crate_classifier_delegates_through_the_router_and_lands() { assert!(true); }\n}\n";
+        let findings = check_naming_quality_with_path(inline, Path::new("/tmp/pkg/src/lib.rs"));
+        assert!(
+            findings.iter().all(|f| f.rule != "naming_quality"),
+            "inline test region should still skip, got {findings:?}",
+        );
+        // Guard: a long identifier in PRODUCTION code (non-test file,
+        // not inside a `#[cfg(test)]` module) must still flag.
+        let prod = "fn this_is_a_really_really_really_really_long_production_function_name() {}\n";
+        let findings = check_naming_quality_with_path(prod, Path::new("/tmp/pkg/src/lib.rs"));
+        assert!(
+            findings.iter().any(|f| f.rule == "naming_quality"),
+            "long production identifiers must still flag, got {findings:?}",
         );
     }
 }
