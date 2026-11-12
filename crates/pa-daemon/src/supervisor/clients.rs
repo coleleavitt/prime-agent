@@ -2282,10 +2282,11 @@ mod tests {
         // A child that stays busy: its worker takes the wait and never answers.
         let (cmd_tx, mut cmd_rx) =
             tokio::sync::mpsc::channel::<WorkerRequest>(WORKER_INFLIGHT_CAPACITY);
-        *resident.cmd_tx.lock().await = Some(cmd_tx);
+        resident
+            .install_command_channel(resident.begin_connection(), cmd_tx)
+            .await;
         supervisor.registry.insert(Arc::clone(&resident)).await;
-        resident.note_connection_live();
-        resident.note_session_ready();
+        resident.transition(crate::registry::WorkerTransition::SessionReady);
 
         let (server_side, client_side) = tokio::net::UnixStream::pair().expect("socket pair");
         let connection = {

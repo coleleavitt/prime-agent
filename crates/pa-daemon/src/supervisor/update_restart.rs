@@ -25,6 +25,7 @@ use super::{
     WORKER_REQUEST_TIMEOUT_MS,
     WorkerSnapshot,
     WorkerStopVerdict,
+    WorkerTransition,
     anyhow,
     app_version,
     build_update_roster,
@@ -229,7 +230,7 @@ impl Supervisor {
             } else {
                 "disconnected"
             };
-            let connected = resident.cmd_tx.lock().await.is_some();
+            let connected = resident.route_state().connected;
             if self.is_stopping(resident) || !connected {
                 // TS #2515: the refusal names the blocking session (`sessionFile`, else the
                 // root active session id).
@@ -397,7 +398,7 @@ impl Supervisor {
                                 // watch woken at the exit reads either the
                                 // intentional stop or the new generation.
                                 resident.monitor_epoch.fetch_add(1, Ordering::SeqCst);
-                                resident.intentional_stop.store(false, Ordering::SeqCst);
+                                resident.transition(WorkerTransition::ResumeStopped);
                                 match self.relaunch_supervised(resident).await {
                                     Ok(()) => {
                                         resident.consecutive_failures.store(0, Ordering::SeqCst);
@@ -414,7 +415,7 @@ impl Supervisor {
                                 // Restore normal supervision: the stop request may still land late,
                                 // in which case the monitor treats the exit as a crash and
                                 // relaunches with backoff (the session file is the truth).
-                                resident.intentional_stop.store(false, Ordering::SeqCst);
+                                resident.transition(WorkerTransition::ResumeStopped);
                             }
                         }
                     }

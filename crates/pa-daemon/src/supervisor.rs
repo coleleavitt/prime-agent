@@ -132,6 +132,7 @@ use crate::registry::{
     WorkerRegistration,
     WorkerReply,
     WorkerRequest,
+    WorkerTransition,
 };
 use crate::saved_session_commands::{NameScope, name_unavailable_error, reservation_key};
 use crate::session_store::list_sessions;

@@ -19,6 +19,7 @@ use super::{
     Supervisor,
     Value,
     WorkerRegistration,
+    WorkerTransition,
     anyhow,
     json,
     load_descriptors,
@@ -284,7 +285,7 @@ impl Supervisor {
                 }
                 // The adopted worker's session already exists (its create ran before the
                 // supervisor restart): routed client commands may reach it immediately.
-                resident.note_session_ready();
+                resident.transition(WorkerTransition::SessionReady);
             }
             (adopted, None)
         } else {
@@ -702,7 +703,7 @@ impl Supervisor {
         }
         // The self-registered worker's session already exists: routed
         // client commands may reach it immediately.
-        resident.note_session_ready();
+        resident.transition(WorkerTransition::SessionReady);
         self.registry.insert(Arc::clone(&resident)).await;
         self.spawn_monitor(
             Arc::clone(&resident),

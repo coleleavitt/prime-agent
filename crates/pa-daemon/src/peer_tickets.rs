@@ -213,7 +213,7 @@ impl Supervisor {
         &self,
         resident: &std::sync::Arc<ResidentWorker>,
     ) -> Result<()> {
-        let connected = resident.cmd_tx.lock().await.is_some();
+        let connected = resident.route_state().connected;
         let lifecycle = resident.descriptor.lock().await.lifecycle;
         let available =
             connected && lifecycle == DaemonWorkerLifecycle::Ready && !self.is_stopping(resident);
@@ -245,7 +245,6 @@ pub(crate) fn effective_worker_state(
             DaemonWorkerLifecycle::Starting => "starting",
             DaemonWorkerLifecycle::Ready => "ready",
             DaemonWorkerLifecycle::Recovering => "recovering",
-            DaemonWorkerLifecycle::Stopping => "stopping",
             DaemonWorkerLifecycle::Failed => "failed",
         }
     }

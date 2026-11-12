@@ -6,7 +6,16 @@ use super::ClientRouting;
 // The only use sits behind the unix update-drain arm below.
 #[cfg(unix)]
 use super::PrepareState;
-use super::{Arc, Ordering, ROUTE_TIMEOUT_MS, RouteAdmission, Supervisor, Value, json};
+use super::{
+    Arc,
+    Ordering,
+    ROUTE_TIMEOUT_MS,
+    RouteAdmission,
+    Supervisor,
+    Value,
+    WorkerTransition,
+    json,
+};
 
 /// The non-update `daemon_closing` frame: every connected client learns the daemon is
 /// going down for a shutdown.
@@ -28,8 +37,7 @@ impl Supervisor {
     pub(super) async fn begin_shutdown(self: &Arc<Self>) {
         self.shutting_down.store(true, Ordering::SeqCst);
         for resident in self.registry.list().await {
-            resident.intentional_stop.store(true, Ordering::SeqCst);
-            resident.note_retired();
+            resident.transition(WorkerTransition::RetireStopped);
             // The stop tombstone persists before the worker is even told (TS
             // `stopWorkerUntracked`): a supervisor that dies between here and the worker's
             // exit leaves durable stop intent, and the next boot finishes the stop. The

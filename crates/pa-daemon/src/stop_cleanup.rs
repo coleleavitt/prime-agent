@@ -268,9 +268,7 @@ impl Supervisor {
         descriptor.archive_on_stop = Some(true);
         crate::descriptor::persist_worker(&resident.descriptor_path, &descriptor)?;
         drop(descriptor);
-        resident
-            .intentional_stop
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        resident.transition(crate::registry::WorkerTransition::RequestStop);
         Ok(())
     }
 
@@ -304,9 +302,7 @@ impl Supervisor {
             return Err(error);
         }
         drop(descriptor);
-        resident
-            .intentional_stop
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        resident.transition(crate::registry::WorkerTransition::RequestStop);
         Ok(())
     }
     pub(crate) async fn finalize_worker_stop(
