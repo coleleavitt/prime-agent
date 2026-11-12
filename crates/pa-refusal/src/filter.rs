@@ -540,7 +540,6 @@ impl ContentFilter {
         let mut matched_terms: HashMap<String, Vec<String>> = HashMap::new();
         let mut matched_terms_with_score: Vec<(String, String, f64)> = Vec::new();
 
-        println!("cyber map size: {}", self.terms.cyber.len());
         for (category, dict) in [
             ("bio", &self.terms.bio),
             ("chem", &self.terms.chem),
@@ -555,7 +554,6 @@ impl ContentFilter {
 
             for (term, weight) in dict {
                 if text_lower.contains(term.to_lowercase().as_str()) {
-                    println!("MATCHED: term={term:?} weight={weight}");
                     category_score += weight;
                     category_matches.push(term.clone());
                     matched_terms_with_score.push((category.to_string(), term.clone(), *weight));
