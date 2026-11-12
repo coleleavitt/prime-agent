@@ -8,6 +8,9 @@ use std::fmt::Write as _;
 
 use serde_json::{Value, json};
 
+use crate::event_stream::initial_assistant_message;
+use crate::providers::stream_end::end_stream;
+
 mod auth;
 mod convert;
 mod credential_process;
@@ -52,7 +55,6 @@ use crate::types::{
     StreamOptions,
     ThinkingBudgets,
     Usage,
-    done_reason,
     error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
@@ -61,7 +63,6 @@ use crate::utils_inner::stream_failure::{
     ConnectionErrorProfile,
     ProviderError,
     ProviderHttpError,
-    record_stream_failure,
     stream_failure_from_stop_reason,
 };
 
@@ -269,53 +270,12 @@ pub fn stream_bedrock(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let mut output = AssistantMessage {
-            content: Vec::new(),
-            api: API_BEDROCK_CONVERSE_STREAM.to_string(),
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            response_model: None,
-            response_id: None,
-            diagnostics: None,
-            usage: Usage::default(),
-            stop_reason: StopReason::Stop,
-            stop_reason_raw: None,
-            error_message: None,
-            timestamp: now_ms(),
-            rest: Map::default(),
-            discarded_usage: None,
-        };
-
+        let mut output =
+            initial_assistant_message(API_BEDROCK_CONVERSE_STREAM, &model.provider, &model.id);
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
-        match result {
-            Ok(()) => {
-                writer.push(AssistantMessageEvent::Done {
-                    reason: done_reason(output.stop_reason),
-                    message: output,
-                });
-                writer.end(None);
-            }
-            Err(error) => {
-                output.stop_reason = if error == ProviderError::Aborted {
-                    StopReason::Aborted
-                } else {
-                    StopReason::Error
-                };
-                // TS surfaces `formatBedrockError(error)`: the SDK exception name prefix form, not
-                // the classified stream-failure rewrite.
-                output.error_message = Some(error.to_string());
-                record_stream_failure(
-                    (&model.provider, &model.id, &model.api),
-                    &mut output,
-                    &error,
-                );
-                writer.push(AssistantMessageEvent::Error {
-                    reason: error_reason(output.stop_reason),
-                    error: output.clone(),
-                });
-                writer.end(Some(output));
-            }
-        }
+        // TS surfaces `formatBedrockError(error)`: the SDK exception name prefix form, not
+        // the classified stream-failure rewrite.
+        end_stream(&model, &writer, output, result, ProviderError::to_string);
     });
 
     reader

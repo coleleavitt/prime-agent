@@ -10,6 +10,7 @@ use crate::event_stream::{
     AssistantMessageEventStream,
     AssistantMessageEventWriter,
     create_assistant_message_event_stream,
+    initial_assistant_message,
 };
 use crate::models::clamp_thinking_level;
 use crate::providers::openai_codex_responses::errors::{
@@ -55,6 +56,7 @@ use crate::providers::openai_responses_shared::{
     convert_responses_tools,
 };
 use crate::providers::simple_options::build_base_options;
+use crate::providers::stream_end::end_stream;
 use crate::registry::Provider;
 use crate::types::{
     AssistantMessage,
@@ -67,14 +69,12 @@ use crate::types::{
     StreamOptions,
     Transport,
     Usage,
-    done_reason,
-    error_reason,
 };
 use crate::utils_inner::diagnostics::now_ms;
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::parse_json_with_repair;
 use crate::utils_inner::sse::SseDecoder;
-use crate::utils_inner::stream_failure::{ProviderError, record_stream_failure};
+use crate::utils_inner::stream_failure::ProviderError;
 
 mod errors;
 pub(crate) mod request;
@@ -144,53 +144,12 @@ pub fn stream_openai_codex_responses(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let mut output = AssistantMessage {
-            content: Vec::new(),
-            api: API_OPENAI_CODEX_RESPONSES.to_string(),
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            response_model: None,
-            response_id: None,
-            diagnostics: None,
-            usage: Usage::default(),
-            stop_reason: StopReason::Stop,
-            stop_reason_raw: None,
-            error_message: None,
-            timestamp: now_ms(),
-            rest: Map::default(),
-            discarded_usage: None,
-        };
-
+        let mut output =
+            initial_assistant_message(API_OPENAI_CODEX_RESPONSES, &model.provider, &model.id);
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
-        match result {
-            Ok(()) => {
-                writer.push(AssistantMessageEvent::Done {
-                    reason: done_reason(output.stop_reason),
-                    message: output,
-                });
-                writer.end(None);
-            }
-            Err(error) => {
-                output.stop_reason = if error == ProviderError::Aborted {
-                    StopReason::Aborted
-                } else {
-                    StopReason::Error
-                };
-                // The TS provider surfaces `error.message` verbatim (including the usage-limit
-                // friendly text), not the classified stream-failure rewrite other providers apply.
-                output.error_message = Some(error.to_string());
-                record_stream_failure(
-                    (&model.provider, &model.id, &model.api),
-                    &mut output,
-                    &error,
-                );
-                writer.push(AssistantMessageEvent::Error {
-                    reason: error_reason(output.stop_reason),
-                    error: output.clone(),
-                });
-                writer.end(Some(output));
-            }
-        }
+        // The TS provider surfaces `error.message` verbatim (including the usage-limit
+        // friendly text), not the classified stream-failure rewrite other providers apply.
+        end_stream(&model, &writer, output, result, ProviderError::to_string);
     });
 
     reader

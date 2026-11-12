@@ -12,6 +12,7 @@ use crate::event_stream::{
     AssistantMessageEventStream,
     AssistantMessageEventWriter,
     create_assistant_message_event_stream,
+    initial_assistant_message,
 };
 use crate::providers::openai_completions::convert::{map_stop_reason, parse_chunk_usage};
 use crate::providers::openai_completions::errors::{openai_http_error, openrouter_raw_metadata};
@@ -25,6 +26,7 @@ use crate::providers::openai_completions::{
     resolve_cache_retention,
 };
 use crate::providers::openai_responses_hooks::apply_service_tier_pricing;
+use crate::providers::stream_end::end_stream;
 use crate::providers::transform_messages::repair_unnamed_tool_calls;
 use crate::types::{
     AssistantContent,
@@ -36,9 +38,6 @@ use crate::types::{
     TextContent,
     ThinkingContent,
     ToolCall,
-    Usage,
-    done_reason,
-    error_reason,
 };
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{
@@ -47,12 +46,7 @@ use crate::utils_inner::json_parse::{
     parse_streaming_json,
 };
 use crate::utils_inner::sse::{ServerSentEvent, SseDecoder};
-use crate::utils_inner::stream_failure::{
-    ProviderError,
-    open_stream_block,
-    record_stream_failure,
-    stream_drop_failure,
-};
+use crate::utils_inner::stream_failure::{ProviderError, open_stream_block, stream_drop_failure};
 
 struct StreamingState {
     output: AssistantMessage,
@@ -503,51 +497,9 @@ pub fn stream_openai_completions(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let mut output = AssistantMessage {
-            content: Vec::new(),
-            api: model.api.clone(),
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            response_model: None,
-            response_id: None,
-            diagnostics: None,
-            usage: Usage::default(),
-            stop_reason: StopReason::Stop,
-            stop_reason_raw: None,
-            error_message: None,
-            timestamp: crate::utils_inner::diagnostics::now_ms(),
-            rest: Map::default(),
-            discarded_usage: None,
-        };
-
+        let mut output = initial_assistant_message(&model.api, &model.provider, &model.id);
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
-        match result {
-            Ok(()) => {
-                writer.push(AssistantMessageEvent::Done {
-                    reason: done_reason(output.stop_reason),
-                    message: output,
-                });
-                writer.end(None);
-            }
-            Err(error) => {
-                output.stop_reason = if error == ProviderError::Aborted {
-                    StopReason::Aborted
-                } else {
-                    StopReason::Error
-                };
-                output.error_message = Some(error_to_message(&error));
-                record_stream_failure(
-                    (&model.provider, &model.id, &model.api),
-                    &mut output,
-                    &error,
-                );
-                writer.push(AssistantMessageEvent::Error {
-                    reason: error_reason(output.stop_reason),
-                    error: output.clone(),
-                });
-                writer.end(Some(output));
-            }
-        }
+        end_stream(&model, &writer, output, result, error_to_message);
     });
 
     reader

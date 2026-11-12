@@ -17,6 +17,7 @@ pub mod openai_responses_shared;
 pub mod openai_responses_stream;
 mod opencode_headers;
 pub mod simple_options;
+mod stream_end;
 pub mod transform_messages;
 
 #[cfg(test)]

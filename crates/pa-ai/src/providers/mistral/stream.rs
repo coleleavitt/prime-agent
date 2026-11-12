@@ -12,6 +12,7 @@ use crate::event_stream::{
     AssistantMessageEventStream,
     AssistantMessageEventWriter,
     create_assistant_message_event_stream,
+    initial_assistant_message,
 };
 use crate::models::calculate_cost;
 use crate::providers::mistral::convert::{
@@ -20,6 +21,7 @@ use crate::providers::mistral::convert::{
     derive_mistral_tool_call_id,
 };
 use crate::providers::mistral::{API_MISTRAL_CONVERSATIONS, MistralOptions, build_request_headers};
+use crate::providers::stream_end::end_stream;
 use crate::providers::transform_messages::{
     repair_unnamed_tool_calls,
     transform_messages_with_normalizer,
@@ -33,11 +35,7 @@ use crate::types::{
     TextContent,
     ThinkingContent,
     ToolCall,
-    Usage,
-    done_reason,
-    error_reason,
 };
-use crate::utils_inner::diagnostics::now_ms;
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{
     StreamingJsonAccumulator,
@@ -49,7 +47,6 @@ use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
     ProviderError,
     ProviderHttpError,
-    record_stream_failure,
     stream_failure_from_stop_reason,
 };
 
@@ -66,53 +63,12 @@ pub fn stream_mistral(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let mut output = AssistantMessage {
-            content: Vec::new(),
-            api: API_MISTRAL_CONVERSATIONS.to_string(),
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            response_model: None,
-            response_id: None,
-            diagnostics: None,
-            usage: Usage::default(),
-            stop_reason: StopReason::Stop,
-            stop_reason_raw: None,
-            error_message: None,
-            timestamp: now_ms(),
-            rest: Map::default(),
-            discarded_usage: None,
-        };
-
+        let mut output =
+            initial_assistant_message(API_MISTRAL_CONVERSATIONS, &model.provider, &model.id);
         let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
-        match result {
-            Ok(()) => {
-                writer.push(AssistantMessageEvent::Done {
-                    reason: done_reason(output.stop_reason),
-                    message: output,
-                });
-                writer.end(None);
-            }
-            Err(error) => {
-                output.stop_reason = if error == ProviderError::Aborted {
-                    StopReason::Aborted
-                } else {
-                    StopReason::Error
-                };
-                // TS surfaces `formatMistralError(error)`: the SDK's statusCode/body composition,
-                // not the classified rewrite.
-                output.error_message = Some(error.to_string());
-                record_stream_failure(
-                    (&model.provider, &model.id, &model.api),
-                    &mut output,
-                    &error,
-                );
-                writer.push(AssistantMessageEvent::Error {
-                    reason: error_reason(output.stop_reason),
-                    error: output.clone(),
-                });
-                writer.end(Some(output));
-            }
-        }
+        // TS surfaces `formatMistralError(error)`: the SDK's statusCode/body composition,
+        // not the classified rewrite.
+        end_stream(&model, &writer, output, result, ProviderError::to_string);
     });
 
     reader
@@ -754,6 +710,7 @@ impl MistralStreamState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Usage;
 
     /// The TS `formatMistralError` shape: "Mistral API error (N): <body>", truncated at 4000 chars
     /// (UTF-16 units) with the JS remainder count.

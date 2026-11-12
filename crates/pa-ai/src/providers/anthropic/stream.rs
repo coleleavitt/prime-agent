@@ -16,6 +16,7 @@ use crate::event_stream::{
     AssistantMessageEventStream,
     AssistantMessageEventWriter,
     create_assistant_message_event_stream,
+    initial_assistant_message,
 };
 use crate::models::{CostOverrides, calculate_cost};
 use crate::providers::anthropic::convert::map_stop_reason;
@@ -27,6 +28,7 @@ use crate::providers::anthropic::{
     get_cache_control,
     should_use_fine_grained_tool_streaming_beta,
 };
+use crate::providers::stream_end::end_stream;
 use crate::request_hooks::{
     Admission,
     CallerOptions,
@@ -50,11 +52,7 @@ use crate::types::{
     TextContent,
     ThinkingContent,
     ToolCall,
-    Usage,
-    done_reason,
-    error_reason,
 };
-use crate::utils_inner::diagnostics::now_ms;
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::{
     StreamingJsonAccumulator,
@@ -69,7 +67,6 @@ use crate::utils_inner::stream_failure::{
     StreamFailureKind,
     classify_stream_failure,
     format_stream_failure_message,
-    record_stream_failure,
     stream_failure_from_stop_reason,
     stream_failure_message,
     truncate_raw_payload,
@@ -174,22 +171,7 @@ pub fn stream_anthropic(
     let (writer, reader) = create_assistant_message_event_stream();
 
     tokio::spawn(async move {
-        let make_output = || AssistantMessage {
-            content: Vec::new(),
-            api: model.api.clone(),
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            response_model: None,
-            response_id: None,
-            diagnostics: None,
-            usage: Usage::default(),
-            stop_reason: StopReason::Stop,
-            stop_reason_raw: None,
-            error_message: None,
-            timestamp: now_ms(),
-            rest: Map::default(),
-            discarded_usage: None,
-        };
+        let make_output = || initial_assistant_message(&model.api, &model.provider, &model.id);
 
         let mut output = make_output();
         let mut result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
@@ -217,33 +199,13 @@ pub fn stream_anthropic(
             result = run_stream(&model, &stripped, options.as_ref(), &mut output, &writer).await;
         }
 
-        match result {
-            Ok(()) => {
-                writer.push(AssistantMessageEvent::Done {
-                    reason: done_reason(output.stop_reason),
-                    message: output,
-                });
-                writer.end(None);
-            }
-            Err(error) => {
-                output.stop_reason = if error == ProviderError::Aborted {
-                    StopReason::Aborted
-                } else {
-                    StopReason::Error
-                };
-                output.error_message = Some(format_stream_failure_message(&error));
-                record_stream_failure(
-                    (&model.provider, &model.id, &model.api),
-                    &mut output,
-                    &error,
-                );
-                writer.push(AssistantMessageEvent::Error {
-                    reason: error_reason(output.stop_reason),
-                    error: output.clone(),
-                });
-                writer.end(Some(output));
-            }
-        }
+        end_stream(
+            &model,
+            &writer,
+            output,
+            result,
+            format_stream_failure_message,
+        );
     });
 
     reader
