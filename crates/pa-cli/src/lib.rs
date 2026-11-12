@@ -191,23 +191,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         std::env::set_var(crate::config::ENV_OFFLINE, "1");
     }
 
-    // Install-time kernel preparation: the installer invokes `--prime-agent-bootstrap`
-    // after extracting a release, so the venv is ready before the first session.
-    if args.len() == 1 && args[0] == "--prime-agent-bootstrap" {
-        crate::config::require_agent_dir()?;
-        return run_runtime_bootstrap();
-    }
-
-    // A kernel runtime outside a Prime Agent host (tests, scripts) runs its
-    // bash() commands through this sidecar over stdin/stdout, under the OS
-    // sandbox a session in the same directory would get.
-    if args.len() == 1 && args[0] == "--prime-agent-bash-host" {
-        if let Some(root) =
-            std::env::var_os(ENV_TEST_BASH_HOST_ROOT).filter(|root| !root.is_empty())
-        {
-            return Ok(serve_test_bash_host(std::path::Path::new(&root)));
-        }
-        return Ok(pa_bash::serve_stdio(bash_host_sandbox()));
+    if let Some(exit) = internal_entry(args) {
+        return exit;
     }
 
     // Public command routing: help requests, removed commands, management
@@ -224,18 +209,16 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     let parsed = args::parse_args(&args);
-    if !parsed.diagnostics.is_empty() {
-        for diagnostic in &parsed.diagnostics {
-            let label = if diagnostic.is_error {
-                "Error"
-            } else {
-                "Warning"
-            };
-            eprintln!("{label}: {}", diagnostic.message);
-        }
-        if parsed.diagnostics.iter().any(|d| d.is_error) {
-            return Ok(1);
-        }
+    for diagnostic in &parsed.diagnostics {
+        let label = if diagnostic.is_error {
+            "Error"
+        } else {
+            "Warning"
+        };
+        eprintln!("{label}: {}", diagnostic.message);
+    }
+    if parsed.diagnostics.iter().any(|d| d.is_error) {
+        return Ok(1);
     }
 
     let app_mode = mode::AppMode::resolve(&parsed, std::io::stdin().is_terminal());
@@ -243,16 +226,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     // Enable Windows VT processing before raw ANSI mode writes.
     pa_types::platform::console_init();
 
-    if public_command.attach_agent.is_some() && app_mode != mode::AppMode::Interactive {
-        return Err("attach requires an interactive terminal".to_string());
-    }
-    if parsed.resume_bare && app_mode != mode::AppMode::Interactive {
-        return Err(
-            "--resume without a session selector requires an interactive terminal".to_string(),
-        );
-    }
-    if parsed.from_pr.is_some() && app_mode != mode::AppMode::Interactive {
-        return Err("--from-pr requires an interactive terminal".to_string());
+    if app_mode != mode::AppMode::Interactive {
+        require_no_interactive_flag(&parsed, public_command.attach_agent.is_some())?;
     }
 
     if parsed.version {
@@ -303,47 +278,12 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         return run_cloud_guest_daemon_mode();
     }
 
-    if let Some(fork) = &parsed.fork {
-        let mut conflicting_flags: Vec<&str> = Vec::new();
-        if parsed.continue_ {
-            conflicting_flags.push("--continue");
-        }
-        if parsed.has_resume() {
-            conflicting_flags.push("--resume");
-        }
-        if parsed.from_pr.is_some() {
-            conflicting_flags.push("--from-pr");
-        }
-        if parsed.no_session {
-            conflicting_flags.push("--no-session");
-        }
-        if !conflicting_flags.is_empty() {
-            return Err(format!(
-                "--fork cannot be combined with {}",
-                conflicting_flags.join(", ")
-            ));
-        }
-        let _ = fork;
+    if parsed.fork.is_some() {
+        refuse_with_session_flags(&parsed, "--fork", &["--fork"], "")?;
     }
 
     let cwd = match &parsed.cwd {
-        Some(cwd) => {
-            let cwd = crate::config::expand_tilde_path(cwd);
-            let from = std::env::current_dir().map_err(|e| e.to_string())?;
-            if let Err(error) = std::env::set_current_dir(&cwd) {
-                return Err(format!(
-                    "Cannot use cwd {}: {}",
-                    cwd.display(),
-                    node_style_error(
-                        &error,
-                        "chdir",
-                        &from.display().to_string(),
-                        &cwd.display().to_string()
-                    )
-                ));
-            }
-            std::env::current_dir().map_err(|e| e.to_string())?
-        }
+        Some(cwd) => enter_cwd(cwd)?,
         None => std::env::current_dir().map_err(|e| e.to_string())?,
     };
 
@@ -365,134 +305,19 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     // `-w, --worktree [name]`: the session runs in a managed worktree, made
     // (or reused) before anything else reads the directory.
     let (cwd, launched_worktree) = if parsed.worktree {
-        let mut conflicting_flags: Vec<&str> = Vec::new();
-        if parsed.continue_ {
-            conflicting_flags.push("--continue");
-        }
-        if parsed.has_resume() {
-            conflicting_flags.push("--resume");
-        }
-        if parsed.from_pr.is_some() {
-            conflicting_flags.push("--from-pr");
-        }
-        if parsed.fork.is_some() {
-            conflicting_flags.push("--fork");
-        }
-        if !conflicting_flags.is_empty() {
-            return Err(format!(
-                "--worktree cannot be combined with {} (a resumed session keeps its own directory)",
-                conflicting_flags.join(", ")
-            ));
-        }
+        refuse_with_session_flags(
+            &parsed,
+            "--worktree",
+            &["--no-session"],
+            " (a resumed session keeps its own directory)",
+        )?;
         let worktree = worktree_launch::enter(&cwd, &agent_dir, parsed.worktree_name.as_deref())?;
         (worktree.path.clone(), Some(worktree))
     } else {
         (cwd, None)
     };
-    // The named-session flags (upstream #1294): the listing and the delete exit before any
-    // session starts; `--name` becomes the resume of the named (or newly created) session.
-    let flag_session_dir = parsed.session_dir.clone();
-    let named_session_dir = || {
-        flag_session_dir
-            .as_deref()
-            .map(crate::config::expand_tilde_path)
-            .or_else(crate::config::get_session_dir_env_override)
-            .or_else(|| {
-                pa_core::settings::SettingsManager::create(&cwd, &agent_dir).get_session_dir()
-            })
-            .unwrap_or_else(|| agent_dir.join("sessions"))
-    };
-    if parsed.list_sessions {
-        println!(
-            "{}",
-            named_sessions::format_sessions_here(
-                &named_session_dir(),
-                &cwd,
-                crate::daemon_session_list::now_ms()
-            )
-        );
-        cli_command_telemetry::report(
-            &cwd,
-            cli_command_telemetry::CliCommand::ListSessions,
-            true,
-            true,
-        );
-        return Ok(0);
-    }
-    if let Some(selector) = &parsed.delete_session {
-        let socket_path =
-            crate::config::resolve_daemon_socket_path(parsed.daemon_socket.as_deref());
-        let deleted =
-            named_sessions::run_delete_session(selector, &named_session_dir(), &cwd, &socket_path);
-        cli_command_telemetry::report(
-            &cwd,
-            cli_command_telemetry::CliCommand::DeleteSession,
-            matches!(deleted, Ok(0)),
-            true,
-        );
-        return deleted;
-    }
-    if let Some(name) = parsed.name.clone() {
-        let mut conflicting_flags: Vec<&str> = Vec::new();
-        if parsed.continue_ {
-            conflicting_flags.push("--continue");
-        }
-        if parsed.has_resume() {
-            conflicting_flags.push("--resume");
-        }
-        if parsed.from_pr.is_some() {
-            conflicting_flags.push("--from-pr");
-        }
-        if parsed.fork.is_some() {
-            conflicting_flags.push("--fork");
-        }
-        if parsed.no_session {
-            conflicting_flags.push("--no-session");
-        }
-        if !conflicting_flags.is_empty() {
-            return Err(format!(
-                "--name cannot be combined with {}",
-                conflicting_flags.join(", ")
-            ));
-        }
-        let opened =
-            match named_sessions::open_or_create_named_session(&named_session_dir(), &cwd, &name) {
-                Ok(opened) => opened,
-                Err(error) => {
-                    cli_command_telemetry::report(
-                        &cwd,
-                        cli_command_telemetry::CliCommand::Name { created: false },
-                        false,
-                        true,
-                    );
-                    return Err(error);
-                }
-            };
-        // The launch continues into the session: the report never holds it.
-        cli_command_telemetry::report(
-            &cwd,
-            cli_command_telemetry::CliCommand::Name {
-                created: opened.created,
-            },
-            true,
-            false,
-        );
-        parsed.resume = Some(opened.path.to_string_lossy().to_string());
-    }
-    // `--session-id <uuid>`: a persisted session is created up front under
-    // that id and opened like `--resume` (`--no-session` keeps it in memory).
-    if let Some(id) = parsed.cc.session_id.clone() {
-        if parsed.continue_ || parsed.has_resume() || parsed.fork.is_some() || parsed.name.is_some()
-        {
-            return Err(
-                "--session-id cannot be combined with --continue, --resume, --fork or --name"
-                    .to_string(),
-            );
-        }
-        if !parsed.no_session {
-            let path = create_session_with_id(&named_session_dir(), &cwd, &id)?;
-            parsed.resume = Some(path.to_string_lossy().to_string());
-        }
+    if let Some(exit) = apply_session_flags(&mut parsed, &cwd, &agent_dir)? {
+        return Ok(exit);
     }
     // Workspace trust: project configuration that can run code or change
     // the prompt loads only in a trusted workspace. The interactive client
@@ -506,51 +331,11 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     let telemetry_disabled = crate::mode::telemetry_disabled(
         &pa_core::settings::SettingsManager::create(&cwd, &agent_dir),
     );
-    let session_dir = parsed
-        .session_dir
-        .as_deref()
-        .map(crate::config::expand_tilde_path)
-        .or_else(crate::config::get_session_dir_env_override)
-        // sessionDir resolution: the cwd-scoped settings manager is
-        // consulted after the flag and env overrides, before the default.
-        .or_else(|| pa_core::settings::SettingsManager::create(&cwd, &agent_dir).get_session_dir());
+    let session_dir = configured_session_dir(parsed.session_dir.as_deref(), &cwd, &agent_dir);
 
-    let mut cli_messages = parsed.messages.clone();
-    // Startup branches read piped stdin for every mode but the stdio-protocol ones
-    // (rpc/acp/daemon keep stdin); the idle window keeps a silent pipe from hanging.
-    let stdin_content = if matches!(app_mode, AppMode::Rpc | AppMode::Acp | AppMode::Daemon) {
-        None
-    } else {
-        piped_stdin::read_piped_stdin(piped_stdin::resolve_stdin_idle_timeout_ms(
-            std::env::var(piped_stdin::STDIN_IDLE_TIMEOUT_MS_ENV)
-                .ok()
-                .as_deref(),
-        ))
+    let Some(prompt) = initial_prompt(&parsed, app_mode, &cwd, &agent_dir) else {
+        return Ok(1);
     };
-    // `@file` arguments expand into text and image attachments for the initial
-    // prompt; the file blocks ride every mode's first message.
-    let (file_text, initial_images) = if parsed.file_args.is_empty() {
-        (None, Vec::new())
-    } else {
-        let auto_resize =
-            pa_core::settings::SettingsManager::create(&cwd, &agent_dir).get_image_auto_resize();
-        match file_processor::process_file_arguments(&parsed.file_args, &cwd, auto_resize) {
-            Ok(processed) => (
-                Some(processed.text).filter(|text| !text.is_empty()),
-                processed.images,
-            ),
-            Err(error) => {
-                eprintln!("{}", error.message);
-                return Ok(1);
-            }
-        }
-    };
-    let initial_message = initial_message::build_initial_message(
-        &mut cli_messages,
-        file_text.as_deref(),
-        stdin_content.as_deref(),
-    )
-    .initial_message;
     let options = mode::RunOptions {
         app_mode,
         config: mode::runtime_config_from_args(
@@ -573,9 +358,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             cwd_from_flag: parsed.cwd.is_some() || launched_worktree.is_some(),
             session_id: parsed.cc.session_id.clone().filter(|_| parsed.no_session),
         },
-        messages: cli_messages,
-        initial_message,
-        initial_images,
+        messages: prompt.messages,
+        initial_message: prompt.message,
+        initial_images: prompt.images,
         file_args: parsed.file_args.clone(),
         daemon_socket: parsed.daemon_socket.clone(),
         daemon_port: parsed.daemon_port,
@@ -593,6 +378,261 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         Ok(exit_code) => Ok(exit_code),
         Err(missing) => Err(missing.error_message()),
     }
+}
+
+/// The first prompt: the CLI messages, with piped stdin and the `@file`
+/// arguments' text joined into the initial message.
+struct InitialPrompt {
+    messages: Vec<String>,
+    message: Option<String>,
+    images: Vec<pa_agent::types::ImageContent>,
+}
+
+/// Read the first prompt's inputs; `None` (the reason printed) when an
+/// `@file` argument cannot be read.
+fn initial_prompt(
+    parsed: &args::Args,
+    app_mode: AppMode,
+    cwd: &std::path::Path,
+    agent_dir: &std::path::Path,
+) -> Option<InitialPrompt> {
+    let mut messages = parsed.messages.clone();
+    // Startup branches read piped stdin for every mode but the stdio-protocol ones
+    // (rpc/acp/daemon keep stdin); the idle window keeps a silent pipe from hanging.
+    let stdin_content = if matches!(app_mode, AppMode::Rpc | AppMode::Acp | AppMode::Daemon) {
+        None
+    } else {
+        piped_stdin::read_piped_stdin(piped_stdin::resolve_stdin_idle_timeout_ms(
+            std::env::var(piped_stdin::STDIN_IDLE_TIMEOUT_MS_ENV)
+                .ok()
+                .as_deref(),
+        ))
+    };
+    // `@file` arguments expand into text and image attachments for the initial
+    // prompt; the file blocks ride every mode's first message.
+    let (file_text, images) = if parsed.file_args.is_empty() {
+        (None, Vec::new())
+    } else {
+        let auto_resize =
+            pa_core::settings::SettingsManager::create(cwd, agent_dir).get_image_auto_resize();
+        match file_processor::process_file_arguments(&parsed.file_args, cwd, auto_resize) {
+            Ok(processed) => (
+                Some(processed.text).filter(|text| !text.is_empty()),
+                processed.images,
+            ),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                return None;
+            }
+        }
+    };
+    let message = initial_message::build_initial_message(
+        &mut messages,
+        file_text.as_deref(),
+        stdin_content.as_deref(),
+    )
+    .initial_message;
+    Some(InitialPrompt {
+        messages,
+        message,
+        images,
+    })
+}
+
+/// The hidden single-flag entries that never reach command routing; `None`
+/// for every other invocation.
+fn internal_entry(args: &[String]) -> Option<Result<i32, String>> {
+    let [flag] = args else {
+        return None;
+    };
+    match flag.as_str() {
+        // Install-time kernel preparation: the installer invokes `--prime-agent-bootstrap`
+        // after extracting a release, so the venv is ready before the first session.
+        "--prime-agent-bootstrap" => {
+            Some(crate::config::require_agent_dir().and_then(|()| run_runtime_bootstrap()))
+        }
+        // A kernel runtime outside a Prime Agent host (tests, scripts) runs its
+        // bash() commands through this sidecar over stdin/stdout, under the OS
+        // sandbox a session in the same directory would get.
+        "--prime-agent-bash-host" => Some(Ok(
+            match std::env::var_os(ENV_TEST_BASH_HOST_ROOT).filter(|root| !root.is_empty()) {
+                Some(root) => serve_test_bash_host(std::path::Path::new(&root)),
+                None => pa_bash::serve_stdio(bash_host_sandbox()),
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// Refuse the flags that need an interactive terminal outside one.
+fn require_no_interactive_flag(parsed: &args::Args, attach: bool) -> Result<(), String> {
+    if attach {
+        return Err("attach requires an interactive terminal".to_string());
+    }
+    if parsed.resume_bare {
+        return Err(
+            "--resume without a session selector requires an interactive terminal".to_string(),
+        );
+    }
+    if parsed.from_pr.is_some() {
+        return Err("--from-pr requires an interactive terminal".to_string());
+    }
+    Ok(())
+}
+
+/// Refuse `flag`, which picks the session itself, combined with another
+/// session-choosing flag (all but `except`); `why` ends the message.
+fn refuse_with_session_flags(
+    parsed: &args::Args,
+    flag: &str,
+    except: &[&str],
+    why: &str,
+) -> Result<(), String> {
+    let given: Vec<&str> = [
+        ("--continue", parsed.continue_),
+        ("--resume", parsed.has_resume()),
+        ("--from-pr", parsed.from_pr.is_some()),
+        ("--fork", parsed.fork.is_some()),
+        ("--no-session", parsed.no_session),
+    ]
+    .into_iter()
+    .filter(|(name, given)| *given && !except.contains(name))
+    .map(|(name, _)| name)
+    .collect();
+    if given.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{flag} cannot be combined with {}{why}",
+        given.join(", ")
+    ))
+}
+
+/// `--cwd`: change into the directory, with the TS product's error text.
+fn enter_cwd(cwd: &str) -> Result<std::path::PathBuf, String> {
+    let cwd = crate::config::expand_tilde_path(cwd);
+    let from = std::env::current_dir().map_err(|e| e.to_string())?;
+    if let Err(error) = std::env::set_current_dir(&cwd) {
+        return Err(format!(
+            "Cannot use cwd {}: {}",
+            cwd.display(),
+            node_style_error(
+                &error,
+                "chdir",
+                &from.display().to_string(),
+                &cwd.display().to_string()
+            )
+        ));
+    }
+    std::env::current_dir().map_err(|e| e.to_string())
+}
+
+/// The session directory the `--session-dir` flag, the env override or the
+/// cwd-scoped settings (in that order) configure.
+fn configured_session_dir(
+    flag: Option<&str>,
+    cwd: &std::path::Path,
+    agent_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    flag.map(crate::config::expand_tilde_path)
+        .or_else(crate::config::get_session_dir_env_override)
+        // sessionDir resolution: the cwd-scoped settings manager is
+        // consulted after the flag and env overrides, before the default.
+        .or_else(|| pa_core::settings::SettingsManager::create(cwd, agent_dir).get_session_dir())
+}
+
+/// The named-session flags (upstream #1294) and `--session-id`: the listing
+/// and the delete exit before any session starts (`Some` exit code);
+/// `--name` and `--session-id` become the resume of their session.
+fn apply_session_flags(
+    parsed: &mut args::Args,
+    cwd: &std::path::Path,
+    agent_dir: &std::path::Path,
+) -> Result<Option<i32>, String> {
+    let named_session_dir = || {
+        configured_session_dir(parsed.session_dir.as_deref(), cwd, agent_dir)
+            .unwrap_or_else(|| agent_dir.join("sessions"))
+    };
+    if parsed.list_sessions {
+        println!(
+            "{}",
+            named_sessions::format_sessions_here(
+                &named_session_dir(),
+                cwd,
+                crate::daemon_session_list::now_ms()
+            )
+        );
+        cli_command_telemetry::report(
+            cwd,
+            cli_command_telemetry::CliCommand::ListSessions,
+            true,
+            true,
+        );
+        return Ok(Some(0));
+    }
+    if let Some(selector) = &parsed.delete_session {
+        let socket_path =
+            crate::config::resolve_daemon_socket_path(parsed.daemon_socket.as_deref());
+        let deleted =
+            named_sessions::run_delete_session(selector, &named_session_dir(), cwd, &socket_path);
+        cli_command_telemetry::report(
+            cwd,
+            cli_command_telemetry::CliCommand::DeleteSession,
+            matches!(deleted, Ok(0)),
+            true,
+        );
+        return deleted.map(Some);
+    }
+    let mut resume = None;
+    if let Some(name) = &parsed.name {
+        refuse_with_session_flags(parsed, "--name", &[], "")?;
+        let opened =
+            match named_sessions::open_or_create_named_session(&named_session_dir(), cwd, name) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    cli_command_telemetry::report(
+                        cwd,
+                        cli_command_telemetry::CliCommand::Name { created: false },
+                        false,
+                        true,
+                    );
+                    return Err(error);
+                }
+            };
+        // The launch continues into the session: the report never holds it.
+        cli_command_telemetry::report(
+            cwd,
+            cli_command_telemetry::CliCommand::Name {
+                created: opened.created,
+            },
+            true,
+            false,
+        );
+        resume = Some(opened.path.to_string_lossy().to_string());
+    }
+    // `--session-id <uuid>`: a persisted session is created up front under
+    // that id and opened like `--resume` (`--no-session` keeps it in memory).
+    if let Some(id) = &parsed.cc.session_id {
+        if parsed.continue_
+            || parsed.has_resume()
+            || resume.is_some()
+            || parsed.fork.is_some()
+            || parsed.name.is_some()
+        {
+            return Err(
+                "--session-id cannot be combined with --continue, --resume, --fork or --name"
+                    .to_string(),
+            );
+        }
+        if !parsed.no_session {
+            let path = create_session_with_id(&named_session_dir(), cwd, id)?;
+            resume = Some(path.to_string_lossy().to_string());
+        }
+    }
+    if resume.is_some() {
+        parsed.resume = resume;
+    }
+    Ok(None)
 }
 
 /// Publish the launch layer the parsed Claude Code flags make (an empty one
