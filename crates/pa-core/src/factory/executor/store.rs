@@ -161,12 +161,25 @@ fn write_record(dir: &Path, cell: &Arc<RunCell>) {
     }
 }
 
+/// Replace the record durably: the temp file's bytes reach the disk before
+/// the rename, and the rename itself before the write returns (the
+/// directory sync), so the id an admission records before its spawn is
+/// still there after a crash or a power loss.
 fn write_atomic(dir: &Path, run_id: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
     std::fs::create_dir_all(dir)?;
     let target = dir.join(format!("{run_id}.json"));
     let temp = dir.join(format!(".{run_id}.json.tmp"));
-    std::fs::write(&temp, bytes)?;
+    let mut file = std::fs::File::create(&temp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&temp, &target)?;
+    // POSIX makes the rename durable by syncing the directory; Windows has
+    // no directory handle to sync.
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
     Ok(())
 }
 

@@ -303,9 +303,21 @@ class Journal:
         return state
 
     def append(self, entry: dict[str, Any]) -> None:
+        """Append one line durably: a ``started`` line names the child before its spawn,
+        so it must survive a crash right after the spawn."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        created = not self.path.exists()
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if created and hasattr(os, "O_DIRECTORY"):
+            # The new file's directory entry must be durable too.
+            directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
 
 # --- the agent backend ----------------------------------------------------

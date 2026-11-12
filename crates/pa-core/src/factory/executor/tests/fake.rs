@@ -788,7 +788,8 @@ impl Case {
     /// `status()`.
     pub async fn settle(&self, result: &Value) -> Value {
         let run_id = Self::run_id(result);
-        for _ in 0..200_000 {
+        let deadline = std::time::Instant::now() + WAIT_LIMIT;
+        while std::time::Instant::now() < deadline {
             if self.run_state(result) != "running" {
                 return self.status(&run_id);
             }
@@ -802,7 +803,8 @@ impl Case {
     }
 
     pub async fn wait_until(&self, mut predicate: impl FnMut() -> bool) {
-        for _ in 0..50_000 {
+        let deadline = std::time::Instant::now() + WAIT_LIMIT;
+        while std::time::Instant::now() < deadline {
             if predicate() {
                 return;
             }
@@ -878,6 +880,12 @@ pub fn entry_statuses(node: &Value) -> Vec<String> {
 pub fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
+
+/// How long [`Case::wait_until`] and [`Case::settle`] yield to the executor:
+/// a store-backed run waits on its writer thread's synced writes (an
+/// admission flushes before its spawn), so a yield count alone is not a
+/// bound under a loaded machine.
+const WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Mark every running instance of a stored run as already re-driven
 /// [`RESTART_ADOPTIONS_MAX`] times, so the next restart loses its child
