@@ -163,7 +163,8 @@ pub(crate) fn agent_message_body(
     let lines = agent_body_diagram_rows(message, theme, width, mermaid).unwrap_or_else(|| {
         let mut lines: Vec<Line> = Vec::new();
         for source in message.split('\n') {
-            for line in wrap_text(source, text_width) {
+            for mut line in wrap_text(source, text_width) {
+                crate::hyperlinks::strip_osc8(&mut line);
                 lines.push(
                     line.into_iter()
                         .map(|span| Span::styled(span.content, body))
@@ -238,11 +239,10 @@ pub(crate) fn render_shell_completion(
     }
     out.push(header);
     if detail.tool_output_expanded() {
-        out.extend(crate::branch::branch_block(
-            &vec![Span::raw(row.content.clone())],
-            theme,
-            width,
-        ));
+        let mut body =
+            crate::branch::branch_block(&vec![Span::raw(row.content.clone())], theme, width);
+        body.iter_mut().for_each(crate::hyperlinks::strip_osc8);
+        out.extend(body);
     }
     out
 }

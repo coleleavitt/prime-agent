@@ -164,7 +164,7 @@ pub(crate) fn render_tool_card_in(
     show_images: bool,
     mermaid: crate::markdown::MermaidMode,
 ) -> Vec<Line> {
-    match card.name.as_str() {
+    let mut rows = match card.name.as_str() {
         name if pa_types::ai::is_python_tool_name(name) => ipython::render_in(
             card,
             frame,
@@ -177,7 +177,10 @@ pub(crate) fn render_tool_card_in(
         ),
         "bash" => bash::render(card, frame, detail, theme, width, show_images),
         _ => generic::render(card, frame, detail, theme, width, show_images),
-    }
+    };
+    // Cards show model-written arguments and file contents and add no links of their own.
+    rows.iter_mut().for_each(crate::hyperlinks::strip_osc8);
+    rows
 }
 
 /// The generic panel status: error wins even while streaming; `running`

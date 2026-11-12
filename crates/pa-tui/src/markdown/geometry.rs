@@ -10,6 +10,7 @@ use super::{
     code_rows,
     heading_spans,
     mermaid_blocks,
+    normalize_source,
     parse_blocks,
     render_inline,
     wrapped_span_count,
@@ -92,7 +93,7 @@ pub(crate) fn markdown_row_count_tagged(
     if text.trim().is_empty() {
         return 0;
     }
-    let normalized = text.replace('\t', "   ");
+    let normalized = normalize_source(text);
     let width = width.max(1);
     let blocks = mermaid_blocks::apply(parse_blocks(&normalized), width, style);
     let mut total = 0;
