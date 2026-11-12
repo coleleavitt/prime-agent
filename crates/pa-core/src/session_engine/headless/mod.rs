@@ -18,10 +18,12 @@ pub(crate) mod boundary;
 mod continuation;
 mod faux;
 pub(crate) mod goal;
+mod model;
 mod print_run;
 mod session_command;
 
 pub use faux::faux_response_steps;
+pub use model::{HeadlessModelFlags, resolve_headless_thinking_level, select_headless_model};
 pub use print_run::{PrintRun, PrintRunConfig, PrintRunOutcome};
 
 /// Where a json-mode run's session events go: the embedding's output

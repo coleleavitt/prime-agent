@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use pa_agent::stream::{LlmContext, StreamFn, StreamRequestOptions};
 use pa_agent::types::Model as AgentModel;
 use pa_core::session::discovery::{
     ResolvedSession,
@@ -11,12 +10,18 @@ use pa_core::session::discovery::{
     find_most_recent_session_for_cwd,
     resolve_session_path,
 };
-use pa_core::session_engine::headless::{PrintRun, PrintRunConfig, PrintRunOutcome};
+use pa_core::session_engine::headless::{
+    HeadlessModelFlags,
+    PrintRun,
+    PrintRunConfig,
+    PrintRunOutcome,
+    resolve_headless_thinking_level,
+    select_headless_model,
+};
+use pa_core::session_engine::image_model_routing;
 use pa_core::session_engine::provider_adapter::{
     ProviderTarget,
     json_round_trip,
-    map_thinking_level,
-    stream_once,
     switchable_stream_fn,
 };
 use pa_core::session_engine::rlm_in_process::{
@@ -33,7 +38,6 @@ use pa_core::session_engine::rlm_in_process::{
 };
 use pa_core::session_engine::session_events::agent_event_json;
 use pa_types::ai::Model;
-use pa_types::sync::{MutexExt, RwLockExt};
 use tokio::sync::Notify;
 
 use crate::mode::{AppMode, MissingSubsystem, RunOptions};
@@ -771,7 +775,7 @@ pub(crate) async fn build_headless_engine_with(
             let session = session_manager
                 .as_ref()
                 .map(pa_core::session::manager::SessionManager::active_context);
-            select_model(&mut registry, config, session.as_ref()).await?
+            select_headless_model(&mut registry, &model_flags(config), session.as_ref()).await?
         }
     };
     // A broken prime CLI directory context fails a Prime Inference run
@@ -812,7 +816,7 @@ pub(crate) async fn build_headless_engine_with(
         // `set_model` picker write cannot redirect an in-flight routed turn.
         let armed_target: std::sync::Arc<std::sync::Mutex<Option<ProviderTarget>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
-        let stream_fn = route_authoritative_stream_fn(
+        let stream_fn = image_model_routing::route_authoritative_stream_fn(
             std::sync::Arc::clone(&provider_target),
             std::sync::Arc::clone(&armed_target),
         );
@@ -820,7 +824,7 @@ pub(crate) async fn build_headless_engine_with(
         // without image input route to the configured image model or refuse.
         (
             stream_fn,
-            Some(headless_image_model_router(
+            Some(image_model_routing::slot_image_model_router(
                 &provider_target,
                 armed_target,
                 config.cwd.clone(),
@@ -913,7 +917,10 @@ pub(crate) async fn build_headless_engine_with(
                     spawned_by_request_id: None,
                 },
             ),
-            Some(resolve_thinking_level(config, &model)),
+            Some(resolve_headless_thinking_level(
+                &model_flags(config),
+                &model,
+            )),
         ),
     };
     let engine = pa_core::session_engine::engine::create_session(
@@ -1006,165 +1013,6 @@ pub(crate) async fn build_headless_engine_with(
     })
 }
 
-/// The armed image route stays AUTHORITATIVE while an episode is armed: a
-/// `set_model` picker write to the slot lands only when the settle clears it.
-fn route_authoritative_stream_fn(
-    provider_target: ProviderTargetSlot,
-    armed_target: std::sync::Arc<std::sync::Mutex<Option<ProviderTarget>>>,
-) -> StreamFn {
-    std::sync::Arc::new(
-        move |_requested: AgentModel, context: LlmContext, options: StreamRequestOptions| {
-            let armed = armed_target.lock_or_recover().clone();
-            let target = armed
-                .or_else(|| provider_target.read_or_recover().clone())
-                .expect("provider target set before the first stream");
-            let ProviderTarget {
-                api_key,
-                model,
-                service_tier,
-                headers,
-            } = target;
-            Box::pin(async move {
-                stream_once(&model, api_key, service_tier, headers, context, options)
-            })
-        },
-    )
-}
-
-/// The routing decision for one dispatched batch (`Err` fails the turn with the
-/// actionable refusal) and the serving-target swap (`None` restores the target).
-fn headless_image_model_router(
-    provider_target: &std::sync::Arc<
-        std::sync::RwLock<Option<pa_core::session_engine::provider_adapter::ProviderTarget>>,
-    >,
-    armed_target: std::sync::Arc<
-        std::sync::Mutex<Option<pa_core::session_engine::provider_adapter::ProviderTarget>>,
-    >,
-    cwd: std::path::PathBuf,
-    agent_dir: std::path::PathBuf,
-    session_model: pa_types::ai::Model,
-) -> pa_core::session_engine::image_model_routing::ImageModelRouter {
-    // The pre-route session target, captured at the FIRST arm (not at build):
-    // the restore must return the SWITCHED-TO target, never the build-time one.
-    let armed_from = std::sync::Arc::new(std::sync::Mutex::new(None));
-    // Holds the routed target the arm wrote, so the settle can tell a slot
-    // that still holds the route from one a mid-run `/model` switch rewrote.
-    let armed_to = armed_target;
-    let decide_agent_dir = agent_dir.clone();
-    let swap_cwd = cwd.clone();
-    let decide_provider_target = std::sync::Arc::clone(provider_target);
-    let decide_armed_from = std::sync::Arc::clone(&armed_from);
-    let decide = std::sync::Arc::new(
-        move |carries_images: bool,
-              thinking_level: pa_types::ai::ModelThinkingLevel|
-              -> Result<Option<pa_core::models::ResolvedImageModel>, String> {
-            if !carries_images {
-                return Ok(None);
-            }
-            // The routing decision needs the SESSION model: during an armed episode
-            // the live slot holds the ROUTED target; un-armed, it is the live slot.
-            let armed_capture = decide_armed_from.lock_or_recover().as_ref().map(
-                |target: &pa_core::session_engine::provider_adapter::ProviderTarget| {
-                    target.model.clone()
-                },
-            );
-            let session_model = armed_capture
-                .or_else(|| {
-                    decide_provider_target
-                        .read_or_recover()
-                        .as_ref()
-                        .map(|target| target.model.clone())
-                })
-                .unwrap_or_else(|| session_model.clone());
-            let settings = pa_core::settings::SettingsManager::create(&cwd, &decide_agent_dir);
-            let image_model_reference = settings.get_image_model();
-            let block_images = settings.get_block_images();
-            let mut registry = pa_core::models::ModelRegistry::for_session(&decide_agent_dir, &cwd);
-            registry.load_private_authorization_from_cache();
-            let available: Vec<pa_types::ai::Model> =
-                registry.get_available().into_iter().cloned().collect();
-            // Route acceptance uses the same resolved-auth result the arm path
-            // installs: a provider can be signed in while its key resolution still fails.
-            let resolvable_auth: std::collections::HashSet<(String, String)> = available
-                .iter()
-                .filter(|model| {
-                    registry
-                        .get_api_key_and_headers(model, model.headers.as_ref())
-                        .ok
-                })
-                .map(|model| (model.provider.clone(), model.id.clone()))
-                .collect();
-            pa_core::models::resolve_image_model_override(
-                &pa_core::models::ImageModelRoutingInputs {
-                    session_model: &session_model,
-                    thinking_level,
-                    service_tier: None,
-                    image_model_reference: image_model_reference.as_deref(),
-                    available_models: &available,
-                    // Keyed (provider, id): one provider's authenticated row must not vouch for
-                    // another provider's same-id model.
-                    has_configured_auth: &|model| {
-                        resolvable_auth.contains(&(model.provider.clone(), model.id.clone()))
-                    },
-                    block_images,
-                },
-            )
-        },
-    );
-    let swap_target = {
-        let provider_target = std::sync::Arc::clone(provider_target);
-        let armed_to = std::sync::Arc::clone(&armed_to);
-        std::sync::Arc::new(move |route: Option<&pa_core::models::ResolvedImageModel>| {
-            if let Some(resolved) = route {
-                // The first swap of the episode captures the session target it replaces.
-                let mut armed_from = armed_from.lock_or_recover();
-                if armed_from.is_none() {
-                    armed_from.clone_from(&provider_target.read_or_recover());
-                }
-                let mut registry =
-                    pa_core::models::ModelRegistry::for_session(&agent_dir, &swap_cwd);
-                registry.load_private_authorization_from_cache();
-                let resolved_auth = registry
-                    .get_api_key_and_headers(&resolved.model, resolved.model.headers.as_ref());
-                let target = pa_core::session_engine::provider_adapter::ProviderTarget {
-                    api_key: resolved_auth.api_key,
-                    headers: resolved_auth.headers,
-                    model: resolved.model.clone(),
-                    service_tier: resolved.service_tier,
-                };
-                *armed_to.lock_or_recover() = Some(target.clone());
-                *provider_target.write_or_recover() = Some(target);
-            } else {
-                // Restore the captured session target ONLY when the slot still holds the routed
-                // target the arm wrote.
-                let captured = armed_from.lock_or_recover().take();
-                let routed = armed_to.lock_or_recover().take();
-                let current = provider_target.read_or_recover().clone();
-                // The full serving target, credentials included: a switch may keep the same
-                // id while rotating its api key; the guard treats that slot as switched.
-                let still_routed = match (&current, &routed) {
-                    (Some(current), Some(routed)) => {
-                        current.model.id == routed.model.id
-                            && current.service_tier == routed.service_tier
-                            && current.api_key == routed.api_key
-                            && current.headers == routed.headers
-                    }
-                    _ => true,
-                };
-                if still_routed {
-                    if let Some(target) = captured.or(current) {
-                        *provider_target.write_or_recover() = Some(target);
-                    }
-                }
-            }
-        })
-    };
-    pa_core::session_engine::image_model_routing::ImageModelRouter {
-        decide,
-        swap_target,
-    }
-}
-
 /// The session header line: the session file's `type: "session"` entry in the
 /// TS wire shape and field order.
 async fn session_header_json(
@@ -1219,113 +1067,15 @@ async fn session_header_json(
     Some(serde_json::Value::Object(object).to_string())
 }
 
-async fn select_model(
-    registry: &mut pa_core::models::ModelRegistry,
-    config: &crate::mode::RuntimeConfig,
-    session: Option<&pa_core::session::SessionContext>,
-) -> Result<Model, String> {
-    // Explicit selectors retain the CLI resolver's provider inference and do
-    // not inherit an unrelated saved provider.
-    if let Some(model_name) = config.model.as_deref() {
-        let available: Vec<Model> = registry.get_available().into_iter().cloned().collect();
-        let resolved =
-            pa_core::models::resolve_cli_model(config.provider.as_deref(), model_name, &available);
-        if let Some(error) = resolved.error {
-            return Err(error);
-        }
-        return resolved
-            .model
-            .ok_or_else(|| "No matching model found.".to_string());
+/// The headless model flags of one invocation.
+fn model_flags(config: &crate::mode::RuntimeConfig) -> HeadlessModelFlags {
+    HeadlessModelFlags {
+        cwd: config.cwd.clone(),
+        agent_dir: config.agent_dir.clone(),
+        provider: config.provider.clone(),
+        model: config.model.clone(),
+        thinking: config.thinking,
     }
-    // A resumed session with messages restores its own model before the
-    // defaults chain (TS `createAgentSession`), through the daemon restore's
-    // bounded catalog-readiness wait; a miss falls through on the record.
-    if let Some((provider, model_id)) = session
-        .filter(|context| !context.messages.is_empty())
-        .and_then(|context| context.model.as_ref())
-    {
-        if let Some(model) = pa_core::models::find_session_model_with_readiness_wait(
-            registry,
-            provider,
-            model_id,
-            pa_core::models::SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
-        )
-        .await
-        {
-            return Ok(model);
-        }
-        eprintln!("Could not restore model {provider}/{model_id}");
-    }
-    // A missed restore's readiness window may have refreshed the catalog, so
-    // the defaults chain resolves against the refreshed view.
-    let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
-    let available: Vec<Model> = registry.get_available().into_iter().cloned().collect();
-    let saved_provider = settings.get_default_provider();
-    let flag_provider = config.provider.as_deref();
-    let saved_model = settings.get_default_model().filter(|_| {
-        flag_provider.is_none_or(|provider| {
-            saved_provider.is_some_and(|saved| provider.eq_ignore_ascii_case(saved))
-        })
-    });
-    if let Some(saved_model) = saved_model {
-        // Saved IDs must exist in the authenticated catalog. Do not synthesize
-        // a fallback model, especially an unauthorized private Prime model.
-        // The lookup is scoped like TS findInitialModel's saved default: the
-        // flag, when given, has already matched the saved provider above.
-        let scope = flag_provider.or(saved_provider);
-        let found = available.iter().find(|model| {
-            scope.is_none_or(|provider| model.provider.eq_ignore_ascii_case(provider))
-                && (model.id.eq_ignore_ascii_case(saved_model)
-                    || format!("{}/{}", model.provider, model.id).eq_ignore_ascii_case(saved_model))
-        });
-        match found {
-            Some(model) => return Ok(model.clone()),
-            // Claude Code's `model` (claudeCodeSettings) is a preference,
-            // not this agent's configuration: unavailable, the usual
-            // default applies.
-            None if settings.default_model_from_claude_code() => {}
-            None => {
-                return Err(format!(
-                    "Configured default model \"{saved_model}\" is unavailable. Check settings.json, models.json, and provider authentication."
-                ));
-            }
-        }
-    }
-    // A settings defaultProvider without a defaultModel does not scope the
-    // no-flag choice (TS reads the two keys together); only the flag does.
-    let candidates: Vec<Model> = available
-        .into_iter()
-        .filter(|model| {
-            flag_provider.is_none_or(|provider| model.provider.eq_ignore_ascii_case(provider))
-        })
-        .collect();
-    pa_core::models::find_preferred_default_model(&candidates)
-        .or_else(|| candidates.first())
-        .cloned()
-        .ok_or_else(|| match flag_provider {
-            Some(provider) => format!("No available models for provider \"{provider}\". Check models.json and provider authentication."),
-            None => "No authenticated models available. Configure a provider or select a model explicitly.".to_string(),
-        })
-}
-
-/// Resolve the session thinking level: the CLI flag, then the settings
-/// default, then "medium" — always clamped to what the model supports.
-fn resolve_thinking_level(
-    config: &crate::mode::RuntimeConfig,
-    model: &Model,
-) -> pa_agent::types::ThinkingLevel {
-    use pa_types::ai::ModelThinkingLevel;
-    let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
-    let requested = config
-        .thinking
-        .or_else(|| {
-            settings
-                .get_default_thinking_level()
-                .map(pa_core::settings::ThinkingLevelSetting::model_level)
-        })
-        .unwrap_or(ModelThinkingLevel::Medium);
-    let clamped = pa_ai::models::clamp_thinking_level(model, requested);
-    map_thinking_level(clamped)
 }
 
 /// The headless session selection, in the flag order of TS
@@ -1908,91 +1658,6 @@ mod tests {
         }
     }
 
-    /// The settle restores the captured session target only while the slot still holds the route;
-    /// a mid-run `/model` switch rewrote the slot, and stays.
-    #[test]
-    fn headless_image_router_settle_preserves_a_mid_run_model_switch() {
-        fn fixture_model(id: &str) -> pa_types::ai::Model {
-            pa_types::ai::Model {
-                id: id.to_string(),
-                name: id.to_string(),
-                api: "anthropic-messages".to_string(),
-                provider: "anthropic".to_string(),
-                base_url: "https://x".to_string(),
-                reasoning: true,
-                thinking_level_map: None,
-                input: vec![
-                    pa_types::ai::ModelInput::Text,
-                    pa_types::ai::ModelInput::Image,
-                ],
-                cost: pa_types::ai::ModelCost {
-                    input: 1.0.into(),
-                    output: 2.0.into(),
-                    cache_read: 0.0.into(),
-                    cache_write: 0.0.into(),
-                },
-                context_window: 200_000,
-                max_tokens: 8192,
-                max_tokens_explicit: false,
-                featured: None,
-                serving: None,
-                headers: None,
-                compat: None,
-            }
-        }
-        fn target(
-            model: pa_types::ai::Model,
-        ) -> pa_core::session_engine::provider_adapter::ProviderTarget {
-            pa_core::session_engine::provider_adapter::ProviderTarget {
-                api_key: None,
-                headers: None,
-                model,
-                service_tier: None,
-            }
-        }
-        let home = tempfile::TempDir::new().unwrap();
-        let agent_dir = home.path().join("agent");
-        std::fs::create_dir_all(&agent_dir).unwrap();
-        let session_model = fixture_model("session-model");
-        let provider_target =
-            std::sync::Arc::new(std::sync::RwLock::new(Some(target(session_model.clone()))));
-        let armed_target: std::sync::Arc<
-            std::sync::Mutex<Option<pa_core::session_engine::provider_adapter::ProviderTarget>>,
-        > = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let router = super::headless_image_model_router(
-            &provider_target,
-            std::sync::Arc::clone(&armed_target),
-            home.path().to_path_buf(),
-            agent_dir,
-            session_model,
-        );
-        let expected_route = pa_core::models::ResolvedImageModel {
-            model: fixture_model("image-model"),
-            thinking_level: pa_types::ai::ModelThinkingLevel::High,
-            service_tier: None,
-        };
-        (router.swap_target)(Some(&expected_route));
-        assert_eq!(
-            provider_target.read().unwrap().as_ref().unwrap().model.id,
-            "image-model"
-        );
-        let switched_to = target(fixture_model("switched-model"));
-        *provider_target.write().unwrap() = Some(switched_to);
-        (router.swap_target)(None);
-        assert_eq!(
-            provider_target.read().unwrap().as_ref().unwrap().model.id,
-            "switched-model"
-        );
-        // The next episode captures the live slot at ITS first arm: its baseline is the post-switch
-        // session model.
-        (router.swap_target)(Some(&expected_route));
-        (router.swap_target)(None);
-        assert_eq!(
-            provider_target.read().unwrap().as_ref().unwrap().model.id,
-            "switched-model"
-        );
-    }
-
     /// Serves a settings-declared server through `mcp.config` and resolves settings LIVE: a
     /// rewrite reaches `refresh()`.
     #[tokio::test]
@@ -2141,7 +1806,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-#[path = "print_model_tests.rs"]
-mod print_model_tests;

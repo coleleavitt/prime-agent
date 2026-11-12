@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
-use pa_core::auth::{AuthStorage, AuthStorageData, NoOAuth};
-use pa_core::models::ModelRegistry;
-use pa_core::session::SessionContext;
 use pa_types::ai::{UserContent, UserMessage};
 use pa_types::session::AgentMessage;
 use serde_json::json;
 
-use super::select_model;
-use crate::mode::RuntimeConfig;
+use super::{HeadlessModelFlags, select_headless_model};
+use crate::auth::{AuthStorage, AuthStorageData, NoOAuth};
+use crate::models::ModelRegistry;
+use crate::session::SessionContext;
 
-fn fixture(settings: &serde_json::Value) -> (tempfile::TempDir, RuntimeConfig, ModelRegistry) {
+fn fixture(settings: &serde_json::Value) -> (tempfile::TempDir, HeadlessModelFlags, ModelRegistry) {
     let dir = tempfile::tempdir().unwrap();
-    let config = RuntimeConfig {
+    let config = HeadlessModelFlags {
         cwd: dir.path().join("project"),
         agent_dir: dir.path().join("agent"),
         ..Default::default()
@@ -45,7 +44,9 @@ async fn print_model_uses_saved_gateway_and_full_model_metadata() {
             .unwrap()
             .clone();
         assert_eq!(
-            select_model(&mut registry, &config, None).await.unwrap(),
+            select_headless_model(&mut registry, &config, None)
+                .await
+                .unwrap(),
             expected
         );
     }
@@ -75,7 +76,9 @@ async fn print_model_explicit_and_partial_flags_override_defaults() {
             fixture(&json!({"defaultProvider":"my-gateway", "defaultModel":"my-group/my-model"}));
         config.provider = provider.map(str::to_string);
         config.model = model.map(str::to_string);
-        let selected = select_model(&mut registry, &config, None).await.unwrap();
+        let selected = select_headless_model(&mut registry, &config, None)
+            .await
+            .unwrap();
         assert_eq!((selected.provider.as_str(), selected.id.as_str()), expected);
     }
 }
@@ -87,11 +90,19 @@ async fn print_model_invalid_saved_or_explicit_selection_fails_locally() {
         json!({"defaultProvider":"my-gateway", "defaultModel":"missing"}),
     ] {
         let (_dir, config, mut registry) = fixture(&settings);
-        assert!(select_model(&mut registry, &config, None).await.is_err());
+        assert!(
+            select_headless_model(&mut registry, &config, None)
+                .await
+                .is_err()
+        );
     }
     let (_dir, mut config, mut registry) = fixture(&json!({}));
     config.provider = Some("missing".into());
-    assert!(select_model(&mut registry, &config, None).await.is_err());
+    assert!(
+        select_headless_model(&mut registry, &config, None)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -99,12 +110,16 @@ async fn print_model_without_configured_auth_does_not_select_a_bundled_fixture()
     let dir = tempfile::tempdir().unwrap();
     let auth = AuthStorage::in_memory_without_env(&AuthStorageData::default(), Arc::new(NoOAuth));
     let mut registry = ModelRegistry::create(auth, dir.path().join("models.json"));
-    let config = RuntimeConfig {
+    let config = HeadlessModelFlags {
         cwd: dir.path().into(),
         agent_dir: dir.path().into(),
         ..Default::default()
     };
-    assert!(select_model(&mut registry, &config, None).await.is_err());
+    assert!(
+        select_headless_model(&mut registry, &config, None)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -117,11 +132,13 @@ async fn print_model_only_flag_preserves_catalog_resolution_without_saved_provid
         .into_iter()
         .cloned()
         .collect::<Vec<_>>();
-    let expected = pa_core::models::resolve_cli_model(None, "other", &available)
+    let expected = crate::models::resolve_cli_model(None, "other", &available)
         .model
         .unwrap();
     assert_eq!(
-        select_model(&mut registry, &config, None).await.unwrap(),
+        select_headless_model(&mut registry, &config, None)
+            .await
+            .unwrap(),
         expected
     );
 }
@@ -144,7 +161,11 @@ async fn print_model_saved_private_id_cannot_reuse_another_private_route() {
             .iter()
             .any(|m| m.id == "internal/authorized-fixture")
     );
-    assert!(select_model(&mut registry, &config, None).await.is_err());
+    assert!(
+        select_headless_model(&mut registry, &config, None)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -171,7 +192,11 @@ async fn print_model_unauthenticated_default_does_not_switch_to_another_gateway(
             .iter()
             .any(|m| m.provider == "other-gateway")
     );
-    assert!(select_model(&mut registry, &config, None).await.is_err());
+    assert!(
+        select_headless_model(&mut registry, &config, None)
+            .await
+            .is_err()
+    );
 }
 
 /// One open session's active context: a message plus, when given, the
@@ -202,7 +227,7 @@ async fn print_model_resumes_the_session_model_over_a_stale_saved_default() {
         .cloned()
         .unwrap();
     assert_eq!(
-        select_model(&mut registry, &config, Some(&context))
+        select_headless_model(&mut registry, &config, Some(&context))
             .await
             .unwrap(),
         expected
@@ -216,7 +241,7 @@ async fn print_model_explicit_flag_wins_over_the_session_model() {
     }));
     config.model = Some("other-gateway/other".into());
     let context = session_context(Some(("my-gateway", "other")));
-    let selected = select_model(&mut registry, &config, Some(&context))
+    let selected = select_headless_model(&mut registry, &config, Some(&context))
         .await
         .unwrap();
     assert_eq!(
@@ -228,7 +253,9 @@ async fn print_model_explicit_flag_wins_over_the_session_model() {
 #[tokio::test]
 async fn print_model_provider_only_settings_default_does_not_scope() {
     let (_dir, config, mut registry) = fixture(&json!({"defaultProvider": "other-gateway"}));
-    let selected = select_model(&mut registry, &config, None).await.unwrap();
+    let selected = select_headless_model(&mut registry, &config, None)
+        .await
+        .unwrap();
     assert_eq!(
         (selected.provider.as_str(), selected.id.as_str()),
         ("my-gateway", "my-group/my-model")
@@ -254,13 +281,13 @@ async fn print_model_falls_back_from_an_unavailable_claude_code_model() {
         json!({ "model": unauthenticated_model.id }).to_string(),
     )
     .unwrap();
-    pa_core::workspace_trust::record(
+    crate::workspace_trust::record(
         &config.cwd,
         &config.agent_dir,
-        pa_core::workspace_trust::TrustDecision::Trusted,
+        crate::workspace_trust::TrustDecision::Trusted,
     )
     .unwrap();
-    let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
+    let settings = crate::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
     assert_eq!(
         (
             settings.get_default_model(),
@@ -268,7 +295,9 @@ async fn print_model_falls_back_from_an_unavailable_claude_code_model() {
         ),
         (Some(unauthenticated_model.id.as_str()), true)
     );
-    let selected = select_model(&mut registry, &config, None).await.unwrap();
+    let selected = select_headless_model(&mut registry, &config, None)
+        .await
+        .unwrap();
     assert_eq!(
         (selected.provider.as_str(), selected.id.as_str()),
         ("my-gateway", "my-group/my-model")

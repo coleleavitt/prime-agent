@@ -3,7 +3,7 @@
 //! parse in pa-core, shared with the inline children's queues). Never set
 //! by the product.
 
-use pa_core::session_engine::headless::faux_response_steps;
+use pa_core::session_engine::headless::{faux_response_steps, resolve_headless_thinking_level};
 use pa_core::session_engine::provider_adapter::{
     ProviderTarget,
     json_round_trip,
@@ -111,9 +111,9 @@ pub(crate) async fn build_faux_engine_with(
         HeadlessEmbedding::Child(overrides) => {
             Some(pa_core::session_engine::provider_adapter::map_thinking_level(overrides.thinking))
         }
-        HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => {
-            Some(super::resolve_thinking_level(config, &model))
-        }
+        HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => Some(
+            resolve_headless_thinking_level(&super::model_flags(config), &model),
+        ),
     };
     let agent_model = json_round_trip(&model).ok_or("model conversion failed")?;
     let provider_target: ProviderTargetSlot =
