@@ -491,31 +491,15 @@ impl TurnRunner {
             .load(std::sync::atomic::Ordering::SeqCst);
         let more_queued = self.settle_lanes(lane, items, accepted_rows, engine.as_ref());
         self.push_roster_delta();
-        // The fallback `agent_end` for runs that ended without a model
-        // turn (session commands, pre-model failures): the engine's own
-        // per-run frames (one per agent run, retried and continued runs
-        // included — the TS `agent_end` `messages` payload) are the real
-        // frames, and a run whose `agent_end` the abort gate swallowed
-        // stays silent exactly like TS (the compact path's detached run).
-        // An ABORTED settle keeps the same silence: the admission
-        // consult's pre-run abort ends the turn with NO engine
-        // `agent_end` at all (no run registered — the
-        // compact-interrupt probe's suppressed-run wire shape, which the
-        // fallback would otherwise break with a synthesized frame). The
-        // association is the abort GATE's own observation during the
-        // turn (the per-event flag read), never a post-join re-read of
-        // the flag: an abort landing after the turn's last emitted event
-        // cancels nothing of this run and must not suppress its fallback
-        // (the flag stays armed until the next pickup — a settle-time
-        // re-read would race `handle_abort` and silence a completed
-        // session-command or pre-model-failure run).
-        if !signals
-            .engine_agent_end
-            .load(std::sync::atomic::Ordering::SeqCst)
-            && !signals
-                .abort_gate_armed
-                .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        // The fallback `agent_end` closes the last `agent_start` on the wire
+        // when no engine `agent_end` did: session commands, pre-model
+        // failures, the admission consult's pre-run abort (no run
+        // registered), and a run a compaction or tree move detached (its
+        // frames were swallowed by the abort gate) — also a later retried or
+        // continued run of the same delivery. The engine's per-run frames (one
+        // per agent run — the TS `agent_end` `messages` payload) are the real
+        // frames.
+        if !signals.run_closed.load(std::sync::atomic::Ordering::SeqCst) {
             self.emit_turn_event(json!({ "type": "agent_end" }));
         }
         // The settle's boundary state: the run's own `agent_end`

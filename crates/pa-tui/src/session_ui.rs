@@ -276,9 +276,6 @@ pub(crate) struct SessionUi {
     context: Option<crate::chrome::ContextUsage>,
     list_rows: Vec<Value>,
     pub(crate) turn_active: bool,
-    /// The run's last model call stopped for its tool calls and the next
-    /// call's `turn_start` has not arrived: the run is still busy.
-    between_model_calls: bool,
     /// Completed runs observed on this connection (one per run, not per model
     /// call). A prompt ACK may arrive after its entire streamed run; it must
     /// not restart the loader then.

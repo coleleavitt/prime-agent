@@ -426,7 +426,6 @@ impl SessionUi {
         match update {
             TurnUpdate::TurnStarted => {
                 self.turn_active = true;
-                self.between_model_calls = false;
                 self.turn_error_shown = false;
                 // A new turn also settles leftovers from a lost turn-end frame.
                 crate::snapshot::settle_pending_tool_cards(
@@ -540,7 +539,10 @@ impl SessionUi {
                     }
                 }
             }
-            TurnUpdate::TurnEnded { error, tool_use } => {
+            TurnUpdate::TurnEnded { error } => {
+                // One model call of the agent loop ended; the run, and with it the busy state
+                // (Ctrl+C interrupts it, the end watermark counts runs, the loader keeps its rows
+                // and clock), lasts until `agent_end`.
                 self.streaming_index = None;
                 view.retry = None;
                 crate::snapshot::settle_pending_tool_cards(
@@ -550,15 +552,13 @@ impl SessionUi {
                     "the turn ended before this call returned",
                 );
                 self.aborted_tools.clear();
-                // A model call that stopped for its tool calls ends one turn of the agent
-                // loop, not the run: the next call's `turn_start` follows, so the run stays
-                // busy (Ctrl+C interrupts it, the end watermark counts runs) and the loader
-                // keeps its rows and clock. A run that ends at that boundary (a tool ended
-                // it, or it failed before the next call) settles at its `agent_end`.
-                if tool_use {
-                    self.between_model_calls = true;
-                } else {
-                    self.settle_run(error, view);
+                // A provider failure already surfaced through the failed assistant message
+                // or the retry-exhausted banner; the turn result error is only a backstop.
+                if let (Some(error), false) = (error, self.turn_error_shown) {
+                    view.push_entry(ChatEntry::Status {
+                        text: format!("turn failed: {error}"),
+                        kind: StatusKind::Warning,
+                    });
                 }
             }
             TurnUpdate::AutoRetryStart {
@@ -673,16 +673,7 @@ impl SessionUi {
                     }
                 }
             }
-            TurnUpdate::Idle => {
-                if self.between_model_calls {
-                    self.settle_run(None, view);
-                }
-                if !self.turn_active {
-                    view.working = None;
-                    // The agent went idle: the client's turn span closes.
-                    self.client_turn_span = None;
-                }
-            }
+            TurnUpdate::Idle => self.end_run(view),
             TurnUpdate::GoalUpdate(goal) => {
                 self.apply_goal_update(goal, view);
             }
@@ -1099,25 +1090,28 @@ impl SessionUi {
         });
     }
 
-    /// The run's end: the busy state, the loader and the held bash cards
-    /// settle. Only the engine's own end clears the busy state: trailing
-    /// frames from the previous run must not cancel a run admitted in between.
-    fn settle_run(&mut self, error: Option<String>, view: &mut AgentView) {
-        self.between_model_calls = false;
+    /// The agent run ended (`agent_end`): the busy state, the loader and the held bash cards
+    /// settle, and the client's turn span closes. Only the run's end clears the busy state: a
+    /// model call's `turn_end` inside the run keeps it.
+    fn end_run(&mut self, view: &mut AgentView) {
         self.turn_ends_seen += 1;
         self.turn_active = false;
         view.working = None;
         view.working_since = None;
+        self.client_turn_span = None;
+        // A run that ends without its `turn_end` (a pre-run abort, a detach) still
+        // leaves no live streaming slot or retry countdown behind.
+        self.streaming_index = None;
+        view.retry = None;
         // The held bash cards stream into the transcript.
         Self::flush_pending_bash(view);
-        // A provider failure already surfaced through the failed assistant message
-        // or the retry-exhausted banner; the run's error is only a backstop.
-        if let (Some(error), false) = (error, self.turn_error_shown) {
-            view.push_entry(ChatEntry::Status {
-                text: format!("turn failed: {error}"),
-                kind: StatusKind::Warning,
-            });
-        }
+        // A detached run's `turn_end` never arrives: its open cards settle here.
+        crate::snapshot::settle_pending_tool_cards(
+            view,
+            &mut self.pending_tools,
+            &mut self.aborted_tools,
+            "the turn ended before this call returned",
+        );
     }
 
     /// Update the loader activity label (agent-activity tracker subset).

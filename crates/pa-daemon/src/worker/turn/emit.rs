@@ -26,9 +26,10 @@ use crate::types::SessionActionSnapshot;
 /// after the join.
 #[derive(Default)]
 pub(super) struct TurnSignals {
-    /// Whether the engine surfaced any `agent_end` this run (the
-    /// trailing synthesized frame is only a fallback).
-    pub(super) engine_agent_end: AtomicBool,
+    /// Whether the last `agent_start` on the wire was closed: the delivery's own opens it,
+    /// an engine `agent_start` that passes the abort gate re-opens it, an engine `agent_end`
+    /// that passes closes it. An open run gets the settle's fallback `agent_end`.
+    pub(super) run_closed: AtomicBool,
     /// The pane reporter's settle hold: a run that FAILED without the
     /// engine's `agent_end` (a provider error before any terminal
     /// assistant row) still parks its error here, so the settle's
@@ -36,19 +37,9 @@ pub(super) struct TurnSignals {
     /// of a false idle.
     pub(super) herdr_settle_error: Mutex<Option<String>>,
     /// Whether the PANE REPORTER already received this run's end —
-    /// set only where `run_ended` is actually called (the engine
-    /// `agent_end` flag above is set on SIGHT, before the abort gate
-    /// can drop the event, so a swallowed `agent_end` must not make
-    /// the settle's pane fallback skip and strand the pane working).
+    /// set only where `run_ended` is actually called (a later run of the
+    /// same turn re-opens it, so it is not the wire flag above).
     pub(super) herdr_run_end: AtomicBool,
-    /// Whether the abort gate ever observed the delivery's cancel flag
-    /// DURING this turn (the per-event read): the fallback
-    /// `agent_end` keys its silence on THIS association — an abort
-    /// landing after the turn's last emitted event (a late abort
-    /// racing the settle) never armed the gate and must not suppress
-    /// the completed run's fallback (the macroscope finding: the
-    /// post-join flag read raced `handle_abort`).
-    pub(super) abort_gate_armed: AtomicBool,
     /// The picked batch's accepted rows (primary, then one per batched item) that passed
     /// the abort gate and persisted; it must survive an engine panic after persistence.
     pub(super) accepted_prefix: AtomicUsize,
@@ -129,16 +120,17 @@ impl TurnEmitter {
         if matches!(event, EngineEvent::TurnEnd { .. }) {
             state.engine_turn_ended = true;
         }
-        if matches!(event, EngineEvent::AgentEnd { .. }) {
-            context
-                .signals
-                .engine_agent_end
-                .store(true, Ordering::SeqCst);
-        }
         let mut core = context.core.lock_or_recover();
         let more_queued = context.note_run_end(&core, &event);
-        if !context.passes_abort_gate(&core, &event) {
+        if !EmitContext::passes_abort_gate(&core, &event) {
             return false;
+        }
+        match &event {
+            EngineEvent::AgentStart => context.signals.run_closed.store(false, Ordering::SeqCst),
+            EngineEvent::AgentEnd { .. } => {
+                context.signals.run_closed.store(true, Ordering::SeqCst);
+            }
+            _ => {}
         }
         context.count_model_step(&event);
         context.report_pane_boundary(&event, more_queued);
@@ -206,21 +198,11 @@ impl EmitContext {
 
     /// The abort gate: once the delivery is cancelled, only the abort's settle frames pass
     /// (durable model cleanup is independent of visual abort-row suppression and emits no
-    /// client-facing frame). The sighting arms the fallback's silence only when
-    /// load-bearing: a sighting on a run that completed on its own cancels nothing.
-    fn passes_abort_gate(&self, core: &SessionCore, event: &EngineEvent) -> bool {
-        if !core.abort_requested || matches!(event, EngineEvent::ModelChange(_)) {
-            return true;
-        }
-        let aborted_row = is_aborted_row(event);
-        if core.suppress_aborted_row || !(is_abort_settle(event) || aborted_row) {
-            self.signals.abort_gate_armed.store(true, Ordering::SeqCst);
-            return false;
-        }
-        if aborted_row || matches!(event, EngineEvent::DoneAborted) {
-            self.signals.abort_gate_armed.store(true, Ordering::SeqCst);
-        }
-        true
+    /// client-facing frame).
+    fn passes_abort_gate(core: &SessionCore, event: &EngineEvent) -> bool {
+        !core.abort_requested
+            || matches!(event, EngineEvent::ModelChange(_))
+            || (!core.suppress_aborted_row && (is_abort_settle(event) || is_aborted_row(event)))
     }
 
     /// The session's messaging step counters (upstream #2352,

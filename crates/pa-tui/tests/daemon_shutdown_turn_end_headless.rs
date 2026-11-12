@@ -138,6 +138,7 @@ impl FirstGeneration {
                         }),
                     );
                     write_session_event(&mut writer, &json!({ "type": "turn_end" }));
+                    write_session_event(&mut writer, &json!({ "type": "agent_end" }));
                     write_json(
                         &mut writer,
                         &json!({ "type": "daemon_closing", "reason": "shutdown" }),
