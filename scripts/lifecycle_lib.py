@@ -486,6 +486,24 @@ def verify_worker(row, active, binary, socket_path):
     return pid, identity
 
 
+def worker_descriptor(agent, active, socket_path, deadline=None, previous=None):
+    deadline = deadline or time.monotonic() + LIMIT
+    while time.monotonic() < deadline:
+        candidates = list((agent / 'daemon-workers').rglob('*.json'))
+        for path in candidates:
+            try:
+                row = json.loads(path.read_text())
+                pid = row.get('pid')
+                if (row.get('rootActiveSessionId') == active
+                        and row.get('supervisorSocketPath') == str(socket_path)
+                        and isinstance(pid, int) and pid > 0 and pid != previous):
+                    return path, row
+            except (OSError, ValueError):
+                pass  # Atomic/transitional descriptor writes are not readiness.
+        threading.Event().wait(0.025)
+    raise AssertionError('fixture worker descriptor never reached readiness')
+
+
 
 
 class OwnedProcesses:

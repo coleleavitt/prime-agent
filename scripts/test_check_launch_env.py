@@ -66,7 +66,7 @@ class VerifierTests(unittest.TestCase):
             (b'/fixture/binary\0worker\0', b'PRIME_AGENT_INTERNAL_DAEMON_WORKER_SOCKET=/fixture/worker.sock\0'),
         ]:
             with patch('pathlib.Path.read_bytes', side_effect=[command, env + extra]), \
-                    patch('check_launch_env.process_identity', return_value=('proc:456', 'S')):
+                    patch('lifecycle_lib.process_identity', return_value=('proc:456', 'S')):
                 self.assertEqual(verify_worker(row, 'fixture', Path('/fixture/binary'), Path('/fixture/d.sock')), (123, 'proc:456'))
 
     def test_reused_pid_is_rejected(self):
@@ -75,7 +75,7 @@ class VerifierTests(unittest.TestCase):
         command = b'/fixture/binary\0--mode\0daemon\0/fixture/worker.sock\0'
         env = b'PRIME_AGENT_INTERNAL_DAEMON_WORKER=1\0PRIME_AGENT_INTERNAL_DAEMON_WORKER_ACTIVE_SESSION_ID=fixture\0PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_SOCKET=/fixture/d.sock\0'
         with patch('pathlib.Path.read_bytes', side_effect=[command, env]), \
-                patch('check_launch_env.process_identity', return_value=('proc:new', 'S')):
+                patch('lifecycle_lib.process_identity', return_value=('proc:new', 'S')):
             with self.assertRaisesRegex(AssertionError, 'reused worker PID'):
                 verify_worker(row, 'fixture', Path('/fixture/binary'), Path('/fixture/d.sock'))
 

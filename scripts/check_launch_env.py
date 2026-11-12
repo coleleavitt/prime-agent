@@ -20,7 +20,7 @@ import threading
 import time
 
 from check_agent_bounce import Client
-from lifecycle_lib import digest, env_for, stop
+from lifecycle_lib import digest, env_for, process_identity, stop, verify_worker, worker_descriptor
 from check_restore_notice import texts
 
 MARKER = 'LAUNCH_ENV_PARITY='
@@ -85,50 +85,6 @@ def current_probe(requests, phase):
               for line in text.splitlines() if line.startswith(MARKER)]
     assert len(probes) == 1, 'missing/duplicate current probe'
     return probes[0]
-
-
-def process_identity(pid):
-    stat = Path('/proc/%d/stat' % pid).read_text()
-    fields = stat[stat.rfind(')') + 2:].split()
-    return 'proc:' + fields[19], fields[0]
-
-
-def worker_descriptor(agent, active, socket_path, deadline=None, previous=None):
-    deadline = deadline or time.monotonic() + LIMIT
-    while time.monotonic() < deadline:
-        candidates = list((agent / 'daemon-workers').rglob('*.json'))
-        for path in candidates:
-            try:
-                row = json.loads(path.read_text())
-                pid = row.get('pid')
-                if (row.get('rootActiveSessionId') == active
-                        and row.get('supervisorSocketPath') == str(socket_path)
-                        and isinstance(pid, int) and pid > 0 and pid != previous):
-                    return path, row
-            except (OSError, ValueError):
-                pass  # Atomic/transitional descriptor writes are not readiness.
-        threading.Event().wait(0.025)
-    raise AssertionError('fixture worker descriptor never reached readiness')
-
-
-def verify_worker(row, active, binary, socket_path):
-    pid = row['pid']
-    assert row.get('rootActiveSessionId') == active, 'wrong descriptor identity'
-    assert row.get('supervisorSocketPath') == str(socket_path), 'wrong supervisor descriptor'
-    command = Path('/proc/%d/cmdline' % pid).read_bytes().split(b'\0')
-    assert command[0] == str(binary).encode(), 'worker argv0 is not fixture binary'
-    env = dict(item.split(b'=', 1) for item in Path('/proc/%d/environ' % pid).read_bytes().split(b'\0') if b'=' in item)
-    for key, value in {
-        'PRIME_AGENT_INTERNAL_DAEMON_WORKER': '1',
-        'PRIME_AGENT_INTERNAL_DAEMON_WORKER_ACTIVE_SESSION_ID': active,
-        'PRIME_AGENT_INTERNAL_DAEMON_SUPERVISOR_SOCKET': str(socket_path),
-    }.items():
-        assert env.get(key.encode()) == value.encode(), 'wrong fixture worker env identity'
-    worker_socket = str(row['socketPath']).encode()
-    assert (worker_socket in command or env.get(b'PRIME_AGENT_INTERNAL_DAEMON_WORKER_SOCKET') == worker_socket), 'wrong worker socket identity'
-    identity, state = process_identity(pid)
-    assert row.get('processStartId') == identity and state != 'Z', 'wrong/reused worker PID'
-    return pid, identity
 
 
 def wait_gone(identities):
