@@ -52,6 +52,9 @@ impl Worker {
         response
     }
 
+    /// The command fences around the routing: a quarantined worker answers nothing, a
+    /// history read or branch change hydrates the full history first, and a success
+    /// admitted just before a quarantine is withdrawn.
     async fn dispatch_command(&self, command_type: &str, payload: &Value) -> DaemonResponse {
         if self.recovery_quarantined() {
             return response_failure(
@@ -61,31 +64,29 @@ impl Worker {
                 None,
             );
         }
-        // Only operations that inspect or change historical branches need hydration.
-        // Cancellation is deliberately excluded: it must reach the live turn immediately.
-        let history_page = command_type == "get_messages"
-            && transcript_page(payload).is_some_and(|page| page.reads_history());
-        if history_page
-            || matches!(
-                command_type,
-                "get_session_tree"
-                    | "get_context_tree"
-                    | "get_user_messages_for_forking"
-                    | "set_session_entry_label"
-                    | "navigate_tree"
-                    | "get_rewind_checkpoints"
-                    | "rewind"
-                    | "fork"
-                    | "fork_export"
-                    | "export_html"
-                    | "export_jsonl"
-            )
-        {
+        if needs_history(command_type, payload) {
             if let Err(error) = self.hydrate_history().await {
                 return response_failure(None, command_type, &error.to_string(), None);
             }
         }
-        let response = match command_type {
+        let response = self.route_command(command_type, payload).await;
+        // A command admitted just before the fsync failure must not send a
+        // success after the keyed delivery quarantined the worker. The
+        // journal itself also rejects every later checkpoint under its lock.
+        if response.success && self.recovery_quarantined() {
+            return response_failure(
+                None,
+                command_type,
+                crate::cloud_family::CLOUD_COMMIT_UNCERTAIN,
+                None,
+            );
+        }
+        response
+    }
+
+    /// The command's handler: a flat table from the wire command type.
+    async fn route_command(&self, command_type: &str, payload: &Value) -> DaemonResponse {
+        match command_type {
             "create" => self.handle_create(payload).await,
             "attach" => self.handle_attach(payload),
             "detach" => self.handle_detach(payload),
@@ -95,18 +96,14 @@ impl Worker {
             "follow_up" => self.handle_queue(payload, Lane::FollowUp),
             "abort" => self.handle_abort(payload),
             "abort_and_send_queued" => self.handle_abort_and_send_queued(payload),
-            "start_side_question" => {
-                if let Err(response) = self.require_created("start_side_question") {
-                    return response;
-                }
-                self.side_questions.start(payload)
-            }
-            "abort_side_question" => {
-                if let Err(response) = self.require_created("abort_side_question") {
-                    return response;
-                }
-                self.side_questions.abort(payload)
-            }
+            "start_side_question" => match self.require_created(command_type) {
+                Ok(()) => self.side_questions.start(payload),
+                Err(response) => response,
+            },
+            "abort_side_question" => match self.require_created(command_type) {
+                Ok(()) => self.side_questions.abort(payload),
+                Err(response) => response,
+            },
             "compact" => self.handle_compaction(payload).await,
             "abort_compaction" => {
                 self.compaction.abort();
@@ -240,19 +237,7 @@ impl Worker {
                 &format!("Unknown worker command: {other}"),
                 None,
             ),
-        };
-        // A command admitted just before the fsync failure must not send a
-        // success after the keyed delivery quarantined the worker. The
-        // journal itself also rejects every later checkpoint under its lock.
-        if response.success && self.recovery_quarantined() {
-            return response_failure(
-                None,
-                command_type,
-                crate::cloud_family::CLOUD_COMMIT_UNCERTAIN,
-                None,
-            );
         }
-        response
     }
 
     fn recovery_quarantined(&self) -> bool {
@@ -1117,6 +1102,27 @@ fn cleared_agent_message_bounce_text(receiver: &str, message: &str) -> String {
 }
 
 /// The display-transcript page a `get_messages` payload asks for, if any.
+/// Whether the command inspects or changes historical branches, so the full history must
+/// be hydrated first. Cancellation is deliberately excluded: it must reach the live turn
+/// immediately.
+fn needs_history(command_type: &str, payload: &Value) -> bool {
+    match command_type {
+        "get_messages" => transcript_page(payload).is_some_and(|page| page.reads_history()),
+        "get_session_tree"
+        | "get_context_tree"
+        | "get_user_messages_for_forking"
+        | "set_session_entry_label"
+        | "navigate_tree"
+        | "get_rewind_checkpoints"
+        | "rewind"
+        | "fork"
+        | "fork_export"
+        | "export_html"
+        | "export_jsonl" => true,
+        _ => false,
+    }
+}
+
 fn transcript_page(payload: &Value) -> Option<pa_types::daemon::TranscriptPage> {
     serde_json::from_value(payload.get("page")?.clone()).ok()
 }
