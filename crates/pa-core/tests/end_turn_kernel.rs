@@ -21,16 +21,16 @@
 #![cfg(unix)]
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use pa_agent::scripted::{tool_call_turn_steps, ScriptedProvider, ScriptedTurn};
+use pa_agent::scripted::{ScriptedProvider, ScriptedTurn, tool_call_turn_steps};
 use pa_core::session::manager::SessionManager;
-use pa_core::session_engine::bash_notices::BashNoticeWake;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE;
 use pa_core::session_engine::PromptOptions;
+use pa_core::session_engine::bash_notices::BashNoticeWake;
+use pa_core::session_engine::engine::{SessionEngineConfig, create_session};
+use pa_core::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE;
 use serde_json::json;
 
 /// The kernel Python with prime-agent-runtime installed (the interpreter the

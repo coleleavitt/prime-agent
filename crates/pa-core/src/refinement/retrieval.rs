@@ -153,11 +153,7 @@ impl RerankerHandle {
     /// arrived after the rerank that showed the memory was evicted from
     /// the offer window. Routes to [`pa_retrieval::Reranker::feedback_detached`],
     /// which trains flyrag on the doc's own KC units.
-    pub fn record_feedback_detached(
-        &self,
-        memory_id: &str,
-        outcome: pa_retrieval::Outcome,
-    ) {
+    pub fn record_feedback_detached(&self, memory_id: &str, outcome: pa_retrieval::Outcome) {
         let mut guard = self
             .inner
             .lock()
@@ -300,9 +296,11 @@ impl RerankerHandle {
                                 #[expect(
                                     clippy::cast_possible_truncation,
                                     reason = "harness term weights live in a small bounded range; \
-                                              the cast to f32 is intentional (BM25 uses f32)",
+                                              the cast to f32 is intentional (BM25 uses f32)"
                                 )]
-                                { *w as f32 },
+                                {
+                                    *w as f32
+                                },
                             )
                         })
                         .collect(),
@@ -426,13 +424,16 @@ mod tests {
             lane: super::super::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         };
-        let entries = vec![make("gamma", "daemon"), make("alpha", "bun"), make("beta", "npm")];
+        let entries = vec![
+            make("gamma", "daemon"),
+            make("alpha", "bun"),
+            make("beta", "npm"),
+        ];
         let order = hook(&entries, &terms).expect("reranker returned an order");
         // Install-flavoured docs come first; gamma (daemon) ranks lowest.
         assert_eq!(order.len(), 3);
         assert!(
-            order.iter().position(|id| id == "gamma")
-                > order.iter().position(|id| id == "alpha"),
+            order.iter().position(|id| id == "gamma") > order.iter().position(|id| id == "alpha"),
             "gamma ranks below alpha: {order:?}"
         );
     }
@@ -498,13 +499,19 @@ mod tests {
             extensions: serde_json::Map::new(),
         };
         assert!(
-            hook(&[make("alpha")], &super::super::ranking::HarnessQueryTerms::new()).is_none()
+            hook(
+                &[make("alpha")],
+                &super::super::ranking::HarnessQueryTerms::new()
+            )
+            .is_none()
         );
-        assert!(hook(&[], &{
-            let mut t = super::super::ranking::HarnessQueryTerms::new();
-            t.insert("x".into(), 1.0);
-            t
-        })
-        .is_none());
+        assert!(
+            hook(&[], &{
+                let mut t = super::super::ranking::HarnessQueryTerms::new();
+                t.insert("x".into(), 1.0);
+                t
+            })
+            .is_none()
+        );
     }
 }

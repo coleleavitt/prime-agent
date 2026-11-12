@@ -23,9 +23,6 @@ mod resolution_store;
 mod silent_failure;
 
 pub use correction_tap::{CorrectionTap, SELF_CORRECTION_CURSOR, USER_CORRECTION_CURSOR};
-pub use feedback_tap::{FEEDBACK_TAP_CURSOR_NAME, FeedbackTap};
-pub use silent_failure::{silent_failure_line, silent_failure_line_bare};
-
 pub use extract::{IPYTHON_TOOL_NAME, extract_failures, observe_message, tool_result_text};
 pub use feature::{
     FailureLedgerFeature,
@@ -37,6 +34,7 @@ pub use feature::{
     LedgerScope,
     RESOLUTION_HINT_EVENT,
 };
+pub use feedback_tap::{FEEDBACK_TAP_CURSOR_NAME, FeedbackTap};
 pub use fingerprint::{
     FAILURE_FINGERPRINT_ATTR,
     FAILURE_OPPONENT_PREFIX,
@@ -125,3 +123,4 @@ pub use resolution_store::{
     resolution_dir,
     resolution_store_path,
 };
+pub use silent_failure::{silent_failure_line, silent_failure_line_bare};

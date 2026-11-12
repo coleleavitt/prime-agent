@@ -298,10 +298,7 @@ pub fn ravo_best_score(lineage: &[RavoChampion], challenger_fingerprints: &[Stri
 /// high-scoring champion on an unrelated topic was ratcheting the floor
 /// across every unclaimed proposal on the machine.
 #[must_use]
-pub fn ravo_best_score_scoped(
-    lineage: &[RavoChampion],
-    challenger_fingerprints: &[String],
-) -> u64 {
+pub fn ravo_best_score_scoped(lineage: &[RavoChampion], challenger_fingerprints: &[String]) -> u64 {
     if challenger_fingerprints.is_empty() {
         return 0;
     }
@@ -601,11 +598,7 @@ fn invalid_certificate(
         certificate: RavoGateCertificate {
             proposal_id: proposal.id.clone(),
             previous_champion_id: previous.champion_id.clone(),
-            previous_best_score: best_score_for(
-                &previous.lineage,
-                challenger_fingerprints,
-                config,
-            ),
+            previous_best_score: best_score_for(&previous.lineage, challenger_fingerprints, config),
             screen_threshold: config.screen_threshold,
             epsilon: config.epsilon,
             deep_tolerance: config.deep_tolerance,

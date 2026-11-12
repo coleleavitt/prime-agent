@@ -1941,9 +1941,11 @@ fn acp_truncated_final_response_retries_then_fails_the_turn() {
         prompt_response["error"]["code"], -32603,
         "the turn's response envelope: {prompt_response}"
     );
-    assert!(prompt_response["error"]["data"]["details"]
-        .as_str()
-        .is_some_and(|details| details.contains("cut off at its output limit")));
+    assert!(
+        prompt_response["error"]["data"]["details"]
+            .as_str()
+            .is_some_and(|details| details.contains("cut off at its output limit"))
+    );
 
     let slash = client.request(
         "session/prompt",

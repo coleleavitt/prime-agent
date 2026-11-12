@@ -5,7 +5,6 @@
 
 mod script;
 
-use script::write_executable;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -17,6 +16,7 @@ use pa_core::kernel::shared::{
     KernelManagerOptions,
     KernelShutdownOptions,
 };
+use script::write_executable;
 
 const FAKE_RUNTIME: &str = r#"#!/usr/bin/env python3
 import json

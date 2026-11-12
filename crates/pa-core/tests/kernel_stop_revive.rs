@@ -18,7 +18,6 @@
 
 mod script;
 
-use script::write_executable;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +30,7 @@ use pa_core::kernel::shared::{
     KernelShutdownOptions,
     host_handler,
 };
+use script::write_executable;
 
 /// The kernel Python with prime-agent-runtime installed (see
 /// `kernel_snapshot_resume.rs`); skipped with a note when absent.

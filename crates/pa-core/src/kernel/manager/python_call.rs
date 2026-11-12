@@ -31,9 +31,10 @@ impl ReplKernelManager {
             pa_bash::JobSandbox::Unavailable(reason) => return Err(reason),
         };
         let env = kernel_spawn_env(&self.inner.options.env, self.inner.options.environment);
-        command
-            .env_clear()
-            .envs(env.into_iter().filter(|(key, _)| !key.to_string_lossy().starts_with("RLM_")));
+        command.env_clear().envs(
+            env.into_iter()
+                .filter(|(key, _)| !key.to_string_lossy().starts_with("RLM_")),
+        );
         if let Some(cwd) = self.inner.start_cwd() {
             command.current_dir(cwd);
         }

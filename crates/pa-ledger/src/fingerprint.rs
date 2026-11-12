@@ -161,14 +161,14 @@ static NUMBER: LazyLock<Regex> = LazyLock::new(|| regex(r"[-+]?[0-9]+(?:\.[0-9]+
 /// anthropic/openai SDKs tag every error with a unique id, so a fault that
 /// recurs every call used to produce a fresh fingerprint on each hit. See
 /// `crates/pa-ai/src/utils_inner/stream_failure.rs` for the writer.
-static REQUEST_ID_TAIL: LazyLock<Regex> =
-    LazyLock::new(|| regex(r"\[request_id:\s*[^\]]+\]"));
+static REQUEST_ID_TAIL: LazyLock<Regex> = LazyLock::new(|| regex(r"\[request_id:\s*[^\]]+\]"));
 /// Prefixed alphanumeric identifiers the SDKs sprinkle through error prose
 /// (`req_abcd1234`, `tr_...`, `msg_...`, `evt_...`): the `_` tail breaks
 /// `HEX_RUN` since it mixes digits and letters outside the pure-hex class,
 /// so they escape normalization and shard fingerprints.
-static TOKEN_ID: LazyLock<Regex> =
-    LazyLock::new(|| regex(r"(?-u:\b)(?:req|tr|msg|evt|sess|run|conn|rc|ses)_[a-z0-9]{8,}(?-u:\b)"));
+static TOKEN_ID: LazyLock<Regex> = LazyLock::new(|| {
+    regex(r"(?-u:\b)(?:req|tr|msg|evt|sess|run|conn|rc|ses)_[a-z0-9]{8,}(?-u:\b)")
+});
 /// Runs of `?` placeholders inside braces (`{ ?: ?, ?: ? }`): the tool
 /// validator stringifies the received `code` argument field by field, so
 /// `{}` and `{ ?: ? }` and `{ ?: ?, ?: ? }` are the same bug with
@@ -496,10 +496,7 @@ mod tests {
             "OAuth access token has been revoked [request_id: req_019ZZbazzkzzzzzzzzzzz9zz]",
         );
         assert_eq!(first, second);
-        assert_eq!(
-            first,
-            "oauth access token has been revoked [request_id: ?]"
-        );
+        assert_eq!(first, "oauth access token has been revoked [request_id: ?]");
     }
 
     #[test]
@@ -526,7 +523,10 @@ mod tests {
         // collapse to `{...}` so they share an id.
         assert_eq!(one, two);
         assert!(one.contains("{...}"), "got: {one}");
-        assert!(!empty.contains("{...}"), "empty braces stay literal: {empty}");
+        assert!(
+            !empty.contains("{...}"),
+            "empty braces stay literal: {empty}"
+        );
     }
 
     #[test]

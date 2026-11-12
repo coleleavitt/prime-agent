@@ -150,9 +150,7 @@ fn scan_supersedes(text: &str, out: &mut Vec<String>) {
         // Grab the next token up to whitespace or terminal punctuation.
         let token: String = tail
             .chars()
-            .take_while(|c| {
-                !c.is_whitespace() && !matches!(*c, ',' | '.' | ';' | '!' | '?' | ')')
-            })
+            .take_while(|c| !c.is_whitespace() && !matches!(*c, ',' | '.' | ';' | '!' | '?' | ')'))
             .collect();
         if !token.is_empty() {
             let stripped = strip_balanced_quotes(&token);
@@ -165,7 +163,12 @@ fn scan_supersedes(text: &str, out: &mut Vec<String>) {
 }
 
 fn strip_balanced_quotes(s: &str) -> &str {
-    let pairs = [('\'', '\''), ('"', '"'), ('`', '`'), ('\u{2018}', '\u{2019}')];
+    let pairs = [
+        ('\'', '\''),
+        ('"', '"'),
+        ('`', '`'),
+        ('\u{2018}', '\u{2019}'),
+    ];
     for (open, close) in pairs {
         if let Some(inner) = s
             .strip_prefix(open)
@@ -205,10 +208,7 @@ pub fn signals_from_supersede(successor: &str, title: &str, content: &str) -> Ve
 /// is read once; pass an owned `Vec` or clone the caller's view. The
 /// caller composes the record iterator over `refinement_history.jsonl`
 /// and the targeting snapshot over `harness_state.json`.
-pub fn extract_signals<I>(
-    records: I,
-    memory_targeting: &[(String, Vec<String>)],
-) -> Vec<Signal>
+pub fn extract_signals<I>(records: I, memory_targeting: &[(String, Vec<String>)]) -> Vec<Signal>
 where
     I: IntoIterator<Item = RefinementRecord>,
 {
@@ -218,7 +218,9 @@ where
             let missed = failure_fingerprints_from_missed(&rec.missed_criteria);
             signals.extend(signals_from_ravo_rejection(
                 missed,
-                memory_targeting.iter().map(|(m, f)| (m.as_str(), f.clone())),
+                memory_targeting
+                    .iter()
+                    .map(|(m, f)| (m.as_str(), f.clone())),
             ));
         }
         for edit in &rec.applied_edits {
@@ -301,10 +303,7 @@ mod tests {
     #[test]
     fn supersede_extracts_predecessor_ids() {
         assert_eq!(
-            superseded_predecessors(
-                "ers-rs: PR #58 landed; supersedes ers_sf_not_needed",
-                "",
-            ),
+            superseded_predecessors("ers-rs: PR #58 landed; supersedes ers_sf_not_needed", "",),
             vec!["ers_sf_not_needed".to_string()]
         );
         assert_eq!(
@@ -325,11 +324,7 @@ mod tests {
         // The cert memory flagged this case: refiners sometimes supersede
         // by prose rather than id ("the 'not needed' decision"). Returns
         // empty here; a classifier in pa-ledger would resolve it.
-        assert!(superseded_predecessors(
-            "",
-            "supersedes the 'not needed' decision"
-        )
-        .is_empty());
+        assert!(superseded_predecessors("", "supersedes the 'not needed' decision").is_empty());
     }
 
     #[test]
@@ -359,9 +354,13 @@ mod tests {
         ];
         let sigs = extract_signals(records, &memories);
         assert_eq!(sigs.len(), 2);
-        assert!(sigs.iter().any(|s| s.memory_id == "memory_covers"
-            && s.outcome == Outcome::Helped));
-        assert!(sigs.iter().any(|s| s.memory_id == "memory_old"
-            && s.outcome == Outcome::Misled));
+        assert!(
+            sigs.iter()
+                .any(|s| s.memory_id == "memory_covers" && s.outcome == Outcome::Helped)
+        );
+        assert!(
+            sigs.iter()
+                .any(|s| s.memory_id == "memory_old" && s.outcome == Outcome::Misled)
+        );
     }
 }

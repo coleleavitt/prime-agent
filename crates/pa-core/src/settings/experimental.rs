@@ -346,10 +346,7 @@ impl ExperimentalSettings {
             usage_limit_wrap_up_threshold: threshold,
             goal_evaluator: flag("goalEvaluator", GOAL_EVALUATOR_ENV),
             goal_evaluator_model: non_empty(get("goalEvaluatorModel")),
-            model_proposed_goals: flag_default_on(
-                "modelProposedGoals",
-                MODEL_PROPOSED_GOALS_ENV,
-            ),
+            model_proposed_goals: flag_default_on("modelProposedGoals", MODEL_PROPOSED_GOALS_ENV),
             idle_compaction: flag_default_on("idleCompaction", IDLE_COMPACTION_ENV),
             idle_compaction_after_ms: idle_after_ms,
             idle_compaction_min_tokens: idle_min_tokens,

@@ -217,7 +217,10 @@ note: `#[warn(unused_imports)]` on by default
         // Non-zero exit → the existing `observe_tool_result` path owns
         // the fingerprint. The silent-failure helper refuses so the
         // ledger doesn't get a duplicate record.
-        assert_eq!(silent_failure_line(1, "error[E0308]: mismatched types"), None);
+        assert_eq!(
+            silent_failure_line(1, "error[E0308]: mismatched types"),
+            None
+        );
     }
 
     #[test]

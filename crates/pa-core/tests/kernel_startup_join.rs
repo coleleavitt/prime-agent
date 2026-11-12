@@ -4,10 +4,11 @@
 
 mod script;
 
+use std::time::Duration;
+
 use pa_core::kernel::cancellation::AbortSignal;
 use pa_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use script::write_executable;
-use std::time::Duration;
 
 fn failing_kernel() -> (
     tempfile::TempDir,

@@ -92,7 +92,7 @@ impl Bm25Index {
     #[expect(
         clippy::cast_precision_loss,
         reason = "BM25 length normalisation uses f32 throughout; the cast is as precise as the \
-                  entire score, and prime-agent corpora stay well under 2^23 tokens per doc",
+                  entire score, and prime-agent corpora stay well under 2^23 tokens per doc"
     )]
     fn average_length(&self) -> f32 {
         let live = self.len();
@@ -104,7 +104,13 @@ impl Bm25Index {
             .iter()
             .zip(&self.tombstoned)
             .enumerate()
-            .filter_map(|(i, (_, &t))| if t { None } else { Some(u64::from(self.lengths[i])) })
+            .filter_map(|(i, (_, &t))| {
+                if t {
+                    None
+                } else {
+                    Some(u64::from(self.lengths[i]))
+                }
+            })
             .sum();
         (live_tokens as f32) / (live as f32)
     }
@@ -169,7 +175,7 @@ impl Bm25Index {
     #[expect(
         clippy::cast_precision_loss,
         reason = "BM25 math is f32 throughout; `live_count`, `df_live`, `tf` and `len` fit the \
-                  23-bit mantissa for prime-agent-scale corpora (millions of docs is the limit)",
+                  23-bit mantissa for prime-agent-scale corpora (millions of docs is the limit)"
     )]
     pub fn top_k(&self, query: &Query, k: usize) -> Vec<Candidate> {
         if k == 0 || self.is_empty() {
@@ -318,7 +324,10 @@ mod tests {
             "bun",
             "install the dependencies with bun install, not npm install",
         );
-        idx.upsert("npm", "install the dependencies with npm install and npm ci");
+        idx.upsert(
+            "npm",
+            "install the dependencies with npm install and npm ci",
+        );
         idx.upsert(
             "daemon",
             "the test runner needs a daemon restart to see new code",

@@ -622,7 +622,7 @@ mod supports_prompt_caching_tests {
 
 #[cfg(test)]
 mod convert_messages_tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::convert_messages;
     use crate::types::{CacheRetention, Context, Message, Model};

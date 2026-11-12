@@ -676,7 +676,11 @@ fn append_digest_memories_sidecar(global_dir: &std::path::Path, fingerprint: &st
             return;
         }
     };
-    let mut file = match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    let mut file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         Ok(f) => f,
         Err(err) => {
             tracing::debug!(target: "pa_core::digest_sidecar", %err, "open failed");

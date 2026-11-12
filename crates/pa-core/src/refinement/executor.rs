@@ -605,7 +605,10 @@ pub trait AutoRefinePolicy: Send + Sync {
     /// `StubPolicy::approved_refine` already matched the right shape; the
     /// native policy just skipped it. This closure restores the signal.
     fn approved_refine(&self, reason: &str, review: &AutoRefineReview) -> AutoRefineRun {
-        let scope = review.reply.get("scope").and_then(serde_json::Value::as_str);
+        let scope = review
+            .reply
+            .get("scope")
+            .and_then(serde_json::Value::as_str);
         AutoRefineRun {
             // Only the explicit `"global"` promotes; unknown or `"local"`
             // stays session-scoped. Mirrors the native guidance's defaults.

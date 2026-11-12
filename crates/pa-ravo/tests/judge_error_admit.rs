@@ -10,11 +10,11 @@ use pa_ravo::{
     GateStatus,
     RAVO_DEFAULT_CONFIG,
     RavoConfig,
+    RavoOpponentPool,
     UnclaimedCommitPolicy,
     authorize_assisted_ravo,
     empty_ravo_state,
 };
-use pa_ravo::{RavoOpponentPool};
 use serde_json::{Value, json};
 
 fn baseline() -> Value {

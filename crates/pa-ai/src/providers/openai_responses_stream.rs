@@ -964,7 +964,9 @@ mod tests {
     use super::*;
     use crate::event_stream::{create_assistant_message_event_stream, initial_assistant_message};
     use crate::providers::openai_responses_shared::{
-        convert_responses_messages, ConvertResponsesMessagesOptions, OPENAI_TOOL_CALL_PROVIDERS,
+        ConvertResponsesMessagesOptions,
+        OPENAI_TOOL_CALL_PROVIDERS,
+        convert_responses_messages,
     };
     use crate::types::{Context, Message};
 

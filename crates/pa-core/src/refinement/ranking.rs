@@ -214,8 +214,9 @@ fn native_entry_order(
 /// `pa-retrieval::FlyRagReranker` is the intended producer; this crate
 /// stays dep-free of pa-retrieval so the trait object crosses the boundary
 /// without a cycle.
-pub type HarnessRerankHook =
-    std::sync::Arc<dyn Fn(&[HarnessEntry], &HarnessQueryTerms) -> Option<Vec<String>> + Send + Sync>;
+pub type HarnessRerankHook = std::sync::Arc<
+    dyn Fn(&[HarnessEntry], &HarnessQueryTerms) -> Option<Vec<String>> + Send + Sync,
+>;
 
 #[derive(Default)]
 pub struct HarnessStatePromptOptions {
@@ -367,8 +368,7 @@ pub fn format_harness_state_for_prompt(
         // overlays); only editable entries are reordered among themselves.
         if let (Some(hook), Some(terms)) = (options.rerank_hook.as_ref(), query_terms.as_ref()) {
             if !entries.is_empty() && !terms.is_empty() {
-                let (packages, editable): (Vec<_>, Vec<_>) =
-                    entries.into_iter().partition(package);
+                let (packages, editable): (Vec<_>, Vec<_>) = entries.into_iter().partition(package);
                 if let Some(ids) = hook(&editable, terms) {
                     let by_id: std::collections::HashMap<String, HarnessEntry> =
                         editable.into_iter().map(|e| (e.id.clone(), e)).collect();

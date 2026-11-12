@@ -40,10 +40,11 @@ pub mod flyrag;
 pub mod signal;
 mod types;
 
-pub use crate::flyrag::FlyRagReranker;
 pub use bm25::{BasicReranker, Bm25Index};
 pub use signal::{Signal, extract_signals};
-pub use types::{Candidate, OfferId, Outcome, Query, Ranked, RerankResult, RetrievalError, Result};
+pub use types::{Candidate, OfferId, Outcome, Query, Ranked, RerankResult, Result, RetrievalError};
+
+pub use crate::flyrag::FlyRagReranker;
 
 /// The plug point pa-core calls to pick memories for a turn, and the daemon
 /// calls to feed outcomes back.
@@ -63,12 +64,8 @@ pub trait Reranker: Send + Sync {
     /// Returns [`RetrievalError`] when a candidate names an unknown memory
     /// (should not happen if the caller just loaded them from the same
     /// memory store) or when the underlying flyrag/BM25 index errors.
-    fn rerank(
-        &mut self,
-        query: &Query,
-        candidates: &[Candidate],
-        k: usize,
-    ) -> Result<RerankResult>;
+    fn rerank(&mut self, query: &Query, candidates: &[Candidate], k: usize)
+    -> Result<RerankResult>;
 
     /// Record one outcome for a shown memory in an earlier offer. `Ok(false)`
     /// means the implementation chose not to persist the signal (feedback

@@ -296,11 +296,12 @@ impl Default for GoogleStreamState {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::event_stream::{create_assistant_message_event_stream, initial_assistant_message};
     use crate::providers::google_shared::convert_messages;
     use crate::types::{Context, Message};
-    use serde_json::json;
 
     #[test]
     fn signed_parts_survive_replay_without_merging() {

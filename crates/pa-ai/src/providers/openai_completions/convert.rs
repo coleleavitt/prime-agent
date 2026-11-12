@@ -76,8 +76,12 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &ResolvedCompa
                         let text: String = blocks
                             .iter()
                             .filter_map(|item| match crate::types::user_block_payload(item) {
-                                crate::types::UserBlockPayload::Text(text) => Some(sanitize_surrogates(text)),
-                                crate::types::UserBlockPayload::Opaque(json) => Some(sanitize_surrogates(&json)),
+                                crate::types::UserBlockPayload::Text(text) => {
+                                    Some(sanitize_surrogates(text))
+                                }
+                                crate::types::UserBlockPayload::Opaque(json) => {
+                                    Some(sanitize_surrogates(&json))
+                                }
                                 crate::types::UserBlockPayload::Image { .. } => None,
                             })
                             .collect::<Vec<_>>()
