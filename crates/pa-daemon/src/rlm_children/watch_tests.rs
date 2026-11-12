@@ -2968,6 +2968,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         prompt_admitted: true,
         error: None,
         closed_by_parent: false,
+        lost_at_restart: false,
         retiring: false,
         return_recorded: false,
         retirement_finished: false,
@@ -3544,6 +3545,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         prompt_admitted: true,
         error: None,
         closed_by_parent: false,
+        lost_at_restart: false,
         retiring: false,
         return_recorded: false,
         retirement_finished: false,
@@ -3592,7 +3594,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
 /// already adopted [`super::registry::RLM_RESTART_ADOPTIONS_MAX`] times is
 /// relisted as interrupted instead (Claude Code's `restartResumes` cap), and so
 /// is a child whose notice the old parent already claimed (never notified
-/// twice).
+/// twice). A re-spawn under the capped child's id is refused as lost.
 #[tokio::test]
 async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap_but_never_a_notified_one() {
     let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
@@ -3696,6 +3698,43 @@ async fn a_reseed_adopts_a_still_running_child_up_to_the_restart_cap_but_never_a
             adoptions("sub-noticed")
         ),
         (Some(1), Some(5), Some(0))
+    );
+    // A re-spawn under a recorded id (the factory's re-driven admission)
+    // answers the adopted and the settled child, and refuses the capped
+    // one as lost: its run never finished and it will never settle.
+    let mut respawned = Vec::new();
+    for child_id in ["sub-run", "sub-capped", "sub-noticed"] {
+        let answer = sessions
+            .spawn(RlmSpawnRequest {
+                child_id: Some(child_id.to_string()),
+                plan_mode: false,
+                prompt: "the task".to_string(),
+                name: None,
+                model: None,
+                thinking: None,
+                target: RlmSpawnTarget::Local,
+                spawned_by_request_id: None,
+                cwd: None,
+                agent: None,
+                worktree: None,
+                factory: None,
+            })
+            .await;
+        respawned.push(
+            answer
+                .map(|handle| handle.rlm_child_id)
+                .map_err(|error| error.to_string()),
+        );
+    }
+    assert_eq!(
+        respawned,
+        [
+            Ok("sub-run".to_string()),
+            Err(pa_core::session_engine::rlm_host::rlm_child_lost(
+                "sub-capped"
+            )),
+            Ok("sub-noticed".to_string())
+        ]
     );
 
     // The adopted child finishes: its watcher delivers the owed notice.

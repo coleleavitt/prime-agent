@@ -222,15 +222,31 @@ pub fn rlm_admission_unknown(child_id: &str) -> String {
 /// The marker of [`rlm_admission_unknown`]'s refusal.
 pub const RLM_ADMISSION_UNKNOWN: &str = "admission unknown";
 
+/// The refusal for a pre-picked child id whose child the host knows but
+/// cannot adopt: its run never finished, and its worker was gone when a
+/// restart relisted it, so it will never settle. Callers match
+/// [`RLM_CHILD_LOST`] and treat the child as lost with the restart.
+#[must_use]
+pub fn rlm_child_lost(child_id: &str) -> String {
+    format!(
+        "rlm.spawn: {RLM_CHILD_LOST}: child {child_id} did not finish, and its worker was gone \
+         after a restart; it was not adopted"
+    )
+}
+
+/// The marker of [`rlm_child_lost`]'s refusal.
+pub const RLM_CHILD_LOST: &str = "child lost";
+
 /// Validated `rlm.spawn` request handed to the child-session host.
 #[derive(Debug, Clone)]
 pub struct RlmSpawnRequest {
     /// The child id the caller picked and recorded before the spawn (the
     /// factory's run record, the workflow journal): a host that already
-    /// knows the child answers its handle instead of spawning again, and
-    /// one that may have admitted it before a restart without keeping a
-    /// record refuses with [`rlm_admission_unknown`]. `None`: the host
-    /// picks a fresh id.
+    /// knows the child answers its handle instead of spawning again (or
+    /// refuses with [`rlm_child_lost`] when that child did not survive a
+    /// restart), and one that may have admitted it before a restart without
+    /// keeping a record refuses with [`rlm_admission_unknown`]. `None`: the
+    /// host picks a fresh id.
     pub child_id: Option<String>,
     pub prompt: String,
     /// Explicit session name; the host derives a default when absent.

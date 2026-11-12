@@ -98,10 +98,12 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   children still running after a host restart) and the `/factory` lane; the kernel's `rlm.factory` is a thin client.
 - RLM children (Claude Code 2.1.322's agent lifecycle where it has one): the settle carries the final answer
   (`get_state` `includeSettlement`, one worker snapshot) and `subagent_tokens`/`tool_uses` (`RlmChildResult`,
-  the notice's `<usage>`); a caller-picked `child_id` makes `rlm.run` idempotent (a known id is adopted, an
-  unconfirmable one refused as `admission unknown`). The factory record and the `rlm.workflow` journal write the
-  id before the spawn; a restarted parent, factory or resumed workflow adopts a surviving child (capped at 5,
-  Claude Code's `restartResumes`) and pauses for the user on an unknown admission. No token budgets in either flow
+  the notice's `<usage>`); a caller-picked `child_id` makes `rlm.run` idempotent (a known id is adopted, a known
+  child whose worker the restart left dead refused as `child lost`, an unconfirmable one as `admission unknown`).
+  The factory record and the `rlm.workflow` journal write the id before the spawn; a restarted parent, factory or
+  resumed workflow adopts a surviving child (capped at 5, Claude Code's `restartResumes`), takes the interrupted
+  path for a lost one (the factory pauses and re-runs it on resume; the workflow agent fails), and pauses for the
+  user on an unknown admission. No token budgets in either flow
   (removed; goal budgets stay).
 - Spawn hardening: ETXTBSY-tolerant spawns (`platform::process::{status,spawn}_retrying_text_busy`) for the runtime
   probe, `uv`, and staged-update version probes; runtime-probe memo invalidation scoped to the failed interpreter.

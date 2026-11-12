@@ -41,7 +41,12 @@ use super::{Inner, RunCell};
 use crate::factory::labels::spawn_label;
 use crate::factory::pyvalue::py_str_repr;
 use crate::factory::spec::NODE_RETRIES_DEFAULT;
-use crate::session_engine::rlm_host::{RLM_ADMISSION_UNKNOWN, RlmChildResult, RlmFactoryTag};
+use crate::session_engine::rlm_host::{
+    RLM_ADMISSION_UNKNOWN,
+    RLM_CHILD_LOST,
+    RlmChildResult,
+    RlmFactoryTag,
+};
 
 /// Spawn admissions per instance before a persistent rate limit fails it.
 pub const BACKOFF_MAX_ATTEMPTS: u32 = 5;
@@ -1205,6 +1210,37 @@ impl Inner {
                             run.run_id
                         ),
                         node: Some(node),
+                    })
+                });
+                if let Some(announce) = announce {
+                    self.milestone(cell, announce).await;
+                }
+                return Admission::Stopped;
+            }
+            Err(error) if error.contains(RLM_CHILD_LOST) => {
+                // The re-driven child did not survive the restart: the
+                // interrupted path (re-queue, pause, delete on resume).
+                let announce = cell.with(|run| {
+                    let instance = run.slot_instance(slot);
+                    instance.interrupted_child = instance.pending_child.take();
+                    instance.spawned_at = None;
+                    let child = instance.interrupted_child.clone().unwrap_or_default();
+                    run.record_at(
+                        kind::INTERRUPTED,
+                        slot,
+                        Some("the child did not survive the host restart; re-queued for admission"),
+                        vec![("child", Value::from(child))],
+                    );
+                    run.touch();
+                    if run.state != RunState::Running {
+                        return None;
+                    }
+                    super::store::pause_interrupted(run, 1);
+                    let (_, detail) = super::interruption_notice(run)?;
+                    Some(MilestoneCall {
+                        kind: super::notice::INTERRUPTED_MILESTONE,
+                        detail,
+                        node: None,
                     })
                 });
                 if let Some(announce) = announce {

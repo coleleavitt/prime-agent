@@ -139,13 +139,17 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // A caller that recorded its child id before the spawn (the
             // factory record, the workflow journal) re-spawns with it after
             // a restart: a child this host knows is adopted, never spawned
-            // twice; one whose dir exists without a record may have been
-            // admitted mid-crash, and the caller decides.
+            // twice, unless it did not survive the restart (lost); one whose
+            // dir exists without a record may have been admitted mid-crash,
+            // and the caller decides.
             let child_id = match request.child_id.clone() {
                 Some(child_id) => {
                     for record in this.children.lock().await.iter() {
                         let record = record.lock().await;
                         if record.rlm_child_id == child_id {
+                            if record.lost_at_restart {
+                                bail!(pa_core::session_engine::rlm_host::rlm_child_lost(&child_id));
+                            }
                             return Ok(RlmSpawnHandle {
                                 rlm_child_id: child_id,
                                 name: record.session_name.clone(),
@@ -286,6 +290,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     prompt_admitted: false,
                     error: None,
                     closed_by_parent: false,
+                    lost_at_restart: false,
                     retiring: false,
                     return_recorded: false,
                     retirement_finished: false,

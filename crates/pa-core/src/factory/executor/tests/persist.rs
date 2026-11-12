@@ -323,6 +323,49 @@ async fn a_host_restart_adopts_the_running_child_and_the_run_carries_on() {
     assert_eq!(run.spawn_count, 4, "the adoption is no new admission");
 }
 
+#[tokio::test]
+async fn a_child_lost_with_the_host_restart_pauses_the_run_as_interrupted() {
+    // The host knows the re-driven child but it did not survive the restart
+    // (its worker died with the host): the instance re-queues and the run
+    // pauses as interrupted; resume deletes the lost child and admits the
+    // instance afresh.
+    let (_temp, dir, case) = store_case();
+    case.host.child_outcome("child-1", running());
+    case.host.child_outcome("child-2", done("ok"));
+    case.store_factory(
+        json!({ "nodes": [{ "id": "a", "subagent": "worker" }] }),
+        "sw",
+    );
+    let result = case.start().await;
+    case.executor.flush().await;
+    let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
+    drop(case);
+    host.with(|state| state.lost_children.insert("child-1".to_string()));
+
+    let restarted = Case::over(host, clock, Some(dir));
+    let paused = restarted.settle(&result).await;
+    assert_eq!(paused["state"], "paused");
+    let lost: Vec<(Value, Value)> = ["adopting", "interrupted", "run_interrupted"]
+        .into_iter()
+        .flat_map(|event_kind| restarted.all_events_of(&result, event_kind))
+        .map(|event| (event["kind"].clone(), event["child"].clone()))
+        .collect();
+    assert_eq!(
+        lost,
+        [
+            (json!("adopting"), json!("child-1")),
+            (json!("interrupted"), json!("child-1")),
+            (json!("run_interrupted"), Value::Null)
+        ]
+    );
+
+    restarted.resume(&result).await.expect("resume");
+    let finished = restarted.settle(&result).await;
+    assert_eq!(finished["state"], "done");
+    assert_eq!(restarted.host.deleted_targets(), ["child-1"]);
+    assert_eq!(restarted.host.spawn_calls("a").len(), 2);
+}
+
 /// Start the stored spec until the host is parked at `parked` (the start's
 /// admission never answers: the host dies there), and name the run.
 async fn start_until(case: &Case, parked: &super::fake::Event) -> Value {

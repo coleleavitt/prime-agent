@@ -184,6 +184,7 @@ impl SupervisorChildSessionsInner {
             prompt_admitted: true,
             error: None,
             closed_by_parent: false,
+            lost_at_restart: false,
             retiring: false,
             return_recorded: false,
             session_file: created.session_file.clone(),

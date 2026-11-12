@@ -379,6 +379,10 @@ class RlmBackend:
         except Exception as error:
             if "admission unknown" in str(error):
                 raise WorkflowAdmissionUnknown(str(error)) from error
+            if "child lost" in str(error):
+                # The journaled child did not survive a restart: the agent
+                # failed, as that child's settle would have reported.
+                return AgentOutcome(text=None, agent_id=request.child_id or "", error=str(error))
             if "thinking" not in kwargs or "thinking" not in str(error).lower():
                 raise
             # A level the child's model does not support: run at its default.

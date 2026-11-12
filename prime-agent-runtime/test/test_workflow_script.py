@@ -533,6 +533,18 @@ class RlmBackendIsolationTests(unittest.IsolatedAsyncioTestCase):
         _, calls = await self.run_backend(None)
         self.assertEqual(calls, [("spawn", {"name": "wf-1", "child_id": None}), ("collect", True)])
 
+    async def test_a_lost_child_fails_the_agent(self):
+        import rlm
+
+        error = "rlm.spawn: child lost: child sub-0123abcd did not finish"
+
+        async def spawn(prompt, **kwargs):
+            raise RuntimeError(error)
+
+        with mock.patch.object(rlm, "_spawn", spawn):
+            outcome = await ws.RlmBackend().run(ws.AgentRequest(prompt="p", name="wf-1", child_id="sub-0123abcd"))
+        self.assertEqual(outcome, ws.AgentOutcome(text=None, agent_id="sub-0123abcd", error=error))
+
 
 class SchemaSubsetTests(unittest.TestCase):
     def test_validation_and_extraction(self) -> None:

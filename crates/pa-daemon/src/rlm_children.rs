@@ -233,6 +233,11 @@ struct ChildRecord {
     /// The parent session closed while this child ran: the settle watcher
     /// exits without a notice — none is owed to a session being torn down.
     closed_by_parent: bool,
+    /// A restarted parent relisted this child with a run that never
+    /// finished and did not adopt it (its worker was gone, or it reached
+    /// the adoption cap): it will never settle, so a re-spawn under its id
+    /// is refused as lost instead of adopting it.
+    lost_at_restart: bool,
     /// A parent delete is in flight for this child: a settle watcher that
     /// wakes inside the kill window must not record a clean
     /// `child_returned` (the delete records a cancel edge instead). Kept
@@ -834,6 +839,7 @@ impl SupervisorChildSessions {
                 prompt_admitted: true,
                 error: None,
                 closed_by_parent: false,
+                lost_at_restart: false,
                 retiring: false,
                 return_recorded: false,
                 session_file: None,
@@ -887,6 +893,7 @@ impl SupervisorChildSessions {
                 prompt_admitted: true,
                 error: None,
                 closed_by_parent: false,
+                lost_at_restart: false,
                 retiring: false,
                 return_recorded: false,
                 retirement_finished: false,

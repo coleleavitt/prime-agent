@@ -183,12 +183,34 @@ fn write_atomic(dir: &Path, run_id: &str, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Pause a running run as interrupted: a host restart lost `lost` of its
+/// in-flight children. The `run_interrupted` event's detail is the notice
+/// the session hears.
+pub(super) fn pause_interrupted(run: &mut FactoryRun, lost: usize) {
+    run.state = RunState::Paused;
+    run.pause_reason = Some(INTERRUPTED_PAUSE_REASON.to_string());
+    let detail = format!(
+        "the host restarted mid-run ({lost} in-flight child(ren) lost); resume with await rlm.factory.resume('{}')",
+        run.run_id
+    );
+    run.record(
+        kind::RUN_INTERRUPTED,
+        EventAt {
+            detail: Some(&detail),
+            ..EventAt::none()
+        },
+        Vec::new(),
+    );
+}
+
 /// Reconcile one reloaded run with a restarted host. The fork's children
 /// run in their own workers and can outlive the host, so a running child is
 /// re-driven, never re-run: its id parks in `pending_child` and the control
 /// loop's admission asks the host for it again through the idempotent
-/// spawn, which adopts a child the host holds and refuses one it may have
-/// admitted without keeping a record (the run then pauses for the user). An
+/// spawn, which adopts a child the host holds, answers one that did not
+/// survive the restart as lost (the interrupted path below), and refuses
+/// one it may have admitted without keeping a record (the run then pauses
+/// for the user). An
 /// admission the record caught in flight is re-driven the same way. A python
 /// call (it ran in the old kernel) or a child already re-driven
 /// [`RESTART_ADOPTIONS_MAX`] times is lost: it re-queues (its child
@@ -276,22 +298,7 @@ pub fn recover_after_restart(run: &mut FactoryRun) {
         // Nothing was lost: the restarted executor's loop carries on,
         // adopting the re-driven children.
         RunState::Running if lost == 0 => {}
-        RunState::Running => {
-            run.state = RunState::Paused;
-            run.pause_reason = Some(INTERRUPTED_PAUSE_REASON.to_string());
-            let detail = format!(
-                "the host restarted mid-run ({lost} in-flight child(ren) lost); resume with await rlm.factory.resume('{}')",
-                run.run_id
-            );
-            run.record(
-                kind::RUN_INTERRUPTED,
-                EventAt {
-                    detail: Some(&detail),
-                    ..EventAt::none()
-                },
-                Vec::new(),
-            );
-        }
+        RunState::Running => pause_interrupted(run, lost),
         RunState::Stopping => {
             for state in &mut run.states {
                 if state.entries.iter().any(|entry| entry.status.in_flight())

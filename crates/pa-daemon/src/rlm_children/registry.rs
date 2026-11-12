@@ -614,6 +614,7 @@ impl SupervisorChildSessionsInner {
                 record.settled_status = None;
                 record.settled = false;
                 record.notice_delivered = false;
+                record.lost_at_restart = false;
             }
             this.emit_child_update(&record).await;
             let watcher = Arc::clone(this);
@@ -662,6 +663,12 @@ fn ledger_child_records(
             .parent()
             .and_then(crate::rlm_ledger::read_rlm_subagent_display)
             .filter(|display| display.child_id == edge.child_id);
+        // A display still `running` relists as `error`; unless its terminal
+        // notice was claimed, the run never finished.
+        let running = display
+            .as_ref()
+            .is_some_and(|display| display.status == "running");
+        let notified = display.as_ref().is_some_and(|display| display.notified);
         records.push(ChildRecord {
             rlm_child_id: edge.child_id,
             session_name: edge.name,
@@ -698,16 +705,7 @@ fn ledger_child_records(
                 },
                 |display| display.created_at,
             ),
-            settled_status: Some(
-                if display
-                    .as_ref()
-                    .is_some_and(|display| display.status == "running")
-                {
-                    "error"
-                } else {
-                    "done"
-                },
-            ),
+            settled_status: Some(if running { "error" } else { "done" }),
             settled: true,
             answer_preview: None,
             answer_text: None,
@@ -724,6 +722,7 @@ fn ledger_child_records(
             prompt_admitted: true,
             error: None,
             closed_by_parent: false,
+            lost_at_restart: running && !notified,
             retiring: false,
             return_recorded: false,
             retirement_finished: false,

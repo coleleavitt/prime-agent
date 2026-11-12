@@ -227,6 +227,9 @@ pub struct HostState {
     pub picked: HashMap<String, String>,
     /// Picked ids the host answers `admission unknown`.
     pub unknown_admissions: HashSet<String>,
+    /// Known children that did not survive a restart: the host answers
+    /// `child lost` for their ids.
+    pub lost_children: HashSet<String>,
     pub delete_fails: bool,
     /// Every collect fails (a dead host bridge).
     pub collect_fails: bool,
@@ -405,6 +408,11 @@ impl FactoryChildren for FakePorts {
         let host = Arc::clone(&self.0);
         Box::pin(async move {
             host.pass_gate("rlm.run").await;
+            if host.with(|state| state.lost_children.contains(&request.child_id)) {
+                return Err(crate::session_engine::rlm_host::rlm_child_lost(
+                    &request.child_id,
+                ));
+            }
             // A known id answers its child (the host's adoption): a picked id,
             // or the id of a child this host holds.
             if let Some(child) = host.with(|state| {
