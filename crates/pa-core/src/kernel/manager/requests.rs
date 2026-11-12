@@ -16,7 +16,6 @@ use super::{
     InternalExecuteResult,
     KERNEL_ABORT_GRACE_MS,
     KernelStartOptions,
-    KernelState,
     Mutex,
     ReplKernelManager,
     Request,
@@ -243,7 +242,7 @@ impl ReplKernelManager {
             on_bootstrap_progress: None,
         })
         .await?;
-        if self.state() == KernelState::Shutdown {
+        if lock(&self.inner.guarded).lifecycle.is_shut_down() {
             return Err(anyhow!("Kernel has been shut down"));
         }
         if lock(&self.inner.guarded).flushing_snapshot_for_dispose && !opts.internal {
@@ -284,7 +283,7 @@ impl ReplKernelManager {
         {
             return Ok(InternalExecuteResult::aborted(started));
         }
-        if self.state() == KernelState::Shutdown {
+        if lock(&self.inner.guarded).lifecycle.is_shut_down() {
             return Err(anyhow!("Kernel has been shut down"));
         }
 
@@ -321,10 +320,6 @@ impl ReplKernelManager {
             }
         }
         result
-    }
-
-    fn state(&self) -> KernelState {
-        lock(&self.inner.guarded).state
     }
 
     /// One protocol request as a `kernel.execute` span: it is current while the frame is
