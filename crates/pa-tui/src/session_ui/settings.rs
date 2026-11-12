@@ -962,8 +962,7 @@ impl SessionUi {
     /// OUT-OF-BAND (a background task — the TUI stays mounted, the daemon keeps running, and the
     /// update replaces only the on-disk binary, so the new build takes effect on restart and
     /// nothing here blocks or tears down; there is no busy guard to keep). The confirm carries
-    /// the preserve invariant: the update uninstalls the TypeScript version and installs the
-    /// latest Rust build; sessions and configuration (~/.prime/agent) are never touched.
+    /// the preserve invariant: sessions and configuration (~/.prime/agent) are never touched.
     pub(super) fn confirm_update(&mut self, view: &mut AgentView) {
         if self.update_in_flight {
             self.note_as(
@@ -978,7 +977,7 @@ impl SessionUi {
         // confirm renders each line truncated, never wrapped).
         view.confirm = Some(crate::confirm::ConfirmPanel::yes_no(
             "Update Prime Agent",
-            "Update uninstalls the TypeScript version and installs the latest Rust build;\nyour sessions and configuration (~/.prime/agent) are never touched.\n\nThe update runs in the background — restart prime-agent after it\nfinishes to run the new build.",
+            "Update installs the latest Prime Agent build;\nyour sessions and configuration (~/.prime/agent) are never touched.\n\nThe update runs in the background — restart prime-agent after it\nfinishes to run the new build.",
         ));
         self.pending_confirm = Some(PendingConfirm::Update);
         self.dirty = true;

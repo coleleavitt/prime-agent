@@ -318,7 +318,7 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     },
     BuiltinSlashCommand {
         name: "update",
-        description: "Update to the latest Rust build (uninstalls the TypeScript version; sessions preserved)",
+        description: "Update to the latest version (sessions preserved)",
         execution: SlashCommandExecution::Client,
         argument_hint: None,
         aliases: &[],

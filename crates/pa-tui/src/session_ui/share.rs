@@ -68,7 +68,7 @@ impl SessionUi {
         let notes = self.update_notes.clone();
         self.update_in_flight = true;
         self.note(
-            "Updating — downloading and installing the latest Rust build…",
+            "Updating — downloading and installing the latest build…",
             view,
         );
         tokio::spawn(async move {
