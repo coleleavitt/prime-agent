@@ -94,7 +94,6 @@ mod test_support;
 // unit batteries; per the crate facade policy its surface stays crate-private.
 pub(crate) mod system_router;
 pub mod update;
-pub mod workspace_snapshot;
 pub mod workspace_trust;
 pub mod worktree;
 pub use kernel::ReplKernelManager;
