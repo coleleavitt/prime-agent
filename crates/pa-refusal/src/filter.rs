@@ -295,109 +295,8 @@ impl TermDict {
             return Self::default();
         }
 
-        let mut bio: HashMap<String, f64> = HashMap::new();
-        let mut chem: HashMap<String, f64> = HashMap::new();
-        let mut nuclear: HashMap<String, f64> = HashMap::new();
-        let mut cyber: HashMap<String, f64> = HashMap::new();
-        let mut security: HashMap<String, f64> = HashMap::new();
-        let mut frontier_llm: HashMap<String, f64> = HashMap::new();
-        let mut reasoning_extraction: HashMap<String, f64> = HashMap::new();
         let mut strip_patterns: Vec<(String, f64)> = Vec::new();
         let mut rewrite_rules: Vec<(String, String)> = Vec::new();
-
-        // HARDCODED CATEGORY WEIGHTS
-        bio.insert("bioweapon".into(), 0.95);
-        bio.insert("biological weapon".into(), 0.95);
-        bio.insert("weaponize".into(), 0.9);
-        bio.insert("mass casualty".into(), 0.9);
-        bio.insert("botulinum toxin".into(), 0.9);
-        chem.insert("sarin".into(), 0.95);
-        chem.insert("tabun".into(), 0.9);
-        chem.insert("soman".into(), 0.9);
-        chem.insert("vx".into(), 0.95);
-        chem.insert("novichok".into(), 0.95);
-        chem.insert("nerve agent".into(), 0.9);
-        chem.insert("nerve gas".into(), 0.9);
-        chem.insert("mustard gas".into(), 0.85);
-        chem.insert("chemical weapon".into(), 0.95);
-        chem.insert("lewisite".into(), 0.8);
-        chem.insert("phosgene".into(), 0.75);
-        chem.insert("sulfur mustard".into(), 0.85);
-        nuclear.insert("enriched uranium".into(), 0.9);
-        nuclear.insert("weapons-grade".into(), 0.95);
-        nuclear.insert("plutonium".into(), 0.85);
-        nuclear.insert("critical mass".into(), 0.8);
-        nuclear.insert("fissile material".into(), 0.75);
-        nuclear.insert("dirty bomb".into(), 0.85);
-        nuclear.insert("nuclear weapon".into(), 0.9);
-        nuclear.insert("highly enriched".into(), 0.95);
-        nuclear.insert("implosion device".into(), 0.9);
-        cyber.insert("exploit".into(), 0.7);
-        cyber.insert("shellcode".into(), 0.85);
-        cyber.insert("rootkit".into(), 0.85);
-        cyber.insert("backdoor".into(), 0.8);
-        cyber.insert("malware".into(), 0.75);
-        cyber.insert("buffer overflow".into(), 0.8);
-        cyber.insert("zero-day".into(), 0.85);
-        cyber.insert("disassemble".into(), 0.4);
-        cyber.insert("disassembly".into(), 0.4);
-        cyber.insert("decompile".into(), 0.4);
-        cyber.insert("reverse engineer".into(), 0.45);
-        cyber.insert("ida".into(), 0.35);
-        cyber.insert("ghidra".into(), 0.3);
-        cyber.insert("rizin".into(), 0.35);
-        cyber.insert("radare".into(), 0.35);
-        cyber.insert("objdump".into(), 0.3);
-        cyber.insert("firmware".into(), 0.35);
-        cyber.insert("binary".into(), 0.2);
-        cyber.insert("0day".into(), 0.85);
-        cyber.insert("trojan".into(), 0.75);
-        cyber.insert("payload".into(), 0.6);
-        cyber.insert("rop chain".into(), 0.8);
-        cyber.insert("heap spray".into(), 0.8);
-        cyber.insert("use after free".into(), 0.8);
-        cyber.insert("strings".into(), 0.25);
-        cyber.insert("readelf".into(), 0.3);
-        cyber.insert("r2".into(), 0.35);
-        cyber.insert("hexdump".into(), 0.25);
-        cyber.insert("elf".into(), 0.2);
-        security.insert("vulnerability".into(), 0.45);
-        security.insert("vulnerabilities".into(), 0.45);
-        security.insert("cve".into(), 0.4);
-        security.insert("security assessment".into(), 0.5);
-        security.insert("security analysis".into(), 0.45);
-        security.insert("confirmed vulnerabilities".into(), 0.6);
-        security.insert("attack surface".into(), 0.55);
-        security.insert("idor".into(), 0.55);
-        security.insert("sqli".into(), 0.6);
-        security.insert("sql injection".into(), 0.6);
-        security.insert("xss".into(), 0.55);
-        security.insert("csrf".into(), 0.5);
-        security.insert("ssrf".into(), 0.6);
-        security.insert("rce".into(), 0.65);
-        security.insert("remote code execution".into(), 0.65);
-        security.insert("403".into(), 0.2);
-        security.insert("404".into(), 0.15);
-        security.insert("401".into(), 0.2);
-        security.insert("enumeration".into(), 0.4);
-        security.insert("brute force".into(), 0.5);
-        security.insert("credential".into(), 0.3);
-        security.insert("credentials".into(), 0.3);
-        security.insert("authentication bypass".into(), 0.6);
-        security.insert("privilege escalation".into(), 0.6);
-        frontier_llm.insert("chain of thought".into(), 0.3);
-        frontier_llm.insert("chain of thoughts".into(), 0.3);
-        frontier_llm.insert("thinking".into(), 0.2);
-        frontier_llm.insert("reasoning".into(), 0.2);
-        frontier_llm.insert("mcp".into(), 0.3);
-        frontier_llm.insert("tool use".into(), 0.3);
-        frontier_llm.insert("function calling".into(), 0.3);
-        frontier_llm.insert("api".into(), 0.2);
-        reasoning_extraction.insert("extract".into(), 0.3);
-        reasoning_extraction.insert("parse".into(), 0.3);
-        reasoning_extraction.insert("decode".into(), 0.3);
-        reasoning_extraction.insert("interpret".into(), 0.3);
-        reasoning_extraction.insert("analyze".into(), 0.3);
 
         // STRIP PATTERNS
         strip_patterns.push(("```".into(), 0.5));
@@ -438,9 +337,6 @@ impl TermDict {
             .as_f64()
             .unwrap_or(DEFAULT_MAX_BLOCK_CONTRIBUTION);
 
-        // Load rewrite_rules from config (pattern -> replacement)
-        // Category weights are kept from TermDict::default().
-
         // Load rewrite_rules from config (flat map -> vec)
         let all_rules = parsed["rewrite_rules"].as_object();
         if let Some(obj) = all_rules {
@@ -455,29 +351,24 @@ impl TermDict {
             }
         }
 
-        debug!(
-            "Loaded config: {} terms across 7 categories, {} rewrite rules",
-            bio.len()
-                + chem.len()
-                + nuclear.len()
-                + cyber.len()
-                + security.len()
-                + frontier_llm.len()
-                + reasoning_extraction.len(),
-            rewrite_rules.len(),
-        );
-
-        Self {
-            bio,
-            chem,
-            nuclear,
-            cyber,
-            security,
-            frontier_llm,
-            reasoning_extraction,
+        // The category weights are the built-in defaults' (the config carries none).
+        let dict = Self {
             strip_patterns,
             rewrite_rules,
-        }
+            ..Self::default()
+        };
+        debug!(
+            "Loaded config: {} terms across 7 categories, {} rewrite rules",
+            dict.bio.len()
+                + dict.chem.len()
+                + dict.nuclear.len()
+                + dict.cyber.len()
+                + dict.security.len()
+                + dict.frontier_llm.len()
+                + dict.reasoning_extraction.len(),
+            dict.rewrite_rules.len(),
+        );
+        dict
     }
 }
 
