@@ -72,469 +72,71 @@ impl Worker {
                 Some(serde_json::to_value(&summary).unwrap_or(Value::Null)),
             );
         }
-        let session_path = match payload.get("sessionPath").and_then(Value::as_str) {
-            Some(path) => match paths::expand_tilde(path) {
-                Ok(expanded) => Some(expanded),
-                Err(error) => return response_failure(None, "create", &error.to_string(), None),
-            },
-            None => None,
+        let request = match CreateRequest::parse(payload) {
+            Ok(request) => request,
+            Err(error) => return response_failure(None, "create", &error, None),
         };
-        let no_session = payload
-            .get("noSession")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let name = payload.get("name").and_then(Value::as_str);
-        let flagged_model = payload.get("model").and_then(Value::as_str).is_some();
         // A revived session restores the model its file pins before the startup
         // chain; an explicit model flag wins. The flags are authoritative for
         // this worker's runtime config and survive every session replacement.
-        let requested_thinking = match payload.get("thinking") {
-            None => None,
-            Some(Value::String(level)) => {
-                match pa_ai::models::thinking_level_from_str(level) {
-                    Some(level) => Some(level),
-                    // The wire contract takes validated levels only: reject
-                    // the create loudly instead of silently dropping it.
-                    None => {
-                        return response_failure(
-                            None,
-                            "create",
-                            &format!(
-                                "Invalid thinking level \"{level}\". Valid values: off, minimal, low, medium, high, xhigh, max"
-                            ),
-                            None,
-                        );
-                    }
-                }
-            }
-            Some(_) => {
-                return response_failure(
-                    None,
-                    "create",
-                    "Invalid thinking level: expected a string",
-                    None,
-                );
-            }
-        };
+        let flag = |key: &str| payload.get(key).and_then(Value::as_str).map(str::to_string);
         self.engine.configure_create_model(EngineModelSelection {
-            provider: payload
-                .get("provider")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            model: payload
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            api_key: payload
-                .get("apiKey")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            thinking: requested_thinking,
+            provider: flag("provider"),
+            model: flag("model"),
+            api_key: flag("apiKey"),
+            thinking: request.thinking,
         });
         // Folded before the background build spawn at the create's tail,
         // so the first build sees them.
-        let resources = match CreateSessionResources::deserialize(payload) {
-            Ok(resources) => resources,
-            Err(error) => {
-                return response_failure(
-                    None,
-                    "create",
-                    &format!("Invalid create config: {error}"),
-                    None,
-                );
-            }
-        };
-        if let Some(mode) = resources
-            .sandbox
-            .as_deref()
-            .filter(|mode| pa_core::os_sandbox::SandboxMode::from_wire(mode).is_none())
-        {
-            return response_failure(
-                None,
-                "create",
-                &format!(
-                    "Invalid sandbox mode \"{mode}\". Valid values: off, read-only, workspace-write"
-                ),
-                None,
-            );
+        match create_resources(payload) {
+            Ok(resources) => self.adopt_create_resources(resources).await,
+            Err(error) => return response_failure(None, "create", &error, None),
         }
-        if let Some(agent_engine) = &self.agent_engine {
-            // A new create re-resolves the sandbox against its own override.
-            *agent_engine.sandbox.write_or_recover() = crate::agent_engine::SandboxSlot::Unresolved;
-            if let Some(autonomous) = &resources.autonomous {
-                *agent_engine.autonomous.lock().await =
-                    pa_core::autonomous::create_autonomous_runtime_state(Some(autonomous), None);
-            }
-            *agent_engine.create_resources.write_or_recover() = resources;
-        }
-        let mut cwd = payload
-            .get("cwd")
-            .and_then(Value::as_str)
-            .unwrap_or("/")
-            .to_string();
-        // A saved session opened with its own explicit cwd pins the run
-        // (upstream #2528); otherwise the branch's recorded `/cwd` wins.
-        let cwd_override = payload.get("cwdOverride").and_then(Value::as_bool) == Some(true);
-        let session_dir = match payload.get("sessionDir").and_then(Value::as_str) {
-            Some(dir) => match paths::expand_tilde(dir) {
-                Ok(expanded) => expanded,
-                Err(error) => return response_failure(None, "create", &error.to_string(), None),
-            },
-            None => match paths::sessions_dir(&self.config.agent_dir) {
-                Ok(dir) => dir,
-                Err(error) => return response_failure(None, "create", &error.to_string(), None),
-            },
-        };
-        // RLM recursion identity (children of an RLM parent run at depth+1):
-        // the durable create replays these so a respawned child keeps them.
-        let (rlm_depth, rlm_max_depth) = match create_payload_rlm_depth(payload) {
-            Ok(identity) => identity,
+        let mut placement = match CreatePlacement::parse(payload, &self.config.agent_dir) {
+            Ok(placement) => placement,
             Err(error) => return response_failure(None, "create", &error, None),
         };
-        let parent_session_path = payload
-            .get("parentSessionPath")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        // The subagent runtime identity (TS `runtimeMetadata` on the create
-        // command): the child id and the parent's live/persisted ids ride
-        // the session summaries so the roster can key children
-        // `parentPath#childId` like TS `rosterAgentIdForSummary`. The
-        // semantic spawn origin (TS `semanticParentSessionId` +
-        // `semanticSpawnedByRequestId`) exists only for this arm: a
-        // resumed saved subagent file is a top-level runtime and spawns
-        // no edge.
-        let (rlm_child_id, parent_active_session_id, parent_session_id, semantic_spawn) =
-            match payload.get("runtimeMetadata") {
-                Some(metadata)
-                    if metadata.get("kind").and_then(Value::as_str) == Some("subagent") =>
-                {
-                    let parent_session_id = metadata
-                        .get("parentSessionId")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    (
-                        metadata
-                            .get("rlmChildId")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        metadata
-                            .get("parentActiveSessionId")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        parent_session_id.clone(),
-                        Some(crate::engine::SemanticSpawnOrigin {
-                            parent_session_id,
-                            spawned_by_request_id: payload
-                                .get("spawnedByRequestId")
-                                .and_then(Value::as_str)
-                                .map(str::to_string),
-                        }),
-                    )
-                }
-                _ => (None, None, None, None),
-            };
-        let factory_child = payload
-            .get("runtimeMetadata")
-            .is_some_and(|metadata| metadata.get("factory").is_some());
-        let thinking = payload
-            .get("thinking")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        // Verification seam (TS children inherit the parent's `sessionConfig`): a
-        // scripted parent passes its children's engine file down; product creates carry `None`.
-        let child_script = payload
-            .get("childScript")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-
-        // Set by the fresh-path arm when the name landed in its single rewrite:
-        // the shared name persist must not append a second `session_info` line.
-        let mut name_persisted_by_fresh_arm = false;
-        // Set by the continuing arm when it OPENED an existing session file:
-        // `is_continuing` reads this arm fact, never an existence check.
-        let mut opened_existing_session = false;
-        let mut restored_tier: Option<Option<pa_types::ai::ServiceTier>> = None;
-        // The fresh arms defer their creation prefix to after the startup scope
-        // registers, so a fresh `--models` session persists the scoped startup pick.
-        let mut fresh_prefix = FreshPrefixPlan::None;
         let (settings, trace_consent) = pa_core::agent_traces::ContinuousTraceUpload::load_settings(
-            std::path::Path::new(&cwd),
+            std::path::Path::new(&placement.cwd),
             &self.config.agent_dir,
         );
-        let traces = |path: &std::path::Path| {
-            pa_core::agent_traces::ContinuousTraceUpload::install(
-                std::path::Path::new(&cwd),
-                &self.config.agent_dir,
-                Some(path),
-                trace_consent.clone(),
-            )
-        };
-        let mut store = match (&session_path, no_session) {
-            (Some(path), false) if path.exists() => {
-                let loaded = {
-                    let path = path.clone();
-                    let agent_dir = self.config.agent_dir.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let lease = crate::lease::acquire_runtime_session_lease(&path, &agent_dir)?;
-                        pa_core::session::manager::repair_jsonl_damage(&path);
-                        let mut store = SessionFile::open_windowed(&path)?;
-                        store.lease = Some(Arc::new(lease));
-                        Ok(store)
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|result| result)
-                };
-                match loaded {
-                    Ok(mut opened) => {
-                        opened.trace_upload = traces(&opened.path);
-                        opened_existing_session = true;
-                        if !cwd_override {
-                            if let Some(recorded) = super::session_cwd::branch_cwd(&opened) {
-                                cwd = recorded;
-                            }
-                        }
-                        if opened.skipped_lines > 0 {
-                            // The rows stay on disk (the append-only
-                            // reopen): the skip count is the damage
-                            // report the torn-tail repair can act on — a
-                            // silent skip is how a torn session degraded
-                            // unnoticed (the operator's 2026-10-08
-                            // report).
-                            eprintln!(
-                                "pa-daemon: session {} skipped {} unparsable row(s) on open; they stay on disk",
-                                path.display(),
-                                opened.skipped_lines
-                            );
-                        }
-                        // The session-model restore records its decision only for a path
-                        // this worker opened — a failed open never leaks the binding into a
-                        // later create.
-                        self.engine.set_session_file(path.clone());
-                        // One fold serves all consumers: the model restore takes its saved
-                        // context off the store this create just opened.
-                        let restored = opened.restored_settings();
-                        restored_tier = opened.has_service_tier().then_some(restored.service_tier);
-                        let has_thinking_level = opened.has_thinking_level();
-                        let saved = crate::agent_engine::saved_session_context_from_parts(
-                            &restored,
-                            has_thinking_level,
-                        );
-                        if !flagged_model {
-                            self.engine
-                                .restore_session_model(path, Some(saved.clone()))
-                                .await;
-                        }
-                        // The saved thinking level restores here when the create carries no
-                        // explicit flag; the saved MODEL restores through the engine's
-                        // session-model restore.
-                        self.engine.configure_model(EngineModelSelection {
-                            provider: None,
-                            model: None,
-                            api_key: None,
-                            thinking: requested_thinking.or(saved.thinking),
-                        });
-                        let append_start = opened.entries.len();
-                        append_creation_prefix(
-                            &mut opened,
-                            self.engine.as_ref(),
-                            &self.config.agent_dir,
-                            &cwd,
-                            false,
-                        );
-                        let _ = opened.append_session_state("active");
-                        // A reopen is APPEND-ONLY (the operator's 2026-10-08
-                        // report: a reopened session showed none of the old
-                        // messages): the full reader skips malformed rows in
-                        // memory, and the legacy full-file rewrite this
-                        // arm carried DELETED them from disk — a gap early
-                        // in the parent chain took the whole transcript
-                        // with it. Only the rows this open appended
-                        // persist; the file keeps every original byte for
-                        // the torn-tail repair to see.
-                        let persisted = opened.persist_appended(append_start);
-                        if let Err(error) = persisted {
-                            return response_failure(None, "create", &error.to_string(), None);
-                        }
-                        // Prime the usage fold on the file's final identity,
-                        // off the runtime and before the core lock:
-                        // summaries under the lock fold only the appended
-                        // tail.
-                        let primed = path.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            crate::session_store::read_session_info(&primed)
-                        })
-                        .await;
-                        opened
-                    }
-                    Err(error) => return crate::hold_refusal::create_failure_response(&error),
-                }
-            }
-            (Some(path), false) => {
-                let mut created = SessionFile::create(
-                    &cwd,
-                    parent_session_path.as_deref(),
-                    rlm_depth.unwrap_or(0),
-                );
-                created.set_path(path.clone());
-                created.trace_upload = traces(&created.path);
-                let acquired = {
-                    let path = path.clone();
-                    let agent_dir = self.config.agent_dir.clone();
-                    tokio::task::spawn_blocking(move || {
-                        crate::lease::acquire_runtime_session_lease(&path, &agent_dir)
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|lease| lease)
-                };
-                match acquired {
-                    Ok(lease) => created.lease = Some(Arc::new(lease)),
-                    Err(error) => return crate::hold_refusal::create_failure_response(&error),
-                }
-                if let Err(error) = created.rewrite() {
-                    return response_failure(None, "create", &error.to_string(), None);
-                }
-                fresh_prefix = FreshPrefixPlan::PathBacked { fold_name: false };
-                created
-            }
-            // In-memory session: no file, like the TS `noSession` create.
-            (None, true) => {
-                let created = SessionFile::create(
-                    &cwd,
-                    parent_session_path.as_deref(),
-                    rlm_depth.unwrap_or(0),
-                );
-                fresh_prefix = FreshPrefixPlan::InMemory;
-                created
-            }
-            (None, false) => {
-                let mut created = SessionFile::create(
-                    &cwd,
-                    parent_session_path.as_deref(),
-                    rlm_depth.unwrap_or(0),
-                );
-                let path = session_dir.join(session_file_name(created.session_id()));
-                created.set_path(path.clone());
-                created.trace_upload = traces(&created.path);
-                let acquired = {
-                    let path = path.clone();
-                    let agent_dir = self.config.agent_dir.clone();
-                    tokio::task::spawn_blocking(move || {
-                        crate::lease::acquire_runtime_session_lease(&path, &agent_dir)
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|lease| lease)
-                };
-                match acquired {
-                    Ok(lease) => created.lease = Some(Arc::new(lease)),
-                    Err(error) => return crate::hold_refusal::create_failure_response(&error),
-                }
-                // One durable write instead of three: the prefix, the `active` state,
-                // and the session name land in a single rewrite; the create stays
-                // pathless until it succeeds, so no reader reads the file mid-create.
-                fresh_prefix = FreshPrefixPlan::PathBacked { fold_name: true };
-                created
-            }
-            (Some(_), true) => {
-                return response_failure(
-                    None,
-                    "create",
-                    "Session cannot be both no-session and session-pathed",
-                    None,
-                );
+        let opened = {
+            let traces = |path: &std::path::Path| {
+                pa_core::agent_traces::ContinuousTraceUpload::install(
+                    std::path::Path::new(&placement.cwd),
+                    &self.config.agent_dir,
+                    Some(path),
+                    trace_consent.clone(),
+                )
+            };
+            match self.open_create_store(&request, &placement, &traces).await {
+                Ok(opened) => opened,
+                Err(response) => return response,
             }
         };
+        if let Some(recorded) = opened.branch_cwd {
+            placement.cwd = recorded;
+        }
+        let mut store = opened.store;
         // The worker owns the session file; the engine reads it for the
         // system prompt's conversation-log path and the local harness dir.
         if !store.path.as_os_str().is_empty() {
             self.engine.set_session_file(store.path.clone());
         }
-
-        // The `models` patterns (else settings `enabledModels`) resolve once into
-        // the scoped list, AFTER the store open (the saved-model restore's wait
-        // already covered the catalog fetch): resolving earlier stores an empty scope.
-        let model_patterns = match payload.get("models").and_then(Value::as_array) {
-            Some(patterns) => patterns
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<String>>(),
-            None => settings.get_enabled_models().unwrap_or_default(),
+        let scoped_entries = self
+            .register_startup_scope(payload, &settings, opened.continuing)
+            .await;
+        let name_persisted_by_fresh_arm = match self.write_fresh_prefix(
+            &mut store,
+            opened.fresh_prefix,
+            request.name,
+            &placement.cwd,
+        ) {
+            Ok(persisted) => persisted,
+            Err(error) => return response_failure(None, "create", &error, None),
         };
-        let is_continuing = opened_existing_session;
-        let scoped_models = if model_patterns.is_empty() {
-            Vec::new()
-        } else {
-            let mut registry = crate::state_getters::worker_model_registry(&self.config.agent_dir);
-            pa_core::models::resolve_model_scope_from_models_with_readiness(
-                &mut registry,
-                &model_patterns,
-                settings
-                    .get_default_provider()
-                    .zip(settings.get_default_model()),
-                is_continuing,
-                pa_core::models::SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
-            )
-            .await
-        };
-        self.engine.configure_startup_scope(
-            scoped_models.clone(),
-            model_patterns.clone(),
-            is_continuing,
-        );
-        // The fresh arms' deferred creation prefix runs here, against the
-        // registered scope; the continuing arm wrote its own prefix above, so
-        // the scope never changes a continuing file's pinned model and thinking.
-        match fresh_prefix {
-            FreshPrefixPlan::None => {}
-            FreshPrefixPlan::InMemory => {
-                append_creation_prefix(
-                    &mut store,
-                    self.engine.as_ref(),
-                    &self.config.agent_dir,
-                    &cwd,
-                    true,
-                );
-            }
-            FreshPrefixPlan::PathBacked { fold_name } => {
-                append_creation_prefix(
-                    &mut store,
-                    self.engine.as_ref(),
-                    &self.config.agent_dir,
-                    &cwd,
-                    true,
-                );
-                let _ = store.append_session_state("active");
-                if fold_name {
-                    if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-                        store.append_session_info(name);
-                        name_persisted_by_fresh_arm = true;
-                    }
-                }
-                if let Err(error) = store.rewrite() {
-                    return response_failure(None, "create", &error.to_string(), None);
-                }
-            }
-        }
-        // The wire shape `set_scoped_models` stores (the connection state
-        // surface and the cycler's input): `{ model, thinkingLevel? }`.
-        let scoped_entries: Vec<Value> = scoped_models
-            .iter()
-            .map(|scoped| {
-                let mut entry = json!({ "model": scoped.model });
-                // The pattern's `:thinking` suffix; the wire name is the level the
-                // cycler and the state readers parse back.
-                if let Some(level) = scoped.thinking_level {
-                    entry["thinkingLevel"] = json!(level);
-                }
-                entry
-            })
-            .collect();
-
         if !name_persisted_by_fresh_arm {
-            if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+            if let Some(name) = request.name.filter(|n| !n.trim().is_empty()) {
                 if let Err(error) =
                     store.persist_entry("session_info", json!({ "name": name.trim() }))
                 {
@@ -553,23 +155,13 @@ impl Worker {
         };
         // The session's settings-seeded switches: a restarted session re-seeds
         // its auto-compaction flag from the persisted `compaction.enabled`.
-        let (service_tier, steering_mode, follow_up_mode, auto_compaction_enabled) = {
-            let queue_mode = |mode: pa_core::settings::QueueModeSetting| -> String {
-                match mode {
-                    pa_core::settings::QueueModeSetting::All => "all".to_string(),
-                    pa_core::settings::QueueModeSetting::OneAtATime => "one-at-a-time".to_string(),
-                }
-            };
-            (
-                settings.get_default_service_tier(),
-                queue_mode(settings.get_steering_mode()),
-                queue_mode(settings.get_follow_up_mode()),
-                settings.get_compaction_enabled(),
-            )
-        };
+        let steering_mode = queue_mode_wire(settings.get_steering_mode());
+        let follow_up_mode = queue_mode_wire(settings.get_follow_up_mode());
         // The ACTIVE tier clamps to the model's support; the stored preference
         // keeps the requested tier, so an ineligible model shows the degraded tier.
-        let configured_tier = restored_tier.unwrap_or(Some(service_tier));
+        let configured_tier = opened
+            .restored_tier
+            .unwrap_or(Some(settings.get_default_service_tier()));
         let clamped_tier =
             crate::setting_switches::effective_service_tier(configured_tier, self.engine.as_ref());
         self.engine.configure_service_tier(clamped_tier);
@@ -582,6 +174,17 @@ impl Worker {
         // record only once the disclosure is durable (a requested record with no
         // disclosure row is vacuously durable; no requested record adds no key).
         let mut interrupted_compaction_persisted = interrupted_compaction_requested;
+        let CreatePlacement {
+            cwd,
+            cwd_override,
+            rlm_depth,
+            rlm_max_depth,
+            runtime,
+            factory_child,
+            thinking,
+            child_script,
+            ..
+        } = placement;
         // The core lock stays inside this block: everything after it may await,
         // and a std MutexGuard must never ride an await point.
         let (summary, rlm_depth) = {
@@ -599,25 +202,12 @@ impl Worker {
             // A resumed session's tool counter re-seeds from its file: a
             // revived worker keeps the count its roster rows carried.
             core.tool_use_count = store.tool_call_count();
-            core.store = Some(store);
             if let Some(disclosure) = &interrupted_compaction {
-                if let Some(store) = core.store.as_mut() {
-                    let already_disclosed = store.entries().iter().any(|entry| {
-                        entry.type_ == "custom_message" && entry.fields == disclosure.row
-                    });
-                    if !already_disclosed
-                        && store
-                            .persist_entry_at(
-                                "custom_message",
-                                disclosure.row.clone(),
-                                &disclosure.declared_at,
-                            )
-                            .is_err()
-                    {
-                        interrupted_compaction_persisted = false;
-                    }
+                if !disclose_interrupted_compaction(&mut store, disclosure) {
+                    interrupted_compaction_persisted = false;
                 }
             }
+            core.store = Some(store);
             core.created = true;
             core.abort_requested = false;
             core.turn_cancelled = false;
@@ -627,16 +217,16 @@ impl Worker {
             if let Some(agent_engine) = &self.agent_engine {
                 agent_engine.clear_session_closed();
             }
-            core.auto_compaction_enabled = auto_compaction_enabled;
+            core.auto_compaction_enabled = settings.get_compaction_enabled();
             core.service_tier = configured_tier;
             core.active_service_tier = clamped_tier;
-            core.steering_mode.clone_from(&steering_mode);
-            core.follow_up_mode.clone_from(&follow_up_mode);
+            core.steering_mode = steering_mode.to_string();
+            core.follow_up_mode = follow_up_mode.to_string();
             // The restored rows carry their forced-batch flag: the batch
             // gate rides the lane, so a restored forced batch keeps its
             // one-turn semantics.
             core.forced_all_steering = core.steering.iter().any(|item| item.forced_batch);
-            core.scoped_models.clone_from(&scoped_entries);
+            core.scoped_models = scoped_entries;
             core.retry_abort_requested = false;
             // The session's depth falls back to the opened file's header: a resumed
             // subagent file carries its persisted depth, so the roster never re-nests
@@ -645,14 +235,14 @@ impl Worker {
                 .or_else(|| core.store.as_ref().and_then(SessionFile::rlm_depth))
                 .unwrap_or(0);
             core.rlm_depth = rlm_depth;
-            core.runtime_kind = if rlm_child_id.is_some() {
+            core.runtime_kind = if runtime.rlm_child_id.is_some() {
                 "subagent".to_string()
             } else {
                 "top-level".to_string()
             };
-            core.rlm_child_id = rlm_child_id;
-            core.parent_active_session_id = parent_active_session_id;
-            core.parent_session_id = parent_session_id;
+            core.rlm_child_id = runtime.rlm_child_id;
+            core.parent_active_session_id = runtime.parent_active_session_id;
+            core.parent_session_id = runtime.parent_session_id;
             core.child_script.clone_from(&child_script);
             (self.summary_locked(&core, inputs), rlm_depth)
         };
@@ -667,7 +257,7 @@ impl Worker {
         // The engine's agent-level queues drain per the same modes the
         // worker lane delivers by.
         self.engine
-            .set_queue_modes(Some(&steering_mode), Some(&follow_up_mode));
+            .set_queue_modes(Some(steering_mode), Some(follow_up_mode));
         // Seed the engine's RLM identity: recursion depth and bound, the session's
         // persistence ids, the children's default thinking level.
         if let Err(error) = self.engine.configure_rlm_identity(RlmSessionIdentity {
@@ -677,13 +267,13 @@ impl Worker {
             session_id: Some(summary.session_id.clone()),
             session_file: summary.session_file.clone(),
             thinking,
-            child_script: child_script.clone(),
-            semantic_spawn,
+            child_script,
+            semantic_spawn: runtime.semantic_spawn,
             factory_child,
         }) {
             return response_failure(None, "create", &error.to_string(), None);
         }
-        if opened_existing_session {
+        if opened.continuing {
             self.reseed_rlm_children().await;
         }
         // The built-in Herdr connector binds here, per session: the pane
@@ -741,28 +331,7 @@ impl Worker {
         // Warm the context-tree cache at session open, so an early `/context`
         // answers from it instead of walking the artifact tree inline.
         self.poke_context_tree_refresh();
-        // The delete boundary invalidates the cache's rows for the deleted child
-        // immediately (the background refresh would otherwise keep its last row).
-        if let Some(agent_engine) = &self.agent_engine {
-            if let Some(children) = &agent_engine.children {
-                let cache = std::sync::Arc::clone(&self.context_tree);
-                children.set_delete_notifier(std::sync::Arc::new(move |child_id| {
-                    cache.invalidate_child(child_id);
-                }));
-                let core = std::sync::Arc::clone(&self.core);
-                let events = self.events.clone();
-                children.set_child_update_sink(std::sync::Arc::new(move |mut child| {
-                    if let Some(parent_id) = core.lock_or_recover().rlm_child_id.clone() {
-                        child["parentId"] = json!(parent_id);
-                    }
-                    crate::user_bash::emit_session_event_frame(
-                        &core,
-                        &events,
-                        json!({ "type": "rlm_child_update", "child": child }),
-                    );
-                }));
-            }
-        }
+        self.wire_child_notifiers();
         let mut data = serde_json::to_value(&summary).unwrap_or(Value::Null);
         if interrupted_compaction_requested {
             data["interruptedCompactionPersisted"] =
@@ -772,6 +341,346 @@ impl Worker {
         // file: return the load's freed heap to the OS.
         pa_types::memory_release::trim_freed_heap();
         response_success(None, "create", Some(data))
+    }
+
+    /// The agent engine adopts a create's resources; a new create re-resolves the sandbox
+    /// against its own override.
+    async fn adopt_create_resources(&self, resources: CreateSessionResources) {
+        let Some(agent_engine) = &self.agent_engine else {
+            return;
+        };
+        *agent_engine.sandbox.write_or_recover() = crate::agent_engine::SandboxSlot::Unresolved;
+        if let Some(autonomous) = &resources.autonomous {
+            *agent_engine.autonomous.lock().await =
+                pa_core::autonomous::create_autonomous_runtime_state(Some(autonomous), None);
+        }
+        *agent_engine.create_resources.write_or_recover() = resources;
+    }
+
+    /// Open the create's session store: reopen an existing file, create a file-backed fresh
+    /// session at the requested path or in the sessions directory, or an in-memory one (no
+    /// file, like the TS `noSession` create). `Err` is the create's failure response.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error is the create's whole failure response, built where the failure is known"
+    )]
+    async fn open_create_store(
+        &self,
+        request: &CreateRequest<'_>,
+        placement: &CreatePlacement,
+        traces: &TraceInstall<'_>,
+    ) -> std::result::Result<OpenedStore, DaemonResponse> {
+        let fresh = || {
+            SessionFile::create(
+                &placement.cwd,
+                placement.parent_session_path.as_deref(),
+                placement.rlm_depth.unwrap_or(0),
+            )
+        };
+        match (&request.session_path, request.no_session) {
+            (Some(path), false) if path.exists() => {
+                self.reopen_session(path, request, placement, traces).await
+            }
+            (Some(path), false) => {
+                let mut created = fresh();
+                created.set_path(path.clone());
+                created.trace_upload = traces(&created.path);
+                created.lease = Some(Arc::new(self.acquire_session_lease(path).await?));
+                if let Err(error) = created.rewrite() {
+                    return Err(response_failure(None, "create", &error.to_string(), None));
+                }
+                Ok(OpenedStore::fresh(
+                    created,
+                    FreshPrefixPlan::PathBacked { fold_name: false },
+                ))
+            }
+            (None, true) => Ok(OpenedStore::fresh(fresh(), FreshPrefixPlan::InMemory)),
+            (None, false) => {
+                let mut created = fresh();
+                let path = placement
+                    .session_dir
+                    .join(session_file_name(created.session_id()));
+                created.set_path(path.clone());
+                created.trace_upload = traces(&created.path);
+                created.lease = Some(Arc::new(self.acquire_session_lease(&path).await?));
+                // One durable write instead of three: the prefix, the `active` state,
+                // and the session name land in a single rewrite; the create stays
+                // pathless until it succeeds, so no reader reads the file mid-create.
+                Ok(OpenedStore::fresh(
+                    created,
+                    FreshPrefixPlan::PathBacked { fold_name: true },
+                ))
+            }
+            (Some(_), true) => Err(response_failure(
+                None,
+                "create",
+                "Session cannot be both no-session and session-pathed",
+                None,
+            )),
+        }
+    }
+
+    /// A fresh session file's runtime lease, taken off the async runtime; a refusal is the
+    /// create's failure response.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error is the create's whole failure response, built where the failure is known"
+    )]
+    async fn acquire_session_lease(
+        &self,
+        path: &std::path::Path,
+    ) -> std::result::Result<crate::lease::SessionLease, DaemonResponse> {
+        let path = path.to_path_buf();
+        let agent_dir = self.config.agent_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::lease::acquire_runtime_session_lease(&path, &agent_dir)
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|lease| lease)
+        .map_err(|error| crate::hold_refusal::create_failure_response(&error))
+    }
+
+    /// Reopen an existing session file under its runtime lease, restoring the model and
+    /// thinking level it pins. A reopen is APPEND-ONLY: only the rows this open appends
+    /// persist.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error is the create's whole failure response, built where the failure is known"
+    )]
+    async fn reopen_session(
+        &self,
+        path: &std::path::Path,
+        request: &CreateRequest<'_>,
+        placement: &CreatePlacement,
+        traces: &TraceInstall<'_>,
+    ) -> std::result::Result<OpenedStore, DaemonResponse> {
+        let loaded = {
+            let path = path.to_path_buf();
+            let agent_dir = self.config.agent_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                let lease = crate::lease::acquire_runtime_session_lease(&path, &agent_dir)?;
+                pa_core::session::manager::repair_jsonl_damage(&path);
+                let mut store = SessionFile::open_windowed(&path)?;
+                store.lease = Some(Arc::new(lease));
+                Ok(store)
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result)
+        };
+        let mut opened = match loaded {
+            Ok(opened) => opened,
+            Err(error) => return Err(crate::hold_refusal::create_failure_response(&error)),
+        };
+        opened.trace_upload = traces(&opened.path);
+        let branch_cwd = if placement.cwd_override {
+            None
+        } else {
+            super::session_cwd::branch_cwd(&opened)
+        };
+        if opened.skipped_lines > 0 {
+            // The rows stay on disk (the append-only
+            // reopen): the skip count is the damage
+            // report the torn-tail repair can act on — a
+            // silent skip is how a torn session degraded
+            // unnoticed (the operator's 2026-10-08
+            // report).
+            eprintln!(
+                "pa-daemon: session {} skipped {} unparsable row(s) on open; they stay on disk",
+                path.display(),
+                opened.skipped_lines
+            );
+        }
+        // The session-model restore records its decision only for a path
+        // this worker opened — a failed open never leaks the binding into a
+        // later create.
+        self.engine.set_session_file(path.to_path_buf());
+        // One fold serves all consumers: the model restore takes its saved
+        // context off the store this create just opened.
+        let restored = opened.restored_settings();
+        let restored_tier = opened.has_service_tier().then_some(restored.service_tier);
+        let has_thinking_level = opened.has_thinking_level();
+        let saved =
+            crate::agent_engine::saved_session_context_from_parts(&restored, has_thinking_level);
+        if !request.flagged_model {
+            self.engine
+                .restore_session_model(path, Some(saved.clone()))
+                .await;
+        }
+        // The saved thinking level restores here when the create carries no
+        // explicit flag; the saved MODEL restores through the engine's
+        // session-model restore.
+        self.engine.configure_model(EngineModelSelection {
+            provider: None,
+            model: None,
+            api_key: None,
+            thinking: request.thinking.or(saved.thinking),
+        });
+        let append_start = opened.entries.len();
+        append_creation_prefix(
+            &mut opened,
+            self.engine.as_ref(),
+            &self.config.agent_dir,
+            branch_cwd.as_deref().unwrap_or(&placement.cwd),
+            false,
+        );
+        let _ = opened.append_session_state("active");
+        // A reopen is APPEND-ONLY (the operator's 2026-10-08
+        // report: a reopened session showed none of the old
+        // messages): the full reader skips malformed rows in
+        // memory, and the legacy full-file rewrite this
+        // arm carried DELETED them from disk — a gap early
+        // in the parent chain took the whole transcript
+        // with it. Only the rows this open appended
+        // persist; the file keeps every original byte for
+        // the torn-tail repair to see.
+        if let Err(error) = opened.persist_appended(append_start) {
+            return Err(response_failure(None, "create", &error.to_string(), None));
+        }
+        // Prime the usage fold on the file's final identity,
+        // off the runtime and before the core lock:
+        // summaries under the lock fold only the appended
+        // tail.
+        let primed = path.to_path_buf();
+        let _ =
+            tokio::task::spawn_blocking(move || crate::session_store::read_session_info(&primed))
+                .await;
+        Ok(OpenedStore {
+            store: opened,
+            continuing: true,
+            restored_tier,
+            fresh_prefix: FreshPrefixPlan::None,
+            branch_cwd,
+        })
+    }
+
+    /// The `models` patterns (else settings `enabledModels`) resolve once into the scoped
+    /// list and register as the engine's startup scope. This runs AFTER the store open
+    /// (the saved-model restore's wait already covered the catalog fetch): resolving
+    /// earlier stores an empty scope. Returns the wire shape `set_scoped_models` stores
+    /// (the connection state surface and the cycler's input): `{ model, thinkingLevel? }`.
+    async fn register_startup_scope(
+        &self,
+        payload: &Value,
+        settings: &pa_core::settings::SettingsManager,
+        is_continuing: bool,
+    ) -> Vec<Value> {
+        let model_patterns = match payload.get("models").and_then(Value::as_array) {
+            Some(patterns) => patterns
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<String>>(),
+            None => settings.get_enabled_models().unwrap_or_default(),
+        };
+        let scoped_models = if model_patterns.is_empty() {
+            Vec::new()
+        } else {
+            let mut registry = crate::state_getters::worker_model_registry(&self.config.agent_dir);
+            pa_core::models::resolve_model_scope_from_models_with_readiness(
+                &mut registry,
+                &model_patterns,
+                settings
+                    .get_default_provider()
+                    .zip(settings.get_default_model()),
+                is_continuing,
+                pa_core::models::SESSION_MODEL_RESTORE_READINESS_TIMEOUT_MS,
+            )
+            .await
+        };
+        self.engine.configure_startup_scope(
+            scoped_models.clone(),
+            model_patterns.clone(),
+            is_continuing,
+        );
+        scoped_models
+            .iter()
+            .map(|scoped| {
+                let mut entry = json!({ "model": scoped.model });
+                // The pattern's `:thinking` suffix; the wire name is the level the
+                // cycler and the state readers parse back.
+                if let Some(level) = scoped.thinking_level {
+                    entry["thinkingLevel"] = json!(level);
+                }
+                entry
+            })
+            .collect()
+    }
+
+    /// The fresh arms' deferred creation prefix, written against the registered scope (the
+    /// continuing arm wrote its own prefix, so the scope never changes a continuing file's
+    /// pinned model and thinking). Returns whether the session name landed in the fresh
+    /// file's single rewrite, so the shared name persist does not append a second
+    /// `session_info` line.
+    fn write_fresh_prefix(
+        &self,
+        store: &mut SessionFile,
+        plan: FreshPrefixPlan,
+        name: Option<&str>,
+        cwd: &str,
+    ) -> std::result::Result<bool, String> {
+        let fold_name = match plan {
+            FreshPrefixPlan::None => return Ok(false),
+            FreshPrefixPlan::InMemory => {
+                append_creation_prefix(
+                    store,
+                    self.engine.as_ref(),
+                    &self.config.agent_dir,
+                    cwd,
+                    true,
+                );
+                return Ok(false);
+            }
+            FreshPrefixPlan::PathBacked { fold_name } => fold_name,
+        };
+        append_creation_prefix(
+            store,
+            self.engine.as_ref(),
+            &self.config.agent_dir,
+            cwd,
+            true,
+        );
+        let _ = store.append_session_state("active");
+        let folded = match name.filter(|n| fold_name && !n.trim().is_empty()) {
+            Some(name) => {
+                store.append_session_info(name);
+                true
+            }
+            None => false,
+        };
+        store.rewrite().map_err(|error| error.to_string())?;
+        Ok(folded)
+    }
+
+    /// The RLM children's notifiers: the delete boundary invalidates the context-tree
+    /// cache's rows for the deleted child immediately (the background refresh would
+    /// otherwise keep its last row), and child updates reach the clients as
+    /// `rlm_child_update` frames.
+    fn wire_child_notifiers(&self) {
+        let Some(children) = self
+            .agent_engine
+            .as_ref()
+            .and_then(|agent_engine| agent_engine.children.as_ref())
+        else {
+            return;
+        };
+        let cache = std::sync::Arc::clone(&self.context_tree);
+        children.set_delete_notifier(std::sync::Arc::new(move |child_id| {
+            cache.invalidate_child(child_id);
+        }));
+        let core = std::sync::Arc::clone(&self.core);
+        let events = self.events.clone();
+        children.set_child_update_sink(std::sync::Arc::new(move |mut child| {
+            if let Some(parent_id) = core.lock_or_recover().rlm_child_id.clone() {
+                child["parentId"] = json!(parent_id);
+            }
+            crate::user_bash::emit_session_event_frame(
+                &core,
+                &events,
+                json!({ "type": "rlm_child_update", "child": child }),
+            );
+        }));
     }
 
     /// (Re)bind the pane reporter from the create payload (the TS
@@ -855,6 +764,225 @@ pub(super) fn worker_server_capabilities(agent_dir: &std::path::Path) -> Vec<Str
     crate::factory_activity::advertised_server_capabilities(agent_dir)
 }
 
+/// The create payload's session selection and model flags, validated before the create
+/// changes anything.
+struct CreateRequest<'a> {
+    session_path: Option<std::path::PathBuf>,
+    no_session: bool,
+    name: Option<&'a str>,
+    /// An explicit model flag wins over the model a revived session file pins.
+    flagged_model: bool,
+    /// The wire contract takes validated levels only: an invalid one fails the create
+    /// loudly instead of being silently dropped.
+    thinking: Option<pa_types::ai::ModelThinkingLevel>,
+}
+
+impl<'a> CreateRequest<'a> {
+    fn parse(payload: &'a Value) -> std::result::Result<Self, String> {
+        let session_path = payload
+            .get("sessionPath")
+            .and_then(Value::as_str)
+            .map(paths::expand_tilde)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let thinking = match payload.get("thinking") {
+            None => None,
+            Some(Value::String(level)) => Some(
+                pa_ai::models::thinking_level_from_str(level).ok_or_else(|| {
+                    format!(
+                        "Invalid thinking level \"{level}\". Valid values: off, minimal, low, medium, high, xhigh, max"
+                    )
+                })?,
+            ),
+            Some(_) => return Err("Invalid thinking level: expected a string".to_string()),
+        };
+        Ok(Self {
+            session_path,
+            no_session: payload
+                .get("noSession")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            name: payload.get("name").and_then(Value::as_str),
+            flagged_model: payload.get("model").and_then(Value::as_str).is_some(),
+            thinking,
+        })
+    }
+}
+
+/// The create's resource overrides, with the sandbox mode validated.
+fn create_resources(payload: &Value) -> std::result::Result<CreateSessionResources, String> {
+    let resources = CreateSessionResources::deserialize(payload)
+        .map_err(|error| format!("Invalid create config: {error}"))?;
+    if let Some(mode) = resources
+        .sandbox
+        .as_deref()
+        .filter(|mode| pa_core::os_sandbox::SandboxMode::from_wire(mode).is_none())
+    {
+        return Err(format!(
+            "Invalid sandbox mode \"{mode}\". Valid values: off, read-only, workspace-write"
+        ));
+    }
+    Ok(resources)
+}
+
+/// Where and as what the created session runs: its directory, the sessions directory a
+/// fresh file lands in, and the RLM recursion and runtime identity (children of an RLM
+/// parent run at depth+1; the durable create replays these so a respawned child keeps
+/// them).
+struct CreatePlacement {
+    cwd: String,
+    /// A saved session opened with its own explicit cwd pins the run
+    /// (upstream #2528); otherwise the branch's recorded `/cwd` wins.
+    cwd_override: bool,
+    session_dir: std::path::PathBuf,
+    rlm_depth: Option<u32>,
+    rlm_max_depth: Option<u32>,
+    parent_session_path: Option<String>,
+    runtime: SubagentRuntime,
+    factory_child: bool,
+    thinking: Option<String>,
+    /// Verification seam (TS children inherit the parent's `sessionConfig`): a scripted
+    /// parent passes its children's engine file down; product creates carry `None`.
+    child_script: Option<String>,
+}
+
+impl CreatePlacement {
+    fn parse(payload: &Value, agent_dir: &std::path::Path) -> std::result::Result<Self, String> {
+        let session_dir = match payload.get("sessionDir").and_then(Value::as_str) {
+            Some(dir) => paths::expand_tilde(dir),
+            None => paths::sessions_dir(agent_dir),
+        }
+        .map_err(|error| error.to_string())?;
+        let (rlm_depth, rlm_max_depth) = create_payload_rlm_depth(payload)?;
+        let text = |key: &str| payload.get(key).and_then(Value::as_str).map(str::to_string);
+        Ok(Self {
+            cwd: payload
+                .get("cwd")
+                .and_then(Value::as_str)
+                .unwrap_or("/")
+                .to_string(),
+            cwd_override: payload.get("cwdOverride").and_then(Value::as_bool) == Some(true),
+            session_dir,
+            rlm_depth,
+            rlm_max_depth,
+            parent_session_path: text("parentSessionPath"),
+            runtime: SubagentRuntime::of_create(payload),
+            factory_child: payload
+                .get("runtimeMetadata")
+                .is_some_and(|metadata| metadata.get("factory").is_some()),
+            thinking: text("thinking"),
+            child_script: text("childScript"),
+        })
+    }
+}
+
+/// The subagent runtime identity (TS `runtimeMetadata` on the create command): the child
+/// id and the parent's live/persisted ids ride the session summaries so the roster can key
+/// children `parentPath#childId` like TS `rosterAgentIdForSummary`. The semantic spawn
+/// origin (TS `semanticParentSessionId` + `semanticSpawnedByRequestId`) exists only for
+/// this arm: a resumed saved subagent file is a top-level runtime and spawns no edge.
+#[derive(Default)]
+struct SubagentRuntime {
+    rlm_child_id: Option<String>,
+    parent_active_session_id: Option<String>,
+    parent_session_id: Option<String>,
+    semantic_spawn: Option<crate::engine::SemanticSpawnOrigin>,
+}
+
+impl SubagentRuntime {
+    fn of_create(payload: &Value) -> Self {
+        let Some(metadata) = payload
+            .get("runtimeMetadata")
+            .filter(|metadata| metadata.get("kind").and_then(Value::as_str) == Some("subagent"))
+        else {
+            return Self::default();
+        };
+        let text = |key: &str| {
+            metadata
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let parent_session_id = text("parentSessionId");
+        Self {
+            rlm_child_id: text("rlmChildId"),
+            parent_active_session_id: text("parentActiveSessionId"),
+            parent_session_id: parent_session_id.clone(),
+            semantic_spawn: Some(crate::engine::SemanticSpawnOrigin {
+                parent_session_id,
+                spawned_by_request_id: payload
+                    .get("spawnedByRequestId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            }),
+        }
+    }
+}
+
+/// The session store a create opened, and what its arm leaves to the later steps.
+struct OpenedStore {
+    store: SessionFile,
+    /// The arm OPENED an existing session file: `is_continuing` reads this arm fact,
+    /// never an existence check.
+    continuing: bool,
+    /// The service tier the reopened file pins.
+    #[expect(
+        clippy::option_option,
+        reason = "`None`: the file pins no tier (the settings default applies); `Some(None)`: it pins none"
+    )]
+    restored_tier: Option<Option<pa_types::ai::ServiceTier>>,
+    /// The creation prefix a fresh arm defers until after the startup scope registers, so
+    /// a fresh `--models` session persists the scoped startup pick.
+    fresh_prefix: FreshPrefixPlan,
+    /// The directory the reopened branch recorded with `/cwd`.
+    branch_cwd: Option<String>,
+}
+
+impl OpenedStore {
+    fn fresh(store: SessionFile, fresh_prefix: FreshPrefixPlan) -> Self {
+        Self {
+            store,
+            continuing: false,
+            restored_tier: None,
+            fresh_prefix,
+            branch_cwd: None,
+        }
+    }
+}
+
+/// Installs a session file's continuous trace upload under the create's trace consent.
+type TraceInstall<'a> = dyn Fn(&std::path::Path) -> Option<Arc<pa_core::agent_traces::ContinuousTraceUpload>>
+    + Sync
+    + 'a;
+
+/// The wire name of a queue mode setting.
+fn queue_mode_wire(mode: pa_core::settings::QueueModeSetting) -> &'static str {
+    match mode {
+        pa_core::settings::QueueModeSetting::All => "all",
+        pa_core::settings::QueueModeSetting::OneAtATime => "one-at-a-time",
+    }
+}
+
+/// Persist the interrupted compaction's disclosure row unless the transcript already
+/// carries it; returns whether the row is durable.
+fn disclose_interrupted_compaction(
+    store: &mut SessionFile,
+    disclosure: &crate::compaction::InterruptedCompactionDisclosure,
+) -> bool {
+    let already_disclosed = store
+        .entries()
+        .iter()
+        .any(|entry| entry.type_ == "custom_message" && entry.fields == disclosure.row);
+    already_disclosed
+        || store
+            .persist_entry_at(
+                "custom_message",
+                disclosure.row.clone(),
+                &disclosure.declared_at,
+            )
+            .is_ok()
+}
+
 /// RLM depth fields of a create payload: `(depth, max_depth)`. Values must
 /// fit a u32; anything else fails the create instead of silently truncating.
 fn create_payload_rlm_depth(payload: &Value) -> Result<(Option<u32>, Option<u32>), String> {
@@ -876,6 +1004,7 @@ fn create_payload_rlm_depth(payload: &Value) -> Result<(Option<u32>, Option<u32>
 /// Creation prefix for a daemon-hosted session file: fresh files record all three changes;
 /// a reopened session records them only when no earlier entry did. Which fresh create
 /// arm still owes its creation prefix (the prefix runs after the startup scope registers).
+#[derive(Clone, Copy)]
 enum FreshPrefixPlan {
     /// Nothing pending: the continuing arm wrote its own prefix before
     /// the scope.
