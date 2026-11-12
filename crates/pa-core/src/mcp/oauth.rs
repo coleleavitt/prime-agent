@@ -196,7 +196,8 @@ pub async fn mcp_login(
     // `state` is independent of the PKCE verifier: the verifier is the
     // token-exchange secret, `state` is echoed on the redirect URL.
     let state = random_state();
-    let callback = CallbackServer::start(&config.label, config.callback_port).await?;
+    let callback =
+        CallbackServer::start(&config.label, config.callback_port, &config.callback_ports).await?;
     let redirect_uri = callback.redirect_uri();
     let mut auth_params: Vec<(String, String)> = vec![
         ("client_id".to_string(), client_id.clone()),

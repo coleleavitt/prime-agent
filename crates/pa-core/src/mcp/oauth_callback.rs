@@ -148,16 +148,28 @@ pub struct CallbackServer {
 }
 
 impl CallbackServer {
-    /// Bind a registered port exactly, or the first free DCR candidate. Never substitute
-    /// an unregistered redirect port when the registered one is occupied.
-    pub async fn start(label: &str, callback_port: Option<u16>) -> Result<Self> {
+    /// Bind a registered port exactly, or the first free one of `ports` (the DCR candidates).
+    /// Never substitute an unregistered redirect port when the registered one is occupied.
+    pub async fn start(
+        label: &str,
+        callback_port: Option<u16>,
+        ports: &CallbackPorts,
+    ) -> Result<Self> {
+        validate_callback_port(callback_port)?;
+        let candidates = match &callback_port {
+            Some(port) => std::slice::from_ref(port),
+            None => ports.candidates.as_slice(),
+        };
         let host = callback_host();
         let mut last_error: Option<String> = None;
-        for port in candidate_ports(callback_port)? {
-            let listener = match TcpListener::bind((host.as_str(), port)).await {
-                Ok(listener) => listener,
+        for &candidate in candidates {
+            let bound = TcpListener::bind((host.as_str(), candidate))
+                .await
+                .and_then(|listener| Ok((listener.local_addr()?.port(), listener)));
+            let (port, listener) = match bound {
+                Ok(bound) => bound,
                 Err(error) => {
-                    last_error = Some(format!("port {port}: {error}"));
+                    last_error = Some(format!("port {candidate}: {error}"));
                     continue;
                 }
             };
@@ -201,7 +213,7 @@ impl CallbackServer {
         Err(anyhow!(
             "Could not start the OAuth callback server: ports {} are all in use. \
              Close other login attempts and retry. ({label}; {})",
-            CallbackPorts::registered().describe(),
+            ports.describe(),
             last_error.unwrap_or_else(|| "no candidate port bound".to_string()),
         ))
     }
@@ -444,6 +456,14 @@ fn oauth_error_page(label: &str, message: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A candidate the test holds bound (never closed while the test runs, so no parallel test can
+    /// take it): an OS-assigned port nothing else contends for.
+    fn held_port() -> (std::net::TcpListener, u16) {
+        let blocker = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = blocker.local_addr().unwrap().port();
+        (blocker, port)
+    }
+
     #[test]
     fn the_registered_range_is_the_registration_redirect_set() {
         assert_eq!(
@@ -461,9 +481,13 @@ mod tests {
         // An accept loop can exit while a previously accepted request is still completing.
         // Complete listener cleanup first so input cancellation will not yield on a join.
         for _ in 0..64 {
-            let server = CallbackServer::start("Slack", /*callback_port*/ None)
-                .await
-                .unwrap();
+            let server = CallbackServer::start(
+                "Slack",
+                /*callback_port*/ None,
+                &CallbackPorts::ephemeral(),
+            )
+            .await
+            .unwrap();
             let task = server.listener_task.lock().unwrap().take().unwrap();
             task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
@@ -489,7 +513,9 @@ mod tests {
         let reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = reservation.local_addr().unwrap().port();
         drop(reservation);
-        let server = CallbackServer::start("Slack", Some(port)).await.unwrap();
+        let server = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
+            .await
+            .unwrap();
         drop(server);
         let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
             .expect("dropping the callback must release its registered port immediately");
@@ -500,7 +526,7 @@ mod tests {
     async fn registered_port_is_exact_and_released_after_cancel() {
         let blocker = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = blocker.local_addr().unwrap().port();
-        let error = CallbackServer::start("Slack", Some(port))
+        let error = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
             .await
             .unwrap_err();
         assert!(
@@ -509,7 +535,9 @@ mod tests {
                 .contains(&format!("registered port {port}"))
         );
         drop(blocker);
-        let server = CallbackServer::start("Slack", Some(port)).await.unwrap();
+        let server = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
+            .await
+            .unwrap();
         assert_eq!(
             server.redirect_uri(),
             format!("http://localhost:{port}/callback")
@@ -536,24 +564,50 @@ mod tests {
 
     #[tokio::test]
     async fn falls_back_to_the_next_free_port() {
-        // The base port is occupied, so the login lands on a later candidate (a leaked login
-        // cannot wedge all of them). Skip when a concurrent test already holds the base port.
-        let Ok(blocker) = std::net::TcpListener::bind(("127.0.0.1", CALLBACK_PORT_BASE)) else {
-            return;
-        };
-        let server = CallbackServer::start("Linear", /*callback_port*/ None)
-            .await
-            .unwrap();
-        assert_ne!(server.redirect_uri(), redirect_uri_for(CALLBACK_PORT_BASE));
-        assert!(server.redirect_uri().starts_with("http://localhost:5370"));
-        drop(blocker);
+        // The first candidate is occupied, so the login lands on a later one (a leaked login
+        // cannot wedge all of them).
+        let (_blocker, busy) = held_port();
+        let server = CallbackServer::start(
+            "Linear",
+            /*callback_port*/ None,
+            &CallbackPorts::new(vec![busy, 0]),
+        )
+        .await
+        .unwrap();
+        assert_ne!(server.port, busy);
+        assert_eq!(server.redirect_uri(), redirect_uri_for(server.port));
+    }
+
+    #[tokio::test]
+    async fn all_candidates_bound_fails_clearly() {
+        let (_first, first) = held_port();
+        let (_second, second) = held_port();
+        let error = CallbackServer::start(
+            "Linear",
+            /*callback_port*/ None,
+            &CallbackPorts::new(vec![first, second]),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.starts_with(&format!(
+                "Could not start the OAuth callback server: ports {} are all in use.",
+                CallbackPorts::new(vec![first, second]).describe()
+            )),
+            "{error}"
+        );
     }
 
     #[tokio::test]
     async fn callback_flow_settles_code_and_state() {
-        let server = CallbackServer::start("Linear", /*callback_port*/ None)
-            .await
-            .unwrap();
+        let server = CallbackServer::start(
+            "Linear",
+            /*callback_port*/ None,
+            &CallbackPorts::ephemeral(),
+        )
+        .await
+        .unwrap();
         let response = reqwest::Client::new()
             .get(format!(
                 "http://127.0.0.1:{}/callback?code=the-code&state=the-state",
@@ -574,9 +628,13 @@ mod tests {
 
     #[tokio::test]
     async fn error_callback_settles_none() {
-        let server = CallbackServer::start("Linear", /*callback_port*/ None)
-            .await
-            .unwrap();
+        let server = CallbackServer::start(
+            "Linear",
+            /*callback_port*/ None,
+            &CallbackPorts::ephemeral(),
+        )
+        .await
+        .unwrap();
         let response = reqwest::Client::new()
             .get(format!(
                 "http://127.0.0.1:{}/callback?error=access_denied",
@@ -591,9 +649,13 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_route_is_404_without_settling() {
-        let server = CallbackServer::start("Linear", /*callback_port*/ None)
-            .await
-            .unwrap();
+        let server = CallbackServer::start(
+            "Linear",
+            /*callback_port*/ None,
+            &CallbackPorts::ephemeral(),
+        )
+        .await
+        .unwrap();
         let response = reqwest::Client::new()
             .get(format!("http://127.0.0.1:{}/other", server.port))
             .send()
@@ -624,7 +686,9 @@ mod tests {
                 .to_string()
                 .contains("callbackPort")
         );
-        let error = CallbackServer::start("fixture", Some(0)).await.unwrap_err();
+        let error = CallbackServer::start("fixture", Some(0), &CallbackPorts::ephemeral())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("callbackPort"));
     }
 
@@ -634,11 +698,15 @@ mod tests {
         let port = probe.local_addr().unwrap().port();
         drop(probe);
         {
-            let first = CallbackServer::start("Linear", Some(port)).await.unwrap();
+            let first = CallbackServer::start("Linear", Some(port), &CallbackPorts::ephemeral())
+                .await
+                .unwrap();
             assert_eq!(first.redirect_uri(), redirect_uri_for(port));
         }
         tokio::task::yield_now().await;
-        let second = CallbackServer::start("Linear", Some(port)).await.unwrap();
+        let second = CallbackServer::start("Linear", Some(port), &CallbackPorts::ephemeral())
+            .await
+            .unwrap();
         assert_eq!(second.redirect_uri(), redirect_uri_for(port));
     }
 }
