@@ -150,6 +150,10 @@ pub fn render_tool_card(
 /// [`render_tool_card`] under the `markdown.mermaid` setting, which an installed diagram
 /// renderer ([`crate::diagram`]) honours in the agent messages an ipython cell sent.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(crate) fn render_tool_card_in(
     card: &ToolCallCard,
     frame: usize,
@@ -409,6 +413,10 @@ fn eligible_images(
 }
 
 /// Exact row geometry for every tool shell without painting output rows.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(crate) fn count_tool_card(
     card: &ToolCallCard,
     frame: usize,

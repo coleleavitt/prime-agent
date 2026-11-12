@@ -84,6 +84,13 @@ pub enum SleepMode {
     Turn,
     /// A real wait of the asked length that then advances the clock by it
     /// (python calls run in real time; a cancelled wait advances nothing).
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "only the unix-only python-state tests sleep in real time"
+        )
+    )]
     Real,
 }
 
@@ -592,6 +599,10 @@ pub struct Case {
     pub host: Arc<FakeHost>,
     pub clock: Arc<FakeClock>,
     pub sleeps: Arc<TestClock>,
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "only the unix-only python-state tests read it")
+    )]
     pub python: Arc<LocalPython>,
     pub executor: Arc<FactoryExecutor>,
     pub subagents: Mutex<Vec<SubagentRow>>,

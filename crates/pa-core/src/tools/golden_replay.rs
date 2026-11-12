@@ -315,7 +315,7 @@ async fn ipython_details_carry_the_cell_edit_diffs() {
         auto_background_ms: None,
         on_late_sent_agent_message: None,
     };
-    let result = ipython::execute_ipython(&options, "edit()", None, None, None)
+    let result = ipython::execute_ipython(&options, "edit()", None, None, None, None)
         .await
         .expect("cell executes");
     assert_eq!(

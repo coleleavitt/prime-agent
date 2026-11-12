@@ -67,6 +67,7 @@ async fn engine_handle(
             featured: None,
             headers: None,
             compat: None,
+            serving: None,
         },
         api_key: None,
         provider_target: Arc::default(),

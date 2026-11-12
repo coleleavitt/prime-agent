@@ -151,6 +151,10 @@ pub fn render(
 
 /// [`render`] under the `markdown.mermaid` setting (sent agent-message bodies).
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(super) fn render_in(
     card: &ToolCallCard,
     frame: usize,
@@ -174,6 +178,10 @@ pub(super) fn render_in(
     lines.into_lines()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the render inputs every tool shell takes, plus the conversation level and mermaid mode"
+)]
 pub(super) fn count(
     card: &ToolCallCard,
     frame: usize,

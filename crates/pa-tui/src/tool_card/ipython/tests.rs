@@ -542,18 +542,35 @@ fn transcript_reads_render_one_summary_row_below_the_summary() {
             false,
             false,
         );
-        let rows: Vec<String> = render(&card, 0, Detail::Overview, &theme(), 100, true)
-            .iter()
-            .map(text_of)
-            .collect();
+        let rows: Vec<String> = render(
+            &card,
+            0,
+            Detail::Overview,
+            Detail::Overview,
+            &theme(),
+            100,
+            true,
+        )
+        .iter()
+        .map(text_of)
+        .collect();
         assert_eq!(
             rows[1..],
             [format!(" \u{2261} transcript \u{b7} {summary}")]
         );
         for detail in [Detail::Overview, Detail::All] {
             assert_eq!(
-                count(&card, 0, detail, &theme(), 100, true, MermaidMode::Off),
-                render(&card, 0, detail, &theme(), 100, true).len(),
+                count(
+                    &card,
+                    0,
+                    detail,
+                    detail,
+                    &theme(),
+                    100,
+                    true,
+                    MermaidMode::Off
+                ),
+                render(&card, 0, detail, detail, &theme(), 100, true).len(),
                 "the row count matches the painted rows"
             );
         }
