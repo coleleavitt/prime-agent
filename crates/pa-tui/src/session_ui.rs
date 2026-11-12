@@ -7,6 +7,7 @@ mod apply;
 mod ask_question;
 mod auth;
 mod bash;
+mod chat_keys;
 mod commands;
 mod factory;
 mod feature_confirm;
@@ -40,15 +41,15 @@ pub(crate) use ask_question::AskQuestionPanel;
 use auth::{McpAuthIntent, PendingModelSignIn, SetModelOutcome};
 pub(crate) use bash::BashActivityUpdate;
 use bash::{ResyncBash, SideBashRun};
+/// The opening phase's echo gate (run.rs): the fresh-state projection of
+/// `handle_key`'s keymap-aware ladder — a claimed key queues behind the
+/// session open instead of echoing into the editor.
+pub(crate) use chat_keys::opening_echo_key_claimed;
 use crossterm::event::KeyEvent;
 pub(crate) use factory::FactoryUpdate;
 pub(crate) use heartbeats::HeartbeatsUpdate;
 use heartbeats::paused_heartbeat_count;
 use keys::SelectionAutoScroll;
-/// The opening phase's echo gate (run.rs): the fresh-state projection of
-/// `handle_key`'s keymap-aware ladder — a claimed key queues behind the
-/// session open instead of echoing into the editor.
-pub(crate) use keys::opening_echo_key_claimed;
 pub(crate) use model_picker::{ModelCatalogUpdate, picker_viewport_rows};
 use pa_types::daemon::{CycleDirection, DaemonCommand};
 use pa_types::slash_commands::{SlashCommandExecution, SlashCommandRegistry};
