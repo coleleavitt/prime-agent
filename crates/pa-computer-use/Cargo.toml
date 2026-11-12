@@ -6,24 +6,26 @@ license.workspace = true
 description = "The computer-use skill's host side: policy, permissions, observation, input and capture for macOS, X11 and Wayland (niri)."
 
 [dependencies]
-serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true }
-regex = "1"
-uuid = { version = "1", features = ["v4"] }
 # The user-edited allowlist is TOML (the Python skill used `tomllib`); no
 # workspace crate parses TOML. `preserve_order` keeps `[risk]` in file order.
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std", "preserve_order"] }
 
 [target.'cfg(unix)'.dependencies]
+# The backends (macOS, X11, Wayland) are the only users; off unix every request is refused.
+uuid = { version = "1", features = ["v4"] }
 # The hardened capture directory: `openat(O_NOFOLLOW)` chains, `fstatat`,
 # `unlinkat` and `fchmodat` through one verified directory descriptor (the
 # Python module's `dir_fd` calls), plus the keymap memfd on Wayland.
 rustix = { version = "1", features = ["fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# The X11 and Wayland backends' logging, output parsing and IPC replies.
+serde = { workspace = true }
+tracing = { workspace = true }
+regex = "1"
 # The Wayland backend's AT-SPI client: pure Rust over D-Bus, replacing the
 # Python skill's PyGObject + libatspi (which needed the gobject-introspection
 # and cairo headers to build). The blocking proxies run on the host's
@@ -49,6 +51,8 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = ["
 objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes", "objc2-core-foundation"] }
 
 [dev-dependencies]
+regex = "1"
+serde = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 

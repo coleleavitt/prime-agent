@@ -18,10 +18,10 @@ clap = { version = "4", features = ["derive"] }
 # agents view's `Inactive (N)` heading repaints as cell diffs on big
 # corpora). MIT, no_std-free, never shipped — the only new third-party dep
 # this crate carries (see README + the PR body).
-vt100 = "0.15"
 # pty + poll for the bench harness: the same nix version the workspace
 # already resolves for pa-core/pa-cli.
 [target.'cfg(unix)'.dependencies]
+vt100 = "0.15"
 # `feature` provides sysconf(CLK_TCK) for idle-cost's /proc tick counts.
 nix = { version = "0.29", features = ["term", "signal", "process", "fs", "poll", "feature"] }
 

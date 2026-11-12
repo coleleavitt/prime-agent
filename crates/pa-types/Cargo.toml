@@ -10,7 +10,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
-libc = "0.2"
 # Cloud wire canonical JSON renders numbers as JavaScript `String(number)`
 # (the TS protocol digests depend on those exact bytes); `ryu-js` is the
 # ECMAScript Number::toString algorithm.
@@ -21,6 +20,9 @@ socket2 = "0.6"
 # The incident classifier's log-message patterns are the TS regexes
 # (src/cli/incident.ts); the `regex` crate keeps their semantics 1:1.
 regex = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
