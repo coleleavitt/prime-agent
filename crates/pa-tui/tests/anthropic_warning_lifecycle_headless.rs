@@ -12,9 +12,9 @@
 //! verify the client gate over a scripted daemon socket.
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+mod support;
+
+use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -23,12 +23,11 @@ use pa_tui::interactive::{
     HeadlessPlan,
     HeadlessStep,
     InteractiveOptions,
-    ModelSelection,
-    SessionSelection,
     UiMode,
     run_interactive,
 };
 use serde_json::{Value, json};
+use support::{Request, options, serve_connection, write_json};
 
 /// The detection arm's warning text (the fake auth's
 /// `anthropic_subscription_warning`): distinguishable from the
@@ -84,40 +83,12 @@ impl MockSupervisor {
     /// command log.
     fn serve(self) {
         let (stream, _) = self.listener.accept().expect("accept");
-        let write_stream = stream.try_clone().expect("clone mock socket");
-        let mut writer = write_stream;
-        let mut reader = BufReader::new(stream);
-
-        let hello = json!({
-            "type": "daemon_hello",
-            "protocol": { "name": "prime-agent.daemon", "version": 7 },
-            "serverCapabilities": [],
-            "clientId": "mock",
-        });
-        write_json(&mut writer, &hello);
-
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-            let Ok(envelope) = serde_json::from_str::<Value>(line.trim()) else {
-                continue;
-            };
-            let id = envelope.get("id").and_then(Value::as_str).unwrap_or("");
-            let command = envelope.get("command").cloned().unwrap_or(Value::Null);
-            let command_type = command
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            self.commands.lock().unwrap().push(command_type.clone());
-            match command_type.as_str() {
+        serve_connection(stream, &[], |writer, Request { id, kind, .. }| {
+            self.commands.lock().unwrap().push(kind.to_string());
+            match kind {
                 "create" => {
                     write_json(
-                        &mut writer,
+                        writer,
                         &json!({
                             "type": "response",
                             "id": id,
@@ -133,7 +104,7 @@ impl MockSupervisor {
                     );
                 }
                 "attach" => {
-                    write_json(&mut writer, &attach_data(id, &self.session));
+                    write_json(writer, &attach_data(id, &self.session));
                 }
                 "get_state" => {
                     // The summary the worker serves: the model's provider
@@ -151,7 +122,7 @@ impl MockSupervisor {
                         data["anthropicWarningShown"] = json!(shown);
                     }
                     write_json(
-                        &mut writer,
+                        writer,
                         &json!({
                             "type": "response",
                             "id": id,
@@ -163,7 +134,7 @@ impl MockSupervisor {
                 }
                 "mark_anthropic_warning_shown" => {
                     write_json(
-                        &mut writer,
+                        writer,
                         &json!({
                             "type": "response",
                             "id": id,
@@ -173,28 +144,11 @@ impl MockSupervisor {
                         }),
                     );
                 }
-                _ => {
-                    write_json(
-                        &mut writer,
-                        &json!({
-                            "type": "response",
-                            "id": id,
-                            "command": command_type,
-                            "success": true,
-                            "data": {},
-                        }),
-                    );
-                }
+                _ => return false,
             }
-        }
+            true
+        });
     }
-}
-
-fn write_json(writer: &mut UnixStream, value: &Value) {
-    let mut line = serde_json::to_string(value).expect("serialize mock frame");
-    line.push('\n');
-    writer.write_all(line.as_bytes()).expect("write mock frame");
-    writer.flush().expect("flush mock frame");
 }
 
 /// The slim attach result: one empty session.
@@ -438,51 +392,6 @@ impl pa_tui::provider_auth::ProviderAuthCommands for SubscriptionAuth {
     }
 }
 
-fn options(
-    socket: PathBuf,
-    settings: Arc<StubSettings>,
-    auth: Option<pa_tui::provider_auth::ProviderAuthCommandsHandle>,
-) -> InteractiveOptions {
-    InteractiveOptions {
-        sandbox_mode: None,
-        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
-        initial_plan_mode: false,
-        socket_path: socket,
-        cwd: PathBuf::from("/tmp"),
-        session_dir: None,
-        script_path: None,
-        model_selection: ModelSelection::default(),
-        model_catalog: Vec::new(),
-        model_configured_providers: std::collections::HashSet::default(),
-        model_recent_models: Vec::new(),
-        default_thinking_level: None,
-        models: None,
-        no_session: false,
-        session: SessionSelection::New,
-        initial_message: None,
-        show_images: true,
-        fullscreen_mouse: true,
-        theme: "prime".to_string(),
-        code_block_indent: "  ".to_string(),
-        tree_filter_mode: String::new(),
-        branch_summary_skip_prompt: false,
-        version: "0.0.0".to_string(),
-        onboarding: None,
-        telemetry_disabled: None,
-        client_auth: None,
-        traces: None,
-        provider_auth: auth,
-        update_commands: None,
-        telemetry: None,
-        keybindings: pa_tui::keybindings::KeybindingsManager::new(),
-        session_rlm_depth: None,
-        prompt_stash: std::sync::Arc::default(),
-        session_has_children: false,
-        restore_dock_focus: false,
-        client_settings: Some(settings),
-    }
-}
-
 /// One headless run against the scripted daemon: the rendered frames plus
 /// every command the client sent.
 fn run_plan(
@@ -511,7 +420,11 @@ fn run_plan(
     )));
     let outcome = runtime
         .block_on(run_interactive(
-            options(socket, settings, auth),
+            InteractiveOptions {
+                provider_auth: auth,
+                client_settings: Some(settings),
+                ..options(socket)
+            },
             UiMode::Headless(plan),
         ))
         .expect("interactive run");
