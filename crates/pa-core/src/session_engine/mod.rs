@@ -30,6 +30,7 @@ pub mod error_classify;
 pub mod factory_host;
 pub mod file_tracker;
 pub mod goal_boundary;
+pub mod goal_continuation;
 pub mod goal_driver;
 pub mod goal_evaluator;
 pub mod goal_proposal;
