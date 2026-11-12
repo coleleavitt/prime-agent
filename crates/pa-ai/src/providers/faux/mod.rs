@@ -42,6 +42,13 @@ use crate::types::{
     zero_model_cost,
 };
 use crate::utils_inner::diagnostics::now_ms;
+use crate::utils_inner::stream_failure::{
+    ProviderError,
+    StreamFailureError,
+    StreamFailureInfo,
+    StreamFailureKind,
+    record_stream_failure,
+};
 
 const DEFAULT_API: &str = "faux";
 const DEFAULT_PROVIDER: &str = "faux";
@@ -50,6 +57,7 @@ const DEFAULT_MODEL_NAME: &str = "Faux Model";
 const DEFAULT_BASE_URL: &str = "http://localhost:0";
 const DEFAULT_MIN_TOKEN_SIZE: usize = 3;
 const DEFAULT_MAX_TOKEN_SIZE: usize = 5;
+const QUEUE_EXHAUSTED_MESSAGE: &str = "No more faux responses queued";
 
 fn default_usage() -> Usage {
     Usage::default()
@@ -763,11 +771,20 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
                     );
                 }
                 let Some(step) = step else {
-                    let mut message = create_error_message(
-                        "No more faux responses queued",
-                        &api,
-                        &provider,
-                        &model.id,
+                    let mut message =
+                        create_error_message(QUEUE_EXHAUSTED_MESSAGE, &api, &provider, &model.id);
+                    // A dry queue fails the same way on every attempt: classified as an invalid
+                    // request, the shared retry policy never retries it.
+                    record_stream_failure(
+                        (&provider, &model.id, &api),
+                        &mut message,
+                        &ProviderError::StreamFailure(StreamFailureError {
+                            message: QUEUE_EXHAUSTED_MESSAGE.to_string(),
+                            info: StreamFailureInfo {
+                                kind: StreamFailureKind::InvalidRequest,
+                                ..StreamFailureInfo::unknown()
+                            },
+                        }),
                     );
                     message = with_usage_estimate(
                         message,

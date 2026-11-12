@@ -23,7 +23,6 @@ use super::provider_retry::{
     has_provider_stream_failure,
     is_agent_lifecycle_failure,
     is_context_overflow_failure,
-    is_faux_provider_queue_exhausted,
     is_permanent_provider_failure_kind,
     is_unsupported_tool_failure,
     jittered_delay_ms,
@@ -256,7 +255,6 @@ where
         // Permanent and deterministic failures never walk the chain: a
         // rejected request fails the same way on every provider.
         let non_retryable = is_agent_lifecycle_failure(&message)
-            || is_faux_provider_queue_exhausted(&message)
             // A context overflow fails identically on every provider (TS
             // `_isRetryableError`): the recovery owns it.
             || is_context_overflow_failure(&message, context_window)
@@ -273,7 +271,7 @@ where
             // SANCTIONED DIVERGENCE (the 402 diagnosis, operator ruling):
             // a first-attempt provider failure still discloses at
             // attempt 0; the self-managed arms (overflow recovery,
-            // lifecycle, faux) stay silent.
+            // lifecycle) stay silent.
             if total_retries > 0
                 || (has_provider_stream_failure(&message)
                     && !is_context_overflow_failure(&message, context_window))

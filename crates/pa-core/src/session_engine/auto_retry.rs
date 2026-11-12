@@ -17,7 +17,6 @@ use super::provider_retry::{
     is_agent_lifecycle_failure,
     is_connection_failure,
     is_context_overflow_failure,
-    is_faux_provider_queue_exhausted,
     is_permanent_provider_failure_kind,
     is_unsupported_tool_failure,
     jittered_delay_ms,
@@ -152,7 +151,6 @@ where
         // Non-retryable failures never enter the retry bookkeeping: a
         // permanent failure only closes the active retry.
         let non_retryable = is_agent_lifecycle_failure(&message)
-            || is_faux_provider_queue_exhausted(&message)
             // A context overflow can never succeed unchanged: the
             // compact-and-retry recovery owns it.
             || is_context_overflow_failure(&message, context_window)

@@ -654,15 +654,11 @@ impl PrintGoalSurface {
 }
 
 #[cfg(test)]
-// The faux provider registry is process-global: one std lock serializes every test that drives it.
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::session_engine::headless::test_support::{faux_engine, register_faux_model};
-
-    /// One test at a time over the global faux registry.
-    static FAUX_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     /// One captured event line (the sink's frames, in order).
     type Frames = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
@@ -915,7 +911,6 @@ mod tests {
     /// seed never announces.
     #[tokio::test]
     async fn seed_rides_the_first_turn_and_stays_silent() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(&json!(["first reply"]), 128_000),
             no_compaction(),
@@ -995,7 +990,6 @@ mod tests {
     /// An unseeded branch reports no seed; a branched (already-seeded) session does not reseed.
     #[tokio::test]
     async fn seeding_respects_the_branch() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(&json!(["first reply", "second reply"]), 128_000),
             no_compaction(),
@@ -1021,7 +1015,6 @@ mod tests {
     /// the one agent run.
     #[tokio::test]
     async fn natural_loop_mints_continuations_inside_one_run() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(&json!(["turn one reply", "turn two reply"]), 128_000),
             no_compaction(),
@@ -1072,7 +1065,6 @@ mod tests {
     /// the wake run.
     #[tokio::test(start_paused = true)]
     async fn backoff_wake_runs_the_marker_turn_and_recovers_the_reply() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(&json!([empty_length_turn(), "recovered reply"]), 128_000),
             no_compaction(),
@@ -1108,7 +1100,6 @@ mod tests {
     /// calls — the third wake never runs.
     #[tokio::test(start_paused = true)]
     async fn three_empty_turns_hit_the_cap_with_exactly_three_model_calls() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(
                 &json!([
@@ -1144,7 +1135,6 @@ mod tests {
     /// A non-goal empty turn never wakes: no marker turn, the boundary returns at once.
     #[tokio::test(start_paused = true)]
     async fn non_goal_empty_turn_returns_without_a_wake() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(script(&json!([{}]), 128_000), no_compaction(), None).await;
         let (counter, subscription) = agent_run_counter(&bed.engine).await;
         let owns = bed.prompt("work").await;
@@ -1162,7 +1152,6 @@ mod tests {
     /// steer drains as its own run.
     #[tokio::test]
     async fn budget_steer_drains_as_its_own_run() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         let bed = goal_bed(
             script(&json!(["goal turn reply", "wrap-up reply"]), 128_000),
             no_compaction(),
@@ -1212,7 +1201,6 @@ mod tests {
     /// run stops, the boundary compacts, and the held turn runs as the post-compaction turn.
     #[tokio::test]
     async fn threshold_hold_mints_before_the_compaction_and_runs_after() {
-        let _guard = FAUX_TEST_LOCK.lock().await;
         // A small output budget keeps the 24k window's combined input+output
         // ceiling satisfiable (threshold 17_904 = window - 2_000 budget - 4_096
         // estimate floor). The window sits mid-range (about 20k to 30k pass

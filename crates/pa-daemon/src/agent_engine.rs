@@ -58,8 +58,6 @@ use crate::rlm_children::{DEFAULT_RLM_MAX_DEPTH, ParentIdentity, SupervisorChild
 pub(crate) mod tests;
 
 #[cfg(test)]
-pub(crate) use model::wait_for_script_faux_calls;
-#[cfg(test)]
 pub(crate) use tests::FAUX_TEST_LOCK;
 
 mod goalcore;
@@ -341,9 +339,10 @@ pub struct AgentSessionEngine {
     /// A `set_rlm_max_depth` that landed before the first turn: the durable
     /// entry parks here and flushes at build.
     pending_max_depth: std::sync::Mutex<Option<u64>>,
-    /// The resolved faux model, registered once per engine so scripts span
-    /// turns. Verification harness only; never set by the product.
-    faux_model: std::sync::OnceLock<Model>,
+    /// The scripted faux provider, registered once per engine (under its own
+    /// api) so scripts span turns. Verification harness only; never set by
+    /// the product.
+    faux_registration: std::sync::OnceLock<pa_ai::faux::FauxProviderRegistration>,
     /// One compact-and-retry attempt per context overflow.
     pub(crate) overflow_recovery: std::sync::Mutex<OverflowRecovery>,
     /// The image-model route armed for the dispatched episode, re-applied at

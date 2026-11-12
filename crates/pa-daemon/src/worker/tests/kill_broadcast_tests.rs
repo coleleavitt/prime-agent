@@ -3,12 +3,8 @@ use super::*;
 
 /// The #245 gap: the aborted row broadcasts and persists, but the goal's
 /// accounting skips it.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn aborted_turn_row_broadcasts_and_persists_through_the_worker_gate() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-aborted-row-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -81,7 +77,12 @@ async fn aborted_turn_row_broadcasts_and_persists_through_the_worker_gate() {
     // in flight, so the abort lands mid-provider-wait and settles the aborted row.
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(2).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(2)
+        .await;
     let abort = worker.dispatch("abort", &json!({})).await;
     assert!(abort.success, "abort failed: {abort:?}");
     let idle = worker.dispatch("wait_for_idle", &json!({})).await;
@@ -179,12 +180,8 @@ async fn aborted_turn_row_broadcasts_and_persists_through_the_worker_gate() {
 
 /// The job's cancel is durable and the file archives, so no scheduled wake
 /// revives the session.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn kill_cancels_the_sessions_scheduled_jobs() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-kill-jobs-");
     let sessions_dir = dir.join("sessions");
     let config = WorkerConfig {
@@ -253,12 +250,8 @@ async fn kill_cancels_the_sessions_scheduled_jobs() {
 /// The #247 matrix: the aborted row still broadcasts and persists, the
 /// `archived` entry lands ahead of the row, and the close surfaces as a
 /// `session_closed` frame.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn kill_cancels_a_mid_provider_wait_turn_and_surfaces_the_aborted_row() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-kill-path-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -312,7 +305,12 @@ async fn kill_cancels_a_mid_provider_wait_turn_and_surfaces_the_aborted_row() {
     }
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     // The kill must answer on the cancelled turn, not the 60s hold: the abort
     // funnel fires before the archive/dispose waits on the session mutex.
     let started = std::time::Instant::now();
@@ -399,12 +397,8 @@ async fn kill_cancels_a_mid_provider_wait_turn_and_surfaces_the_aborted_row() {
 
 /// TS `compact()` detaches from agent events before the abort, so this row
 /// stays off the wire and file while `abort` broadcasts it.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn compact_interrupt_swallows_the_aborted_row() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-compact-abort-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -443,7 +437,12 @@ async fn compact_interrupt_swallows_the_aborted_row() {
     // aborted row must stay off the wire (TS `_disconnectFromAgent`).
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     let compact = worker
         .dispatch(
             "compact",

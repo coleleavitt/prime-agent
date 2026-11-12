@@ -68,14 +68,6 @@ pub fn is_agent_lifecycle_failure(message: &AssistantMessage) -> bool {
     })
 }
 
-/// The faux test provider's queue running dry is deterministic; retrying it
-/// only stalls tests.
-#[must_use]
-pub fn is_faux_provider_queue_exhausted(message: &AssistantMessage) -> bool {
-    message.provider == "faux"
-        && message.error_message.as_deref() == Some("No more faux responses queued")
-}
-
 /// A context-overflow failure: re-issuing it unchanged can never
 /// succeed; the compact-and-retry recovery owns it.
 #[must_use]
@@ -150,12 +142,12 @@ pub fn provider_stream_failure_status(message: &AssistantMessage) -> Option<u16>
         .and_then(|status| u16::try_from(status).ok())
 }
 
-/// The failure-scoped disclosure's gate. Lifecycle and faux queue
-/// failures and abort conversions stay silent (the 402 diagnosis: only
-/// a real provider failure must never settle silently).
+/// The failure-scoped disclosure's gate. Lifecycle failures and abort
+/// conversions stay silent (the 402 diagnosis: only a real provider
+/// failure must never settle silently).
 #[must_use]
 pub fn has_provider_stream_failure(message: &AssistantMessage) -> bool {
-    !is_faux_provider_queue_exhausted(message) && provider_stream_failure_details(message).is_some()
+    provider_stream_failure_details(message).is_some()
 }
 
 /// Deterministic rejections never retry; auth gets one retry before it
@@ -189,7 +181,6 @@ pub fn is_permanent_provider_failure_kind(
 pub fn is_transient_provider_failure(message: &AssistantMessage) -> bool {
     message.stop_reason == StopReason::Error
         && !is_agent_lifecycle_failure(message)
-        && !is_faux_provider_queue_exhausted(message)
         && matches!(
             provider_stream_failure_kind(message).as_deref(),
             Some("overloaded" | "rate_limit" | "server_error" | "stream_drop")
@@ -342,7 +333,6 @@ where
         }
         if retries_performed >= max_retries
             || is_agent_lifecycle_failure(&message)
-            || is_faux_provider_queue_exhausted(&message)
             || is_unsupported_tool_failure(&message)
         {
             return Ok(message);
@@ -1023,7 +1013,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lifecycle_and_faux_failures_are_never_retried() {
+    async fn lifecycle_failures_are_never_retried() {
         let policy = ProviderRetryPolicy {
             enabled: true,
             max_retries: 3,
@@ -1053,10 +1043,28 @@ mod tests {
         .unwrap();
         assert_eq!(attempts, 1);
         assert_eq!(message.stop_reason, StopReason::Error);
+    }
 
-        let mut faux = error_message(None, None, None);
-        faux.provider = "faux".to_string();
-        faux.error_message = Some("No more faux responses queued".to_string());
+    #[tokio::test]
+    async fn an_exhausted_faux_queue_is_never_retried() {
+        use crate::session_engine::provider_adapter::json_round_trip;
+        let policy = ProviderRetryPolicy {
+            enabled: true,
+            max_retries: 3,
+            base_delay_ms: 5,
+            max_retry_delay_ms: 50,
+            max_delay_ms: UNBOUNDED_BACKOFF_MS,
+            connection_wait_ms: 0,
+        };
+        let registration = pa_ai::faux::register_faux_provider(
+            pa_ai::faux::RegisterFauxProviderOptions::default(),
+        );
+        let model = registration.get_model();
+        let context = pa_types::ai::Context {
+            system_prompt: None,
+            messages: Vec::new(),
+            tools: None,
+        };
         let mut attempts = 0;
         let message = complete_with_provider_retry(
             &policy,
@@ -1064,13 +1072,18 @@ mod tests {
             |_| async { true },
             || {
                 attempts += 1;
-                async { Ok(faux.clone()) }
+                let exhausted = pa_ai::complete(&model, &context, None);
+                async move {
+                    let exhausted = exhausted.await?;
+                    Ok(json_round_trip(&exhausted).expect("the faux reply crosses the boundary"))
+                }
             },
         )
         .await
         .unwrap();
         assert_eq!(attempts, 1);
         assert_eq!(message.stop_reason, StopReason::Error);
+        registration.unregister();
     }
 
     #[tokio::test]

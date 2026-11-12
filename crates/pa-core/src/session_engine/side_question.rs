@@ -25,7 +25,6 @@ use super::provider_retry::{
     ProviderRetryDelay,
     ProviderRetryPolicy,
     is_agent_lifecycle_failure,
-    is_faux_provider_queue_exhausted,
     is_permanent_provider_failure_kind,
     provider_retry_delay,
     provider_stream_failure_kind,
@@ -341,10 +340,7 @@ async fn run_attempts(
         if message.stop_reason != StopReason::Error {
             break Ok(Some(message));
         }
-        if retries_performed >= max_retries
-            || is_agent_lifecycle_failure(&message)
-            || is_faux_provider_queue_exhausted(&message)
-        {
+        if retries_performed >= max_retries || is_agent_lifecycle_failure(&message) {
             break Ok(Some(message));
         }
         let kind = provider_stream_failure_kind(&message);

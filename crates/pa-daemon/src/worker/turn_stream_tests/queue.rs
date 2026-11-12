@@ -413,11 +413,7 @@ async fn follow_up_mode_all_batches_the_follow_up_lane() {
 
 /// Kevin's acceptance case: ALL visible steers send together; the follow-up runs once idle.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 async fn abort_and_send_queued_delivers_the_steering_batch_then_the_follow_ups() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-abort-send-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -495,7 +491,12 @@ async fn abort_and_send_queued_delivers_the_steering_batch_then_the_follow_ups()
     }
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     // Two steers and one follow-up behind the streaming turn.
     for message in ["steering one", "steering two"] {
         let steered = worker
@@ -604,11 +605,7 @@ async fn abort_and_send_queued_delivers_the_steering_batch_then_the_follow_ups()
 
 /// Answers immediately while both the aborted turn and the follow-up's reply are held.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 async fn abort_and_send_queued_acks_before_the_follow_up_delivery() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-abort-ack-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -659,7 +656,12 @@ async fn abort_and_send_queued_acks_before_the_follow_up_delivery() {
     // The held response is dequeued (the provider request in flight), so
     // the abort lands on it and the follow-up gets its own response; a fixed
     // sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     let follow = worker
         .dispatch("follow_up", &json!({ "message": "ack follow-up" }))
         .await;

@@ -975,9 +975,6 @@ mod tests {
     #[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
     #[tokio::test]
     async fn a_restored_row_without_a_timestamp_delivers_one_normalized_row() {
-        let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::TempDir::new().unwrap();
         let dir_path = dir.path().to_path_buf();
         let config = crate::worker::WorkerConfig {
@@ -1162,12 +1159,8 @@ mod tests {
     /// the reload reaches the MCP auth store's blocking lock, which panics
     /// when taken on the runtime — this fails if the blocking work moves
     /// back onto the executor.
-    #[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
     #[tokio::test]
     async fn reload_parks_the_engine_reload_off_the_runtime() {
-        let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // A TempDir keeps the worker's files from piling up in /tmp.
         let dir = tempfile::TempDir::new().unwrap();
         let dir_path = dir.path().to_path_buf();

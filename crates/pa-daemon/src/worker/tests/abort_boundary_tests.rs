@@ -86,12 +86,7 @@ async fn compact_suspends_and_resume_queue_clears() {
 
 /// The interrupt aborts the run AND delivers the parked queue right after the turn settles.
 #[tokio::test]
-// the faux registry is process-global: the guard must span the async flow
-#[allow(clippy::await_holding_lock)]
 async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-abort-send-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -145,7 +140,12 @@ async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
     }
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     // Parked steering and one follow-up behind the running turn.
     for message in ["steering one", "steering two"] {
         let steered = worker
@@ -256,9 +256,6 @@ async fn abort_and_send_queued_delivers_the_parked_queue_at_the_boundary() {
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn a_send_now_abort_labels_the_cut_row() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-send-now-cut-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -290,7 +287,12 @@ async fn a_send_now_abort_labels_the_cut_row() {
         )
         .await;
     assert!(prompt.success, "prompt failed: {prompt:?}");
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     let steered = worker
         .dispatch("steer", &json!({ "message": "right now" }))
         .await;
@@ -345,11 +347,7 @@ async fn abort_and_send_queued_with_an_empty_queue_is_a_plain_abort() {
 
 /// The sanctioned divergence: the OLDEST queued follow-up starts the next turn after the settle.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 async fn abort_and_send_queued_with_only_follow_ups_starts_the_oldest() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-abort-fu-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),
@@ -401,7 +399,12 @@ async fn abort_and_send_queued_with_only_follow_ups_starts_the_oldest() {
     }
     // The provider dequeued the held response (the request is in flight):
     // a fixed sleep raced the turn's start-of-run work under load.
-    crate::agent_engine::wait_for_script_faux_calls(1).await;
+    worker
+        .agent_engine
+        .as_ref()
+        .expect("the scripted engine")
+        .wait_for_script_faux_calls(1)
+        .await;
     // Two follow-ups park behind the running turn; the steering
     // lane stays empty — nothing armable.
     for message in ["follow-up one", "follow-up two"] {
@@ -796,8 +799,7 @@ impl pa_ai::Provider for RequestProbe {
 /// The faux-script worker for the abort-and-send probes: a fresh created
 /// session whose first response holds for 60s (the streaming turn the
 /// abort cuts) and whose next turn answers `reply`, plus the signal for
-/// each provider request. The faux registry is process-global: hold
-/// `FAUX_TEST_LOCK` across the flow.
+/// each provider request.
 async fn held_turn_worker(
     active_session_id: &str,
     name: &str,
@@ -922,12 +924,7 @@ async fn agent_message_transcript(worker: &Worker) -> (Option<Value>, Vec<String
 /// the aborted turn settles, then the parked row delivers as the next turn
 /// (TS's ctrl+c must never strand agent mail behind the suspension).
 #[tokio::test]
-// the faux registry is process-global: the guard must span the async flow
-#[allow(clippy::await_holding_lock)]
 async fn abort_and_send_queued_delivers_the_parked_agent_message() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (worker, dir, requested) =
         held_turn_worker("abort-am-session", "abort-am", "agent message reply").await;
     let mut subscription = worker.events.subscribe();
@@ -1002,12 +999,7 @@ async fn abort_and_send_queued_delivers_the_parked_agent_message() {
 /// abort clears the suspension, the pump holds the delivery while the pause
 /// stands, and the pause release delivers the parked agent message.
 #[tokio::test]
-// the faux registry is process-global: the guard must span the async flow
-#[allow(clippy::await_holding_lock)]
 async fn abort_and_send_queued_under_a_held_pause_delivers_on_the_release() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (worker, dir, requested) =
         held_turn_worker("abort-pause-session", "abort-pause", "agent message reply").await;
     start_in_flight_held_turn(
@@ -1114,9 +1106,6 @@ async fn abort_and_send_queued_under_a_held_pause_delivers_on_the_release() {
 // the faux registry is process-global: the guard must span the async flow
 #[allow(clippy::await_holding_lock)]
 async fn a_folded_unread_steer_survives_a_graceful_daemon_shutdown() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-folded-steer-");
     let config = WorkerConfig {
         socket_path: dir.join("worker.sock"),

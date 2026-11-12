@@ -311,17 +311,22 @@ impl AgentSessionEngine {
     ///
     /// The script model serves the session while the selection is unset or
     /// names it; any other selection resolves through the registry (a
-    /// models.json faux-api model streams through the same registered
+    /// models.json faux-api model streams through this engine's scripted
     /// provider).
     pub(crate) fn resolve_model(&self) -> anyhow::Result<Model> {
         if let Some(script) = &self.config.faux_script {
-            let model = if let Some(model) = self.faux_model.get() {
-                model.clone()
-            } else {
-                let model = faux_model_from_script(script)?;
-                let _ = self.faux_model.set(model.clone());
-                model
-            };
+            if self.faux_registration.get().is_none() {
+                // A racing resolve that registered first wins; this
+                // registration's provider then just goes unused.
+                let _ = self
+                    .faux_registration
+                    .set(faux_registration_from_script(script)?);
+            }
+            let model = self
+                .faux_registration
+                .get()
+                .expect("the faux registration was just set")
+                .get_model();
             let selection = self.current_selection();
             let names_script_model = selection
                 .provider
@@ -334,7 +339,11 @@ impl AgentSessionEngine {
             if names_script_model {
                 return Ok(model);
             }
-            return self.resolve_registry_model();
+            let mut resolved = self.resolve_registry_model()?;
+            if resolved.api == "faux" {
+                resolved.api = model.api;
+            }
+            return Ok(resolved);
         }
         self.resolve_registry_model()
     }
@@ -578,69 +587,40 @@ pub(crate) fn saved_session_context_from_parts(
     }
 }
 
-/// The faux provider registry is process-global: a registration replaces
-/// the provider every live faux engine streams through, so one made outside
-/// `FAUX_TEST_LOCK` hands a concurrent test's turns (a provider retry, a
-/// background summary) this test's scripted responses. Fail the registering
-/// test instead of a random other one.
-#[cfg(test)]
-fn assert_faux_test_lock_held() {
-    let held = matches!(
-        crate::agent_engine::FAUX_TEST_LOCK.try_lock(),
-        Err(std::sync::TryLockError::WouldBlock)
-    );
-    assert!(
-        held,
-        "a faux provider registered without FAUX_TEST_LOCK held (thread {:?})",
-        std::thread::current().name()
-    );
-}
-
-/// Register the faux provider from a script and return its model. Scripts
-/// carry plain-text responses or content-block arrays (thinking, text, tool
-/// calls) so harnesses can script full turns. Verification harness only.
-fn faux_model_from_script(script: &str) -> anyhow::Result<Model> {
+/// Register the faux provider from a script. Scripts carry plain-text
+/// responses or content-block arrays (thinking, text, tool calls) so
+/// harnesses can script full turns. Each registration gets its own api, so
+/// concurrent engines never share a queue. Verification harness only.
+fn faux_registration_from_script(
+    script: &str,
+) -> anyhow::Result<pa_ai::faux::FauxProviderRegistration> {
     let script: serde_json::Value = serde_json::from_str(script)?;
     let parsed = pa_ai::faux::script::parse_faux_script(&script).map_err(anyhow::Error::msg)?;
-    #[cfg(test)]
-    assert_faux_test_lock_held();
-    let registration = pa_ai::faux::script::register_faux_provider_from_script(&parsed);
-    let model = registration.get_model();
-    #[cfg(test)]
-    {
-        *LAST_SCRIPT_FAUX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(registration);
-    }
-    Ok(model)
+    Ok(pa_ai::faux::script::register_faux_provider_from_script(
+        &parsed,
+    ))
 }
 
-/// The newest script-registered faux provider (tests read its call count:
-/// a provider request in flight is the readiness an abort probe needs).
 #[cfg(test)]
-static LAST_SCRIPT_FAUX: std::sync::Mutex<Option<pa_ai::faux::FauxProviderRegistration>> =
-    std::sync::Mutex::new(None);
-
-/// Wait until the newest script-registered faux provider has served at
-/// least `calls` requests (the turn's provider request is in flight, its
-/// scripted response dequeued), or panic after ten seconds. Callers hold
-/// `FAUX_TEST_LOCK`, so the registration is theirs.
-#[cfg(test)]
-pub(crate) async fn wait_for_script_faux_calls(calls: u64) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        let served = LAST_SCRIPT_FAUX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .map_or(0, pa_ai::faux::FauxProviderRegistration::call_count);
-        if served >= calls {
-            return;
+impl AgentSessionEngine {
+    /// Wait until this engine's scripted faux provider has served at least
+    /// `calls` requests (the turn's provider request is in flight, its
+    /// scripted response dequeued), or panic after ten seconds.
+    pub(crate) async fn wait_for_script_faux_calls(&self, calls: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let served = self
+                .faux_registration
+                .get()
+                .map_or(0, pa_ai::faux::FauxProviderRegistration::call_count);
+            if served >= calls {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the scripted provider served {served} of {calls} requests"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the scripted provider served {served} of {calls} requests"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }

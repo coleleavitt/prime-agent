@@ -280,31 +280,30 @@ impl AgentSessionEngine {
 mod tests {
     use super::*;
     use crate::agent_engine::AgentEngineConfig;
-    use crate::agent_engine::tests::FAUX_TEST_LOCK;
     use crate::engine::{EngineEvent, EngineModelSelection, PromptRequest, SessionEngine as _};
 
-    fn write_image_pair_models_json(agent_dir: &std::path::Path) {
+    fn write_image_pair_models_json(agent_dir: &std::path::Path, api: &str) {
         std::fs::create_dir_all(agent_dir).unwrap();
         std::fs::write(
             agent_dir.join("models.json"),
             serde_json::json!({
                 "providers": {
                     "battery": {
-                        "api": "mock-battery",
+                        "api": api,
                         "baseUrl": "http://127.0.0.1:9",
                         "apiKey": "sk-battery",
                         "models": [
                             {
                                 "id": "mock-1",
                                 "name": "Mock 1",
-                                "api": "mock-battery",
+                                "api": api,
                                 "contextWindow": 128_000,
                                 "maxTokens": 4096
                             },
                             {
                                 "id": "mock-vision",
                                 "name": "Mock Vision",
-                                "api": "mock-battery",
+                                "api": api,
                                 "contextWindow": 128_000,
                                 "maxTokens": 4096,
                                 "input": ["text", "image"]
@@ -332,9 +331,10 @@ mod tests {
     fn image_route_engine(
         dir: &std::path::Path,
         settings: &serde_json::Value,
+        api: &str,
     ) -> std::sync::Arc<AgentSessionEngine> {
         let agent_dir = dir.join("agent");
-        write_image_pair_models_json(&agent_dir);
+        write_image_pair_models_json(&agent_dir, api);
         write_image_settings(dir, settings);
         let engine = AgentSessionEngine::new(AgentEngineConfig {
             cwd: dir.to_path_buf(),
@@ -379,6 +379,7 @@ mod tests {
         let engine = image_route_engine(
             dir.path(),
             &serde_json::json!({ "imageModel": "battery/mock-vision" }),
+            "mock-battery",
         );
         let route = engine
             .resolve_image_turn_route(true)
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn image_route_refusals_name_the_setting() {
         let dir = tempfile::TempDir::new().unwrap();
-        let engine = image_route_engine(dir.path(), &serde_json::json!({}));
+        let engine = image_route_engine(dir.path(), &serde_json::json!({}), "mock-battery");
         let error = engine
             .resolve_image_turn_route(true)
             .expect_err("no imageModel configured");
@@ -412,6 +413,7 @@ mod tests {
         let engine = image_route_engine(
             dir.path(),
             &serde_json::json!({ "imageModel": "nope/nothere" }),
+            "mock-battery",
         );
         let error = engine
             .resolve_image_turn_route(true)
@@ -427,6 +429,7 @@ mod tests {
                 "imageModel": "battery/mock-vision",
                 "images": { "blockImages": true }
             }),
+            "mock-battery",
         );
         let none = engine
             .resolve_image_turn_route(true)
@@ -439,12 +442,8 @@ mod tests {
     /// next dispatch re-evaluates the routing).
     #[test]
     fn image_turn_serves_on_the_image_model_and_restores() {
-        let _faux = FAUX_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let registration =
             pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
-                api: Some("mock-battery".to_string()),
                 provider: Some("battery".to_string()),
                 models: Some(vec![
                     pa_ai::faux::FauxModelDefinition {
@@ -481,6 +480,7 @@ mod tests {
         let engine = image_route_engine(
             dir.path(),
             &serde_json::json!({ "imageModel": "battery/mock-vision" }),
+            &registration.api,
         );
         let mut events = Vec::new();
         engine.run_prompt(
@@ -523,12 +523,8 @@ mod tests {
 
     #[test]
     fn image_turn_without_image_model_fails_with_the_refusal() {
-        let _faux = FAUX_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let registration =
             pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
-                api: Some("mock-battery".to_string()),
                 provider: Some("battery".to_string()),
                 models: Some(vec![pa_ai::faux::FauxModelDefinition {
                     id: "mock-1".to_string(),
@@ -548,7 +544,7 @@ mod tests {
             ),
         )]);
         let dir = tempfile::TempDir::new().unwrap();
-        let engine = image_route_engine(dir.path(), &serde_json::json!({}));
+        let engine = image_route_engine(dir.path(), &serde_json::json!({}), &registration.api);
         let mut events = Vec::new();
         engine.run_prompt(
             0,
@@ -688,9 +684,6 @@ mod tests {
     /// the target follows the candidate.
     #[test]
     fn routed_image_failover_serves_the_candidate_provider() {
-        let _faux = FAUX_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let battery_a =
             pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
                 api: Some("mock-battery-a".to_string()),

@@ -381,12 +381,8 @@ fn summary_reports_the_in_flight_tool_call_count_and_oldest_start() {
 }
 
 /// The summary carries the live note, and the next run's boundaries clear it.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn summary_carries_the_live_note_until_the_run_boundaries_clear_it() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = std::env::temp_dir().join(format!("pa-worker-note-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config = WorkerConfig {

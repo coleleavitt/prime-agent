@@ -323,7 +323,7 @@ pub(crate) fn assert_cancelled_end_event(
     );
 }
 
-/// A driver loop test harness: faux script + collected events, holding the faux lock.
+/// A driver loop test harness: faux script + collected events.
 #[cfg(test)]
 fn run_prompts(
     script: &serde_json::Value,
@@ -332,9 +332,6 @@ fn run_prompts(
     crate::test_support::InTestDir<std::sync::Arc<AgentSessionEngine>>,
     Vec<EngineEvent>,
 ) {
-    let _faux = FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // The engine outlives this helper and keeps writing under the dir (a later build creates
     // `agent/auth.json`), so the dir goes back with it.
     let dir = crate::test_support::TestDir::new("pa-engine-prompts-");

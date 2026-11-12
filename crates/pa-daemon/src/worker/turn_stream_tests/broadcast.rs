@@ -308,7 +308,6 @@ async fn a_turn_without_a_model_turn_keeps_the_bare_fallback_frames() {
 /// One `agent_end` per agent run on the wire: the retry run re-opens with
 /// its own `agent_start` + `turn_start` frames, and its `agent_end`
 /// carries only the retry's messages; no bare synthesized frame trails.
-#[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn a_retried_turn_broadcasts_one_agent_end_per_run() {
     fn roles_of(frame: &Value) -> Vec<String> {
@@ -322,9 +321,6 @@ async fn a_retried_turn_broadcasts_one_agent_end_per_run() {
             })
             .unwrap_or_default()
     }
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-agent-end-retry-");
     std::fs::create_dir_all(dir.join("agent")).unwrap();
     std::fs::write(
@@ -472,9 +468,6 @@ async fn a_retried_turn_broadcasts_one_agent_end_per_run() {
 #[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
 async fn an_abort_during_the_retry_wait_broadcasts_the_retry_end() {
-    let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = crate::test_support::TestDir::new("pa-worker-retry-wait-abort-");
     std::fs::create_dir_all(dir.join("agent")).unwrap();
     // A wait the test never sits out: only the abort can end it.
