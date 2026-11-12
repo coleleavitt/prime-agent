@@ -196,6 +196,463 @@ impl OlderPathUsage {
     }
 }
 
+/// What one row of the newest-first walk asks of the open.
+enum WalkStep {
+    /// Keep walking toward the header.
+    Next,
+    /// The session header ended the walk (`None` when it does not parse).
+    Header(Option<Box<FileEntry>>),
+    /// The file needs the ordinary full reader.
+    Reject,
+}
+
+/// Where the walk stands against the compaction boundary.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum WindowPhase {
+    /// Retaining rows: the boundary is still ahead (toward the header).
+    #[default]
+    Retaining,
+    /// The current row is the compaction's first kept row, the last retained one.
+    Boundary,
+    /// Past the boundary: the older rows only count.
+    Done,
+}
+
+/// The newest-first walk from the leaf to the header: the retained window (the rows back to
+/// the compaction boundary), the older path's accounting, and the settings the active
+/// branch's newest rows pin.
+#[derive(Default)]
+struct WindowWalk {
+    retained: Vec<FileEntry>,
+    raw_entries: Vec<String>,
+    metadata_entries: Vec<String>,
+    message_count: usize,
+    older_path_stats: WindowStats,
+    older_usage: Vec<(String, OlderPathUsage)>,
+    older_aggregates: HashMap<String, OlderPathUsage>,
+    first_user_line: Option<Vec<u8>>,
+    /// The next row id on the active branch (the last branch row's parent).
+    expected: Option<String>,
+    leaf_id: Option<String>,
+    first_kept: Option<String>,
+    retained_start: u64,
+    compaction_count: usize,
+    non_bootstrap: bool,
+    goal: Option<crate::goals::GoalState>,
+    /// The Anthropic subscription warning's once-per-session-lifecycle
+    /// gate: set when the walk meets the marked-shown custom row (any
+    /// position on the active branch hydrates it, exactly like `goal`).
+    anthropic_warning_shown: bool,
+    /// The newest plan-mode change on the branch (hydrated like `goal`).
+    plan_mode: Option<bool>,
+    phase: WindowPhase,
+    seen: HashSet<String>,
+    thinking: Option<String>,
+    tier: Option<pa_types::ai::ServiceTier>,
+    /// The branch pins a tier (`tier` `None`: pinned off).
+    tier_present: bool,
+    model: Option<(String, String)>,
+    /// The boundary model: the usage fold seeds its timeline with this,
+    /// not `model` (the leaf's).
+    boundary_model: Option<(String, String)>,
+}
+
+impl WindowWalk {
+    fn window_done(&self) -> bool {
+        self.phase == WindowPhase::Done
+    }
+
+    /// One row, newest first.
+    fn visit(&mut self, line: Vec<u8>, reader: &ReverseLines) -> io::Result<WalkStep> {
+        let Ok(text) = std::str::from_utf8(&line) else {
+            return Ok(WalkStep::Reject);
+        };
+        let Ok(meta) = serde_json::from_str::<Envelope>(text) else {
+            return Ok(WalkStep::Reject);
+        };
+        if meta.kind == "session" {
+            if reader.position != 0
+                || reader
+                    .pending
+                    .iter()
+                    .any(|byte| !byte.is_ascii_whitespace())
+            {
+                return Ok(WalkStep::Reject);
+            }
+            return Ok(WalkStep::Header(
+                serde_json::from_slice::<FileEntry>(&line)
+                    .ok()
+                    .map(Box::new),
+            ));
+        }
+        self.count_row(&meta, &line, text)?;
+        let Some(id) = meta.id.as_deref() else {
+            return Ok(WalkStep::Reject);
+        };
+        if !self.seen.insert(id.to_owned()) {
+            return Ok(WalkStep::Reject);
+        }
+        if self.leaf_id.is_none() {
+            self.leaf_id = Some(id.to_owned());
+            self.expected.clone_from(&self.leaf_id);
+        }
+        let on_path = self.expected.as_deref() == Some(id);
+        if on_path && !self.follow_path(&meta, id, text) {
+            return Ok(WalkStep::Reject);
+        }
+        let entry = if self.parses_entry(on_path, &meta) {
+            match serde_json::from_slice::<FileEntry>(&line) {
+                Ok(entry) => Some(entry),
+                Err(_) => return Ok(WalkStep::Reject),
+            }
+        } else {
+            None
+        };
+        if on_path {
+            self.note_path_entry(entry.as_ref(), id);
+        }
+        if self.phase != WindowPhase::Done {
+            self.retained_start = reader.line_start;
+            self.retained.push(entry.expect("window entries parsed"));
+            self.raw_entries.push(
+                String::from_utf8(line)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            );
+            if self.phase == WindowPhase::Boundary {
+                self.phase = WindowPhase::Done;
+            }
+        }
+        Ok(WalkStep::Next)
+    }
+
+    /// The counts every row contributes, on the active branch or not.
+    fn count_row(&mut self, meta: &Envelope, line: &[u8], text: &str) -> io::Result<()> {
+        if !matches!(
+            meta.kind.as_str(),
+            "model_change" | "thinking_level_change" | "service_tier_change"
+        ) {
+            self.non_bootstrap = true;
+        }
+        if meta.kind == "compaction" {
+            self.compaction_count += 1;
+        }
+        if meta.kind == "message" {
+            self.message_count += 1;
+            if meta
+                .message
+                .as_ref()
+                .is_some_and(|message| message.role == "user")
+            {
+                self.first_user_line = Some(line.to_vec());
+            }
+        } else if self.window_done()
+            && (matches!(
+                meta.kind.as_str(),
+                "session_info"
+                    | "session_state"
+                    | "agent_status"
+                    | "git_state"
+                    | "child_usage_attributed"
+            ) || matches!(
+                (meta.kind.as_str(), meta.custom_type.as_deref()),
+                (
+                    "custom",
+                    Some("provider_quota_park" | "provider_quota_resume")
+                )
+            ))
+        {
+            self.metadata_entries.push(
+                String::from_utf8(line.to_vec())
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            );
+        }
+        if meta.kind == "child_usage_attributed" {
+            // Older-path targets are dropped from the retained metadata, so
+            // capture here or their attributed spend is lost. Newest-first,
+            // the FIRST aggregate seen per target is the cumulative one.
+            let value = serde_json::from_str::<serde_json::Value>(text).ok();
+            let target = value
+                .as_ref()
+                .and_then(|value| value.get("targetId"))
+                .and_then(serde_json::Value::as_str);
+            // A malformed aggregate (null, a scalar) must not
+            // replace a valid row usage with zeros.
+            let aggregate = value
+                .as_ref()
+                .and_then(|value| value.get("aggregateUsage"))
+                .filter(|aggregate| aggregate.is_object());
+            if let (Some(target), Some(aggregate)) = (target, aggregate) {
+                self.older_aggregates
+                    .entry(target.to_owned())
+                    .or_insert_with(|| OlderPathUsage::from_usage(aggregate));
+            }
+        }
+        Ok(())
+    }
+
+    /// An active-branch row: the older path's accounting, the next expected id, and the
+    /// newest assistant model. `false` when an assistant row names no model.
+    fn follow_path(&mut self, meta: &Envelope, id: &str, text: &str) -> bool {
+        if self.window_done() {
+            self.count_older_path_row(meta, id, text);
+        }
+        self.expected.clone_from(&meta.parent_id);
+        if let Some(message) = meta
+            .message
+            .as_ref()
+            .filter(|message| message.role == "assistant" && self.model.is_none())
+        {
+            let (Some(provider), Some(name)) = (&message.provider, &message.model) else {
+                return false;
+            };
+            self.model = Some((provider.clone(), name.clone()));
+        }
+        true
+    }
+
+    /// An active-branch row past the compaction boundary: its display row, message counts,
+    /// and spend.
+    fn count_older_path_row(&mut self, meta: &Envelope, id: &str, text: &str) {
+        let stats = &mut self.older_path_stats;
+        let role = display_role(
+            &meta.kind,
+            meta.message.as_ref().map(|message| message.role.as_str()),
+        );
+        if let Some(role) = role {
+            *stats.display_rows.entry(role.to_owned()).or_default() += 1;
+        }
+        if meta.kind != "message" {
+            // The older path's compactions and other billed calls.
+            if let Some(row) = super::billed_row::billed_line(&meta.kind, text) {
+                self.older_usage
+                    .push((id.to_owned(), OlderPathUsage::from(row.usage)));
+            }
+            return;
+        }
+        let Some(message) = &meta.message else {
+            return;
+        };
+        stats.total_messages += 1;
+        match message.role.as_str() {
+            "user" => stats.user_messages += 1,
+            "toolResult" => stats.tool_results += 1,
+            "assistant" => {
+                stats.assistant_messages += 1;
+                if let Some(MessageContentMetadata::Blocks(blocks)) = &message.content {
+                    stats.tool_calls += blocks
+                        .iter()
+                        .filter(|block| block.kind == "toolCall")
+                        .count() as u64;
+                }
+                // Recorded per row, not summed inline: an attribution
+                // replaces its usage with the cumulative aggregate.
+                self.older_usage.push((
+                    id.to_owned(),
+                    message
+                        .usage
+                        .as_ref()
+                        .map(OlderPathUsage::from_usage)
+                        .unwrap_or_default(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the row's body parses: every retained row, and the sparse setting records
+    /// the older active branch still pins; serde ignores the rest without allocating it.
+    fn parses_entry(&self, on_path: bool, meta: &Envelope) -> bool {
+        if !self.window_done() {
+            return true;
+        }
+        let custom_type = meta.custom_type.as_deref();
+        on_path
+            && (matches!(
+                meta.kind.as_str(),
+                "model_change" | "thinking_level_change" | "service_tier_change"
+            ) || (self.goal.is_none()
+                && custom_type == Some(crate::goals::GOAL_STATE_CUSTOM_TYPE))
+                || (!self.anthropic_warning_shown
+                    && custom_type == Some(crate::session::ANTHROPIC_WARNING_SHOWN_CUSTOM_TYPE))
+                || (self.plan_mode.is_none()
+                    && custom_type
+                        == Some(crate::session_engine::plan_mode::PLAN_MODE_CHANGE_CUSTOM_TYPE)))
+    }
+
+    /// The settings the newest active-branch rows pin, and the compaction boundary.
+    fn note_path_entry(&mut self, entry: Option<&FileEntry>, id: &str) {
+        if self.goal.is_none() {
+            self.goal = entry.and_then(valid_goal);
+        }
+        if !self.anthropic_warning_shown {
+            self.anthropic_warning_shown = entry.is_some_and(valid_warning_shown);
+        }
+        if self.plan_mode.is_none() {
+            self.plan_mode = entry.and_then(crate::session_engine::plan_mode::plan_mode_of_entry);
+        }
+        match entry {
+            Some(FileEntry::ThinkingLevelChange { payload, .. }) if self.thinking.is_none() => {
+                self.thinking = Some(payload.thinking_level.clone());
+            }
+            Some(FileEntry::ServiceTierChange { payload, .. }) if !self.tier_present => {
+                self.tier = payload.service_tier;
+                self.tier_present = true;
+            }
+            Some(FileEntry::ModelChange { payload, .. }) => {
+                if self.model.is_none() {
+                    self.model = Some((payload.provider.clone(), payload.model_id.clone()));
+                }
+                // The boundary model: the newest `model_change` in the discarded prefix.
+                if self.window_done() && self.boundary_model.is_none() {
+                    self.boundary_model =
+                        Some((payload.provider.clone(), payload.model_id.clone()));
+                }
+            }
+            Some(FileEntry::Compaction { payload, .. }) if self.first_kept.is_none() => {
+                self.first_kept = Some(payload.first_kept_entry_id.clone());
+            }
+            _ => {}
+        }
+        if self.phase == WindowPhase::Retaining && self.first_kept.as_deref() == Some(id) {
+            self.phase = WindowPhase::Boundary;
+        }
+    }
+
+    /// The walked store: the window oldest-first under its header, the older path's spend
+    /// folded, and the snapshot a warm open reuses.
+    fn finish(
+        mut self,
+        path: &Path,
+        header: FileEntry,
+        generation: &Generation,
+        reader: ReverseLines,
+    ) -> io::Result<Option<WindowedSessionStore>> {
+        let retained_whole_file = !self.window_done();
+        self.retained.push(header);
+        self.retained.reverse();
+        self.raw_entries.reverse();
+        self.metadata_entries.reverse();
+        let metadata_entries =
+            latest_metadata(std::mem::take(&mut self.metadata_entries), &self.retained)?;
+        // Fold oldest-first (the cost sum's float order matches the pre-fold
+        // walk): an attributed assistant reports its cumulative aggregate.
+        let mut older_path_stats = self.older_path_stats;
+        for (id, usage) in self.older_usage.iter().rev() {
+            let folded = self.older_aggregates.get(id).unwrap_or(usage);
+            older_path_stats.input += folded.input;
+            older_path_stats.output += folded.output;
+            older_path_stats.cache_read += folded.cache_read;
+            older_path_stats.cache_write += folded.cache_write;
+            older_path_stats.cost += folded.cost;
+        }
+        let first_user_message = self
+            .first_user_line
+            .and_then(|line| serde_json::from_slice::<serde_json::Value>(&line).ok())
+            .and_then(|row| row.get("message").cloned());
+        let Some(leaf_id) = self.leaf_id else {
+            return Ok(None);
+        };
+        let mut retained = self.retained;
+        let snapshot = Snapshot {
+            version: window_cache::SNAPSHOT_VERSION,
+            generation: generation.clone(),
+            header: serde_json::to_string(&retained[0])?,
+            start: self.retained_start,
+            leaf: leaf_id.clone(),
+            thinking: self.thinking.clone().unwrap_or_else(|| "off".to_owned()),
+            thinking_present: self.thinking.is_some(),
+            tier: self.tier,
+            tier_present: self.tier_present,
+            model: self.model.clone(),
+            boundary_model: self.boundary_model.clone(),
+            metadata: metadata_entries.clone(),
+            message_count: self.message_count,
+            compaction_count: self.compaction_count,
+            stats: older_path_stats.clone(),
+            first_user: first_user_message.clone(),
+            goal: self.goal,
+            anthropic_warning_shown: self.anthropic_warning_shown,
+            plan_mode: self.plan_mode,
+            non_bootstrap: self.non_bootstrap,
+            retained_whole_file,
+        };
+        if !generation.valid(&reader.file, path)? {
+            return Ok(None);
+        }
+        // A disposable sidecar failure must never prevent opening the source.
+        let _ = window_cache::save(path, &snapshot);
+        apply_attributions(&mut retained, &metadata_entries);
+        super::apply_child_usage_attributions(&mut retained);
+        Ok(Some(WindowedSessionStore {
+            path: path.to_owned(),
+            entries: retained,
+            raw_entries: self.raw_entries,
+            metadata_entries,
+            message_count: self.message_count,
+            older_path_stats,
+            first_user_message,
+            leaf_id,
+            settings: SessionContext {
+                messages: Vec::new(),
+                thinking_level: self.thinking.unwrap_or_else(|| "off".to_owned()),
+                service_tier: self.tier,
+                model: self.model,
+            },
+            boundary_model: self.boundary_model,
+            full: false,
+            retained_whole_file,
+            snapshot,
+            reads: reader.reads,
+            detached: false,
+        }))
+    }
+}
+
+/// The older-path metadata rows a window keeps (oldest first): the latest session info,
+/// state and git rows, the latest attribution per retained target, and every quota
+/// park/resume row.
+fn latest_metadata(
+    metadata_entries: Vec<String>,
+    retained: &[FileEntry],
+) -> io::Result<Vec<String>> {
+    let retained_ids: HashSet<&str> = retained.iter().filter_map(FileEntry::id).collect();
+    let mut latest = std::collections::HashMap::new();
+    let mut keep = HashSet::new();
+    for (index, row) in metadata_entries.iter().enumerate() {
+        let value: serde_json::Value = serde_json::from_str(row)?;
+        let kind = value["type"].as_str().unwrap_or("");
+        match kind {
+            "session_info" | "session_state" | "git_state" => {
+                latest.insert(kind.to_owned(), index);
+            }
+            "child_usage_attributed"
+                if value["targetId"]
+                    .as_str()
+                    .is_some_and(|id| retained_ids.contains(id)) =>
+            {
+                latest.insert(format!("attribution:{}", value["targetId"]), index);
+            }
+            // Quota-park episodes end on resume rows, so every
+            // park/resume row must survive the keep filter.
+            "custom"
+                if matches!(
+                    value["customType"].as_str(),
+                    Some("provider_quota_park" | "provider_quota_resume")
+                ) =>
+            {
+                keep.insert(index);
+            }
+            _ => {}
+        }
+    }
+    keep.extend(latest.into_values());
+    Ok(metadata_entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, row)| keep.contains(&index).then_some(row))
+        .collect())
+}
+
 /// An active compacted window plus verified settings from its older ancestry.
 /// The underlying JSONL is never rewritten by this reader.
 pub struct WindowedSessionStore {
@@ -263,381 +720,31 @@ impl WindowedSessionStore {
             line_start: 0,
             reads,
         };
-        let mut retained = Vec::new();
-        let mut raw_entries = Vec::new();
-        let mut metadata_entries = Vec::new();
-        let mut message_count = 0;
-        let mut older_path_stats = WindowStats::default();
-        let mut older_usage: Vec<(String, OlderPathUsage)> = Vec::new();
-        let mut older_aggregates: HashMap<String, OlderPathUsage> = HashMap::new();
-        let mut first_user_line = None;
-        let mut expected: Option<String> = None;
-        let mut leaf_id = None;
-        let mut first_kept = None;
-        let mut found_boundary = false;
-        let mut retained_start = 0;
-        let mut compaction_count = 0;
-        let mut non_bootstrap = false;
-        let mut goal = None;
-        // The Anthropic subscription warning's once-per-session-lifecycle
-        // gate: set when the walk meets the marked-shown custom row (any
-        // position on the active branch hydrates it, exactly like `goal`).
-        let mut anthropic_warning_shown = false;
-        // The newest plan-mode change on the branch (hydrated like `goal`).
-        let mut plan_mode = None;
-        let mut window_done = false;
-        let mut seen = HashSet::new();
-        let mut thinking = None;
-        let mut tier = None;
-        let mut model = None;
-        // The boundary model: the usage fold seeds its timeline with this,
-        // not `model` (the leaf's).
-        let mut boundary_model = None;
-        let mut header = None;
-        while let Some(line) = reader.next()? {
-            let Ok(text) = std::str::from_utf8(&line) else {
-                return Ok(None);
+        let mut walk = WindowWalk::default();
+        let header = loop {
+            let Some(line) = reader.next()? else {
+                break None;
             };
-            let Ok(meta) = serde_json::from_str::<Envelope>(text) else {
-                return Ok(None);
-            };
-            if meta.kind == "session" {
-                if reader.position != 0
-                    || reader
-                        .pending
-                        .iter()
-                        .any(|byte| !byte.is_ascii_whitespace())
-                {
-                    return Ok(None);
-                }
-                header = serde_json::from_slice::<FileEntry>(&line).ok();
-                break;
+            match walk.visit(line, &reader)? {
+                WalkStep::Next => {}
+                WalkStep::Header(header) => break header,
+                WalkStep::Reject => return Ok(None),
             }
-            if !matches!(
-                meta.kind.as_str(),
-                "model_change" | "thinking_level_change" | "service_tier_change"
-            ) {
-                non_bootstrap = true;
-            }
-            if meta.kind == "compaction" {
-                compaction_count += 1;
-            }
-            if meta.kind == "message" {
-                message_count += 1;
-                if meta
-                    .message
-                    .as_ref()
-                    .is_some_and(|message| message.role == "user")
-                {
-                    first_user_line = Some(line.clone());
-                }
-            } else if window_done
-                && (matches!(
-                    meta.kind.as_str(),
-                    "session_info"
-                        | "session_state"
-                        | "agent_status"
-                        | "git_state"
-                        | "child_usage_attributed"
-                ) || matches!(
-                    (meta.kind.as_str(), meta.custom_type.as_deref()),
-                    (
-                        "custom",
-                        Some("provider_quota_park" | "provider_quota_resume")
-                    )
-                ))
-            {
-                metadata_entries.push(
-                    String::from_utf8(line.clone())
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-                );
-            }
-            if meta.kind == "child_usage_attributed" {
-                // Older-path targets are dropped from the retained metadata, so
-                // capture here or their attributed spend is lost. Newest-first,
-                // the FIRST aggregate seen per target is the cumulative one.
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-                    if let Some(target) = value.get("targetId").and_then(serde_json::Value::as_str)
-                    {
-                        // A malformed aggregate (null, a scalar) must not
-                        // replace a valid row usage with zeros.
-                        if let Some(aggregate) = value
-                            .get("aggregateUsage")
-                            .filter(|aggregate| aggregate.is_object())
-                        {
-                            older_aggregates
-                                .entry(target.to_owned())
-                                .or_insert_with(|| OlderPathUsage::from_usage(aggregate));
-                        }
-                    }
-                }
-            }
-            let Some(id) = meta.id.as_deref() else {
-                return Ok(None);
-            };
-            if !seen.insert(id.to_owned()) {
-                return Ok(None);
-            }
-            if leaf_id.is_none() {
-                leaf_id = Some(id.to_owned());
-                expected.clone_from(&leaf_id);
-            }
-            let on_path = expected.as_deref() == Some(id);
-            if on_path {
-                let role = display_role(
-                    &meta.kind,
-                    meta.message.as_ref().map(|message| message.role.as_str()),
-                );
-                if let Some(role) = role.filter(|_| window_done) {
-                    *older_path_stats
-                        .display_rows
-                        .entry(role.to_owned())
-                        .or_default() += 1;
-                }
-                if window_done && meta.kind == "message" {
-                    if let Some(message) = &meta.message {
-                        older_path_stats.total_messages += 1;
-                        match message.role.as_str() {
-                            "user" => older_path_stats.user_messages += 1,
-                            "toolResult" => older_path_stats.tool_results += 1,
-                            "assistant" => {
-                                older_path_stats.assistant_messages += 1;
-                                if let Some(MessageContentMetadata::Blocks(blocks)) =
-                                    &message.content
-                                {
-                                    older_path_stats.tool_calls += blocks
-                                        .iter()
-                                        .filter(|block| block.kind == "toolCall")
-                                        .count()
-                                        as u64;
-                                }
-                                // Recorded per row, not summed inline: an attribution
-                                // replaces its usage with the cumulative aggregate.
-                                older_usage.push((
-                                    id.to_owned(),
-                                    message
-                                        .usage
-                                        .as_ref()
-                                        .map(OlderPathUsage::from_usage)
-                                        .unwrap_or_default(),
-                                ));
-                            }
-                            _ => {}
-                        }
-                    }
-                } else if window_done {
-                    // The older path's compactions and other billed calls.
-                    if let Some(row) = super::billed_row::billed_line(&meta.kind, text) {
-                        older_usage.push((id.to_owned(), OlderPathUsage::from(row.usage)));
-                    }
-                }
-                expected.clone_from(&meta.parent_id);
-                if let Some(message) = meta
-                    .message
-                    .as_ref()
-                    .filter(|message| message.role == "assistant" && model.is_none())
-                {
-                    let (Some(provider), Some(name)) = (&message.provider, &message.model) else {
-                        return Ok(None);
-                    };
-                    model = Some((provider.clone(), name.clone()));
-                }
-            }
-            // Parse only retained bodies and sparse setting records; serde
-            // ignores the older ancestry without allocating it.
-            let entry = if !window_done
-                || (on_path
-                    && (matches!(
-                        meta.kind.as_str(),
-                        "model_change" | "thinking_level_change" | "service_tier_change"
-                    ) || (goal.is_none()
-                        && meta.custom_type.as_deref()
-                            == Some(crate::goals::GOAL_STATE_CUSTOM_TYPE))
-                        || (!anthropic_warning_shown
-                            && meta.custom_type.as_deref()
-                                == Some(crate::session::ANTHROPIC_WARNING_SHOWN_CUSTOM_TYPE))
-                        || (plan_mode.is_none()
-                            && meta.custom_type.as_deref()
-                                == Some(
-                                    crate::session_engine::plan_mode::PLAN_MODE_CHANGE_CUSTOM_TYPE,
-                                ))))
-            {
-                match serde_json::from_slice::<FileEntry>(&line) {
-                    Ok(entry) => Some(entry),
-                    Err(_) => return Ok(None),
-                }
-            } else {
-                None
-            };
-            if on_path {
-                if goal.is_none() {
-                    goal = entry.as_ref().and_then(valid_goal);
-                }
-                if !anthropic_warning_shown {
-                    anthropic_warning_shown = entry.as_ref().is_some_and(valid_warning_shown);
-                }
-                if plan_mode.is_none() {
-                    plan_mode = entry
-                        .as_ref()
-                        .and_then(crate::session_engine::plan_mode::plan_mode_of_entry);
-                }
-                match entry.as_ref() {
-                    Some(FileEntry::ThinkingLevelChange { payload, .. }) if thinking.is_none() => {
-                        thinking = Some(payload.thinking_level.clone());
-                    }
-                    Some(FileEntry::ServiceTierChange { payload, .. }) if tier.is_none() => {
-                        tier = Some(payload.service_tier);
-                    }
-                    Some(FileEntry::ModelChange { payload, .. }) => {
-                        if model.is_none() {
-                            model = Some((payload.provider.clone(), payload.model_id.clone()));
-                        }
-                        // The boundary model: the newest `model_change` in the discarded prefix.
-                        if window_done && boundary_model.is_none() {
-                            boundary_model =
-                                Some((payload.provider.clone(), payload.model_id.clone()));
-                        }
-                    }
-                    Some(FileEntry::Compaction { payload, .. }) if first_kept.is_none() => {
-                        first_kept = Some(payload.first_kept_entry_id.clone());
-                    }
-                    _ => {}
-                }
-                if first_kept.as_deref() == Some(id) {
-                    found_boundary = true;
-                }
-            }
-            if !window_done {
-                retained_start = reader.line_start;
-                retained.push(entry.expect("window entries parsed"));
-                raw_entries.push(
-                    String::from_utf8(line)
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-                );
-                window_done = found_boundary;
-            }
-        }
-        let Some(FileEntry::Header {
-            header: SessionHeader {
-                version: Some(3), ..
+        };
+        let Some(
+            header @ FileEntry::Header {
+                header: SessionHeader {
+                    version: Some(3), ..
+                },
             },
-        }) = &header
+        ) = header.map(|header| *header)
         else {
             return Ok(None);
         };
-        if expected.is_some() {
+        if walk.expected.is_some() {
             return Ok(None);
         }
-        retained.push(header.expect("header checked"));
-        retained.reverse();
-        raw_entries.reverse();
-        metadata_entries.reverse();
-        let retained_ids: HashSet<&str> = retained.iter().filter_map(FileEntry::id).collect();
-        let mut latest = std::collections::HashMap::new();
-        let mut keep = HashSet::new();
-        for (index, row) in metadata_entries.iter().enumerate() {
-            let value: serde_json::Value = serde_json::from_str(row)?;
-            let kind = value["type"].as_str().unwrap_or("");
-            match kind {
-                "session_info" | "session_state" | "git_state" => {
-                    latest.insert(kind.to_owned(), index);
-                }
-                "child_usage_attributed"
-                    if value["targetId"]
-                        .as_str()
-                        .is_some_and(|id| retained_ids.contains(id)) =>
-                {
-                    latest.insert(format!("attribution:{}", value["targetId"]), index);
-                }
-                // Quota-park episodes end on resume rows, so every
-                // park/resume row must survive the keep filter.
-                "custom"
-                    if matches!(
-                        value["customType"].as_str(),
-                        Some("provider_quota_park" | "provider_quota_resume")
-                    ) =>
-                {
-                    keep.insert(index);
-                }
-                _ => {}
-            }
-        }
-        keep.extend(latest.into_values());
-        metadata_entries = metadata_entries
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, row)| keep.contains(&index).then_some(row))
-            .collect();
-        // Fold oldest-first (the cost sum's float order matches the pre-fold
-        // walk): an attributed assistant reports its cumulative aggregate.
-        for (id, usage) in older_usage.iter().rev() {
-            let folded = older_aggregates.get(id).unwrap_or(usage);
-            older_path_stats.input += folded.input;
-            older_path_stats.output += folded.output;
-            older_path_stats.cache_read += folded.cache_read;
-            older_path_stats.cache_write += folded.cache_write;
-            older_path_stats.cost += folded.cost;
-        }
-        let first_user_message = first_user_line
-            .and_then(|line| serde_json::from_slice::<serde_json::Value>(&line).ok())
-            .and_then(|row| row.get("message").cloned());
-        let thinking_present = thinking.is_some();
-        let tier_present = tier.is_some();
-        let Some(leaf_id) = leaf_id else {
-            return Ok(None);
-        };
-        let snapshot = Snapshot {
-            version: window_cache::SNAPSHOT_VERSION,
-            generation: generation.clone(),
-            header: serde_json::to_string(&retained[0])?,
-            start: retained_start,
-            leaf: leaf_id.clone(),
-            thinking: thinking.clone().unwrap_or_else(|| "off".to_owned()),
-            thinking_present,
-            tier: tier.flatten(),
-            tier_present,
-            model: model.clone(),
-            boundary_model: boundary_model.clone(),
-            metadata: metadata_entries.clone(),
-            message_count,
-            compaction_count,
-            stats: older_path_stats.clone(),
-            first_user: first_user_message.clone(),
-            goal,
-            anthropic_warning_shown,
-            plan_mode,
-            non_bootstrap,
-            retained_whole_file: !window_done,
-        };
-        if !generation.valid(&reader.file, path)? {
-            return Ok(None);
-        }
-        // A disposable sidecar failure must never prevent opening the source.
-        let _ = window_cache::save(path, &snapshot);
-        apply_attributions(&mut retained, &metadata_entries);
-        super::apply_child_usage_attributions(&mut retained);
-        Ok(Some(Self {
-            path: path.to_owned(),
-            entries: retained,
-            raw_entries,
-            metadata_entries,
-            message_count,
-            older_path_stats,
-            first_user_message,
-            leaf_id,
-            settings: SessionContext {
-                messages: Vec::new(),
-                thinking_level: thinking.unwrap_or_else(|| "off".to_owned()),
-                service_tier: tier.flatten(),
-                model,
-            },
-            boundary_model,
-            full: false,
-            retained_whole_file: !window_done,
-            snapshot,
-            reads: reader.reads,
-            detached: false,
-        }))
+        walk.finish(path, header, &generation, reader)
     }
 
     fn from_snapshot(
