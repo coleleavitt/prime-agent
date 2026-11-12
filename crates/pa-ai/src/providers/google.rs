@@ -119,17 +119,34 @@ pub fn stream_google(
 }
 
 fn build_params(model: &Model, context: &Context, options: &GoogleOptions) -> Value {
+    gemini_request_body(
+        model,
+        context,
+        &options.base,
+        options.tool_choice,
+        options.thinking.as_ref(),
+    )
+}
+
+/// The Gemini request body Google Generative AI and Vertex AI share.
+pub(crate) fn gemini_request_body(
+    model: &Model,
+    context: &Context,
+    base: &StreamOptions,
+    tool_choice: Option<GoogleToolChoice>,
+    thinking: Option<&GoogleThinking>,
+) -> Value {
     let contents = convert_messages(model, context);
 
     let mut generation_config = Map::new();
-    if let Some(temperature) = options.base.temperature {
+    if let Some(temperature) = base.temperature {
         generation_config.insert("temperature".into(), json!(temperature));
     }
-    if let Some(max_tokens) = options.base.max_tokens {
+    if let Some(max_tokens) = base.max_tokens {
         generation_config.insert("maxOutputTokens".into(), json!(max_tokens));
     }
 
-    if let Some(thinking) = &options.thinking {
+    if let Some(thinking) = thinking {
         if thinking.enabled && model.reasoning {
             let mut thinking_config = Map::new();
             thinking_config.insert("includeThoughts".into(), json!(true));
@@ -167,7 +184,7 @@ fn build_params(model: &Model, context: &Context, options: &GoogleOptions) -> Va
         .as_ref()
         .is_some_and(|tools| !tools.is_empty())
     {
-        if let Some(tool_choice) = options.tool_choice {
+        if let Some(tool_choice) = tool_choice {
             body.insert(
                 "toolConfig".into(),
                 json!({

@@ -2,7 +2,7 @@
 //! authentication, the Vertex `streamGenerateContent` endpoint, and the shared Google stream
 //! processor.
 
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
 use crate::event_stream::{
     AssistantMessageEvent,
@@ -12,12 +12,7 @@ use crate::event_stream::{
     initial_assistant_message,
 };
 use crate::providers::google::{GoogleOptions, resolve_simple_thinking};
-use crate::providers::google_shared::{
-    API_GOOGLE_VERTEX,
-    convert_messages,
-    convert_tools,
-    get_disabled_thinking_config,
-};
+use crate::providers::google_shared::API_GOOGLE_VERTEX;
 use crate::providers::google_stream::GoogleStreamState;
 use crate::providers::simple_options::build_base_options;
 use crate::providers::stream_end::end_stream;
@@ -32,7 +27,6 @@ use crate::types::{
 };
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
 use crate::utils_inner::json_parse::parse_json_with_repair;
-use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
     ProviderError,
@@ -175,66 +169,13 @@ pub fn stream_google_vertex(
 }
 
 fn build_params(model: &Model, context: &Context, options: &GoogleVertexOptions) -> Value {
-    let contents = convert_messages(model, context);
-
-    let mut generation_config = Map::new();
-    if let Some(temperature) = options.base.temperature {
-        generation_config.insert("temperature".into(), json!(temperature));
-    }
-    if let Some(max_tokens) = options.base.max_tokens {
-        generation_config.insert("maxOutputTokens".into(), json!(max_tokens));
-    }
-    if let Some(thinking) = &options.thinking {
-        if thinking.enabled && model.reasoning {
-            let mut thinking_config = Map::new();
-            thinking_config.insert("includeThoughts".into(), json!(true));
-            if let Some(level) = thinking.level {
-                thinking_config.insert("thinkingLevel".into(), json!(level.as_str()));
-            } else if let Some(budget) = thinking.budget_tokens {
-                thinking_config.insert("thinkingBudget".into(), json!(budget));
-            }
-            generation_config.insert("thinkingConfig".into(), Value::Object(thinking_config));
-        } else if model.reasoning && !thinking.enabled {
-            generation_config.insert("thinkingConfig".into(), get_disabled_thinking_config(model));
-        }
-    }
-
-    let mut body = Map::new();
-    body.insert("contents".into(), json!(contents));
-    if !generation_config.is_empty() {
-        body.insert("generationConfig".into(), Value::Object(generation_config));
-    }
-    if let Some(system_prompt) = &context.system_prompt {
-        body.insert(
-            "systemInstruction".into(),
-            json!({ "parts": [{ "text": sanitize_surrogates(system_prompt) }] }),
-        );
-    }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            if let Some(converted) = convert_tools(tools, false) {
-                body.insert("tools".into(), json!(converted));
-            }
-        }
-    }
-    if context
-        .tools
-        .as_ref()
-        .is_some_and(|tools| !tools.is_empty())
-    {
-        if let Some(tool_choice) = options.tool_choice {
-            body.insert(
-                "toolConfig".into(),
-                json!({
-                    "functionCallingConfig": {
-                        "mode": crate::providers::google_shared::map_tool_choice(tool_choice.as_str()),
-                    },
-                }),
-            );
-        }
-    }
-
-    Value::Object(body)
+    crate::providers::google::gemini_request_body(
+        model,
+        context,
+        &options.base,
+        options.tool_choice,
+        options.thinking.as_ref(),
+    )
 }
 
 // Long by design: mirrors the provider's stream shape.
@@ -450,6 +391,8 @@ fn _options_marker() -> Option<GoogleOptions> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::types::ModelThinkingLevel;
 
