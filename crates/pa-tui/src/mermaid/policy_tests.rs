@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 
 use super::{Axis, Layout, Notice, NoticeLevel, Rotated, layout, rotate_flowchart};
-use crate::render::tests::art_json;
+use crate::mermaid::render::tests::art_json;
 
 const POLICY_GOLDENS: &str = include_str!("policy_goldens.json");
 
@@ -145,7 +145,7 @@ fn side_by_side() -> String {
     lines.join("\n")
 }
 
-fn art_of(layout: Layout) -> crate::Art {
+fn art_of(layout: Layout) -> crate::mermaid::render::Art {
     match layout {
         Layout::Art { art, .. } => art,
         Layout::Source { notices } => panic!("expected art, got source with {notices:?}"),

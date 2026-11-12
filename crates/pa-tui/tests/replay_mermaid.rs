@@ -1,7 +1,7 @@
 //! Replay-path Mermaid rendering, whole frame: a settled assistant message's `mermaid`
 //! fence renders as the diagram (TS `components/mermaid.ts`, default `streaming` mode),
-//! falls back to the fence when the terminal is too narrow for it, and stays a fence with
-//! the setting off.
+//! falls back to the fence with a note when the terminal is too narrow for it, and stays a
+//! fence with the setting off.
 // Casts: structurally bounded terminal-layout arithmetic; guarded conversions add panic paths.
 #![allow(
     clippy::cast_possible_truncation,
@@ -49,23 +49,25 @@ fn assistant_rows(frame: &[String]) -> Vec<String> {
     frame[start..=end].to_vec()
 }
 
-/// The diagram the fence draws (10 columns wide), joined to the paragraph above and below
-/// exactly as TS's rewritten markdown joins it (no blank rows: the fence had none).
-const DIAGRAM_ROWS: [&str; 15] = [
+/// The diagram the fence draws (10 columns wide), joined to the paragraph above exactly as
+/// TS's rewritten markdown joins it (no blank row: the fence had none); the paragraph ends
+/// after the diagram, so the text below stands apart.
+const DIAGRAM_ROWS: [&str; 16] = [
     " The flow:",
     "  ┌───────┐",
     "  │ Start │",
     "  └───┬───┘",
     "      │",
     "      ▼",
-    " ╭────────╮",
-    " │ Ready? │",
-    " ╰────┬───╯",
+    " ╔════════╗",
+    " ║ Ready? ║",
+    " ╚════╤═══╝",
     "      │",
     "      ▼yes",
     "  ┌──────┐",
     "  │ 开始 │",
     "  └──────┘",
+    "",
     " Done.",
 ];
 
@@ -86,10 +88,12 @@ fn a_settled_mermaid_fence_renders_as_its_diagram() {
 
 #[test]
 fn a_terminal_too_narrow_for_the_diagram_shows_the_fence() {
-    // One column short of the diagram.
+    // One column short of the diagram, which has no other axis to turn to (its left to
+    // right layout is wider still).
     let frame = frame_text(MermaidMode::Streaming, 11, 30);
     let rows = assistant_rows(&frame);
-    // The fence renders as code, wrapped like any code block at this width.
+    // The fence renders as code, wrapped like any code block at this width, then the
+    // note giving the columns it needs.
     assert_eq!(
         rows,
         vec![
@@ -105,6 +109,15 @@ fn a_terminal_too_narrow_for_the_diagram_shows_the_fence() {
             "     B",
             " -->|yes|",
             " C[开始]",
+            "",
+            " Mermaid",
+            " diagram",
+            " not",
+            " drawn:",
+            " needs 10",
+            " columns,",
+            " 9",
+            " available",
             "",
             " Done.",
         ]

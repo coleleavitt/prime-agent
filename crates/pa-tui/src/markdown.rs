@@ -9,9 +9,9 @@ mod inline;
 mod mermaid_blocks;
 #[cfg(test)]
 mod mermaid_blocks_tests;
-/// The golden-replaying diagram renderer the markdown and plain-text seam tests share.
+/// The recorded diagram layouts the markdown and plain-text diagram tests share.
 #[cfg(test)]
-pub(crate) use mermaid_blocks_tests::installed as test_support;
+pub(crate) use mermaid_blocks_tests::replay as test_support;
 #[cfg(test)]
 mod tests;
 

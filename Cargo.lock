@@ -2738,7 +2738,6 @@ dependencies = [
  "pa-learning",
  "pa-ledger",
  "pa-lsp",
- "pa-mermaid",
  "pa-observer",
  "pa-os-sandbox",
  "pa-permissions",
@@ -2970,15 +2969,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "pa-mermaid"
-version = "0.10.3"
-dependencies = [
- "serde_json",
- "unicode-segmentation",
- "unicode-width 0.2.0",
 ]
 
 [[package]]

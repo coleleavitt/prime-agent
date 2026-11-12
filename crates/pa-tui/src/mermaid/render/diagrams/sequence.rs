@@ -15,9 +15,9 @@ use super::super::layout_seq::layout_sequence;
 use super::super::statements::{first_word, header_kind, non_empty, statements_of};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["sequencediagram"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["sequencediagram"];
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let seq = parse_sequence(src)?;
     let canvas = layout_sequence(&seq)?;
     Some(Drawn {
@@ -27,7 +27,7 @@ pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::render) enum SeqHead {
+pub(in crate::mermaid::render) enum SeqHead {
     Arrow,
     Cross,
 }
@@ -65,14 +65,14 @@ const SEQ_BLOCKS: [&str; 9] = [
 const SEQ_CONTINUATIONS: [&str; 3] = ["else", "and", "option"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::render) enum NoteAnchor {
+pub(in crate::mermaid::render) enum NoteAnchor {
     Over { from: usize, to: usize },
     Left { at: usize },
     Right { at: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::render) enum SeqItem {
+pub(in crate::mermaid::render) enum SeqItem {
     Message {
         from: usize,
         to: usize,
@@ -91,18 +91,18 @@ pub(in crate::render) enum SeqItem {
 
 /// A hot span of one lifeline: item indices, `to` unset while still open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::render) struct Activation {
-    pub(in crate::render) at: usize,
-    pub(in crate::render) from: usize,
-    pub(in crate::render) to: Option<usize>,
+pub(in crate::mermaid::render) struct Activation {
+    pub(in crate::mermaid::render) at: usize,
+    pub(in crate::mermaid::render) from: usize,
+    pub(in crate::mermaid::render) to: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(in crate::render) struct Sequence {
-    pub(in crate::render) labels: Vec<String>,
+pub(in crate::mermaid::render) struct Sequence {
+    pub(in crate::mermaid::render) labels: Vec<String>,
     index: HashMap<String, usize>,
-    pub(in crate::render) items: Vec<SeqItem>,
-    pub(in crate::render) activations: Vec<Activation>,
+    pub(in crate::mermaid::render) items: Vec<SeqItem>,
+    pub(in crate::mermaid::render) activations: Vec<Activation>,
     /// The cap that was hit, if any: the parser stops and renders the prefix.
     truncated: Option<String>,
     /// Statements the grammar could not read and dropped.

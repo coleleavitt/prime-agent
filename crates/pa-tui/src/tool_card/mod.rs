@@ -147,8 +147,8 @@ pub fn render_tool_card(
     )
 }
 
-/// [`render_tool_card`] under the `markdown.mermaid` setting, which an installed diagram
-/// renderer ([`crate::diagram`]) honours in the agent messages an ipython cell sent.
+/// [`render_tool_card`] under the `markdown.mermaid` setting, which decides when the agent
+/// messages an ipython cell sent draw their diagrams ([`crate::diagram`]).
 #[must_use]
 #[expect(
     clippy::too_many_arguments,

@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-retrieval`, `pa-refusal`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`, `pa-cc-import`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-retrieval`, `pa-refusal`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`, `pa-cc-import`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -68,14 +68,6 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      `pa_core::refinement::executor::AutoRefinePolicy` (the review's prompt texts and what an approval runs; the
      review's whole reply is on `AutoRefineReview::reply`);
    - harness entries keep the keys pa-core does not model (`HarnessEntry::extensions`), as the state keeps its own.
-   - TUI diagrams: `pa_tui::diagram::install_diagram_renderer` takes a process-wide `DiagramRenderer` (once,
-     before the first frame; `pa-cli` installs it from `features::install_tui_features`) that lays out every
-     `mermaid` fence instead of the built-in renderer — drawn rows or the kept source, each with notice lines, the
-     paragraph closed after them — and may opt into custom messages, agent messages, and `/btw` answers
-     (`draws_on`), all under the `markdown.mermaid` mode. Without one nothing changes. `pa-tui` stays unaware of the
-     feature crates, so `pa-cli` adapts a crate's layout onto the seam's types. A drawn layout that changed the
-     diagram to fit sets `DiagramLayout::Rows::adapted`; the TUI counts each settled diagram once per run
-     (`diagram::take_render_counts`) for the composition root's `tui exit`.
    - bundled skills: `SessionFeature::bundled_skills` names directories under `skills/.features/` (hidden from every
      native skill scan, shipped inside `skills/`), loaded as built-in skills only while the feature is installed.
    - per-session skill visibility: `SessionFeature::session_skill_visible(context, skill_name)` (default `true`)
@@ -153,7 +145,7 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 2 | `pa-recall`, `pa-toolforge`, `pa-dream` (standalone zero-token runner), `pa-workflow` (v1) | `pa-trace` (spans) |
 | 3 | `pa-ledger` (failure ledger, resolution index) → `pa-ravo` (gate, referee, trust, run service) | `pa-trace`, `pa-ledger` |
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
-| 5 | persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
+| 5 | persisted session-catalog index, Mermaid rendering (`pa-mermaid`, since folded into `pa-tui`) | per item |
 | 6 | Claude Code's flag-gated features: `pa-observer` (observer agents), `pa-advisor` (`advisor.ask`); both inert unless the `experimental` settings turn them on | `pa-core` (`session_engine::side_model`) |
 | 7 | `pa-cc-import` (Claude Code transcripts listed beside the saved sessions, imported into a new session file on open) | `pa-core` (`session::external_sessions`), `pa-daemon` (`external_sessions` capability) |
 

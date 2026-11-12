@@ -28,10 +28,9 @@ static SEEN: [AtomicU64; SEEN_SLOTS] = [const { AtomicU64::new(0) }; SEEN_SLOTS]
 pub struct RenderCounts {
     /// Drawn as diagram rows (adapted or not).
     pub drawn: u64,
-    /// Kept as their fenced source: unreadable, unsupported, too wide, or (built-in
-    /// renderer) incomplete.
+    /// Kept as their fenced source: unreadable, unsupported, or too wide on both axes.
     pub kept_source: u64,
-    /// Drawn after the installed renderer adapted the layout to fit (a subset of `drawn`).
+    /// Drawn on the other axis to fit the width (a subset of `drawn`).
     pub adapted: u64,
 }
 
@@ -43,11 +42,13 @@ pub(crate) enum Outcome {
 }
 
 impl Outcome {
-    /// The outcome an installed renderer's layout shows.
-    pub(crate) fn of(layout: &super::DiagramLayout) -> Self {
+    /// The outcome a layout shows.
+    pub(crate) fn of(layout: &crate::mermaid::Layout) -> Self {
         match layout {
-            super::DiagramLayout::Rows { adapted, .. } => Self::Drawn { adapted: *adapted },
-            super::DiagramLayout::Source { .. } => Self::KeptSource,
+            crate::mermaid::Layout::Art { rotated, .. } => Self::Drawn {
+                adapted: rotated.is_some(),
+            },
+            crate::mermaid::Layout::Source { .. } => Self::KeptSource,
         }
     }
 }

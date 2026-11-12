@@ -1,7 +1,7 @@
-//! The run's diagram render counts (`pa_tui::diagram::take_render_counts`) under the
-//! built-in renderer: each settled diagram counts once however often it repaints, a
-//! streaming paint never counts, the off mode counts nothing, and a fence kept as source
-//! counts as such. (The counts are process-wide, so this binary's tests take turns.)
+//! The run's diagram render counts (`pa_tui::diagram::take_render_counts`): each settled
+//! diagram counts once however often it repaints, a streaming paint never counts, the off
+//! mode counts nothing, and a fence kept as source or drawn on the other axis counts as
+//! such. (The counts are process-wide, so this binary's tests take turns.)
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -57,24 +57,29 @@ fn the_off_mode_counts_nothing() {
 }
 
 #[test]
-fn fences_kept_as_source_count_as_kept() {
+fn fences_kept_as_source_or_drawn_on_the_other_axis_count_as_such() {
     let _turn = turn();
-    // Unsupported type, then a diagram wider than the transcript.
+    // Unsupported type, then a diagram wider than the transcript with no other axis.
     paint(
-        "```mermaid\npie\n  \"a\" : 1\n```\n",
+        "```mermaid\ngantt\n  title Plan\n```\n",
         80,
         MermaidMode::Streaming,
         false,
     );
-    let wide = "```mermaid\nflowchart LR\n  Alpha_node_one --> Bravo_node_two --> Charlie_node_three --> Delta_node_four\n```\n";
-    paint(wide, 30, MermaidMode::Streaming, false);
-    paint(wide, 30, MermaidMode::Streaming, false);
+    let too_wide =
+        "```mermaid\nsequenceDiagram\n  Alpha_participant->>Bravo_participant: hello\n```\n";
+    paint(too_wide, 30, MermaidMode::Streaming, false);
+    paint(too_wide, 30, MermaidMode::Streaming, false);
+    // A chain too wide left to right, drawn top to bottom.
+    let turned = "```mermaid\nflowchart LR\n  Alpha_node_one --> Bravo_node_two --> Charlie_node_three --> Delta_node_four\n```\n";
+    paint(turned, 30, MermaidMode::Streaming, false);
+    paint(turned, 30, MermaidMode::Streaming, false);
     assert_eq!(
         take_render_counts(),
         RenderCounts {
-            drawn: 0,
+            drawn: 1,
             kept_source: 2,
-            adapted: 0,
+            adapted: 1,
         }
     );
 }

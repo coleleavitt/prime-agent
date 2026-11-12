@@ -10,7 +10,7 @@ use super::super::statements::{header_kind, statements_of};
 use super::super::{Role, js_text};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["timeline"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["timeline"];
 
 /// One output row: a period cell (blank on continuations) and an event; section headers
 /// take a row of their own.
@@ -20,7 +20,7 @@ struct Row {
     section: bool,
 }
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let (title, rows, warnings) = parse_timeline(src)?;
 
     let period_w = rows

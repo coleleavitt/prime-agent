@@ -243,10 +243,10 @@ The fork's TS-only features are ported as removable feature crates (`docs/fork-f
 was deleted, tag `workflow-v2-dormant`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
 `pa-retrieval` (flyrag learning rerank of daemon sessions' harness digest, fed by a tick at every agent stop;
 needs `pa-ledger`), `pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
-`pa-session-index`, `pa-mermaid`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
+`pa-session-index`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
 `~/.anthropic-accounts` store via the vendored anthropic-rs SDK). The Claude Code parity port added `pa-web`,
 `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp` and `pa-cc-import` (all in pa-cli's default features;
-observer and advisor stay inert until their `experimental` settings name a model). Native upstream-parity Mermaid rendering lives in `pa-tui/src/mermaid/`. On-disk
+observer and advisor stay inert until their `experimental` settings name a model). Mermaid rendering (the fork's lovely-mermaid 0.3.3 port and its wide-diagram policy, formerly `pa-mermaid`) is built into `pa-tui/src/mermaid/`, so the native build draws diagrams too. On-disk
 formats are byte-compatible with the TS fork, proven by node-generated goldens in each crate's `tests/`. Static bug
 rules for this repo's hazard classes: `codegraph-rules/` (`codegraph analyze rules`).
 

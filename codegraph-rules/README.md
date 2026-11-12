@@ -46,7 +46,7 @@ A panic while any holder has the guard poisons a std lock, and every later
 The convention is `pa_types::sync::{MutexExt::lock_or_recover,
 RwLockExt::read_or_recover, RwLockExt::write_or_recover}`, which recover the
 guard through `PoisonError::into_inner`; the leaf crates with no pa-types
-dependency (pa-agent, pa-telemetry, pa-mermaid) spell it
+dependency (pa-agent, pa-telemetry) spell it
 `.unwrap_or_else(PoisonError::into_inner)`. `fix-lockpoison` migrated all 748
 product sites (pa-daemon 508, pa-core 95, pa-agent 62, pa-tui 31, pa-ai 26,
 pa-cli 12, pa-models 9, pa-telemetry 3, pa-mermaid 2); no site was kept as an

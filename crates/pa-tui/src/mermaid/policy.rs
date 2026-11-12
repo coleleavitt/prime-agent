@@ -7,7 +7,7 @@
 //! are advisory: the art is still drawn and they are listed beside it. Notices are
 //! omitted while streaming, where nearly every intermediate state warns.
 
-use crate::render::{Art, diagram_kind, render_cached};
+use super::render::{Art, diagram_kind, render_cached};
 
 /// The axis a rotated flowchart is drawn on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,14 +26,14 @@ pub struct Rotated {
 }
 
 /// How loud a notice under a diagram is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NoticeLevel {
     Info,
     Warning,
 }
 
 /// A line shown under a diagram (or its kept source).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Notice {
     pub level: NoticeLevel,
     pub text: String,

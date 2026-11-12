@@ -12,9 +12,9 @@ use super::super::layout::layout_class;
 use super::super::statements::{header_kind, non_empty, statements_of};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["erdiagram"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["erdiagram"];
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let mut graph = parse_er(src)?;
     let canvas = layout_class(&mut graph)?;
     Some(Drawn {

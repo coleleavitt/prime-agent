@@ -139,7 +139,7 @@ impl SideQuestionPane {
 
     /// Render the pane: blank surfaced row, the turns, and the dim hint row, every row painted with
     /// the popup background and padded to the full width. `mermaid` (the `markdown.mermaid`
-    /// setting) applies to answers when an installed diagram renderer draws there.
+    /// setting) decides when answers draw their diagrams.
     #[must_use]
     pub fn render(
         &self,
@@ -188,11 +188,10 @@ impl SideQuestionPane {
             // The plain text renders in the user-message color, not the markdown
             // body color.
             style.body = theme.fg_style(ThemeColor::UserMessageText);
-            style.mermaid = crate::diagram::surface_render(
-                crate::diagram::DiagramSurface::SideAnswer,
-                mermaid,
-                turn.status == "running",
-            );
+            style.mermaid = Some(crate::markdown::MermaidRender {
+                mode: mermaid,
+                streaming: turn.status == "running",
+            });
             let content_width = width.saturating_sub(PADDING_X).max(1);
             let mut rendered = if turn.answer.is_empty() {
                 Vec::new()

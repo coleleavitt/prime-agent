@@ -1,110 +1,46 @@
-//! Source text to diagram model: statements, the diagram-kind header, and the flowchart
-//! grammar. Ported from grok-mermaid 0.2.3 `parse.ts` (Apache-2.0; see
-//! `LICENSE-grok-mermaid`). Every `parse_*` returns `None` when the source is not that kind
-//! of diagram or exceeds a cap.
+//! `graph` / `flowchart`: node chains with inline shapes and labelled links, plus
+//! `subgraph` grouping. Ported from lovely-mermaid 0.3.3 `diagrams/flowchart.ts`
+//! (Apache-2.0; see `LICENSE-lovely-mermaid`).
+//!
+//! The grammar is lenient: a statement contributes whatever prefix parsed and the rest is
+//! dropped, recorded in `graph.warnings`.
 
-mod class;
-mod sequence;
-mod state;
+use super::super::graph::{
+    Edge,
+    Graph,
+    Group,
+    Head,
+    LineKind,
+    MAX_GROUP_DEPTH,
+    MAX_GROUPS,
+    Shape,
+    parse_dir,
+};
+use super::super::js_text;
+use super::super::labels::{ascii_lower, clean_label, decode_html_entities, is_id_char};
+use super::super::layout::{layout_flowchart, layout_grouped};
+use super::super::statements::{first_word, header_kind, non_empty, split_top, statements_of};
+use super::Drawn;
 
-pub(super) use class::{display_generics, parse_class, parse_er};
-pub(super) use sequence::{NoteAnchor, SeqHead, SeqItem, Sequence, parse_sequence};
-pub(super) use state::parse_state;
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["graph", "flowchart"];
 
-use super::graph::{Edge, Graph, Head, LineKind, MAX_GROUP_DEPTH, MAX_GROUPS, Shape, parse_dir};
-use super::js_text;
-use super::labels::{ascii_lower, clean_label, decode_html_entities, is_id_char, src_lines};
-
-/// Split one source line into statements on `;`, stopping at a `%%` comment. Quoted
-/// spans are opaque, so a label may contain `;` and `%%`.
-fn split_statements(line: &str, out: &mut Vec<String>) {
-    let chars: Vec<char> = line.chars().collect();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-    let flush = |cur: &mut String, out: &mut Vec<String>| {
-        let trimmed = js_text::trim(cur);
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_owned());
-        }
-        cur.clear();
-    };
-    for (i, &c) in chars.iter().enumerate() {
-        if in_quotes {
-            if c == '"' {
-                in_quotes = false;
-            }
-            cur.push(c);
-        } else if c == '"' {
-            in_quotes = true;
-            cur.push(c);
-        } else if c == '%' && chars.get(i + 1) == Some(&'%') {
-            break;
-        } else if c == ';' {
-            flush(&mut cur, out);
-        } else {
-            cur.push(c);
-        }
-    }
-    flush(&mut cur, out);
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
+    let mut graph = parse_graph(src)?;
+    let canvas = if graph.groups.is_empty() {
+        layout_flowchart(&mut graph)
+    } else {
+        layout_grouped(&graph)
+    }?;
+    Some(Drawn {
+        canvas,
+        warnings: graph.warnings,
+    })
 }
 
-/// All statements in a source block, in order.
-fn statements_of(src: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in src_lines(src) {
-        split_statements(line, &mut out);
-    }
-    out
-}
-
-fn first_word(s: &str) -> &str {
-    js_text::words(s).first().copied().unwrap_or("")
-}
-
-/// Split on the first occurrence of `sep` (Rust's `split_once`, which the package mirrors).
-fn split_once<'a>(s: &'a str, sep: &str) -> Option<(&'a str, &'a str)> {
-    s.split_once(sep)
-}
-
-fn non_empty(s: String) -> Option<String> {
-    (!s.is_empty()).then_some(s)
-}
-
-/// Diagram kind from the header statement, lowercased.
-fn header_kind(statements: &[String]) -> Option<String> {
-    let kind = first_word(statements.first()?);
-    (!kind.is_empty()).then(|| ascii_lower(kind))
-}
-
-/// A diagram type this renderer draws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DiagramKind {
-    Flowchart,
-    State,
-    Class,
-    Er,
-    Sequence,
-}
-
-/// The kind of diagram `src` declares, from its header alone.
-pub(super) fn diagram_kind(src: &str) -> Option<DiagramKind> {
-    let kind = header_kind(&statements_of(src))?;
-    match kind.as_str() {
-        "graph" | "flowchart" => Some(DiagramKind::Flowchart),
-        "erdiagram" => Some(DiagramKind::Er),
-        "sequencediagram" => Some(DiagramKind::Sequence),
-        k if k.starts_with("statediagram") => Some(DiagramKind::State),
-        k if k.starts_with("classdiagram") => Some(DiagramKind::Class),
-        _ => None,
-    }
-}
-
-// ----------------------------------------------------------------- flowchart
-
-pub(super) fn parse_graph(src: &str) -> Option<Graph> {
+fn parse_graph(src: &str) -> Option<Graph> {
     let statements = statements_of(src);
     let kind = header_kind(&statements)?;
-    if kind != "graph" && kind != "flowchart" {
+    if !HEADERS.contains(&kind.as_str()) {
         return None;
     }
 
@@ -116,32 +52,42 @@ pub(super) fn parse_graph(src: &str) -> Option<Graph> {
         match ascii_lower(first_word(st)).as_str() {
             "subgraph" => {
                 if graph.groups.len() >= MAX_GROUPS || stack.len() >= MAX_GROUP_DEPTH {
-                    return None;
+                    graph.truncate(format!(
+                        "subgraph cap ({MAX_GROUPS} groups, depth {MAX_GROUP_DEPTH}) reached"
+                    ));
+                } else {
+                    let (id, label) = parse_subgraph_decl(js_text::trim(&st["subgraph".len()..]));
+                    graph.groups.push(Group {
+                        id,
+                        label,
+                        parent: stack.last().copied(),
+                    });
+                    stack.push(graph.groups.len() - 1);
+                    graph.cur_group = stack.last().copied();
+                    continue;
                 }
-                let (id, label) = parse_subgraph_decl(js_text::trim(&st["subgraph".len()..]));
-                graph.groups.push(super::graph::Group {
-                    id,
-                    label,
-                    parent: stack.last().copied(),
-                });
-                stack.push(graph.groups.len() - 1);
-                graph.cur_group = stack.last().copied();
-                continue;
             }
             "end" => {
                 stack.pop();
                 graph.cur_group = stack.last().copied();
                 continue;
             }
-            "classdef" | "class" | "style" | "linkstyle" | "click" | "direction" => continue,
+            // Author classes, link targets, and styling carry no cell of their own.
+            "classdef" | "class" | "click" | "style" | "linkstyle" | "direction" => continue,
             _ => {}
         }
-        parse_statement(st, &mut graph);
-        if graph.over_cap {
-            return None;
+        if graph.truncated.is_none() {
+            parse_statement(st, &mut graph);
+        }
+        if graph.truncated.is_some() {
+            break;
         }
     }
 
+    if let Some(cap) = &graph.truncated {
+        let warning = format!("diagram truncated: {cap}");
+        graph.warnings.push(warning);
+    }
     (!graph.nodes.is_empty()).then_some(graph)
 }
 
@@ -167,15 +113,23 @@ fn collect(chars: &[char]) -> String {
     chars.iter().collect()
 }
 
+/// Warn about unread source unless a cap already explains it.
+fn warn(graph: &mut Graph, warning: String) {
+    if graph.truncated.is_none() {
+        graph.warnings.push(warning);
+    }
+}
+
 /// A chain of `node link node link node ...`, each link fanning out over `&`. Parses as far
 /// as it can and keeps the prefix; whatever it could not read lands in `graph.warnings`.
 fn parse_statement(st: &str, graph: &mut Graph) {
     let chars: Vec<char> = st.chars().collect();
 
     let Some((head, next)) = parse_node_group(&chars, 0, graph) else {
-        graph
-            .warnings
-            .push(format!("dropped, does not start with a node: \"{st}\""));
+        warn(
+            graph,
+            format!("dropped, does not start with a node: \"{st}\""),
+        );
         return;
     };
     let mut prev = head;
@@ -188,16 +142,12 @@ fn parse_statement(st: &str, graph: &mut Graph) {
         }
         let Some(link) = parse_link(&chars, i) else {
             let rest = collect(&chars[i..]);
-            graph
-                .warnings
-                .push(format!("dropped, expected a link: \"{rest}\""));
+            warn(graph, format!("dropped, expected a link: \"{rest}\""));
             break;
         };
         i = skip_spaces(&chars, link.next);
         let Some((target, next)) = parse_node_group(&chars, i, graph) else {
-            graph
-                .warnings
-                .push(format!("dropped, link has no target: \"{st}\""));
+            warn(graph, format!("dropped, link has no target: \"{st}\""));
             break;
         };
         i = next;
@@ -206,14 +156,14 @@ fn parse_statement(st: &str, graph: &mut Graph) {
                 // `A <-- B` reads right-to-left: swap the endpoints so the arrow written on
                 // the left becomes a normal forward head.
                 let reversed = link.left == Head::Arrow && link.right != Head::Arrow;
-                let pushed = graph.push_edge(Edge {
-                    from: if reversed { t } else { f },
-                    to: if reversed { f } else { t },
-                    label: link.label.clone(),
-                    head_to: if reversed { Head::Arrow } else { link.right },
-                    head_from: if reversed { link.right } else { link.left },
-                    line: link.line,
-                });
+                let pushed = graph.push_edge(Edge::new(
+                    if reversed { t } else { f },
+                    if reversed { f } else { t },
+                    link.label.clone(),
+                    if reversed { Head::Arrow } else { link.right },
+                    if reversed { link.right } else { link.left },
+                    link.line,
+                ));
                 if !pushed {
                     return;
                 }
@@ -250,9 +200,9 @@ fn skip_spaces(chars: &[char], mut i: usize) -> usize {
     i
 }
 
-/// The end of a `:::name` style tag starting at `at`, if one is there: a name never ends
+/// The end of a `:::name` class tag starting at `at`, if one is there: a name never ends
 /// in `-`, so `A:::x-->B` keeps its link.
-fn style_tag_end(chars: &[char], at: usize) -> Option<usize> {
+fn class_tag_end(chars: &[char], at: usize) -> Option<usize> {
     if chars.get(at..at + 3) != Some(&[':', ':', ':'][..]) {
         return None;
     }
@@ -269,7 +219,12 @@ fn style_tag_end(chars: &[char], at: usize) -> Option<usize> {
 fn parse_node(chars: &[char], start: usize, graph: &mut Graph) -> Option<(usize, usize)> {
     let mut i = skip_spaces(chars, start);
     let id_start = i;
-    while i < chars.len() && is_id_char(chars[i]) {
+    // `-` joins the id only when an id char follows, so kebab-case ids parse while `-->`
+    // / `-.` / `--` still terminate.
+    while i < chars.len()
+        && (is_id_char(chars[i])
+            || (chars[i] == '-' && chars.get(i + 1).is_some_and(|&c| is_id_char(c))))
+    {
         i += 1;
     }
     if i == id_start {
@@ -277,7 +232,11 @@ fn parse_node(chars: &[char], start: usize, graph: &mut Graph) -> Option<(usize,
     }
     let id = collect(&chars[id_start..i]);
 
-    let shaped = read_shape_at(chars, i);
+    let shaped = if chars.get(i) == Some(&'@') && chars.get(i + 1) == Some(&'{') {
+        read_at_shape(chars, i + 2)
+    } else {
+        read_shape_at(chars, i)
+    };
     if let Some(unclosed) = shaped.unclosed {
         graph.warnings.push(format!(
             "node \"{id}\": label is missing its closing `{unclosed}`"
@@ -285,9 +244,9 @@ fn parse_node(chars: &[char], start: usize, graph: &mut Graph) -> Option<(usize,
     }
     let index = graph.node_index(&id, shaped.label, shaped.shape)?;
 
-    // `id:::name` (after any shape) attaches a style class; swallow it so the statement
+    // `id:::name` (after any shape) attaches an author class; swallow it so the statement
     // keeps parsing.
-    let next = style_tag_end(chars, shaped.after).unwrap_or(shaped.after);
+    let next = class_tag_end(chars, shaped.after).unwrap_or(shaped.after);
     Some((index, next))
 }
 
@@ -363,6 +322,69 @@ fn read_shape(chars: &[char], start: usize, closer: &'static str, shape: Shape) 
     }
 }
 
+/// Flowchart v2 shape names that read as something other than a plain box; every other
+/// name means "some kind of box".
+fn at_shape(name: &str) -> Shape {
+    match name {
+        "rounded" | "stadium" | "pill" | "terminal" | "cyl" | "cylinder" | "database" | "db"
+        | "circle" | "circ" | "sm-circ" | "small-circle" | "dbl-circ" | "double-circle"
+        | "fr-circ" | "framed-circle" | "start" | "stop" | "event" | "delay" | "cloud" | "bang" => {
+            Shape::Round
+        }
+        "diam" | "diamond" | "decision" | "question" | "hex" | "hexagon" | "prepare" => {
+            Shape::Diamond
+        }
+        _ => Shape::Rect,
+    }
+}
+
+/// The v2 node syntax `id@{shape: cyl, label: "..."}`, cursor past the `@{`: `key: value`
+/// pairs split on top-level commas; quoted values may hold commas and `}`.
+fn read_at_shape(chars: &[char], start: usize) -> Shaped {
+    let mut i = start;
+    let mut depth = 0usize;
+    let mut in_quotes = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_quotes {
+            if c == '"' {
+                in_quotes = false;
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            if depth == 0 {
+                break;
+            }
+            depth -= 1;
+        }
+        i += 1;
+    }
+    let body = collect(&chars[start..i]);
+    let closed = chars.get(i) == Some(&'}');
+
+    let mut shape = Shape::Rect;
+    let mut label = None;
+    for pair in split_top(&body, |c| c == ',') {
+        let Some((key, value)) = pair.split_once(':') else {
+            continue;
+        };
+        match ascii_lower(js_text::trim(key)).as_str() {
+            "shape" => shape = at_shape(&ascii_lower(js_text::trim(value))),
+            "label" => label = non_empty(clean_label(value)),
+            _ => {}
+        }
+    }
+    Shaped {
+        shape,
+        label,
+        after: if closed { i + 1 } else { chars.len() },
+        unclosed: (!closed).then_some("}"),
+    }
+}
+
 fn is_link_char(c: char) -> bool {
     matches!(c, '-' | '.' | '=' | '<' | '>')
 }
@@ -414,7 +436,12 @@ fn parse_link(chars: &[char], start: usize) -> Option<Link> {
     if chars.get(i) == Some(&'|') {
         i += 1;
         let l_start = i;
-        while i < chars.len() && chars[i] != '|' {
+        // A quoted stretch keeps its `|`s as text: `-->|"a|b"|`.
+        let mut in_quotes = false;
+        while i < chars.len() && (in_quotes || chars[i] != '|') {
+            if chars[i] == '"' {
+                in_quotes = !in_quotes;
+            }
             i += 1;
         }
         let label = clean_label(&collect(&chars[l_start..i]));
@@ -433,8 +460,23 @@ fn parse_link(chars: &[char], start: usize) -> Option<Link> {
     if right == Head::None {
         let text_start = skip_spaces(chars, i);
         let mut j = text_start;
-        while j < chars.len() && !is_link_char(chars[j]) {
-            j += 1;
+        // The label runs to the closing operator, which always starts with two link chars
+        // (`--`, `-.`, `==`): a lone `=`/`.`/`-` is label text, and a quoted stretch is
+        // label text throughout.
+        while j < chars.len() {
+            if chars[j] == '"' {
+                j += 1;
+                while j < chars.len() && chars[j] != '"' {
+                    j += 1;
+                }
+                if j < chars.len() {
+                    j += 1;
+                }
+            } else if is_link_char(chars[j]) && chars.get(j + 1).is_some_and(|&c| is_link_char(c)) {
+                break;
+            } else {
+                j += 1;
+            }
         }
         if j < chars.len() && j > text_start && chars[j] != '<' {
             let text = collect(&chars[text_start..j]);
@@ -490,21 +532,4 @@ fn trailing_head(chars: &[char], i: usize) -> Option<(Head, usize)> {
     };
     let boundary = matches!(chars.get(i + 1), None | Some(' ' | '\t' | '|' | '&' | ';'));
     boundary.then_some((head, i + 1))
-}
-
-/// Remove every `:::name` style tag from a statement (state and class statements are read
-/// by string splits, and the `:` label split would cut inside a `:::`).
-fn drop_style_tags(st: &str) -> String {
-    let chars: Vec<char> = st.chars().collect();
-    let mut out = String::with_capacity(st.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if let Some(end) = style_tag_end(&chars, i) {
-            i = end;
-            continue;
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
 }

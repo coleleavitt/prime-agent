@@ -1,57 +1,13 @@
-//! The diagram renderer seam (`pa_tui::diagram`) with a stub renderer installed: whole
-//! frames replayed from a session draw the stub's rows and notices in assistant text, and —
-//! because the stub opts in — in custom messages, agent messages, and `/btw` answers,
-//! all under the `markdown.mermaid` mode. (This binary installs the process-wide renderer;
-//! the crate's own tests and every other binary run without one.)
-
-use std::sync::Once;
+//! Mermaid diagrams on every surface, whole frames replayed from a session: assistant
+//! text, custom messages, agent messages, and `/btw` answers draw their `mermaid` fences,
+//! all under the `markdown.mermaid` mode.
 
 use pa_tui::chat::Detail;
-use pa_tui::diagram::{
-    AlreadyInstalled,
-    DiagramLayout,
-    DiagramNotice,
-    DiagramRenderer,
-    DiagramRole,
-    DiagramSpan,
-    DiagramSurface,
-    NoticeLevel,
-    install_diagram_renderer,
-};
 use pa_tui::markdown::MermaidMode;
 use pa_tui::session::{JsonlSessionStream, SessionStream, parse_jsonl};
 use pa_tui::side_question::{SideQuestionPane, SideQuestionTurn};
 use pa_tui::theme::{ColorMode, Theme};
 use pa_tui::view::AgentView;
-
-/// Draws one row naming the fence's first word and the width, then one notice.
-struct Stub;
-
-impl DiagramRenderer for Stub {
-    fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
-        let kind = source.split_whitespace().next().unwrap_or("");
-        DiagramLayout::Rows {
-            rows: vec![vec![DiagramSpan {
-                text: format!("<{kind} {available_width} {streaming}>"),
-                role: DiagramRole::Edge,
-            }]],
-            notices: vec![DiagramNotice {
-                level: NoticeLevel::Info,
-                text: "stub note".to_owned(),
-            }],
-            adapted: false,
-        }
-    }
-
-    fn draws_on(&self, _: DiagramSurface) -> bool {
-        true
-    }
-}
-
-fn install_stub() {
-    static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| install_diagram_renderer(Box::new(Stub)).expect("first install"));
-}
 
 const SESSION: &str = concat!(
     r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"draw it"}],"timestamp":1}}"#,
@@ -65,7 +21,6 @@ const SESSION: &str = concat!(
 );
 
 fn frame_text(mode: MermaidMode, detail: Detail) -> Vec<String> {
-    install_stub();
     let entries = parse_jsonl(SESSION).expect("session parses");
     let mut stream = JsonlSessionStream::from_entries(entries);
     let mut view = AgentView::new(Theme::builtin("prime", ColorMode::TrueColor));
@@ -80,57 +35,78 @@ fn frame_text(mode: MermaidMode, detail: Detail) -> Vec<String> {
         .collect()
 }
 
-/// The frame rows that carry `needle`, trimmed.
-fn rows_with(frame: &[String], needle: &str) -> Vec<String> {
-    frame
+/// The transcript from the assistant text's first row through the agent message's last.
+fn transcript(frame: &[String]) -> &[String] {
+    let start = frame
         .iter()
-        .filter(|row| row.contains(needle))
-        .map(|row| row.trim().to_string())
-        .collect()
+        .position(|row| row == " The flow:")
+        .expect("assistant text row");
+    let end = frame
+        .iter()
+        .position(|row| row == "    ok")
+        .expect("agent message's last row");
+    &frame[start..=end]
 }
 
 #[test]
-fn the_first_install_wins() {
-    install_stub();
-    assert_eq!(
-        install_diagram_renderer(Box::new(Stub)),
-        Err(AlreadyInstalled)
-    );
-}
-
-#[test]
-fn an_installed_renderer_draws_on_every_surface_it_opts_into() {
+fn every_surface_draws_its_diagrams() {
     let frame = frame_text(MermaidMode::Final, Detail::All);
-    // Assistant text (content width 58), the custom panel's branch body, and the agent
-    // message body (60 - 4) each draw the stub row; every surface is settled.
     assert_eq!(
-        rows_with(&frame, " false>"),
-        vec![
-            "<flowchart 58 false>",
-            "<sequenceDiagram 56 false>",
-            "<classDiagram 56 false>",
+        transcript(&frame),
+        [
+            " The flow:",
+            "  ┌───┐",
+            "  │ A │",
+            "  └─┬─┘",
+            "    │",
+            "    ▼",
+            "  ┌───┐",
+            "  │ B │",
+            "  └───┘",
+            "",
+            " Done.",
+            "",
+            " [note]",
+            " ╰─ Panel:",
+            "",
+            "    ┌───┐  ┌───┐",
+            "    │ A │  │ B │",
+            "    └─┬─┘  └─┬─┘",
+            "      │      │",
+            "      │  hi  │",
+            "      ├─────▶│",
+            "      │      │",
+            "    ┌─┴─┐  ┌─┴─┐",
+            "    │ A │  │ B │",
+            "    └───┘  └───┘",
+            "",
+            " ✉ Agent message · ↓ lane",
+            " ╰─ Plan:",
+            "     ┌───┐",
+            "     │ A │",
+            "     └─△─┘",
+            "       │",
+            "       │",
+            "     ┌───┐",
+            "     │ B │",
+            "     └───┘",
+            "    ok",
         ],
         "{frame:#?}"
     );
-    assert_eq!(rows_with(&frame, "stub note").len(), 3, "{frame:#?}");
-    // The paragraph closes after the notice: the text after the fence stands apart.
-    let notice = frame
-        .iter()
-        .position(|row| row.trim() == "stub note")
-        .expect("assistant notice");
-    assert_eq!(frame[notice + 1], "");
-    assert_eq!(frame[notice + 2].trim(), "Done.");
 }
 
 #[test]
 fn the_off_mode_keeps_every_fence() {
     let frame = frame_text(MermaidMode::Off, Detail::All);
-    assert_eq!(
-        rows_with(&frame, " false>"),
-        Vec::<String>::new(),
-        "{frame:#?}"
-    );
-    assert_eq!(rows_with(&frame, "stub note"), Vec::<String>::new());
+    let drawn: Vec<&String> = frame.iter().filter(|row| row.contains("┌───┐")).collect();
+    assert_eq!(drawn, Vec::<&String>::new(), "{frame:#?}");
+    for header in ["flowchart TD", "sequenceDiagram", "classDiagram"] {
+        assert!(
+            frame.iter().any(|row| row.trim() == header),
+            "{header}: {frame:#?}"
+        );
+    }
 }
 
 fn pane(status: &str) -> SideQuestionPane {
@@ -147,8 +123,8 @@ fn pane(status: &str) -> SideQuestionPane {
     }
 }
 
+/// The answer's drawn edge rows.
 fn pane_rows(status: &str, mode: MermaidMode) -> Vec<String> {
-    install_stub();
     let theme = Theme::builtin("prime", ColorMode::TrueColor);
     let rows = pane(status).render(&theme, 0, false, "Esc", 40, mode);
     rows.iter()
@@ -157,25 +133,20 @@ fn pane_rows(status: &str, mode: MermaidMode) -> Vec<String> {
                 .map(|span| span.content.as_str())
                 .collect::<String>()
         })
-        .filter(|row| row.contains("e>"))
+        .filter(|row| row.contains("───▶"))
         .map(|row| row.trim().to_owned())
         .collect()
 }
 
 #[test]
 fn side_answers_draw_once_settled_in_final_mode_and_while_running_in_streaming_mode() {
+    let drawn = ["│ A ├───▶│ B │"];
     assert_eq!(
         pane_rows("running", MermaidMode::Final),
         Vec::<String>::new()
     );
-    assert_eq!(
-        pane_rows("complete", MermaidMode::Final),
-        ["<flowchart 38 false>"]
-    );
-    assert_eq!(
-        pane_rows("running", MermaidMode::Streaming),
-        ["<flowchart 38 true>"]
-    );
+    assert_eq!(pane_rows("complete", MermaidMode::Final), drawn);
+    assert_eq!(pane_rows("running", MermaidMode::Streaming), drawn);
     assert_eq!(
         pane_rows("complete", MermaidMode::Off),
         Vec::<String>::new()

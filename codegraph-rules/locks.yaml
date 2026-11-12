@@ -8,8 +8,8 @@ description: >-
   or a session worker one bad turn takes the whole long-lived process down.
   The repo's convention is `pa_types::sync::{MutexExt::lock_or_recover,
   RwLockExt::read_or_recover, RwLockExt::write_or_recover}`; the leaf crates
-  without a pa-types dependency (pa-agent, pa-telemetry, pa-mermaid) spell
-  it `.unwrap_or_else(PoisonError::into_inner)`.
+  without a pa-types dependency (pa-agent, pa-telemetry) spell it
+  `.unwrap_or_else(PoisonError::into_inner)`.
 severity: medium
 tags: [panic, poisoning, availability]
 language: rust

@@ -12,7 +12,7 @@ use super::super::statements::{header_kind, quote_mask, statements_of};
 use super::super::{Role, js_number, js_text};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["pie"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["pie"];
 
 /// Columns of the full-scale bar; eighth blocks refine below one cell.
 const BAR_W: i64 = 20;
@@ -23,7 +23,7 @@ struct Slice {
     value: f64,
 }
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let parsed = parse_pie(src)?;
 
     let label_w = parsed

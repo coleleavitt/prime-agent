@@ -1912,8 +1912,8 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_hyperlinks_enabled", optional(boolean())),
         // Mermaid adoption (added in schema v4, additive): the run's `markdown.mermaid`
         // mode at exit and its settled diagrams, each counted once (never per repaint),
-        // by outcome; `tui_mermaid_rotated` (the fork renderer's axis flip, a subset of
-        // `tui_mermaid_rendered`) rides only fork builds. Counts only, never diagram text.
+        // by outcome; `tui_mermaid_rotated` counts the axis flips, a subset of
+        // `tui_mermaid_rendered`. Counts only, never diagram text.
         (
             "tui_mermaid_mode",
             optional(enum_rule(&["off", "final", "streaming"], "streaming")),

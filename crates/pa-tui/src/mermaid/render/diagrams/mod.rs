@@ -16,7 +16,7 @@ mod timeline;
 
 use super::canvas::Canvas;
 use super::statements::{header_kind, statements_of};
-use crate::DiagramKind;
+use crate::mermaid::render::DiagramKind;
 
 /// A drawn diagram before row extraction.
 pub(super) struct Drawn {

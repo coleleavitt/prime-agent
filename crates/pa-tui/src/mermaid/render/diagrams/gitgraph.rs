@@ -15,7 +15,7 @@ use super::super::statements::{header_kind, statements_of};
 use super::super::{Role, js_text};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["gitgraph", "gitgraph:"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["gitgraph", "gitgraph:"];
 
 struct Commit {
     lane: usize,
@@ -58,7 +58,7 @@ impl Live {
     }
 }
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let model = parse_git_graph(src)?;
     let lane_count = model.branches.len();
     let commits = &model.commits;

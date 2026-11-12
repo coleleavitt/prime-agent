@@ -10,19 +10,19 @@ use super::{PAD, edge_text, half, sat, width_of};
 
 /// A node's box on the canvas.
 #[derive(Debug, Clone, Copy, Default)]
-pub(in crate::render) struct Placed {
-    pub(in crate::render) x: i64,
-    pub(in crate::render) y: i64,
-    pub(in crate::render) w: i64,
-    pub(in crate::render) h: i64,
-    pub(in crate::render) cx: i64,
-    pub(in crate::render) cy: i64,
-    pub(in crate::render) rank: usize,
+pub(in crate::mermaid::render) struct Placed {
+    pub(in crate::mermaid::render) x: i64,
+    pub(in crate::mermaid::render) y: i64,
+    pub(in crate::mermaid::render) w: i64,
+    pub(in crate::mermaid::render) h: i64,
+    pub(in crate::mermaid::render) cx: i64,
+    pub(in crate::mermaid::render) cy: i64,
+    pub(in crate::mermaid::render) rank: usize,
 }
 
 /// Draw a box with its label rows centred; `mirrored` draws the rows bottom-up for a
 /// canvas a `BT` flip will turn over.
-pub(in crate::render) fn draw_box(
+pub(in crate::mermaid::render) fn draw_box(
     canvas: &mut Canvas,
     p: &Placed,
     lines: &[String],

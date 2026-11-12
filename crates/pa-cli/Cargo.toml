@@ -17,7 +17,6 @@ default = [
     "learning",
     "ledger",
     "lsp",
-    "mermaid",
     "observer",
     "permissions",
     "plugins",
@@ -64,10 +63,6 @@ ledger = ["dep:pa-ledger"]
 # edits as a hidden `<new-diagnostics>` reminder. Inert without configured
 # servers.
 lsp = ["dep:pa-lsp"]
-# The fork's Mermaid diagrams in the TUI: lovely-mermaid 0.3.3, a too-wide
-# flowchart redrawn on the other axis, art drawn with its warnings, and diagrams
-# in agent/custom messages and /btw (crates/pa-mermaid).
-mermaid = ["dep:pa-mermaid"]
 # Claude Code's permission rules and modes (crates/pa-permissions): the
 # `permissions` settings key's allow/ask/deny rules over the kernel's bash(),
 # file edits, web and MCP requests, `/permissions`, and the shift+tab mode
@@ -134,7 +129,6 @@ pa-ledger = { path = "../pa-ledger", optional = true }
 pa-session-index = { path = "../pa-session-index", optional = true }
 pa-ravo = { path = "../pa-ravo", optional = true }
 pa-learning = { path = "../pa-learning", optional = true }
-pa-mermaid = { path = "../pa-mermaid", optional = true }
 pa-anthropic-auth = { path = "../pa-anthropic-auth", optional = true }
 pa-observer = { path = "../pa-observer", optional = true }
 pa-advisor = { path = "../pa-advisor", optional = true }

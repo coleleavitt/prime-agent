@@ -3,11 +3,11 @@
 //! Copyright 2026 Alexey Zaytsev — the renderer the fork's TS product draws with since
 //! `a358fd19e` (formerly grok-mermaid; itself derived from the renderer in
 //! xai-org/grok-build, `crates/codegen/xai-grok-markdown/src/mermaid.rs`). The license
-//! text ships beside this crate as `LICENSE-lovely-mermaid`.
+//! text ships beside this module as `mermaid/LICENSE-lovely-mermaid`.
 //!
 //! Changes from the original: translated from TypeScript to Rust; display widths come
-//! from an installable measure ([`crate::set_width_measure`]), defaulting to the package's
-//! own rule; author classes, link targets, and `classDef`s (which never change a cell's
+//! from pa-tui's own grapheme measure (`width.rs`) rather than the package's
+//! `unicode-width` table; author classes, link targets, and `classDef`s (which never change a cell's
 //! glyph or role, only how the package splits runs and its own ANSI styling) are parsed
 //! but not carried, so a row's runs are split by role alone; the package's `sourceBox`,
 //! `toAnsi`, and class-style helpers, which the TS product never called, are not ported.
@@ -26,10 +26,12 @@ mod layout_seq;
 mod statements;
 #[cfg(test)]
 pub(crate) mod tests;
-pub(crate) mod width;
+mod width;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
+
+use pa_types::sync::MutexExt;
 
 /// What a run of cells is, decided by the renderer; the caller maps roles to its theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -143,18 +145,11 @@ struct RenderCache {
 pub fn render_cached(src: &str) -> Arc<Option<Art>> {
     static CACHE: OnceLock<Mutex<RenderCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Mutex::default);
-    if let Some(hit) = cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entries
-        .get(src)
-    {
+    if let Some(hit) = cache.lock_or_recover().entries.get(src) {
         return Arc::clone(hit);
     }
     let art = Arc::new(render(src));
-    let mut cache = cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut cache = cache.lock_or_recover();
     if !cache.entries.contains_key(src) {
         if cache.order.len() >= RENDER_CACHE_ENTRIES {
             if let Some(oldest) = cache.order.pop_front() {

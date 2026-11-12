@@ -21,7 +21,7 @@ type ScopeEdges = HashMap<Option<usize>, Vec<(Item, Item, usize)>>;
 
 /// Lay out a flowchart that uses `subgraph`. An edge is drawn in the innermost scope
 /// containing both endpoints; one crossing a subgraph boundary attaches to the frame.
-pub(in crate::render) fn layout_grouped(graph: &Graph) -> Option<Canvas> {
+pub(in crate::mermaid::render) fn layout_grouped(graph: &Graph) -> Option<Canvas> {
     // A node whose id matches a subgraph id stands in for that subgraph.
     let mut proxy: HashMap<usize, usize> = HashMap::new();
     for (gi, g) in graph.groups.iter().enumerate() {

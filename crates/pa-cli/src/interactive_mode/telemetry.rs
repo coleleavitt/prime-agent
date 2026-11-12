@@ -87,7 +87,7 @@ impl CliInteractionTelemetry {
 
 /// The run's Mermaid adoption on `tui exit`: the `markdown.mermaid` mode
 /// and its settled diagrams by outcome (each counted once, never per
-/// repaint); the fork renderer's axis flip only where it is built in.
+/// repaint), the axis flips among them.
 fn set_mermaid_properties(
     properties: &mut pa_telemetry::Properties,
     mode: &'static str,
@@ -102,7 +102,6 @@ fn set_mermaid_properties(
         "tui_mermaid_kept_source",
         serde_json::Value::from(diagrams.kept_source),
     );
-    #[cfg(feature = "mermaid")]
     properties.set(
         "tui_mermaid_rotated",
         serde_json::Value::from(diagrams.adapted),
@@ -598,7 +597,7 @@ mod tests {
 
     const TWO_DIAGRAMS: &str = "Flow:\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\nThen:\n\n\
 ```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n";
-    /// A diagram type no renderer draws: its fence stays source.
+    /// A diagram type the renderer does not draw: its fence stays source.
     const UNSUPPORTED: &str =
         "```mermaid\ngantt\n  title Plan\n  task one :a1, 2026-01-01, 3d\n```\n";
 
@@ -608,10 +607,9 @@ mod tests {
         let _ = pa_tui::markdown::render_markdown(text, width, &style);
     }
 
-    /// A telemetry handle on a fresh agent dir with `markdown.mermaid` = `mode`, the
-    /// diagram renderer this build installs, and no counts left from another test.
+    /// A telemetry handle on a fresh agent dir with `markdown.mermaid` = `mode` and no
+    /// counts left from another test.
     fn mermaid_run(mode: &str) -> (tempfile::TempDir, CliInteractionTelemetry) {
-        crate::features::install_tui_features();
         let dir = tempfile::TempDir::new().unwrap();
         let agent_dir = dir.path().join("agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
@@ -646,8 +644,8 @@ mod tests {
 
     /// `tui exit` carries the run's mode and its settled diagrams by outcome: two drawn
     /// diagrams count once each however often they repaint (streaming paints never
-    /// count), an unsupported one counts as kept source, and (fork renderer) a too-wide
-    /// flowchart redrawn on the other axis counts as rotated too.
+    /// count), an unsupported one counts as kept source, and a too-wide flowchart redrawn on
+    /// the other axis counts as rotated too.
     #[test]
     fn tui_exit_carries_the_mermaid_counts() {
         crate::mode::tests::with_clean_telemetry_env(|| {
@@ -666,30 +664,26 @@ mod tests {
         paint(TWO_DIAGRAMS, 120, MermaidMode::Final, false);
         paint(UNSUPPORTED, 100, MermaidMode::Final, false);
         paint(UNSUPPORTED, 100, MermaidMode::Final, false);
-        #[cfg(feature = "mermaid")]
-        {
-            let fan_out = "flowchart TD\n  A --> B\n  A --> C\n  A --> D\n  A --> E\n  A --> F";
-            let rotated = pa_mermaid::rotate_flowchart(fan_out).unwrap();
-            let width = pa_mermaid::render(&rotated.source).unwrap().width;
-            assert!(pa_mermaid::render(fan_out).unwrap().width > width);
-            let fence = format!("```mermaid\n{fan_out}\n```\n");
-            paint(&fence, width, MermaidMode::Final, true);
-            paint(&fence, width, MermaidMode::Final, false);
-            paint(&fence, width, MermaidMode::Final, false);
-        }
+        // A wide fan-out, settled at the narrowest width it draws at: left to right, the
+        // top-down layout being wider. (Streaming paints never count.)
+        let fence = "```mermaid\nflowchart TD\n  A --> B\n  A --> C\n  A --> D\n  A --> E\n  A --> F\n```\n";
+        let draws = |width| {
+            let style = pa_tui::markdown::MarkdownStyle::default()
+                .with_mermaid(MermaidMode::Streaming, /*streaming*/ true);
+            pa_tui::markdown::render_markdown(fence, width, &style)
+                .first()
+                .is_some_and(|row| row.iter().any(|span| span.content.contains('┌')))
+        };
+        let width = (1..200).find(|&width| draws(width)).unwrap();
+        paint(fence, width, MermaidMode::Final, true);
+        paint(fence, width, MermaidMode::Final, false);
+        paint(fence, width, MermaidMode::Final, false);
         telemetry.client_exit("ctrl_d", false).await;
-        #[cfg(feature = "mermaid")]
         let expected = serde_json::json!({
             "tui_mermaid_mode": "final",
             "tui_mermaid_rendered": 3,
             "tui_mermaid_kept_source": 1,
             "tui_mermaid_rotated": 1,
-        });
-        #[cfg(not(feature = "mermaid"))]
-        let expected = serde_json::json!({
-            "tui_mermaid_mode": "final",
-            "tui_mermaid_rendered": 2,
-            "tui_mermaid_kept_source": 1,
         });
         assert_eq!(mermaid_exit_properties(&dir), [expected]);
     }
@@ -729,15 +723,12 @@ mod tests {
         telemetry.client_exit("ctrl_d", false).await;
 
         let counts = |mode: &str, rendered: u64| {
-            let mut expected = serde_json::json!({
+            serde_json::json!({
                 "tui_mermaid_mode": mode,
                 "tui_mermaid_rendered": rendered,
                 "tui_mermaid_kept_source": 0,
-            });
-            if cfg!(feature = "mermaid") {
-                expected["tui_mermaid_rotated"] = serde_json::json!(0);
-            }
-            expected
+                "tui_mermaid_rotated": 0,
+            })
         };
         // The second run counts only what settled after telemetry came back on.
         assert_eq!(

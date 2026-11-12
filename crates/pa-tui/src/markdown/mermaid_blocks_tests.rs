@@ -1,14 +1,15 @@
-//! The Mermaid fence hook against the TS v0.9.8 transform: `mermaid_transform_goldens.json`
-//! holds, per case, the markdown TS rewrote the assistant text into and the block structure
-//! marked lexed from it (`scripts/mermaid-goldens.mjs`).
+//! The Mermaid fence hook against the fork's TS transform (`createMermaidMarkdownTransform`,
+//! `a358fd19e`): `diagram_transform_goldens.json` holds, per case, the layout each fence got,
+//! the markdown TS rewrote the text into, and the block structure marked lexed from it
+//! (`scripts/lovely-mermaid-goldens.mjs`).
 
 use serde_json::Value;
 
-use super::mermaid_blocks::{ArtRow, MermaidMode, MermaidRender, apply, apply_with};
+use super::mermaid_blocks::{ArtRow, MermaidMode, MermaidRender, apply_with};
 use super::*;
 use crate::theme::{ColorMode, Theme, ThemeColor};
 
-const TRANSFORM_GOLDENS: &str = include_str!("mermaid_transform_goldens.json");
+const DIAGRAM_GOLDENS: &str = include_str!("diagram_transform_goldens.json");
 
 fn theme() -> Theme {
     Theme::builtin("prime", ColorMode::TrueColor)
@@ -51,9 +52,6 @@ fn block_shape(block: &Block) -> Value {
                 .map(|row| match row {
                     ArtRow::Inline(text) => text.clone(),
                     // A blank diagram row is the TS code span's no-break space.
-                    ArtRow::Art(spans) if spans.is_empty() => "\u{a0}".to_owned(),
-                    ArtRow::Art(spans) => spans.iter().map(|s| s.text.as_str()).collect(),
-                    ArtRow::Warning { text, trailing } => format!("{text}{trailing}"),
                     ArtRow::Drawn(spans) if spans.is_empty() => "\u{a0}".to_owned(),
                     ArtRow::Drawn(spans) => spans.iter().map(|s| s.text.as_str()).collect(),
                     ArtRow::Notice(notice) => notice.text.clone(),
@@ -79,29 +77,6 @@ fn mode_of(case: &Value) -> MermaidMode {
     }
 }
 
-/// Every case's blocks match what marked lexes from the TS-rewritten markdown: the same
-/// diagram rows, the same paragraph joins, the same blank lines, the same kept fences.
-#[test]
-fn fence_rewrite_matches_the_ts_transform() {
-    let cases: Vec<Value> = serde_json::from_str(TRANSFORM_GOLDENS).expect("goldens parse");
-    assert!(cases.len() >= 20, "the corpus is loaded");
-    let mut mismatches = Vec::new();
-    for case in &cases {
-        let text = case["text"].as_str().expect("text");
-        let width = case["width"].as_u64().expect("width") as usize;
-        let streaming = case["streaming"].as_bool().expect("streaming");
-        let blocks = apply(parse_blocks(text), width, &style(mode_of(case), streaming));
-        let actual = Value::Array(blocks.iter().map(block_shape).collect());
-        if actual != case["blocks"] {
-            mismatches.push(format!(
-                "{}\n  expected: {}\n  actual:   {actual}",
-                case["name"], case["blocks"]
-            ));
-        }
-    }
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
-}
-
 const FLOW: &str = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```";
 const FLOW_ROWS: [&str; 3] = [
     "┌───────┐    ┌──────┐",
@@ -109,17 +84,30 @@ const FLOW_ROWS: [&str; 3] = [
     "└───────┘    └──────┘",
 ];
 
-/// The diagram renders when its width equals the space exactly and falls back to the
-/// fence one column short (TS kills the `>=` mutant with the same boundary).
+/// The diagram renders as written when its width equals the space exactly and turns a
+/// quarter one column short (TS kills the `>=` mutant with the same boundary).
 #[test]
-fn a_diagram_renders_at_exactly_its_width_and_not_one_column_less() {
+fn a_diagram_renders_at_exactly_its_width_and_turns_one_column_less() {
     let fits = render_markdown(FLOW, 21, &style(MermaidMode::Streaming, false));
     assert_eq!(row_texts(&fits), FLOW_ROWS.map(String::from).to_vec());
-    // One column short, the fence renders as code (and wraps like any code row).
+    // One column short, the flowchart is drawn top to bottom, the notice wrapped like any
+    // paragraph text.
     let short = render_markdown(FLOW, 20, &style(MermaidMode::Streaming, false));
     assert_eq!(
         row_texts(&short),
-        vec!["  flowchart LR", "    A[Start] -->", "B[Done]"]
+        vec![
+            " ┌───────┐",
+            " │ Start │",
+            " └───┬───┘",
+            "     │",
+            "     ▼",
+            " ┌──────┐",
+            " │ Done │",
+            " └──────┘",
+            "Mermaid diagram",
+            "drawn top to bottom",
+            "to fit 20 columns",
+        ]
     );
 }
 
@@ -190,38 +178,24 @@ fn diagram_rows_paint_each_class_in_its_theme_slot() {
     );
 }
 
-/// A settled diagram that dropped source keeps its fence and gains the warning notice; the
-/// same source streaming shows the partial art (warnings are advisory mid-stream).
+/// A settled diagram that dropped source is drawn with the first warning listed under it;
+/// the same source streaming shows the art alone (warnings are noise mid-stream).
 #[test]
-fn a_settled_diagram_with_warnings_keeps_its_source_and_says_why() {
+fn a_settled_diagram_with_warnings_is_drawn_and_says_what_it_dropped() {
     let source = "```mermaid\nflowchart LR\n  A --> B\n  --> C\n  B --> \n  C D E\n```";
     let warning = theme().fg_style(ThemeColor::Warning);
-    let md = style(MermaidMode::Streaming, false);
-    let settled = render_markdown(source, 120, &md);
-    let last = settled.last().expect("rows");
+    let settled = render_markdown(source, 120, &style(MermaidMode::Streaming, false));
+    let (notice, art) = settled.split_last().expect("rows");
     assert_eq!(
-        last,
-        &vec![
-            Span::styled(
-                "Mermaid diagram not rendered: dropped, does not start with a node: \"--> C\" (+2 more)",
-                warning,
-            ),
-            Span::styled("  ", md.body),
-        ]
+        notice,
+        &vec![Span::styled(
+            "Mermaid diagram incomplete: dropped, does not start with a node: \"--> C\" (+2 more)",
+            warning,
+        )]
     );
-    assert_eq!(
-        row_texts(&settled[..settled.len() - 2]),
-        vec![
-            "  flowchart LR",
-            "    A --> B",
-            "    --> C",
-            "    B --> ",
-            "    C D E",
-        ]
-    );
-    assert_eq!(settled[settled.len() - 2], Vec::<Span>::new());
 
     let streaming = render_markdown(source, 120, &style(MermaidMode::Streaming, true));
+    assert_eq!(row_texts(art), row_texts(&streaming));
     assert_eq!(
         row_texts(&streaming),
         vec![
@@ -240,7 +214,7 @@ fn a_settled_diagram_with_warnings_keeps_its_source_and_says_why() {
 /// block cache, for every hook case.
 #[test]
 fn the_row_count_matches_the_painted_rows() {
-    let cases: Vec<Value> = serde_json::from_str(TRANSFORM_GOLDENS).expect("goldens parse");
+    let cases: Vec<Value> = serde_json::from_str(DIAGRAM_GOLDENS).expect("goldens parse");
     for case in &cases {
         let text = case["text"].as_str().expect("text");
         let width = case["width"].as_u64().expect("width") as usize;
@@ -265,30 +239,21 @@ fn the_row_count_matches_the_painted_rows() {
     }
 }
 
-// ------------------------------------------------------------ installed renderer
+// ------------------------------------------------------------ recorded layouts
 
-pub(crate) mod installed {
+pub(crate) mod replay {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::diagram::{
-        DiagramLayout,
-        DiagramNotice,
-        DiagramRenderer,
-        DiagramRole,
-        DiagramSpan,
-        NoticeLevel,
-    };
-
-    const DIAGRAM_GOLDENS: &str = include_str!("diagram_transform_goldens.json");
+    use crate::mermaid::{Art, ArtSpan, Layout, Notice, NoticeLevel, Role};
 
     /// A layout recorded in a golden file (`scripts/lovely-mermaid-goldens.mjs`).
-    pub(crate) fn layout_of(value: &Value) -> DiagramLayout {
+    pub(crate) fn layout_of(value: &Value) -> Layout {
         let notices = value["notices"]
             .as_array()
             .expect("notices")
             .iter()
-            .map(|n| DiagramNotice {
+            .map(|n| Notice {
                 level: match n["level"].as_str().expect("level") {
                     "info" => NoticeLevel::Info,
                     "warning" => NoticeLevel::Warning,
@@ -298,41 +263,44 @@ pub(crate) mod installed {
             })
             .collect();
         match value["kind"].as_str().expect("kind") {
-            "art" => DiagramLayout::Rows {
-                rows: value["rows"]
-                    .as_array()
-                    .expect("rows")
-                    .iter()
-                    .map(|row| {
-                        row.as_array()
-                            .expect("row")
-                            .iter()
-                            .map(|run| DiagramSpan {
-                                role: match run[0].as_str().expect("role") {
-                                    "border" => DiagramRole::Border,
-                                    "text" => DiagramRole::Text,
-                                    "edge" => DiagramRole::Edge,
-                                    "edgeLabel" => DiagramRole::EdgeLabel,
-                                    "title" => DiagramRole::Title,
-                                    "none" => DiagramRole::None,
-                                    other => panic!("unknown role {other}"),
-                                },
-                                text: run[1].as_str().expect("text").to_owned(),
-                            })
-                            .collect()
-                    })
-                    .collect(),
+            "art" => Layout::Art {
+                art: Art {
+                    rows: value["rows"]
+                        .as_array()
+                        .expect("rows")
+                        .iter()
+                        .map(|row| {
+                            row.as_array()
+                                .expect("row")
+                                .iter()
+                                .map(|run| ArtSpan {
+                                    role: match run[0].as_str().expect("role") {
+                                        "border" => Role::Border,
+                                        "text" => Role::Text,
+                                        "edge" => Role::Edge,
+                                        "edgeLabel" => Role::EdgeLabel,
+                                        "title" => Role::Title,
+                                        "none" => Role::None,
+                                        other => panic!("unknown role {other}"),
+                                    },
+                                    text: run[1].as_str().expect("text").to_owned(),
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                    width: value["width"].as_u64().expect("width") as usize,
+                    warnings: Vec::new(),
+                },
                 notices,
-                adapted: false,
+                rotated: None,
             },
-            "source" => DiagramLayout::Source { notices },
+            "source" => Layout::Source { notices },
             other => panic!("unknown layout kind {other}"),
         }
     }
 
-    /// A renderer replaying the layouts a golden case recorded, by fence source, width,
-    /// and streaming state.
-    pub(crate) struct Replay(HashMap<(String, usize, bool), DiagramLayout>);
+    /// The layouts a golden case recorded, by fence source, width, and streaming state.
+    pub(crate) struct Replay(HashMap<(String, usize, bool), Layout>);
 
     impl Replay {
         pub(crate) fn of(case: &Value) -> Self {
@@ -354,10 +322,14 @@ pub(crate) mod installed {
                     .collect(),
             )
         }
-    }
 
-    impl DiagramRenderer for Replay {
-        fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
+        /// The recorded layout of one fence.
+        pub(crate) fn layout(
+            &self,
+            source: &str,
+            available_width: usize,
+            streaming: bool,
+        ) -> Layout {
             self.0
                 .get(&(source.to_owned(), available_width, streaming))
                 .cloned()
@@ -389,7 +361,7 @@ pub(crate) mod installed {
                 parse_blocks(text),
                 width,
                 &style(mode_of(case), streaming),
-                Some(&replay),
+                &|src: &str, w: usize, s: bool| replay.layout(src, w, s),
             );
             let actual = Value::Array(blocks.iter().map(block_shape).collect());
             if actual != case["blocks"] {
@@ -404,20 +376,17 @@ pub(crate) mod installed {
 
     #[test]
     fn an_unclosed_kept_fence_keeps_its_notices_under_it() {
-        let replay = Replay(HashMap::from([(
-            ("flowchart TD\n  ((( ".to_owned(), 80, false),
-            DiagramLayout::Source {
-                notices: vec![DiagramNotice {
-                    level: NoticeLevel::Warning,
-                    text: "Mermaid diagram not drawn: no statement could be parsed".to_owned(),
-                }],
-            },
-        )]));
+        let kept = |_: &str, _: usize, _: bool| Layout::Source {
+            notices: vec![Notice {
+                level: NoticeLevel::Warning,
+                text: "Mermaid diagram not drawn: no statement could be parsed".to_owned(),
+            }],
+        };
         let blocks = apply_with(
             parse_blocks("Look:\n\n```mermaid\nflowchart TD\n  ((( "),
             80,
             &style(MermaidMode::Streaming, false),
-            Some(&replay),
+            &kept,
         );
         assert_eq!(
             Value::Array(blocks.iter().map(block_shape).collect()),
@@ -433,65 +402,64 @@ pub(crate) mod installed {
         );
     }
 
-    /// A stub renderer: one fixed row and one notice for any fence.
-    struct Stub;
-
-    impl DiagramRenderer for Stub {
-        fn layout(&self, source: &str, available_width: usize, streaming: bool) -> DiagramLayout {
-            DiagramLayout::Rows {
-                rows: vec![vec![DiagramSpan {
+    /// A stub layout: one fixed row and one notice for any fence.
+    fn stub(source: &str, available_width: usize, streaming: bool) -> Layout {
+        Layout::Art {
+            art: Art {
+                rows: vec![vec![ArtSpan {
                     text: format!("[{}|{available_width}|{streaming}]", source.len()),
-                    role: DiagramRole::Edge,
+                    role: Role::Edge,
                 }]],
-                notices: vec![DiagramNotice {
-                    level: NoticeLevel::Info,
-                    text: "note".to_owned(),
-                }],
-                adapted: false,
-            }
+                width: 1,
+                warnings: Vec::new(),
+            },
+            notices: vec![Notice {
+                level: NoticeLevel::Info,
+                text: "note".to_owned(),
+            }],
+            rotated: None,
         }
     }
 
     #[test]
-    fn a_stub_renderer_draws_its_rows_and_notices_and_closes_the_paragraph() {
+    fn drawn_rows_and_notices_close_the_paragraph() {
         let md = style(MermaidMode::Streaming, true);
         let rows = row_texts(&render_markdown_with(
             "Before\n```mermaid\nflowchart LR\n```\nAfter",
             40,
             &md,
-            &Stub,
+            &stub,
         ));
         assert_eq!(rows, ["Before", "[12|40|true]", "note", "", "After"]);
     }
 
     #[test]
-    fn the_mode_still_gates_an_installed_renderer() {
+    fn the_mode_gates_the_layout() {
         let text = "```mermaid\nflowchart LR\n```";
         let off = row_texts(&render_markdown_with(
             text,
             40,
             &style(MermaidMode::Off, false),
-            &Stub,
+            &stub,
         ));
         let final_streaming = row_texts(&render_markdown_with(
             text,
             40,
             &style(MermaidMode::Final, true),
-            &Stub,
+            &stub,
         ));
         assert_eq!(off, ["  flowchart LR"]);
         assert_eq!(final_streaming, off);
     }
 
-    /// Render through the hook with an explicit renderer (the global one stays unset in
-    /// unit tests).
+    /// Render through the hook with the fences laid out by `layout`.
     fn render_markdown_with(
         text: &str,
         width: usize,
         style: &MarkdownStyle,
-        renderer: &dyn DiagramRenderer,
+        layout: &dyn Fn(&str, usize, bool) -> Layout,
     ) -> Vec<Line> {
-        let blocks = apply_with(parse_blocks(text), width, style, Some(renderer));
+        let blocks = apply_with(parse_blocks(text), width, style, layout);
         let mut lines = Vec::new();
         for (i, block) in blocks.iter().enumerate() {
             if block.sep_blank {

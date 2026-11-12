@@ -136,8 +136,7 @@ impl InstalledFeatures {
 }
 
 /// Install the enabled features: the session seam, the provider credential
-/// sources ([`install_credential_sources`]), the TUI seams
-/// ([`install_tui_features`]), (feature `trace`) the trace recorder as the
+/// sources ([`install_credential_sources`]), (feature `trace`) the trace recorder as the
 /// process subscriber, and (feature `session-index`) the saved-session
 /// catalog cache. Called once by the binary before any
 /// session or worker starts. Does no I/O: the recorder opens its log and
@@ -152,7 +151,6 @@ pub fn install_enabled_features() -> InstalledFeatures {
     #[cfg(feature = "hooks")]
     pa_hooks::worktree::install();
     install_credential_sources();
-    install_tui_features();
     // Without an agent dir nothing here may read settings or open the log:
     // the command boundary reports the missing home (`require_agent_dir`).
     #[cfg(any(feature = "refusal", feature = "trace"))]
@@ -260,13 +258,6 @@ pub fn install_refusal_hooks(settings: &pa_core::settings::SettingsManager) {
 pub fn install_session_sources() {
     #[cfg(feature = "cc-import")]
     pa_cc_import::install();
-}
-
-/// Install the enabled features' TUI seams before the first frame: (feature `mermaid`)
-/// the fork's Mermaid diagrams as the TUI's diagram renderer. Idempotent; no I/O.
-pub fn install_tui_features() {
-    #[cfg(feature = "mermaid")]
-    crate::mermaid_diagrams::install();
 }
 
 /// The shared structured log (`<agentDir>/logs/agent.jsonl`).

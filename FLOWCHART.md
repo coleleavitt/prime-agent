@@ -409,7 +409,7 @@ Native crates (dependency direction pinned in `AGENTS.md` → Crates):
 
 Fork feature crates, wired only in `pa-cli` (`crates/pa-cli/src/features.rs`) behind its default Cargo features:
 `pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`, `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`,
-`pa-session-index`, `pa-mermaid`, `pa-anthropic-auth`. No native crate depends on them. `pa-anthropic-auth` is the one
+`pa-session-index`, `pa-anthropic-auth`. No native crate depends on them. `pa-anthropic-auth` is the one
 that touches the provider path: it installs a `ProviderCredentialSource` (`pa_core::auth`) and `ProviderRequestHooks`
 (`pa_ai::request_hooks`) for the `anthropic` provider, so its OAuth credential comes from the shared
 `~/.anthropic-accounts` store.

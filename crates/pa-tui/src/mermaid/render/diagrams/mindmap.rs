@@ -11,7 +11,7 @@ use super::super::statements::frontmatter_end;
 use super::super::{Role, js_text};
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["mindmap"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["mindmap"];
 
 struct MindNode {
     text: String,
@@ -34,7 +34,7 @@ fn walk(node: &MindNode, prefix: String, child_prefix: &str, rows: &mut Vec<(Str
     }
 }
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let (roots, warnings) = parse_mindmap(src)?;
     let mut rows: Vec<(String, String)> = Vec::new();
     for root in &roots {

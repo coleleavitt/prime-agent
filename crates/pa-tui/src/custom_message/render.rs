@@ -101,10 +101,10 @@ pub(crate) fn render_agent_message(
     out
 }
 
-/// The body rows of a message an installed diagram renderer draws into (TS
+/// The body rows of a message with diagrams drawn into it (TS
 /// `createMermaidTextRenderer`): prose re-wrapped at the body width, drawn rows as they
-/// are, notices in their level's color. `None` when no renderer draws agent messages, the
-/// mode is off, or nothing was drawn — the body keeps its plain rendering.
+/// are, notices in their level's color. `None` when the mode is off or nothing was drawn —
+/// the body keeps its plain rendering.
 pub(crate) fn agent_body_diagram_rows(
     message: &str,
     theme: &Theme,
@@ -114,10 +114,8 @@ pub(crate) fn agent_body_diagram_rows(
     if !crate::diagram::mode_active(mermaid, false) {
         return None;
     }
-    let renderer = crate::diagram::installed()
-        .filter(|renderer| renderer.draws_on(crate::diagram::DiagramSurface::AgentMessage))?;
     let text_width = super::geometry::agent_body_width(width);
-    let segments = crate::diagram::text_segments(message, text_width, renderer)?;
+    let segments = crate::diagram::text_segments(message, text_width, &crate::mermaid::layout)?;
     let palette = crate::markdown::MermaidPalette::from_theme(theme);
     let body = theme.fg_style(ThemeColor::CustomMessageText);
     let mut lines: Vec<Line> = Vec::new();
@@ -152,7 +150,7 @@ pub(crate) fn agent_body_diagram_rows(
 
 /// Each source line wraps at `width - 4`: the first rendered line carries
 /// the `╰─ ` gutter, the rest three spaces, all in `customMessageText` (diagram rows and
-/// notices an installed renderer draws keep their own colors).
+/// notices keep their own colors).
 pub(crate) fn agent_message_body(
     message: &str,
     theme: &Theme,
@@ -300,11 +298,10 @@ pub(crate) fn render_custom_panel(
     mermaid: MermaidMode,
 ) -> Vec<Line> {
     let mut md = super::geometry::markdown_style(ThemeColor::CustomMessageText, theme);
-    md.mermaid = crate::diagram::surface_render(
-        crate::diagram::DiagramSurface::CustomMessage,
-        mermaid,
-        false,
-    );
+    md.mermaid = Some(crate::markdown::MermaidRender {
+        mode: mermaid,
+        streaming: false,
+    });
     let mut out = vec![spacer()];
     out.extend(text_rows(
         &vec![custom_message_label(&row.custom_type, theme)],
@@ -479,10 +476,10 @@ mod tests {
         );
     }
 
-    /// No diagram renderer is installed in this binary: agent-message bodies and custom
-    /// panels keep their `mermaid` fences as text, as the native product renders them.
+    /// Agent-message bodies and custom panels draw their `mermaid` fences in place, the
+    /// prose around them under the body gutter.
     #[test]
-    fn without_an_installed_renderer_message_bodies_keep_their_fences() {
+    fn message_bodies_draw_their_diagrams() {
         let fence = "Plan:\n```mermaid\nflowchart LR\n  A --> B\n```";
         let row = AgentMessageRow {
             direction: AgentMessageDirection::Received,
@@ -505,10 +502,9 @@ mod tests {
             text[1..],
             [
                 " ╰─ Plan:",
-                "    ```mermaid",
-                "    flowchart LR",
-                "      A --> B",
-                "    ```",
+                "    ┌───┐    ┌───┐",
+                "    │ A ├───▶│ B │",
+                "    └───┘    └───┘",
             ]
         );
         assert_eq!(
@@ -532,10 +528,7 @@ mod tests {
                 .iter()
                 .map(|r| flat(r).trim_end().to_string())
                 .collect();
-        assert!(
-            panel_text.iter().any(|r| r.ends_with("flowchart LR")),
-            "{panel_text:?}"
-        );
+        assert_eq!(panel_text[2..], text[1..]);
     }
 
     #[test]

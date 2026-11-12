@@ -81,11 +81,10 @@ pub(crate) fn custom_panel_row_count(
     mermaid: crate::markdown::MermaidMode,
 ) -> usize {
     let mut md = markdown_style(ThemeColor::CustomMessageText, theme);
-    md.mermaid = crate::diagram::surface_render(
-        crate::diagram::DiagramSurface::CustomMessage,
-        mermaid,
-        false,
-    );
+    md.mermaid = Some(crate::markdown::MermaidRender {
+        mode: mermaid,
+        streaming: false,
+    });
     let header = 1 + text_row_count(
         &vec![super::render::custom_message_label(&row.custom_type, theme)],
         width,

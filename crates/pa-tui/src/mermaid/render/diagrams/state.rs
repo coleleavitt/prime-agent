@@ -30,9 +30,9 @@ use super::super::statements::{
 };
 use super::Drawn;
 
-pub(in crate::render) const HEADERS: &[&str] = &["statediagram", "statediagram-v2"];
+pub(in crate::mermaid::render) const HEADERS: &[&str] = &["statediagram", "statediagram-v2"];
 
-pub(in crate::render) fn render(src: &str) -> Option<Drawn> {
+pub(in crate::mermaid::render) fn render(src: &str) -> Option<Drawn> {
     let mut graph = parse_state(src)?;
     let canvas = if graph.groups.is_empty() {
         layout_flowchart(&mut graph)

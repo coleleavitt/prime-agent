@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// Regenerates the fork's Mermaid parity goldens (crates/pa-mermaid) from the TS fork's own
+// Regenerates the fork's Mermaid parity goldens (crates/pa-tui/src/mermaid) from the TS fork's own
 // dependencies (perf/session-catalog-resume, a358fd19e):
 //
 //   node scripts/lovely-mermaid-goldens.mjs <lovely-mermaid-0.3.3 package dir> <marked-18 package dir>
 //
 // (`npm pack lovely-mermaid@0.3.3 marked@18.0.7` and untar each.)
 //
-// - crates/pa-mermaid/src/render/goldens.json: lovely-mermaid's `render()` for each case's
+// - crates/pa-tui/src/mermaid/render/goldens.json: lovely-mermaid's `render()` for each case's
 //   `src`: rows as [role, text] runs (adjacent spans of one role merged: the TS product styles
 //   by role only, so author classes and links, which only split runs, are not carried), width,
 //   warnings.
-// - crates/pa-mermaid/src/policy_goldens.json: the fork's `layoutMermaid` (components/mermaid.ts,
+// - crates/pa-tui/src/mermaid/policy_goldens.json: the fork's `layoutMermaid` (components/mermaid.ts,
 //   verbatim) for each case's `src`, `width` and `streaming`. A case with `widthRule` derives
 //   its width from the flowchart turned a quarter: `rotated` is the rotated art's width,
 //   `rotated-1` one column short of it.
@@ -59,7 +59,7 @@ const artOf = (src) => {
     ? null
     : { width: art.width, warnings: art.warnings, rows: roleRows(art), plain: art.plain }
 }
-const rendererPath = join(root, 'crates/pa-mermaid/src/render/goldens.json')
+const rendererPath = join(root, 'crates/pa-tui/src/mermaid/render/goldens.json')
 regenerate(rendererPath, ({ name, src }) => ({ name, src, art: artOf(src) }))
 
 // ---- the fork's components/mermaid.ts (a358fd19e), verbatim but for the theme
@@ -192,7 +192,7 @@ const layoutJson = (layout) =>
     ? { kind: 'art', rows: roleRows(layout.art), width: layout.art.width, notices: layout.notices }
     : { kind: 'source', notices: layout.notices }
 
-const policyPath = join(root, 'crates/pa-mermaid/src/policy_goldens.json')
+const policyPath = join(root, 'crates/pa-tui/src/mermaid/policy_goldens.json')
 regenerate(policyPath, ({ name, src, width, widthRule, streaming }) => {
     if (widthRule !== undefined) {
       const rotated = render(rotateFlowchart(src).source).width

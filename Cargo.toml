@@ -22,7 +22,6 @@ members = [
     "crates/pa-ravo",
     "crates/pa-learning",
     "crates/pa-session-index",
-    "crates/pa-mermaid",
     "crates/pa-anthropic-auth",
     "crates/pa-computer-use",
     "crates/pa-plugins",
