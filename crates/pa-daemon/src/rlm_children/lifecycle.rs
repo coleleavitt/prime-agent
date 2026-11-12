@@ -478,19 +478,21 @@ impl SupervisorChildSessionsInner {
 
     /// Refresh one record against its worker: settle a child whose worker ran out of work and
     /// capture its answer once; an unreachable child keeps its last known state. The same
-    /// round trip observes the child's live note and tool count onto the record.
-    pub(super) async fn refresh_record(&self, record: &Arc<Mutex<ChildRecord>>) {
+    /// round trip observes the child's live note and tool count onto the record. Returns
+    /// whether the child read busy.
+    pub(super) async fn refresh_record(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
         {
             let record = record.lock().await;
             if !record.prompt_admitted {
-                return;
+                return false;
             }
         }
-        let (active_session_id, direct_observation, unsettled_session_file) = {
+        let (active_session_id, direct_observation, recheck_idle, unsettled_session_file) = {
             let record = record.lock().await;
             (
                 record.active_session_id.clone(),
                 Arc::clone(&record.direct_observation),
+                !record.settled || record.settled_status == Some("cancelled"),
                 record
                     .settled_status
                     .is_none()
@@ -517,10 +519,26 @@ impl SupervisorChildSessionsInner {
             state
         };
         let Ok(state) = state else {
-            return;
+            return false;
         };
         if child_busy_flags(&state) {
-            return;
+            return true;
+        }
+        // Stability re-check of an idle read that can still end the run (a
+        // verdict, or the watcher's settle tail): a prompt admitted to an
+        // idle worker can read idle once between the admission and the turn
+        // pop (the queue snapshot and the busy flag change under different
+        // locks on the far side of a socket). A short grace closes that
+        // window; a child that went busy again (a queued continuation) is
+        // still running. A cancel stays re-checked after its funnel fired:
+        // an abort that reached the idle worker before the task turn started
+        // leaves the run going. An unreachable worker (an idle passivation,
+        // a crash) does not undo the idle read.
+        if recheck_idle {
+            tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
+            if matches!(self.child_busy(&active_session_id).await, Ok(true)) {
+                return true;
+            }
         }
         // The answer rides the idle snapshot itself: the compact preview
         // for the roster rows and the full text (capped at
@@ -572,6 +590,7 @@ impl SupervisorChildSessionsInner {
             record.answer_text = answer_text;
             record.subagent_tokens = subagent_tokens;
         }
+        false
     }
 
     /// Watch one admitted child until its run settles, then deliver the parent's terminal notice
@@ -596,7 +615,7 @@ impl SupervisorChildSessionsInner {
                 Duration::from_millis(WATCH_WAIT_SLICE_MS),
             )
             .await;
-            self.refresh_record(record).await;
+            let busy = self.refresh_record(record).await;
             let settled = record.lock().await.settled_status.is_some();
             if settled {
                 // A delete in flight (`retiring`) owns this run's terminal
@@ -615,45 +634,15 @@ impl SupervisorChildSessionsInner {
                     tokio::time::sleep(Duration::from_millis(WATCH_POLL_INTERVAL_MS)).await;
                     continue;
                 }
-                // Stability re-check: a prompt admitted to an idle worker
-                // can read idle once between the admission and the turn
-                // pop (the queue snapshot and the busy flag change under
-                // different locks on the far side of a socket). A short
-                // grace closes that window; a child that went busy again
-                // (a queued continuation) keeps watching. An unreachable
-                // worker (an idle passivation, a crash) leaves the settled
-                // verdict standing, as in `refresh_record`.
-                //
-                // The re-check wipes only a WATCHER-set settle (the
-                // premature `done` of the admission race, or a refresh's
-                // final-turn `error`, which claimed no notice yet): a
-                // registry-set `cancelled` (a user abort or a parent kill
-                // in flight, `cancel_child_run`/`close_children_inner`)
-                // stands — wiping it would let this watcher refresh the
-                // still-live run back to `done` and record a clean
-                // `child_returned` beside the cancel line, so the row
-                // keeps its registry settle and this loop keeps watching
-                // until the abort lands (the cancel path owns the
-                // terminal handling).
-                tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
-                if matches!(self.child_busy(&active_session_id).await, Ok(true)) {
-                    let mut record = record.lock().await;
-                    let refresh_verdict = match record.settled_status {
-                        Some("done") => true,
-                        Some("error") => !record.notice_delivered,
-                        _ => false,
-                    };
-                    if refresh_verdict {
-                        record.settled_status = None;
-                        record.error = None;
-                        // The run is live again (a queued continuation): a
-                        // re-settle owes a fresh return.
-                        record.return_recorded = false;
-                    }
-                    drop(record);
+                // A registry-set `cancelled` (a user abort or a parent kill
+                // in flight, `cancel_child_run`/`close_children_inner`) lands
+                // before the run stops, and a verdict whose funnel has not
+                // fired can see a follow-up turn start: keep watching until
+                // the child reads idle (the cancel path owns the terminal
+                // handling).
+                if busy {
                     continue;
                 }
-                self.refresh_record(record).await;
                 if !self.run_settle_tail(record).await {
                     // The verdict was re-cleared while this tail ran its
                     // round trips (a collect's grace found the child busy
