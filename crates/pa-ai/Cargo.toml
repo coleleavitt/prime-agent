@@ -40,7 +40,6 @@ base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
-rsa = { version = "0.9", features = ["sha2"] }
 url = "2"
 # rustls: the extra-CA trust configuration (`utils::tls`), and the stale-connection check reads
 # a fatal TLS alert the peer sent on an established connection (`bad_record_mac`) through the

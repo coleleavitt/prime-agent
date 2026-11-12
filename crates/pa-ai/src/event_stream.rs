@@ -11,7 +11,7 @@ use futures::Stream;
 use pa_types::sync::MutexExt;
 use serde_json::Map;
 
-pub use crate::types::{AssistantContent, AssistantMessage, AssistantMessageEvent, StopReason};
+pub use crate::types::{AssistantMessage, AssistantMessageEvent, StopReason};
 
 /// Provider-side helpers over the shared [`AssistantMessageEvent`] wire enum.
 pub trait AssistantMessageEventExt {
@@ -308,11 +308,6 @@ pub fn initial_assistant_message(api: &str, provider: &str, model_id: &str) -> A
         rest: Map::default(),
         discarded_usage: None,
     }
-}
-
-#[allow(dead_code)] // provider constructors use this once each port lands
-pub fn empty_content() -> Vec<AssistantContent> {
-    Vec::new()
 }
 
 #[cfg(test)]
