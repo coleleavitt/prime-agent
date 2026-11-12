@@ -11,6 +11,7 @@
 use pa_core::session_engine::rlm_in_process::compact_rlm_text;
 use pa_types::sync::MutexExt;
 
+use super::retirement::Retirement;
 use super::run_state::{RunEvent, RunState};
 use super::{
     Arc,
@@ -176,9 +177,8 @@ impl SupervisorChildSessionsInner {
             notice_delivered: false,
             factory: false,
             prompt_admitted: true,
-            closed_by_parent: false,
+            retirement: Retirement::live(),
             lost_at_restart: false,
-            retiring: false,
             return_recorded: false,
             session_file: created.session_file.clone(),
             attributed_rows: Some(0),
@@ -186,9 +186,6 @@ impl SupervisorChildSessionsInner {
             usage_rearm: false,
             emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
-            retirement_finished: false,
-            retirement_notified: false,
-            retirement_roster_emitted: false,
             usage_registration_forgotten: false,
             pending_usage_report: None,
             last_emitted_status: None,
@@ -224,7 +221,7 @@ impl SupervisorChildSessionsInner {
         // slices.
         let mut unreachable_polls: u32 = 0;
         loop {
-            if record.lock().await.closed_by_parent {
+            if record.lock().await.retirement.closed_by_parent() {
                 // The parent closed mid-delegation: no answer is owed to a
                 // closing session, and the record must not leave the
                 // quiescence predicate stuck on an unsettled row.

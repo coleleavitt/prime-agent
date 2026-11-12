@@ -594,7 +594,7 @@ impl SupervisorChildSessionsInner {
         loop {
             // The parent closed with this child running: the child dies
             // with it and no notice is owed — end without polling it.
-            if record.lock().await.closed_by_parent {
+            if record.lock().await.retirement.closed_by_parent() {
                 return;
             }
             // Slice-top usage flush: rows of turns that completed since the
@@ -623,7 +623,7 @@ impl SupervisorChildSessionsInner {
                 // settles the run normally, and a confirmed kill closes
                 // the record (`closed_by_parent` ends the watch at the
                 // loop top).
-                if record.lock().await.retiring {
+                if record.lock().await.retirement.retiring() {
                     tokio::time::sleep(Duration::from_millis(WATCH_POLL_INTERVAL_MS)).await;
                     continue;
                 }
@@ -755,7 +755,7 @@ impl SupervisorChildSessionsInner {
     /// `error` settle returns — a cancelled run never returns (it is the
     /// parent's action, so it records through
     /// [`Self::record_child_cancelled`] instead, nano-rlm #202) — and a
-    /// delete in flight ([`ChildRecord::retiring`]) returns nothing either.
+    /// delete in flight (`Retirement::retiring`) returns nothing either.
     /// A child without a durable session id, or a parent without a
     /// recorder, records nothing.
     pub(super) async fn record_child_return(&self, record: &Arc<Mutex<ChildRecord>>) {
@@ -1063,7 +1063,7 @@ impl SupervisorChildSessionsInner {
 /// change. The settle state is durable and the passive roster row
 /// stays the representation.
 pub(super) fn should_mark_error(state: &ChildRecord) -> bool {
-    !(state.closed_by_parent || state.notice_delivered || !state.run.is_running())
+    !(state.retirement.closed_by_parent() || state.notice_delivered || !state.run.is_running())
 }
 
 /// The child's last assistant text from its durable session file (the exit
