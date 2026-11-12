@@ -1067,7 +1067,7 @@ pub fn check_metric_mimicry(file_content: &str) -> Vec<SlopFinding> {
                     // Find the top-level comma (not inside nested parens)
                     let mut depth = 0;
                     let mut comma_pos = None;
-                    for (ci, ch) in args.chars().enumerate() {
+                    for (ci, ch) in args.char_indices() {
                         match ch {
                             '(' | '[' | '{' => depth += 1,
                             ')' | ']' | '}' => depth -= 1,
@@ -1496,6 +1496,10 @@ fn push_security_profile_finding(
 /// reviewed only by prose. When `old_content` is present, unchanged matching
 /// lines are ignored so edits do not repeatedly report pre-existing unsafe code.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat list of pattern checks reads better than a chain of one-call helpers"
+)]
 pub fn check_rust_security_profile(
     old_content: Option<&str>,
     new_content: &str,
@@ -2388,6 +2392,19 @@ mod tests {
                 .iter()
                 .any(|f| f.rule == "metric_mimicry" && f.message.contains("identical")),
             "expected self-equality finding, got: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn metric_mimicry_handles_non_ascii_assert_args() {
+        // Regression: `chars().enumerate()` returned a char index and then
+        // sliced the string with it as a byte offset, which panicked when
+        // the args contained a multi-byte character ahead of the comma.
+        let code = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(name(\"李明\"), \"李明\");\n    }\n}";
+        let findings = check_metric_mimicry(code);
+        assert!(
+            findings.iter().all(|f| !f.message.contains("identical")),
+            "unexpected self-equality finding on non-ASCII args: {findings:?}",
         );
     }
 
