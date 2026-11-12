@@ -87,7 +87,6 @@ pub(crate) mod recovery_pacing;
 pub mod registration;
 pub(crate) mod registry;
 pub(crate) mod remote_mesh;
-pub(crate) mod retrieval_tick;
 mod revival_gate;
 mod rewind;
 pub mod rlm_child_model;

@@ -202,7 +202,6 @@ async fn the_runtime_round_trips_run_agent_through_the_rust_host() {
         daemonless: true,
         rlm_token_allowance: None,
         agent_definition: None,
-        reranker: None,
         bash_notice_wake: None,
     })
     .await

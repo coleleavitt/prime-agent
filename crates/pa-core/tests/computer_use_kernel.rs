@@ -212,7 +212,6 @@ async fn the_kernel_client_is_served_by_the_host() {
         sandbox_mode: None,
         additional_directories: Vec::new(),
         agent_definition: None,
-        reranker: None,
         bash_notice_wake: None,
     })
     .await

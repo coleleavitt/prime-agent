@@ -376,7 +376,6 @@ mod tests {
                     follow_up_mode: None,
                     rlm_token_allowance: None,
                     agent_definition: None,
-                    reranker: None,
                 },
             )
             .await

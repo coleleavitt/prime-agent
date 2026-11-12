@@ -1,24 +1,26 @@
 //! Read the tail of `refinement_history.jsonl` and emit retrieval
 //! feedback signals.
 //!
-//! The daemon calls [`FeedbackTap::drain`] once per settled turn (or on
-//! a background tick). It:
+//! The retrieval tick ([`crate::tick`]) calls [`FeedbackTap::drain`] once
+//! per agent stop. It:
 //!
 //! 1. Opens `~/.prime/agent/harness/refinement_history.jsonl`.
 //! 2. Skips over records already processed (tracked by byte offset on a
 //!    sidecar `feedback_tap.cursor` file — crash-safe, no parsing).
-//! 3. Parses each new record into `pa_retrieval::signal::RefinementRecord`.
+//! 3. Parses each new record into `crate::signal::RefinementRecord`.
 //! 4. Reads the current `harness_state.json` for each memory entry's
 //!    `targetsFingerprints` so the RAVO extractor can match them.
-//! 5. Runs `pa_retrieval::signal::extract_signals` and returns the
-//!    emitted [`pa_retrieval::Signal`]s to the caller (pa-daemon loops
+//! 5. Runs `crate::signal::extract_signals` and returns the
+//!    emitted [`crate::Signal`]s to the caller (the tick loops
 //!    them back into the reranker's feedback method).
 
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use pa_retrieval::signal::{AppliedEditView, RefinementRecord, Signal, extract_signals};
+use pa_ledger::HARNESS_STATE_FILE_NAME;
 use serde::Deserialize;
+
+use crate::signal::{AppliedEditView, RefinementRecord, Signal, extract_signals};
 
 /// Where the cursor file lives relative to the harness dir.
 pub const FEEDBACK_TAP_CURSOR_NAME: &str = "feedback_tap.cursor";
@@ -34,6 +36,10 @@ pub const FEEDBACK_TAP_LOCAL_CURSOR_NAME: &str = "feedback_tap_local.cursor";
 /// so a local rejection that carries a `failure:<fp>` reaches the
 /// retrieval learning loop the same way a global one does.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the four files the tap reads and advances, each named for what it is"
+)]
 pub struct FeedbackTap {
     /// The global jsonl (admits and rejections of global-scope refinements).
     pub history_path: PathBuf,
@@ -61,7 +67,7 @@ impl FeedbackTap {
             cursor_path: harness_dir.join(FEEDBACK_TAP_CURSOR_NAME),
             local_history_path: harness_dir.join("local_refinement_history.jsonl"),
             local_cursor_path: harness_dir.join(FEEDBACK_TAP_LOCAL_CURSOR_NAME),
-            harness_state_path: harness_dir.join(crate::HARNESS_STATE_FILE_NAME),
+            harness_state_path: harness_dir.join(HARNESS_STATE_FILE_NAME),
         }
     }
 
@@ -230,9 +236,8 @@ fn load_memory_targeting(path: &Path) -> Vec<(String, Vec<String>)> {
 
 #[cfg(test)]
 mod tests {
-    use pa_retrieval::Outcome;
-
     use super::*;
+    use crate::Outcome;
 
     fn write_history(path: &Path, records: &[&str]) {
         let mut body = String::new();
@@ -272,7 +277,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
         write_state_with_memories(
-            &hd.join(crate::HARNESS_STATE_FILE_NAME),
+            &hd.join(HARNESS_STATE_FILE_NAME),
             &[("memory_covers", vec!["deadbeef"])],
         );
         let rec = r#"{"id":"r1","summary":"x","rejectionCause":"gate","ravo":{"missedCriteria":["failure:deadbeef"]},"appliedEdits":[]}"#;
@@ -290,7 +295,7 @@ mod tests {
     fn drain_extracts_supersede_signals_from_applied_edits() {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
-        write_state_with_memories(&hd.join(crate::HARNESS_STATE_FILE_NAME), &[]);
+        write_state_with_memories(&hd.join(HARNESS_STATE_FILE_NAME), &[]);
         let rec = r#"{"id":"r2","summary":"x","appliedEdits":[{"id":"memory_new","title":"fresh lesson; supersedes memory_old","content":""}]}"#;
         write_history(&hd.join("refinement_history.jsonl"), &[rec]);
         let tap = FeedbackTap::new(hd);
@@ -304,7 +309,7 @@ mod tests {
     fn drain_resumes_from_the_cursor_so_new_records_only_fire_once() {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
-        write_state_with_memories(&hd.join(crate::HARNESS_STATE_FILE_NAME), &[]);
+        write_state_with_memories(&hd.join(HARNESS_STATE_FILE_NAME), &[]);
         let r1 = r#"{"id":"r1","summary":"","appliedEdits":[{"id":"a","title":"supersedes x","content":""}]}"#;
         let r2 = r#"{"id":"r2","summary":"","appliedEdits":[{"id":"b","title":"supersedes y","content":""}]}"#;
         let history = hd.join("refinement_history.jsonl");
@@ -338,7 +343,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
         write_state_with_memories(
-            &hd.join(crate::HARNESS_STATE_FILE_NAME),
+            &hd.join(HARNESS_STATE_FILE_NAME),
             &[("memory_local", vec!["cafefeed"])],
         );
         // One global record (no match) + one local record that DOES match.
@@ -361,7 +366,7 @@ mod tests {
     fn drain_cursors_advance_independently_per_file() {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
-        write_state_with_memories(&hd.join(crate::HARNESS_STATE_FILE_NAME), &[]);
+        write_state_with_memories(&hd.join(HARNESS_STATE_FILE_NAME), &[]);
         let r1 = r#"{"id":"r1","summary":"","appliedEdits":[{"id":"a","title":"supersedes x","content":""}]}"#;
         write_history(&hd.join("refinement_history.jsonl"), &[r1]);
         let tap = FeedbackTap::new(hd);
@@ -378,7 +383,7 @@ mod tests {
     fn drain_skips_malformed_lines_without_jamming_the_tap() {
         let dir = tempfile::tempdir().unwrap();
         let hd = dir.path();
-        write_state_with_memories(&hd.join(crate::HARNESS_STATE_FILE_NAME), &[]);
+        write_state_with_memories(&hd.join(HARNESS_STATE_FILE_NAME), &[]);
         let good = r#"{"id":"r1","summary":"","appliedEdits":[{"id":"a","title":"supersedes x","content":""}]}"#;
         let bad = "{not json";
         write_history(&hd.join("refinement_history.jsonl"), &[bad, good]);

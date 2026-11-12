@@ -1,19 +1,20 @@
-//! The per-settle retrieval tick: drain the cert stream for feedback
-//! signals, scan new refinement records for memory add/remove events,
-//! feed both through the reranker handle, and persist.
+//! The retrieval tick: drain the cert stream for feedback signals, scan
+//! new refinement records for memory add/remove events, feed both through
+//! the reranker handle, and persist.
 //!
-//! Called from the worker's settle path (once per settled turn, on the
-//! idle side of the turn so it never blocks a user-visible read). A
-//! failure in any step is logged and skipped; the tick is best-effort
-//! and must never fail a turn.
+//! Run by [`crate::RetrievalFeature`] at every agent stop, on its own
+//! thread so it never blocks the session. A failure in any step is logged
+//! and skipped; the tick is best-effort and must never fail a turn.
 
 use std::path::Path;
 use std::{fs, io};
 
-use pa_core::refinement::retrieval::RerankerHandle;
-use pa_ledger::{CorrectionTap, FeedbackTap};
-use pa_retrieval::Outcome;
 use serde::{Deserialize, Serialize};
+
+use crate::Outcome;
+use crate::correction_tap::CorrectionTap;
+use crate::feedback_tap::FeedbackTap;
+use crate::handle::RerankerHandle;
 
 /// Sidecar that records the byte offset in `refinement_history.jsonl`
 /// (global-scope admits/rejects) we've already synced to the reranker's
@@ -53,7 +54,7 @@ fn now_iso() -> String {
     pa_ledger::now_iso()
 }
 
-/// One settle-time pass: cheap when nothing changed.
+/// One pass: cheap when nothing changed.
 pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
     // Learning feedback (Helped/Misled).
     let harness_dir = agent_dir.join("harness");
@@ -62,10 +63,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
         Ok(signals) if !signals.is_empty() => {
             let mut applied = 0usize;
             for signal in signals {
-                let outcome = match signal.outcome {
-                    Outcome::Helped => pa_retrieval::Outcome::Helped,
-                    Outcome::Misled => pa_retrieval::Outcome::Misled,
-                };
+                let outcome = signal.outcome;
                 // Cert-stream signals have no offer id — the signal is
                 // over admitted edits, not over a prior rerank. Route
                 // through the detached-feedback path, which trains
@@ -108,8 +106,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
         match ctap.drain_user_corrections() {
             Ok(signals) if !signals.is_empty() => {
                 for signal in &signals {
-                    handle
-                        .record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                    handle.record_feedback_detached(&signal.memory_id, Outcome::Misled);
                 }
                 tracing::info!(
                     target: "pa_daemon::retrieval",
@@ -125,8 +122,7 @@ pub(crate) fn run(agent_dir: &Path, handle: &RerankerHandle) {
         match ctap.drain_self_corrections() {
             Ok(signals) if !signals.is_empty() => {
                 for signal in &signals {
-                    handle
-                        .record_feedback_detached(&signal.memory_id, pa_retrieval::Outcome::Misled);
+                    handle.record_feedback_detached(&signal.memory_id, Outcome::Misled);
                 }
                 tracing::info!(
                     target: "pa_daemon::retrieval",
@@ -311,10 +307,8 @@ struct RawEdit {
 
 #[cfg(test)]
 mod tests {
-    use pa_core::refinement::retrieval::RerankerHandle;
-    use pa_retrieval::FlyRagReranker;
-
     use super::*;
+    use crate::FlyRagReranker;
 
     fn write_history(path: &Path, records: &[&str]) {
         let mut body = String::new();

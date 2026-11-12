@@ -40,10 +40,9 @@ pub struct HarnessDigestContext {
     /// The read-only package overlay (upstream #2298), mounted below the
     /// editable entries; refine plans against it and never edits it.
     pub package_state: Option<std::sync::Arc<crate::refinement::HarnessState>>,
-    /// Learning-rerank hook (`pa_retrieval::FlyRagReranker` bridged
-    /// through `pa_core::refinement::retrieval::RerankerHandle`). `None`
-    /// keeps the native TF-IDF order byte-for-byte; the daemon worker
-    /// installs this on session create when the retrieval feature is on.
+    /// The rerank hook an installed feature offers the session
+    /// ([`crate::features::SessionFeature::harness_rerank_hook`]). `None`
+    /// keeps the native TF-IDF order byte-for-byte.
     pub rerank_hook: Option<crate::refinement::ranking::HarnessRerankHook>,
 }
 
@@ -142,8 +141,8 @@ fn render_digest_with_fingerprint(
             ..Default::default()
         },
     );
-    // Persist which memory ids landed in this turn's digest. pa-ledger's
-    // user/self-correction taps read this sidecar to attribute Misled
+    // Persist which memory ids landed in this turn's digest. The retrieval
+    // feature's user/self-correction taps read this sidecar to attribute Misled
     // signals to the exact memories shown. Append-only JSONL; failures
     // are logged and skipped — the digest render must never fail a turn.
     if let Ok(ids) = rendered_memory_ids.lock() {
@@ -651,7 +650,7 @@ impl super::AgentSession {
 pub const DIGEST_MEMORIES_SIDECAR: &str = "digest_memories.jsonl";
 
 /// Append one JSONL line per digest render: the ISO timestamp (so the
-/// pa-ledger tap can join by time), the state fingerprint (so a tap
+/// correction tap can join by time), the state fingerprint (so a tap
 /// can also match on that), and the list of memory ids shown.
 /// Best-effort — any I/O failure is logged at debug and dropped; a
 /// digest render must never fail a turn.

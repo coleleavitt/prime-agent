@@ -26,21 +26,34 @@
 //!
 //! # Retriever trait
 //!
-//! [`Reranker`] is the plug point the pa-core digest seam calls. It has two
-//! methods: [`Reranker::rerank`] re-orders a base retriever's candidates and
-//! returns an offer id; [`Reranker::feedback`] records an outcome against that
-//! offer. [`BasicReranker`] (BM25-only, no learning) and [`FlyRagReranker`]
-//! (BM25 + flyrag, learning) both satisfy it, so pa-core can be wired behind a
-//! `Box<dyn Reranker>` without caring which one is live.
+//! [`Reranker`] has two methods: [`Reranker::rerank`] re-orders a base
+//! retriever's candidates and returns an offer id; [`Reranker::feedback`]
+//! records an outcome against that offer. [`BasicReranker`] (BM25-only, no
+//! learning) and [`FlyRagReranker`] (BM25 + flyrag, learning) both satisfy it.
+//!
+//! # Session feature
+//!
+//! [`RetrievalFeature`] wires the loop into prime-agent sessions through
+//! `pa-core`'s `SessionFeature` seam: the harness digest's rerank hook, and
+//! a tick at every agent stop that feeds the cert stream (the refinement
+//! histories) and the session transcripts' corrections back into flyrag. See
+//! `README.md`.
 
 #![warn(missing_docs)]
 
 pub mod bm25;
+mod correction_tap;
+mod feature;
+mod feedback_tap;
 pub mod flyrag;
+mod handle;
+mod seed;
 pub mod signal;
+mod tick;
 mod types;
 
 pub use bm25::{BasicReranker, Bm25Index};
+pub use feature::RetrievalFeature;
 pub use signal::{Signal, extract_signals};
 pub use types::{Candidate, OfferId, Outcome, Query, Ranked, RerankResult, Result, RetrievalError};
 

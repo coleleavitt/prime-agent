@@ -12,8 +12,6 @@ pa-core = { path = "../pa-core" }
 pa-agent = { path = "../pa-agent" }
 pa-ai = { path = "../pa-ai" }
 pa-telemetry = { path = "../pa-telemetry" }
-pa-ledger = { path = "../pa-ledger" }
-pa-retrieval = { path = "../pa-retrieval" }
 anyhow = { workspace = true }
 futures = { workspace = true }
 globset = "0.4"

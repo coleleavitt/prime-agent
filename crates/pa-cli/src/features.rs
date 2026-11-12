@@ -36,6 +36,10 @@ pub fn enabled_features() -> Vec<Arc<dyn SessionFeature>> {
     ];
     #[cfg(feature = "ledger")]
     features.extend(ledger_features());
+    // Learning memory retrieval: daemon sessions' digest rerank hook and
+    // the retrieval tick at every agent stop.
+    #[cfg(feature = "retrieval")]
+    features.push(Arc::new(pa_retrieval::RetrievalFeature::new()));
     // `rlm.web_search` / `rlm.web_fetch`: the `web.search` / `web.fetch`
     // host requests (their HTTP clients start on the first request).
     #[cfg(feature = "web")]
@@ -379,6 +383,8 @@ mod tests {
             "ravo",
             #[cfg(feature = "ledger")]
             "ledger",
+            #[cfg(feature = "retrieval")]
+            "retrieval",
             #[cfg(feature = "web")]
             "web",
             #[cfg(feature = "lsp")]

@@ -1,23 +1,21 @@
-//! Thread-safe handle around a `pa_retrieval::FlyRagReranker` plus the two
-//! glue functions the session engine uses to attach it: a rerank hook for
-//! the digest render, and a memory-sink pair the refinement apply path
-//! calls when entries land or leave the state.
+//! Thread-safe handle around a [`FlyRagReranker`]: the rerank hook the
+//! session's harness digest renders with, the memory upserts/removals and
+//! feedback the retrieval tick feeds it, and its persisted state.
 //!
-//! The handle owns the reranker behind a `Mutex`. The session engine keeps
-//! an `Arc<RerankerHandle>` on its session so the hook, the memory sink,
-//! and the periodic save all share one instance.
-//!
-//! The hook is what pa-core's [`super::ranking::HarnessStatePromptOptions`]
-//! reads. The memory sink is what [`super::planner::apply_refinement_proposal`]
-//! calls on each `memory`-kind edit. The feedback loop lives elsewhere
-//! (pa-ledger's feedback tap), so this module does not touch it.
+//! The handle owns the reranker behind a `Mutex`. Every session in the
+//! process on the same agent dir shares one handle ([`shared_handle_for`]),
+//! so the hook, the tick and the periodic save all touch one instance.
 
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use pa_retrieval::{FlyRagReranker, Query, RerankResult, Reranker, RetrievalError};
+use pa_core::refinement::HarnessEntry;
+use pa_core::refinement::ranking::{HarnessQueryTerms, HarnessRerankHook};
+
+use crate::seed::{seed_from_agent_dir, seed_reranker_from_harness_state};
+use crate::{Candidate, FlyRagReranker, Outcome, Query, Reranker, RetrievalError};
 
 /// A cross-crate handle to one `FlyRagReranker`. `Clone` cheap (just an
 /// `Arc`). Every method serialises through the inner `Mutex`, so the
@@ -45,32 +43,23 @@ impl std::fmt::Debug for RerankerHandle {
 }
 
 impl RerankerHandle {
-    /// Wrap an owned reranker. Use [`RerankerHandle::load_or_new`] on the
-    /// daemon side to pair construction with disk state.
-    #[must_use]
-    pub fn new(reranker: FlyRagReranker) -> Self {
+    /// Wrap an owned reranker that persists nowhere (tests).
+    #[cfg(test)]
+    pub(crate) fn new(reranker: FlyRagReranker) -> Self {
         Self {
             inner: Arc::new(Mutex::new(reranker)),
             persist_path: None,
         }
     }
 
-    /// Set the file this handle persists to. The file is written on
-    /// [`RerankerHandle::save`] and read on [`RerankerHandle::load_or_new`].
-    #[must_use]
-    pub fn with_persist_path(mut self, path: PathBuf) -> Self {
-        self.persist_path = Some(path);
-        self
-    }
-
     /// Construct a handle backed by `path`: load the file if present,
     /// otherwise start empty with the preregistered flyrag params at
     /// `seed`. Any I/O/JSON error short-circuits to an empty reranker so
-    /// the daemon boots even after a truncated save.
+    /// a session starts even after a truncated save.
     ///
     /// # Errors
     ///
-    /// Returns [`pa_retrieval::RetrievalError`] when flyrag rejects the
+    /// Returns [`RetrievalError`] when flyrag rejects the
     /// seed (should not happen for a valid `u64`).
     pub fn load_or_new(path: PathBuf, seed: u64) -> Result<Self, RetrievalError> {
         let rerank = match FlyRagReranker::load_from_file(&path) {
@@ -130,30 +119,12 @@ impl RerankerHandle {
         }
     }
 
-    /// Record a verified outcome against an earlier rerank's offer. The
-    /// pa-ledger feedback tap funnels cert-stream signals through here.
-    pub fn record_feedback(
-        &self,
-        offer: pa_retrieval::OfferId,
-        memory_id: &str,
-        outcome: pa_retrieval::Outcome,
-    ) {
-        let mut guard = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Err(err) = guard.feedback(offer, memory_id, outcome) {
-            tracing::warn!(target: "pa_core::retrieval", %memory_id, %err,
-                "reranker rejected feedback; skipping");
-        }
-    }
-
     /// Record a cert-stream outcome for a memory with no live offer to
     /// attribute to — a supersede, a RAVO coverage match, any signal that
     /// arrived after the rerank that showed the memory was evicted from
-    /// the offer window. Routes to [`pa_retrieval::Reranker::feedback_detached`],
+    /// the offer window. Routes to [`Reranker::feedback_detached`],
     /// which trains flyrag on the doc's own KC units.
-    pub fn record_feedback_detached(&self, memory_id: &str, outcome: pa_retrieval::Outcome) {
+    pub fn record_feedback_detached(&self, memory_id: &str, outcome: Outcome) {
         let mut guard = self
             .inner
             .lock()
@@ -183,22 +154,6 @@ impl RerankerHandle {
                 );
             }
         }
-    }
-
-    /// Execute a full rerank against the current index.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`pa_retrieval::RetrievalError`] when the underlying
-    /// flyrag errors (unknown doc, codec failure).
-    pub fn rerank(&self, query: &Query, k: usize) -> Result<RerankResult, RetrievalError> {
-        let mut guard = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let base_top_k = 32usize.max(k);
-        let candidates = guard.base().top_k(query, base_top_k);
-        guard.rerank(query, &candidates, k)
     }
 
     /// Live memory count (base retriever).
@@ -236,7 +191,7 @@ impl RerankerHandle {
     }
 
     /// Compact the reranker's index, reclaiming tombstoned slots. Run
-    /// periodically (every N refinements) from pa-daemon's retrieval
+    /// periodically (every N refinements) from the retrieval
     /// tick — not every settle. Logs the number of slots dropped.
     pub fn compact(&self) {
         let mut guard = self
@@ -277,61 +232,59 @@ impl RerankerHandle {
     /// consults this handle; fallbacks to `None` (native TF-IDF order)
     /// on any lock poison or reranker error.
     #[must_use]
-    pub fn as_rerank_hook(&self) -> super::ranking::HarnessRerankHook {
+    pub fn as_rerank_hook(&self) -> HarnessRerankHook {
         let handle = self.clone();
-        std::sync::Arc::new(
-            move |entries: &[super::HarnessEntry], terms: &super::ranking::HarnessQueryTerms| {
-                if entries.is_empty() || terms.is_empty() {
-                    return None;
-                }
-                // Build a Query from the terms the digest already computed.
-                // The weighted map IS the query bag; BM25 reads it directly.
-                let query = Query {
-                    text: String::new(),
-                    terms: terms
-                        .iter()
-                        .map(|(t, w)| {
-                            (
-                                t.clone(),
-                                #[expect(
-                                    clippy::cast_possible_truncation,
-                                    reason = "harness term weights live in a small bounded range; \
-                                              the cast to f32 is intentional (BM25 uses f32)"
-                                )]
-                                {
-                                    *w as f32
-                                },
-                            )
-                        })
-                        .collect(),
-                };
-                let mut guard = handle
-                    .inner
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                // Rerank only the entries pa-core is already considering
-                // (post-filter for `is_enabled`, pre-truncation): their
-                // own BM25 scores decide the order.
-                let candidates: Vec<pa_retrieval::Candidate> = entries
+        std::sync::Arc::new(move |entries: &[HarnessEntry], terms: &HarnessQueryTerms| {
+            if entries.is_empty() || terms.is_empty() {
+                return None;
+            }
+            // Build a Query from the terms the digest already computed.
+            // The weighted map IS the query bag; BM25 reads it directly.
+            let query = Query {
+                text: String::new(),
+                terms: terms
                     .iter()
-                    .map(|e| pa_retrieval::Candidate {
-                        id: e.id.clone(),
-                        base_score: 1.0,
+                    .map(|(t, w)| {
+                        (
+                            t.clone(),
+                            #[expect(
+                                clippy::cast_possible_truncation,
+                                reason = "harness term weights live in a small bounded range; \
+                                              the cast to f32 is intentional (BM25 uses f32)"
+                            )]
+                            {
+                                *w as f32
+                            },
+                        )
                     })
-                    .collect();
-                match guard.rerank(&query, &candidates, entries.len()) {
-                    Ok(result) => Some(result.ranked.into_iter().map(|r| r.id).collect()),
-                    Err(err) => {
-                        tracing::debug!(
-                            target: "pa_core::retrieval",
-                            %err,
-                            "rerank hook fell back to native order"
-                        );
-                        None
-                    }
+                    .collect(),
+            };
+            let mut guard = handle
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Rerank only the entries pa-core is already considering
+            // (post-filter for `is_enabled`, pre-truncation): their
+            // own BM25 scores decide the order.
+            let candidates: Vec<Candidate> = entries
+                .iter()
+                .map(|e| Candidate {
+                    id: e.id.clone(),
+                    base_score: 1.0,
+                })
+                .collect();
+            match guard.rerank(&query, &candidates, entries.len()) {
+                Ok(result) => Some(result.ranked.into_iter().map(|r| r.id).collect()),
+                Err(err) => {
+                    tracing::debug!(
+                        target: "pa_core::retrieval",
+                        %err,
+                        "rerank hook fell back to native order"
+                    );
+                    None
                 }
-            },
-        )
+            }
+        })
     }
 }
 
@@ -365,13 +318,18 @@ fn shared_handles() -> &'static Mutex<HashMap<PathBuf, RerankerHandle>> {
 
 /// Get-or-create the shared `RerankerHandle` for `agent_dir`. Every
 /// call in this process on the same agent dir returns the SAME inner
-/// Mutex — multi-worker safe.
+/// Mutex — multi-worker safe. A fresh handle that loaded no state is
+/// seeded from the memory entries already on disk, so the index matches
+/// the harness state from turn one, and the one-shot `targetsFingerprints`
+/// backfill runs (sentinel-gated and idempotent, see
+/// `pa_core::refinement::backfill_targets::backfill_once`), so the feedback
+/// loop has targets to credit.
 ///
 /// # Errors
 ///
-/// Returns [`pa_retrieval::RetrievalError`] when flyrag rejects the
+/// Returns [`RetrievalError`] when flyrag rejects the
 /// seed on a fresh construction.
-pub fn shared_handle_for(agent_dir: &Path, seed: u64) -> Result<RerankerHandle, RetrievalError> {
+pub(crate) fn shared_handle_for(agent_dir: &Path) -> Result<RerankerHandle, RetrievalError> {
     let key = std::fs::canonicalize(agent_dir).unwrap_or_else(|_| agent_dir.to_path_buf());
     let mut map = shared_handles()
         .lock()
@@ -380,7 +338,19 @@ pub fn shared_handle_for(agent_dir: &Path, seed: u64) -> Result<RerankerHandle, 
         return Ok(h.clone());
     }
     let path = default_retrieval_path(&key);
-    let handle = RerankerHandle::load_or_new(path, seed)?;
+    let handle = RerankerHandle::load_or_new(path, seed_from_agent_dir(agent_dir))?;
+    if handle.is_empty() {
+        seed_reranker_from_harness_state(agent_dir, &handle);
+    }
+    if let Err(err) =
+        pa_core::refinement::backfill_targets::backfill_once(&agent_dir.join("harness"))
+    {
+        tracing::warn!(
+            target: "pa_daemon::retrieval",
+            %err,
+            "targetsFingerprints backfill failed; learning loop keeps its current coverage"
+        );
+    }
     map.insert(key, handle.clone());
     Ok(handle)
 }
@@ -401,18 +371,18 @@ mod tests {
         let handle = RerankerHandle::new(r);
         seeded(&handle);
 
-        let mut terms = super::super::ranking::HarnessQueryTerms::new();
+        let mut terms = HarnessQueryTerms::new();
         terms.insert("install".to_string(), 1.0);
         let hook = handle.as_rerank_hook();
 
         // Build entries matching what the digest render would pass in.
-        let make = |id: &str, title: &str| super::super::HarnessEntry {
+        let make = |id: &str, title: &str| HarnessEntry {
             id: id.to_string(),
-            kind: super::super::RefinementKind::Memory,
+            kind: pa_core::refinement::RefinementKind::Memory,
             title: title.to_string(),
             content: String::new(),
             path: "memory".to_string(),
-            scope: Some(super::super::HarnessScope::Global),
+            scope: Some(pa_core::refinement::HarnessScope::Global),
             reference: serde_json::Map::default(),
             arguments: serde_json::Map::default(),
             metadata: serde_json::Map::default(),
@@ -421,7 +391,7 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: Vec::new(),
-            lane: super::super::RefinementLane::Lesson,
+            lane: pa_core::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         };
         let entries = vec![
@@ -459,9 +429,9 @@ mod tests {
         // workers race their saves.
         let dir = tempfile::tempdir().unwrap();
         let agent_dir = dir.path().to_path_buf();
-        let a = shared_handle_for(&agent_dir, 17).unwrap();
+        let a = shared_handle_for(&agent_dir).unwrap();
         a.record_memory_upsert("a", "install the dependencies with bun");
-        let b = shared_handle_for(&agent_dir, 17).unwrap();
+        let b = shared_handle_for(&agent_dir).unwrap();
         // b sees a's mutation: no independent load.
         assert_eq!(b.len(), 1, "shared handle sees a's upsert");
         // Confirm the two share the SAME inner Mutex by checking that
@@ -471,7 +441,7 @@ mod tests {
 
         // A different agent_dir gets its OWN handle.
         let other = tempfile::tempdir().unwrap();
-        let c = shared_handle_for(other.path(), 17).unwrap();
+        let c = shared_handle_for(other.path()).unwrap();
         assert_eq!(c.len(), 0, "disjoint agent dirs don't share state");
     }
 
@@ -480,13 +450,13 @@ mod tests {
         let handle = RerankerHandle::new(FlyRagReranker::new(1).unwrap());
         seeded(&handle);
         let hook = handle.as_rerank_hook();
-        let make = |id: &str| super::super::HarnessEntry {
+        let make = |id: &str| HarnessEntry {
             id: id.to_string(),
-            kind: super::super::RefinementKind::Memory,
+            kind: pa_core::refinement::RefinementKind::Memory,
             title: String::new(),
             content: String::new(),
             path: "memory".to_string(),
-            scope: Some(super::super::HarnessScope::Global),
+            scope: Some(pa_core::refinement::HarnessScope::Global),
             reference: serde_json::Map::default(),
             arguments: serde_json::Map::default(),
             metadata: serde_json::Map::default(),
@@ -495,19 +465,13 @@ mod tests {
             updated_at: String::new(),
             version: 1,
             targets_fingerprints: Vec::new(),
-            lane: super::super::RefinementLane::Lesson,
+            lane: pa_core::refinement::RefinementLane::Lesson,
             extensions: serde_json::Map::new(),
         };
-        assert!(
-            hook(
-                &[make("alpha")],
-                &super::super::ranking::HarnessQueryTerms::new()
-            )
-            .is_none()
-        );
+        assert!(hook(&[make("alpha")], &HarnessQueryTerms::new()).is_none());
         assert!(
             hook(&[], &{
-                let mut t = super::super::ranking::HarnessQueryTerms::new();
+                let mut t = HarnessQueryTerms::new();
                 t.insert("x".into(), 1.0);
                 t
             })

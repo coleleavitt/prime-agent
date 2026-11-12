@@ -209,11 +209,8 @@ fn native_entry_order(
 /// their native TF-IDF order) + the query terms, returns the ids to show
 /// in order, best first. Length may be <= input length (a reranker can
 /// drop a doc it has learned is unhelpful). Returning `None` falls back
-/// to the native TF-IDF sort.
-///
-/// `pa-retrieval::FlyRagReranker` is the intended producer; this crate
-/// stays dep-free of pa-retrieval so the trait object crosses the boundary
-/// without a cycle.
+/// to the native TF-IDF sort. A session's hook comes from an installed
+/// feature (`crate::features::SessionFeature::harness_rerank_hook`).
 pub type HarnessRerankHook = std::sync::Arc<
     dyn Fn(&[HarnessEntry], &HarnessQueryTerms) -> Option<Vec<String>> + Send + Sync,
 >;
@@ -232,13 +229,12 @@ pub struct HarnessStatePromptOptions {
     /// native digest byte for byte.
     pub adjustment: Option<super::prompt_hook::HarnessPromptAdjustment>,
     /// Pluggable reranker over harness entries (see [`HarnessRerankHook`]).
-    /// `None` keeps the native TF-IDF order byte-for-byte; the daemon can
-    /// hand in a hook wrapping a `pa_retrieval::FlyRagReranker`.
+    /// `None` keeps the native TF-IDF order byte-for-byte.
     pub rerank_hook: Option<HarnessRerankHook>,
     /// When set, the render fills this buffer with the memory-kind entry
     /// IDs it actually included in the digest (post-rerank, post-truncate
-    /// to `max_entries_per_kind`). The daemon uses it to persist a per-turn
-    /// `digest_memories.jsonl` sidecar so the pa-ledger feedback taps can
+    /// to `max_entries_per_kind`). The digest render persists it as a per-turn
+    /// `digest_memories.jsonl` sidecar so a feature's feedback taps can
     /// attribute `Misled` signals to the exact memories shown when a
     /// failure or user correction follows.
     pub record_rendered_memory_ids: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,

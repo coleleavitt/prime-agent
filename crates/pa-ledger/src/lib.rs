@@ -9,10 +9,8 @@
 //! [`FailureLedgerFeature`] behind its `ledger` Cargo feature. RAVO builds
 //! on the pure ledger API and on [`LedgerHandle`] / [`LedgerObserver`].
 
-mod correction_tap;
 mod extract;
 mod feature;
-mod feedback_tap;
 mod fingerprint;
 mod harness;
 mod js;
@@ -22,7 +20,6 @@ mod resolution;
 mod resolution_store;
 mod silent_failure;
 
-pub use correction_tap::{CorrectionTap, SELF_CORRECTION_CURSOR, USER_CORRECTION_CURSOR};
 pub use extract::{IPYTHON_TOOL_NAME, extract_failures, observe_message, tool_result_text};
 pub use feature::{
     FailureLedgerFeature,
@@ -34,7 +31,6 @@ pub use feature::{
     LedgerScope,
     RESOLUTION_HINT_EVENT,
 };
-pub use feedback_tap::{FEEDBACK_TAP_CURSOR_NAME, FeedbackTap};
 pub use fingerprint::{
     FAILURE_FINGERPRINT_ATTR,
     FAILURE_OPPONENT_PREFIX,

@@ -693,7 +693,6 @@ pub mod prompt_hook;
 pub mod ranking;
 pub mod recurrence;
 pub mod relocate;
-pub mod retrieval;
 pub mod store;
 
 // Export the compact-text helper for the digest formatter.

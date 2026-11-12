@@ -1334,11 +1334,6 @@ impl TurnRunner {
             // (on by default); emits a durable `turn_duration` custom row
             // so replays carry it too.
             self.maybe_emit_turn_duration(turn_started_at);
-            // The retrieval tick: drain the cert stream for feedback
-            // signals, sync new memory add/remove events into the
-            // flyrag reranker's index, and persist its state. No-op
-            // when no reranker is attached (test builds, legacy workers).
-            self.maybe_run_retrieval_tick(&settle_engine);
         }
         if let Some(result) = settled_outcome {
             for done in items_done.into_iter().chain(folded_done) {

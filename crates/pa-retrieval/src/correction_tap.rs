@@ -1,7 +1,7 @@
 //! User-correction + self-correction taps.
 //!
-//! The pa-daemon retrieval tick drives both after each settled turn.
-//! Each produces [`pa_retrieval::signal::Signal`]s attributed to the
+//! The retrieval tick ([`crate::tick`]) drives both after each agent stop.
+//! Each produces [`crate::signal::Signal`]s attributed to the
 //! memory ids in the digest of the turn that preceded the correction
 //! event.
 //!
@@ -14,7 +14,7 @@
 //!   boundary.
 //!
 //! - **Self correction** — turn N's bash emitted a `SilentFailure`
-//!   fingerprint (caught by [`crate::silent_failure`]) AND turn N+1's
+//!   fingerprint (caught by [`pa_ledger::silent_failure_line_bare`]) AND turn N+1's
 //!   bash matches a corrective pattern (`playwright install`,
 //!   `pip install`, `cargo clean`, `rustup install`, `npm install`).
 //!   The corrective command is ground truth that turn N's failure was
@@ -33,10 +33,12 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::{fs, io};
 
-use pa_retrieval::Outcome;
-use pa_retrieval::signal::{Signal, SignalCause};
+use pa_ledger::silent_failure_line_bare;
 use regex::Regex;
 use serde::Deserialize;
+
+use crate::Outcome;
+use crate::signal::{Signal, SignalCause};
 
 /// Cursor sidecar names.
 pub const USER_CORRECTION_CURSOR: &str = "user_correction_tap.cursor";
@@ -210,7 +212,7 @@ fn is_retry_recovery(prior_cmd: &str, follow_cmd: &str, follow_text: &str) -> bo
     }
     // The retry must NOT contain a silent-failure signature of its own:
     // otherwise it's a second failure, not a recovery.
-    if crate::silent_failure::silent_failure_line_bare(follow_text).is_some() {
+    if silent_failure_line_bare(follow_text).is_some() {
         return false;
     }
     true
@@ -358,8 +360,7 @@ impl CorrectionTap {
                         last_fail_pair = None;
                         continue;
                     }
-                    let this_result_has_failure =
-                        crate::silent_failure::silent_failure_line_bare(msg.text()).is_some();
+                    let this_result_has_failure = silent_failure_line_bare(msg.text()).is_some();
                     // If a prior failure exists, check if THIS pair is
                     // the recovery.
                     if let Some(fail) = &last_fail_pair {
