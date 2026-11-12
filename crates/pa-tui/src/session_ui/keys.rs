@@ -384,11 +384,6 @@ impl SessionUi {
         let Some(id) = key_event_to_id(&key) else {
             return Ok(());
         };
-        // The picker consumes Ctrl+C (close, not exit); report it so the force-quit
-        // guard can disarm.
-        if id == "ctrl+c" {
-            self.exit_guard.note_ctrl_c_handled();
-        }
         let action = view
             .choice_picker
             .as_mut()
@@ -432,9 +427,15 @@ impl SessionUi {
         // A key press breaks a multi-click run (standard editor behavior): the next press on the
         // same spot is a fresh single click, not a double click.
         self.click_counter.reset();
+        let id = key_event_to_id(&key);
+        // Every key that reaches the session is handled, whichever surface consumes it (the
+        // force-quit guard counts the Ctrl+C presses; an exit re-arms it from the loop's break).
+        if let Some(id) = &id {
+            self.exit_guard.note_key_handled(id);
+        }
         // Any non-Escape key re-arms the double-Esc tree shortcut (one shot per input chain);
         // Escape itself never resets, so repeated Escape converges to the inert empty state.
-        if key_event_to_id(&key).is_some_and(|id| id != "escape") {
+        if id.is_some_and(|id| id != "escape") {
             self.escape_tree_shortcut_spent = false;
         }
         // The `/model` picker owns the frame while open: its keys go before the

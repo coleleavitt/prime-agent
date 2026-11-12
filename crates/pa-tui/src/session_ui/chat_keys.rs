@@ -170,7 +170,7 @@ impl SessionUi {
             if key.needs_blank_editor() && !view.editor.get_text().trim().is_empty() {
                 continue;
             }
-            if self.run_chat_key(key, id, view, running).await? {
+            if self.run_chat_key(key, view, running).await? {
                 return Ok(true);
             }
         }
@@ -181,7 +181,6 @@ impl SessionUi {
     async fn run_chat_key(
         &mut self,
         key: ChatKey,
-        id: &str,
         view: &mut AgentView,
         running: &mut bool,
     ) -> Result<bool> {
@@ -211,7 +210,7 @@ impl SessionUi {
                 self.exit_reason = "ctrl_d";
                 *running = false;
             }
-            ChatKey::Interrupt | ChatKey::Clear => self.handle_clear_press(key, id, view, running),
+            ChatKey::Interrupt | ChatKey::Clear => self.handle_clear_press(key, view, running),
             // Suspend hands the terminal to the shell; the loop performs the cycle right after
             // dispatch, and the SIGCONT continuation re-applies raw mode and mouse tracking.
             ChatKey::Suspend => {
@@ -490,16 +489,10 @@ impl SessionUi {
     fn handle_clear_press(
         &mut self,
         key: ChatKey,
-        id: &str,
         view: &mut AgentView,
         running: &mut bool,
     ) {
         let interrupt = key == ChatKey::Interrupt;
-        // One handled Ctrl+C press: the force-quit guard disarms once every
-        // observed press of the pair was handled without an exit.
-        if id == "ctrl+c" {
-            self.exit_guard.note_ctrl_c_handled();
-        }
         if view.editor.is_showing_autocomplete() {
             view.editor.cancel_autocomplete();
             self.clear_ctrl_c_hint();

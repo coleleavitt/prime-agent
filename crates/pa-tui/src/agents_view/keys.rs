@@ -153,6 +153,9 @@ impl AgentsViewMode {
     /// Handle one key id: the bash view, the notice panel, the preview and an armed composer
     /// own the key first; then the list actions, then the search text.
     pub(super) fn handle_key(&mut self, key: &str) {
+        // Every key that reaches the view is handled, whichever surface consumes it (the
+        // force-quit guard counts the Ctrl+C presses; an exit re-arms it from the loop's break).
+        self.exit_guard.note_key_handled(key);
         // A sticky line clears on any keypress (the transient lines ride their own
         // expiry).
         self.clear_sticky_status();
@@ -199,7 +202,7 @@ impl AgentsViewMode {
             {
                 continue;
             }
-            if self.run_list_key(action, key, &mut press) {
+            if self.run_list_key(action, &mut press) {
                 return;
             }
         }
@@ -215,14 +218,11 @@ impl AgentsViewMode {
     }
 
     /// One bound list action; `false` when its guard declines the key.
-    fn run_list_key(&mut self, action: ListKey, key: &str, press: &mut KeyPress) -> bool {
+    fn run_list_key(&mut self, action: ListKey, press: &mut KeyPress) -> bool {
         match action {
-            // One handled Ctrl+C press: the force-quit guard disarms once the whole observed pair
-            // was handled; an exit re-arms from the run loop's break.
+            // `app.clear` (default ctrl+c): the first press arms the exit hint, a second press
+            // while armed exits.
             ListKey::ExitPress => {
-                if key == "ctrl+c" {
-                    self.exit_guard.note_ctrl_c_handled();
-                }
                 if press.was_exit_armed {
                     self.running = false;
                 } else {

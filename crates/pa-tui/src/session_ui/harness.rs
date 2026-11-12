@@ -62,10 +62,6 @@ impl SessionUi {
         let Some(id) = key_event_to_id(&key) else {
             return Ok(());
         };
-        // The selector consumes Ctrl+C (close, not exit).
-        if id == "ctrl+c" {
-            self.exit_guard.note_ctrl_c_handled();
-        }
         let action = match view.harness_selector.as_mut() {
             Some(HarnessSelectorState::Open(selector)) => {
                 selector.handle_key(&id, view.editor.keybindings())
