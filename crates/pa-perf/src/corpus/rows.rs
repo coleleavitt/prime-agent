@@ -168,20 +168,20 @@ pub(crate) fn session_id(rng: &mut Rng, start_ms: u64) -> String {
     )
 }
 
-fn sentence(rng: &mut Rng, words: usize) -> String {
+fn sentence(rng: &mut Rng, words: u64) -> String {
     (0..words)
-        .map(|_| WORDS[rng.below(WORDS.len() as u64) as usize])
+        .map(|_| *rng.pick(&WORDS))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 fn user_text(rng: &mut Rng) -> String {
-    (0..(1 + rng.below(3)))
+    (0..=rng.below(3))
         .map(|_| {
             let words = 6 + rng.below(12);
-            let mut text = sentence(rng, words as usize);
+            let mut text = sentence(rng, words);
             if rng.chance(12) {
-                text.push_str(&format!(" ({})", sentence(rng, 2)));
+                text = format!("{text} ({})", sentence(rng, 2));
             }
             text.push('.');
             text
@@ -191,10 +191,10 @@ fn user_text(rng: &mut Rng) -> String {
 
 fn assistant_text(rng: &mut Rng) -> String {
     let mut text = String::new();
-    for _ in 0..(1 + rng.below(3)) {
+    for _ in 0..=rng.below(3) {
         for _ in 0..(2 + rng.below(4)) {
             let words = 8 + rng.below(16);
-            text.push_str(&sentence(rng, words as usize));
+            text.push_str(&sentence(rng, words));
             text.push_str(". ");
         }
         text.push('\n');
@@ -203,7 +203,7 @@ fn assistant_text(rng: &mut Rng) -> String {
 }
 
 fn tool_output(rng: &mut Rng) -> String {
-    let mut text = TOOL_OUTPUTS[rng.below(TOOL_OUTPUTS.len() as u64) as usize].to_string();
+    let mut text = rng.pick(&TOOL_OUTPUTS).to_string();
     text.push_str(&sentence(rng, 3));
     text.push('\n');
     text
@@ -215,6 +215,10 @@ fn usage(rng: &mut Rng) -> Usage {
     let output = 50 + rng.below(2000);
     let cache_write = rng.below(500);
     let total = input + output + cache_read + cache_write;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "generated token counts stay far below f64's exact integer range"
+    )]
     let cost = |n: u64| pa_types::JsNumber::from(n as f64 / 1000.0);
     Usage {
         input,
@@ -280,12 +284,16 @@ impl Rows {
 /// # Errors
 ///
 /// Propagates serialization and filesystem failures.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one session's rows in the seeded stream's order"
+)]
 pub(crate) fn write_session_file(
     path: &Path,
     spec: &SessionSpec,
     rng: &mut Rng,
 ) -> anyhow::Result<Written> {
-    let (provider, model) = MODELS[rng.below(MODELS.len() as u64) as usize];
+    let (provider, model) = *rng.pick(&MODELS);
     let header = SessionHeader {
         version: Some(3),
         id: spec.id.clone(),
@@ -404,7 +412,7 @@ pub(crate) fn write_session_file(
 
         // The assistant turn: thinking + text + a tool call, then the result.
         let tool = (!marker_turn && rng.chance(45)).then(|| {
-            let name = TOOLS[rng.below(TOOLS.len() as u64) as usize];
+            let name = *rng.pick(&TOOLS);
             let id = format!("call-{:08x}", rows.counter);
             let mut arguments = serde_json::Map::new();
             arguments.insert(
@@ -502,7 +510,7 @@ pub(crate) fn write_session_file(
         }
 
         if !marker_turn && rng.chance(7) {
-            let custom = CUSTOM_TYPES[rng.below(CUSTOM_TYPES.len() as u64) as usize];
+            let custom = *rng.pick(&CUSTOM_TYPES);
             rows.push(
                 "custom_message",
                 serde_json::to_value(CustomMessageEntry {
@@ -519,7 +527,7 @@ pub(crate) fn write_session_file(
 
     rows.writer.flush()?;
     Ok(Written {
-        rows: rows.counter as usize,
+        rows: usize::try_from(rows.counter)?,
         last_user_text,
     })
 }

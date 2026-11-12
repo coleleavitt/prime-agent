@@ -214,6 +214,10 @@ impl Marker {
 /// # Errors
 ///
 /// Propagates filesystem, serialization, and ledger failures.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one deterministic corpus script whose steps consume the seeded stream in order"
+)]
 pub fn generate(options: &CorpusOptions) -> anyhow::Result<Manifest> {
     anyhow::ensure!(
         options.sessions >= 3,
@@ -277,7 +281,7 @@ pub fn generate(options: &CorpusOptions) -> anyhow::Result<Manifest> {
             _ => (
                 options.rows,
                 rng.chance(70)
-                    .then(|| format!("{} #{index}", TASKS[rng.below(TASKS.len() as u64) as usize])),
+                    .then(|| format!("{} #{index}", *rng.pick(&TASKS))),
                 None,
             ),
         };
@@ -441,7 +445,7 @@ pub fn generate(options: &CorpusOptions) -> anyhow::Result<Manifest> {
 }
 
 /// Replace only a prior corpus owned by this suite; arbitrary populated output
-/// remains an error. remove_dir_all does not follow nested directory symlinks.
+/// remains an error. `remove_dir_all` does not follow nested directory symlinks.
 #[cfg(any(unix, test))]
 pub(crate) fn regenerate_for_suite(options: &CorpusOptions) -> anyhow::Result<Manifest> {
     anyhow::ensure!(
@@ -556,7 +560,7 @@ fn warm_sidecars(sessions_dir: &Path, archive_dir: &Path) -> anyhow::Result<()> 
 fn collect_files(root: &Path) -> anyhow::Result<Vec<String>> {
     fn walk(dir: &Path, out: &mut Vec<String>) -> anyhow::Result<()> {
         let mut entries = std::fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let path = entry.path();
             if path.is_dir() {

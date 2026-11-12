@@ -73,7 +73,7 @@ pub(crate) fn write_artifact_dir(
             .map(|index| {
                 (
                     format!("{seed_text}-memory-{index}"),
-                    format!("corpus memory entry {index}: {}", seed_text),
+                    format!("corpus memory entry {index}: {seed_text}"),
                 )
             })
             .collect::<Vec<_>>();
@@ -90,7 +90,7 @@ pub(crate) fn write_artifact_dir(
                             HarnessEntry {
                                 id: id.clone(),
                                 kind: RefinementKind::Memory,
-                                title: format!("corpus memory {}", id),
+                                title: format!("corpus memory {id}"),
                                 content: content.clone(),
                                 path: "general".to_string(),
                                 scope: Some(HarnessScope::Local),
@@ -146,7 +146,7 @@ pub(crate) fn write_artifact_dir(
                     "sessionId": session_id,
                     "sessionFile": String::new(),
                     "cwd": "/tmp",
-                    "label": WORKER_NAMES[rng.below(WORKER_NAMES.len() as u64) as usize],
+                    "label": *rng.pick(&WORKER_NAMES),
                     "prompt": "retired corpus heartbeat",
                     "schedule": { "kind": "interval", "expression": "every 30m", "intervalMs": 1_800_000 },
                     "createdAt": iso_from_millis(1_700_000_000_000),
@@ -225,7 +225,7 @@ pub(crate) fn spawn_child(
             parent: parent_file.display().to_string(),
             child: child_file.display().to_string(),
             depth,
-            name: WORKER_NAMES[rng.below(WORKER_NAMES.len() as u64) as usize].to_string(),
+            name: rng.pick(&WORKER_NAMES).to_string(),
             factory: None,
         })?;
         written.push(child_file.clone());

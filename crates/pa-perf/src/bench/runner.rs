@@ -147,7 +147,7 @@ pub(super) fn run(options: &BenchOptions) -> anyhow::Result<BenchResult> {
     let runs = sample_runs(&ctx, options.runs, |index| {
         Ok(launch(&ctx, options.scenario, index)?.0)
     })?;
-    let result = build_result(&ctx, options.scenario, runs);
+    let result = build_result(&ctx, options.scenario, &runs);
     write_result(&result, &options.json)?;
     Ok(result)
 }
@@ -201,7 +201,9 @@ fn launch(ctx: &RunCtx, scenario: Scenario, run: usize) -> anyhow::Result<(Measu
     } else {
         None
     };
-    let daemon_pid = daemon.as_ref().map(|daemon| daemon.child.id() as i32);
+    let daemon_pid = daemon
+        .as_ref()
+        .map(|daemon| daemon.child.id().cast_signed());
     let outcome: anyhow::Result<(Measured, Launch)> = (|| {
         let mut launched = spawn_for_scenario(ctx, &socket, scenario, run)?;
         let sample = launch_scenario(ctx, &mut launched, scenario, daemon_pid)?;
@@ -251,6 +253,10 @@ fn launch(ctx: &RunCtx, scenario: Scenario, run: usize) -> anyhow::Result<(Measu
 ///
 /// Propagates corpus-generation, spawn, needle-timeout, daemon, and IO
 /// failures.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sequential suite: the corpus, the daemon, each scenario's runs, the report"
+)]
 pub(super) fn run_suite(options: &RunOptions) -> anyhow::Result<Vec<BenchResult>> {
     anyhow::ensure!(options.runs > 0, "sampled runs must be positive");
     let liveness = Duration::from_secs(options.liveness_secs);
@@ -360,7 +366,7 @@ pub(super) fn run_suite(options: &RunOptions) -> anyhow::Result<Vec<BenchResult>
             );
         }
         let ctx = corpus_for(scenario, &cold_ctx, &warm_ctx);
-        let result = build_result(ctx, scenario, runs);
+        let result = build_result(ctx, scenario, &runs);
         let name = crate::report::key_of(scenario);
         // Per-profile unique names: the CI legs merge their artifacts into
         // one results dir, and same-named files would overwrite each other.
@@ -696,7 +702,7 @@ fn at_completion(ctx: &RunCtx, child: &mut PtyChild) -> anyhow::Result<Measured>
     Ok(Measured::single(Mark::since(child, started)))
 }
 
-/// From the resumed tail: PAGES PageUps, each timed to the first frame whose
+/// From the resumed tail: PAGES `PageUps`, each timed to the first frame whose
 /// topmost block ordinal is above the previous frame's.
 fn transcript_paging(ctx: &RunCtx, child: &mut PtyChild) -> anyhow::Result<Measured> {
     wait_ordinal_frame(ctx, child)?;
@@ -825,7 +831,7 @@ impl Drop for DaemonChild {
             return;
         }
         let _ = pa_core::platform::process::kill_pid(
-            self.child.id() as i32,
+            self.child.id().cast_signed(),
             pa_core::platform::process::Signal::Kill,
         );
         let _ = self.child.wait();
@@ -928,7 +934,7 @@ fn restore(ctx: &RunCtx) -> anyhow::Result<()> {
 }
 
 /// The result object for one scenario's runs (settled marks pooled).
-fn build_result(ctx: &RunCtx, scenario: Scenario, runs: Vec<Measured>) -> BenchResult {
+fn build_result(ctx: &RunCtx, scenario: Scenario, runs: &[Measured]) -> BenchResult {
     let mut samples: Vec<f64> = runs.iter().flat_map(|run| run.settled.clone()).collect();
     samples.sort_by(f64::total_cmp);
     let (median_ms, p95_ms, _) = stats(&samples);
@@ -975,8 +981,14 @@ fn stats(samples: &[f64]) -> (f64, f64, f64) {
     let median = if sorted.len() % 2 == 1 {
         sorted[sorted.len() / 2]
     } else {
-        (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) / 2.0
+        f64::midpoint(sorted[sorted.len() / 2 - 1], sorted[sorted.len() / 2])
     };
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a sample count far below 2^52; the index is non-negative and clamped below"
+    )]
     let p95_index = ((sorted.len() as f64 - 1.0) * 0.95).ceil() as usize;
     (
         median,
@@ -1065,6 +1077,10 @@ mod idle {
         });
         let ticks_per_second = nix::unistd::sysconf(nix::unistd::SysconfVar::CLK_TCK)?
             .context("CLK_TCK is defined on Linux")?;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "CPU ticks of an idle window and the tick rate are far below 2^52"
+        )]
         let cpu_ms = delta.ticks as f64 * 1000.0 / ticks_per_second as f64;
         println!(
             "idle-cost: {cpu_ms:.0}ms CPU, {} context switches, {} processes",
@@ -1173,11 +1189,11 @@ mod idle {
                 .stdin(std::process::Stdio::piped())
                 .spawn()
                 .expect("spawn the mock descendant");
-            let own = std::process::id() as i32;
+            let own = std::process::id().cast_signed();
             let seen = super::snapshot(&[own]);
             let _ = child.kill();
             let _ = child.wait();
-            assert!(seen.contains_key(&(child.id() as i32)), "{seen:?}");
+            assert!(seen.contains_key(&(child.id().cast_signed())), "{seen:?}");
             assert!(seen[&own].switches > 0);
         }
     }
@@ -1257,7 +1273,7 @@ mod tests {
                 settled: vec![1.0],
                 ..Measured::default()
             };
-            let result = build_result(measured, scenario, vec![run]);
+            let result = build_result(measured, scenario, &[run]);
             let expected = if scenario == Scenario::ColdStart {
                 &cold
             } else {
@@ -1379,7 +1395,7 @@ mod tests {
             std::fs::write(&sidecar, "written by the mock scenario")?;
             launches.push(index);
             Ok(Measured {
-                settled: vec![index as f64],
+                settled: vec![f64::from(u32::try_from(index).expect("a small index"))],
                 ..Measured::default()
             })
         })
@@ -1398,7 +1414,7 @@ mod tests {
             .arg("60")
             .spawn()
             .expect("spawn the mock daemon, never the product");
-        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+        let pid = nix::unistd::Pid::from_raw(child.id().cast_signed());
         let result = DaemonChild { child }.wait_until_ready(&dir.path().join("s"), Instant::now());
         assert!(result.is_err());
         assert_eq!(

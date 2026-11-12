@@ -37,6 +37,9 @@ path = "../pa-daemon"
 [dev-dependencies]
 tempfile = "3"
 
+[lints]
+workspace = true
+
 # The library's rows/entries ride the product's own serializers (pa-types
 # payloads inside pa-daemon's SessionEntry), so generated corpora exercise
 # the exact wire format the product reads.

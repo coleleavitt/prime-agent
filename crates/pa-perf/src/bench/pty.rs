@@ -176,7 +176,7 @@ impl PtyChild {
             }
             None => IDLE_POLL,
         };
-        let millis = timeout.as_millis().min(u16::MAX as u128) as u16;
+        let millis = u16::try_from(timeout.as_millis()).unwrap_or(u16::MAX);
         let mut poller = [PollFd::new(self.master.as_fd(), PollFlags::POLLIN)];
         let ready = poll(&mut poller, millis)?;
         // After exit, keep reading any buffered final paints before reporting
@@ -305,7 +305,7 @@ impl PtyChild {
 
     /// The child's pid (teardown signals this pid only).
     pub(crate) fn pid(&self) -> i32 {
-        self.child.id() as i32
+        self.child.id().cast_signed()
     }
 
     /// Stop the child: SIGTERM, a short grace, then SIGKILL; reap it.

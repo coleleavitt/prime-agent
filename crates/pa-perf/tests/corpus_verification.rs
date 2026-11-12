@@ -1,5 +1,5 @@
 //! The corpus verification battery: every generated file loads through the
-//! PRODUCT's own readers (pa-daemon SessionFile, pa-core parse, the RLM
+//! PRODUCT's own readers (pa-daemon `SessionFile`, pa-core parse, the RLM
 //! ledger replay), the tree is seed-deterministic, and the marker discipline
 //! holds. Kept small and fast: tiny corpora in temp dirs only.
 
@@ -125,12 +125,6 @@ fn the_ledger_replays_through_the_product_reader() {
 /// edge content is compared field-by-field instead).
 #[test]
 fn the_same_seed_rebuilds_the_identical_tree() {
-    let first = tempfile::tempdir().expect("temp dir");
-    let second = tempfile::tempdir().expect("temp dir");
-    let first_root = first.path().canonicalize().expect("canonical first");
-    let second_root = second.path().canonicalize().expect("canonical second");
-    generate(&tiny(Profile::Small, &first_root)).expect("first generate");
-    generate(&tiny(Profile::Small, &second_root)).expect("second generate");
     // The ledger file NAME is the hash of the canonical sessions dir, so
     // two corpus roots name it differently; normalize it for comparison.
     fn normalized(mut files: Vec<String>) -> Vec<String> {
@@ -146,6 +140,12 @@ fn the_same_seed_rebuilds_the_identical_tree() {
         }
         files
     }
+    let first = tempfile::tempdir().expect("temp dir");
+    let second = tempfile::tempdir().expect("temp dir");
+    let first_root = first.path().canonicalize().expect("canonical first");
+    let second_root = second.path().canonicalize().expect("canonical second");
+    generate(&tiny(Profile::Small, &first_root)).expect("first generate");
+    generate(&tiny(Profile::Small, &second_root)).expect("second generate");
     let first_files = normalized(relative_files(&first_root));
     let second_files = normalized(relative_files(&second_root));
     let mut first_sorted = first_files.clone();
@@ -174,7 +174,8 @@ fn the_same_seed_rebuilds_the_identical_tree() {
                             (
                                 value["childId"].as_str().unwrap_or_default().to_string(),
                                 child.to_string_lossy().to_string(),
-                                value["depth"].as_u64().unwrap_or_default() as u32,
+                                u32::try_from(value["depth"].as_u64().unwrap_or_default())
+                                    .expect("a tree depth fits u32"),
                             )
                         })
                     })
@@ -288,7 +289,7 @@ fn the_switch_query_can_only_match_switch_b() {
     let manifest = generate(&options).expect("generate");
     assert_eq!(manifest.markers.switch_row, "switch target zqmark");
     assert!(manifest.markers.switch_query.contains("zqmark"));
-    assert!(manifest.markers.switch_query != manifest.markers.switch_row);
+    assert_ne!(manifest.markers.switch_query, manifest.markers.switch_row);
     let mut scanned = 0;
     for file in &manifest.files {
         let path = std::path::PathBuf::from(file);

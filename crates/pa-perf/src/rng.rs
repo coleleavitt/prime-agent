@@ -28,6 +28,14 @@ impl Rng {
         self.next_u64() % bound
     }
 
+    /// A uniformly chosen element of the non-empty `items`.
+    pub(crate) fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        let len = u64::try_from(items.len()).expect("a slice length fits u64");
+        let index =
+            usize::try_from(self.below(len)).expect("an index below a slice length fits usize");
+        &items[index]
+    }
+
     /// A true chance of `percent` in 100.
     pub(crate) fn chance(&mut self, percent: u64) -> bool {
         self.below(100) < percent
@@ -44,8 +52,8 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).expect("a day of the month");
+    let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).expect("a month");
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
@@ -53,7 +61,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 /// product's entry-timestamp format.
 #[must_use]
 pub(crate) fn iso_from_millis(millis: u64) -> String {
-    let secs = (millis / 1000) as i64;
+    let secs = i64::try_from(millis / 1000).expect("u64 milliseconds in seconds fit i64");
     let rem = millis % 1000;
     let days = secs.div_euclid(86_400);
     let secs_of_day = secs.rem_euclid(86_400);
