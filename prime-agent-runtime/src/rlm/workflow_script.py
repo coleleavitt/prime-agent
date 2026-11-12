@@ -29,8 +29,11 @@ The semantics follow Claude Code's runtime:
   lanes), so a key never depends on which slot finished first.
   ``resume_from=<run id>`` replays the longest unchanged prefix of calls
   from the journal and runs everything from the first changed call on
-  live; a call that was in flight when the run died re-runs without
-  ending the replay.
+  live; a call that was in flight when the run died does not end the
+  replay: its child (journaled before the spawn) outlives the kernel and is
+  adopted through the host's idempotent spawn, at most ``MAX_ADOPTIONS``
+  times. A child whose admission the host cannot confirm pauses the run for
+  the user; a run still running in this kernel cannot be resumed.
 - At most ``min(16, cpus - 2)`` agents run at once, 1000 per run, 4096 items
   per ``pipeline``/``parallel`` call; ``workflow()`` nests one level deep.
 
@@ -72,6 +75,7 @@ from . import workflow_schema
 __all__ = [
     "AgentOutcome",
     "AgentRequest",
+    "WorkflowAdmissionUnknown",
     "WorkflowContext",
     "WorkflowError",
     "WorkflowHandle",
@@ -113,6 +117,9 @@ RUN_ID_PATTERN = re.compile(r"^wf_[a-z0-9-]{6,}$")
 MAX_AGENTS = 1000
 MAX_ITEMS = 4096
 MAX_SCHEMA_REPAIRS = 2
+# How many resumes may adopt one journaled child that is still unsettled
+# (Claude Code's `restartResumes` cap).
+MAX_ADOPTIONS = 5
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 SIZE_GUIDELINES: dict[str, int | None] = {"small": 5, "medium": 10, "large": 50, "unrestricted": None}
 DEFAULT_SIZE_GUIDELINE = "medium"
@@ -123,10 +130,28 @@ _CURRENT: contextvars.ContextVar[WorkflowContext | None] = contextvars.ContextVa
     "rlm_workflow_context", default=None
 )
 _RUNS: dict[str, WorkflowHandle] = {}
+# Runs executing in this kernel: a resume of one would run two copies of its
+# agents against the same journal.
+_ACTIVE_RUNS: set[str] = set()
+
+
+def _refuse_live_resume(run_id: str) -> None:
+    """Claude Code's resume guard: never resume a run that is still running."""
+    handle = _RUNS.get(run_id)
+    if run_id in _ACTIVE_RUNS or (handle is not None and not handle.done()):
+        raise WorkflowError(
+            f"workflow run {run_id} is still running in this kernel; resuming it now would run "
+            "two copies of its agents against the same journal. Wait for it, or cancel it first."
+        )
 
 
 class WorkflowError(RuntimeError):
     """A workflow call broke one of the runtime's rules (caps, nesting, arguments)."""
+
+
+class WorkflowAdmissionUnknown(WorkflowError):
+    """A journaled agent's child may have started before a restart, and the host keeps
+    no record of it: the run pauses for the user instead of running it again."""
 
 
 # --- journal keys ---------------------------------------------------------
@@ -298,6 +323,9 @@ class AgentRequest:
     # ``"worktree"``: the child runs in its own git worktree, which the host
     # cuts and removes (``rlm.spawn(isolation="worktree")``).
     isolation: str | None = None
+    # The child id the run journaled before the spawn: the host answers the
+    # child it already holds under it (an adoption) instead of spawning again.
+    child_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -323,9 +351,9 @@ class RlmBackend:
     """
 
     async def run(self, request: AgentRequest) -> AgentOutcome:
-        from . import collect, spawn
+        from . import _spawn, collect
 
-        kwargs: dict[str, Any] = {"name": request.name}
+        kwargs: dict[str, Any] = {"name": request.name, "child_id": request.child_id}
         if request.model is not None:
             kwargs["model"] = request.model
         if request.cwd is not None:
@@ -335,13 +363,15 @@ class RlmBackend:
         if request.effort is not None:
             kwargs["thinking"] = request.effort
         try:
-            handle = await spawn(request.prompt, **kwargs)
+            handle = await _spawn(request.prompt, **kwargs)
         except Exception as error:
+            if "admission unknown" in str(error):
+                raise WorkflowAdmissionUnknown(str(error)) from error
             if "thinking" not in kwargs or "thinking" not in str(error).lower():
                 raise
             # A level the child's model does not support: run at its default.
             del kwargs["thinking"]
-            handle = await spawn(request.prompt, **kwargs)
+            handle = await _spawn(request.prompt, **kwargs)
         try:
             while True:
                 results = await collect(handle, timeout_ms=_COLLECT_WAIT_MS)
@@ -512,6 +542,8 @@ class _Run:
         self.background = background
         # The key chain outside any parallel/pipeline slot.
         self.root_lane = _Lane(self)
+        # Set when an agent's admission is unknown: the run ends paused.
+        self.paused: str | None = None
         # Claude Code's `T`: once a call misses the journal, every later call runs live.
         self.live = False
         self.records: list[AgentRecord] = []
@@ -563,6 +595,17 @@ class _Fork:
 
     def join(self) -> None:
         self.parent.prev = lane_key(self.parent.prev, self.kind, [lane.prev for lane in self.slots])
+
+
+async def _gather_lanes(lanes: list[asyncio.Task[Any]]) -> list[Any]:
+    """Every lane's value; a paused run (an unknown admission) stops the other lanes,
+    whose children keep running for a resume to adopt."""
+    try:
+        return list(await asyncio.gather(*lanes))
+    except WorkflowAdmissionUnknown:
+        for lane in lanes:
+            lane.cancel()
+        raise
 
 
 def _call_stage(stage: Callable[..., Any], previous: Any, item: Any, index: int) -> Any:
@@ -637,6 +680,8 @@ class WorkflowContext:
             )
         if schema is not None:
             workflow_schema.check_schema(schema)
+        if run.paused is not None:
+            raise WorkflowAdmissionUnknown(run.paused)
         if len(run.records) >= MAX_AGENTS:
             raise WorkflowError(f"a workflow runs at most {MAX_AGENTS} agents")
         options = {"schema": schema, "model": model, "effort": effort, "isolation": isolation}
@@ -701,19 +746,51 @@ class WorkflowContext:
         run = self._run
         async with run.semaphore:
             record.state = "running"
+            replay = run.replay
+            started = replay.started.get(record.key) or []
+            # A call that was in flight when the run died journaled its child
+            # id: that child outlives the kernel, so it is adopted (the host
+            # answers the child it holds) instead of spawned again, at most
+            # MAX_ADOPTIONS times. Anything else starts a new child.
+            last_id = str(started[-1].get("agentId") or "") if started else ""
+            in_flight = bool(last_id) and not any(
+                record.key in keys for keys in (replay.results, replay.failed, replay.demoted)
+            )
+            if in_flight:
+                adoptions = sum(1 for line in started if line.get("agentId") == last_id) - 1
+                if adoptions >= MAX_ADOPTIONS:
+                    record.state = "failed"
+                    record.error = (
+                        f"child {last_id} was adopted {adoptions} times without settling; "
+                        "it is not adopted again"
+                    )
+                    run.note(f"agent {record.label!r} failed: {record.error}")
+                    run.journal.append({"type": "failed", "key": record.key, "agentId": last_id})
+                    return None
+                child_id = last_id
+            else:
+                child_id = f"sub-{secrets.token_hex(6)}"
             name = f"wf-{run.run_id[3:11]}-{record.index}"
             label_slug = _slug(record.label, 30)
             if label_slug:
                 name = f"{name}-{label_slug}"
+            # An earlier child of this call keeps its name registered: a new
+            # attempt carries its attempt number.
+            attempt = len({line.get("agentId") for line in started} | {child_id})
+            if attempt > 1:
+                name = f"{name[:56]}-a{attempt}"
+            # Written before the spawn: a run that dies after the host admitted
+            # the child still knows the child to adopt on resume.
             run.journal.append(
                 {
                     "type": "started",
                     "key": record.key,
-                    "agentId": "",
+                    "agentId": child_id,
                     "label": record.label,
                     "phase": record.phase,
                 }
             )
+            record.agent_id = child_id
             try:
                 outcome = await run.backend.run(
                     AgentRequest(
@@ -722,6 +799,7 @@ class WorkflowContext:
                         model=model,
                         effort=effort,
                         isolation=isolation,
+                        child_id=child_id,
                     )
                 )
                 record.agent_id = outcome.agent_id
@@ -745,6 +823,17 @@ class WorkflowContext:
                 return value
             except asyncio.CancelledError:
                 record.state = "cancelled"
+                raise
+            except WorkflowAdmissionUnknown as error:
+                # The user decides: the run pauses, and a later resume (that
+                # decision) runs this call again under a new child.
+                record.state = "failed"
+                record.error = str(error)
+                run.paused = (
+                    f"agent {record.label!r}: {error}. Check that child, then resume with "
+                    f"resume_from={run.run_id!r} to run this agent again."
+                )
+                run.journal.append({"type": "failed", "key": record.key, "agentId": record.agent_id})
                 raise
             except Exception as error:
                 record.state = "failed"
@@ -800,7 +889,7 @@ class WorkflowContext:
                     value = _call_stage(stage, value, item, index)
                     if inspect.isawaitable(value):
                         value = await value
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, WorkflowAdmissionUnknown):
                     raise
                 except Exception as error:
                     self._run.note(f"pipeline item {index} dropped: {type(error).__name__}: {error}")
@@ -812,7 +901,7 @@ class WorkflowContext:
             fork.start(index, lambda index=index, item=item: chain(index, item))
             for index, item in enumerate(values)
         ]
-        results = list(await asyncio.gather(*lanes))
+        results = await _gather_lanes(lanes)
         fork.join()
         return results
 
@@ -829,7 +918,7 @@ class WorkflowContext:
                 if inspect.isawaitable(value):
                     value = await value
                 return value
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, WorkflowAdmissionUnknown):
                 raise
             except Exception as error:
                 self._run.note(f"parallel task {index} failed: {type(error).__name__}: {error}")
@@ -840,7 +929,7 @@ class WorkflowContext:
             fork.start(index, lambda index=index, thunk=thunk: one(index, thunk))
             for index, thunk in enumerate(calls)
         ]
-        results = list(await asyncio.gather(*lanes))
+        results = await _gather_lanes(lanes)
         fork.join()
         return results
 
@@ -1102,6 +1191,9 @@ async def _execute(
     background: bool,
     run_id: str,
 ) -> WorkflowResult:
+    # The resume guard again just before the launch (a run started meanwhile).
+    if run_id in _ACTIVE_RUNS:
+        _refuse_live_resume(run_id)
     function, meta = _load_script(script)
     run_name = name or meta.get("name") or getattr(function, "__name__", None) or "workflow"
     run_dir = _run_dir(run_id)
@@ -1135,6 +1227,7 @@ async def _execute(
         "args": args,
     }
     _write_run_record(run_dir, record)
+    _ACTIVE_RUNS.add(run_id)
     context = WorkflowContext(state, args)
     status, value, error = "completed", None, None
     try:
@@ -1145,6 +1238,10 @@ async def _execute(
     except Exception as failure:
         status, error = "failed", f"{type(failure).__name__}: {failure}"
     finally:
+        _ACTIVE_RUNS.discard(run_id)
+        # An unknown admission pauses the run even when the script caught it.
+        if state.paused is not None:
+            status, error = "paused", state.paused
         outcome = WorkflowResult(
             run_id=run_id,
             name=state.name,
@@ -1189,6 +1286,7 @@ async def run(
     """
     script = _resolve_script(script, name)
     run_id = _resume_id(resume_from) or _new_run_id()
+    _refuse_live_resume(run_id)
     return await _execute(
         script,
         args=args,
@@ -1279,6 +1377,7 @@ def start(
     """
     script = _resolve_script(script, name)
     run_id = _resume_id(resume_from) or _new_run_id()
+    _refuse_live_resume(run_id)
     function, meta = _load_script(script)
     run_name = str(name or meta.get("name") or getattr(function, "__name__", None) or "workflow")
 

@@ -366,6 +366,59 @@ class ResumeTests(WorkflowTestCase):
         resumed = await workflow.run(main, backend=backend, resume_from=first.run_id)
         self.assertEqual([r.cached for r in resumed.agents], [True, False, True])
         self.assertEqual([FakeBackend.task(call) for call in backend.calls], ["b"])
+        # The in-flight child outlives the run: its journaled id (written
+        # before the spawn) is asked for again, so the host adopts it.
+        started_b = [line for line in kept if line["key"] == key_b and line["type"] == "started"]
+        self.assertEqual(backend.calls[0].child_id, started_b[0]["agentId"])
+        self.assertTrue(started_b[0]["agentId"].startswith("sub-"))
+
+    async def test_an_unknown_admission_pauses_the_run_and_resume_runs_it_afresh(self) -> None:
+        async def main(wf):
+            return [await wf.agent("a"), await wf.agent("b")]
+
+        def refuse_b(request):
+            if FakeBackend.task(request) == "b":
+                raise ws.WorkflowAdmissionUnknown(f"rlm.spawn: admission unknown: child {request.child_id}")
+            return "ok-a"
+
+        first = await workflow.run(main, backend=FakeBackend(refuse_b))
+        self.assertEqual(first.status, "paused")
+        self.assertIn("admission unknown", first.error)
+        refused = first.agents[1].agent_id
+
+        backend = FakeBackend()
+        resumed = await workflow.run(main, backend=backend, resume_from=first.run_id)
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual([FakeBackend.task(call) for call in backend.calls], ["b"])
+        self.assertNotEqual(backend.calls[0].child_id, refused)
+
+    async def test_a_child_adopted_too_often_is_not_adopted_again(self) -> None:
+        async def main(wf):
+            return await wf.agent("a")
+
+        first = await workflow.run(main, backend=FakeBackend())
+        started = [json.loads(line) for line in first.journal_path.read_text().splitlines()][0]
+        # The child never settled across every allowed adoption.
+        first.journal_path.write_text("".join(json.dumps(started) + "\n" for _ in range(1 + ws.MAX_ADOPTIONS)))
+        backend = FakeBackend()
+        resumed = await workflow.run(main, backend=backend, resume_from=first.run_id)
+        self.assertEqual((resumed.result, backend.calls), (None, []))
+        self.assertIn("not adopted again", resumed.agents[0].error)
+
+    async def test_a_running_run_cannot_be_resumed(self) -> None:
+        backend = FakeBackend()
+        backend.gates["a"] = asyncio.Event()
+
+        async def main(wf):
+            return await wf.agent("a")
+
+        handle = workflow.start(main, backend=backend, notify=False)
+        while not backend.calls:
+            await asyncio.sleep(0)
+        with self.assertRaisesRegex(ws.WorkflowError, "two copies of its agents"):
+            await workflow.run(main, backend=FakeBackend(), resume_from=handle.run_id)
+        backend.gates["a"].set()
+        self.assertEqual((await handle.result()).status, "completed")
 
     async def test_a_failed_agent_reruns_and_breaks_the_prefix(self) -> None:
         outcomes = iter([None, "ok-a"])
@@ -457,7 +510,7 @@ class RlmBackendIsolationTests(unittest.IsolatedAsyncioTestCase):
             calls.append(("delete", target is handle))
 
         with (
-            mock.patch.object(rlm, "spawn", spawn),
+            mock.patch.object(rlm, "_spawn", spawn),
             mock.patch.object(rlm, "collect", collect),
             mock.patch.object(rlm, "delete_subagent", delete_subagent),
         ):
@@ -469,12 +522,16 @@ class RlmBackendIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome.text, "ok")
         self.assertEqual(
             calls,
-            [("spawn", {"name": "wf-1", "isolation": "worktree"}), ("collect", True), ("delete", True)],
+            [
+                ("spawn", {"name": "wf-1", "child_id": None, "isolation": "worktree"}),
+                ("collect", True),
+                ("delete", True),
+            ],
         )
 
     async def test_a_plain_agent_is_not_deleted(self):
         _, calls = await self.run_backend(None)
-        self.assertEqual(calls, [("spawn", {"name": "wf-1"}), ("collect", True)])
+        self.assertEqual(calls, [("spawn", {"name": "wf-1", "child_id": None}), ("collect", True)])
 
 
 class SchemaSubsetTests(unittest.TestCase):

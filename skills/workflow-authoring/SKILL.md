@@ -127,8 +127,12 @@ again with `resume_from=<run id>`: the longest unchanged prefix of `agent()`
 calls (keyed by prompt and result-shaping options, chained in call order
 within each `parallel`/`pipeline` slot, so completion order does not matter)
 returns the journaled results instantly, and the first changed call and every
-call after it run live; an agent that was still running when the run died
-runs again without ending the replay. Same script and args -> every agent replays. Keep
+call after it run live. An agent that was still running when the run died
+does not end the replay: its child outlives the kernel, so it is adopted (the
+journal names it before the spawn) and its answer collected, not run twice. A
+child whose start the host cannot confirm pauses the run (`status` "paused"):
+check it, then resume again to run that agent afresh. A run still running in
+this kernel cannot be resumed. Same script and args -> every agent replays. Keep
 scripts deterministic: no `random`, no time-dependent prompts - pass
 timestamps in through `args`. Before diagnosing an empty or unexpected
 result, read the journal: it records each agent's actual return value.

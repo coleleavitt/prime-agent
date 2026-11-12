@@ -333,9 +333,14 @@ async def _spawn(
     agent: str | None = None,
     isolation: str | None = None,
     factory: dict[str, str] | None = None,
+    child_id: str | None = None,
 ) -> RLMSpawnHandle:
     """``spawn`` plus the factory executor's run tag (``{runId, specId,
-    stateId}``), which the host records on the child's ledger spawn edge."""
+    stateId}``), which the host records on the child's ledger spawn edge,
+    and a ``child_id`` the caller picked and recorded before the spawn: the
+    host answers the child it already holds under that id instead of
+    spawning another, and refuses with "admission unknown" when the child
+    may have been admitted before a restart without a record."""
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
     if target is not None and not isinstance(target, str):
@@ -359,6 +364,8 @@ async def _spawn(
         kwargs["isolation"] = isolation
     if factory is not None:
         kwargs["factory"] = factory
+    if child_id is not None:
+        kwargs["child_id"] = child_id
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     return _spawn_handle_from_payload(payload)
 
