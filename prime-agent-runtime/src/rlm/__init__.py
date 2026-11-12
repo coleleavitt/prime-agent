@@ -1579,13 +1579,12 @@ __all__ = [
     "web_fetch",
     "web_search",
     "workflow",
-    "workflow_v2",
 ]
 
 # Lazily re-export the MCP base class. Kept lazy so `import rlm` never requires
 # the optional `mcp` SDK — only integration packages that subclass it do.
 _LAZY_MCP = {"McpIntegration", "McpToolError", "NotEnabled"}
-_LAZY_MODULES = {"workflow", "workflow_v2"}
+_LAZY_MODULES = {"workflow"}
 
 
 def __getattr__(name: str) -> Any:  # noqa: D401 - module-level lazy attr hook

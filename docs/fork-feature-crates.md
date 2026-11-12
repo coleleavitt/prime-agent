@@ -153,7 +153,7 @@ plus the windows-gnu clippy lane, `cargo deny` for any new dependency, and the c
 | 2 | `pa-recall`, `pa-toolforge`, `pa-dream` (standalone zero-token runner), `pa-workflow` (v1) | `pa-trace` (spans) |
 | 3 | `pa-ledger` (failure ledger, resolution index) → `pa-ravo` (gate, referee, trust, run service) | `pa-trace`, `pa-ledger` |
 | 4 | `pa-learning` (learning index, trajectory index) → in-session Dream in `pa-dream` | `pa-trace`, `pa-ravo` |
-| 5 | Workflow V2 in `pa-workflow`, persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
+| 5 | persisted session-catalog index, Mermaid rendering (`pa-mermaid`) | per item |
 | 6 | Claude Code's flag-gated features: `pa-observer` (observer agents), `pa-advisor` (`advisor.ask`); both inert unless the `experimental` settings turn them on | `pa-core` (`session_engine::side_model`) |
 | 7 | `pa-cc-import` (Claude Code transcripts listed beside the saved sessions, imported into a new session file on open) | `pa-core` (`session::external_sessions`), `pa-daemon` (`external_sessions` capability) |
 

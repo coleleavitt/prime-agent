@@ -12,7 +12,7 @@
 //! (`computer_use_session_started`, `computer_use_action`); schema version 4
 //! adds the separately built features' adoption events (`anthropic_shared_auth`, `dream_run`,
 //! `failure_resolution_hint`, `learning_report`, `observability command used`, `ravo_gate_decision`, `ravo_run`, `toolforge
-//! publish`, `workflow_run_agent`, `workflow_durable_request`, `workspace_trust_decision`,
+//! publish`, `workflow_run_agent`, `workspace_trust_decision`,
 //! `cli command used`, `acp session load`); schema version 5 adds the
 //! Claude Code parity features' adoption events (`permissions_session`,
 //! `observer_session`, `advisor_ask`) and their additive counters
@@ -21,9 +21,9 @@
 //! `tui_status_line` on `tui exit`); schema version 6 adds the round-two
 //! parity features' events (`lsp_session`); schema version 7 adds the
 //! wait-handling events (`bash_sleep_refused`, `bash_timeout_backgrounded`,
-//! `monitor_started`): new-event
-//! vocabulary bumps the version,
-//! additive property changes do not.
+//! `monitor_started`); schema version 8 retires `workflow_durable_request`
+//! (v4-7) with the dormant Workflow V2 host: new or retired event
+//! vocabulary bumps the version, additive property changes do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
 //! sink, every catalogued event's properties are normalized against its
@@ -45,10 +45,11 @@ use crate::properties::Properties;
 /// Code parity features' events (`permissions_session`, `observer_session`,
 /// `advisor_ask`) landed, to 6 when `lsp_session` landed, and to 7 when
 /// the wait-handling events (`bash_sleep_refused`,
-/// `bash_timeout_backgrounded`, `monitor_started`) landed — new-event
+/// `bash_timeout_backgrounded`, `monitor_started`) landed, and to 8 when
+/// `workflow_durable_request` was retired — new or retired event
 /// vocabulary bumps the version (the #2117 precedent); additive property
 /// changes alone do not.
-pub const SCHEMA_VERSION: u64 = 7;
+pub const SCHEMA_VERSION: u64 = 8;
 
 // ---------------------------------------------------------------------------
 // Rule kinds
@@ -1583,38 +1584,6 @@ const WORKFLOW_RUN_AGENT: EventRule = EventRule {
     ],
 };
 
-/// `workflow_durable_request` (v4): one Workflow V2 `workflow.v2.request` kernel
-/// host request answered by the host (the fork's `pa-workflow` feature).
-/// The public action and the reply's classification only — never the
-/// definition, a prompt, a model selector, or a request, run, or node id.
-const WORKFLOW_V2_REQUEST: EventRule = EventRule {
-    name: "workflow_durable_request",
-    since: 4,
-    properties: &[
-        (
-            "action",
-            required(enum_rule(
-                &[
-                    "validate", "create", "start", "cancel", "retry", "status", "events", "unknown",
-                ],
-                "unknown",
-            )),
-        ),
-        (
-            "outcome",
-            required(enum_rule(
-                &[
-                    "valid",
-                    "invalid_definition",
-                    "invalid_request",
-                    "capability_unavailable",
-                ],
-                "invalid_request",
-            )),
-        ),
-    ],
-};
-
 /// `learning_report` (v4): one parsed `prime-agent learning` invocation (the
 /// fork's `pa-learning` feature): which report (or `backfill`, whose `days`
 /// counts the day files it wrote), how it ended (a p-value or a label
@@ -2236,7 +2205,6 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &MONITOR_STARTED,
         &PLAN_MODE_TOGGLED,
         &WORKFLOW_RUN_AGENT,
-        &WORKFLOW_V2_REQUEST,
         &OBSERVABILITY_COMMAND_USED,
         &FAILURE_RESOLUTION_HINT,
         &RAVO_GATE_DECISION,
@@ -2368,8 +2336,9 @@ mod tests {
         // New-event vocabulary bumps the schema version: the #2117
         // vocabulary landed at v2, the kernel telemetry bridge's skill
         // events at v3, the feature crates' adoption events at v4, the
-        // Claude Code parity features' events at v5, the round-two ones at v6.
-        assert_eq!(SCHEMA_VERSION, 7);
+        // Claude Code parity features' events at v5, the round-two ones at v6,
+        // the wait-handling ones at v7; v8 retired `workflow_durable_request`.
+        assert_eq!(SCHEMA_VERSION, 8);
         for name in [
             "bash_sleep_refused",
             "bash_timeout_backgrounded",
@@ -2385,10 +2354,6 @@ mod tests {
         assert_eq!(lookup("web search").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("web fetch").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("workflow_run_agent").map(|rule| rule.since), Some(4));
-        assert_eq!(
-            lookup("workflow_durable_request").map(|rule| rule.since),
-            Some(4)
-        );
         assert_eq!(lookup("dream_run").map(|rule| rule.since), Some(4));
         assert_eq!(lookup("dream_session_run").map(|rule| rule.since), Some(4));
         assert_eq!(

@@ -65,7 +65,7 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   Protocol 5: the runtime needs a host that serves `bash.*` and `computer_use.*`; the handshake refuses a skewed pair.
   Protocol 6: the out-of-band `detach` request (send-now moves the running cell to the background; `cell.completed`
   reports its end).
-- Runtime: kernel span tracing, workflow v1/v2, bash activity rows (`bashCommands`, `bash.consumed`), the fd-2 stderr
+- Runtime: kernel span tracing, workflow v1, bash activity rows (`bashCommands`, `bash.consumed`), the fd-2 stderr
   tee, the pidfd owner watchdog with a raw-syscall fallback.
 - Queued steers join the running turn at its next boundary (Claude Code's mid-turn delivery) instead of ending the
   run: `pa-core::session_engine::steering_fold` admits them like a busy-session steer (skill and template expansion,
@@ -232,8 +232,8 @@ branches merged in two rounds, with integration fixes in their own commits (one 
 the `claude_code` reader and behind workspace trust, the hold-refusal classifier accepting `target/<triple>/<profile>`).
 
 The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
-`pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
-`validate`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
+`pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; the dormant V2
+was deleted, tag `workflow-v2-dormant`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
 `pa-retrieval` (flyrag learning rerank of daemon sessions' harness digest, fed by a tick at every agent stop;
 needs `pa-ledger`), `pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
 `pa-session-index`, `pa-mermaid`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
@@ -260,12 +260,6 @@ Open:
   `rlm_in_process::inline` host (children driven turn by turn through `headless::boundary`, notices steered into
   the parent's lane). They share model resolution and roster text but not the hosting; folding print onto the
   resident host changes print's notice and compaction behavior, so it needs its own change with e2e evidence.
-- Workflow V2's durable controller: new work, not a port (the TS fork stopped after slices 2-4, which exist here
-  dormant: the SQLite store, reducer, capture/settlement, dispatch guard). Remaining are `WORKFLOW-V2.md` slices
-  5-9 (controller/executor adapter and create/start, settlement policy/acceptance/budgets/retry, cancellation and
-  the crash-window suite, the Python/status/events/view projections, release attestation) plus slice 3's native
-  halves in `pa-daemon` (composite request-id admission, the retained child runtime). The factory executor's
-  host-side control loop, child port and restart reconciliation are reusable for it.
 - Computer use's Rust backends (`crates/pa-computer-use`) are tested over test doubles only (macOS compile-checked
   for aarch64-apple-darwin, never run); none has been live-tested yet. The removed Python Wayland backend was
   live-tested on niri 26.04 with a GTK 4 window; tiled windows lacked coordinate input and screenshots there (niri

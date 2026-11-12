@@ -67,7 +67,7 @@ fn the_build_embeds_the_runtime_and_skills_without_dev_files() {
         "prime-agent-runtime/kernel-constraints.txt",
         "prime-agent-runtime/src/rlm/repl.py",
         "prime-agent-runtime/src/rlm/bash.py",
-        "prime-agent-runtime/schemas/workflow-v2.schema.json",
+        "prime-agent-runtime/schemas/workflow-v1.schema.json",
         "skills/computer-use/SKILL.md",
         "skills/computer-use/pyproject.toml",
         "skills/.features/dream/SKILL.md",

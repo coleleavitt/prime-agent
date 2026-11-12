@@ -107,8 +107,7 @@ trace = ["dep:pa-trace"]
 # Anthropic's server-side tool (or Brave / Exa with a key) and page fetches
 # converted to Markdown.
 web = ["dep:pa-web"]
-# Workflow host: the kernel's `workflow.run_agent` (V1) and
-# `workflow.v2.request` (V2) (crates/pa-workflow).
+# Workflow host: the kernel's `workflow.run_agent` (V1) (crates/pa-workflow).
 workflow = ["dep:pa-workflow"]
 
 [dependencies]
