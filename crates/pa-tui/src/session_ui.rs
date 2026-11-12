@@ -12,6 +12,7 @@ mod factory;
 mod feature_confirm;
 mod harness;
 mod heartbeats;
+mod info_panel_commands;
 mod keys;
 mod lifecycle;
 mod model_picker;

@@ -114,9 +114,18 @@ impl SessionUi {
         }
     }
 
-    /// `/speed on/off`: toggles the footer tok/sec readout; disabling clears the
-    /// stats and the row.
-    pub(crate) fn set_speed_display(&mut self, enabled: bool, view: &mut AgentView) {
+    /// `/speed [on|off]`: toggles the footer tok/sec readout (a bare `/speed` flips it);
+    /// disabling clears the stats and the row.
+    pub(crate) fn handle_speed_command(&mut self, args: &str, view: &mut AgentView) {
+        let enabled = match args.trim().to_lowercase().as_str() {
+            "on" => true,
+            "off" => false,
+            "" => !self.speed_display_enabled,
+            _ => {
+                self.error_row("Usage: /speed [on|off]", view);
+                return;
+            }
+        };
         self.speed_display_enabled = enabled;
         if !enabled {
             self.speed_stats = None;

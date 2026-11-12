@@ -867,6 +867,125 @@ impl SessionUi {
         }
     }
 
+    /// `/nightly [on|off|status]` (TS `interactive-mode.ts` 5455-5484): status resolves the
+    /// effective channel; on (or bare) and off/stable save the `updateChannel` setting that
+    /// `/update` and `prime-agent update` follow. The channel resolves and persists through the
+    /// client-settings seam; a surface without it never claims a channel.
+    pub(super) fn handle_nightly_command(&mut self, args: &str, view: &mut AgentView) {
+        let pin = match args.trim().to_lowercase().as_str() {
+            "status" => None,
+            "off" | "stable" => Some((
+                "stable",
+                "Updates now follow the stable channel. Run /update to install the latest build.",
+            )),
+            "" | "on" => Some((
+                "nightly",
+                "Updates now follow the nightly channel. Run /update to install the latest nightly build.",
+            )),
+            _ => {
+                self.error_row("Usage: /nightly [on|off|status]", view);
+                return;
+            }
+        };
+        let Some(settings) = &self.client_settings else {
+            self.note("/nightly is not available in this client yet", view);
+            return;
+        };
+        let Some((channel, message)) = pin else {
+            let preferred = settings.update_channel();
+            let channel = settings.effective_update_channel(&view.chrome.version);
+            let source = if preferred.is_some() {
+                "set in settings"
+            } else {
+                "inferred from the running version"
+            };
+            self.note(
+                &format!(
+                    "Updates follow the {channel} channel ({source}). v{} installed.",
+                    view.chrome.version
+                ),
+                view,
+            );
+            return;
+        };
+        match settings.set_update_channel(channel) {
+            Ok(()) => self.note(message, view),
+            Err(error) => self.error_row(&format!("{error:#}"), view),
+        }
+    }
+
+    /// `/telemetry [status|on|off]`: the report (on/off and why, the endpoint, the installation
+    /// id), or the persisted switch the running telemetry clients re-read at their next send.
+    pub(super) fn handle_telemetry_command(&mut self, args: &str, view: &mut AgentView) {
+        let Some(settings) = &self.client_settings else {
+            self.note("/telemetry is not available in this client yet", view);
+            return;
+        };
+        let report = match args.trim().to_lowercase().as_str() {
+            "" | "status" => Ok(settings.telemetry_status()),
+            "on" => settings.set_telemetry_enabled(true),
+            "off" => settings.set_telemetry_enabled(false),
+            _ => {
+                self.error_row("Usage: /telemetry [status|on|off]", view);
+                return;
+            }
+        };
+        match report {
+            Ok(report) => self.note(&report, view),
+            Err(error) => self.error_row(&format!("{error:#}"), view),
+        }
+    }
+
+    /// `/vim`: toggle the editor's vim mode and persist `editorMode`.
+    pub(super) fn toggle_vim_mode(&mut self, view: &mut AgentView) {
+        let enabled = !view.editor.vim_enabled();
+        view.editor.set_vim_enabled(enabled);
+        let mode = if enabled {
+            crate::client_settings::EditorMode::Vim
+        } else {
+            crate::client_settings::EditorMode::Normal
+        };
+        if let Some(settings) = &self.client_settings {
+            if let Err(error) = settings.set_editor_mode(mode) {
+                self.error_row(&format!("{error:#}"), view);
+            }
+        }
+        self.note(
+            if enabled {
+                "Editor mode set to vim. Press Escape for NORMAL mode, i to insert."
+            } else {
+                "Editor mode set to normal."
+            },
+            view,
+        );
+    }
+
+    /// `/update` (the TS->Rust migration path): the confirm, then the download+install runs
+    /// OUT-OF-BAND (a background task — the TUI stays mounted, the daemon keeps running, and the
+    /// update replaces only the on-disk binary, so the new build takes effect on restart and
+    /// nothing here blocks or tears down; there is no busy guard to keep). The confirm carries
+    /// the preserve invariant: the update uninstalls the TypeScript version and installs the
+    /// latest Rust build; sessions and configuration (~/.prime/agent) are never touched.
+    pub(super) fn confirm_update(&mut self, view: &mut AgentView) {
+        if self.update_in_flight {
+            self.note_as(
+                "An update is already running; its outcome lands here when it finishes.",
+                StatusKind::Warning,
+                view,
+            );
+            return;
+        }
+        view.editor.set_text("");
+        // The message is hand-wrapped to fit the panel rows (the
+        // confirm renders each line truncated, never wrapped).
+        view.confirm = Some(crate::confirm::ConfirmPanel::yes_no(
+            "Update Prime Agent",
+            "Update uninstalls the TypeScript version and installs the latest Rust build;\nyour sessions and configuration (~/.prime/agent) are never touched.\n\nThe update runs in the background — restart prime-agent after it\nfinishes to run the new build.",
+        ));
+        self.pending_confirm = Some(PendingConfirm::Update);
+        self.dirty = true;
+    }
+
     /// The reload box replaces the editor while the daemon reload runs; the
     /// run loop folds the outcome in when it lands.
     pub(super) fn handle_reload_command(&mut self, view: &mut AgentView) -> Result<()> {

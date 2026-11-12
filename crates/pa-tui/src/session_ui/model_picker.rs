@@ -21,6 +21,7 @@ use super::{
     SetModelOutcome,
     StatusKind,
     UI_REQUEST_TIMEOUT_MS,
+    effort_picker,
     key_event_to_id,
     streaming_tray_hint,
 };
@@ -460,6 +461,89 @@ impl SessionUi {
             }
         }
         self.dirty = true;
+    }
+
+    /// `/model` opens the model picker (menu-only: the TS inline-arg form is deliberately
+    /// removed — a partial + Tab opens the picker filtered instead); `/switch` opens the same
+    /// picker for a session-only switch (upstream #840).
+    pub(super) async fn handle_model_command(
+        &mut self,
+        resolved: &pa_types::slash_commands::ResolvedSlashCommand,
+        view: &mut AgentView,
+    ) -> Result<()> {
+        let (usage, scope) = if resolved.name == "switch" {
+            (
+                "Usage: /switch (Tab filters the picker), or /switch <n|id> for a session",
+                ModelSwitchScope::SessionOnly,
+            )
+        } else {
+            (
+                "Usage: /model (Tab filters the picker)",
+                ModelSwitchScope::SavedDefault,
+            )
+        };
+        if !resolved.args.trim().is_empty() {
+            view.editor
+                .set_text(&format!("/{} {}", resolved.original_name, resolved.args));
+            self.error_row(usage, view);
+            return Ok(());
+        }
+        self.open_model_picker(view, "", scope).await?;
+        self.track_menu_opened("model", "command");
+        self.track_feature_outcome("model", "initiated", None);
+        Ok(())
+    }
+
+    /// `/effort [level]`: the thinking-level picker over the model's levels, or the named level
+    /// applied directly.
+    pub(super) async fn handle_effort_command(&mut self, args: &str, view: &mut AgentView) {
+        let Some(state) = self.connection_state(view).await else {
+            return;
+        };
+        let levels: Vec<String> = state
+            .get("availableThinkingLevels")
+            .and_then(Value::as_array)
+            .map(|levels| {
+                levels
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // An "off"-only list is no thinking surface.
+        let levels: Vec<String> = if levels.len() == 1 && levels[0] == "off" {
+            Vec::new()
+        } else {
+            levels
+        };
+        let current = state
+            .get("thinkingLevel")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        match effort_picker::effort_command(&levels, current.as_deref(), args) {
+            effort_picker::EffortCommandOutcome::Open(picker) => {
+                view.choice_picker = Some(picker);
+                self.track_feature_outcome("effort", "initiated", None);
+            }
+            effort_picker::EffortCommandOutcome::Unsupported => {
+                self.note("Current model does not support thinking", view);
+            }
+            effort_picker::EffortCommandOutcome::Unknown { requested, levels } => {
+                // The ⚠ Error row, not the muted note.
+                view.push_entry(ChatEntry::Status {
+                    text: format!(
+                        "\u{26a0} Error: Unknown thinking level '{requested}'. Available: {}",
+                        levels.join(", ")
+                    ),
+                    kind: StatusKind::Error,
+                });
+                self.dirty = true;
+            }
+            effort_picker::EffortCommandOutcome::Apply { level } => {
+                self.apply_thinking_level(&level, view).await;
+            }
+        }
     }
 
     /// Apply a thinking level: the daemon `set_thinking_level` command switches the session's
