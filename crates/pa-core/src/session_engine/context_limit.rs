@@ -39,6 +39,25 @@ impl ContextLimitSource {
             Self::None => "none",
         }
     }
+
+    /// The settings layer whose `compaction.maxContextTokens` caps the context: the
+    /// project's over the global's.
+    pub(crate) fn of_settings(settings: &crate::settings::SettingsManager) -> Self {
+        let caps = |layer: &crate::settings::Settings| {
+            layer
+                .compaction
+                .as_ref()
+                .and_then(|compaction| compaction.max_context_tokens)
+                .is_some()
+        };
+        if caps(settings.project_settings()) {
+            Self::Project
+        } else if caps(settings.global_settings()) {
+            Self::Global
+        } else {
+            Self::None
+        }
+    }
 }
 
 /// The session's cap layer: the override, which settings layer supplied the

@@ -346,20 +346,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // compaction budget and the auto-refine gates.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
     let file_checkpointing_setting = settings.settings().file_checkpointing_enabled;
-    let layer_cap = |layer: &crate::settings::Settings| {
-        layer
-            .compaction
-            .as_ref()
-            .and_then(|compaction| compaction.max_context_tokens)
-            .is_some()
-    };
-    let context_cap_source = if layer_cap(settings.project_settings()) {
-        super::context_limit::ContextLimitSource::Project
-    } else if layer_cap(settings.global_settings()) {
-        super::context_limit::ContextLimitSource::Global
-    } else {
-        super::context_limit::ContextLimitSource::None
-    };
+    let context_cap_source = super::context_limit::ContextLimitSource::of_settings(&settings);
     // The OS sandbox (`sandbox` setting, `--sandbox`): resolved once per session; the kernel
     // spawns under it, the prompt states it, the worker's `!` lane and status read it.
     let sandbox = crate::os_sandbox::SessionSandbox::resolve(&settings, config.sandbox_mode, &cwd);
@@ -486,19 +473,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             shell,
         ))
     });
-    // The model writes its memory files from the kernel: a `workspace-write`
-    // sandbox keeps the auto-memory directory writable.
-    let sandbox = match (sandbox, &resources.auto_memory) {
-        (Some(sandbox), Some(memory)) => Some(sandbox.with_writable_root(memory.dir.clone())),
-        (sandbox, _) => sandbox,
-    };
-    // So is the agent's persistent memory (unless it is read-only).
-    let sandbox = match (sandbox, &resources.agent_memory) {
-        (Some(sandbox), Some(memory)) if !memory.read_only => {
-            Some(sandbox.with_writable_root(memory.dir.clone()))
-        }
-        (sandbox, _) => sandbox,
-    };
+    let sandbox = sandbox.map(|sandbox| with_writable_memory(sandbox, &resources));
 
     let model = config
         .model
@@ -1196,28 +1171,32 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     };
     let thinking_level = config.thinking_level.unwrap_or(ThinkingLevel::Off);
     {
+        // A fresh session records its starting model, thinking level and tier; a resumed
+        // one records only the settings its branch never did.
+        let fresh = existing_messages.is_empty();
         let mut session = wiring.session.lock().await;
-        if existing_messages.is_empty() {
+        if fresh {
             session.append_model_change(&model.provider, &model.id)?;
-            session.append_thinking_level_change(&format!("{thinking_level:?}").to_lowercase())?;
-        } else if !has_thinking_entry {
+        }
+        if fresh || !has_thinking_entry {
             session.append_thinking_level_change(&format!("{thinking_level:?}").to_lowercase())?;
         }
-        if existing_messages.is_empty() || !has_service_tier_entry {
+        if fresh || !has_service_tier_entry {
             session.append_service_tier_change(Some(service_tier_preference))?;
         }
         // An explicit start state the branch does not already hold is a
         // change: record it so a resume restores it.
-        if let Some(explicit) = config.plan_mode {
-            if explicit != restored_plan_mode.unwrap_or(false) {
-                let row = super::plan_mode::plan_mode_change_row(explicit);
-                session.append_custom_message(
-                    &row.custom_type,
-                    row.content,
-                    row.display,
-                    row.details,
-                )?;
-            }
+        if let Some(explicit) = config
+            .plan_mode
+            .filter(|explicit| *explicit != restored_plan_mode.unwrap_or(false))
+        {
+            let row = super::plan_mode::plan_mode_change_row(explicit);
+            session.append_custom_message(
+                &row.custom_type,
+                row.content,
+                row.display,
+                row.details,
+            )?;
         }
     }
     // Session entries cross through the shared wire shape (same conversion
@@ -1362,124 +1341,22 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             std::sync::Arc::clone(&request_timing_wiring),
             super::request_timing::pass_through_transform(),
         )),
-        should_stop_after_turn: {
-            let fold = config.steering_fold.take();
-            let fold_slot = std::sync::Arc::clone(&fold_admission);
-            let steering = config.queued_steering_probe.take();
-            let boundary = config.should_stop_after_turn.take();
-            let usage_limit = usage_limit.clone();
-            let goal_evaluator = goal_evaluator.clone();
-            let nested = nested_instructions.clone();
-            let dynamic_skills = dynamic_skills.clone();
-            let known_skills = Arc::new(resources.skills.clone());
-            let context_rows = std::sync::Arc::clone(&context_rows);
-            let modes_boundary = session_modes.boundary(wiring.rlm.child_host());
-            Some(std::sync::Arc::new(move |context| {
-                let fold = fold.clone();
-                let fold_slot = std::sync::Arc::clone(&fold_slot);
-                let nested = nested.clone();
-                let modes_boundary = modes_boundary.clone();
-                let dynamic_skills = dynamic_skills.clone();
-                let known_skills = Arc::clone(&known_skills);
-                let steering = steering.clone();
-                let boundary = boundary.clone();
-                let usage_limit = usage_limit.clone();
-                let goal_evaluator = goal_evaluator.clone();
-                let context_rows = std::sync::Arc::clone(&context_rows);
-                Box::pin(async move {
-                    // Queued steers that can join this run go into the agent's
-                    // steering queue now (the loop drains it before its next
-                    // model call); only the ones that cannot still end the run.
-                    if let Some(fold) = &fold {
-                        super::steering_fold::fold_queued_steers(fold.as_ref(), &fold_slot).await;
-                    }
-                    // A queued steer ends the run only once the agent holds no
-                    // rows of its own: rows folded in above ride this run's
-                    // next turn. Ending the run under them would leave them to
-                    // the idle pump, whose run no embedding owns.
-                    let steer_ends_run = steering.as_ref().is_some_and(|probe| probe())
-                        && !fold_slot
-                            .get()
-                            .and_then(|admission| admission.agent.upgrade())
-                            .is_some_and(|agent| agent.has_queued_messages());
-                    if steer_ends_run {
-                        return Ok(true);
-                    }
-                    // The installed features see the boundary only when the
-                    // run goes on past it (the copy is made only for them).
-                    let feature_turn =
-                        (!crate::features::installed().is_empty()).then(|| context.clone());
-                    // The usage-limit monitor and the goal evaluator read the
-                    // boundary only when the run goes on past it, like the features.
-                    let experimental_turn = (usage_limit.is_some() || goal_evaluator.is_some())
-                        .then(|| context.clone());
-                    // The files this batch touched (nested instruction discovery).
-                    let mut touched = if nested.is_some() || dynamic_skills.is_some() {
-                        super::instruction_boundary::touched_paths(&context.tool_results)
-                    } else {
-                        Vec::new()
-                    };
-                    // A coordinator also loads what its workers loaded.
-                    if nested.is_some() {
-                        modes_boundary
-                            .propagate_nested(&context, &mut touched)
-                            .await;
-                    }
-                    let brief_enforcement = modes_boundary.brief_enforcement(&context);
-                    // The nested files the conversation still carries (a
-                    // compaction may have summarized some away).
-                    let live = if touched.is_empty() {
-                        Vec::new()
-                    } else {
-                        super::instruction_boundary::delivered_paths(&context.context.messages)
-                    };
-                    // The context and reminder rows ride a run that goes on
-                    // past a tool batch.
-                    let reminder_turn = (!context.tool_results.is_empty()).then(|| context.clone());
-                    let stop = match boundary {
-                        Some(hook) => hook(context).await?,
-                        None => false,
-                    };
-                    if let (false, Some(turn)) = (stop, experimental_turn) {
-                        if let Some(monitor) = &usage_limit {
-                            super::usage_limit::after_turn(monitor, &fold_slot, &turn);
-                        }
-                        if let Some(evaluator) = &goal_evaluator {
-                            super::goal_evaluator::after_turn(evaluator, &fold_slot, &turn).await;
-                        }
-                    }
-                    if let (false, Some(nested)) = (stop, &nested) {
-                        super::instruction_boundary::after_turn(
-                            &fold_slot, nested, &touched, &live,
-                        );
-                    }
-                    if let (false, Some(dynamic)) = (stop, &dynamic_skills) {
-                        super::skill_boundary::after_turn(
-                            &fold_slot,
-                            dynamic,
-                            &known_skills,
-                            touched.clone(),
-                        )
-                        .await;
-                    }
-                    if let (false, Some(turn)) = (stop, feature_turn) {
-                        super::feature_boundary::after_turn(&fold_slot, &turn).await;
-                    }
-                    if let (false, Some(text)) = (stop, brief_enforcement) {
-                        super::brief_mode::steer_enforcement(&fold_slot, &text);
-                    }
-                    if let (false, Some(turn)) = (stop, reminder_turn) {
-                        let agent = fold_slot
-                            .get()
-                            .and_then(|admission| admission.agent.upgrade());
-                        if let Some(agent) = agent {
-                            super::context_rows::after_turn(&context_rows, &agent, &turn).await;
-                        }
-                    }
-                    Ok(stop)
-                })
-            }))
-        },
+        should_stop_after_turn: Some(
+            stop_after_turn::StopAfterTurn {
+                fold: config.steering_fold.take(),
+                fold_slot: std::sync::Arc::clone(&fold_admission),
+                steering: config.queued_steering_probe.take(),
+                boundary: config.should_stop_after_turn.take(),
+                usage_limit: usage_limit.clone(),
+                goal_evaluator: goal_evaluator.clone(),
+                nested: nested_instructions.clone(),
+                dynamic_skills: dynamic_skills.clone(),
+                known_skills: Arc::new(resources.skills.clone()),
+                context_rows: std::sync::Arc::clone(&context_rows),
+                modes_boundary: session_modes.boundary(wiring.rlm.child_host()),
+            }
+            .into_hook(),
+        ),
         should_stop_before_turn: config.queued_steering_probe.clone(),
         steering_mode: config.steering_mode,
         follow_up_mode: config.follow_up_mode,
@@ -1677,26 +1554,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // it already holds, and the next admission's own settle re-reads
     // fresh state either way.
     if let Some(router) = config.image_model_router.clone() {
-        // A weak agent reference: the listener lives ON the agent, so a
-        // strong edge would cycle and pin a dropped session's agent.
-        let agent_at_end = std::sync::Arc::downgrade(&agent);
-        agent
-            .subscribe(move |event, _signal| {
-                let router = router.clone();
-                let agent_at_end = agent_at_end.clone();
-                Box::pin(async move {
-                    if matches!(event, pa_agent::types::AgentEvent::AgentEnd { .. }) {
-                        (router.swap_target)(None);
-                        // A leftover override would leak into a later
-                        // `continue_run`'s loop config.
-                        if let Some(agent) = agent_at_end.upgrade() {
-                            agent.set_model_override(None);
-                        }
-                    }
-                    Ok(())
-                })
-            })
-            .await;
+        clear_image_route_at_run_end(&agent, router).await;
     }
     // Rows parked by a boot that settled mid-build merge in; later boots
     // push straight into the live session's queue.
@@ -1832,6 +1690,52 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         engine.set_feature_notice_sink(admit_notice_sink(engine.session.agent()));
     }
     Ok(engine)
+}
+
+/// Drop the armed image route at every run end: a leftover override would leak into a
+/// later `continue_run`'s loop config.
+async fn clear_image_route_at_run_end(
+    agent: &Arc<Agent>,
+    router: super::image_model_routing::ImageModelRouter,
+) {
+    // A weak agent reference: the listener lives ON the agent, so a
+    // strong edge would cycle and pin a dropped session's agent.
+    let agent_at_end = std::sync::Arc::downgrade(agent);
+    agent
+        .subscribe(move |event, _signal| {
+            let router = router.clone();
+            let agent_at_end = agent_at_end.clone();
+            Box::pin(async move {
+                if matches!(event, pa_agent::types::AgentEvent::AgentEnd { .. }) {
+                    (router.swap_target)(None);
+                    if let Some(agent) = agent_at_end.upgrade() {
+                        agent.set_model_override(None);
+                    }
+                }
+                Ok(())
+            })
+        })
+        .await;
+}
+
+/// The session sandbox with the memory directories the model writes from the kernel kept
+/// writable: the auto memory, and the agent's persistent memory unless it is read-only.
+fn with_writable_memory(
+    sandbox: crate::os_sandbox::SessionSandbox,
+    resources: &crate::resources::LoadedResources,
+) -> crate::os_sandbox::SessionSandbox {
+    let sandbox = match &resources.auto_memory {
+        Some(memory) => sandbox.with_writable_root(memory.dir.clone()),
+        None => sandbox,
+    };
+    match resources
+        .agent_memory
+        .as_ref()
+        .filter(|memory| !memory.read_only)
+    {
+        Some(memory) => sandbox.with_writable_root(memory.dir.clone()),
+        None => sandbox,
+    }
 }
 
 /// The engine's own feature-notice delivery: the row starts a turn on an
@@ -2292,6 +2196,8 @@ impl SessionEngine {
         manager.bash_activity(action, activity_id, lines).await
     }
 }
+
+mod stop_after_turn;
 
 #[cfg(test)]
 mod tests;
