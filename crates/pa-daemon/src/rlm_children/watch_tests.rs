@@ -40,9 +40,9 @@ enum FakeChild {
     Healthy,
     PromptFails,
     Unreachable,
-    /// The first `get_last_assistant_text` reads no text (the settle raced
-    /// the worker's answer hand-off); later reads answer it.
-    TextLate,
+    /// Every `get_last_assistant_text` reads no text: the final answer
+    /// rides only the settlement snapshot.
+    NoLastTextRead,
     /// The worker leaves right after the settle answer is captured:
     /// every later child read fails.
     LeavesAfterSettle,
@@ -177,16 +177,30 @@ async fn spawn_fake_supervisor(
                                 None,
                             )
                         }
-                        "create" => response_success(
-                            Some(&id),
-                            command_type,
-                            Some(json!({
-                                "activeSessionId": "child-live",
-                                "sessionId": "child-file",
-                                "sessionFile": *child_session_file,
-                                "sessionName": "f20-worker",
-                            })),
-                        ),
+                        "create" => {
+                            // An unreachable worker cannot answer its live
+                            // settlement read: its last say is only in its
+                            // durable session file.
+                            if matches!(child, FakeChild::Unreachable) {
+                                let said =
+                                    super::lifecycle::exit_capture_tests::assistant_row_ending(
+                                        "the child final answer",
+                                        pa_types::ai::StopReason::Stop,
+                                        None,
+                                    );
+                                std::fs::write(&*child_session_file, format!("{said}\n")).unwrap();
+                            }
+                            response_success(
+                                Some(&id),
+                                command_type,
+                                Some(json!({
+                                    "activeSessionId": "child-live",
+                                    "sessionId": "child-file",
+                                    "sessionFile": *child_session_file,
+                                    "sessionName": "f20-worker",
+                                })),
+                            )
+                        }
                         "prompt" => {
                             if matches!(child, FakeChild::FinalTurnFails) {
                                 use super::lifecycle::exit_capture_tests::{
@@ -241,19 +255,29 @@ async fn spawn_fake_supervisor(
                                 child_subagents.grace_parked.notify_one();
                                 child_subagents.grace_release.notified().await;
                             }
-                            response_success(
-                                Some(&id),
-                                command_type,
-                                Some(child_subagents.live_state.lock().unwrap().clone().unwrap_or_else(|| {
-                                    json!({
-                                        "isStreaming": false,
-                                        "hasRunningSubagents": child_subagents.running.load(Ordering::SeqCst),
-                                        "sessionActions": { "queuedCount": 0 },
-                                        "progressNote": "halfway through the task",
-                                        "toolUseCount": 3,
-                                    })
-                                })),
-                            )
+                            let mut state = child_subagents.live_state.lock().unwrap().clone().unwrap_or_else(|| {
+                                json!({
+                                    "isStreaming": false,
+                                    "hasRunningSubagents": child_subagents.running.load(Ordering::SeqCst),
+                                    "sessionActions": { "queuedCount": 0 },
+                                    "progressNote": "halfway through the task",
+                                    "toolUseCount": 3,
+                                })
+                            });
+                            // The settle capture: the final answer rides the
+                            // settlement snapshot; with the knob set, the
+                            // worker leaves right after it.
+                            if command["includeSettlement"] == true {
+                                child_subagents
+                                    .settlement_reads
+                                    .fetch_add(1, Ordering::SeqCst);
+                                state["settlement"] =
+                                    json!({ "finalAnswer": "the child final answer" });
+                                if matches!(child, FakeChild::LeavesAfterSettle) {
+                                    gone.store(true, Ordering::SeqCst);
+                                }
+                            }
+                            response_success(Some(&id), command_type, Some(state))
                         }
                         "list_agent_peers" => {
                             let snapshot = peers.lock().unwrap().clone();
@@ -272,17 +296,7 @@ async fn spawn_fake_supervisor(
                             )
                         }
                         "get_last_assistant_text" => {
-                            // The settle capture: with the knob set, the
-                            // worker leaves right after its final answer.
-                            if matches!(child, FakeChild::LeavesAfterSettle) {
-                                gone.store(true, Ordering::SeqCst);
-                            }
-                            // Every answer read counts; the late-text
-                            // variant's FIRST read races the worker's
-                            // answer hand-off and reads no text (a None
-                            // capture), later reads answer.
-                            let reads = child_subagents.answer_reads.fetch_add(1, Ordering::SeqCst);
-                            if matches!(child, FakeChild::TextLate) && reads == 0 {
+                            if matches!(child, FakeChild::NoLastTextRead) {
                                 response_success(Some(&id), command_type, Some(json!({})))
                             } else {
                                 response_success(
@@ -382,8 +396,8 @@ async fn sessions_with_fake_supervisor(
 /// The fake child's own subagents: whether one still runs (the child
 /// reports `hasRunningSubagents`, and a `waitForRlmQuiescence` idle wait
 /// holds until it finishes), how many such waits started, how many
-/// `get_last_assistant_text` reads the child link answered (the
-/// late-text variant scripts its first read empty off the count), and the
+/// settlement reads (`get_state` with `includeSettlement`) the child link
+/// answered, and the
 /// `ParksGraceCheck` hand-off pair — per instance, never static, so
 /// parallel module tests cannot steal each other's park/release permits.
 #[derive(Default)]
@@ -392,7 +406,7 @@ struct FakeChildSubagents {
     quiescent_waits: std::sync::atomic::AtomicUsize,
     grace_parked: tokio::sync::Notify,
     grace_release: tokio::sync::Notify,
-    answer_reads: AtomicU32,
+    settlement_reads: AtomicU32,
     /// The fake answers `abort` with a real refusal (the cancel path's
     /// failed-abort lane).
     abort_fails: AtomicBool,
@@ -2735,7 +2749,8 @@ async fn a_deleted_settled_child_releases_its_name_slot_and_deletes_idempotently
 
 /// The exit capture (the M4 seam): an unreachable child settles `error`
 /// through the give-up, but its last assistant text still lands on the row —
-/// the live read first, the durable session file second — so the parent-side
+/// the live settlement read first, the durable session file second (the only
+/// source an unreachable worker leaves) — so the parent-side
 /// reader (the factory's provisional answer) sees the child's final say, not
 /// a bare failure row.
 #[tokio::test(start_paused = true)]
@@ -2773,49 +2788,48 @@ async fn a_failed_settle_captures_the_childs_last_assistant_text() {
     );
 }
 
-/// Review finding (PR #3462): a `None` first answer capture (the settle
-/// raced the worker's answer hand-off) FROZE the row empty — the capture fill
-/// only ran while the settle verdict was unset, so no later refresh could
-/// deliver the text and every re-collect answered the same empty envelope. The
-/// fill now runs on every refresh: it writes only when the fresh round trip
-/// produced a text AND the row has no answer yet.
+/// The settle carries its answer (Claude Code stores an agent's result with
+/// its completed status in one update): the idle snapshot that settles the
+/// child holds the final answer, so neither the terminal notice nor a collect
+/// depends on a separate answer read (`get_last_assistant_text` here never
+/// has the text).
 #[tokio::test]
-async fn a_none_first_answer_capture_recovers_on_a_later_collect() {
-    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
-    let (sessions, _kill_rx) =
-        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::TextLate)
-            .await;
+async fn the_settle_carries_the_answer_from_its_idle_snapshot() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) = sessions_with_fake_supervisor(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::NoLastTextRead,
+    )
+    .await;
     let handle = spawn_child(&sessions).await;
     sessions.notify_turn_done();
-    // The watcher's settle refresh consumed the empty first answer read and
-    // settled the child with no captured answer.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let entries = sessions.list_subagents().await.expect("child roster");
-        if entries.iter().any(|entry| entry.status == "completed") {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "child never settled: {entries:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    // A later collect refreshes the row and the answer lands: the settle
-    // verdict is one-shot, the capture is not.
+    let notice = tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the settle delivers the no-reply notice")
+        .expect("follow-up channel open");
+    assert!(
+        notice["customMessage"]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("<result>the child final answer</result>")),
+        "the notice carries the settled answer: {notice}"
+    );
     let results = sessions
         .collect(vec![handle.rlm_child_id.clone()], 0)
         .await
         .expect("collect the settled child");
-    assert_eq!(results[0].status, "done");
     assert_eq!(
-        results[0].answer_text.as_deref(),
-        Some("the child final answer"),
-        "the late answer must land after the empty first capture"
-    );
-    assert_eq!(
-        results[0].answer_preview.as_deref(),
-        Some("the child final answer")
+        (
+            results[0].status,
+            results[0].answer_text.as_deref(),
+            results[0].answer_preview.as_deref(),
+        ),
+        (
+            "done",
+            Some("the child final answer"),
+            Some("the child final answer"),
+        )
     );
 }
 
@@ -3551,7 +3565,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         .await;
     assert!(claimed, "the give-up claims the settle");
     assert_eq!(
-        child_subagents.answer_reads.load(Ordering::SeqCst),
+        child_subagents.settlement_reads.load(Ordering::SeqCst),
         0,
         "no exit-capture round trip may run while a captured answer stands"
     );

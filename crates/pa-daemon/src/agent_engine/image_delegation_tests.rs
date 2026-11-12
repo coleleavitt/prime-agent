@@ -356,7 +356,7 @@ fn depth_capped_delegation_fails_loud_without_a_fallback_swap() {
 
 /// A scripted supervisor-link peer for the delegation integration
 /// tests: answers `create`/`prompt`/`kill`/`wait_for_idle`/
-/// `get_state`, and `get_last_assistant_text` with `answer`. Every
+/// `get_state`, its settlement carrying `answer` as the final answer. Every
 /// received command is captured for the wire assertions. Runs on its
 /// own thread+runtime; each engine link request connects fresh, so
 /// the accept loop serves one command per connection.
@@ -414,10 +414,8 @@ impl ScriptedSupervisor {
                                         "isStreaming": false,
                                         "hasRunningSubagents": false,
                                         "sessionActions": { "queuedCount": 0 },
+                                        "settlement": { "finalAnswer": answer },
                                     })),
-                                    "get_last_assistant_text" => {
-                                        Some(serde_json::json!({ "text": answer }))
-                                    }
                                     _ => None,
                                 },
                             );

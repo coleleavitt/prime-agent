@@ -71,23 +71,6 @@ impl SupervisorChildSessions {
 }
 
 impl SupervisorChildSessionsInner {
-    /// The child's final answer text, uncapped (the delegation carries the
-    /// full description into the parent turn; only the roster preview
-    /// compacts it).
-    async fn child_answer_text(&self, active_session_id: &str) -> anyhow::Result<Option<String>> {
-        let command = pa_types::daemon::DaemonCommand::GetLastAssistantText {
-            id: None,
-            active_session_id: active_session_id.to_string(),
-            rest: serde_json::Map::default(),
-        };
-        let answer = self.command(&command, super::STATE_TIMEOUT_MS).await?;
-        Ok(answer
-            .get("text")
-            .and_then(serde_json::Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(str::to_string))
-    }
-
     /// Settle a failed delegation child: the record takes the terminal
     /// error status, its usage flushes once, and the settle funnel fires
     /// (the roster and the quiescence predicate see a settled child).
@@ -285,11 +268,16 @@ impl SupervisorChildSessionsInner {
                     // Stability re-check: an idle read between the
                     // admission and the turn pop is not a settle (the same
                     // grace the watcher closes).
+                    // The settlement read is that re-check: the idle verdict
+                    // and the child's final answer (uncapped: the delegation
+                    // carries the full description into the parent turn)
+                    // come from one worker snapshot.
                     tokio::time::sleep(Duration::from_millis(WATCH_SETTLE_GRACE_MS)).await;
-                    if !matches!(self.child_busy(&active_session_id).await, Ok(false)) {
-                        continue;
-                    }
-                    let answer = self.child_answer_text(&active_session_id).await;
+                    let answer = match self.child_settlement_state(&active_session_id).await {
+                        Ok(state) if super::lifecycle::child_busy_flags(&state) => continue,
+                        Ok(state) => Ok(super::lifecycle::settlement_answer(&state)),
+                        Err(error) => Err(error),
+                    };
                     match answer {
                         Ok(Some(answer)) => {
                             {

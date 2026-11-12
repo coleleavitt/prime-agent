@@ -1,4 +1,5 @@
-//! `get_last_assistant_text` after an ended turn: the collect lane's
+//! `get_last_assistant_text` and the `get_state` settlement after an ended
+//! turn: the collect lane's
 //! newest-non-empty rule. A turn ended on `rlm.end_turn()` settles on its
 //! batch's tool result, and the final assistant row holds only the tool
 //! call — the answer text sits in the earlier assistant row, and the read
@@ -33,5 +34,14 @@ async fn get_last_assistant_text_steps_back_over_an_ended_turns_textless_row() {
         response.data.expect("response data")["text"],
         "the answer",
         "the read must step back over the ended turn's textless assistant row"
+    );
+    // The child host's settlement read answers the same final answer from
+    // the snapshot that carries the idle flags.
+    let state = worker
+        .dispatch("get_state", &json!({ "includeSettlement": true }))
+        .await;
+    assert_eq!(
+        state.data.expect("state data")["settlement"],
+        json!({ "finalAnswer": "the answer" })
     );
 }

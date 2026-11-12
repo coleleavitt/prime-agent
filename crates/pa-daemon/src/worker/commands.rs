@@ -117,7 +117,7 @@ impl Worker {
             "wait_for_headless_completion" => {
                 self.handle_wait_for_headless_completion(payload).await
             }
-            "get_state" => self.handle_get_state(),
+            "get_state" => self.handle_get_state(payload),
             "get_messages" => self.handle_get_messages(payload),
             "get_session_messages" => self.handle_get_session_messages(payload).await,
             "get_session_header" => self.handle_get_session_header(),
@@ -497,17 +497,22 @@ impl Worker {
         response_success(None, "abort_and_send_queued", None)
     }
 
-    fn handle_get_state(&self) -> DaemonResponse {
+    /// `get_state`: the session summary. With `includeSettlement: true` (the
+    /// parent's child host) it also carries the run's settlement — the final
+    /// answer — read under the same core lock as the busy flags, so an idle
+    /// verdict and its answer are one snapshot (Claude Code stores an agent's
+    /// result with its completed status in one update).
+    fn handle_get_state(&self, payload: &Value) -> DaemonResponse {
         if let Err(response) = self.require_created("get_state") {
             return response;
         }
         let (core, inputs) = self.summary_inputs();
         let summary = self.summary_locked(&core, inputs);
-        response_success(
-            None,
-            "get_state",
-            Some(serde_json::to_value(&summary).unwrap_or(Value::Null)),
-        )
+        let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
+        if payload.get("includeSettlement").and_then(Value::as_bool) == Some(true) {
+            state["settlement"] = json!({ "finalAnswer": final_answer(core.store.as_ref()) });
+        }
+        response_success(None, "get_state", Some(state))
     }
 
     /// `get_session_header`: the persisted session header line (TS wraps it
@@ -832,18 +837,7 @@ impl Worker {
             return response;
         }
         let core = self.core.lock_or_recover();
-        // The newest non-empty assistant text: an ended turn's final
-        // assistant row may hold only the tool call, so the answer sits in
-        // the last assistant row with text (the file fallback's rule).
-        let text = core.store.as_ref().and_then(|store| {
-            store
-                .messages()
-                .into_iter()
-                .rev()
-                .filter(|message| crate::types::message_role(message) == Some("assistant"))
-                .map(|message| crate::types::message_text(&message))
-                .find(|text| !text.is_empty())
-        });
+        let text = final_answer(core.store.as_ref());
         response_success(
             None,
             "get_last_assistant_text",
@@ -1063,6 +1057,20 @@ impl Worker {
             Some(serde_json::to_value(&summary).unwrap_or(Value::Null)),
         )
     }
+}
+
+/// A run's final answer: the newest non-empty assistant text. An ended
+/// turn's final assistant row may hold only the tool call, so the answer
+/// sits in the last assistant row with text (Claude Code's `pkn` walk-back,
+/// and the exit capture's rule).
+fn final_answer(store: Option<&crate::session_store::SessionFile>) -> Option<String> {
+    store?
+        .messages()
+        .into_iter()
+        .rev()
+        .filter(|message| crate::types::message_role(message) == Some("assistant"))
+        .map(|message| crate::types::message_text(&message))
+        .find(|text| !text.is_empty())
 }
 
 /// The bounce body: the receiver label, the fact, and the dropped body —

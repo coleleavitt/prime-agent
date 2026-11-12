@@ -226,10 +226,6 @@ pub struct HostState {
     /// Every collect fails (a dead host bridge).
     pub collect_fails: bool,
     pub dead_notices: bool,
-    /// Children whose FIRST collect settles them with no captured answer
-    /// (the host-side capture race); later collects carry the answer.
-    pub late_children: HashSet<String>,
-    pub collects_of: HashMap<String, u64>,
 }
 
 /// Deterministic host fake routing by request type.
@@ -488,12 +484,6 @@ impl FactoryChildren for FakePorts {
                     let Some((name, node)) = state.children.get(target).cloned() else {
                         continue; // deleted children vanish from collect results
                     };
-                    let seen = state.collects_of.entry(target.clone()).or_insert(0);
-                    *seen += 1;
-                    if state.late_children.contains(target) && *seen == 1 {
-                        results.push(FakeHost::entry(target, &name, "done", true, None));
-                        continue;
-                    }
                     let outcome = state
                         .child_outcomes
                         .get(target)

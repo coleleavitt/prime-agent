@@ -439,23 +439,19 @@ impl SupervisorChildSessionsInner {
         Ok(child_busy_flags(&state))
     }
 
-    /// One `GetLastAssistantText` round trip: the raw text the roster
-    /// preview and the collect envelope's binding lane both derive from
-    /// (the preview compacts it; the binding lane caps it at
-    /// [`ANSWER_TEXT_MAX_CHARS`] instead, so the whole fenced JSON a
-    /// settle binds from survives).
-    async fn child_answer_raw(&self, active_session_id: &str) -> Result<Option<String>> {
-        let command = DaemonCommand::GetLastAssistantText {
+    /// The child's live summary with its settlement (`get_state` with
+    /// `includeSettlement`): the busy verdict and the run's final answer
+    /// come from one worker snapshot, so a settle carries its answer and
+    /// never races a separate answer read.
+    pub(super) async fn child_settlement_state(&self, active_session_id: &str) -> Result<Value> {
+        let mut rest = Map::default();
+        rest.insert("includeSettlement".to_string(), Value::Bool(true));
+        let command = DaemonCommand::GetState {
             id: None,
             active_session_id: active_session_id.to_string(),
-            rest: Map::default(),
+            rest,
         };
-        let answer = self.command(&command, STATE_TIMEOUT_MS).await?;
-        Ok(answer
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(str::to_string))
+        self.command(&command, STATE_TIMEOUT_MS).await
     }
 
     /// Best-effort bounded wait for one child and its descendants to go
@@ -508,7 +504,7 @@ impl SupervisorChildSessionsInner {
             let request_order = self
                 .observation_requests
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let state = self.child_state(&active_session_id).await;
+            let state = self.child_settlement_state(&active_session_id).await;
             if let Ok(state) = &state {
                 self.observe_live_state(
                     record,
@@ -520,19 +516,17 @@ impl SupervisorChildSessionsInner {
             }
             state
         };
-        let idle = matches!(&state, Ok(state) if !child_busy_flags(state));
-        if !idle {
+        let Ok(state) = state else {
+            return;
+        };
+        if child_busy_flags(&state) {
             return;
         }
-        // Capture the answer before taking the record lock (the capture is
-        // a link round trip): one fetch yields the raw text both lanes
-        // derive from — the compact preview for the roster rows and the
-        // full text for the collect envelope's binding lane.
-        let raw_answer = self
-            .child_answer_raw(&active_session_id)
-            .await
-            .ok()
-            .flatten();
+        // The answer rides the idle snapshot itself: the compact preview
+        // for the roster rows and the full text (capped at
+        // [`ANSWER_TEXT_MAX_CHARS`], so the whole fenced JSON a settle binds
+        // from survives) for the collect envelope's binding lane.
+        let raw_answer = settlement_answer(&state);
         // How the run's final turn ended (#3366): a run whose last model
         // call failed (a provider error, after its retries if it had any)
         // settles `error` with that text instead of a `done` with no
@@ -554,16 +548,12 @@ impl SupervisorChildSessionsInner {
             .as_deref()
             .map(|text| cap_text(text, ANSWER_TEXT_MAX_CHARS));
         let mut record = record.lock().await;
-        // The settle verdict is one-shot, the answer capture is not: a
-        // `None` first capture (the settle raced the worker's answer
-        // hand-off) froze the row empty before — the capture fill only
-        // ran while `settled_status` was unset, so a later refresh could
-        // never deliver the text and a re-collect answered the same empty
-        // envelope forever. The fill now runs on every refresh: it only
-        // writes when the fresh round trip produced a text AND the row has
-        // no answer yet, so a settled preview is still never overwritten
-        // with a later miss.
-        if record.settled_status.is_none() {
+        // The verdict and its answer land in one record update (Claude
+        // Code's `uls`): a settle never exposes a `done` row whose answer
+        // a later read has to fill in. A row settled without an answer (a
+        // ledger reseed after a restart) takes the idle snapshot's answer.
+        let verdict = record.settled_status.is_none();
+        if verdict {
             match final_turn_error {
                 Some(error) => {
                     record.settled_status = Some("error");
@@ -572,10 +562,10 @@ impl SupervisorChildSessionsInner {
                 None => record.settled_status = Some("done"),
             }
         }
-        if (!record.answer_captured || record.answer_preview.is_none()) && answer.is_some() {
+        if verdict || !record.answer_captured {
+            record.answer_captured = answer.is_some();
             record.answer_preview = answer;
             record.answer_text = answer_text;
-            record.answer_captured = true;
         }
     }
 
@@ -940,10 +930,11 @@ impl SupervisorChildSessionsInner {
         let exit_text = match live_or_file {
             Some((active_session_id, session_file)) => {
                 let live = self
-                    .child_answer_raw(&active_session_id)
+                    .child_settlement_state(&active_session_id)
                     .await
                     .ok()
-                    .flatten();
+                    .as_ref()
+                    .and_then(settlement_answer);
                 if live.is_some() {
                     live
                 } else {
@@ -1192,9 +1183,20 @@ pub(super) fn final_turn_error_from_file(session_file: &str) -> Option<String> {
     None
 }
 
+/// The run's final answer a settlement `get_state` carries (`None`: the
+/// run produced no text, or an older worker sent no settlement).
+pub(super) fn settlement_answer(state: &Value) -> Option<String> {
+    state
+        .get("settlement")?
+        .get("finalAnswer")?
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
 /// The busy flags of one child `get_state` summary (streaming, its own
 /// descendants, or queued work in flight).
-fn child_busy_flags(state: &Value) -> bool {
+pub(super) fn child_busy_flags(state: &Value) -> bool {
     let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
     flag("isStreaming")
         || flag("hasRunningSubagents")

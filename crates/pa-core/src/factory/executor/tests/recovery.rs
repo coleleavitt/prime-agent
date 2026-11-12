@@ -1,6 +1,6 @@
 //! Machine-recovery fixes for the M1-M6 triage classes (ports of upstream
 //! #3462's `FactoryExecutorTest` additions): run-scoped child names, the
-//! full-answer binding lane and its capture retry, optional inputs over a
+//! full-answer binding lane, optional inputs over a
 //! live upstream, exit captures that need verification, and the paused
 //! run's error payload.
 
@@ -274,42 +274,6 @@ async fn optional_input_waits_for_a_live_upstream_before_spawning() {
     assert_eq!(validate.len(), 1);
     assert!(validate[0].contains("WTREE-A1"), "{}", validate[0]);
     assert!(!validate[0].contains("None"), "{}", validate[0]);
-}
-
-#[tokio::test]
-async fn capture_retry_rebinds_a_settle_that_raced_the_answer_capture() {
-    // M2: a child settled with no captured answer yet; the capture retry
-    // re-collects it once and the declared output binds.
-    let case = Case::new();
-    case.host.with(|state| {
-        state.late_children.insert("child-2".to_string());
-    });
-    case.host
-        .outcome("build", done("```json\n{\"built\": \"BIN-A1\"}\n```"));
-    case.host.outcome("use", done("USED"));
-    case.store_machine(
-        json!({
-            "run": { "failure_policy": "escalate", "max_parallel": 4 },
-            "states": [
-                { "id": "seed", "entry": true, "subagent": "worker" },
-                { "id": "build", "subagent": "worker", "outputs": [{ "name": "built", "type": "json" }] },
-                { "id": "use", "subagent": { "prompt": "Use {built}." },
-                  "inputs": [{ "name": "built", "type": "json", "from": "build.built" }] }
-            ],
-            "transitions": [{ "from": "seed", "to": "build" }, { "from": "build", "to": "use" }]
-        }),
-        "sw",
-    );
-    let result = case.start().await;
-    assert_eq!(case.settle(&result).await["state"], "done");
-    assert_eq!(
-        case.host.spawn_prompts("use"),
-        vec!["Use \"BIN-A1\".".to_string()]
-    );
-    assert_eq!(
-        case.all_events_of(&result, "output_capture_failed"),
-        Vec::<Value>::new()
-    );
 }
 
 #[tokio::test]

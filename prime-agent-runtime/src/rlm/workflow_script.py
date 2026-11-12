@@ -353,7 +353,9 @@ class RlmBackend:
                 await _release_isolated_child(handle)
         if row.status == "done":
             return AgentOutcome(
-                text=row.answer_text if row.answer_text is not None else row.answer_preview or "",
+                # The settle carries the full answer; a child that ended with no
+                # text answers "" (Claude Code's workflow agent()).
+                text=row.answer_text or "",
                 agent_id=handle.rlm_child_id,
             )
         return AgentOutcome(text=None, agent_id=handle.rlm_child_id, error=row.error or row.status)

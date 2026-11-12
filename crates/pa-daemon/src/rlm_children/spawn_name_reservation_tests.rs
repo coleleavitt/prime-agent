@@ -86,12 +86,8 @@ async fn spawn_gated_supervisor(
                             Some(json!({
                                 "isStreaming": false,
                                 "sessionActions": { "queuedCount": 0 },
+                                "settlement": { "finalAnswer": "the child final answer" },
                             })),
-                        ),
-                        "get_last_assistant_text" => response_success(
-                            Some(&id),
-                            command_type,
-                            Some(json!({ "text": "the child final answer" })),
                         ),
                         "kill" => response_success(Some(&id), command_type, None),
                         "rename" => {
