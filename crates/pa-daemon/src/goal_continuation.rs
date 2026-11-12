@@ -91,7 +91,7 @@ impl AgentSessionEngine {
         error: &str,
         failed_turn: Option<&pa_agent::types::AssistantMessage>,
     ) {
-        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
+        let Some(handles) = self.live_handles().map(|live| live.goal.clone()) else {
             return;
         };
         self.runtime.block_on(async {
@@ -142,13 +142,11 @@ impl AgentSessionEngine {
     /// The settle-site body: exactly-once delivery under the driver lock,
     /// deferral kept while descendants or queued input own the boundary.
     async fn goal_children_settled(&self) {
-        // A closed session (killed/stopped) drops the retry.
-        if self.session_is_closed() {
-            return;
-        }
-        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
+        // A closed session (killed/stopped) has no live handles: the retry drops.
+        let Some(live) = self.live_handles() else {
             return;
         };
+        let handles = &live.goal;
         {
             let driver = handles.driver.lock().await;
             if !driver.owes_continuation() {
@@ -186,7 +184,7 @@ impl AgentSessionEngine {
                 let state = driver.state_with_creation_elapsed();
                 let wake_at = driver.backoff_wake_at();
                 drop(driver);
-                self.publish_goal_state(&state);
+                live.publish_goal(&state);
                 if let Some(wake_at) = wake_at {
                     self.schedule_goal_backoff_wake(wake_at).await;
                 }
@@ -217,7 +215,7 @@ impl AgentSessionEngine {
             }
             return;
         }
-        let goal_update = self.publish_goal_state(&driver.state_with_creation_elapsed());
+        let goal_update = live.publish_goal(&driver.state_with_creation_elapsed());
         drop(driver);
         // A close that lands while the awaits above ran: the mint is
         // consumed (the owed flag was already taken) and the unconsumed
@@ -248,10 +246,8 @@ impl AgentSessionEngine {
     /// probe reads the kernel manager without the session mutex (the
     /// consult can run inside a compaction turn, which holds it).
     pub(crate) fn has_live_background_bash_handles(&self) -> bool {
-        self.background_bash_probe
-            .lock_or_recover()
-            .clone()
-            .is_some_and(|probe| probe())
+        self.live_handles()
+            .is_some_and(|live| (live.background_bash_probe)())
     }
 
     /// The settled passivation gates (the kernel release and the whole-worker idle
@@ -282,14 +278,12 @@ impl AgentSessionEngine {
     /// continuation turn, deferred (owed, not consumed) behind unsettled
     /// descendant work or a background bash handle.
     fn mint_goal_continuation(&self) -> GoalBoundary {
-        // A closed session never continues: no mint, no owed-continuation
+        // A closed session has no live handles: no mint, no owed-continuation
         // consumption.
-        if self.session_is_closed() {
-            return GoalBoundary::Proceed;
-        }
-        let Some(handles) = self.goal_runtime.lock_or_recover().clone() else {
+        let Some(live) = self.live_handles() else {
             return GoalBoundary::Proceed;
         };
+        let handles = &live.goal;
         // Read the just-settled turn BEFORE the driver lock (the session
         // mutex never nests under it). The failed pair's drop happens
         // inside, once the consult examines the corpse — an early drop
@@ -360,7 +354,7 @@ impl AgentSessionEngine {
                 let state = driver.state_with_creation_elapsed();
                 let wake_at = driver.backoff_wake_at();
                 drop(driver);
-                self.publish_goal_state(&state);
+                live.publish_goal(&state);
                 if let Some(wake_at) = wake_at {
                     self.schedule_goal_backoff_wake(wake_at).await;
                 }
@@ -384,7 +378,7 @@ impl AgentSessionEngine {
                 }
                 return GoalBoundary::End;
             }
-            let goal_update = self.publish_goal_state(&driver.state_with_creation_elapsed());
+            let goal_update = live.publish_goal(&driver.state_with_creation_elapsed());
             let message = message.expect("the mint produced a message");
             drop(driver);
             self.deliver_goal_work(GoalTurnEndWork::Continuation(GoalContinuation {
@@ -400,10 +394,7 @@ impl AgentSessionEngine {
     /// steer); carries no `goal_update` — the budget transition already
     /// surfaced through the crossing turn's tracking wrapper.
     fn mint_budget_limit_steer(&self) -> Option<GoalTurnEndWork> {
-        if self.session_is_closed() {
-            return None;
-        }
-        let handles = self.goal_runtime.lock_or_recover().clone()?;
+        let handles = self.live_handles()?.goal.clone();
         let message = self.runtime.block_on(async {
             let driver = handles.driver.lock().await;
             let state = driver.state_with_creation_elapsed();
@@ -423,26 +414,6 @@ impl AgentSessionEngine {
             // The budget steer mints no continuation slot: no pending guard.
             pending_handle: None,
         }))
-    }
-
-    /// Publish a minted state change as the `goal_update` payload; the
-    /// dedupe contract keeps an unchanged state silent.
-    pub(crate) fn publish_goal_state(
-        &self,
-        goal: &pa_core::goals::GoalState,
-    ) -> Option<serde_json::Value> {
-        let mut published = self.published_goal.lock_or_recover();
-        // The dedupe is age-invariant: the creation-based timer's age ticks
-        // with the wall clock (a second boundary between reads must not
-        // re-emit an unchanged goal).
-        if published.as_ref().is_some_and(|last| {
-            pa_core::goals::goal_update_dedupe_projection(last)
-                == pa_core::goals::goal_update_dedupe_projection(goal)
-        }) {
-            return None;
-        }
-        *published = Some(goal.clone());
-        Some(serde_json::to_value(goal).unwrap_or(serde_json::Value::Null))
     }
 
     /// Hand one minted follow-up to the worker's admission sink. An
@@ -499,10 +470,7 @@ mod tests {
         engine: &Arc<AgentSessionEngine>,
         probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
     ) {
-        *engine
-            .background_bash_probe
-            .lock()
-            .expect("background bash probe lock") = Some(probe);
+        engine.set_test_probes(Some(probe), None);
     }
 
     #[test]
@@ -533,12 +501,7 @@ mod tests {
                 "work minted behind a live handle: {work:?}"
             );
         }
-        let handles = engine
-            .goal_runtime
-            .lock()
-            .unwrap()
-            .clone()
-            .expect("goal runtime");
+        let handles = engine.live_handles().expect("goal runtime").goal.clone();
         assert!(
             engine
                 .runtime

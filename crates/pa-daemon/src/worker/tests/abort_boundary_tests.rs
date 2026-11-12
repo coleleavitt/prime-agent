@@ -1153,11 +1153,10 @@ async fn a_folded_unread_steer_survives_a_graceful_daemon_shutdown() {
         .agent_engine
         .as_ref()
         .expect("the faux script runs the agent engine")
+        .built_handles()
+        .expect("the created session's agent")
         .turn_agent
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("the created session's agent");
+        .clone();
     agent.steer(pa_agent::types::AgentMessage::Standard(
         pa_agent::types::Message::User(pa_agent::types::UserMessage {
             content: pa_agent::types::UserContent::Text("also check the tests".to_string()),

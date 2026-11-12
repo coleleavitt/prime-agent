@@ -63,9 +63,8 @@ impl AgentSessionEngine {
         if self.session_is_closed() || self.session_input_queued() {
             return false;
         }
-        let goal = self.goal_runtime.lock_or_recover().clone();
-        if let Some(handles) = goal
-            && handles.driver.lock().await.state().status != pa_types::goal::GoalStatus::Idle
+        if let Some(live) = self.live_handles()
+            && live.goal.driver.lock().await.state().status != pa_types::goal::GoalStatus::Idle
         {
             return false;
         }
