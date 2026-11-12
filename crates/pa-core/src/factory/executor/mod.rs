@@ -374,6 +374,7 @@ impl FactoryExecutor {
             runs: Mutex::new(Vec::new()),
         });
         let mut interrupted = Vec::new();
+        let mut continuing = Vec::new();
         if let Some(store) = &store {
             let mut recovered = Vec::new();
             for mut run in store.load() {
@@ -402,6 +403,11 @@ impl FactoryExecutor {
                 if let Some(notice) = notice {
                     interrupted.push((Arc::clone(&cell), notice));
                 }
+                if state_before == RunState::Running
+                    && cell.with(|run| run.state == RunState::Running)
+                {
+                    continuing.push(Arc::clone(&cell));
+                }
                 recovered.push(cell);
             }
             *inner
@@ -410,6 +416,13 @@ impl FactoryExecutor {
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = recovered;
         }
         inner.announce_interrupted(interrupted);
+        // A run that lost nothing carries on: its loop re-drives the
+        // children the restart parked for adoption.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            for cell in &continuing {
+                inner.start_loop(cell);
+            }
+        }
         Self { inner }
     }
 

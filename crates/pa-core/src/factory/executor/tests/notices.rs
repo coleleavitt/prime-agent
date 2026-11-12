@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::fake::{Case, done, running};
+use super::fake::{Case, done, exhaust_restart_adoptions, running};
 use crate::factory::executor::ports::FactoryNotice;
 
 fn store_chain(case: &Case) {
@@ -135,9 +135,10 @@ async fn a_host_restart_announces_one_interruption_per_restart() {
     case.executor.flush().await;
     let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
     drop(case);
+    exhaust_restart_adoptions(&dir, &run_id);
 
-    // Restart 1: the in-flight run pauses as interrupted, and the session
-    // hears it once.
+    // Restart 1: the in-flight child is past its adoption cap, so the run
+    // pauses as interrupted, and the session hears it once.
     let restarted = Case::over(Arc::clone(&host), Arc::clone(&clock), Some(dir.clone()));
     restarted
         .wait_until(|| notices(&restarted).len() == 1)

@@ -345,6 +345,13 @@ async fn a_restart_interruption_notifies_once_and_a_second_restart_stays_quiet()
         "a running run owes nothing"
     );
     drop(first);
+    // The child already used every restart adoption, so this restart
+    // loses it instead of adopting it.
+    let record_path = store.join(format!("{run_id}.json"));
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    record["run"]["states"][0]["entries"][0]["instances"][0]["restart_adoptions"] =
+        json!(pa_core::factory::executor::model::RESTART_ADOPTIONS_MAX);
+    std::fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
 
     // The host restarts: the in-flight run pauses as interrupted.
     let second = executor(

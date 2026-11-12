@@ -41,7 +41,7 @@ use super::{Inner, RunCell};
 use crate::factory::labels::spawn_label;
 use crate::factory::pyvalue::py_str_repr;
 use crate::factory::spec::NODE_RETRIES_DEFAULT;
-use crate::session_engine::rlm_host::{RlmChildResult, RlmFactoryTag};
+use crate::session_engine::rlm_host::{RLM_ADMISSION_UNKNOWN, RlmChildResult, RlmFactoryTag};
 
 /// Spawn admissions per instance before a persistent rate limit fails it.
 pub const BACKOFF_MAX_ATTEMPTS: u32 = 5;
@@ -722,6 +722,11 @@ impl Inner {
                         if let Some(child) = instance.interrupted_child.take() {
                             lost.push(child);
                         }
+                        // The user resumed past an unknown admission: the
+                        // instance is admitted afresh under a new id.
+                        if std::mem::take(&mut instance.admission_unknown) {
+                            instance.pending_child = None;
+                        }
                     }
                 }
             }
@@ -948,7 +953,9 @@ impl Inner {
                 // A python call is no child: it never counts toward
                 // max_children.
                 let python = run.runs_python(slot.state);
-                if !python && run.children_budget_exceeded() {
+                // A re-driven admission is not a new child.
+                let redrive = run.slot_instance(slot).pending_child.is_some();
+                if !python && !redrive && run.children_budget_exceeded() {
                     return Next::PauseChildren;
                 }
                 Next::Admit(slot, python)
@@ -1116,7 +1123,7 @@ impl Inner {
     /// rate-limited admissions fail the instance; any other admission error
     /// fails it immediately. A spawn that lands after `stop()` is retracted.
     async fn admit(&self, cell: &Arc<RunCell>, slot: Slot, allow_backoff: bool) -> Admission {
-        let request = cell.with(|run| {
+        let (request, redrive) = cell.with(|run| {
             let (run_id, spec_id) = (run.run_id.clone(), run.spec_id.clone());
             let state = &run.states[slot.state];
             let (name, model, thinking, state_id) = (
@@ -1126,7 +1133,18 @@ impl Inner {
                 state.state_id.clone(),
             );
             let instance = run.slot_instance(slot);
-            instance.attempt += 1;
+            // A re-driven admission (its id was recorded before a restart)
+            // keeps its attempt; a fresh one picks a new id, recorded before
+            // the spawn below.
+            let redrive = instance.pending_child.is_some();
+            if !redrive {
+                instance.attempt += 1;
+                instance.pending_child = Some(format!(
+                    "sub-{}",
+                    &uuid::Uuid::new_v4().simple().to_string()[..12]
+                ));
+            }
+            let child_id = instance.pending_child.clone().unwrap_or_default();
             let label = spawn_label(
                 name.as_deref(),
                 &run_id,
@@ -1134,7 +1152,8 @@ impl Inner {
                 instance.index as i64,
                 instance.attempt,
             );
-            FactorySpawn {
+            let request = FactorySpawn {
+                child_id,
                 prompt: instance.prompt.clone(),
                 name: label,
                 model,
@@ -1144,13 +1163,62 @@ impl Inner {
                     spec_id,
                     state_id,
                 },
-            }
+            };
+            run.touch();
+            (request, redrive)
         });
+        // Write-before-effect: the picked id is on disk before the host can
+        // admit a child under it, so a crash anywhere after this point
+        // re-drives the same admission instead of spawning a second child.
+        if let Some(store) = &self.store {
+            store.flush().await;
+        }
         let child_name = request.name.clone();
         let spawned = self.children.spawn(request).await;
         let child_id = match spawned {
             Ok(child_id) => child_id,
+            Err(error) if error.contains(RLM_ADMISSION_UNKNOWN) => {
+                // The host keeps no record of the recorded child, but its
+                // admission may have run: the user decides, never a silent
+                // re-run (resume admits the instance afresh).
+                let announce = cell.with(|run| {
+                    let instance = run.slot_instance(slot);
+                    instance.admission_unknown = true;
+                    let child = instance.pending_child.clone().unwrap_or_default();
+                    run.record_at(
+                        kind::ADMISSION_UNKNOWN,
+                        slot,
+                        Some(&error),
+                        vec![("child", Value::from(child))],
+                    );
+                    if run.state != RunState::Running {
+                        return None;
+                    }
+                    let node = run.states[slot.state].state_id.clone();
+                    run.state = RunState::Paused;
+                    run.pause_reason = Some(error.clone());
+                    run.touch();
+                    Some(MilestoneCall {
+                        kind: "paused",
+                        detail: format!(
+                            "state {node}: {error}; resume with await rlm.factory.resume('{}') to admit it afresh",
+                            run.run_id
+                        ),
+                        node: Some(node),
+                    })
+                });
+                if let Some(announce) = announce {
+                    self.milestone(cell, announce).await;
+                }
+                return Admission::Stopped;
+            }
             Err(error) => {
+                // The host answered: no child runs under the picked id, so
+                // the next admission picks a new one.
+                cell.with(|run| {
+                    run.slot_instance(slot).pending_child = None;
+                    run.touch();
+                });
                 let reason = format!("spawn admission failed: {error}");
                 if !is_rate_limit_error(&error) {
                     self.apply_instance_failure(cell, slot, reason, /*retry*/ false)
@@ -1196,13 +1264,26 @@ impl Inner {
             let running = run.state == RunState::Running;
             let instance = run.slot_instance(slot);
             instance.child_id = Some(child_id.clone());
+            instance.pending_child = None;
             if !running {
+                run.touch();
                 return true;
             }
-            instance.spawned_at = Some(now);
             instance.status = Status::Running;
             instance.rate_limit_streak = 0;
             let attempt = instance.attempt;
+            if redrive {
+                // An adopted child keeps its first admission time.
+                instance.spawned_at.get_or_insert(now);
+                run.record_at(
+                    kind::ADOPTED,
+                    slot,
+                    None,
+                    vec![("child", Value::from(child_id.clone()))],
+                );
+                return false;
+            }
+            instance.spawned_at = Some(now);
             run.spawn_count += 1;
             run.record_at(
                 kind::SPAWNED,

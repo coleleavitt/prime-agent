@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::fake::{Case, done, node_status, running, strings};
+use super::fake::{Case, done, exhaust_restart_adoptions, node_status, running, strings};
 use crate::factory::executor::store::INTERRUPTED_PAUSE_REASON;
 
 fn record(dir: &Path, run_id: &str) -> Value {
@@ -81,7 +81,8 @@ async fn every_committed_transition_reaches_the_record() {
 }
 
 #[tokio::test]
-async fn a_host_restart_pauses_the_run_as_interrupted_and_resume_finishes_the_loop() {
+async fn a_restart_past_the_adoption_cap_pauses_the_run_as_interrupted_and_resume_finishes_the_loop()
+ {
     let (_temp, dir, case) = store_case();
     case.host.child_outcome("child-1", done("DRAFT"));
     case.host.child_outcome("child-2", done(REJECT));
@@ -96,6 +97,7 @@ async fn a_host_restart_pauses_the_run_as_interrupted_and_resume_finishes_the_lo
     let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
     // The host process dies: its session (and the executor) goes away.
     drop(case);
+    exhaust_restart_adoptions(&dir, &run_id);
 
     let restarted = Case::over(host, clock, Some(dir.clone()));
     assert_eq!(restarted.executor.run_ids(), std::slice::from_ref(&run_id));
@@ -270,4 +272,125 @@ async fn unreadable_records_are_skipped_not_fatal() {
     std::fs::write(dir.join("future.json"), br#"{"version": 99, "run": {}}"#).unwrap();
     let case = Case::with_store(Some(dir));
     assert_eq!(case.executor.run_ids(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_host_restart_adopts_the_running_child_and_the_run_carries_on() {
+    // The fork's children outlive the host: a restart re-drives the running
+    // reviewer through the idempotent spawn, which adopts it - no second
+    // child, no delete, no pause.
+    let (_temp, dir, case) = store_case();
+    case.host.child_outcome("child-1", done("DRAFT"));
+    case.host.child_outcome("child-2", done(REJECT));
+    case.host.child_outcome("child-3", done("fixed"));
+    case.host.child_outcome("child-4", running());
+    case.store_machine(review_loop(), "sw");
+    let result = case.start().await;
+    let run_id = Case::run_id(&result);
+    case.wait_until(|| case.host.spawn_calls("reviewing").len() == 2)
+        .await;
+    case.executor.flush().await;
+    let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
+    drop(case);
+
+    let restarted = Case::over(host, clock, Some(dir));
+    restarted
+        .wait_until(|| !restarted.all_events_of(&result, "adopted").is_empty())
+        .await;
+    let adopted: Vec<(Value, Value)> = restarted
+        .all_events_of(&result, "adopting")
+        .into_iter()
+        .chain(restarted.all_events_of(&result, "adopted"))
+        .map(|event| (event["kind"].clone(), event["child"].clone()))
+        .collect();
+    assert_eq!(
+        adopted,
+        [
+            (json!("adopting"), json!("child-4")),
+            (json!("adopted"), json!("child-4"))
+        ]
+    );
+    restarted.host.child_outcome("child-4", done(APPROVE));
+    let finished = restarted.settle(&result).await;
+    assert_eq!(finished["state"], "done");
+    assert_eq!(restarted.host.spawn_calls("reviewing").len(), 2);
+    assert!(restarted.host.deleted_targets().is_empty());
+    assert_eq!(
+        restarted.all_events_of(&result, "run_interrupted"),
+        Vec::<Value>::new()
+    );
+    let run = restarted.executor.snapshot_run(&run_id).unwrap();
+    assert_eq!(run.spawn_count, 4, "the adoption is no new admission");
+}
+
+/// Start the stored spec until the host is parked at `parked` (the start's
+/// admission never answers: the host dies there), and name the run.
+async fn start_until(case: &Case, parked: &super::fake::Event) -> Value {
+    let start = case.start();
+    tokio::pin!(start);
+    tokio::select! {
+        _ = &mut start => panic!("the admission must park at the gate"),
+        () = parked.wait() => {}
+    }
+    json!({ "run_id": case.executor.run_ids()[0] })
+}
+
+#[tokio::test]
+async fn a_crash_between_the_admission_and_its_record_spawns_no_second_child() {
+    // Write-before-effect: the picked child id is on disk before the host
+    // admits the child, so a host that dies after the admission but before
+    // the executor records it re-drives the same id and adopts the child.
+    let (_temp, dir, case) = store_case();
+    case.store_factory(
+        json!({ "nodes": [{ "id": "a", "subagent": "worker" }] }),
+        "sw",
+    );
+    let _held = case.host.gate("rlm.run.admitted", 1);
+    let admitted = case.host.gate_entered("rlm.run.admitted", 1);
+    let result = start_until(&case, &admitted).await;
+    let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
+    drop(case);
+
+    let restarted = Case::over(host, clock, Some(dir));
+    let finished = restarted.settle(&result).await;
+    assert_eq!(finished["state"], "done");
+    assert_eq!(restarted.host.spawn_calls("a").len(), 1);
+    assert_eq!(restarted.all_events_of(&result, "adopted").len(), 1);
+}
+
+#[tokio::test]
+async fn an_unknown_admission_pauses_the_run_and_resume_admits_it_afresh() {
+    // The host keeps no record of the recorded child but its admission may
+    // have run: the run pauses for the user instead of re-running it, and a
+    // resume (the user's decision) admits the instance under a new id.
+    let (_temp, dir, case) = store_case();
+    case.store_factory(
+        json!({ "nodes": [{ "id": "a", "subagent": "worker" }] }),
+        "sw",
+    );
+    let _held = case.host.gate("rlm.run", 1);
+    let entered = case.host.gate_entered("rlm.run", 1);
+    let result = start_until(&case, &entered).await;
+    let run_id = Case::run_id(&result);
+    let picked =
+        record(&dir, &run_id)["run"]["states"][0]["entries"][0]["instances"][0]["pending_child"]
+            .as_str()
+            .expect("the picked id is recorded before the spawn")
+            .to_string();
+    let (host, clock) = (Arc::clone(&case.host), Arc::clone(&case.clock));
+    drop(case);
+    host.with(|state| state.unknown_admissions.insert(picked.clone()));
+
+    let restarted = Case::over(host, clock, Some(dir));
+    let paused = restarted.settle(&result).await;
+    assert_eq!(paused["state"], "paused");
+    let unknown = restarted.all_events_of(&result, "admission_unknown");
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0]["child"], json!(picked));
+    assert!(restarted.host.spawn_calls("a").is_empty());
+
+    restarted.resume(&result).await.expect("resume");
+    let finished = restarted.settle(&result).await;
+    assert_eq!(finished["state"], "done");
+    assert_eq!(restarted.host.spawn_calls("a").len(), 1);
 }

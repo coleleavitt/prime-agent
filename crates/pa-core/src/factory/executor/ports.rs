@@ -23,6 +23,9 @@ pub type PortFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 /// One spawn admission the executor asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactorySpawn {
+    /// The child id the executor picked and recorded before the spawn; the
+    /// host answers the child it already holds under it.
+    pub child_id: String,
     pub prompt: String,
     pub name: String,
     pub model: Option<String>,
@@ -154,6 +157,7 @@ impl FactoryChildren for SessionChildren {
         Box::pin(async move {
             let mut kwargs = serde_json::Map::new();
             kwargs.insert("name".into(), Value::from(request.name));
+            kwargs.insert("child_id".into(), Value::from(request.child_id));
             if let Some(model) = request.model {
                 kwargs.insert("model".into(), Value::from(model));
             }

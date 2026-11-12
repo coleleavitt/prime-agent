@@ -109,6 +109,23 @@ pub struct NodeInstance {
     /// flight; resume deletes it best-effort before re-admitting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interrupted_child: Option<String>,
+    /// The child id picked for this instance's admission and written to the
+    /// record before the spawn (write-before-effect). It stays set until the
+    /// host answers, so a restart re-drives the admission with the same id
+    /// through the host's idempotent spawn: a child the host already holds
+    /// is adopted, never spawned twice. A host restart also parks a running
+    /// child here, to adopt it the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_child: Option<String>,
+    /// The host could not place [`Self::pending_child`] (its admission may
+    /// have run before a restart): the run paused for the user, and a
+    /// resume admits the instance afresh.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub admission_unknown: bool,
+    /// How many host restarts re-drove this instance's running child
+    /// (capped at [`RESTART_ADOPTIONS_MAX`], Claude Code's `restartResumes`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub restart_adoptions: u32,
     /// A python state's bound inputs (raw values); a re-run reuses them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<Map<String, Value>>,
@@ -134,6 +151,9 @@ impl NodeInstance {
             error: None,
             tool_uses: 0,
             interrupted_child: None,
+            pending_child: None,
+            admission_unknown: false,
+            restart_adoptions: 0,
             inputs: None,
             deadline: None,
         }
@@ -163,6 +183,20 @@ pub struct StateEntry {
     /// `status()["needs_verify"]`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub needs_verify: bool,
+}
+
+/// How many host restarts may re-drive one instance's running child
+/// (Claude Code's `restartResumes` cap).
+pub const RESTART_ADOPTIONS_MAX: u32 = 5;
+
+/// `skip_serializing_if` for the zero counters (persisted runs stay
+/// byte-identical while a counter is unset).
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip predicate takes the field by reference"
+)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// `skip_serializing_if` for the default-false flags (persisted runs stay
@@ -372,6 +406,12 @@ pub mod kind {
     pub const RUN_INTERRUPTED: &str = "run_interrupted";
     /// A host restart lost an in-flight instance's child (one per instance).
     pub const INTERRUPTED: &str = "interrupted";
+    /// A host restart re-drives a running child: the host adopts it.
+    pub const ADOPTING: &str = "adopting";
+    /// The host adopted a child it already held (a re-driven admission).
+    pub const ADOPTED: &str = "adopted";
+    /// The host could not place a re-driven child: the run pauses.
+    pub const ADMISSION_UNKNOWN: &str = "admission_unknown";
 }
 
 /// The optional addressing fields of one ledger event.

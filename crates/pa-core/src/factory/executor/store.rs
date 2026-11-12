@@ -6,9 +6,11 @@
 //! (temp file + rename), coalescing bursts, so the record trails the live
 //! run by at most one write. A restarted host reloads every record and
 //! [`recover_after_restart`] reconciles the runs that were in flight: the
-//! children the old host admitted are gone with its session, so their
-//! instances re-queue and the run pauses as `interrupted`, which
-//! `factory.resume` continues.
+//! children the old host admitted run in their own workers, so they are
+//! adopted through the host's idempotent spawn instead of spawned again;
+//! only what cannot be adopted re-queues and pauses the run as
+//! `interrupted`, which `factory.resume` continues. The writer flushes before
+//! each spawn, so a picked child id is on disk before the host can admit it.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -18,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::RunCell;
-use super::model::{EventAt, FactoryRun, RunState, Status, kind};
+use super::model::{EventAt, FactoryRun, RESTART_ADOPTIONS_MAX, RunState, Status, kind};
 
 /// The run-record directory under a session's artifact directory.
 pub const FACTORY_RUNS_DIR: &str = "factory-runs";
@@ -168,20 +170,29 @@ fn write_atomic(dir: &Path, run_id: &str, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reconcile one reloaded run with a restarted host. The old host's
-/// children did not survive with its session, so every instance it had in
-/// flight re-queues (its lost child is remembered for a best-effort delete
-/// on resume), and a run that was running pauses as interrupted — the
-/// state `factory.resume` continues from. A run caught mid-stop finishes
-/// stopping. Terminal runs only lose their in-flight resident children.
+/// Reconcile one reloaded run with a restarted host. The fork's children
+/// run in their own workers and can outlive the host, so a running child is
+/// re-driven, never re-run: its id parks in `pending_child` and the control
+/// loop's admission asks the host for it again through the idempotent
+/// spawn, which adopts a child the host holds and refuses one it may have
+/// admitted without keeping a record (the run then pauses for the user). An
+/// admission the record caught in flight is re-driven the same way. A python
+/// call (it ran in the old kernel) or a child already re-driven
+/// [`RESTART_ADOPTIONS_MAX`] times is lost: it re-queues (its child
+/// remembered for a best-effort delete on resume) and a running run pauses
+/// as interrupted, the state `factory.resume` continues from. A run caught
+/// mid-stop finishes stopping. Terminal runs only lose their in-flight
+/// resident children.
 pub fn recover_after_restart(run: &mut FactoryRun) {
     let live = run.state.live();
     let mut lost = 0_usize;
     for position in 0..run.states.len() {
+        let python = run.runs_python(position);
         for entry_position in 0..run.states[position].entries.len() {
             for instance_position in 0..run.states[position].entries[entry_position].instances.len()
             {
                 let state_id = run.states[position].state_id.clone();
+                let stopping = run.state == RunState::Stopping;
                 let entry = &mut run.states[position].entries[entry_position];
                 let entry_index = entry.index;
                 let entry_running = entry.status == Status::Running;
@@ -189,9 +200,33 @@ pub fn recover_after_restart(run: &mut FactoryRun) {
                 if instance.status != Status::Running {
                     continue;
                 }
+                if live
+                    && !stopping
+                    && entry_running
+                    && !python
+                    && instance.child_id.is_some()
+                    && instance.restart_adoptions < RESTART_ADOPTIONS_MAX
+                {
+                    instance.pending_child = instance.child_id.take();
+                    instance.status = Status::Pending;
+                    instance.restart_adoptions += 1;
+                    let index = instance.index;
+                    let child = instance.pending_child.clone().unwrap_or_default();
+                    run.record(
+                        kind::ADOPTING,
+                        EventAt {
+                            node: Some(&state_id),
+                            entry: Some(entry_index),
+                            instance: Some(index),
+                            detail: Some("the host restarted while this child ran; adopting it"),
+                        },
+                        vec![("child", Value::from(child))],
+                    );
+                    continue;
+                }
                 let child = instance.child_id.take();
                 instance.spawned_at = None;
-                let requeue = live && run.state != RunState::Stopping && entry_running;
+                let requeue = live && !stopping && entry_running;
                 instance.status = if requeue {
                     Status::Pending
                 } else {
@@ -225,6 +260,9 @@ pub fn recover_after_restart(run: &mut FactoryRun) {
         }
     }
     match run.state {
+        // Nothing was lost: the restarted executor's loop carries on,
+        // adopting the re-driven children.
+        RunState::Running if lost == 0 => {}
         RunState::Running => {
             run.state = RunState::Paused;
             run.pause_reason = Some(INTERRUPTED_PAUSE_REASON.to_string());

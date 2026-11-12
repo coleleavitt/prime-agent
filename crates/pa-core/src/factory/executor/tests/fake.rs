@@ -222,6 +222,11 @@ pub struct HostState {
     pub rate_limit_forever: HashSet<String>,
     gates: HashMap<(String, usize), (Event, Event)>,
     call_indices: HashMap<String, usize>,
+    /// The child ids the executor picked, by the child the host admitted
+    /// under each (a repeated id answers that child: the host's adoption).
+    pub picked: HashMap<String, String>,
+    /// Picked ids the host answers `admission unknown`.
+    pub unknown_admissions: HashSet<String>,
     pub delete_fails: bool,
     /// Every collect fails (a dead host bridge).
     pub collect_fails: bool,
@@ -400,6 +405,23 @@ impl FactoryChildren for FakePorts {
         let host = Arc::clone(&self.0);
         Box::pin(async move {
             host.pass_gate("rlm.run").await;
+            // A known id answers its child (the host's adoption): a picked id,
+            // or the id of a child this host holds.
+            if let Some(child) = host.with(|state| {
+                state.picked.get(&request.child_id).cloned().or_else(|| {
+                    state
+                        .children
+                        .contains_key(&request.child_id)
+                        .then(|| request.child_id.clone())
+                })
+            }) {
+                return Ok(child);
+            }
+            if host.with(|state| state.unknown_admissions.contains(&request.child_id)) {
+                return Err(crate::session_engine::rlm_host::rlm_admission_unknown(
+                    &request.child_id,
+                ));
+            }
             let mut kwargs = serde_json::Map::new();
             kwargs.insert("name".into(), Value::from(request.name.clone()));
             if let Some(model) = &request.model {
@@ -448,14 +470,20 @@ impl FactoryChildren for FakePorts {
             if advance.1 {
                 return Err("429 rate limit exceeded".to_string());
             }
-            Ok(host.with(|state| {
+            let child = host.with(|state| {
                 state.counter += 1;
                 let child = format!("child-{}", state.counter);
                 state
                     .children
                     .insert(child.clone(), (request.name.clone(), node));
+                state.picked.insert(request.child_id.clone(), child.clone());
                 child
-            }))
+            });
+            // The host admitted the child; its answer has not reached the
+            // executor yet (a crash here is the window write-before-effect
+            // covers).
+            host.pass_gate("rlm.run.admitted").await;
+            Ok(child)
         })
     }
 
@@ -849,4 +877,23 @@ pub fn entry_statuses(node: &Value) -> Vec<String> {
 
 pub fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
+}
+
+/// Mark every running instance of a stored run as already re-driven
+/// [`RESTART_ADOPTIONS_MAX`] times, so the next restart loses its child
+/// instead of adopting it (the interrupted path).
+pub fn exhaust_restart_adoptions(dir: &std::path::Path, run_id: &str) {
+    let path = dir.join(format!("{run_id}.json"));
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for state in record["run"]["states"].as_array_mut().unwrap() {
+        for entry in state["entries"].as_array_mut().unwrap() {
+            for instance in entry["instances"].as_array_mut().unwrap() {
+                if instance["status"] == "running" {
+                    instance["restart_adoptions"] =
+                        json!(crate::factory::executor::model::RESTART_ADOPTIONS_MAX);
+                }
+            }
+        }
+    }
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
 }
