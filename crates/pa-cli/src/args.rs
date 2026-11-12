@@ -254,334 +254,16 @@ fn parse_positive_u64(value: &str, flag: &str, diagnostics: &mut Vec<Diagnostic>
 
 pub fn parse_args(args: &[String]) -> Args {
     let args = &crate::args_cc::split_equals(args);
-    let mut result = Args::default();
     let internal_runtime_command =
         args.first().map(String::as_str) == Some(INTERNAL_RUNTIME_COMMAND_MARKER);
-    let first_arg_index = usize::from(internal_runtime_command);
-
-    let mut end_of_options = false;
-    let mut i = first_arg_index;
-    while i < args.len() {
-        let arg = args[i].as_str();
-
-        if end_of_options {
-            result.messages.push(arg.to_string());
-            i += 1;
-            continue;
-        }
-        if arg == "--" {
-            end_of_options = true;
-            i += 1;
-            continue;
-        }
-
-        macro_rules! require_value {
-            ($flag:expr) => {
-                match take_required_value(args, i, $flag, &mut result.diagnostics) {
-                    Some(value) => {
-                        i += 1;
-                        value
-                    }
-                    None => {
-                        i += 1;
-                        continue;
-                    }
-                }
-            };
-        }
-
-        if crate::args_cc::parse_cc_flag(args, &mut i, &mut result.cc, &mut result.diagnostics) {
-            i += 1;
-            continue;
-        }
-        match arg {
-            "--help" | "-h" => result.help = true,
-            "--version" | "-v" => result.version = true,
-            "--mode" => {
-                let mode = require_value!(arg);
-                if let Some(mode) = Mode::parse(&mode) {
-                    result.mode = Some(mode);
-                } else {
-                    result.diagnostics.push(Diagnostic::error(format!(
-                        "Invalid --mode \"{mode}\". Valid values: text, json, rpc, acp, daemon"
-                    )));
-                }
-            }
-            "--daemon-socket" => {
-                result.daemon_socket = Some(require_value!(arg));
-            }
-            "--daemon-port" => {
-                let value = require_value!(arg);
-                match value.parse::<u16>() {
-                    Ok(port) if (1..=u16::MAX).contains(&port) => {
-                        result.daemon_port = Some(port);
-                    }
-                    _ => {
-                        result.diagnostics.push(Diagnostic::error(format!(
-                            "Invalid --daemon-port \"{value}\": expected an integer between 1 and 65535"
-                        )));
-                    }
-                }
-            }
-            "--daemon-bind" => {
-                let value = require_value!(arg).trim().to_string();
-                // An IP literal binds exactly one interface; a hostname
-                // would resolve through DNS at listen time and could dodge
-                // the tailnet-only default.
-                if value.parse::<std::net::IpAddr>().is_err() {
-                    result.diagnostics.push(Diagnostic::error(format!(
-                        "Invalid --daemon-bind \"{value}\": expected an IP address (e.g. the tailnet address of this machine)"
-                    )));
-                } else {
-                    result.daemon_bind_host = Some(value);
-                }
-            }
-            "--continue" | "-c" => result.continue_ = true,
-            "--resume" | "-r" => match args.get(i + 1) {
-                Some(next)
-                    if !next.starts_with('-') && !next.starts_with('@') && !next.is_empty() =>
-                {
-                    result.resume = Some(next.clone());
-                    i += 1;
-                }
-                Some(next) if next.is_empty() => {
-                    result.resume_bare = true;
-                    i += 1;
-                }
-                _ => result.resume_bare = true,
-            },
-            "--provider" => result.provider = Some(require_value!(arg)),
-            "--model" => result.model = Some(require_value!(arg)),
-            "--api-key" => result.api_key = Some(require_value!(arg)),
-            "--cwd" => result.cwd = Some(require_value!(arg)),
-            "--system-prompt" => result.system_prompt = Some(require_value!(arg)),
-            "--append-system-prompt" => {
-                let value = require_value!(arg);
-                result.append_system_prompt.push(value);
-            }
-            "--no-session" => result.no_session = true,
-            "--name" => result.name = Some(require_value!(arg)),
-            "--list-sessions" => result.list_sessions = true,
-            "--delete-session" => result.delete_session = Some(require_value!(arg)),
-            // The name is optional: the next token is taken only when it is a
-            // valid worktree name, so `-w "fix the login bug"` stays a message.
-            "--worktree" | "-w" => {
-                result.worktree = true;
-                if let Some(next) = args
-                    .get(i + 1)
-                    .filter(|next| crate::global_flags::is_worktree_name_value(next))
-                {
-                    result.worktree_name = Some(next.clone());
-                    i += 1;
-                }
-            }
-            "--fork" => result.fork = Some(require_value!(arg)),
-            // The value is optional, like `--resume`'s.
-            "--from-pr" => match args.get(i + 1) {
-                Some(next) if !next.starts_with('-') && !next.starts_with('@') => {
-                    result.from_pr = Some(next.clone());
-                    i += 1;
-                }
-                _ => result.from_pr = Some(String::new()),
-            },
-            "--session-dir" => result.session_dir = Some(require_value!(arg)),
-            "--models" => {
-                let value = require_value!(arg);
-                result.models = Some(
-                    value
-                        .split(',')
-                        .map(str::trim)
-                        .map(str::to_string)
-                        .collect(),
-                );
-            }
-            "--thinking" => {
-                let level = require_value!(arg);
-                if let Some(level) = parse_thinking_level(&level) {
-                    result.thinking = Some(level);
-                } else {
-                    result.diagnostics.push(Diagnostic::error(format!(
-                        "Invalid thinking level \"{level}\". Valid values: {}",
-                        THINKING_LEVELS.join(", ")
-                    )));
-                }
-            }
-            "--print" | "-p" => {
-                result.print = true;
-                if let Some(next) = args.get(i + 1) {
-                    if !next.starts_with('@') && (!next.starts_with('-') || next.starts_with("---"))
-                    {
-                        result.messages.push(next.clone());
-                        i += 1;
-                    }
-                }
-            }
-            "--export" => {
-                if !internal_runtime_command {
-                    result.diagnostics.push(Diagnostic::error(
-                        "--export was removed. Use \"prime-agent session export <file> [output]\".",
-                    ));
-                    if let Some(next) = args.get(i + 1) {
-                        if !next.starts_with('-') {
-                            i += 1;
-                        }
-                    }
-                } else if let Some(next) = args.get(i + 1) {
-                    result.export = Some(next.clone());
-                    i += 1;
-                } else {
-                    result
-                        .diagnostics
-                        .push(Diagnostic::error("--export requires a value"));
-                }
-            }
-            "--skill" => {
-                let value = require_value!(arg);
-                result.skills.push(value);
-            }
-            "--prompt-template" => {
-                let value = require_value!(arg);
-                result.prompt_templates.push(value);
-            }
-            "--theme" => {
-                let value = require_value!(arg);
-                result.themes.push(value);
-            }
-            "--no-skills" | "-ns" => result.no_skills = true,
-            "--no-prompt-templates" | "-np" => result.no_prompt_templates = true,
-            "--no-themes" => result.no_themes = true,
-            "--no-context-files" | "-nc" => result.no_context_files = true,
-            "--trust-workspace" => result.trust_workspace = true,
-            "--autonomous" => result.autonomous = true,
-            "--autonomous-gate" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result
-                    .autonomous_gates
-                    .get_or_insert_with(Vec::new)
-                    .push(value);
-            }
-            "--autonomous-gate-retries" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_gate_retries =
-                    parse_positive_u32(&value, arg, &mut result.diagnostics);
-            }
-            "--autonomous-gate-timeout-ms" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_gate_timeout_ms =
-                    parse_positive_u64(&value, arg, &mut result.diagnostics);
-            }
-            "--autonomous-max-continuations" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_max_continuations =
-                    parse_positive_u32(&value, arg, &mut result.diagnostics);
-            }
-            "--autonomous-max-turns" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_max_turns =
-                    parse_positive_u32(&value, arg, &mut result.diagnostics);
-            }
-            "--autonomous-max-tokens" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_max_tokens =
-                    parse_positive_u64(&value, arg, &mut result.diagnostics);
-            }
-            "--autonomous-timeout-ms" => {
-                result.autonomous = true;
-                let value = require_value!(arg);
-                result.autonomous_timeout_ms =
-                    parse_positive_u64(&value, arg, &mut result.diagnostics);
-            }
-            "--goal" => {
-                let value = require_value!(arg);
-                if value.trim().is_empty() {
-                    result
-                        .diagnostics
-                        .push(Diagnostic::error("--goal requires a non-empty objective"));
-                } else {
-                    result.goal = Some(value);
-                }
-            }
-            "--goal-token-budget" => {
-                let value = require_value!(arg);
-                result.goal_token_budget = parse_positive_u32(&value, arg, &mut result.diagnostics);
-            }
-            "--list-models" => {
-                let has_search = args
-                    .get(i + 1)
-                    .is_some_and(|next| !next.starts_with('-') && !next.starts_with('@'));
-                if !internal_runtime_command {
-                    result.diagnostics.push(Diagnostic::error(
-                        "--list-models was removed. Use \"prime-agent model list [search]\".",
-                    ));
-                    if has_search {
-                        i += 1;
-                    }
-                } else if has_search {
-                    result.list_models = Some(Some(args[i + 1].clone()));
-                    i += 1;
-                } else {
-                    result.list_models = Some(None);
-                }
-            }
-            "--verbose" => result.verbose = true,
-            "--offline" => result.offline = true,
-            "--plan" => result.plan = true,
-            "--add-dir" => {
-                let value = require_value!(arg);
-                result.add_dirs.push(value);
-            }
-            "--sandbox" => {
-                let value = require_value!(arg);
-                if let Some(mode) = pa_core::os_sandbox::SandboxMode::from_wire(&value) {
-                    result.sandbox = Some(mode);
-                } else {
-                    result.diagnostics.push(Diagnostic::error(format!(
-                        "Invalid sandbox mode \"{value}\". Valid values: {}",
-                        pa_core::os_sandbox::SandboxMode::ALL
-                            .map(pa_core::os_sandbox::SandboxMode::wire_name)
-                            .join(", ")
-                    )));
-                }
-            }
-            _ if arg.starts_with("--from-pr=") => {
-                result.from_pr = Some(arg["--from-pr=".len()..].to_string());
-            }
-            _ if arg.starts_with("--resume=") => {
-                let value = &arg["--resume=".len()..];
-                if value.is_empty() {
-                    result.resume_bare = true;
-                } else {
-                    result.resume = Some(value.to_string());
-                }
-            }
-            _ if arg.starts_with("--export=") => {
-                result.diagnostics.push(Diagnostic::error(
-                    "--export was removed. Use \"prime-agent session export <file> [output]\".",
-                ));
-            }
-            _ if arg.starts_with("--list-models=") => {
-                result.diagnostics.push(Diagnostic::error(
-                    "--list-models was removed. Use \"prime-agent model list [search]\".",
-                ));
-            }
-            _ if arg.starts_with('@') => {
-                result.file_args.push(arg[1..].to_string());
-            }
-            _ if arg.starts_with('-') => {
-                result
-                    .diagnostics
-                    .push(Diagnostic::error(format!("Unknown option: {arg}")));
-            }
-            _ => result.messages.push(arg.to_string()),
-        }
-        i += 1;
-    }
+    let mut parser = Parser {
+        args,
+        index: usize::from(internal_runtime_command),
+        internal_runtime_command,
+        result: Args::default(),
+    };
+    parser.parse();
+    let mut result = parser.result;
 
     crate::args_cc::validate(
         &result.cc,
@@ -596,6 +278,407 @@ pub fn parse_args(args: &[String]) -> Args {
     }
 
     result
+}
+
+/// The argv walk: `index` is the token being parsed; a flag that consumes
+/// the token after it moves `index` onto that token.
+struct Parser<'a> {
+    args: &'a [String],
+    index: usize,
+    internal_runtime_command: bool,
+    result: Args,
+}
+
+impl Parser<'_> {
+    fn parse(&mut self) {
+        let args = self.args;
+        let mut end_of_options = false;
+        while self.index < args.len() {
+            let arg = args[self.index].as_str();
+            if end_of_options {
+                self.result.messages.push(arg.to_string());
+            } else if arg == "--" {
+                end_of_options = true;
+            } else {
+                self.option(arg);
+            }
+            self.index += 1;
+        }
+    }
+
+    /// One token before `--`: a flag, an `@file` argument or a message.
+    fn option(&mut self, arg: &str) {
+        if crate::args_cc::parse_cc_flag(
+            self.args,
+            &mut self.index,
+            &mut self.result.cc,
+            &mut self.result.diagnostics,
+        ) {
+            return;
+        }
+        if let Some(switch) = switch(&mut self.result, arg) {
+            *switch = true;
+            return;
+        }
+        if let Some(flag) = ValueFlag::of(arg) {
+            if flag.enables_autonomous() {
+                self.result.autonomous = true;
+            }
+            if let Some(value) =
+                take_required_value(self.args, self.index, arg, &mut self.result.diagnostics)
+            {
+                self.index += 1;
+                flag.apply(arg, value, &mut self.result);
+            }
+            return;
+        }
+        let next = self.args.get(self.index + 1);
+        match arg {
+            "--resume" | "-r" => self.resume(),
+            // The name is optional: the next token is taken only when it is a
+            // valid worktree name, so `-w "fix the login bug"` stays a message.
+            "--worktree" | "-w" => {
+                self.result.worktree = true;
+                if let Some(next) =
+                    next.filter(|next| crate::global_flags::is_worktree_name_value(next))
+                {
+                    self.result.worktree_name = Some(next.clone());
+                    self.index += 1;
+                }
+            }
+            // The value is optional, like `--resume`'s.
+            "--from-pr" => match next {
+                Some(next) if !next.starts_with('-') && !next.starts_with('@') => {
+                    self.result.from_pr = Some(next.clone());
+                    self.index += 1;
+                }
+                _ => self.result.from_pr = Some(String::new()),
+            },
+            "--print" | "-p" => {
+                self.result.print = true;
+                if let Some(next) = next {
+                    if !next.starts_with('@') && (!next.starts_with('-') || next.starts_with("---"))
+                    {
+                        self.result.messages.push(next.clone());
+                        self.index += 1;
+                    }
+                }
+            }
+            "--export" => self.export(),
+            "--list-models" => self.list_models(),
+            _ => self.word(arg),
+        }
+    }
+
+    /// `--resume [selector]`: an empty next token is consumed as no selector.
+    fn resume(&mut self) {
+        match self.args.get(self.index + 1) {
+            Some(next) if !next.starts_with('-') && !next.starts_with('@') && !next.is_empty() => {
+                self.result.resume = Some(next.clone());
+                self.index += 1;
+            }
+            Some(next) if next.is_empty() => {
+                self.result.resume_bare = true;
+                self.index += 1;
+            }
+            _ => self.result.resume_bare = true,
+        }
+    }
+
+    /// `--export <file>`: an internal runtime flag; a user's `--export` is
+    /// the removed command, its value skipped.
+    fn export(&mut self) {
+        let next = self.args.get(self.index + 1);
+        if !self.internal_runtime_command {
+            self.result.diagnostics.push(Diagnostic::error(
+                "--export was removed. Use \"prime-agent session export <file> [output]\".",
+            ));
+            if next.is_some_and(|next| !next.starts_with('-')) {
+                self.index += 1;
+            }
+        } else if let Some(next) = next {
+            self.result.export = Some(next.clone());
+            self.index += 1;
+        } else {
+            self.result
+                .diagnostics
+                .push(Diagnostic::error("--export requires a value"));
+        }
+    }
+
+    /// `--list-models [search]`: an internal runtime flag; a user's
+    /// `--list-models` is the removed command, its search skipped.
+    fn list_models(&mut self) {
+        let search = self
+            .args
+            .get(self.index + 1)
+            .filter(|next| !next.starts_with('-') && !next.starts_with('@'));
+        if !self.internal_runtime_command {
+            self.result.diagnostics.push(Diagnostic::error(
+                "--list-models was removed. Use \"prime-agent model list [search]\".",
+            ));
+            if search.is_some() {
+                self.index += 1;
+            }
+        } else if let Some(search) = search {
+            self.result.list_models = Some(Some(search.clone()));
+            self.index += 1;
+        } else {
+            self.result.list_models = Some(None);
+        }
+    }
+
+    /// A token that is no known flag: a `--flag=value` form, an `@file`
+    /// argument, an unknown option, or a message.
+    fn word(&mut self, arg: &str) {
+        let result = &mut self.result;
+        if let Some(value) = arg.strip_prefix("--from-pr=") {
+            result.from_pr = Some(value.to_string());
+        } else if let Some(value) = arg.strip_prefix("--resume=") {
+            if value.is_empty() {
+                result.resume_bare = true;
+            } else {
+                result.resume = Some(value.to_string());
+            }
+        } else if arg.starts_with("--export=") {
+            result.diagnostics.push(Diagnostic::error(
+                "--export was removed. Use \"prime-agent session export <file> [output]\".",
+            ));
+        } else if arg.starts_with("--list-models=") {
+            result.diagnostics.push(Diagnostic::error(
+                "--list-models was removed. Use \"prime-agent model list [search]\".",
+            ));
+        } else if let Some(file) = arg.strip_prefix('@') {
+            result.file_args.push(file.to_string());
+        } else if arg.starts_with('-') {
+            result
+                .diagnostics
+                .push(Diagnostic::error(format!("Unknown option: {arg}")));
+        } else {
+            result.messages.push(arg.to_string());
+        }
+    }
+}
+
+/// The field a boolean flag sets.
+fn switch<'r>(result: &'r mut Args, arg: &str) -> Option<&'r mut bool> {
+    Some(match arg {
+        "--help" | "-h" => &mut result.help,
+        "--version" | "-v" => &mut result.version,
+        "--continue" | "-c" => &mut result.continue_,
+        "--no-session" => &mut result.no_session,
+        "--list-sessions" => &mut result.list_sessions,
+        "--no-skills" | "-ns" => &mut result.no_skills,
+        "--no-prompt-templates" | "-np" => &mut result.no_prompt_templates,
+        "--no-themes" => &mut result.no_themes,
+        "--no-context-files" | "-nc" => &mut result.no_context_files,
+        "--trust-workspace" => &mut result.trust_workspace,
+        "--autonomous" => &mut result.autonomous,
+        "--verbose" => &mut result.verbose,
+        "--offline" => &mut result.offline,
+        "--plan" => &mut result.plan,
+        _ => return None,
+    })
+}
+
+/// A flag that takes one required value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueFlag {
+    Mode,
+    DaemonSocket,
+    DaemonPort,
+    DaemonBind,
+    Provider,
+    Model,
+    ApiKey,
+    Cwd,
+    SystemPrompt,
+    AppendSystemPrompt,
+    Name,
+    DeleteSession,
+    Fork,
+    SessionDir,
+    Models,
+    Thinking,
+    Skill,
+    PromptTemplate,
+    Theme,
+    AutonomousGate,
+    AutonomousGateRetries,
+    AutonomousGateTimeoutMs,
+    AutonomousMaxContinuations,
+    AutonomousMaxTurns,
+    AutonomousMaxTokens,
+    AutonomousTimeoutMs,
+    Goal,
+    GoalTokenBudget,
+    AddDir,
+    Sandbox,
+}
+
+impl ValueFlag {
+    fn of(arg: &str) -> Option<Self> {
+        Some(match arg {
+            "--mode" => Self::Mode,
+            "--daemon-socket" => Self::DaemonSocket,
+            "--daemon-port" => Self::DaemonPort,
+            "--daemon-bind" => Self::DaemonBind,
+            "--provider" => Self::Provider,
+            "--model" => Self::Model,
+            "--api-key" => Self::ApiKey,
+            "--cwd" => Self::Cwd,
+            "--system-prompt" => Self::SystemPrompt,
+            "--append-system-prompt" => Self::AppendSystemPrompt,
+            "--name" => Self::Name,
+            "--delete-session" => Self::DeleteSession,
+            "--fork" => Self::Fork,
+            "--session-dir" => Self::SessionDir,
+            "--models" => Self::Models,
+            "--thinking" => Self::Thinking,
+            "--skill" => Self::Skill,
+            "--prompt-template" => Self::PromptTemplate,
+            "--theme" => Self::Theme,
+            "--autonomous-gate" => Self::AutonomousGate,
+            "--autonomous-gate-retries" => Self::AutonomousGateRetries,
+            "--autonomous-gate-timeout-ms" => Self::AutonomousGateTimeoutMs,
+            "--autonomous-max-continuations" => Self::AutonomousMaxContinuations,
+            "--autonomous-max-turns" => Self::AutonomousMaxTurns,
+            "--autonomous-max-tokens" => Self::AutonomousMaxTokens,
+            "--autonomous-timeout-ms" => Self::AutonomousTimeoutMs,
+            "--goal" => Self::Goal,
+            "--goal-token-budget" => Self::GoalTokenBudget,
+            "--add-dir" => Self::AddDir,
+            "--sandbox" => Self::Sandbox,
+            _ => return None,
+        })
+    }
+
+    /// The autonomous flags turn autonomy on even when their value is missing.
+    fn enables_autonomous(self) -> bool {
+        matches!(
+            self,
+            Self::AutonomousGate
+                | Self::AutonomousGateRetries
+                | Self::AutonomousGateTimeoutMs
+                | Self::AutonomousMaxContinuations
+                | Self::AutonomousMaxTurns
+                | Self::AutonomousMaxTokens
+                | Self::AutonomousTimeoutMs
+        )
+    }
+
+    /// Store `value` given to `flag` (as written), or record why it is invalid.
+    fn apply(self, flag: &str, value: String, result: &mut Args) {
+        let diagnostics = &mut result.diagnostics;
+        match self {
+            Self::Mode => {
+                if let Some(mode) = Mode::parse(&value) {
+                    result.mode = Some(mode);
+                } else {
+                    diagnostics.push(Diagnostic::error(format!(
+                        "Invalid --mode \"{value}\". Valid values: text, json, rpc, acp, daemon"
+                    )));
+                }
+            }
+            Self::DaemonSocket => result.daemon_socket = Some(value),
+            Self::DaemonPort => match value.parse::<u16>() {
+                Ok(port) if (1..=u16::MAX).contains(&port) => result.daemon_port = Some(port),
+                _ => diagnostics.push(Diagnostic::error(format!(
+                    "Invalid --daemon-port \"{value}\": expected an integer between 1 and 65535"
+                ))),
+            },
+            Self::DaemonBind => {
+                let value = value.trim().to_string();
+                // An IP literal binds exactly one interface; a hostname
+                // would resolve through DNS at listen time and could dodge
+                // the tailnet-only default.
+                if value.parse::<std::net::IpAddr>().is_err() {
+                    diagnostics.push(Diagnostic::error(format!(
+                        "Invalid --daemon-bind \"{value}\": expected an IP address (e.g. the tailnet address of this machine)"
+                    )));
+                } else {
+                    result.daemon_bind_host = Some(value);
+                }
+            }
+            Self::Provider => result.provider = Some(value),
+            Self::Model => result.model = Some(value),
+            Self::ApiKey => result.api_key = Some(value),
+            Self::Cwd => result.cwd = Some(value),
+            Self::SystemPrompt => result.system_prompt = Some(value),
+            Self::AppendSystemPrompt => result.append_system_prompt.push(value),
+            Self::Name => result.name = Some(value),
+            Self::DeleteSession => result.delete_session = Some(value),
+            Self::Fork => result.fork = Some(value),
+            Self::SessionDir => result.session_dir = Some(value),
+            Self::Models => {
+                result.models = Some(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+            Self::Thinking => {
+                if let Some(level) = parse_thinking_level(&value) {
+                    result.thinking = Some(level);
+                } else {
+                    diagnostics.push(Diagnostic::error(format!(
+                        "Invalid thinking level \"{value}\". Valid values: {}",
+                        THINKING_LEVELS.join(", ")
+                    )));
+                }
+            }
+            Self::Skill => result.skills.push(value),
+            Self::PromptTemplate => result.prompt_templates.push(value),
+            Self::Theme => result.themes.push(value),
+            Self::AutonomousGate => result
+                .autonomous_gates
+                .get_or_insert_with(Vec::new)
+                .push(value),
+            Self::AutonomousGateRetries => {
+                result.autonomous_gate_retries = parse_positive_u32(&value, flag, diagnostics);
+            }
+            Self::AutonomousGateTimeoutMs => {
+                result.autonomous_gate_timeout_ms = parse_positive_u64(&value, flag, diagnostics);
+            }
+            Self::AutonomousMaxContinuations => {
+                result.autonomous_max_continuations = parse_positive_u32(&value, flag, diagnostics);
+            }
+            Self::AutonomousMaxTurns => {
+                result.autonomous_max_turns = parse_positive_u32(&value, flag, diagnostics);
+            }
+            Self::AutonomousMaxTokens => {
+                result.autonomous_max_tokens = parse_positive_u64(&value, flag, diagnostics);
+            }
+            Self::AutonomousTimeoutMs => {
+                result.autonomous_timeout_ms = parse_positive_u64(&value, flag, diagnostics);
+            }
+            Self::Goal => {
+                if value.trim().is_empty() {
+                    diagnostics.push(Diagnostic::error("--goal requires a non-empty objective"));
+                } else {
+                    result.goal = Some(value);
+                }
+            }
+            Self::GoalTokenBudget => {
+                result.goal_token_budget = parse_positive_u32(&value, flag, diagnostics);
+            }
+            Self::AddDir => result.add_dirs.push(value),
+            Self::Sandbox => {
+                if let Some(mode) = pa_core::os_sandbox::SandboxMode::from_wire(&value) {
+                    result.sandbox = Some(mode);
+                } else {
+                    diagnostics.push(Diagnostic::error(format!(
+                        "Invalid sandbox mode \"{value}\". Valid values: {}",
+                        pa_core::os_sandbox::SandboxMode::ALL
+                            .map(pa_core::os_sandbox::SandboxMode::wire_name)
+                            .join(", ")
+                    )));
+                }
+            }
+        }
+    }
 }
 
 /// The value flag either consumes the next token or records a
