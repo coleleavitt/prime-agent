@@ -222,9 +222,6 @@ pub struct RlmSpawnRequest {
     pub target: RlmSpawnTarget,
     /// The parent's plan mode at spawn; the child starts in it.
     pub plan_mode: bool,
-    /// The child's delegation grant (upstream #1192), drawn from this
-    /// session's budget pool at spawn; `None` when no budget applies.
-    pub token_budget: Option<u64>,
     /// The child's working directory (`cwd=`, or its worktree); `None`
     /// keeps the parent's.
     pub cwd: Option<String>,
@@ -608,11 +605,6 @@ pub struct RlmHostBridge {
     /// decision at the next turn boundary (`None` until the engine binds
     /// one; a session without one cannot apply a model-driven change).
     pub(crate) plan_control: std::sync::OnceLock<Arc<dyn super::plan_host::PlanModeControl>>,
-    /// The session's delegation budget (`None` until the engine installs
-    /// one; unset when no budget applies): every spawn draws its grant.
-    pub(crate) token_budget: std::sync::OnceLock<Arc<super::rlm_token_budget::RlmTokenBudget>>,
-    /// The session counters a budget refusal counts into (adoption).
-    pub(crate) adoption: std::sync::OnceLock<Arc<super::telemetry::SessionCounters>>,
     /// What `agent=`, `cwd=` and worktree isolation resolve against
     /// (unset: no agent definitions, `cwd=` taken as given).
     pub spawn_context: std::sync::OnceLock<super::rlm_spawn_agent::SpawnContext>,
@@ -643,47 +635,9 @@ impl RlmHostBridge {
             semantic_spawn: std::sync::OnceLock::new(),
             plan_mode: std::sync::OnceLock::new(),
             plan_control: std::sync::OnceLock::new(),
-            token_budget: std::sync::OnceLock::new(),
-            adoption: std::sync::OnceLock::new(),
             spawn_context: std::sync::OnceLock::new(),
             ignore_spawn_model: std::sync::atomic::AtomicBool::new(false),
             nested_memory: std::sync::OnceLock::new(),
-        }
-    }
-}
-
-impl RlmHostBridge {
-    /// The delegation budget's current numbers (`None`: no budget applies).
-    #[must_use]
-    pub fn token_budget_status(&self) -> Option<super::rlm_token_budget::RlmTokenBudgetStatus> {
-        self.token_budget.get().map(|budget| budget.status())
-    }
-
-    /// Draw a grant for a child the embedding spawns outside `rlm.spawn`
-    /// (the daemon's image-model delegation child): `Ok(None)` when no
-    /// budget applies.
-    ///
-    /// # Errors
-    ///
-    /// The budget's refusals (an exhausted pool, an unrecordable grant).
-    pub fn reserve_child_grant(&self, requested: Option<u64>) -> anyhow::Result<Option<u64>> {
-        let reserved = self
-            .token_budget
-            .get()
-            .map(|budget| budget.reserve_child_grant(requested))
-            .transpose();
-        if reserved.is_err() {
-            if let Some(counters) = self.adoption.get() {
-                counters.note_adoption(super::telemetry::SessionAdoption::RlmTokenBudgetRefusal);
-            }
-        }
-        reserved
-    }
-
-    /// Name the child a [`Self::reserve_child_grant`] grant funded.
-    pub fn attribute_child_grant(&self, tokens: u64, rlm_child_id: &str, name: &str) {
-        if let Some(budget) = self.token_budget.get() {
-            budget.attribute_grant(tokens, rlm_child_id, name);
         }
     }
 }
@@ -866,15 +820,6 @@ impl RlmHostBridge {
             }
             None => None,
         };
-        // The delegation budget (upstream #1192): the child's grant is
-        // drawn before the host is consulted, so an exhausted pool refuses
-        // the spawn and no child runs unfunded. An explicit
-        // `token_budget=` asks for that grant; with no budget installed it
-        // funds the child alone.
-        if self.token_budget.get().is_some() {
-            request.token_budget = self.reserve_child_grant(request.token_budget)?;
-        }
-        let grant = request.token_budget;
         // The worktree is cut last, after every refusal above, so a refused
         // spawn leaves no checkout behind; a failed host spawn removes it.
         if isolation == Some(crate::agents::AgentIsolation::Worktree) {
@@ -892,10 +837,6 @@ impl RlmHostBridge {
                 return Err(error);
             }
         };
-        // The status surface names the child each grant funded.
-        if let (Some(budget), Some(grant)) = (self.token_budget.get(), grant) {
-            budget.attribute_grant(grant, &handle.rlm_child_id, &handle.name);
-        }
         // TS `_findLastAssistantMessage` at spawn: the spawning assistant
         // row (persisted at `message_end` before tool execution) is the
         // target every child-usage attribution folds into.
@@ -921,7 +862,6 @@ fn spawn_request_from_payload(
             "model",
             "thinking",
             "target",
-            "token_budget",
             "agent",
             "isolation",
             "cwd",
@@ -944,13 +884,6 @@ fn spawn_request_from_payload(
     // refuses until the backend exists.
     let target = optional_string_kwarg(&kwargs, "target", OPERATION)?;
     let target = normalize_requested_rlm_spawn_target(target, OPERATION)?;
-    // The explicit delegation grant (upstream #1192's `token_budget=`).
-    let token_budget = match kwargs.get("token_budget") {
-        None | Some(Value::Null) => None,
-        Some(value) => Some(value.as_u64().filter(|tokens| *tokens > 0).ok_or_else(|| {
-            anyhow::anyhow!("{OPERATION} token_budget must be a positive integer")
-        })?),
-    };
     let factory = match kwargs.get("factory") {
         None | Some(Value::Null) => None,
         Some(tag) => Some(serde_json::from_value(tag.clone()).map_err(|_| {
@@ -968,7 +901,6 @@ fn spawn_request_from_payload(
             spawned_by_request_id: None,
             target: target.unwrap_or_default(),
             plan_mode: false,
-            token_budget,
             cwd: None,
             agent: None,
             worktree: None,
@@ -1675,172 +1607,6 @@ mod tests {
             .map(|request| request.plan_mode)
             .collect();
         assert_eq!(inherited, vec![true, false]);
-    }
-
-    /// Upstream #1192: every spawn draws its grant from the session's
-    /// delegation pool before the host is consulted, under the per-depth
-    /// ceiling; an empty pool refuses the spawn and no child is created.
-    #[tokio::test]
-    async fn spawns_draw_grants_from_the_delegation_budget() {
-        use super::super::rlm_token_budget::{
-            RlmTokenAllowance,
-            RlmTokenBudget,
-            RlmTokenBudgetConfig,
-        };
-        let dir = tempfile::TempDir::new().unwrap();
-        let host = RecordingHost::new();
-        let spawn_requests = Arc::clone(&host.spawn_requests);
-        let wiring = wired(dir.path(), Some(host));
-        let _ = wiring.rlm.token_budget.set(Arc::new(RlmTokenBudget::new(
-            RlmTokenBudgetConfig {
-                total: 100,
-                per_depth: vec![60],
-            },
-            RlmTokenAllowance::Root,
-            0,
-        )));
-        let counters = Arc::new(crate::session_engine::telemetry::SessionCounters::default());
-        let _ = wiring.rlm.adoption.set(Arc::clone(&counters));
-        let spawn = || {
-            call(
-                &wiring,
-                "rlm.run",
-                json!({ "type": "rlm.run", "prompt": "look around", "kwargs": {} }),
-            )
-        };
-        spawn().await.unwrap();
-        spawn().await.unwrap();
-        let refused = spawn().await.unwrap_err();
-        assert_eq!(
-            refused.to_string(),
-            "RLM token budget exhausted: 100 of 100 tokens already granted; no budget is left for another subagent"
-        );
-        let grants: Vec<Option<u64>> = spawn_requests
-            .lock()
-            .await
-            .iter()
-            .map(|request| request.token_budget)
-            .collect();
-        assert_eq!(grants, vec![Some(60), Some(40)]);
-        // Adoption: the refusal counts once.
-        assert_eq!(
-            counters.adoption_count(
-                crate::session_engine::telemetry::SessionAdoption::RlmTokenBudgetRefusal
-            ),
-            1
-        );
-        // Each grant names the child it funded (the status surface).
-        let attributed: Vec<(String, u64)> = wiring
-            .rlm
-            .token_budget
-            .get()
-            .unwrap()
-            .status()
-            .grants
-            .into_iter()
-            .map(|grant| {
-                (
-                    format!("{} ({})", grant.name, grant.rlm_child_id),
-                    grant.tokens,
-                )
-            })
-            .collect();
-        assert_eq!(
-            attributed,
-            vec![
-                ("worker (sub-1)".to_string(), 60),
-                ("worker (sub-1)".to_string(), 40)
-            ]
-        );
-    }
-
-    /// `rlm.spawn(token_budget=)`: an explicit grant is drawn from the pool
-    /// when it fits both what is left and the per-depth cap, and refused
-    /// otherwise; without a budget it funds the child alone; a malformed
-    /// value is refused before any grant or host call.
-    #[tokio::test]
-    async fn an_explicit_token_budget_draws_its_grant_within_the_pool_and_cap() {
-        use super::super::rlm_token_budget::{
-            RlmTokenAllowance,
-            RlmTokenBudget,
-            RlmTokenBudgetConfig,
-        };
-        async fn spawn(
-            wiring: &crate::session_engine::runtime_wiring::SessionKernelWiring,
-            token_budget: Value,
-        ) -> Result<(), String> {
-            let kwargs = if token_budget.is_null() {
-                json!({})
-            } else {
-                json!({ "token_budget": token_budget })
-            };
-            call(
-                wiring,
-                "rlm.run",
-                json!({ "type": "rlm.run", "prompt": "look around", "kwargs": kwargs }),
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-        }
-        let dir = tempfile::TempDir::new().unwrap();
-        let host = RecordingHost::new();
-        let spawn_requests = Arc::clone(&host.spawn_requests);
-        let wiring = wired(dir.path(), Some(host));
-        let _ = wiring.rlm.token_budget.set(Arc::new(RlmTokenBudget::new(
-            RlmTokenBudgetConfig {
-                total: 1_000,
-                per_depth: vec![400],
-            },
-            RlmTokenAllowance::Root,
-            0,
-        )));
-        let outcomes = vec![
-            spawn(&wiring, json!(300)).await,
-            spawn(&wiring, json!(500)).await,
-            spawn(&wiring, json!(400)).await,
-            spawn(&wiring, json!(350)).await,
-            spawn(&wiring, Value::Null).await,
-            spawn(&wiring, json!(0)).await,
-            spawn(&wiring, json!("200k")).await,
-            spawn(&wiring, json!(true)).await,
-        ];
-        let malformed = "rlm.spawn token_budget must be a positive integer".to_string();
-        assert_eq!(
-            outcomes,
-            vec![
-                Ok(()),
-                Err("rlm.spawn token_budget=500 exceeds the 400-token cap on any single grant to a depth-1 subagent".to_string()),
-                Ok(()),
-                Err("RLM token budget cannot fund token_budget=350: 300 tokens are left to grant (700 of 1000 already granted)".to_string()),
-                Ok(()),
-                Err(malformed.clone()),
-                Err(malformed.clone()),
-                Err(malformed),
-            ]
-        );
-        let grants: Vec<Option<u64>> = spawn_requests
-            .lock()
-            .await
-            .iter()
-            .map(|request| request.token_budget)
-            .collect();
-        assert_eq!(grants, vec![Some(300), Some(400), Some(300)]);
-
-        // No budget: the explicit grant funds the child alone.
-        let dir = tempfile::TempDir::new().unwrap();
-        let host = RecordingHost::new();
-        let spawn_requests = Arc::clone(&host.spawn_requests);
-        let wiring = wired(dir.path(), Some(host));
-        assert_eq!(spawn(&wiring, json!(50)).await, Ok(()));
-        assert_eq!(spawn(&wiring, Value::Null).await, Ok(()));
-        let grants: Vec<Option<u64>> = spawn_requests
-            .lock()
-            .await
-            .iter()
-            .map(|request| request.token_budget)
-            .collect();
-        assert_eq!(grants, vec![Some(50), None]);
     }
 
     /// The accepted note announces with its message and wall-clock

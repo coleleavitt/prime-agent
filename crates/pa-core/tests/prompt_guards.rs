@@ -770,7 +770,7 @@ fn documented_spawn_kwargs_reach_the_runtime_and_the_host() {
         .expect("the core layer documents rlm.spawn");
     let documented = keyword_only_parameters(documented_line);
     assert!(
-        documented.contains("name") && documented.contains("token_budget"),
+        documented.contains("name") && documented.contains("agent"),
         "rlm.spawn's documented kwargs: {documented:?}"
     );
 

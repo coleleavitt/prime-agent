@@ -552,7 +552,6 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
             target: pa_core::session_engine::rlm_host::RlmSpawnTarget::Local,
             spawned_by_request_id: None,
             plan_mode: false,
-            token_budget: None,
             cwd: None,
             agent: None,
             worktree: None,

@@ -22,8 +22,11 @@
 //! parity features' events (`lsp_session`); schema version 7 adds the
 //! wait-handling events (`bash_sleep_refused`, `bash_timeout_backgrounded`,
 //! `monitor_started`); schema version 8 retires `workflow_durable_request`
-//! (v4-7) with the dormant Workflow V2 host: new or retired event
-//! vocabulary bumps the version, additive property changes do not.
+//! (v4-7) with the dormant Workflow V2 host, and the removed RLM
+//! delegation token budget's `rlm_token_budget` (`agent started`) and
+//! `rlm_token_budget_refusal_count` (`agent session ended`) properties: new
+//! or retired event vocabulary bumps the version, additive property changes
+//! do not.
 //!
 //! [`sanitize`] is the platform adjust layer: before a batch reaches any
 //! sink, every catalogued event's properties are normalized against its
@@ -587,10 +590,6 @@ const AGENT_STARTED: EventRule = EventRule {
             "repetition_guard",
             optional(enum_rule(&["off", "reasoning", "all"], "reasoning")),
         ),
-        (
-            "rlm_token_budget",
-            optional(enum_rule(&["off", "total", "per_depth"], "off")),
-        ),
         ("fallback_model_count", optional(count())),
         (
             "context_cap_source",
@@ -833,13 +832,12 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("feature_feedback_unavailable_count", optional(count())),
         // Runtime behaviours (schema v4, additive), counts only: fallback
         // model switches and repetition-guard trips (summed over runs),
-        // length auto-continues, delegation-budget spawn refusals,
+        // length auto-continues,
         // `/harness` enable and disable flips, `refine.preview` calls and
         // `refine.run(plan_id=)` runs, and `present_artifact` previews.
         ("fallback_model_switch_count", optional(count())),
         ("repetition_guard_trip_count", optional(count())),
         ("length_continuation_count", optional(count())),
-        ("rlm_token_budget_refusal_count", optional(count())),
         ("harness_enable_count", optional(count())),
         ("harness_disable_count", optional(count())),
         ("refine_preview_count", optional(count())),
@@ -2693,7 +2691,6 @@ mod tests {
         properties.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
         properties.set("length_continuations", json!(3u64));
         properties.set("repetition_guard", json!("all"));
-        properties.set("rlm_token_budget", json!("per_depth"));
         properties.set("fallback_model_count", json!(2u64));
         properties.set("context_cap_source", json!("project"));
         properties.set("kernel_environment", json!("scrub_credentials"));
@@ -2705,7 +2702,6 @@ mod tests {
         let mut odd = Properties::new();
         odd.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
         odd.set("repetition_guard", json!("sometimes"));
-        odd.set("rlm_token_budget", json!(400_000u64));
         odd.set("context_cap_source", json!("chat"));
         odd.set("kernel_environment", json!("minimal"));
         odd.set("sandbox_mode", json!("/home/me/project"));
@@ -2713,7 +2709,6 @@ mod tests {
         let mut fallen = Properties::new();
         fallen.set("session_id", json!("0197d0a0-8f5c-7f2a-b0e3-2d7e0d2b3b1a"));
         fallen.set("repetition_guard", json!("reasoning"));
-        fallen.set("rlm_token_budget", json!("off"));
         fallen.set("context_cap_source", json!("none"));
         fallen.set("kernel_environment", json!("inherit"));
         fallen.set("sandbox_mode", json!("off"));
@@ -2741,7 +2736,6 @@ mod tests {
             "fallback_model_switch_count",
             "repetition_guard_trip_count",
             "length_continuation_count",
-            "rlm_token_budget_refusal_count",
             "harness_enable_count",
             "harness_disable_count",
             "refine_preview_count",

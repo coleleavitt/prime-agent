@@ -153,7 +153,6 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
         progress_note_emit: None,
         factory_notices: None,
         daemonless: true,
-        rlm_token_allowance: None,
         agent_definition: None,
         bash_notice_wake: None,
     })

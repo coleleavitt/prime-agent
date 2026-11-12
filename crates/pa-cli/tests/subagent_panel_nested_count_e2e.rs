@@ -231,7 +231,6 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         thinking: None,
         target: RlmSpawnTarget::Local,
         spawned_by_request_id: None,
-        token_budget: None,
         cwd: None,
         agent: None,
         worktree: None,

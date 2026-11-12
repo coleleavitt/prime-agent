@@ -190,10 +190,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     "rlmDepth": identity.rlm_depth + 1,
                     "createdAt": now_ms(),
                 });
-                // The grant the spawn drew funds the child (upstream #1192).
-                if let Some(grant) = request.token_budget {
-                    runtime_metadata["rlmTokenAllowance"] = json!(grant);
-                }
                 if let Some(definition) = &request.agent {
                     runtime_metadata["agentType"] = json!(definition.name);
                 }

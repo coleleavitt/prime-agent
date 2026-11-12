@@ -421,8 +421,6 @@ struct CounterValues {
 pub enum SessionAdoption {
     /// A reply cut at the output limit auto-continued (`lengthContinuations`).
     LengthContinuation,
-    /// A spawn the delegation budget (`rlmTokenBudget`) refused.
-    RlmTokenBudgetRefusal,
     /// `/harness enable` turned an entry on.
     HarnessEnabled,
     /// `/harness disable` turned an entry off.
@@ -452,7 +450,6 @@ impl SessionAdoption {
     fn key(self) -> &'static str {
         match self {
             SessionAdoption::LengthContinuation => "length_continuation_count",
-            SessionAdoption::RlmTokenBudgetRefusal => "rlm_token_budget_refusal_count",
             SessionAdoption::HarnessEnabled => "harness_enable_count",
             SessionAdoption::HarnessDisabled => "harness_disable_count",
             SessionAdoption::RefinePreview => "refine_preview_count",
@@ -589,8 +586,6 @@ pub struct SettingsAdoption {
     pub length_continuations: u32,
     /// `repetitionGuard`: `off` | `reasoning` | `all`.
     pub repetition_guard: &'static str,
-    /// `rlmTokenBudget`: `off` | `total` | `per_depth`.
-    pub rlm_token_budget: &'static str,
     /// `fallbackModels`: how many distinct fallback models are configured.
     pub fallback_model_count: usize,
     /// Where `compaction.maxContextTokens` comes from: `none` | `global` | `project`.
@@ -617,11 +612,6 @@ impl SettingsAdoption {
                 Some(guard) if guard.guard_text => "all",
                 Some(_) => "reasoning",
             },
-            rlm_token_budget: match settings.get_rlm_token_budget() {
-                None => "off",
-                Some(budget) if budget.per_depth.is_empty() => "total",
-                Some(_) => "per_depth",
-            },
             fallback_model_count: settings.get_fallback_models().len(),
             context_cap_source: match context_cap_source {
                 super::context_limit::ContextLimitSource::Global => "global",
@@ -643,7 +633,6 @@ impl SettingsAdoption {
             Value::from(u64::from(self.length_continuations)),
         );
         properties.set("repetition_guard", Value::from(self.repetition_guard));
-        properties.set("rlm_token_budget", Value::from(self.rlm_token_budget));
         properties.set(
             "fallback_model_count",
             Value::from(self.fallback_model_count as u64),

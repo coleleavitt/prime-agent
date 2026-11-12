@@ -178,7 +178,6 @@ mod tests {
             spawned_by_request_id: None,
             target: crate::kernel::rlm_runtime::RlmSpawnTarget::default(),
             plan_mode: false,
-            token_budget: None,
             cwd: None,
             agent: None,
             worktree: None,

@@ -488,11 +488,6 @@ pub struct Settings {
     pub repetition_guard: Option<serde_json::Value>,
     /// `reminders`: which per-turn reminders the model receives.
     pub reminders: Option<ReminderSettings>,
-    /// `rlmTokenBudget` (global scope only): the host-enforced delegation
-    /// budget, a token count or `{ "total": n, "perDepth": [n, ...] }`
-    /// (upstream #1192). Unset is OFF (TS v0.9.8 had no budget). Raw JSON
-    /// validated at access time.
-    pub rlm_token_budget: Option<serde_json::Value>,
     /// Ordered cross-model fallback chain (`provider/model-id` entries,
     /// upstream #1465): once a turn's same-model provider failover is
     /// spent on a retryable failure (or a provider cooldown beyond the wait

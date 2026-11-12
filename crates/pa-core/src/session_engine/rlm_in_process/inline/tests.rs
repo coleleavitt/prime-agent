@@ -99,7 +99,6 @@ async fn spawn_waiting_for_admission_rejects_a_disposed_parent() {
         spawned_by_request_id: None,
         target: crate::session_engine::rlm_host::RlmSpawnTarget::Local,
         plan_mode: false,
-        token_budget: None,
         agent: None,
         worktree: None,
         factory: None,

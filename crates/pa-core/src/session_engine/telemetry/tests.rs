@@ -1681,7 +1681,6 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
     for adoption in [
         SessionAdoption::LengthContinuation,
         SessionAdoption::LengthContinuation,
-        SessionAdoption::RlmTokenBudgetRefusal,
         SessionAdoption::HarnessEnabled,
         SessionAdoption::HarnessDisabled,
         SessionAdoption::RefinePreview,
@@ -1716,7 +1715,6 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
         "fallback_model_switch_count",
         "repetition_guard_trip_count",
         "length_continuation_count",
-        "rlm_token_budget_refusal_count",
         "harness_enable_count",
         "harness_disable_count",
         "refine_preview_count",
@@ -1742,7 +1740,6 @@ async fn fallback_switches_repetition_trips_and_session_behaviours_count() {
             "fallback_model_switch_count": 1,
             "repetition_guard_trip_count": 1,
             "length_continuation_count": 2,
-            "rlm_token_budget_refusal_count": 1,
             "harness_enable_count": 1,
             "harness_disable_count": 1,
             "refine_preview_count": 1,

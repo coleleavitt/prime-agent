@@ -126,10 +126,6 @@ pub struct SessionEngineConfig {
     /// session's restored mode is recorded as a durable change row. `None`
     /// restores the newest change on the session's branch (off when none).
     pub plan_mode: Option<bool>,
-    /// The delegation grant that funds this subagent (upstream #1192; the
-    /// parent's `rlm.spawn` drew it). `None` for a root session, which
-    /// takes its pool from the `rlmTokenBudget` setting.
-    pub rlm_token_allowance: Option<u64>,
     /// `--sandbox <mode>`: replaces the `sandbox` setting's mode for this run (`off` included).
     /// `None` keeps the setting.
     pub sandbox_mode: Option<crate::os_sandbox::SandboxMode>,
@@ -387,10 +383,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let ask_user_timeout = settings.get_ask_user_question_timeout();
     let plans_directory = settings.get_plans_directory().map(str::to_string);
     let reminder_toggles = settings.get_reminders();
-    // The delegation budget's setting (upstream #1192), read before
-    // `settings` moves into the loader; the budget itself is built once
-    // the session's artifact dir (its durable ledger's home) is known.
-    let rlm_token_budget_setting = settings.get_rlm_token_budget();
     let kernel_environment = settings.get_kernel_environment();
     // Claude Code's settings files (behind `claudeCodeSettings`): their
     // `env` reaches the kernel and its commands; what was not taken is
@@ -617,50 +609,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             None
         }
     };
-    // The delegation budget (upstream #1192): a root takes its pool from
-    // the global `rlmTokenBudget` setting; a funded child enforces the grant
-    // its parent drew even if the setting changed since, and a resumed
-    // child whose resume carries no grant (a daemon restart) keeps the one
-    // its ledger recorded.
-    let rlm_token_budget = {
-        use super::rlm_token_budget::{
-            RLM_TOKEN_BUDGET_FILE,
-            RlmTokenAllowance,
-            RlmTokenBudget,
-            RlmTokenBudgetConfig,
-            RlmTokenBudgetLedger,
-        };
-        let depth = config.rlm_depth.unwrap_or(0);
-        let store = session_artifact_dir
-            .as_deref()
-            .map(|dir| dir.join(RLM_TOKEN_BUDGET_FILE));
-        let allowance = config.rlm_token_allowance.or_else(|| {
-            (depth > 0)
-                .then(|| store.as_deref().map(RlmTokenBudgetLedger::load))
-                .flatten()
-                .and_then(|ledger| ledger.allowance)
-        });
-        let budget = match (rlm_token_budget_setting, allowance) {
-            (budget, Some(grant)) => Some((
-                budget.unwrap_or(RlmTokenBudgetConfig {
-                    total: grant,
-                    per_depth: Vec::new(),
-                }),
-                RlmTokenAllowance::Granted(grant),
-            )),
-            (Some(budget), None) if depth == 0 => Some((budget, RlmTokenAllowance::Root)),
-            (Some(_) | None, None) => None,
-        };
-        budget.map(|(budget, allowance)| {
-            std::sync::Arc::new(match store {
-                Some(store) => RlmTokenBudget::open(budget, allowance, depth, store),
-                None => RlmTokenBudget::new(budget, allowance, depth),
-            })
-        })
-    };
-    if let Some(budget) = &rlm_token_budget {
-        let _ = wiring.rlm.token_budget.set(std::sync::Arc::clone(budget));
-    }
     // Separately built features installed by the composition root (none in
     // the native product).
     let mut feature_context = crate::features::SessionFeatureContext {
@@ -815,11 +763,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &presented_artifacts,
         &wiring.session,
     );
-    // A delegation-budget refusal counts into the session counters.
-    let _ = wiring
-        .rlm
-        .adoption
-        .set(std::sync::Arc::clone(&session_counters));
     // The kernel telemetry bridge: `telemetry.emit` lets Python-backed
     // skills emit their bridge-vocabulary events through the session's
     // client; telemetry-opt-out sessions never register it.
@@ -1424,9 +1367,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             let fold_slot = std::sync::Arc::clone(&fold_admission);
             let steering = config.queued_steering_probe.take();
             let boundary = config.should_stop_after_turn.take();
-            // A funded subagent that spent its grant stops at this
-            // boundary (the turn that crossed it is kept).
-            let budget = rlm_token_budget.clone();
             let usage_limit = usage_limit.clone();
             let goal_evaluator = goal_evaluator.clone();
             let nested = nested_instructions.clone();
@@ -1443,20 +1383,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 let known_skills = Arc::clone(&known_skills);
                 let steering = steering.clone();
                 let boundary = boundary.clone();
-                let budget = budget.clone();
                 let usage_limit = usage_limit.clone();
                 let goal_evaluator = goal_evaluator.clone();
                 let context_rows = std::sync::Arc::clone(&context_rows);
                 Box::pin(async move {
-                    // Checked before the fold: a run that stops here must not
-                    // take queued steers it will never answer.
-                    if budget.as_ref().is_some_and(|budget| budget.exhausted()) {
-                        tracing::info!(
-                            target: "pa_core::rlm_token_budget",
-                            "subagent stopped: its RLM token grant is spent"
-                        );
-                        return Ok(true);
-                    }
                     // Queued steers that can join this run go into the agent's
                     // steering queue now (the loop drains it before its next
                     // model call); only the ones that cannot still end the run.
@@ -1765,23 +1695,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     }
                     Ok(())
                 })
-            })
-            .await;
-    }
-    // The budget counts this session's own replies as they settle.
-    if let Some(budget) = rlm_token_budget {
-        agent
-            .subscribe(move |event, _signal| {
-                if let pa_agent::types::AgentEvent::MessageEnd {
-                    message:
-                        pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::Assistant(
-                            reply,
-                        )),
-                } = &event
-                {
-                    budget.record_spend(super::rlm_token_budget::reply_tokens(&reply.usage));
-                }
-                Box::pin(async { Ok(()) })
             })
             .await;
     }

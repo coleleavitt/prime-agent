@@ -384,8 +384,6 @@ impl Worker {
                 child_script,
                 // A TS replacement runtime has no semantic spawn.
                 semantic_spawn: None,
-                // A replacement runtime is a fresh top-level run: no grant.
-                rlm_token_allowance: None,
                 factory_child: false,
             }) {
             Ok(()) => self.reseed_rlm_children().await,

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 /// Session-executed commands (their behavior lives in the session engine).
-pub const SESSION_SLASH_COMMAND_NAMES: [&str; 16] = [
+pub const SESSION_SLASH_COMMAND_NAMES: [&str; 15] = [
     "compact",
     "refine",
     "goal",
@@ -13,7 +13,6 @@ pub const SESSION_SLASH_COMMAND_NAMES: [&str; 16] = [
     "context-limit",
     "plan",
     "harness",
-    "rlm-token-budget",
     "ultracode",
     "brief",
     "output-style",
@@ -540,14 +539,6 @@ const CANONICAL_BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         name: "workflows",
         description: "List the saved workflows (.prime/workflows, .claude/workflows) and this session's recent workflow runs",
-        execution: SlashCommandExecution::Session,
-        argument_hint: None,
-        aliases: &[],
-        takes_argument: false,
-    },
-    BuiltinSlashCommand {
-        name: "rlm-token-budget",
-        description: "Show the RLM delegation token budget: pool, spend, and each subagent's grant",
         execution: SlashCommandExecution::Session,
         argument_hint: None,
         aliases: &[],

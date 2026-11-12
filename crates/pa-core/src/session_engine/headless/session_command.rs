@@ -374,7 +374,6 @@ mod tests {
                     image_model_router: None,
                     steering_mode: None,
                     follow_up_mode: None,
-                    rlm_token_allowance: None,
                     agent_definition: None,
                 },
             )

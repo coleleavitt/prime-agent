@@ -111,8 +111,6 @@ pub struct ChildEngineOverrides {
     pub spawned_by_request_id: Option<String>,
     /// The parent's plan mode at spawn; the child starts in it.
     pub plan_mode: bool,
-    /// The child's delegation grant (`rlm.spawn(token_budget=...)`).
-    pub token_budget: Option<u64>,
     /// The typed agent the child runs as (`rlm.spawn(agent=...)`).
     pub agent_definition: Option<crate::agents::AgentDefinition>,
     /// The spawn carried a factory run tag.
@@ -952,7 +950,6 @@ impl RlmSubagentHost for InlineHost {
                 semantic_parent_session_id: Some(node.session_id.clone()),
                 spawned_by_request_id: request.spawned_by_request_id.clone(),
                 plan_mode: request.plan_mode,
-                token_budget: request.token_budget,
                 agent_definition: request.agent.clone(),
                 factory_child: request.factory.is_some(),
             };

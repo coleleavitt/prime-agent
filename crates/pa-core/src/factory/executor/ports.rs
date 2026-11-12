@@ -135,7 +135,7 @@ impl FactoryClock for SystemClock {
 
 /// The session's own child host behind the kernel `rlm.*` surface: factory
 /// children ride exactly the `rlm.spawn` admission path (payload
-/// validation, plan mode, delegation budget, usage attribution, the daemon
+/// validation, plan mode, usage attribution, the daemon
 /// allowlist pin), so a factory child is an ordinary child.
 pub struct SessionChildren {
     bridge: Arc<RlmHostBridge>,

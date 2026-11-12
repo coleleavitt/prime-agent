@@ -171,7 +171,6 @@ fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
         thinking: None,
         target: RlmSpawnTarget::Local,
         spawned_by_request_id: None,
-        token_budget: None,
         cwd: None,
         agent: None,
         worktree: None,
@@ -478,42 +477,6 @@ async fn concurrent_parent_renames_keep_the_last_applied_name() {
     );
     let rows = sessions.list_subagents().await.expect("roster");
     assert_eq!(rows[0].session_name, "second");
-}
-
-/// Upstream #1192: the grant a spawn drew rides the child's create as
-/// `runtimeMetadata.rlmTokenAllowance` (the child worker enforces it); an
-/// unbudgeted spawn carries none.
-#[tokio::test]
-async fn a_spawn_grant_rides_the_child_create_metadata() {
-    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
-    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
-    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
-    let sessions =
-        sessions_with_gated_supervisor(create_seen_tx, verdict_rx, rename_seen_tx, None).await;
-    verdict_tx.send(true).unwrap();
-    verdict_tx.send(true).unwrap();
-    sessions
-        .spawn(RlmSpawnRequest {
-            token_budget: Some(40_000),
-            ..spawn_request("funded", "a funded child")
-        })
-        .await
-        .expect("the funded spawn admits");
-    let funded = create_seen_rx.recv().await.unwrap();
-    sessions
-        .spawn(spawn_request("unfunded", "an unfunded child"))
-        .await
-        .expect("the unfunded spawn admits");
-    let unfunded = create_seen_rx.recv().await.unwrap();
-    assert_eq!(
-        (
-            funded["runtimeMetadata"].get("rlmTokenAllowance").cloned(),
-            unfunded["runtimeMetadata"]
-                .get("rlmTokenAllowance")
-                .cloned(),
-        ),
-        (Some(json!(40_000)), None)
-    );
 }
 
 /// A parent run under `--sandbox` creates every child under the same mode, so

@@ -991,10 +991,6 @@ pub(crate) async fn build_headless_engine_with(
             steering_fold: None,
             should_stop_after_turn: None,
             image_model_router,
-            rlm_token_allowance: match embedding {
-                HeadlessEmbedding::Child(overrides) => overrides.token_budget,
-                HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => None,
-            },
             agent_definition: match embedding {
                 HeadlessEmbedding::Child(overrides) => overrides.agent_definition.clone(),
                 HeadlessEmbedding::Root { .. } | HeadlessEmbedding::Rpc { .. } => None,

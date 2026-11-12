@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/memory`, `/rlm-token-budget`,
+//! `/compact`, `/refine`, `/goal`, `/autonomous`, `/context-limit`, `/plan`, `/memory`,
 //! `/output-style` and `/add-dir`. The host runtime owns
 //! persistence of what this returns; errors carry the exact TS message and
 //! the host renders the `Command failed: ...` result row.
@@ -253,7 +253,6 @@ pub async fn execute_session_command(
         "plan" => execute_plan(engine, command, &mut execution).await,
         "ultracode" => execute_ultracode(engine, command, &mut execution).await,
         "brief" => execute_brief(engine, command, &mut execution),
-        "rlm-token-budget" => execute_rlm_token_budget(engine, command, &mut execution),
         "output-style" => execute_output_style(engine, command, &mut execution),
         "add-dir" => execute_add_dir(engine, command, &mut execution).await,
         "memory" => execute_memory(engine, command, &mut execution),
@@ -364,10 +363,6 @@ async fn execute_context_limit(
     Ok(())
 }
 
-/// `/rlm-token-budget` (upstream #1192's status form): the delegation
-/// budget's pool, this session's spend, what is left to grant, and the
-/// grant each spawned subagent drew. The budget is configured by the
-/// global `rlmTokenBudget` setting; the command only reports.
 /// `/memory`: the session's instruction files and auto memory
 /// ([`super::memory_command`]); display-only.
 fn execute_memory(
@@ -438,27 +433,6 @@ async fn execute_workflows(
         .get_cwd()
         .to_path_buf();
     let text = super::workflows_command::workflows_report(&engine.workflows, &cwd);
-    execution.push_message(slash_command_result(
-        command, text, true, "info", None, true,
-    ));
-    Ok(())
-}
-
-fn execute_rlm_token_budget(
-    engine: &SessionEngine,
-    command: &SessionSlashCommand,
-    execution: &mut SessionCommandExecution,
-) -> Result<(), String> {
-    if !command.args.trim().is_empty() {
-        return Err(
-            "Usage: /rlm-token-budget (the budget is configured by the global rlmTokenBudget setting)"
-                .to_string(),
-        );
-    }
-    let text = match engine.rlm.token_budget.get() {
-        Some(budget) => budget.status().render(),
-        None => "No RLM token budget applies to this session. Set rlmTokenBudget in the global settings to fund subagent delegation.".to_string(),
-    };
     execution.push_message(slash_command_result(
         command, text, true, "info", None, true,
     ));
@@ -1274,10 +1248,6 @@ mod tests {
 #[cfg(test)]
 #[path = "harness_command_tests.rs"]
 mod harness_command_tests;
-
-#[cfg(test)]
-#[path = "rlm_token_budget_command_tests.rs"]
-mod rlm_token_budget_command_tests;
 
 #[cfg(test)]
 #[path = "claude_parity_command_tests.rs"]

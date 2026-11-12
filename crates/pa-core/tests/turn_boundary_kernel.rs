@@ -199,7 +199,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         on_background_work_settled: None,
         bash_notice_wake: None,
         queued_goal_context_purge: None,
-        rlm_token_allowance: None,
         agent_definition: None,
     })
     .await
