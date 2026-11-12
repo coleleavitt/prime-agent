@@ -41,10 +41,16 @@ use render::{
     spawn_session_reader,
 };
 
-mod reconnect;
+pub(crate) mod reconnect;
 
 #[cfg(test)]
-use reconnect::{DAEMON_SHUTDOWN_RECONNECT_WINDOW, ReconnectLoop, SHUTDOWN_RECONNECT_RETRY};
+use reconnect::{
+    Connection,
+    ConnectionEvent,
+    DAEMON_SHUTDOWN_RECONNECT_WINDOW,
+    ReconnectLoop,
+    SHUTDOWN_RECONNECT_RETRY,
+};
 
 mod opening;
 mod run;

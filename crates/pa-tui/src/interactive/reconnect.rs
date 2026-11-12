@@ -1,5 +1,6 @@
-//! The reconnect machinery: the update-restart resume window, the unexpected-loss hiccup loop, and
-//! the announced shutdown's bounded recovery.
+//! The daemon connection's recovery state machine ([`Connection`]): the session-plane re-attach
+//! after a direct worker link dies, the update-restart resume window, the unexpected-loss hiccup
+//! loop, and the announced shutdown's bounded recovery.
 
 use super::{AgentView, DaemonClient, DaemonClientEvent, Duration, RecoveryKind, SessionUi, mpsc};
 
@@ -37,12 +38,11 @@ pub(super) const SESSION_RECONNECT_ATTEMPT_TIMEOUT_S: u64 = 10;
 /// worker process behind the direct link died, so the attach retries through the supervisor — which
 /// respawns the worker and hands out a fresh peer ticket — with the TS backoff inside the TS
 /// window.
-pub(super) struct SessionReconnect {
+pub(crate) struct SessionReconnect {
     pub(super) active_session_id: String,
     pub(super) deadline: tokio::time::Instant,
     pub(super) next_attempt: tokio::time::Instant,
     delay: Duration,
-    pub(super) last_error: String,
 }
 
 impl SessionReconnect {
@@ -52,7 +52,6 @@ impl SessionReconnect {
             deadline: tokio::time::Instant::now() + SESSION_RECONNECT_WINDOW,
             next_attempt: tokio::time::Instant::now(),
             delay: Duration::from_millis(100),
-            last_error: String::new(),
         }
     }
 
@@ -70,7 +69,7 @@ impl SessionReconnect {
 /// the one-shot path exited the operator's TUI with "the daemon connection closed"), and an
 /// ANNOUNCED non-update closing (TS #2458: the operator's own shutdown used to kill every
 /// attached window) — the pane keeps its transcript and retries instead of dying.
-pub(super) struct ReconnectLoop {
+pub(crate) struct ReconnectLoop {
     pub(super) deadline: tokio::time::Instant,
     pub(super) next_attempt: tokio::time::Instant,
     pub(super) delay: Duration,
@@ -79,7 +78,8 @@ pub(super) struct ReconnectLoop {
 }
 
 impl ReconnectLoop {
-    pub(super) fn start(_update: &crate::daemon_client::DaemonClosingUpdate) -> Self {
+    /// Spec §10.2: the update restart's resume window.
+    pub(super) fn start_update() -> Self {
         let delay = Duration::from_secs(1);
         ReconnectLoop {
             deadline: tokio::time::Instant::now() + RECONNECT_WINDOW,
@@ -123,6 +123,246 @@ impl ReconnectLoop {
     }
 }
 
+/// The daemon connection's recovery state. [`Connection::on`] is its only writer: the client-event
+/// fold and the run loop's select arms feed it events, and the arms only perform the IO it asks for.
+pub(crate) enum Connection {
+    Connected,
+    /// The supervisor connection died while a live direct link kept serving the session: the loss
+    /// is retained until the direct link itself dies; then the full reconnect driver owns the
+    /// recovery.
+    SupervisorLost,
+    /// The direct worker link died (a killed or crashed worker): the session re-attaches through
+    /// the supervisor, which respawns the worker.
+    SessionPlane(SessionReconnect),
+    /// The session-plane window expired: submits surface this error instead of leaving the UI on a
+    /// silent spinner, until an attach lands.
+    SessionPlaneFailed(String),
+    /// The full reconnect driver owns the run (an update restart, a lost connection, or an
+    /// announced shutdown).
+    Recovering(ReconnectLoop),
+}
+
+/// One input to [`Connection::on`].
+pub(crate) enum ConnectionEvent {
+    /// A `daemon_closing` update frame (§10.2).
+    UpdateNotice { est_seconds: u64 },
+    /// A `daemon_closing` frame announcing the daemon's own shutdown (TS #2458).
+    ShutdownNotice,
+    /// The event stream closed without a notice: a daemon hiccup.
+    ConnectionLost,
+    /// The supervisor connection's reader died; `direct_alive` when a direct link still serves the
+    /// session.
+    SupervisorDied { direct_alive: bool },
+    /// The active session's direct worker link died.
+    DirectLinkLost { active_session_id: String },
+    /// The session-plane driver's next attempt is due; `active_session_id` is the mounted session.
+    SessionTick { active_session_id: String },
+    /// The session-plane re-attach landed.
+    SessionAttached,
+    /// The session-plane re-attach failed.
+    SessionAttachFailed(String),
+    /// An attach landed (any path: open, switch, rebind, re-attach).
+    Attached,
+    /// The reconnect driver's next attempt is due.
+    Tick,
+    /// The in-flight connect attempt returned.
+    AttemptLanded,
+    /// The connect attempt failed: back off and retry.
+    ConnectFailed,
+    /// The reattach outlived its budget (a slow restore): retry (§10.4 — never fatal).
+    RestoreRetry,
+    /// The reattach failed.
+    ReattachFailed(String),
+    /// The reattach landed on the fresh connection.
+    Reattached,
+}
+
+/// What the run loop shows or does after one [`Connection::on`] step.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ConnectionEffect {
+    None,
+    Note(String),
+    Info(String),
+    Warning(String),
+    ErrorRow(String),
+    /// Re-attach this session through the supervisor.
+    Attach(String),
+    /// Spawn one connect attempt: `retry` picks the retrying connect, the announced shutdown's poll
+    /// makes one bounded connect per attempt.
+    Connect {
+        retry: bool,
+    },
+    /// The run ends with this note and exit reason.
+    Exit {
+        note: String,
+        reason: &'static str,
+    },
+}
+
+const LOST_NOTE: &str = "the daemon connection closed — reconnecting…";
+
+impl Connection {
+    /// Apply one event and return what the caller shows or does next.
+    pub(crate) fn on(&mut self, event: ConnectionEvent) -> ConnectionEffect {
+        use ConnectionEvent as Event;
+        let now = tokio::time::Instant::now();
+        match (event, &mut *self) {
+            // An update closing outranks a shutdown or hiccup recovery in flight (TS #2458): the
+            // §10.2 resume contract replaces it.
+            (Event::UpdateNotice { est_seconds }, _) => {
+                *self = Connection::Recovering(ReconnectLoop::start_update());
+                ConnectionEffect::Note(format!(
+                    "the daemon is restarting for an update (about {}s) — reconnecting…",
+                    est_seconds.max(1)
+                ))
+            }
+            // TS #2458 `reconnectAfterShutdown`: the announced closing keeps the pane mounted and
+            // waits bounded (the recovery never relaunches the daemon — an explicit stop stays
+            // stopped).
+            (Event::ShutdownNotice, state) if !matches!(state, Connection::Recovering(_)) => {
+                *self = Connection::Recovering(ReconnectLoop::start_shutdown());
+                ConnectionEffect::Warning(
+                    "the Prime Agent daemon shut down; waiting for it to come back…".to_string(),
+                )
+            }
+            // An unexpected loss is a daemon hiccup, not a session end: the pane keeps its
+            // transcript and retries; the window expires into the exit note.
+            (Event::ConnectionLost, state) if !matches!(state, Connection::Recovering(_)) => {
+                *self = Connection::Recovering(ReconnectLoop::start_lost());
+                ConnectionEffect::Warning(LOST_NOTE.to_string())
+            }
+            (
+                Event::SupervisorDied { .. },
+                Connection::Recovering(_) | Connection::SupervisorLost,
+            ) => ConnectionEffect::None,
+            // A supervisor socket loss while a live direct link still serves the session is not a
+            // pane-level loss: retain it until the direct link dies.
+            (
+                Event::SupervisorDied { direct_alive: true },
+                Connection::Connected | Connection::SessionPlaneFailed(_),
+            ) => {
+                *self = Connection::SupervisorLost;
+                ConnectionEffect::None
+            }
+            // A session-plane driver would retry through the now-dead supervisor, and a retained
+            // supervisor loss could never be restored by one once the direct link dies too: the full
+            // driver replaces the client and reattaches.
+            (Event::SupervisorDied { .. }, _)
+            | (Event::DirectLinkLost { .. }, Connection::SupervisorLost) => {
+                *self = Connection::Recovering(ReconnectLoop::start_lost());
+                ConnectionEffect::Warning(LOST_NOTE.to_string())
+            }
+            (
+                Event::DirectLinkLost { active_session_id },
+                Connection::Connected | Connection::SessionPlaneFailed(_),
+            ) => {
+                *self = Connection::SessionPlane(SessionReconnect::start(&active_session_id));
+                ConnectionEffect::Warning("Daemon connection lost; reconnecting…".to_string())
+            }
+            // The user switched sessions while the link was down: the new attach owns its own
+            // connection, so this driver stops.
+            (Event::SessionTick { active_session_id }, Connection::SessionPlane(state))
+                if state.active_session_id != active_session_id =>
+            {
+                *self = Connection::Connected;
+                ConnectionEffect::None
+            }
+            (Event::SessionTick { .. }, Connection::SessionPlane(state)) => {
+                ConnectionEffect::Attach(state.active_session_id.clone())
+            }
+            (Event::SessionAttached, Connection::SessionPlane(_)) => {
+                *self = Connection::Connected;
+                ConnectionEffect::Info("Daemon reconnected".to_string())
+            }
+            // The window expired: the last error surfaces as the closed event's error row, and the
+            // UI stays mounted.
+            (Event::SessionAttachFailed(error), Connection::SessionPlane(state))
+                if now > state.deadline =>
+            {
+                let row = format!("Daemon reconnection failed: {error}");
+                *self = Connection::SessionPlaneFailed(error);
+                ConnectionEffect::ErrorRow(row)
+            }
+            (Event::SessionAttachFailed(_), Connection::SessionPlane(_)) => {
+                if let Connection::SessionPlane(state) =
+                    std::mem::replace(self, Connection::Connected)
+                {
+                    *self = Connection::SessionPlane(state.next_attempt());
+                }
+                ConnectionEffect::None
+            }
+            (Event::Tick | Event::AttemptLanded, Connection::Recovering(driver))
+                if now > driver.deadline =>
+            {
+                let effect = expiry(driver.kind);
+                *self = Connection::Connected;
+                effect
+            }
+            (Event::Tick, Connection::Recovering(driver)) => ConnectionEffect::Connect {
+                retry: !matches!(driver.kind, RecoveryKind::Shutdown),
+            },
+            (Event::ConnectFailed, Connection::Recovering(_)) => {
+                self.back_off();
+                ConnectionEffect::None
+            }
+            (Event::RestoreRetry, Connection::Recovering(_)) => {
+                self.back_off();
+                ConnectionEffect::Note("the daemon is still restoring — retrying…".to_string())
+            }
+            // An update's reattach failure detaches the window; a lost or shutdown recovery keeps
+            // retrying through its window (the worker may still be respawning).
+            (Event::ReattachFailed(error), Connection::Recovering(driver)) => match driver.kind {
+                RecoveryKind::Update => ConnectionEffect::Exit {
+                    note: format!(
+                        "reattach after the update failed: {error} — run `prime-agent attach` to resume"
+                    ),
+                    reason: "update_reattach_failed",
+                },
+                RecoveryKind::Lost | RecoveryKind::Shutdown => {
+                    self.back_off();
+                    ConnectionEffect::Warning(format!("reattach failed: {error} — retrying…"))
+                }
+            },
+            // An expired re-attach window is per-connection: a recovered connection must not keep
+            // refusing submits.
+            (Event::Reattached, _) | (Event::Attached, Connection::SessionPlaneFailed(_)) => {
+                *self = Connection::Connected;
+                ConnectionEffect::None
+            }
+            _ => ConnectionEffect::None,
+        }
+    }
+
+    fn back_off(&mut self) {
+        if let Connection::Recovering(driver) = std::mem::replace(self, Connection::Connected) {
+            *self = Connection::Recovering(driver.next_attempt());
+        }
+    }
+}
+
+/// The recovery window expired without a reattach: the kind-specific exit row.
+fn expiry(kind: RecoveryKind) -> ConnectionEffect {
+    let (note, reason) = match kind {
+        // The saved-transcript close (the session file survives on disk).
+        RecoveryKind::Shutdown => (
+            "The Prime Agent daemon shut down while this window was attached. The session transcript remains saved; restart Prime Agent and reopen it from Agents View.",
+            "daemon_closed",
+        ),
+        RecoveryKind::Lost => (
+            "could not reconnect to the daemon within 10 minutes — run `prime-agent attach` to resume.",
+            "daemon_reconnect_failed",
+        ),
+        RecoveryKind::Update => (
+            "could not reconnect to the daemon within 10 minutes — the update finished but this window is detached. Run `prime-agent attach` to resume.",
+            "update_reconnect_failed",
+        ),
+    };
+    ConnectionEffect::Exit {
+        note: note.to_string(),
+        reason,
+    }
+}
+
 /// What the run loop does after a recovery arm: the arms that ended without work skip the
 /// iteration's frame pass, and an expired or failed recovery ends the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,189 +377,54 @@ pub(super) enum RecoveryStep {
     StopAfterFrame,
 }
 
-/// The interactive loop's connection recovery: the full reconnect driver and its in-flight
-/// connect leg, the session re-attach driver, and the loss latches that decide which owns a
-/// lost connection.
+/// The interactive loop's side of the connection recovery: the IO the [`Connection`] state asks
+/// for (the connect leg, the reattach, the session-plane re-attach) and the loop-local stream
+/// state. The recovery decisions stay in [`Connection::on`].
 #[derive(Default)]
 pub(super) struct Recovery {
-    /// Spec §10.2: the reconnect loop after a `daemon_closing` update frame, an unexpected loss,
-    /// or an announced shutdown. Retry with backoff up to the window; each attempt reads the
-    /// successor's hello (§10.3) and reattaches by durable session id (§10.4). UI input keeps
-    /// flowing while reconnecting.
-    reconnect: Option<ReconnectLoop>,
     /// The in-flight reconnect attempt's connect leg (spawned off the loop, so the connect+hello
     /// wait never blocks UI input or the render); the reattach leg runs inline on the loop.
     pub(super) connect: Option<ReconnectConnect>,
-    /// The reader-death watch is one-shot: once the loss is handled (or suppressed), the arm
-    /// parks so the closed watch cannot hot-spin the select loop.
-    pub(super) reader_loss_handled: bool,
-    /// The supervisor connection died while a live direct link kept serving the session: the
-    /// loss is retained until the direct link itself dies; then the full reconnect driver owns
-    /// the recovery.
-    supervisor_lost: bool,
-    /// Set once the event channel has returned None (see the events arm).
+    /// The event channel returned None: a closed receiver resolves instantly and forever, which
+    /// would hot-spin the select, so the events arm parks until a reattach installs the fresh one.
     events_closed: bool,
-    /// The session re-attach driver: armed when the direct worker link dies (a killed or crashed
-    /// worker); it re-attaches through the supervisor so the respawned worker serves the session
-    /// again.
-    session_reconnect: Option<SessionReconnect>,
 }
 
 impl Recovery {
-    /// A closed event channel's `recv()` resolves None instantly and forever; while the reconnect
-    /// driver owns the run that always-ready arm would hot-spin the loop and starve the tokio
-    /// timers, so the events arm parks instead: the tick drives the retries.
+    /// The events arm parks once its channel closed (the reconnect tick drives the retries).
     pub(super) fn parks_events(&self) -> bool {
-        self.events_closed && self.reconnect.is_some()
+        self.events_closed
     }
 
-    /// The reconnect tick's deadline: parked while an attempt is in flight (the armed
-    /// `next_attempt` is in the past, so an unparked tick would busy-spin the loop for the
-    /// attempt's duration) or when no driver runs.
-    pub(super) fn tick_deadline(&self) -> Option<tokio::time::Instant> {
-        if self.connect.is_some() {
-            return None;
+    /// The reconnect driver's next attempt, parked while one is in flight (its armed instant is
+    /// in the past, so an unparked tick would busy-spin the loop for the attempt's duration).
+    pub(super) fn tick_deadline(&self, connection: &Connection) -> Option<tokio::time::Instant> {
+        match (connection, &self.connect) {
+            (Connection::Recovering(driver), None) => Some(driver.next_attempt),
+            _ => None,
         }
-        self.reconnect.as_ref().map(|state| state.next_attempt)
     }
 
     /// The session re-attach driver's next attempt.
-    pub(super) fn session_tick_deadline(&self) -> Option<tokio::time::Instant> {
-        self.session_reconnect
-            .as_ref()
-            .map(|state| state.next_attempt)
-    }
-
-    /// An update close frame arms the reconnect driver: the UI stays mounted and reconnects.
-    fn start_update(
-        &mut self,
-        update: &crate::daemon_client::DaemonClosingUpdate,
-        session: &mut SessionUi,
-        view: &mut AgentView,
-    ) {
-        session.note(
-            &format!(
-                "the daemon is restarting for an update (about {}s) — reconnecting…",
-                update.est_seconds.max(1)
-            ),
-            view,
-        );
-        self.reconnect = Some(ReconnectLoop::start(update));
-        session.dirty = true;
-    }
-
-    /// An unexpected connection loss (no update in flight) is a daemon hiccup, not a session
-    /// end: the pane keeps its transcript and retries with the update restart's window and
-    /// backoff; the window expires into the exit note.
-    fn start_lost(&mut self, session: &mut SessionUi, view: &mut AgentView) {
-        session.note_as(
-            "the daemon connection closed — reconnecting…",
-            crate::chat::StatusKind::Warning,
-            view,
-        );
-        self.reconnect = Some(ReconnectLoop::start_lost());
-        session.dirty = true;
-    }
-
-    /// TS #2458 `reconnectAfterShutdown`'s arming: an announced non-update closing keeps the pane
-    /// mounted (the recovery never relaunches the daemon — an explicit stop stays stopped). No-op
-    /// when the notice is absent or a driver already owns the recovery.
-    fn arm_shutdown_recovery(&mut self, session: &mut SessionUi, view: &mut AgentView) -> bool {
-        if self.reconnect.is_some() || session.daemon_closing_notice.as_deref() != Some("shutdown")
-        {
-            return false;
+    pub(super) fn session_tick_deadline(connection: &Connection) -> Option<tokio::time::Instant> {
+        match connection {
+            Connection::SessionPlane(state) => Some(state.next_attempt),
+            _ => None,
         }
-        session.note_as(
-            "the Prime Agent daemon shut down; waiting for it to come back…",
-            crate::chat::StatusKind::Warning,
-            view,
-        );
-        // TS #2458's yield rule: the shutdown recovery owns the run — a session-plane retry armed
-        // by an earlier direct-link loss would race it through a dying supervisor.
-        self.session_reconnect = None;
-        self.reconnect = Some(ReconnectLoop::start_shutdown());
-        session.dirty = true;
-        true
     }
 
-    /// The loss signals a folded event batch raised. An update close frame arms the reconnect
-    /// driver immediately: the doomed connection's reader task is gone, but the client retains an
-    /// event sender, so the channel itself never closes - the frame, not the EOF, is the trigger
-    /// (spec §10.2). An update closing outranks a shutdown recovery in flight (TS #2458): the
-    /// §10.2 resume contract replaces it. An announced non-update closing arms the bounded
-    /// shutdown recovery instead, and a dead direct worker link arms the session re-attach
-    /// driver: the warning row rides the chat while the driver retries.
-    pub(super) fn after_events(&mut self, session: &mut SessionUi, view: &mut AgentView) {
-        if let Some(update) = session.reconnect.take() {
-            self.start_update(&update, session, view);
-        }
-        self.arm_shutdown_recovery(session, view);
-        if self.session_reconnect.is_some() {
-            return;
-        }
-        let Some(lost) = session.transport_lost.take() else {
-            return;
-        };
-        if self.supervisor_lost && self.reconnect.is_none() {
-            // A supervisor loss retained while the direct link lived: the supervisor client is
-            // dead, so the session-plane retry loop could never restore it — the full reconnect
-            // driver replaces the client and reattaches.
-            self.start_lost(session, view);
-            self.supervisor_lost = false;
-        } else if self.reconnect.is_none() {
-            session.note_as(
-                "Daemon connection lost; reconnecting…",
-                crate::chat::StatusKind::Warning,
-                view,
-            );
-            self.session_reconnect = Some(SessionReconnect::start(&lost));
-        }
-        // With a full reconnect driver running, the dead direct link joins it instead of racing a
-        // session-plane retry through a supervisor it cannot reach.
-        session.dirty = true;
-    }
-
-    /// The event channel closed.
+    /// The event channel closed: a recovery already in flight owns the run, otherwise the loss
+    /// is a daemon hiccup.
     pub(super) fn on_events_closed(&mut self, session: &mut SessionUi, view: &mut AgentView) {
         self.events_closed = true;
-        if let Some(update) = session.reconnect.take() {
-            // §10: an update restart closed the daemon; the UI stays mounted and reconnects.
-            self.start_update(&update, session, view);
-            return;
-        }
-        // TS #2458: the announced non-update closing owns the recovery, not the hiccup loop;
-        // already reconnecting, the dead channel's None frames are expected.
-        if self.arm_shutdown_recovery(session, view) || self.reconnect.is_some() {
-            return;
-        }
-        self.start_lost(session, view);
+        session.connection_event(ConnectionEvent::ConnectionLost, view);
     }
 
-    /// The supervisor reader died (the events already delivered were folded first, so an update's
-    /// close frame racing the death owns the recovery).
-    pub(super) fn on_reader_death(&mut self, session: &mut SessionUi, view: &mut AgentView) {
-        if session.reconnect.is_some() {
-            session.dirty = true;
-        } else if self.arm_shutdown_recovery(session, view) {
-            // The announced non-update closing owns the recovery: the supervisor
-            // socket's death joins its driver.
-        } else if session.client.direct_session_id().is_some() {
-            // A supervisor socket loss while a live direct link still serves the session is not a
-            // pane-level loss: retain the loss instead of recovering, and hand it to the full
-            // reconnect driver when the direct link later dies.
-            self.supervisor_lost = true;
-        } else if self.session_reconnect.is_some() {
-            // The direct link already died and the session-plane driver is retrying through the
-            // NOW-DEAD supervisor: stop it (it would ride a dead client) and hand the recovery to
-            // the full driver.
-            self.session_reconnect = None;
-            if self.reconnect.is_none() {
-                self.start_lost(session, view);
-            }
-            session.dirty = true;
-        } else if self.reconnect.is_none() {
-            self.start_lost(session, view);
-        }
+    /// The supervisor reader died (the events already delivered were folded first, so an
+    /// announced closing racing the death owns the recovery).
+    pub(super) fn on_reader_death(session: &mut SessionUi, view: &mut AgentView) {
+        let direct_alive = session.client.direct_session_id().is_some();
+        session.connection_event(ConnectionEvent::SupervisorDied { direct_alive }, view);
     }
 
     /// The reconnect tick: an expired window ends the run, otherwise one connect attempt runs
@@ -333,56 +438,34 @@ impl Recovery {
         if self.connect.is_some() {
             return RecoveryStep::NextIteration;
         }
-        let Some(state) = self.reconnect.as_ref() else {
-            return RecoveryStep::NextIteration;
-        };
-        let kind = state.kind;
-        if tokio::time::Instant::now() > state.deadline {
-            self.expire(kind, session, view);
-            return RecoveryStep::Stop;
+        match session.connection_event(ConnectionEvent::Tick, view) {
+            ConnectionEffect::Exit { .. } => RecoveryStep::Stop,
+            ConnectionEffect::Connect { retry } => {
+                let socket_path = socket_path.to_path_buf();
+                let (attempt_tx, attempt_rx) = tokio::sync::oneshot::channel();
+                self.connect = Some(attempt_rx);
+                tokio::spawn(async move {
+                    // No outer timeout: dropping the future mid-attempt would cancel an
+                    // in-flight handshake without its reader abort running (a leaked reader and
+                    // socket). The leg self-bounds — every attempt carries its own budgets. The
+                    // shutdown recovery's discovery waits no longer than its bound: one bounded
+                    // connect+hello per poll.
+                    let attempt = if retry {
+                        DaemonClient::connect_with_retry(&socket_path).await
+                    } else {
+                        DaemonClient::connect(&socket_path).await
+                    };
+                    let _ = attempt_tx.send(attempt);
+                });
+                RecoveryStep::Proceed
+            }
+            ConnectionEffect::None
+            | ConnectionEffect::Note(_)
+            | ConnectionEffect::Info(_)
+            | ConnectionEffect::Warning(_)
+            | ConnectionEffect::ErrorRow(_)
+            | ConnectionEffect::Attach(_) => RecoveryStep::NextIteration,
         }
-        let socket_path = socket_path.to_path_buf();
-        let (attempt_tx, attempt_rx) = tokio::sync::oneshot::channel();
-        self.connect = Some(attempt_rx);
-        // The shutdown recovery's discovery waits no longer than the bound — one bounded
-        // connect+hello per poll (the resume/hiccup windows keep the retrying helper).
-        let shutdown = matches!(kind, RecoveryKind::Shutdown);
-        tokio::spawn(async move {
-            // No outer timeout: dropping the future mid-attempt would cancel an
-            // in-flight handshake without its reader abort running (a leaked reader and
-            // socket). The leg self-bounds — every attempt carries its own budgets.
-            let attempt = if shutdown {
-                DaemonClient::connect(&socket_path).await
-            } else {
-                DaemonClient::connect_with_retry(&socket_path).await
-            };
-            let _ = attempt_tx.send(attempt);
-        });
-        RecoveryStep::Proceed
-    }
-
-    /// The reconnect window ran out: the closing's expiry row, and the run ends.
-    fn expire(&mut self, kind: RecoveryKind, session: &mut SessionUi, view: &mut AgentView) {
-        let (note, reason) = match kind {
-            // The daemon never came back within the reconnect timeout — the saved-transcript
-            // close (the session file survives on disk).
-            RecoveryKind::Shutdown => (
-                "The Prime Agent daemon shut down while this window was attached. The session transcript remains saved; restart Prime Agent and reopen it from Agents View.",
-                "daemon_closed",
-            ),
-            RecoveryKind::Lost => (
-                "could not reconnect to the daemon within 10 minutes — run `prime-agent attach` to resume.",
-                "daemon_reconnect_failed",
-            ),
-            RecoveryKind::Update => (
-                "could not reconnect to the daemon within 10 minutes — the update finished but this window is detached. Run `prime-agent attach` to resume.",
-                "update_reconnect_failed",
-            ),
-        };
-        session.note(note, view);
-        session.exit_reason = reason;
-        self.reconnect = None;
-        session.dirty = true;
     }
 
     /// The reconnect attempt's connect leg landed: reattach over the fresh connection (its
@@ -396,20 +479,21 @@ impl Recovery {
         session: &mut SessionUi,
         view: &mut AgentView,
         events: &mut mpsc::UnboundedReceiver<DaemonClientEvent>,
-        reader_dead: &mut tokio::sync::watch::Receiver<bool>,
+        reader_dead: &mut Option<tokio::sync::watch::Receiver<bool>>,
     ) -> RecoveryStep {
         self.connect = None;
-        // The deadline check runs here too: the tick arm parks while an attempt is in
-        // flight, so the window can never overrun its advertised bound by more than the
-        // in-flight attempt's connect leg.
-        let Some(state) = self.reconnect.as_ref() else {
-            return RecoveryStep::NextIteration;
-        };
-        let kind = state.kind;
-        if tokio::time::Instant::now() > state.deadline {
-            self.expire(kind, session, view);
+        // The deadline check runs here too: the tick parks while an attempt is in flight, so the
+        // window can never overrun its advertised bound by more than the in-flight attempt's
+        // connect leg.
+        if let ConnectionEffect::Exit { .. } =
+            session.connection_event(ConnectionEvent::AttemptLanded, view)
+        {
             return RecoveryStep::Stop;
         }
+        let Connection::Recovering(driver) = &session.connection else {
+            return RecoveryStep::NextIteration;
+        };
+        let kind = driver.kind;
         match attempt {
             Ok(Ok((client, fresh_events))) => {
                 // The reattach self-bounds (a timeout cannot cancel the failure-path client
@@ -417,107 +501,80 @@ impl Recovery {
                 // queued attach can legitimately wait out a slow restore).
                 match session.reattach_after_recovery(client, view, kind).await {
                     Ok(crate::session_ui::ReattachOutcome::Attached) => {
+                        // The fresh connection's event stream and loss watch replace the dead
+                        // one's.
                         *events = fresh_events;
-                        *reader_dead = session.client.reader_dead();
-                        // The fresh connection owes nothing to the old one's loss states: a
-                        // retained supervisor-loss flag or a session-plane retry left over from
-                        // before the reconnect must not fire on the new link, and the loss watch
-                        // re-arms (the new client's supervisor reader can die later, and the
-                        // one-shot latch must not park that loss).
-                        *self = Self::default();
-                        session.reconnect = None;
-                        session.dirty = true;
+                        self.events_closed = false;
+                        *reader_dead = Some(session.client.reader_dead());
+                        session.connection_event(ConnectionEvent::Reattached, view);
                     }
                     Ok(crate::session_ui::ReattachOutcome::AttachBudgetExceeded) => {
-                        // The queued attach outlived the attempt's budget (a slow restore):
-                        // schedule another on both paths (§10.4 — never a fatal exit).
-                        session.note("the daemon is still restoring — retrying…", view);
-                        session.dirty = true;
-                        self.schedule_next_attempt();
-                    }
-                    // An unexpected-loss reattach failure is a hiccup like any other (the worker
-                    // still respawning), and a shutdown recovery retries until its own bound
-                    // lands the saved-transcript close: keep retrying through the window instead
-                    // of exiting — the pane never dies to it (the operator's kicked-out class).
-                    Err(error) if matches!(kind, RecoveryKind::Lost | RecoveryKind::Shutdown) => {
-                        session.note_as(
-                            &format!("reattach failed: {error:#} — retrying…"),
-                            crate::chat::StatusKind::Warning,
-                            view,
-                        );
-                        session.dirty = true;
-                        self.schedule_next_attempt();
+                        session.connection_event(ConnectionEvent::RestoreRetry, view);
                     }
                     Err(error) => {
-                        session.note(
-                            &format!("reattach after the update failed: {error:#} — run `prime-agent attach` to resume"),
+                        if let ConnectionEffect::Exit { .. } = session.connection_event(
+                            ConnectionEvent::ReattachFailed(format!("{error:#}")),
                             view,
-                        );
-                        session.exit_reason = "update_reattach_failed";
-                        session.dirty = true;
-                        return RecoveryStep::StopAfterFrame;
+                        ) {
+                            return RecoveryStep::StopAfterFrame;
+                        }
                     }
                 }
             }
-            Ok(Err(_)) => self.schedule_next_attempt(),
+            Ok(Err(_)) => {
+                session.connection_event(ConnectionEvent::ConnectFailed, view);
+            }
             // The attempt leg was dropped: the next tick re-arms.
             Err(_) => {}
         }
         RecoveryStep::Proceed
     }
 
-    fn schedule_next_attempt(&mut self) {
-        if let Some(state) = self.reconnect.take() {
-            self.reconnect = Some(state.next_attempt());
-        }
-    }
-
     /// The session re-attach driver's attempt: re-attach the same session through the
     /// supervisor; the window's expiry surfaces the last error and the UI stays mounted.
     pub(super) async fn on_session_tick(
-        &mut self,
         session: &mut SessionUi,
         view: &mut AgentView,
     ) -> RecoveryStep {
-        let Some(mut state) = self.session_reconnect.take() else {
+        let ConnectionEffect::Attach(active_session_id) = session.connection_event(
+            ConnectionEvent::SessionTick {
+                active_session_id: session.active_session_id.clone(),
+            },
+            view,
+        ) else {
             return RecoveryStep::NextIteration;
         };
-        // The user switched sessions while the link was down: the new attach owns its own
-        // connection, so this driver stops.
-        if state.active_session_id != session.active_session_id {
-            return RecoveryStep::NextIteration;
-        }
         // The reconnect attempt's budget covers the attach alone: the surface is already
         // up and its dock holds, so the first-frame fold's bounded fetches cannot eat the
         // 10s attempt budget on a slow daemon.
         let anchor = session.reader_anchor(view);
         let attempt = tokio::time::timeout(
             Duration::from_secs(SESSION_RECONNECT_ATTEMPT_TIMEOUT_S),
-            session.attach_session(&state.active_session_id, crate::session_ui::DockFold::Held),
+            session.attach_session(&active_session_id, crate::session_ui::DockFold::Held),
         )
         .await;
-        state.last_error = match attempt {
+        match attempt {
             Ok(Ok(())) => {
                 // The resynced transcript replaces the chat, then the reconnected status
                 // lands on the rebuilt chat.
                 session.resync_view(anchor, view).await;
-                session.note_as("Daemon reconnected", crate::chat::StatusKind::Info, view);
+                session.connection_event(ConnectionEvent::SessionAttached, view);
                 session.spawn_heartbeat_refresh();
-                session.dirty = true;
-                return RecoveryStep::Proceed;
             }
-            Ok(Err(error)) => format!("{error:#}"),
-            Err(_) => "the session re-attach attempt timed out".to_string(),
-        };
-        if tokio::time::Instant::now() > state.deadline {
-            // The window expired: the last error surfaces as the closed event's
-            // error row, and the UI stays mounted.
-            let failure = format!("Daemon reconnection failed: {}", state.last_error);
-            session.error_row(&failure, view);
-            session.reconnection_failed = Some(state.last_error);
-            session.dirty = true;
-        } else {
-            self.session_reconnect = Some(state.next_attempt());
+            Ok(Err(error)) => {
+                session.connection_event(
+                    ConnectionEvent::SessionAttachFailed(format!("{error:#}")),
+                    view,
+                );
+            }
+            Err(_) => {
+                session.connection_event(
+                    ConnectionEvent::SessionAttachFailed(
+                        "the session re-attach attempt timed out".to_string(),
+                    ),
+                    view,
+                );
+            }
         }
         RecoveryStep::Proceed
     }

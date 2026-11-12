@@ -530,8 +530,9 @@ async fn run_interactive_surface(
     session.exit_guard = exit_guard.clone();
     // The supervisor reader's death watch: the event channel stays open across a supervisor socket
     // loss, so this watch is the signal the reconnect driver arms on. Taken from the LIVE session
-    // client after the open (a wait retry may have reconnected).
-    let mut reader_dead = session.client.reader_dead();
+    // client after the open (a wait retry may have reconnected). One-shot: the arm consumes it (a
+    // fired watch would hot-spin the select), and a reattach installs the fresh client's.
+    let mut reader_dead = Some(session.client.reader_dead());
     fold_opened_session(
         &mut session,
         &mut view,
@@ -658,9 +659,8 @@ async fn run_interactive_surface(
         let quiet_tick = run_loop.quiet_tick_deadline;
         let frame_deadline = run_loop.render_deadline;
         let parks_events = recovery.parks_events();
-        let reconnect_tick = recovery.tick_deadline();
-        let session_reconnect_tick = recovery.session_tick_deadline();
-        let reader_loss_handled = recovery.reader_loss_handled;
+        let reconnect_tick = recovery.tick_deadline(&session.connection);
+        let session_reconnect_tick = Recovery::session_tick_deadline(&session.connection);
         let attempt_rx = &mut recovery.connect;
         tokio::select! {
             maybe_event = async {
@@ -672,27 +672,25 @@ async fn run_interactive_surface(
                 if let Some(event) = maybe_event {
                     fold_session_events(event, &mut events, was_active, &mut session, &mut view)
                         .await;
-                    recovery.after_events(&mut session, &mut view);
                 } else {
                     recovery.on_events_closed(&mut session, &mut view);
                 }
             }
             reader_death = async {
-                // One-shot: a ready arm would hot-spin the select.
-                if reader_loss_handled {
-                    std::future::pending::<()>().await;
+                match reader_dead.as_mut() {
+                    Some(watch) => watch.changed().await,
+                    None => std::future::pending().await,
                 }
-                reader_dead.changed().await
             } => {
-                recovery.reader_loss_handled = true;
-                if reader_death.is_ok() && *reader_dead.borrow_and_update() {
+                let watch = reader_dead.take();
+                if reader_death.is_ok() && watch.is_some_and(|mut watch| *watch.borrow_and_update()) {
                     // An update restart's close frame can race this signal (the reader emits the
                     // frame, then dies): drain every frame the reader already delivered before
-                    // deciding, so the update's own reconnect driver owns the recovery.
+                    // deciding, so the announced closing's own driver owns the recovery.
                     while let Ok(event) = events.try_recv() {
                         session.apply_client_event(event, &mut view);
                     }
-                    recovery.on_reader_death(&mut session, &mut view);
+                    Recovery::on_reader_death(&mut session, &mut view);
                 }
             }
             input = async {
@@ -775,7 +773,7 @@ async fn run_interactive_surface(
                 }
             }
             () = sleep_until_armed(session_reconnect_tick) => {
-                let step = recovery.on_session_tick(&mut session, &mut view).await;
+                let step = Recovery::on_session_tick(&mut session, &mut view).await;
                 if run_loop.after_recovery(step) {
                     continue;
                 }
