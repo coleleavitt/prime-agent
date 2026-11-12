@@ -259,19 +259,6 @@ class SemanticsTests(WorkflowTestCase):
 
         self.assertEqual((await workflow.run(bad, backend=FakeBackend())).result, "ok")
 
-    async def test_budget_refuses_agents_once_spent(self) -> None:
-        backend = FakeBackend(lambda request: ws.AgentOutcome(text="x", agent_id="c", tokens=600))
-
-        async def main(wf):
-            await wf.agent("one")
-            await wf.agent("two")
-            self.assertEqual((wf.budget.spent(), wf.budget.remaining()), (1200, 0))
-            wf.agent("three")
-
-        result = await workflow.run(main, backend=backend, budget=1000)
-        self.assertEqual(result.status, "failed")
-        self.assertIn("WorkflowBudgetExceeded", result.error)
-
 
 class SchemaTests(WorkflowTestCase):
     async def test_structured_answers_are_parsed_and_validated(self) -> None:

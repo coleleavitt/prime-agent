@@ -68,8 +68,6 @@ from . import workflow_schema
 __all__ = [
     "AgentOutcome",
     "AgentRequest",
-    "Budget",
-    "WorkflowBudgetExceeded",
     "WorkflowContext",
     "WorkflowError",
     "WorkflowHandle",
@@ -77,7 +75,6 @@ __all__ = [
     "SavedWorkflow",
     "agent",
     "find_saved",
-    "get_budget",
     "get_args",
     "journal_key",
     "list_saved",
@@ -126,10 +123,6 @@ _RUNS: dict[str, WorkflowHandle] = {}
 
 class WorkflowError(RuntimeError):
     """A workflow call broke one of the runtime's rules (caps, nesting, arguments)."""
-
-
-class WorkflowBudgetExceeded(WorkflowError):
-    """``agent()`` was called after the run's token budget was spent."""
 
 
 # --- journal keys ---------------------------------------------------------
@@ -271,7 +264,6 @@ class AgentOutcome:
     text: str | None
     agent_id: str = ""
     error: str | None = None
-    tokens: int | None = None
 
 
 class AgentBackend(Protocol):
@@ -332,40 +324,6 @@ async def _release_isolated_child(handle: Any) -> None:
         await delete_subagent(handle)
     except Exception:  # noqa: BLE001 - the worktree merely stays; the run goes on
         pass
-
-
-# --- budget ---------------------------------------------------------------
-
-
-class Budget:
-    """The run's token target: ``total`` (None when unset), ``spent()``, ``remaining()``.
-
-    ``spent()`` counts the usage the backend reports per agent (the default
-    ``rlm`` backend reports none; bound children with ``rlm.spawn``'s
-    delegation budget instead). Once ``spent()`` reaches ``total``, further
-    ``agent()`` calls raise :class:`WorkflowBudgetExceeded`.
-    """
-
-    def __init__(self, total: int | None) -> None:
-        if total is not None and (not isinstance(total, int) or isinstance(total, bool) or total <= 0):
-            raise TypeError("budget must be a positive int or None")
-        self.total = total
-        self._spent = 0
-
-    def spent(self) -> int:
-        return self._spent
-
-    def remaining(self) -> float:
-        if self.total is None:
-            return math.inf
-        return max(0, self.total - self._spent)
-
-    def _add(self, tokens: int | None) -> None:
-        if tokens:
-            self._spent += int(tokens)
-
-    def __repr__(self) -> str:
-        return f"Budget(total={self.total}, spent={self._spent})"
 
 
 # --- settings -------------------------------------------------------------
@@ -498,7 +456,6 @@ class _Run:
         journal: Journal,
         replay: JournalState,
         concurrency: int,
-        budget: Budget,
         background: bool,
     ) -> None:
         self.run_id = run_id
@@ -507,7 +464,6 @@ class _Run:
         self.journal = journal
         self.replay = replay
         self.semaphore = asyncio.Semaphore(concurrency)
-        self.budget = budget
         self.background = background
         self.previous_key = ""
         # Claude Code's `T`: once a call misses the journal, every later call runs live.
@@ -549,7 +505,7 @@ async def _resolved(value: Any) -> Any:
 
 
 class WorkflowContext:
-    """What a script sees: ``agent``, ``pipeline``, ``parallel``, ``phase``, ``log``, ``args``, ``budget``, ``workflow``."""
+    """What a script sees: ``agent``, ``pipeline``, ``parallel``, ``phase``, ``log``, ``args``, ``workflow``."""
 
     def __init__(self, run: _Run, args: Any, *, depth: int = 0) -> None:
         self._run = run
@@ -559,10 +515,6 @@ class WorkflowContext:
     @property
     def run_id(self) -> str:
         return self._run.run_id
-
-    @property
-    def budget(self) -> Budget:
-        return self._run.budget
 
     def phase(self, title: str) -> None:
         """Start a phase: later ``agent()`` calls without ``phase=`` belong to it."""
@@ -600,10 +552,6 @@ class WorkflowContext:
             )
         if schema is not None:
             workflow_schema.check_schema(schema)
-        if run.budget.total is not None and run.budget.spent() >= run.budget.total:
-            raise WorkflowBudgetExceeded(
-                f"the workflow's token budget ({run.budget.total}) is spent; agent() refused"
-            )
         if len(run.records) >= MAX_AGENTS:
             raise WorkflowError(f"a workflow runs at most {MAX_AGENTS} agents")
         options = {"schema": schema, "model": model, "effort": effort, "isolation": isolation}
@@ -674,7 +622,6 @@ class WorkflowContext:
                     )
                 )
                 record.agent_id = outcome.agent_id
-                run.budget._add(outcome.tokens)
                 value: Any = None
                 if outcome.text is not None:
                     value = outcome.text
@@ -726,7 +673,6 @@ class WorkflowContext:
                     effort="low",
                 )
             )
-            run.budget._add(outcome.tokens)
             if outcome.text is None:
                 record.error = outcome.error or "the repair agent returned no result"
                 return None
@@ -781,7 +727,7 @@ class WorkflowContext:
 
     async def workflow(self, script: Any, args: Any = None) -> Any:
         """Run another workflow script inline as a sub-step (one level deep); it shares
-        this run's journal chain, concurrency cap, agent count and budget."""
+        this run's journal chain, concurrency cap and agent count."""
         if self._depth >= 1:
             raise WorkflowError("workflow() nests one level only")
         function, meta = _load_script(script)
@@ -1032,7 +978,6 @@ async def _execute(
     args: Any,
     name: str | None,
     resume_from: str | None,
-    budget: int | None,
     concurrency: int | None,
     backend: AgentBackend | None,
     background: bool,
@@ -1054,7 +999,6 @@ async def _execute(
         journal=journal,
         replay=replay,
         concurrency=concurrency or _default_concurrency(),
-        budget=Budget(budget),
         background=background,
     )
     source = _script_source(function, script)
@@ -1114,7 +1058,6 @@ async def run(
     args: Any = None,
     name: str | None = None,
     resume_from: str | None = None,
-    budget: int | None = None,
     concurrency: int | None = None,
     backend: AgentBackend | None = None,
 ) -> WorkflowResult:
@@ -1132,7 +1075,6 @@ async def run(
         args=args,
         name=name,
         resume_from=resume_from,
-        budget=budget,
         concurrency=concurrency,
         backend=backend,
         background=False,
@@ -1207,7 +1149,6 @@ def start(
     args: Any = None,
     name: str | None = None,
     resume_from: str | None = None,
-    budget: int | None = None,
     concurrency: int | None = None,
     backend: AgentBackend | None = None,
     notify: bool = True,
@@ -1229,7 +1170,6 @@ def start(
                 args=args,
                 name=run_name,
                 resume_from=resume_from,
-                budget=budget,
                 concurrency=concurrency,
                 backend=backend,
                 background=True,
@@ -1340,11 +1280,6 @@ def log(message: str) -> None:
 def get_args() -> Any:
     """The running script's ``args``."""
     return _context("get_args").args
-
-
-def get_budget() -> Budget:
-    """The running script's :class:`Budget`."""
-    return _context("get_budget").budget
 
 
 async def workflow(script: Any, args: Any = None) -> Any:

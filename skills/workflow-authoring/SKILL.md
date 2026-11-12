@@ -91,8 +91,6 @@ Context hooks (also callable as `rlm.workflow.agent(...)` etc. inside a running 
 - `wf.phase(title)`, `wf.log(message)`: progress grouping and narrator lines
   (shown in the cell for a foreground run; kept in `result.logs`).
 - `wf.args`: the `args=` value passed to `run`/`start`, verbatim.
-- `wf.budget`: `total` (the `budget=` token target or None), `spent()`,
-  `remaining()`; once spent reaches total, `agent()` raises.
 - `await wf.workflow(script, args=None)`: run another script inline (one level
   deep), sharing this run's caps and journal.
 
@@ -110,7 +108,7 @@ logs a line.
 
 ## Running
 
-- `await rlm.workflow.run(script, *, args=None, name=None, resume_from=None, budget=None, concurrency=None)`
+- `await rlm.workflow.run(script, *, args=None, name=None, resume_from=None, concurrency=None)`
   -> `WorkflowResult` (`run_id`, `status`, `result`, `error`, `agents`,
   `logs`, `run_dir`, `journal_path`). Foreground: the cell waits.
 - `rlm.workflow.start(script, ...)` -> `WorkflowHandle`: the run continues in
