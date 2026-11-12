@@ -147,6 +147,7 @@ impl SessionUi {
             context: None,
             list_rows: Vec::new(),
             turn_active: false,
+            between_model_calls: false,
             turn_ends_seen: 0,
             last_prompt_turn_end: 0,
             steering_mode: "all".to_string(),
@@ -556,6 +557,7 @@ impl SessionUi {
                 .any(|flag| state.get(flag).and_then(Value::as_bool).unwrap_or(false))
         });
         self.turn_active = streaming;
+        self.between_model_calls = false;
         self.streaming_index = None;
         // The turn-end watermark restarts only when the mounted session CHANGES: an end owed by the
         // detached session's stream must not pin the watermark (without the reset a later prompt's

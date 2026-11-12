@@ -276,8 +276,12 @@ pub(crate) struct SessionUi {
     context: Option<crate::chrome::ContextUsage>,
     list_rows: Vec<Value>,
     pub(crate) turn_active: bool,
-    /// Completed turns observed on this connection. A prompt ACK may arrive
-    /// after its entire streamed turn; it must not restart the loader then.
+    /// The run's last model call stopped for its tool calls and the next
+    /// call's `turn_start` has not arrived: the run is still busy.
+    between_model_calls: bool,
+    /// Completed runs observed on this connection (one per run, not per model
+    /// call). A prompt ACK may arrive after its entire streamed run; it must
+    /// not restart the loader then.
     turn_ends_seen: u64,
     last_prompt_turn_end: u64,
     /// The session's queue delivery mode: `all` delivers the queued steering prefix as one batched

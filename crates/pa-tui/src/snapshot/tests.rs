@@ -1468,12 +1468,19 @@ fn decodes_streamed_events() {
         TurnUpdate::AssistantMessage { message, streaming: false, .. } if message["content"] == "done"
     ));
     let ended = event_to_update(&json!({ "type": "turn_end" })).unwrap();
-    assert_eq!(ended, TurnUpdate::TurnEnded { error: None });
+    assert_eq!(
+        ended,
+        TurnUpdate::TurnEnded {
+            error: None,
+            tool_use: false
+        }
+    );
     let failed = event_to_update(&json!({ "type": "turn_end", "error": "boom" })).unwrap();
     assert_eq!(
         failed,
         TurnUpdate::TurnEnded {
-            error: Some("boom".to_string())
+            error: Some("boom".to_string()),
+            tool_use: false
         }
     );
     assert_eq!(

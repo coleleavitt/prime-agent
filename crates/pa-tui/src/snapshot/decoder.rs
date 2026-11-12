@@ -49,7 +49,12 @@ pub enum TurnUpdate {
         is_error: bool,
     },
     /// `turn_end`, with the turn error string when the turn failed.
-    TurnEnded { error: Option<String> },
+    /// `tool_use`: the model call stopped for its tool calls, so the agent
+    /// loop calls the model again unless a tool ended the run.
+    TurnEnded {
+        error: Option<String>,
+        tool_use: bool,
+    },
     /// A `custom`-role message the transcript renders (session-command
     /// echo/result rows, or the malformed-notice fallback).
     CustomRow(ChatEntry),
@@ -256,6 +261,8 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .get("error")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            tool_use: event.pointer("/message/stopReason").and_then(Value::as_str)
+                == Some("toolUse"),
         }),
         "agent_end" => Some(TurnUpdate::Idle),
         // Claude Code's away summary and prompt-suggestion worker events
