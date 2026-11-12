@@ -761,7 +761,6 @@ pub(crate) async fn build_headless_engine_with(
     // spawned child carries its already-resolved model and request auth
     // (the spawn resolved them against this same catalog).
     let mut registry = pa_core::models::ModelRegistry::for_session(&config.agent_dir, &config.cwd);
-    registry.load_private_authorization_from_cache();
     let model = match embedding {
         HeadlessEmbedding::Child(overrides) => match &overrides.lane {
             ChildLane::Real(model) => (**model).clone(),

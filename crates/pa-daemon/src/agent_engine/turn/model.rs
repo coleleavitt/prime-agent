@@ -419,7 +419,6 @@ impl AgentSessionEngine {
             return Ok(());
         }
         let mut registry = self.session_model_registry();
-        registry.load_private_authorization_from_cache();
         let uses_oauth = registry
             .auth
             .get_all()

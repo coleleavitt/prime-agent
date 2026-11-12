@@ -127,7 +127,6 @@ fn resolve_action_model(
         AuthStorage::create(&config.agent_dir),
         config.agent_dir.join("models.json"),
     );
-    registry.load_private_authorization_from_cache();
     let session_selector = session_selector(config);
     let reference = reference
         .map(str::trim)

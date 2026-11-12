@@ -187,7 +187,6 @@ impl AgentSessionEngine {
             return;
         };
         let mut registry = self.session_model_registry();
-        registry.load_private_authorization_from_cache();
         let restored = pa_core::models::find_session_model_with_readiness_wait(
             &mut registry,
             &provider,
@@ -277,11 +276,7 @@ impl AgentSessionEngine {
     /// The registry resolution before the allowlist gate: the flagged-model
     /// arm or the startup chain.
     fn resolve_registry_model_unchecked(&self) -> anyhow::Result<Model> {
-        let mut registry = self.session_model_registry();
-        // A fresh registry gates private Prime Inference models out until the
-        // async authorization refresh runs; adopt the on-disk cache so
-        // create-time resolution can pick the session's private model.
-        registry.load_private_authorization_from_cache();
+        let registry = self.session_model_registry();
         let selection = self.current_selection();
         let Some(model_name) = selection.model.as_deref() else {
             if let Some(model) = self.restored_model_resolution(&registry) {

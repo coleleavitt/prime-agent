@@ -42,8 +42,7 @@ impl AgentSessionEngine {
         if self.config.faux_script.is_some() {
             return Vec::new();
         }
-        let mut registry = self.session_model_registry();
-        registry.load_private_authorization_from_cache();
+        let registry = self.session_model_registry();
         let available: Vec<pa_types::ai::Model> =
             registry.get_available().into_iter().cloned().collect();
         let candidates = pa_core::models::failover_candidates(model, &available);
@@ -78,8 +77,7 @@ impl AgentSessionEngine {
         if entries.is_empty() {
             return Vec::new();
         }
-        let mut registry = self.session_model_registry();
-        registry.load_private_authorization_from_cache();
+        let registry = self.session_model_registry();
         let available: Vec<pa_types::ai::Model> =
             registry.get_available().into_iter().cloned().collect();
         let (resolved, unresolved) =

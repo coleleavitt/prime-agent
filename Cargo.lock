@@ -2806,7 +2806,6 @@ dependencies = [
  "futures",
  "getrandom 0.3.4",
  "globset",
- "hmac",
  "ignore",
  "libc",
  "nix 0.29.0",

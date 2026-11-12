@@ -26,10 +26,7 @@ impl StartupModelProbe {
         let settings = pa_core::settings::SettingsManager::create(&self.cwd, &self.agent_dir);
         // The session directory's saved Prime context counts as signed in
         // there, as its requests use it.
-        let mut registry = pa_core::models::ModelRegistry::for_session(&self.agent_dir, &self.cwd);
-        // Sync resolution on a fresh registry must adopt the on-disk private
-        // authorization cache before `get_available`.
-        registry.load_private_authorization_from_cache();
+        let registry = pa_core::models::ModelRegistry::for_session(&self.agent_dir, &self.cwd);
         let all: Vec<pa_types::ai::Model> = registry.get_all().to_vec();
         let available: Vec<pa_types::ai::Model> =
             registry.get_available().into_iter().cloned().collect();

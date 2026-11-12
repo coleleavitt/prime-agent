@@ -116,7 +116,6 @@ pub fn slot_image_model_router(
             let image_model_reference = settings.get_image_model();
             let block_images = settings.get_block_images();
             let mut registry = crate::models::ModelRegistry::for_session(&decide_agent_dir, &cwd);
-            registry.load_private_authorization_from_cache();
             let available: Vec<pa_types::ai::Model> =
                 registry.get_available().into_iter().cloned().collect();
             // Route acceptance uses the same resolved-auth result the arm path
@@ -156,7 +155,6 @@ pub fn slot_image_model_router(
                     armed_from.clone_from(&provider_target.read_or_recover());
                 }
                 let mut registry = crate::models::ModelRegistry::for_session(&agent_dir, &swap_cwd);
-                registry.load_private_authorization_from_cache();
                 let resolved_auth = registry
                     .get_api_key_and_headers(&resolved.model, resolved.model.headers.as_ref());
                 let target = ProviderTarget {

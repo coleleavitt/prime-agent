@@ -62,7 +62,6 @@ struct Cleared {
 impl AgentRunAgent {
     fn clear(&self, request: &RunAgentRequest) -> Result<Cleared, String> {
         let mut registry = ModelRegistry::for_session(&self.agent_dir, self.cwd.clone());
-        registry.load_private_authorization_from_cache();
         let resolved = resolve_child_model(
             &registry,
             request.model.as_deref(),

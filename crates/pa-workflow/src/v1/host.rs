@@ -69,7 +69,6 @@ pub(crate) async fn handle_run_agent(
         let reference = request.model.clone();
         tokio::task::spawn_blocking(move || {
             let mut registry = ModelRegistry::for_session(&config.agent_dir, config.cwd.clone());
-            registry.load_private_authorization_from_cache();
             preflight(&mut registry, reference.as_deref(), &config.session_model)
         })
         .await?

@@ -199,14 +199,10 @@ pub fn wire_session_runtime(
     crate::memory::register_host_handlers(&mut handlers, crate::memory::personal_dir(agent_dir));
     let model_registry = rlm.model_registry.unwrap_or_else(|| {
         let auth = crate::auth::AuthStorage::create(agent_dir);
-        let mut registry =
-            crate::models::registry::ModelRegistry::create(auth, agent_dir.join("models.json"));
-        // Adopt the on-disk private authorization before freezing the Arc:
-        // `rlm.find_models` and child-spawn resolution search this registry, and a
-        // fresh registry otherwise gates every private `internal/*` model out (only
-        // the async refresh populates the authorized set).
-        registry.load_private_authorization_from_cache();
-        Arc::new(registry)
+        Arc::new(crate::models::registry::ModelRegistry::create(
+            auth,
+            agent_dir.join("models.json"),
+        ))
     });
     let rlm_usage = Arc::new(super::rlm_usage::RlmChildUsageAttributions::new(
         rlm.usage_store

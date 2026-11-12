@@ -397,7 +397,6 @@ fn resolve(selector: &str, agent_dir: &std::path::Path, cwd: PathBuf) -> anyhow:
         .split_once('/')
         .ok_or_else(|| anyhow::anyhow!("model \"{selector}\" is not provider/model-id"))?;
     let mut registry = crate::models::ModelRegistry::for_session(agent_dir, cwd);
-    registry.load_private_authorization_from_cache();
     let model = registry
         .get_all()
         .iter()

@@ -14,9 +14,7 @@ use super::protocol::ResponseData;
 /// resolution `set_model` uses), with the session directory's Prime
 /// Inference team and key.
 fn registry(state: &RpcState) -> pa_core::models::ModelRegistry {
-    let mut registry = pa_core::models::ModelRegistry::for_session(&state.agent_dir, &state.cwd);
-    registry.load_private_authorization_from_cache();
-    registry
+    pa_core::models::ModelRegistry::for_session(&state.agent_dir, &state.cwd)
 }
 
 /// `set_model`: resolve through the available catalog, swap the live

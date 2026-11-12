@@ -49,9 +49,7 @@ fn selector_of(model: &Model) -> String {
 }
 
 fn registry(agent_dir: &Path, cwd: &Path) -> pa_core::models::ModelRegistry {
-    let mut registry = pa_core::models::ModelRegistry::for_session(agent_dir, cwd);
-    registry.load_private_authorization_from_cache();
-    registry
+    pa_core::models::ModelRegistry::for_session(agent_dir, cwd)
 }
 
 fn with_auth(

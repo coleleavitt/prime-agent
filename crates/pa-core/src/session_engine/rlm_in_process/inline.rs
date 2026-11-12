@@ -905,11 +905,10 @@ impl RlmSubagentHost for InlineHost {
                 )
             } else {
                 let auth = crate::auth::AuthStorage::create(&config.agent_dir);
-                let mut registry = crate::models::ModelRegistry::create(
+                let registry = crate::models::ModelRegistry::create(
                     auth,
                     config.agent_dir.join("models.json"),
                 );
-                registry.load_private_authorization_from_cache();
                 let selector = super::resolve_child_selector(
                     &registry,
                     request.model.as_deref(),

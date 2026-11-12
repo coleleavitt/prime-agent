@@ -12,14 +12,6 @@ pub use catalog_chain::{
 /// and auth-change wiring selects it; pa-daemon's runtime surface goes
 /// through pa-core, so the trigger rides this re-export).
 pub use pa_models::RefreshTrigger;
-pub use private_auth::{
-    PRIVATE_PRIME_AUTHORIZATION_CACHE_TTL_MS,
-    PrivatePrimeAuthorizationCache,
-    get_private_prime_inference_models,
-    private_prime_authorization_fingerprint,
-    read_private_prime_authorization_cache,
-    write_private_prime_authorization_cache,
-};
 pub use registry::{
     ModelRegistry,
     ProviderRequestConfig,
@@ -32,8 +24,6 @@ pub(crate) mod catalog_chain;
 pub(crate) mod custom;
 pub mod image_model_routing;
 pub(crate) mod prime_inference;
-pub(crate) mod prime_inference_catalog;
-pub(crate) mod private_auth;
 pub(crate) mod registry;
 pub(crate) mod resolver;
 pub(crate) mod session_restore;

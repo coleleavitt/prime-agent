@@ -92,7 +92,6 @@ fn resolve(
     session: &pa_agent::types::Model,
 ) -> Result<Resolved, String> {
     let mut registry = ModelRegistry::for_session(agent_dir, cwd);
-    registry.load_private_authorization_from_cache();
     let model = registry
         .get_all()
         .iter()
