@@ -13,6 +13,31 @@ use super::model_usage::{MODEL_USAGE_CUSTOM_TYPE, ModelUsage};
 use crate::session::billed_row::BilledRowSink;
 use crate::session::manager::SessionManager;
 
+/// Claude Code's `subagent_tokens` for one child: the latest call's
+/// context (input plus cache reads and writes) plus every call's output,
+/// so the final context size plus all output, not a billed sum.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubagentTokens {
+    latest_context: u64,
+    output: u64,
+}
+
+impl SubagentTokens {
+    /// Fold one completed assistant call's usage.
+    pub fn add(&mut self, usage: &Usage) {
+        self.latest_context = usage
+            .input
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write);
+        self.output = self.output.saturating_add(usage.output);
+    }
+
+    #[must_use]
+    pub fn total(self) -> u64 {
+        self.latest_context.saturating_add(self.output)
+    }
+}
+
 pub fn add_assistant_usage(total: &mut Usage, usage: &Usage) {
     // Saturating: a wrapping usage sum would underbill.
     total.input = total.input.saturating_add(usage.input);

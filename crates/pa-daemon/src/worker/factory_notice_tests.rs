@@ -64,6 +64,7 @@ impl FactoryChildren for ScriptedChildren {
                     error: None,
                     duration_ms: None,
                     tool_use_count: None,
+                    subagent_tokens: None,
                     replied_since_task: None,
                 })
                 .collect())

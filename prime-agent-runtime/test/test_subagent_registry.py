@@ -637,6 +637,7 @@ class RlmCollectTest(unittest.TestCase):
                         "error": None,
                         "duration_ms": 4321,
                         "tool_use_count": 3,
+                        "subagent_tokens": 12345,
                         "replied_since_task": False,
                     },
                     {
@@ -669,6 +670,7 @@ class RlmCollectTest(unittest.TestCase):
         self.assertIsNone(done.error)
         self.assertEqual(done.duration_ms, 4321)
         self.assertEqual(done.tool_use_count, 3)
+        self.assertEqual(done.subagent_tokens, 12345)
         self.assertFalse(done.replied_since_task)
         running = results[1]
         self.assertEqual(running.status, "running")

@@ -66,6 +66,10 @@ pub enum RlmChildTerminalNotice {
 /// `<usage>` and `<worktree>` elements.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RlmChildNoticeExtras {
+    /// Claude Code's `subagent_tokens` ([`super::rlm_usage::SubagentTokens`]).
+    pub subagent_tokens: Option<u64>,
+    /// The child's tool calls.
+    pub tool_uses: Option<u64>,
     /// The run's wall time.
     pub duration_ms: Option<u64>,
     /// The worktree the child ran in, when it was isolated in one.
@@ -73,14 +77,22 @@ pub struct RlmChildNoticeExtras {
 }
 
 impl RlmChildNoticeExtras {
-    /// The trailer lines: `<usage>` and `<worktree>`, each when known.
+    /// The trailer lines: `<usage>` (its elements in Claude Code's order,
+    /// each when known) and `<worktree>`.
     fn trailer(&self) -> String {
         let mut lines = String::new();
+        let mut usage = String::new();
+        if let Some(tokens) = self.subagent_tokens {
+            let _ = write!(usage, "<subagent_tokens>{tokens}</subagent_tokens>");
+        }
+        if let Some(tool_uses) = self.tool_uses {
+            let _ = write!(usage, "<tool_uses>{tool_uses}</tool_uses>");
+        }
         if let Some(duration_ms) = self.duration_ms {
-            let _ = writeln!(
-                lines,
-                "<usage><duration_ms>{duration_ms}</duration_ms></usage>"
-            );
+            let _ = write!(usage, "<duration_ms>{duration_ms}</duration_ms>");
+        }
+        if !usage.is_empty() {
+            let _ = writeln!(lines, "<usage>{usage}</usage>");
         }
         if let Some(worktree) = &self.worktree {
             // A hook-made worktree has no branch: its element is left out.
@@ -100,6 +112,12 @@ impl RlmChildNoticeExtras {
 
     /// The details keys the extras add.
     fn extend_details(&self, details: &mut serde_json::Value) {
+        if let Some(tokens) = self.subagent_tokens {
+            details["subagentTokens"] = json!(tokens);
+        }
+        if let Some(tool_uses) = self.tool_uses {
+            details["toolUses"] = json!(tool_uses);
+        }
         if let Some(duration_ms) = self.duration_ms {
             details["durationMs"] = json!(duration_ms);
         }
@@ -336,6 +354,8 @@ mod tests {
     #[test]
     fn extras_render_usage_and_the_worktree() {
         let extras = RlmChildNoticeExtras {
+            subagent_tokens: Some(12_345),
+            tool_uses: Some(7),
             duration_ms: Some(1_500),
             worktree: Some(crate::worktree::Worktree {
                 name: "agent-1".to_string(),
@@ -355,7 +375,8 @@ mod tests {
             text(&message),
             "<task-notification>\n<task-id>sub-9</task-id>\n<task-type>local_agent</task-type>\n\
              <status>failed</status>\n<summary>Agent \"lane\" failed</summary>\n<result>boom</result>\n\
-             <usage><duration_ms>1500</duration_ms></usage>\n\
+             <usage><subagent_tokens>12345</subagent_tokens><tool_uses>7</tool_uses>\
+             <duration_ms>1500</duration_ms></usage>\n\
              <worktree><worktreePath>/r/.prime/worktrees/agent-1</worktreePath>\
              <worktreeBranch>worktree-agent-1</worktreeBranch></worktree>\n\
              </task-notification>"
@@ -369,6 +390,8 @@ mod tests {
                 "taskType": "local_agent",
                 "status": "failed",
                 "summary": "Agent \"lane\" failed",
+                "subagentTokens": 12_345,
+                "toolUses": 7,
                 "durationMs": 1_500,
                 "worktreePath": "/r/.prime/worktrees/agent-1",
                 "worktreeBranch": "worktree-agent-1",

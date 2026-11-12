@@ -148,6 +148,9 @@ class RLMChildResult:
 
     `answer_text` is the child's full final answer (the settle-binding
     lane, host-bounded); `answer_preview` is the compact roster preview.
+    `subagent_tokens`, `tool_use_count` and `duration_ms` are Claude Code's
+    `<usage>`: the child's final context size plus all its output, its tool
+    calls, and its wall time.
     """
 
     rlm_child_id: str
@@ -161,6 +164,7 @@ class RLMChildResult:
     duration_ms: int | None = None
     tool_use_count: int | None = None
     replied_since_task: bool | None = None
+    subagent_tokens: int | None = None
 
     @property
     def answer(self) -> str | None:
@@ -559,6 +563,7 @@ def _child_result_from_payload(payload: Any) -> RLMChildResult:
         error=_optional_str("error"),
         duration_ms=_optional_int("duration_ms"),
         tool_use_count=_optional_int("tool_use_count"),
+        subagent_tokens=_optional_int("subagent_tokens"),
         replied_since_task=replied,
     )
 

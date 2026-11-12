@@ -271,8 +271,10 @@ async fn spawn_fake_supervisor(
                                 child_subagents
                                     .settlement_reads
                                     .fetch_add(1, Ordering::SeqCst);
-                                state["settlement"] =
-                                    json!({ "finalAnswer": "the child final answer" });
+                                state["settlement"] = json!({
+                                    "finalAnswer": "the child final answer",
+                                    "subagentTokens": 4_096,
+                                });
                                 if matches!(child, FakeChild::LeavesAfterSettle) {
                                     gone.store(true, Ordering::SeqCst);
                                 }
@@ -903,8 +905,9 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
         follow_up["rlmNoticeNonce"].as_str().is_some(),
         "the notice carries the one-shot capability the parent's queue admission consumes"
     );
-    // The agent `<task-notification>`: the child's last text is the result,
-    // the run's wall time the usage.
+    // The agent `<task-notification>`: the child's last text is the result;
+    // the usage is Claude Code's `subagent_tokens` (from the settlement),
+    // tool uses (the live count) and the run's wall time.
     let content = custom["content"].as_str().expect("text content");
     let duration_ms = custom["details"]["durationMs"]
         .as_u64()
@@ -920,7 +923,8 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
     assert!(
         content.ends_with(&format!(
             "<result>the child final answer</result>\n\
-             <usage><duration_ms>{duration_ms}</duration_ms></usage>\n</task-notification>"
+             <usage><subagent_tokens>4096</subagent_tokens><tool_uses>3</tool_uses>\
+             <duration_ms>{duration_ms}</duration_ms></usage>\n</task-notification>"
         )),
         "{content}"
     );
@@ -1230,6 +1234,8 @@ fn assert_failure_row(follow_up: &Value, child_id: &str, error: &str) {
     let custom = &follow_up["customMessage"];
     let timestamp = custom["timestamp"].as_u64().expect("failure row timestamp");
     let extras = pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
+        subagent_tokens: custom["details"]["subagentTokens"].as_u64(),
+        tool_uses: custom["details"]["toolUses"].as_u64(),
         duration_ms: custom["details"]["durationMs"].as_u64(),
         worktree: None,
     };
@@ -2952,6 +2958,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         interrupted: false,
         progress_note: None,
         tool_use_count: None,
+        subagent_tokens: None,
         live_observation: None,
         direct_observation: Arc::new(Mutex::new(())),
         notice_delivered: false,
@@ -3527,6 +3534,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         replied_since_task: false,
         progress_note: None,
         tool_use_count: None,
+        subagent_tokens: None,
         live_observation: None,
         direct_observation: Arc::new(Mutex::new(())),
         notice_delivered: false,

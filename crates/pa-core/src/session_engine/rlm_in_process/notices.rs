@@ -6,9 +6,10 @@ use std::sync::Arc;
 use super::now_ms;
 use super::registry::{InProcessChildRecord, NoticeKind};
 use crate::session_engine::rlm_notices::{
+    RlmChildNoticeExtras,
     RlmChildTerminalNotice,
-    create_rlm_child_failure_message,
-    create_rlm_child_terminal_notice,
+    create_rlm_child_failure_message_with,
+    create_rlm_child_terminal_notice_with,
 };
 
 pub(super) fn terminal_row(
@@ -16,28 +17,32 @@ pub(super) fn terminal_row(
     kind: NoticeKind,
     error: Option<&str>,
     preview: Option<String>,
+    extras: &RlmChildNoticeExtras,
 ) -> Option<pa_types::session::CustomMessage> {
     match kind {
-        NoticeKind::Done => Some(create_rlm_child_terminal_notice(
+        NoticeKind::Done => Some(create_rlm_child_terminal_notice_with(
             &RlmChildTerminalNotice::CompletedWithoutReply {
                 child_id: record.rlm_child_id.clone(),
                 session_name: record.session_name.clone(),
                 last_assistant_text_preview: preview,
             },
+            extras,
             now_ms(),
         )),
-        NoticeKind::Error => Some(create_rlm_child_failure_message(
+        NoticeKind::Error => Some(create_rlm_child_failure_message_with(
             &record.rlm_child_id,
             &record.session_name,
             error.unwrap_or("Child run failed"),
+            extras,
             now_ms(),
         )),
-        NoticeKind::Cancelled => Some(create_rlm_child_terminal_notice(
+        NoticeKind::Cancelled => Some(create_rlm_child_terminal_notice_with(
             &RlmChildTerminalNotice::Cancelled {
                 child_id: record.rlm_child_id.clone(),
                 session_name: record.session_name.clone(),
                 reason: Some("Deleted by parent orchestrator".to_string()),
             },
+            extras,
             now_ms(),
         )),
         NoticeKind::DoneReplied

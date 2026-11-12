@@ -212,6 +212,8 @@ struct ChildRecord {
     /// The child's tool-call count as last observed live; `None` until a
     /// read saw one (the wire omits a zero count, TS parity).
     tool_use_count: Option<u64>,
+    /// The child's `subagent_tokens`, captured with the settle's answer.
+    subagent_tokens: Option<u64>,
     /// Freshness of the last live summary, shared by roster and direct reads.
     live_observation: Option<ChildObservation>,
     /// Direct reads establish process generations in capture order.
@@ -285,6 +287,8 @@ impl ChildRecord {
     /// run's wall time and its worktree.
     fn notice_extras(&self) -> pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
         pa_core::session_engine::rlm_notices::RlmChildNoticeExtras {
+            subagent_tokens: self.subagent_tokens,
+            tool_uses: self.tool_use_count,
             duration_ms: Some(now_ms().saturating_sub(self.started_at_ms)),
             worktree: self.worktree.clone(),
         }
@@ -822,6 +826,7 @@ impl SupervisorChildSessions {
                 interrupted: false,
                 progress_note: None,
                 tool_use_count: None,
+                subagent_tokens: None,
                 live_observation: None,
                 direct_observation: Arc::new(Mutex::new(())),
                 notice_delivered: false,
@@ -874,6 +879,7 @@ impl SupervisorChildSessions {
                 interrupted: false,
                 progress_note: None,
                 tool_use_count: None,
+                subagent_tokens: None,
                 live_observation: None,
                 direct_observation: Arc::new(Mutex::new(())),
                 notice_delivered: false,
@@ -965,6 +971,7 @@ impl SupervisorChildSessions {
             error: record.error.clone(),
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
             tool_use_count: record.tool_use_count,
+            subagent_tokens: record.subagent_tokens,
             replied_since_task: Some(record.replied_since_task),
         }
     }
@@ -983,6 +990,7 @@ impl SupervisorChildSessions {
             error: Some(deleted.error.clone()),
             duration_ms: Some(now_ms().saturating_sub(deleted.started_at_ms)),
             tool_use_count: None,
+            subagent_tokens: None,
             replied_since_task: None,
         }
     }

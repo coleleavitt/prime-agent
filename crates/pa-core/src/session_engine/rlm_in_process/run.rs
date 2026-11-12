@@ -264,8 +264,21 @@ async fn finish_run(
             }
         }
     }
-    let preview = record.state().await.answer_preview.clone();
-    if let Some(row) = super::notices::terminal_row(record, kind, error.as_deref(), preview) {
+    let (preview, extras) = {
+        let state = record.state().await;
+        (
+            state.answer_preview.clone(),
+            crate::session_engine::rlm_notices::RlmChildNoticeExtras {
+                subagent_tokens: Some(state.subagent_tokens.total()),
+                tool_uses: Some(state.tool_use_count),
+                duration_ms: Some(super::now_ms().saturating_sub(record.started_at_ms)),
+                worktree: None,
+            },
+        )
+    };
+    if let Some(row) =
+        super::notices::terminal_row(record, kind, error.as_deref(), preview, &extras)
+    {
         if !super::notices::admit_claimed_row(
             record,
             parent.expect("notice has parent"),
@@ -367,6 +380,7 @@ async fn observe_child_event(record: &Arc<InProcessChildRecord>, event: AgentEve
                     >(assistant)
                     .map(|wire| wire.usage)
                     {
+                        state.subagent_tokens.add(&wire_usage);
                         match state
                             .pending_usage
                             .iter_mut()
@@ -769,8 +783,14 @@ pub(super) fn delete_subagent(
             record.child_host.close_children().await;
             flush_pending_usage(&host, &record).await;
             let admitted = if let Some(parent) = parent {
-                let row = super::notices::terminal_row(&record, NoticeKind::Cancelled, None, None)
-                    .expect("cancelled notice");
+                let row = super::notices::terminal_row(
+                    &record,
+                    NoticeKind::Cancelled,
+                    None,
+                    None,
+                    &crate::session_engine::rlm_notices::RlmChildNoticeExtras::default(),
+                )
+                .expect("cancelled notice");
                 super::notices::admit_claimed_row(
                     &record,
                     parent,
@@ -815,6 +835,7 @@ pub(super) fn delete_subagent(
                             NoticeKind::Cancelled,
                             None,
                             None,
+                            &crate::session_engine::rlm_notices::RlmChildNoticeExtras::default(),
                         )
                         .expect("cancelled notice");
                         if super::notices::admit_claimed_row(

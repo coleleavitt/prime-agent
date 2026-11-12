@@ -137,6 +137,8 @@ pub(crate) struct ChildRunState {
     /// notice and the watcher stops.
     pub(crate) closed_by_parent: bool,
     pub(crate) tool_use_count: u64,
+    /// The child's `subagent_tokens` over its completed assistant calls.
+    pub(crate) subagent_tokens: crate::session_engine::rlm_usage::SubagentTokens,
     /// Concurrent tool executions (activity flips back to `waiting` at 0).
     pub(crate) running_tools: u32,
     pub(crate) activity: Option<ChildActivity>,
@@ -202,6 +204,7 @@ impl InProcessChildRecord {
                 prompt_admitted: false,
                 closed_by_parent: false,
                 tool_use_count: 0,
+                subagent_tokens: crate::session_engine::rlm_usage::SubagentTokens::default(),
                 running_tools: 0,
                 activity: Some(ChildActivity {
                     kind: "waiting",
@@ -488,6 +491,7 @@ impl InProcessChildRecord {
                 .or_else(|| state.admission_error.clone()),
             duration_ms: Some(now_ms.saturating_sub(self.started_at_ms)),
             tool_use_count: Some(state.tool_use_count),
+            subagent_tokens: Some(state.subagent_tokens.total()),
             replied_since_task: Some(state.replied_since_task),
             answer_text: state.answer_text.clone(),
         }
@@ -527,6 +531,7 @@ impl DeletedChild {
             error: Some(self.error.clone()),
             duration_ms: Some(super::now_ms().saturating_sub(self.started_at_ms)),
             tool_use_count: None,
+            subagent_tokens: None,
             replied_since_task: None,
             answer_text: None,
         }

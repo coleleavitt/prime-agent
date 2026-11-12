@@ -1140,6 +1140,7 @@ impl RlmSubagentHost for InlineHost {
                         error: state.error.clone(),
                         duration_ms: Some(super::now_ms().saturating_sub(state.started_at_ms)),
                         tool_use_count: None,
+                        subagent_tokens: None,
                         replied_since_task: Some(state.replied_since_task),
                     });
                 }

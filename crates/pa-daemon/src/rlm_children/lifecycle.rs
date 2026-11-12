@@ -527,6 +527,10 @@ impl SupervisorChildSessionsInner {
         // [`ANSWER_TEXT_MAX_CHARS`], so the whole fenced JSON a settle binds
         // from survives) for the collect envelope's binding lane.
         let raw_answer = settlement_answer(&state);
+        let subagent_tokens = state
+            .get("settlement")
+            .and_then(|settlement| settlement.get("subagentTokens"))
+            .and_then(Value::as_u64);
         // How the run's final turn ended (#3366): a run whose last model
         // call failed (a provider error, after its retries if it had any)
         // settles `error` with that text instead of a `done` with no
@@ -566,6 +570,7 @@ impl SupervisorChildSessionsInner {
             record.answer_captured = answer.is_some();
             record.answer_preview = answer;
             record.answer_text = answer_text;
+            record.subagent_tokens = subagent_tokens;
         }
     }
 

@@ -371,6 +371,7 @@ impl FakeHost {
             error: outcome.and_then(|outcome| outcome.error.clone()),
             duration_ms: Some(5),
             tool_use_count: Some(1),
+            subagent_tokens: None,
             replied_since_task: None,
             answer_text: outcome.and_then(|outcome| outcome.answer.clone()),
         }

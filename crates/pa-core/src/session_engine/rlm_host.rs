@@ -197,6 +197,10 @@ pub struct RlmChildResult {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_use_count: Option<u64>,
+    /// Claude Code's `subagent_tokens`: the child's final context size
+    /// plus all its output ([`super::rlm_usage::SubagentTokens`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replied_since_task: Option<bool>,
 }
@@ -1340,6 +1344,7 @@ mod tests {
                     error: None,
                     duration_ms: Some(2_000),
                     tool_use_count: Some(3),
+                    subagent_tokens: None,
                     replied_since_task: Some(true),
                 }])
             })

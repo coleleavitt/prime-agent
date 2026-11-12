@@ -510,7 +510,10 @@ impl Worker {
         let summary = self.summary_locked(&core, inputs);
         let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
         if payload.get("includeSettlement").and_then(Value::as_bool) == Some(true) {
-            state["settlement"] = json!({ "finalAnswer": final_answer(core.store.as_ref()) });
+            state["settlement"] = json!({
+                "finalAnswer": final_answer(core.store.as_ref()),
+                "subagentTokens": subagent_tokens(core.store.as_ref()),
+            });
         }
         response_success(None, "get_state", Some(state))
     }
@@ -1071,6 +1074,29 @@ fn final_answer(store: Option<&crate::session_store::SessionFile>) -> Option<Str
         .filter(|message| crate::types::message_role(message) == Some("assistant"))
         .map(|message| crate::types::message_text(&message))
         .find(|text| !text.is_empty())
+}
+
+/// The run's `subagent_tokens` (Claude Code's `<usage>`): every completed
+/// assistant call's usage folded into the final context size plus all
+/// output.
+fn subagent_tokens(store: Option<&crate::session_store::SessionFile>) -> u64 {
+    let mut tokens = pa_core::session_engine::rlm_usage::SubagentTokens::default();
+    for message in store
+        .map(crate::session_store::SessionFile::messages)
+        .unwrap_or_default()
+    {
+        if crate::types::message_role(&message) != Some("assistant") {
+            continue;
+        }
+        if let Some(usage) = message
+            .get("usage")
+            .cloned()
+            .and_then(|usage| serde_json::from_value::<pa_types::ai::Usage>(usage).ok())
+        {
+            tokens.add(&usage);
+        }
+    }
+    tokens.total()
 }
 
 /// The bounce body: the receiver label, the fact, and the dropped body —

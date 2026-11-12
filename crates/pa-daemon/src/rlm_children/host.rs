@@ -246,6 +246,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     interrupted: false,
                     progress_note: None,
                     tool_use_count: None,
+                    subagent_tokens: None,
                     live_observation: None,
                     direct_observation: Arc::new(Mutex::new(())),
                     notice_delivered: false,
