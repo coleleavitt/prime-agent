@@ -73,14 +73,20 @@ pub(super) async fn run_child_task(
                 teardown_parent_gone(&host, &record).await;
             }
         }
-        Some(Err(error)) => {
+        Some(Err(error)) if !pa_agent::abort::is_abort_error(&error) => {
             // The terminal sequence keeps its order: accounting, notice
             // admission, THEN the settled state and its wake signal — the
             // run state never exposes `settled` before the parent's
             // notice is admitted.
             finish_run(&host, &record, &TaskVerdict::Error(error.to_string())).await;
         }
-        Some(Ok(_)) => match wait_for_task_settle(&host, &record).await {
+        // An abort that lands before the run's first provider request ends
+        // the prompt with the abort as its error (the agent still records
+        // the aborted assistant row); one during the request ends it with
+        // that row and no error. Both are the same aborted run, never a
+        // failure (TS `agent.prompt` does not reject on abort, and the
+        // daemon host reads the aborted row as no failure).
+        Some(Ok(_) | Err(_)) => match wait_for_task_settle(&host, &record).await {
             TaskSettle::Done => {
                 finish_run(&host, &record, &TaskVerdict::Done).await;
             }

@@ -4838,10 +4838,12 @@ async fn interrupting_a_running_child_keeps_it_for_a_follow_up() {
         .await
         .unwrap();
     let child = rig.first_child().await;
-    let streaming_child = Arc::clone(&child);
-    eventually("the child streams", move || {
-        let engine = Arc::clone(&streaming_child.engine);
-        async move { engine.session.agent().state().await.is_streaming }
+    // The stalled request must be in flight: an interrupt that lands before
+    // it leaves the stalled step queued, and the follow-up turn would draw it.
+    let catalog = Arc::clone(&rig.catalog);
+    eventually("the child's request reaches the provider", move || {
+        let requested = !catalog.provider("glm-5.3-turbo").calls().is_empty();
+        async move { requested }
     })
     .await;
     let session_id = child.session_id.clone();
@@ -4925,6 +4927,97 @@ async fn interrupting_a_running_child_keeps_it_for_a_follow_up() {
         }
     })
     .await;
+}
+
+/// An interrupt that lands before the child's first provider request (its
+/// run is still delivering the prompt's events, ahead of the loop's first
+/// steering poll) settles the run exactly like one that lands mid-request:
+/// a plain completion and no notice. The agent reports this abort as the
+/// run's error; it is not a failure.
+#[tokio::test]
+async fn an_interrupt_before_the_first_request_settles_like_one_during_it() {
+    use crate::session_engine::rlm_host::RlmInterruptOutcome;
+
+    let rig = TestRig::new().await;
+    rig.catalog
+        .provider("glm-5.3-turbo")
+        .push_text_turn("never requested");
+    let handle = rig
+        .host
+        .spawn(spawn_request(
+            Some("early"),
+            Some("test-provider/glm-5.3-turbo"),
+        ))
+        .await
+        .unwrap();
+    // The test runtime is single-threaded: the child's run task has not
+    // been polled yet, so this listener sees the run's first events.
+    let child = rig.first_child().await;
+    let prompt_delivered = GateLatch::new();
+    let hold = prompt_delivered.clone();
+    let _held = child
+        .engine
+        .session
+        .agent()
+        .subscribe(move |event, _signal| {
+            let hold = hold.clone();
+            Box::pin(async move {
+                if matches!(
+                    &event,
+                    pa_agent::types::AgentEvent::MessageEnd {
+                        message: pa_agent::types::AgentMessage::Standard(
+                            pa_agent::types::Message::User(_)
+                        ),
+                    }
+                ) {
+                    hold.hold().await;
+                }
+                Ok(())
+            })
+        })
+        .await;
+    prompt_delivered.reached().await;
+    let interrupted = rig
+        .host
+        .interrupt_subagent("early".to_string())
+        .await
+        .unwrap();
+    assert_eq!(interrupted.outcome, RlmInterruptOutcome::Interrupted);
+    prompt_delivered.release();
+
+    let collected = rig
+        .host
+        .collect(vec![handle.rlm_child_id.clone()], 10_000)
+        .await
+        .unwrap();
+    let result = one(&collected);
+    assert_eq!(
+        (result.status, result.settled, result.error.as_deref()),
+        ("done", true, None)
+    );
+    let notices = rig
+        .parent_rows()
+        .await
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry,
+                pa_types::session::FileEntry::CustomMessage { payload, .. }
+                    if payload.custom_type
+                        == crate::session_engine::rlm_notices::RLM_CHILD_TERMINAL_NOTICE_CUSTOM_TYPE
+                        || payload.custom_type
+                            == crate::session_engine::rlm_notices::RLM_CHILD_FAILURE_CUSTOM_TYPE
+            )
+        })
+        .count();
+    assert_eq!(
+        notices, 0,
+        "an interrupted run owes the parent no notice, and never a failure"
+    );
+    assert!(
+        rig.catalog.provider("glm-5.3-turbo").calls().is_empty(),
+        "the abort landed before the request"
+    );
 }
 
 /// `rlm.interrupt_subagent` (#1502) with nothing to abort: a settled child
