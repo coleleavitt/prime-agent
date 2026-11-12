@@ -605,10 +605,13 @@ impl ModelRegistry {
         {
             api_key = Some(resolved);
         }
-        if api_key.is_none() && stored.oauth_refresh_failed {
+        // A failed OAuth refresh with nothing else to serve: fail with the re-login sentence.
+        if api_key.is_none()
+            && let Some(failure) = &stored.refresh_failure
+        {
             return ResolvedRequestAuth {
                 ok: false,
-                error: Some(crate::auth::oauth_refresh_failed_message(&model.provider)),
+                error: Some(failure.to_string()),
                 oauth_refresh_failed: true,
                 ..Default::default()
             };

@@ -155,7 +155,9 @@ impl pa_core::auth::OAuthIntegration for PresentingOAuth {
             ..
         }) = credentials.credential(provider_id)
         else {
-            return Err(pa_core::auth::OAuthRefreshError::Failed);
+            return Err(pa_core::auth::OAuthRefreshError::Failed(
+                "the token call failed".to_string(),
+            ));
         };
         let address = self
             .token_url
@@ -175,7 +177,9 @@ impl pa_core::auth::OAuthIntegration for PresentingOAuth {
         let mut answer = String::new();
         let _ = std::io::Read::read_to_string(&mut stream, &mut answer);
         // The test reads what was presented; the answer is not used.
-        Err(pa_core::auth::OAuthRefreshError::Failed)
+        Err(pa_core::auth::OAuthRefreshError::Failed(
+            "the token call failed".to_string(),
+        ))
     }
 }
 
@@ -553,7 +557,9 @@ impl pa_core::auth::OAuthIntegration for CountingOAuth {
         _credentials: &pa_core::auth::AuthStorageData,
     ) -> Result<pa_core::auth::AuthCredential, pa_core::auth::OAuthRefreshError> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Err(pa_core::auth::OAuthRefreshError::Failed)
+        Err(pa_core::auth::OAuthRefreshError::Failed(
+            "the token call failed".to_string(),
+        ))
     }
 }
 

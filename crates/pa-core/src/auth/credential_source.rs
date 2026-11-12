@@ -333,7 +333,7 @@ mod tests {
                 ),
             }),
             credential_type: Some("oauth"),
-            oauth_refresh_failed: false,
+            refresh_failure: None,
             headers: Some(BTreeMap::from([("x-stub".to_string(), "1".to_string())])),
         }
     }
@@ -408,7 +408,10 @@ mod tests {
             auth.get_api_key_with_source_token(provider, false),
             AuthApiKeyResult {
                 credential_type: Some("oauth"),
-                oauth_refresh_failed: true,
+                refresh_failure: Some(crate::auth::OAuthRefreshFailure {
+                    provider: provider.to_string(),
+                    reason: "invalid_grant: the refresh token was revoked".to_string(),
+                }),
                 ..AuthApiKeyResult::default()
             }
         );

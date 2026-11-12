@@ -131,16 +131,18 @@ impl OAuthIntegration for RotatingOAuth {
             ..
         }) = data.credential(provider)
         else {
-            return Err(OAuthRefreshError::Failed);
+            return Err(OAuthRefreshError::Failed(
+                "the token call failed".to_string(),
+            ));
         };
         let issued = Self::spent(&self.dir).len() + 1;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.dir.join("spent"))
-            .map_err(|_| OAuthRefreshError::Failed)?;
+            .map_err(|error| OAuthRefreshError::Failed(error.to_string()))?;
         file.write_all(format!("{presented}\n").as_bytes())
-            .map_err(|_| OAuthRefreshError::Failed)?;
+            .map_err(|error| OAuthRefreshError::Failed(error.to_string()))?;
         Ok(AuthCredential::Oauth {
             access: format!("sk-new-access-{issued}"),
             refresh: Some(format!("sk-new-refresh-{issued}")),
@@ -230,7 +232,7 @@ fn a_refresh_whose_write_fails_serves_the_new_credential() {
     );
     let result = auth.get_api_key_with_source_token(PROVIDER, true);
     assert_eq!(
-        (result.api_key, result.oauth_refresh_failed),
+        (result.api_key, result.refresh_failure.is_some()),
         (Some(issued(1)), false),
         "the fetched credential serves, never the expired one it replaced"
     );
@@ -370,7 +372,7 @@ fn an_unsaved_credential_that_expires_refreshes_with_its_own_refresh_token() {
     assert_eq!(auth.get_api_key(PROVIDER), Some(issued(1)));
     let result = auth.get_api_key_with_source_token(PROVIDER, true);
     assert_eq!(
-        (result.api_key, result.oauth_refresh_failed),
+        (result.api_key, result.refresh_failure.is_some()),
         (Some(issued(2)), false)
     );
     assert_eq!(

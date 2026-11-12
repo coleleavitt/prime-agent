@@ -115,26 +115,34 @@ pub struct AuthApiKeyResult {
     pub api_key: Option<String>,
     pub source_token: Option<AuthSourceToken>,
     pub credential_type: Option<&'static str>,
-    /// The stored OAuth login was expired and its refresh failed: there
-    /// is no key, but the provider is signed in (the credential stays for
-    /// a later retry). Callers report an authentication failure
-    /// ([`oauth_refresh_failed_message`]) instead of calling the provider
-    /// keyless.
-    pub oauth_refresh_failed: bool,
+    /// The stored OAuth login could not be refreshed (or the provider's
+    /// credential source produced no credential) and no environment key
+    /// serves: there is no key, but the provider is signed in (the
+    /// credential stays for a later retry). Callers report it as the
+    /// authentication failure instead of calling the provider keyless.
+    pub refresh_failure: Option<OAuthRefreshFailure>,
     /// Request headers the credential needs (an installed credential
     /// source's), merged into the request after the provider's own.
     pub headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
-/// The authentication failure a turn reports when a stored OAuth login
-/// could not be refreshed (TS `formatAuthenticationFailedMessage`, naming
-/// the refresh): the provider would otherwise fail keyless as "No API key
-/// for provider".
-#[must_use]
-pub fn oauth_refresh_failed_message(provider: &str) -> String {
-    format!(
-        "Authentication failed for \"{provider}\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
-    )
+/// A failed OAuth refresh; `Display` is the user-facing re-login sentence
+/// (TS `formatAuthenticationFailedMessage`, naming the refresh): the
+/// provider would otherwise fail keyless as "No API key for provider".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthRefreshFailure {
+    pub provider: String,
+    pub reason: String,
+}
+
+impl std::fmt::Display for OAuthRefreshFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let OAuthRefreshFailure { provider, reason } = self;
+        write!(
+            f,
+            "Authentication failed for \"{provider}\": the stored credential could not be refreshed ({reason}).\n\nRun /login to update credentials."
+        )
+    }
 }
 
 /// OAuth integration seam, implemented by the pa-ai oauth registry; a
@@ -142,13 +150,14 @@ pub fn oauth_refresh_failed_message(provider: &str) -> String {
 pub trait OAuthIntegration: Send + Sync {
     /// The resolved API key for stored OAuth credentials (bearer/token form).
     fn api_key_for(&self, provider_id: &str, credential: &AuthCredential) -> Option<String>;
-    /// Refresh an expired credential.
+    /// Refresh the provider's stored credential at its token endpoint.
     ///
     /// # Errors
     ///
     /// [`OAuthRefreshError::Revoked`] when the token endpoint refused the
     /// refresh token itself, [`OAuthRefreshError::Failed`] for any other
     /// failure (including a provider this integration does not refresh).
+    /// Each carries why, without credential values (it is shown and logged).
     fn refresh(
         &self,
         provider_id: &str,
@@ -157,16 +166,20 @@ pub trait OAuthIntegration: Send + Sync {
 }
 
 /// Why a stored OAuth credential did not refresh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OAuthRefreshError {
     /// The token endpoint refused the refresh token itself (OAuth
     /// `invalid_grant`: revoked, expired, or already spent). It never
     /// refreshes again; only a new login replaces it.
     Revoked,
     /// Anything else (network, server, a malformed answer, no refresh for
-    /// the provider): a later try may pass.
-    Failed,
+    /// the provider), with why: a later try may pass.
+    Failed(String),
 }
+
+/// The reason a revoked refresh token reports, at the token endpoint's
+/// refusal and at every later lookup that no longer presents it.
+pub(crate) const REVOKED_REFRESH_REASON: &str = "the refresh token was revoked (invalid_grant)";
 
 /// The refresh tokens a token endpoint revoked in this process, as
 /// `(provider, SHA-256 of the token)`: never presented again. A new login
@@ -235,7 +248,9 @@ impl OAuthIntegration for NoOAuth {
         _provider: &str,
         _credentials: &AuthStorageData,
     ) -> Result<AuthCredential, OAuthRefreshError> {
-        Err(OAuthRefreshError::Failed)
+        Err(OAuthRefreshError::Failed(
+            "no OAuth integration is available".to_string(),
+        ))
     }
 }
 

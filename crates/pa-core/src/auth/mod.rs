@@ -32,7 +32,7 @@ pub use manager::{
     NoOAuth,
     OAuthIntegration,
     OAuthRefreshError,
-    oauth_refresh_failed_message,
+    OAuthRefreshFailure,
 };
 pub use notices::{
     AuthNotice,

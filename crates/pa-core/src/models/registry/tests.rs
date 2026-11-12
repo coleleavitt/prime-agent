@@ -165,7 +165,9 @@ fn get_api_key_and_headers_attempts_one_refresh_per_call() {
             _credentials: &crate::auth::types::AuthStorageData,
         ) -> Result<crate::auth::types::AuthCredential, crate::auth::OAuthRefreshError> {
             *self.0.lock().unwrap() += 1;
-            Err(crate::auth::OAuthRefreshError::Failed)
+            Err(crate::auth::OAuthRefreshError::Failed(
+                "the token call failed".to_string(),
+            ))
         }
     }
     let dir = tempfile::tempdir().unwrap();
@@ -575,7 +577,7 @@ fn a_failed_oauth_refresh_resolves_to_an_authentication_failure() {
     // request auth names the failed refresh instead of going keyless.
     let mut registry = ModelRegistry::in_memory(auth_without_env(&serde_json::json!({
         "anthropic": {
-            "type": "oauth", "access": "expired", "refresh": "r", "expires": 1000
+            "type": "oauth", "access": "expired", "refresh": "stored-refresh", "expires": 1000
         }
     })));
     let result = registry.get_api_key_and_headers(&model("m", "anthropic"), None);
@@ -586,7 +588,7 @@ fn a_failed_oauth_refresh_resolves_to_an_authentication_failure() {
             api_key: None,
             headers: None,
             error: Some(
-                "Authentication failed for \"anthropic\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
+                "Authentication failed for \"anthropic\": the stored credential could not be refreshed (no OAuth integration is available).\n\nRun /login to update credentials."
                     .to_string()
             ),
             oauth_refresh_failed: true,

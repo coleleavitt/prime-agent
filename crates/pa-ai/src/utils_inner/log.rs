@@ -1,6 +1,7 @@
 //! Minimal structured logger shared by pa-ai and its consumers: entries go to an injectable sink;
 //! the library never writes files and logging must never throw into the caller.
 
+use std::io::Write as _;
 use std::sync::RwLock;
 
 use pa_types::sync::RwLockExt;
@@ -22,6 +23,7 @@ impl Serialize for LogLevel {
 }
 
 impl LogLevel {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             LogLevel::Debug => "debug",
@@ -47,9 +49,21 @@ pub type LogSink = std::sync::Arc<dyn Fn(&LogEntry) + Send + Sync>;
 static SINK: RwLock<Option<LogSink>> = RwLock::new(None);
 
 /// Install the process-wide log sink. Pass None to restore the default.
-#[allow(dead_code)] // logging surface for consumers once exposed
+///
+/// # Panics
+///
+/// Panics when the sink lock is poisoned.
 pub fn set_log_sink(next: Option<LogSink>) {
     *SINK.write_or_recover() = next;
+}
+
+/// Install a sink writing each entry to stderr as one JSON line.
+pub fn install_stderr_log_sink() {
+    set_log_sink(Some(std::sync::Arc::new(|entry: &LogEntry| {
+        if let Ok(line) = serde_json::to_string(entry) {
+            let _ = writeln!(std::io::stderr().lock(), "{line}");
+        }
+    })));
 }
 
 fn emit(level: LogLevel, component: &str, msg: &str, fields: serde_json::Value) {
@@ -123,6 +137,7 @@ impl Logger {
     }
 }
 
+#[must_use]
 pub fn get_logger(component: &str) -> Logger {
     Logger {
         component: component.to_string(),

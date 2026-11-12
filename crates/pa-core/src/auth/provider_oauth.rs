@@ -78,7 +78,9 @@ impl ProviderOAuth {
             ..
         } = credential
         else {
-            return Err(OAuthRefreshError::Failed);
+            return Err(OAuthRefreshError::Failed(
+                "the stored credential has no refresh token".to_string(),
+            ));
         };
         let http = Arc::clone(&self.http);
         let provider_http = Arc::clone(&self.provider_http);
@@ -87,17 +89,16 @@ impl ProviderOAuth {
         let provider_id = provider_id.to_string();
         std::thread::Builder::new()
             .name("provider-oauth-refresh".to_string())
-            .spawn(move || {
+            .spawn(move || -> Result<AuthCredential, OAuthRefreshError> {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|_| OAuthRefreshError::Failed)?;
-
+                    .map_err(|error| OAuthRefreshError::Failed(error.to_string()))?;
                 match provider_id.as_str() {
                     OPENAI_CODEX_PROVIDER_ID => {
                         let credentials = runtime
                             .block_on(refresh_openai_codex_token(http.as_ref(), &refresh_token))
-                            .map_err(|error| refresh_error(&error))?;
+                            .map_err(refresh_error)?;
                         Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
@@ -118,7 +119,7 @@ impl ProviderOAuth {
                                 provider_http.as_ref(),
                                 &refresh_token,
                             ))
-                            .map_err(|error| refresh_error(&error))?;
+                            .map_err(refresh_error)?;
                         Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
@@ -142,7 +143,7 @@ impl ProviderOAuth {
                                 &refresh_token,
                                 enterprise_url.as_deref(),
                             ))
-                            .map_err(|error| refresh_error(&error))?;
+                            .map_err(refresh_error)?;
                         Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
@@ -160,7 +161,7 @@ impl ProviderOAuth {
                     XAI_PROVIDER_ID => {
                         let credentials = runtime
                             .block_on(refresh_xai_token(provider_http.as_ref(), &refresh_token))
-                            .map_err(|error| refresh_error(&error))?;
+                            .map_err(refresh_error)?;
                         Ok(AuthCredential::Oauth {
                             access: credentials.access,
                             refresh: Some(credentials.refresh),
@@ -177,12 +178,18 @@ impl ProviderOAuth {
                     }
                     // The match arms cover the four subscription ids;
                     // `refresh` never dispatches another.
-                    _ => Err(OAuthRefreshError::Failed),
+                    _ => Err(OAuthRefreshError::Failed(
+                        "no token refresh for this provider".to_string(),
+                    )),
                 }
             })
-            .map_err(|_| OAuthRefreshError::Failed)?
+            .map_err(|error| OAuthRefreshError::Failed(error.to_string()))?
             .join()
-            .unwrap_or(Err(OAuthRefreshError::Failed))
+            .unwrap_or_else(|_| {
+                Err(OAuthRefreshError::Failed(
+                    "the token refresh thread panicked".to_string(),
+                ))
+            })
     }
 }
 
@@ -206,11 +213,13 @@ impl crate::auth::OAuthIntegration for ProviderOAuth {
                 | GITHUB_COPILOT_PROVIDER_ID
                 | XAI_PROVIDER_ID
         ) {
-            return Err(OAuthRefreshError::Failed);
+            return Err(OAuthRefreshError::Failed(format!(
+                "{provider_id} has no token refresh"
+            )));
         }
         let credential = credentials
             .credential(provider_id)
-            .ok_or(OAuthRefreshError::Failed)?;
+            .ok_or_else(|| OAuthRefreshError::Failed("no stored credential".to_string()))?;
         self.refresh_blocking(provider_id, &credential)
     }
 }
@@ -218,11 +227,11 @@ impl crate::auth::OAuthIntegration for ProviderOAuth {
 /// How a token endpoint's refusal reads: `invalid_grant` (RFC 6749 §5.2:
 /// the refresh token is invalid, expired, revoked or already used) is a
 /// revocation; anything else may pass on a later try.
-fn refresh_error(message: &str) -> OAuthRefreshError {
+fn refresh_error(message: String) -> OAuthRefreshError {
     if message.contains("invalid_grant") {
         OAuthRefreshError::Revoked
     } else {
-        OAuthRefreshError::Failed
+        OAuthRefreshError::Failed(message)
     }
 }
 
@@ -584,7 +593,10 @@ mod tests {
         );
         let failed = crate::auth::AuthApiKeyResult {
             credential_type: Some("oauth"),
-            oauth_refresh_failed: true,
+            refresh_failure: Some(crate::auth::OAuthRefreshFailure {
+                provider: ANTHROPIC_PROVIDER_ID.to_string(),
+                reason: "the refresh token was revoked (invalid_grant)".to_string(),
+            }),
             ..crate::auth::AuthApiKeyResult::default()
         };
 

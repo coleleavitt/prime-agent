@@ -114,6 +114,7 @@ async fn quota_reset_beyond_cap_parks_through_the_seam() {
         },
         |_| async { true },
         Some(&mut seam),
+        None,
     )
     .await
     .unwrap();
@@ -162,6 +163,7 @@ async fn quota_reset_beyond_cap_keeps_the_give_up_when_the_seam_declines() {
         },
         |_| async { true },
         Some(&mut seam),
+        None,
     )
     .await
     .unwrap();
@@ -211,6 +213,7 @@ async fn non_quota_exceeds_cap_never_consults_the_park_seam() {
         },
         |_| async { true },
         Some(&mut seam),
+        None,
     )
     .await
     .unwrap();
@@ -248,6 +251,7 @@ async fn transient_failure_is_retried_until_success_with_events() {
             }
         },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -323,6 +327,7 @@ async fn exhausted_retries_surface_the_final_error() {
             }
         },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -410,6 +415,7 @@ async fn stream_drop_retries_until_the_turn_completes() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -467,6 +473,7 @@ async fn stream_drop_exhausts_retries_surfacing_the_class() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -519,6 +526,7 @@ async fn permanent_failures_never_retry_but_disclose() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -568,6 +576,7 @@ async fn payment_failures_settle_once_with_the_disclosure() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -611,6 +620,7 @@ async fn safety_failures_are_permanent_never_retry_but_disclose() {
             }
         },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -665,6 +675,7 @@ async fn context_overflow_never_enters_the_retry_loop() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -694,6 +705,7 @@ async fn cancelled_wait_aborts_with_retry_cancelled() {
             }
         },
         |_| async { false },
+        None,
         None,
     )
     .await
@@ -746,6 +758,7 @@ async fn an_aborted_retry_attempt_ends_cancelled_not_recovered() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -772,6 +785,7 @@ async fn aborted_signal_racing_failure_stops_aborted() {
         || async { Ok(error_message(Some("server_error"), None, None)) },
         |_| async { Ok(()) },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -803,6 +817,7 @@ async fn server_retry_after_over_cap_ends_the_loop() {
             }
         },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -857,6 +872,7 @@ async fn disabled_policy_never_retries_but_discloses() {
         },
         |_| async { true },
         None,
+        None,
     )
     .await
     .unwrap();
@@ -882,6 +898,7 @@ async fn attempt_errors_propagate() {
         || async { Err(anyhow::anyhow!("turn crashed")) },
         |_| async { Ok(()) },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -920,6 +937,7 @@ async fn unsupported_tool_failures_surface_with_the_disclosure() {
             }
         },
         |_| async { true },
+        None,
         None,
     )
     .await
@@ -1003,6 +1021,7 @@ async fn run_attempts(
                 .push(u64::try_from(delay.as_millis()).unwrap());
             async { true }
         },
+        None,
         None,
     )
     .await
@@ -1106,4 +1125,58 @@ async fn outage_waits_are_capped() {
     let ceiling = CONNECTION_RETRY_MAX_DELAY_MS + CONNECTION_RETRY_MAX_DELAY_MS / 5;
     assert!(!waits.is_empty());
     assert!(waits.iter().all(|wait| *wait <= ceiling), "{waits:?}");
+}
+
+/// A credential rejection whose recovery cannot refresh the credential ends
+/// the turn with the recovery's error instead of retrying the rejected key.
+#[tokio::test]
+async fn an_auth_rejection_whose_recovery_ends_the_turn_never_retries() {
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let recoveries = Arc::new(Mutex::new(Vec::new()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_for_emit = Arc::clone(&events);
+    let recoveries_for_seam = Arc::clone(&recoveries);
+    let mut recovery = move |message: &AssistantMessage| {
+        recoveries_for_seam
+            .lock()
+            .unwrap()
+            .push(message.provider.clone());
+        Box::pin(async { AuthRecovery::EndTurn("sign in again".to_string()) }) as AuthRecoveryFuture
+    };
+    let message = run_turn_with_auto_retry(
+        &fast_policy(),
+        0,
+        None,
+        || {
+            let attempts = Arc::clone(&attempts);
+            async move {
+                attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(error_message(Some("auth"), Some(401), None))
+            }
+        },
+        move |event| {
+            let events = Arc::clone(&events_for_emit);
+            async move {
+                events.lock().unwrap().push(event);
+                Ok(())
+            }
+        },
+        |_| async { true },
+        None,
+        Some(&mut recovery),
+    )
+    .await
+    .unwrap();
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(*recoveries.lock().unwrap(), vec!["test".to_string()]);
+    assert_eq!(message.error_message.as_deref(), Some("sign in again"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![AutoRetryEvent::End {
+            success: false,
+            attempt: 0,
+            final_error: Some("sign in again".to_string()),
+            restored_model: None,
+        }]
+    );
 }

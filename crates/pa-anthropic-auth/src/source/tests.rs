@@ -138,7 +138,13 @@ fn a_refresh_failure_is_the_oauth_authentication_error() {
             ok: false,
             api_key: None,
             headers: None,
-            error: Some(pa_core::auth::oauth_refresh_failed_message(provider)),
+            error: Some(
+                pa_core::auth::OAuthRefreshFailure {
+                    provider: provider.to_string(),
+                    reason: "invalid_grant: every matching account's refresh token is revoked or expired; re-login is required (oauth refresh token was revoked by anthropic (token endpoint answered HTTP 400 invalid_grant); re-authentication is required)".to_string(),
+                }
+                .to_string()
+            ),
             oauth_refresh_failed: true,
             request_model: None,
         }

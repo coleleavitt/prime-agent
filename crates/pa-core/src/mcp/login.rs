@@ -231,7 +231,9 @@ impl OAuthIntegration for McpOAuth {
         credentials
             .credential(provider_id)
             .and_then(|credential| self.refresh_blocking(provider_id, &credential))
-            .ok_or(crate::auth::OAuthRefreshError::Failed)
+            .ok_or_else(|| {
+                crate::auth::OAuthRefreshError::Failed("the MCP token refresh failed".to_string())
+            })
     }
 }
 
