@@ -113,279 +113,222 @@ enum ModelParse {
 /// mouse, CSI keys, kitty CSI-u).
 fn model_parse(buf: &[u8], more: bool) -> ModelParse {
     if buf[0] != 0x1b {
-        if buf[0] >= 0x80 {
-            // `parse_utf8_char`: an incomplete code point keeps buffering, a
-            // complete one is the character (SHIFT only on uppercase).
-            return match std::str::from_utf8(buf) {
-                Ok(text) => {
-                    let ch = text.chars().next().expect("non-empty");
-                    let modifiers = if ch.is_uppercase() {
-                        KeyModifiers::SHIFT
-                    } else {
-                        KeyModifiers::NONE
-                    };
-                    ModelParse::Event(Event::Key(KeyEvent::new(KeyCode::Char(ch), modifiers)))
-                }
-                Err(error) if error.error_len().is_none() => ModelParse::More,
-                Err(_) => ModelParse::Invalid,
-            };
-        }
-
-        return match buf[0] {
-            b'\r' => ModelParse::Event(Event::Key(KeyCode::Enter.into())),
-            b'\t' => ModelParse::Event(Event::Key(KeyCode::Tab.into())),
-            0x7f => ModelParse::Event(Event::Key(KeyCode::Backspace.into())),
-            c @ 0x01..=0x1a => ModelParse::Event(Event::Key(KeyEvent::new(
-                KeyCode::Char((c - 0x1 + b'a') as char),
-                KeyModifiers::CONTROL,
-            ))),
-            c @ 0x1c..=0x1f => ModelParse::Event(Event::Key(KeyEvent::new(
-                KeyCode::Char((c - 0x1c + b'4') as char),
-                KeyModifiers::CONTROL,
-            ))),
-            0x00 => ModelParse::Event(Event::Key(KeyEvent::new(
-                KeyCode::Char(' '),
-                KeyModifiers::CONTROL,
-            ))),
-            c => {
-                let ch = char::from_u32(u32::from(c)).expect("ascii corpus");
-                let modifiers = if ch.is_uppercase() {
-                    KeyModifiers::SHIFT
-                } else {
-                    KeyModifiers::NONE
-                };
-                ModelParse::Event(Event::Key(KeyEvent::new(KeyCode::Char(ch), modifiers)))
-            }
-        };
+        return model_char(buf, KeyModifiers::NONE);
     }
-    if buf.len() == 1 {
+    match buf.get(1) {
         // The defect: a lone `ESC` at a partial-read tail commits.
-        return if more {
-            ModelParse::More
+        None if more => ModelParse::More,
+        None | Some(0x1b) => ModelParse::Event(Event::Key(KeyCode::Esc.into())),
+        Some(b'[') => model_parse_csi(buf),
+        // crossterm's ESC branch re-parses the remaining bytes and adds ALT: control bytes keep
+        // their control forms, ASCII and UTF-8 characters are their key.
+        Some(_) => model_char(&buf[1..], KeyModifiers::ALT),
+    }
+}
+
+/// One character outside an escape sequence (`parse_utf8_char` and the control-byte table), with
+/// `extra` added to its modifiers (ALT behind an `ESC` prefix). An incomplete UTF-8 code point
+/// keeps buffering; SHIFT rides only on uppercase characters.
+fn model_char(bytes: &[u8], extra: KeyModifiers) -> ModelParse {
+    let shift_if_upper = |ch: char| {
+        if ch.is_uppercase() {
+            KeyModifiers::SHIFT
         } else {
-            ModelParse::Event(Event::Key(KeyCode::Esc.into()))
+            KeyModifiers::NONE
+        }
+    };
+    if bytes[0] >= 0x80 {
+        return match std::str::from_utf8(bytes) {
+            Ok(text) => {
+                let ch = text.chars().next().expect("non-empty");
+                ModelParse::Event(Event::Key(KeyEvent::new(
+                    KeyCode::Char(ch),
+                    shift_if_upper(ch) | extra,
+                )))
+            }
+            Err(error) if error.error_len().is_none() => ModelParse::More,
+            Err(_) => ModelParse::Invalid,
         };
     }
-    match buf[1] {
-        0x1b => ModelParse::Event(Event::Key(KeyCode::Esc.into())),
-        b'[' => {
-            if buf.len() == 2 {
+    let (code, modifiers) = match bytes[0] {
+        b'\r' => (KeyCode::Enter, KeyModifiers::NONE),
+        b'\t' => (KeyCode::Tab, KeyModifiers::NONE),
+        0x7f => (KeyCode::Backspace, KeyModifiers::NONE),
+        c @ 0x01..=0x1a => (
+            KeyCode::Char((c - 0x1 + b'a') as char),
+            KeyModifiers::CONTROL,
+        ),
+        c @ 0x1c..=0x1f => (
+            KeyCode::Char((c - 0x1c + b'4') as char),
+            KeyModifiers::CONTROL,
+        ),
+        0x00 => (KeyCode::Char(' '), KeyModifiers::CONTROL),
+        c => {
+            let ch = char::from_u32(u32::from(c)).expect("ascii corpus");
+            (KeyCode::Char(ch), shift_if_upper(ch))
+        }
+    };
+    ModelParse::Event(Event::Key(KeyEvent::new(code, modifiers | extra)))
+}
+
+/// A CSI sequence (`ESC [`): mouse reports (SGR, X10, rxvt), the `ESC [ [` function keys, cursor
+/// keys, and kitty CSI-u keys.
+fn model_parse_csi(buf: &[u8]) -> ModelParse {
+    if buf.len() == 2 {
+        return ModelParse::More;
+    }
+    let payload = &buf[2..];
+    let last = *payload.last().expect("non-empty");
+    if !(0x40..=0x7e).contains(&last) {
+        return ModelParse::More;
+    }
+    match payload[0] {
+        b'<' => {
+            if last != b'M' && last != b'm' {
                 return ModelParse::More;
             }
-            let payload = &buf[2..];
-            let last = *payload.last().expect("non-empty");
-            if !(0x40..=0x7e).contains(&last) {
+            let Ok(text) = std::str::from_utf8(&payload[1..payload.len() - 1]) else {
+                return ModelParse::Invalid;
+            };
+            let fields: Vec<&str> = text.split(';').collect();
+            let (Ok(cb), Ok(x), Ok(y)) = (
+                fields[0].parse::<u8>(),
+                fields[1].parse::<u16>(),
+                fields[2].parse::<u16>(),
+            ) else {
+                return ModelParse::Invalid;
+            };
+            let kind = report_kind(cb, last == b'M').expect("corpus buttons");
+            ModelParse::Event(Event::Mouse(CtMouse {
+                kind,
+                column: x - 1,
+                row: y - 1,
+                modifiers: report_modifiers(cb),
+            }))
+        }
+        b'M' => {
+            if buf.len() < 6 {
                 return ModelParse::More;
             }
-            if payload[0] == b'<' {
-                if last != b'M' && last != b'm' {
-                    return ModelParse::More;
-                }
-                let Ok(text) = std::str::from_utf8(&payload[1..payload.len() - 1]) else {
-                    return ModelParse::Invalid;
+            let kind = report_kind(buf[3].wrapping_sub(32), true).expect("corpus buttons");
+            ModelParse::Event(Event::Mouse(CtMouse {
+                kind,
+                column: u16::from(buf[4]) - 32 - 1,
+                row: u16::from(buf[5]) - 32 - 1,
+                modifiers: KeyModifiers::NONE,
+            }))
+        }
+        // `ESC [ [ <fin>`: parse_csi holds the three-byte prefix for the fourth byte, then
+        // F1-F5 (any other final byte is a dropped parse error).
+        b'[' if buf.len() == 3 => ModelParse::More,
+        b'[' => match last {
+            val @ b'A'..=b'E' => ModelParse::Event(Event::Key(KeyCode::F(1 + val - b'A').into())),
+            _ => ModelParse::Invalid,
+        },
+        _ => match last {
+            b'A' => ModelParse::Event(Event::Key(KeyCode::Up.into())),
+            b'B' => ModelParse::Event(Event::Key(KeyCode::Down.into())),
+            b'C' => ModelParse::Event(Event::Key(KeyCode::Right.into())),
+            b'D' => ModelParse::Event(Event::Key(KeyCode::Left.into())),
+            // rxvt mouse (`parse_csi_rxvt_mouse`): `cb ; cx ; cy` behind
+            // a digit-led CSI, `M` at the end.
+            b'M' if payload[0].is_ascii_digit() => {
+                let text =
+                    std::str::from_utf8(&payload[..payload.len() - 1]).expect("corpus is ascii");
+                let mut fields = text.split(';');
+                let cb = fields
+                    .next()
+                    .and_then(|field| field.parse::<u8>().ok())
+                    .and_then(|cb| cb.checked_sub(32))
+                    .expect("corpus buttons");
+                let mut coordinate = || -> u16 {
+                    fields
+                        .next()
+                        .expect("corpus coordinates")
+                        .parse()
+                        .expect("corpus coordinates")
                 };
-                let fields: Vec<&str> = text.split(';').collect();
-                let (Ok(cb), Ok(x), Ok(y)) = (
-                    fields[0].parse::<u8>(),
-                    fields[1].parse::<u16>(),
-                    fields[2].parse::<u16>(),
-                ) else {
-                    return ModelParse::Invalid;
-                };
-                let kind = report_kind(cb, last == b'M').expect("corpus buttons");
-                let mut modifiers = KeyModifiers::empty();
-                if cb & 0b0000_0100 != 0 {
-                    modifiers |= KeyModifiers::SHIFT;
-                }
-                if cb & 0b0000_1000 != 0 {
-                    modifiers |= KeyModifiers::ALT;
-                }
-                if cb & 0b0001_0000 != 0 {
-                    modifiers |= KeyModifiers::CONTROL;
-                }
-                return ModelParse::Event(Event::Mouse(CtMouse {
+                let (x, y) = (coordinate(), coordinate());
+                let kind = report_kind(cb, true).expect("corpus buttons");
+                ModelParse::Event(Event::Mouse(CtMouse {
                     kind,
                     column: x - 1,
                     row: y - 1,
-                    modifiers,
-                }));
+                    modifiers: report_modifiers(cb),
+                }))
             }
-            if payload[0] == b'M' {
-                if buf.len() < 6 {
-                    return ModelParse::More;
-                }
-                let kind = report_kind(buf[3].wrapping_sub(32), true).expect("corpus buttons");
-                return ModelParse::Event(Event::Mouse(CtMouse {
-                    kind,
-                    column: u16::from(buf[4]) - 32 - 1,
-                    row: u16::from(buf[5]) - 32 - 1,
-                    modifiers: KeyModifiers::NONE,
-                }));
-            }
-            if payload[0] == b'[' {
-                // `ESC [ [ <fin>`: parse_csi holds the three-byte prefix for the fourth byte, then
-                // F1-F5 (any other final byte is a dropped parse error).
-                if buf.len() == 3 {
-                    return ModelParse::More;
-                }
-                return match last {
-                    val @ b'A'..=b'E' => {
-                        ModelParse::Event(Event::Key(KeyCode::F(1 + val - b'A').into()))
-                    }
-                    _ => ModelParse::Invalid,
-                };
-            }
-            match last {
-                b'A' => ModelParse::Event(Event::Key(KeyCode::Up.into())),
-                b'B' => ModelParse::Event(Event::Key(KeyCode::Down.into())),
-                b'C' => ModelParse::Event(Event::Key(KeyCode::Right.into())),
-                b'D' => ModelParse::Event(Event::Key(KeyCode::Left.into())),
-                // rxvt mouse (`parse_csi_rxvt_mouse`): `cb ; cx ; cy` behind
-                // a digit-led CSI, `M` at the end.
-                b'M' if payload[0].is_ascii_digit() => {
-                    let text = std::str::from_utf8(&payload[..payload.len() - 1])
-                        .expect("corpus is ascii");
-                    let mut fields = text.split(';');
-                    let cb = fields
-                        .next()
-                        .and_then(|field| field.parse::<u8>().ok())
-                        .and_then(|cb| cb.checked_sub(32))
-                        .expect("corpus buttons");
-                    let x: u16 = fields
-                        .next()
-                        .expect("corpus coordinates")
-                        .parse()
-                        .expect("corpus coordinates");
-                    let y: u16 = fields
-                        .next()
-                        .expect("corpus coordinates")
-                        .parse()
-                        .expect("corpus coordinates");
-                    let kind = report_kind(cb, true).expect("corpus buttons");
-                    ModelParse::Event(Event::Mouse(CtMouse {
-                        kind,
-                        column: x - 1,
-                        row: y - 1,
-                        modifiers: report_modifiers(cb),
-                    }))
-                }
-                b'u' => {
-                    let text = std::str::from_utf8(&payload[..payload.len() - 1])
-                        .expect("corpus is ascii");
-                    let mut fields = text.split(';');
-                    let codepoint: u32 = fields.next().expect("non-empty").parse().expect("corpus");
-                    // `parse_csi_u_encoded_key_code`: the modifier mask rides
-                    // the second field (`CSI 13;2u`).
-                    let mut modifiers = KeyModifiers::empty();
-                    if let Some(mods) = fields.next() {
-                        let mask: u8 = mods
-                            .split(':')
-                            .next()
-                            .unwrap_or_default()
-                            .parse()
-                            .expect("corpus");
-                        modifiers = parse_modifiers(mask);
-                    }
-                    if (57399..=57426).contains(&codepoint) {
-                        // The keypad block decodes with the KEYPAD state.
-                        let code = match codepoint {
-                            c @ 57399..=57408 => KeyCode::Char(
-                                char::from_u32(c - 57399 + u32::from(b'0')).expect("digits"),
-                            ),
-                            57409 => KeyCode::Char('.'),
-                            57410 => KeyCode::Char('/'),
-                            57411 => KeyCode::Char('*'),
-                            57412 => KeyCode::Char('-'),
-                            57413 => KeyCode::Char('+'),
-                            57414 => KeyCode::Enter,
-                            57415 => KeyCode::Char('='),
-                            57416 => KeyCode::Char(','),
-                            57417 => KeyCode::Left,
-                            57418 => KeyCode::Right,
-                            57419 => KeyCode::Up,
-                            57420 => KeyCode::Down,
-                            57421 => KeyCode::PageUp,
-                            57422 => KeyCode::PageDown,
-                            57423 => KeyCode::Home,
-                            57424 => KeyCode::End,
-                            57425 => KeyCode::Insert,
-                            57426 => KeyCode::Delete,
-                            _ => unreachable!("the keypad range is checked above"),
-                        };
-                        return ModelParse::Event(Event::Key(KeyEvent::new_with_kind_and_state(
-                            code,
-                            KeyModifiers::NONE,
-                            KeyEventKind::Press,
-                            KeyEventState::KEYPAD,
-                        )));
-                    }
-                    match codepoint {
-                        27 => ModelParse::Event(Event::Key(KeyEvent::new(KeyCode::Esc, modifiers))),
-                        // `\r` maps to Enter before the char row (crossterm's
-                        // own match), so `CSI 13;2u` projects Enter+SHIFT.
-                        13 => {
-                            ModelParse::Event(Event::Key(KeyEvent::new(KeyCode::Enter, modifiers)))
-                        }
-                        c => ModelParse::Event(Event::Key(KeyEvent::new(
-                            KeyCode::Char(char::from_u32(c).expect("corpus")),
-                            modifiers,
-                        ))),
-                    }
-                }
-                b'~' if payload == b"27;2;13~" => ModelParse::Event(Event::Key(KeyEvent::new(
-                    KeyCode::Enter,
-                    KeyModifiers::SHIFT,
-                ))),
-                b'~' if payload == b"200~" || payload == b"201~" => ModelParse::Invalid,
-                _ => ModelParse::Invalid,
-            }
-        }
-        // crossterm's ESC branch re-parses the remaining bytes and adds ALT: control bytes keep
-        // their control forms, ASCII and UTF-8 characters are their key.
-        _ => {
-            let inner = &buf[1..];
-            if inner[0] >= 0x80 {
-                return match std::str::from_utf8(inner) {
-                    Ok(text) => {
-                        let ch = text.chars().next().expect("non-empty");
-                        let mut modifiers = KeyModifiers::ALT;
-                        if ch.is_uppercase() {
-                            modifiers |= KeyModifiers::SHIFT;
-                        }
-                        ModelParse::Event(Event::Key(KeyEvent::new(KeyCode::Char(ch), modifiers)))
-                    }
-                    Err(error) if error.error_len().is_none() => ModelParse::More,
-                    Err(_) => ModelParse::Invalid,
-                };
-            }
-            let (code, modifiers) = match inner[0] {
-                b'\r' => (KeyCode::Enter, KeyModifiers::ALT),
-                b'\t' => (KeyCode::Tab, KeyModifiers::ALT),
-                0x7f => (KeyCode::Backspace, KeyModifiers::ALT),
-                c @ 0x01..=0x1a => (
-                    KeyCode::Char((c - 0x1 + b'a') as char),
-                    KeyModifiers::CONTROL | KeyModifiers::ALT,
-                ),
-                c @ 0x1c..=0x1f => (
-                    KeyCode::Char((c - 0x1c + b'4') as char),
-                    KeyModifiers::CONTROL | KeyModifiers::ALT,
-                ),
-                0x00 => (
-                    KeyCode::Char(' '),
-                    KeyModifiers::CONTROL | KeyModifiers::ALT,
-                ),
-                c => {
-                    let ch = char::from_u32(u32::from(c)).expect("ascii corpus");
-                    let mut modifiers = KeyModifiers::ALT;
-                    if ch.is_uppercase() {
-                        modifiers |= KeyModifiers::SHIFT;
-                    }
-                    (KeyCode::Char(ch), modifiers)
-                }
-            };
-            ModelParse::Event(Event::Key(KeyEvent::new(code, modifiers)))
-        }
+            b'u' => model_csi_u(payload),
+            b'~' if payload == b"27;2;13~" => ModelParse::Event(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::SHIFT,
+            ))),
+            _ => ModelParse::Invalid,
+        },
     }
+}
+
+/// A kitty CSI-u key (`CSI codepoint [; modifiers] u`): the keypad block decodes with the KEYPAD
+/// state, the rest by codepoint.
+fn model_csi_u(payload: &[u8]) -> ModelParse {
+    let text = std::str::from_utf8(&payload[..payload.len() - 1]).expect("corpus is ascii");
+    let mut fields = text.split(';');
+    let codepoint: u32 = fields.next().expect("non-empty").parse().expect("corpus");
+    // `parse_csi_u_encoded_key_code`: the modifier mask rides
+    // the second field (`CSI 13;2u`).
+    let modifiers = fields.next().map_or(KeyModifiers::empty(), |mods| {
+        let mask: u8 = mods
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .parse()
+            .expect("corpus");
+        parse_modifiers(mask)
+    });
+    if let Some(code) = keypad_code(codepoint) {
+        return ModelParse::Event(Event::Key(KeyEvent::new_with_kind_and_state(
+            code,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+            KeyEventState::KEYPAD,
+        )));
+    }
+    let code = match codepoint {
+        27 => KeyCode::Esc,
+        // `\r` maps to Enter before the char row (crossterm's
+        // own match), so `CSI 13;2u` projects Enter+SHIFT.
+        13 => KeyCode::Enter,
+        c => KeyCode::Char(char::from_u32(c).expect("corpus")),
+    };
+    ModelParse::Event(Event::Key(KeyEvent::new(code, modifiers)))
+}
+
+/// The kitty keypad block's codepoints (57399..=57426).
+fn keypad_code(codepoint: u32) -> Option<KeyCode> {
+    let code = match codepoint {
+        c @ 57399..=57408 => {
+            KeyCode::Char(char::from_u32(c - 57399 + u32::from(b'0')).expect("digits"))
+        }
+        57409 => KeyCode::Char('.'),
+        57410 => KeyCode::Char('/'),
+        57411 => KeyCode::Char('*'),
+        57412 => KeyCode::Char('-'),
+        57413 => KeyCode::Char('+'),
+        57414 => KeyCode::Enter,
+        57415 => KeyCode::Char('='),
+        57416 => KeyCode::Char(','),
+        57417 => KeyCode::Left,
+        57418 => KeyCode::Right,
+        57419 => KeyCode::Up,
+        57420 => KeyCode::Down,
+        57421 => KeyCode::PageUp,
+        57422 => KeyCode::PageDown,
+        57423 => KeyCode::Home,
+        57424 => KeyCode::End,
+        57425 => KeyCode::Insert,
+        57426 => KeyCode::Delete,
+        _ => return None,
+    };
+    Some(code)
 }
 
 /// The SGR decode filtered through the dispatch filter: `mouse::from_crossterm` consumes the
