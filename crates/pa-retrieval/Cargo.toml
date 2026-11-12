@@ -6,6 +6,7 @@ license.workspace = true
 description = "Learning memory retrieval for prime-agent: BM25 base retriever + flyrag re-ranker with certificate-stream feedback, as a session feature."
 
 [dependencies]
+anyhow = { workspace = true }
 pa-core = { path = "../pa-core" }
 pa-ledger = { path = "../pa-ledger" }
 regex = "1"

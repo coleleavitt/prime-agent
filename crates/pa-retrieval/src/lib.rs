@@ -41,6 +41,7 @@
 
 #![warn(missing_docs)]
 
+mod backfill_targets;
 pub mod bm25;
 mod correction_tap;
 mod feature;

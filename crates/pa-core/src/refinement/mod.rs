@@ -680,7 +680,6 @@ fn scope_prefix(scope: HarnessScope, id: &str) -> String {
     )
 }
 
-pub mod backfill_targets;
 pub mod entries;
 pub mod executor;
 pub mod fingerprint_matcher;

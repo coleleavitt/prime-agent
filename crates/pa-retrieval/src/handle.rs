@@ -322,8 +322,8 @@ fn shared_handles() -> &'static Mutex<HashMap<PathBuf, RerankerHandle>> {
 /// seeded from the memory entries already on disk, so the index matches
 /// the harness state from turn one, and the one-shot `targetsFingerprints`
 /// backfill runs (sentinel-gated and idempotent, see
-/// `pa_core::refinement::backfill_targets::backfill_once`), so the feedback
-/// loop has targets to credit.
+/// [`crate::backfill_targets::backfill_once`]), so the feedback loop has
+/// targets to credit.
 ///
 /// # Errors
 ///
@@ -342,9 +342,7 @@ pub(crate) fn shared_handle_for(agent_dir: &Path) -> Result<RerankerHandle, Retr
     if handle.is_empty() {
         seed_reranker_from_harness_state(agent_dir, &handle);
     }
-    if let Err(err) =
-        pa_core::refinement::backfill_targets::backfill_once(&agent_dir.join("harness"))
-    {
+    if let Err(err) = crate::backfill_targets::backfill_once(&agent_dir.join("harness")) {
         tracing::warn!(
             target: "pa_daemon::retrieval",
             %err,

@@ -20,21 +20,17 @@
 //! idempotent (set-union) and guarded by a sentinel file so it only
 //! runs once per account; the sentinel carries the date for audit.
 //!
-//! Call `backfill_once` from the daemon's cold-boot path. It is
-//! best-effort: every failure mode logs a warning and returns `Ok(())`,
-//! so a missing file, malformed record, or permission error never
-//! blocks startup.
+//! [`crate::handle::shared_handle_for`] calls `backfill_once` when it
+//! builds a process's reranker. It is best-effort: every failure mode
+//! logs a warning and returns `Ok(())`, so a missing file, malformed
+//! record, or permission error never blocks startup.
 
 use std::fs;
 use std::path::Path;
 
+use pa_ledger::HARNESS_STATE_FILE_NAME;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-
-/// Mirror of `pa_ledger::HARNESS_STATE_FILE_NAME` — kept inline so
-/// this module stays in pa-core (pa-ledger depends on pa-core, not
-/// the other way around).
-const HARNESS_STATE_FILE_NAME: &str = "harness_state.json";
 
 /// The sentinel file name. Its presence (regardless of contents)
 /// disables the backfill. Writing the current iso-8601 date in the
@@ -272,6 +268,10 @@ fn now_iso_best_effort() -> String {
     let hour = secs_in_day / 3600;
     let min = (secs_in_day % 3600) / 60;
     let sec = secs_in_day % 60;
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "days since 1970 stay far below i64::MAX"
+    )]
     let (year, month, day) = civil_from_days(days as i64);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
 }
@@ -280,6 +280,12 @@ fn now_iso_best_effort() -> String {
 /// algorithms — unix-epoch days to (year, month, day). Correct for
 /// all dates after 1970.
 #[allow(clippy::many_single_char_names)]
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "Hinnant's algorithm keeps day-of-era, year-of-era, month and day in range"
+)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 {

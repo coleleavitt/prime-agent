@@ -3173,6 +3173,7 @@ dependencies = [
 name = "pa-retrieval"
 version = "0.10.3"
 dependencies = [
+ "anyhow",
  "flyrag",
  "kenyon",
  "pa-core",
