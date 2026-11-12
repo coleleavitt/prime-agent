@@ -172,7 +172,8 @@ impl ClickCounter {
         count
     }
 
-    /// Forget the run: a drag or a press elsewhere (a modified press, a wheel turn) breaks it.
+    /// Forget the run: a drag, a press elsewhere (a modified press, a wheel turn), or a key press
+    /// breaks it.
     pub(crate) fn reset(&mut self) {
         self.last = None;
     }

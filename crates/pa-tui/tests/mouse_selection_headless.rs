@@ -390,6 +390,27 @@ fn double_click_copies_the_word_under_the_pointer() {
     assert_eq!(copies, vec!["answer".to_string()], "the word copied");
 }
 
+/// A key press between two clicks on one spot breaks the multi-click run (standard editor
+/// behavior): the second press is a fresh single click, so it selects and copies nothing.
+#[test]
+fn a_key_press_between_two_clicks_breaks_the_double_click() {
+    let (_, _, answer_row, answer_col, ..) = top_layout();
+    let steps = vec![
+        // The located press targets are valid only while the view sits at the transcript top.
+        HeadlessStep::ScrollTop,
+        HeadlessStep::Mouse(press(answer_col + 4, answer_row + 1)),
+        HeadlessStep::Mouse(release(answer_col + 4, answer_row + 1)),
+        HeadlessStep::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        )),
+        HeadlessStep::Mouse(press(answer_col + 5, answer_row + 1)),
+        HeadlessStep::Mouse(release(answer_col + 5, answer_row + 1)),
+    ];
+    let (_, copies) = run_plan(steps, true);
+    assert_eq!(copies, Vec::<String>::new(), "no word copied");
+}
+
 /// A triple click selects the row's visible content (upstream #1089); the fourth press starts
 /// over as a single click, so it copies nothing more.
 #[test]

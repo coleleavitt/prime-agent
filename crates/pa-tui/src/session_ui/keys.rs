@@ -436,6 +436,9 @@ impl SessionUi {
         view: &mut AgentView,
         running: &mut bool,
     ) -> Result<()> {
+        // A key press breaks a multi-click run (standard editor behavior): the next press on the
+        // same spot is a fresh single click, not a double click.
+        self.click_counter.reset();
         // Any non-Escape key re-arms the double-Esc tree shortcut (one shot per input chain);
         // Escape itself never resets, so repeated Escape converges to the inert empty state.
         if key_event_to_id(&key).is_some_and(|id| id != "escape") {
