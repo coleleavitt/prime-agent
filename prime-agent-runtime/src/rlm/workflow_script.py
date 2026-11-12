@@ -24,9 +24,13 @@ The semantics follow Claude Code's runtime:
 - Every run journals its agents to ``<session dir>/workflows/<run id>/
   journal.jsonl``. The journal key of one ``agent()`` call is
   ``"v2:" + sha256(previous key, prompt, the call's result-shaping options)``,
-  chained in call order, so ``resume_from=<run id>`` replays the longest
-  unchanged prefix of calls from the journal and runs everything from the
-  first changed call on live.
+  chained in call order within each lane: every ``parallel``/``pipeline``
+  slot chains its own keys and the join links them back (Claude Code's
+  lanes), so a key never depends on which slot finished first.
+  ``resume_from=<run id>`` replays the longest unchanged prefix of calls
+  from the journal and runs everything from the first changed call on
+  live; a call that was in flight when the run died re-runs without
+  ending the replay.
 - At most ``min(16, cpus - 2)`` agents run at once, 1000 per run, 4096 items
   per ``pipeline``/``parallel`` call; ``workflow()`` nests one level deep.
 
@@ -192,16 +196,49 @@ def journal_key(previous: str, prompt: str, options: dict[str, Any] | None) -> s
     return f"{KEY_VERSION}:{digest.hexdigest()}"
 
 
+def lane_key(previous: str, kind: str, slot: int | str | list[str]) -> str:
+    """A ``parallel``/``pipeline`` lane's chain link (Claude Code's ``Zo``): a slot's
+    start (``slot`` an index), the parent's fork, or the join over every slot's tail."""
+    digest = hashlib.sha256()
+    digest.update(previous.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(kind.encode("utf-8"))
+    digest.update(b"\0")
+    if isinstance(slot, int):
+        digest.update(f"slot:{slot}".encode())
+    elif slot == "fork":
+        digest.update(b"fork")
+    else:
+        digest.update(b"join")
+        for tail in slot:
+            digest.update(b"\0")
+            digest.update(tail.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def replaced_key(key: str, agent_id: str) -> str:
+    """The chain link after a key whose result was replaced (Claude Code's ``jn``)."""
+    digest = hashlib.sha256()
+    digest.update(key.encode("utf-8"))
+    digest.update(b"\0replaced\0")
+    digest.update(agent_id.encode("utf-8"))
+    return digest.hexdigest()
+
+
 # --- the journal ----------------------------------------------------------
 
 
 @dataclass
 class JournalState:
-    """A journal read back: each key's newest result, its start lines, and the failed keys."""
+    """A journal read back (Claude Code's reducer): each key's newest result, its start
+    lines, the failed keys, the keys a later start demoted, and the keys with more than
+    one result."""
 
     results: dict[str, dict[str, Any]] = field(default_factory=dict)
     started: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     failed: set[str] = field(default_factory=set)
+    demoted: set[str] = field(default_factory=set)
+    replaced: set[str] = field(default_factory=set)
 
 
 class Journal:
@@ -225,13 +262,19 @@ class Journal:
                 continue
             if not isinstance(entry, dict) or not isinstance(entry.get("key"), str):
                 continue
-            kind = entry.get("type")
+            kind, key = entry.get("type"), entry["key"]
             if kind == "result":
-                state.results[entry["key"]] = entry
+                if key in state.results or key in state.demoted or key in state.failed:
+                    state.replaced.add(key)
+                state.results[key] = entry
+                state.demoted.discard(key)
             elif kind == "started":
-                state.started.setdefault(entry["key"], []).append(entry)
+                if state.results.pop(key, None) is not None:
+                    state.demoted.add(key)
+                state.started.setdefault(key, []).append(entry)
             elif kind == "failed":
-                state.failed.add(entry["key"])
+                state.results.pop(key, None)
+                state.failed.add(key)
         return state
 
     def append(self, entry: dict[str, Any]) -> None:
@@ -465,7 +508,8 @@ class _Run:
         self.replay = replay
         self.semaphore = asyncio.Semaphore(concurrency)
         self.background = background
-        self.previous_key = ""
+        # The key chain outside any parallel/pipeline slot.
+        self.root_lane = _Lane(self)
         # Claude Code's `T`: once a call misses the journal, every later call runs live.
         self.live = False
         self.records: list[AgentRecord] = []
@@ -478,6 +522,45 @@ class _Run:
         self.logs.append(message)
         if not self.background:
             _emit_progress(f"[workflow {self.name}] {message}")
+
+    def lane(self) -> _Lane:
+        """The key chain the calling task extends: its slot's, else the run's root."""
+        lane = _LANE.get()
+        return lane if lane is not None and lane.run is self else self.root_lane
+
+
+class _Lane:
+    """One key chain (Claude Code's lane): agent() calls in one slot chain in call order,
+    so a key never depends on which slot finished first."""
+
+    def __init__(self, run: _Run, prev: str = "") -> None:
+        self.run = run
+        self.prev = prev
+
+
+_LANE: contextvars.ContextVar[_Lane | None] = contextvars.ContextVar("rlm_workflow_lane", default=None)
+
+
+class _Fork:
+    """A ``parallel``/``pipeline`` call's lanes: each slot runs in its own lane task, and
+    the join links the parent lane to every slot's tail (Claude Code's ``Ve``)."""
+
+    def __init__(self, run: _Run, kind: str) -> None:
+        self.parent = run.lane()
+        self.base = self.parent.prev
+        self.kind = kind
+        self.parent.prev = lane_key(self.base, kind, "fork")
+        self.slots: list[_Lane] = []
+
+    def start(self, index: int, body: Callable[[], Awaitable[Any]]) -> asyncio.Task[Any]:
+        lane = _Lane(self.parent.run, lane_key(self.base, self.kind, index))
+        self.slots.append(lane)
+        context = contextvars.copy_context()
+        context.run(_LANE.set, lane)
+        return asyncio.get_running_loop().create_task(body(), context=context)
+
+    def join(self) -> None:
+        self.parent.prev = lane_key(self.parent.prev, self.kind, [lane.prev for lane in self.slots])
 
 
 def _call_stage(stage: Callable[..., Any], previous: Any, item: Any, index: int) -> Any:
@@ -555,8 +638,9 @@ class WorkflowContext:
         if len(run.records) >= MAX_AGENTS:
             raise WorkflowError(f"a workflow runs at most {MAX_AGENTS} agents")
         options = {"schema": schema, "model": model, "effort": effort, "isolation": isolation}
-        key = journal_key(run.previous_key, prompt, options)
-        run.previous_key = key
+        lane = run.lane()
+        key = journal_key(lane.prev, prompt, options)
+        lane.prev = key
         index = len(run.records) + 1
         text_label = (
             " ".join(str(label).split()) if label is not None else " ".join(prompt.split())[:60]
@@ -573,16 +657,32 @@ class WorkflowContext:
                 f"this run passed the {run.guideline_name} workflow size guideline "
                 f"({run.guideline_count} agents); it is a guideline, not a limit"
             )
-        cached = None if run.live else run.replay.results.get(key)
+        replay = run.replay
+        cached = None if run.live else replay.results.get(key)
         if cached is not None:
             record.state, record.cached = "done", True
             record.agent_id = str(cached.get("agentId") or "")
+            if key in replay.replaced:
+                lane.prev = replaced_key(key, record.agent_id)
             return asyncio.ensure_future(_resolved(cached.get("result")))
-        started = run.replay.started.get(key)
-        if not (not run.live and started and key not in run.replay.failed):
+        # Claude Code's resume rule: the first new call ends the replay; a call that
+        # was in flight when the run died re-runs without ending it.
+        started = replay.started.get(key)
+        if not (not run.live and started and key not in replay.failed and key not in replay.demoted):
             run.live = True
+        # A key whose earlier outcome this run replaces re-links the lane after it,
+        # so later calls never reuse results computed after the old outcome.
+        relink = key in replay.results or key in replay.demoted or key in replay.failed
         return asyncio.ensure_future(
-            self._run_agent(record, prompt, schema=schema, model=model, effort=effort, isolation=isolation)
+            self._run_agent(
+                record,
+                prompt,
+                lane=lane if relink else None,
+                schema=schema,
+                model=model,
+                effort=effort,
+                isolation=isolation,
+            )
         )
 
     async def _run_agent(
@@ -590,6 +690,7 @@ class WorkflowContext:
         record: AgentRecord,
         prompt: str,
         *,
+        lane: _Lane | None,
         schema: dict[str, Any] | None,
         model: str | None,
         effort: str | None,
@@ -637,6 +738,8 @@ class WorkflowContext:
                 run.journal.append(
                     {"type": "result", "key": record.key, "agentId": record.agent_id, "result": value}
                 )
+                if lane is not None and lane.prev == record.key:
+                    lane.prev = replaced_key(record.key, record.agent_id)
                 return value
             except asyncio.CancelledError:
                 record.state = "cancelled"
@@ -702,7 +805,14 @@ class WorkflowContext:
                     return None
             return value
 
-        return list(await asyncio.gather(*(chain(index, item) for index, item in enumerate(values))))
+        fork = _Fork(self._run, "pipeline")
+        lanes = [
+            fork.start(index, lambda index=index, item=item: chain(index, item))
+            for index, item in enumerate(values)
+        ]
+        results = list(await asyncio.gather(*lanes))
+        fork.join()
+        return results
 
     async def parallel(self, thunks: Iterable[Callable[[], Any]]) -> list[Any]:
         """Run every thunk concurrently and wait for all (a barrier); never raises —
@@ -723,7 +833,14 @@ class WorkflowContext:
                 self._run.note(f"parallel task {index} failed: {type(error).__name__}: {error}")
                 return None
 
-        return list(await asyncio.gather(*(one(index, thunk) for index, thunk in enumerate(calls))))
+        fork = _Fork(self._run, "parallel")
+        lanes = [
+            fork.start(index, lambda index=index, thunk=thunk: one(index, thunk))
+            for index, thunk in enumerate(calls)
+        ]
+        results = list(await asyncio.gather(*lanes))
+        fork.join()
+        return results
 
     async def workflow(self, script: Any, args: Any = None) -> Any:
         """Run another workflow script inline as a sub-step (one level deep); it shares

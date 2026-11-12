@@ -322,6 +322,35 @@ class ResumeTests(WorkflowTestCase):
         # Everything after the first changed call runs live, even an unchanged prompt.
         self.assertEqual([FakeBackend.task(call) for call in edited.calls], ["TWO", "three"])
 
+    async def test_pipeline_keys_do_not_depend_on_completion_order(self) -> None:
+        # Each pipeline slot chains its own keys (Claude Code's per-lane keys):
+        # a resume whose items finish stage one in another order still replays
+        # every agent from the journal.
+        async def main(wf):
+            return await wf.pipeline(["0", "1"], lambda item: wf.agent(f"s1-{item}"), lambda _, item: wf.agent(f"s2-{item}"))
+
+        first_backend = FakeBackend()
+        held = asyncio.Event()
+        first_backend.gates["s1-0"] = held
+
+        def answer(request):
+            task = FakeBackend.task(request)
+            if task == "s2-1":
+                held.set()
+            return f"answer to {task}"
+
+        first_backend.answer = answer
+        first = await workflow.run(main, backend=first_backend)
+        self.assertEqual(
+            [event for event in first_backend.events if event.startswith("end:")],
+            ["end:s1-1", "end:s2-1", "end:s1-0", "end:s2-0"],
+        )
+
+        replay = FakeBackend()
+        resumed = await workflow.run(main, backend=replay, resume_from=first.run_id)
+        self.assertEqual((resumed.cached, len(replay.calls)), (4, 0))
+        self.assertEqual(resumed.result, first.result)
+
     async def test_an_interrupted_run_resumes_past_its_in_flight_agents(self) -> None:
         async def main(wf):
             return await wf.parallel([lambda p=p: wf.agent(p) for p in ("a", "b", "c")])
