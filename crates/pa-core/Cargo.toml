@@ -61,9 +61,11 @@ ignore = "0.4"
 # with the official Rust SDK, client side only. Its reqwest client feature
 # stays off (rmcp 3 pins reqwest 0.13): the HTTP leg rides this crate's
 # reqwest 0.12 + rustls client through `StreamableHttpClient`, which names
-# `sse_stream::Sse` (rmcp's own SSE parser dependency). Pinned: 3.5.0 is the
-# newest release past the 7-day release-age rule.
-rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
+# `sse_stream::Sse` (rmcp's own SSE parser dependency). Pinned: 3.9.0
+# (2026-11-05) fixes RUSTSEC-2026-0457/0461/0462 and keeps reqwest 0.13 and
+# sse-stream 0.2; move the pin only to a release past the 7-day release-age
+# rule that still uses sse-stream 0.2.
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
 sse-stream = "0.2"
 pa-refusal = { path = "../pa-refusal" }
 
