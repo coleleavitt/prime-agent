@@ -167,7 +167,7 @@ where
             python: Some(python),
         });
     }
-    if let Err(error) = record_installed_python_skill(venv, &skill) {
+    if let Err(error) = record_installed_python_skill(venv, &resolve_runtime_identity(), &skill) {
         tracing::warn!(
             venv = %venv.display(),
             import_name = %skill.import_name,
@@ -185,12 +185,15 @@ where
 }
 
 /// Merge one installed skill into the venv manifest. A manifest that does not
-/// describe the current runtime is about to be rebuilt wholesale by the next
+/// describe `runtime_identity` is about to be rebuilt wholesale by the next
 /// bootstrap; writing into it would only claim a state the venv is not in.
-fn record_installed_python_skill(venv: &Path, skill: &BootstrapPythonSkill) -> anyhow::Result<()> {
-    let runtime_identity = resolve_runtime_identity();
+fn record_installed_python_skill(
+    venv: &Path,
+    runtime_identity: &str,
+    skill: &BootstrapPythonSkill,
+) -> anyhow::Result<()> {
     let version = read_bootstrap_version(venv);
-    if !bootstrap_base_version_current(version.clone(), &runtime_identity) {
+    if !bootstrap_base_version_current(version.clone(), runtime_identity) {
         return Ok(());
     }
     let key = bootstrap_skill_key(skill);
@@ -206,7 +209,7 @@ fn record_installed_python_skill(venv: &Path, skill: &BootstrapPythonSkill) -> a
             .cmp(&b.package_path)
             .then(a.import_name.cmp(&b.import_name))
     });
-    write_bootstrap_version(venv, &runtime_identity, &skills)
+    write_bootstrap_version(venv, runtime_identity, &skills)
 }
 
 #[cfg(test)]
@@ -288,15 +291,17 @@ mod tests {
             pyproject_hash: "sha256:a".to_string(),
         };
 
-        record_installed_python_skill(venv, &skill("sha256:new")).unwrap();
+        // A fixed identity: the resolved one follows the process env, which
+        // sibling tests change.
+        let runtime = "sha256:runtime";
+        record_installed_python_skill(venv, runtime, &skill("sha256:new")).unwrap();
         assert!(
             read_bootstrap_version(venv).is_none(),
             "no manifest, no write"
         );
 
-        let runtime = resolve_runtime_identity();
-        write_bootstrap_version(venv, &runtime, &[skill("sha256:old"), other.clone()]).unwrap();
-        record_installed_python_skill(venv, &skill("sha256:new")).unwrap();
+        write_bootstrap_version(venv, runtime, &[skill("sha256:old"), other.clone()]).unwrap();
+        record_installed_python_skill(venv, runtime, &skill("sha256:new")).unwrap();
         assert_eq!(
             read_bootstrap_version(venv).and_then(|version| version.python_skills),
             Some(vec![other, skill("sha256:new")])
