@@ -256,10 +256,11 @@ feature status, the TUI's yes/no panel, and the `answer_feature_confirmation` da
 `feature_confirmation`); print mode refuses. Contract in `docs/hooks-and-plugins.md`.
 
 Open:
-- `pa-cli` holds a parallel in-process RLM runtime that belongs in `pa-core`: `print_rlm.rs` (1600 LoC),
-  `print_goal.rs` (1600 LoC) and `print_runtime.rs` (2316 LoC) drive a daemonless subagent host from the CLI
-  binary with their own compaction arms, while AGENTS.md defines `pa-cli` as a composition root with no business
-  logic. Migration target is `pa-core::session_engine::rlm_in_process/`; `print_*` is tolerated for now.
+- Two in-process RLM hosts: the resident guest's `rlm_in_process::InProcessRlmHost` (children run through the
+  engine's own run task, terminal notices through the parent's inbox) and the print runtime's
+  `rlm_in_process::inline` host (children driven turn by turn through `headless::boundary`, notices steered into
+  the parent's lane). They share model resolution and roster text but not the hosting; folding print onto the
+  resident host changes print's notice and compaction behavior, so it needs its own change with e2e evidence.
 - Feature-crate dependency drift: `pa-core` hard-links `pa-retrieval` + `pa-refusal`; `pa-daemon` hard-links
   `pa-retrieval` + `pa-ledger`; `pa-ai` hard-links `pa-refusal`. Each violates `docs/fork-feature-crates.md` rule 2
   ("no native crate depends on a feature crate") and breaks the `--no-default-features = native product` promise.
