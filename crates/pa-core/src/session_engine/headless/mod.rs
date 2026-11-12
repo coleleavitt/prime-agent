@@ -21,6 +21,8 @@ pub(crate) mod goal;
 mod model;
 mod print_run;
 mod session_command;
+#[cfg(test)]
+mod test_support;
 
 pub use faux::faux_response_steps;
 pub use model::{HeadlessModelFlags, resolve_headless_thinking_level, select_headless_model};

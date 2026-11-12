@@ -196,6 +196,7 @@ mod tests {
     use super::*;
     use crate::session_engine::headless::boundary::TurnBoundary;
     use crate::session_engine::headless::goal::PrintGoalSurface;
+    use crate::session_engine::headless::test_support::{faux_engine, register_faux_model};
     use crate::session_engine::slash_commands::{SlashCommandRegistry, parse_session_command};
 
     /// One test at a time over the global faux registry (the same contract the `goal` and
@@ -307,79 +308,12 @@ mod tests {
 
     async fn bed_with_settings(script: Value, settings: Value) -> Bed {
         let dir = tempfile::TempDir::new().unwrap();
-        let agent_dir = dir.path().join("agent");
-        std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::write(agent_dir.join("settings.json"), settings.to_string()).unwrap();
-        let parsed = pa_ai::faux::script::parse_faux_script(&script).unwrap();
-        let registration =
-            pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
-                models: Some(vec![parsed.model.clone()]),
-                ..Default::default()
-            });
-        registration.set_responses(parsed.responses);
-        registration.set_repeat_last_response(parsed.repeat_last_response);
-        let model = registration.get_model();
-        let stream_fn =
-            crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
-        let agent_model: pa_agent::types::Model =
-            serde_json::from_value(serde_json::to_value(&model).unwrap()).unwrap();
+        let model = register_faux_model(dir.path(), &script, &settings);
         let session_manager = crate::session::manager::SessionManager::persisted(
             dir.path(),
             &dir.path().join("sessions"),
         );
-        let engine = Arc::new(
-            crate::session_engine::engine::create_session(
-                crate::session_engine::engine::SessionEngineConfig {
-                    sandbox_mode: None,
-                    additional_directories: Vec::new(),
-                    plan_mode: None,
-                    on_late_sent_agent_message: None,
-                    semantic_edges: None,
-                    cron_store: None,
-                    telemetry: None,
-                    cwd: dir.path().to_path_buf(),
-                    agent_dir,
-                    mcp_manager: None,
-                    model: Some(agent_model),
-                    thinking_level: None,
-                    stream_fn: Some(stream_fn),
-                    tools: Vec::new(),
-                    custom_system_prompt: None,
-                    prompt_guidelines: Vec::new(),
-                    generic_mcp_servers: Vec::new(),
-                    allow_recursion: None,
-                    session_manager: Some(session_manager),
-                    extra_host_handlers: None,
-                    conversation_log_path: None,
-                    additional_skill_paths: Vec::new(),
-                    additional_prompt_paths: Vec::new(),
-                    resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
-                    extra_builtin_skill_overrides: Vec::new(),
-                    rlm_subagent_host: None,
-                    rlm_usage_store: None,
-                    progress_note_emit: None,
-                    factory_notices: None,
-                    factory_child: false,
-                    daemonless: true,
-                    rlm_depth: None,
-                    model_info: Some(model.clone()),
-                    kernel_ready_gate: None,
-                    prewarm_ipython_kernel: None,
-                    on_background_work_settled: None,
-                    bash_notice_wake: None,
-                    queued_goal_context_purge: None,
-                    queued_steering_probe: None,
-                    steering_fold: None,
-                    should_stop_after_turn: None,
-                    image_model_router: None,
-                    steering_mode: None,
-                    follow_up_mode: None,
-                    agent_definition: None,
-                },
-            )
-            .await
-            .unwrap(),
-        );
+        let engine = Arc::new(faux_engine(dir.path(), &model, session_manager, None).await);
         let (frames, sink) = capture_sink();
         let goal = Arc::new(PrintGoalSurface::json(sink));
         goal.seed_publish_baseline(&engine).await;

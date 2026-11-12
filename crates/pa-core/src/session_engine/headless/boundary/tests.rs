@@ -3,7 +3,7 @@ use serde_json::json;
 
 use super::*;
 use crate::session::manager::SessionManager;
-use crate::session_engine::engine::{SessionEngineConfig, create_session};
+use crate::session_engine::headless::test_support::{faux_engine, register_faux_model};
 
 /// The faux model's per-request output budget: threshold fixtures
 /// subtract it from the window alongside the headroom.
@@ -81,78 +81,10 @@ async fn faux_engine_with_telemetry(
     telemetry: Option<crate::session_engine::telemetry::TelemetryWiring>,
 ) -> (SessionEngine, tempfile::TempDir, Model) {
     let dir = tempfile::TempDir::new().unwrap();
-    let agent_dir = dir.path().join("agent");
-    std::fs::create_dir_all(&agent_dir).unwrap();
-    std::fs::write(agent_dir.join("settings.json"), settings.to_string()).unwrap();
-    let parsed = pa_ai::faux::script::parse_faux_script(&script).unwrap();
-    let registration =
-        pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
-            models: Some(vec![parsed.model]),
-            ..Default::default()
-        });
-    registration.set_responses(parsed.responses);
-    registration.set_repeat_last_response(parsed.repeat_last_response);
-    let model = registration.get_model();
-    let stream_fn = crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
-    let agent_model: pa_agent::types::Model =
-        json_round_trip(&model).expect("the faux model crosses the loop boundary");
+    let model = register_faux_model(dir.path(), &script, &settings);
     let session_manager = session_manager
-        .or_else(|| {
-            Some(SessionManager::persisted(
-                dir.path(),
-                &dir.path().join("sessions"),
-            ))
-        })
-        .expect("a session manager");
-    let engine = create_session(SessionEngineConfig {
-        sandbox_mode: None,
-        additional_directories: Vec::new(),
-        plan_mode: None,
-        on_late_sent_agent_message: None,
-        semantic_edges: None,
-        cron_store: None,
-        steering_mode: None,
-        follow_up_mode: None,
-        image_model_router: None,
-        telemetry,
-        cwd: dir.path().to_path_buf(),
-        agent_dir,
-        mcp_manager: None,
-        model: Some(agent_model),
-        thinking_level: None,
-        stream_fn: Some(stream_fn),
-        tools: Vec::new(),
-        custom_system_prompt: None,
-        prompt_guidelines: Vec::new(),
-        generic_mcp_servers: Vec::new(),
-        allow_recursion: None,
-        session_manager: Some(session_manager),
-        extra_host_handlers: None,
-        conversation_log_path: None,
-        additional_skill_paths: Vec::new(),
-        additional_prompt_paths: Vec::new(),
-        resource_exclusions: pa_types::daemon::SessionResourceExclusions::default(),
-        extra_builtin_skill_overrides: Vec::new(),
-        rlm_subagent_host: None,
-        rlm_usage_store: None,
-        progress_note_emit: None,
-        factory_notices: None,
-        rlm_depth: None,
-        factory_child: false,
-        daemonless: true,
-        model_info: Some(model.clone()),
-        kernel_ready_gate: None,
-        prewarm_ipython_kernel: None,
-        on_background_work_settled: None,
-        bash_notice_wake: None,
-        queued_goal_context_purge: None,
-        queued_steering_probe: None,
-        steering_fold: None,
-        should_stop_after_turn: None,
-        agent_definition: None,
-    })
-    .await
-    .expect("the faux session assembles");
+        .unwrap_or_else(|| SessionManager::persisted(dir.path(), &dir.path().join("sessions")));
+    let engine = faux_engine(dir.path(), &model, session_manager, telemetry).await;
     (engine, dir, model)
 }
 
