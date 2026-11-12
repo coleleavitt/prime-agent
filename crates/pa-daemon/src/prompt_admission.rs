@@ -150,6 +150,34 @@ impl PromptAdmissionTable {
         keys.next().is_none().then_some(first)
     }
 
+    /// Hand the admission to `worker_id`, the route's last step before the
+    /// worker round trip: `false` when a cancel came first. One transition
+    /// with [`Self::cancel_unrouted`]: a cancel either refuses the route
+    /// here or finds the worker and forwards to it, never answers
+    /// `cancelled` for a prompt that is still delivered. A settled (removed)
+    /// admission does not refuse.
+    fn assign_worker(&self, key: &str, worker_id: &str) -> bool {
+        self.update(key, |admission| {
+            if admission.status == AdmissionStatus::Cancelled {
+                return false;
+            }
+            admission.worker_id = Some(worker_id.to_string());
+            admission.worker_active_session_id = Some(worker_id.to_string());
+            true
+        })
+        .unwrap_or(true)
+    }
+
+    /// A waiting admission with no worker yet cancels outright (the TS
+    /// pre-check: the route refuses at [`Self::assign_worker`]).
+    fn cancel_unrouted(&self, key: &str) {
+        self.update(key, |admission| {
+            if admission.status == AdmissionStatus::Waiting && admission.worker_id.is_none() {
+                admission.status = AdmissionStatus::Cancelled;
+            }
+        });
+    }
+
     fn remove(&self, key: &str) {
         self.admissions
             .lock()
@@ -269,23 +297,16 @@ impl Supervisor {
         };
         // A cancellation that landed during the resolution fails the
         // prompt first.
-        let cancelled = connection
+        if !connection
             .prompt_admissions
-            .with(&key, |admission| {
-                admission.status == AdmissionStatus::Cancelled
-            })
-            .unwrap_or(false);
-        if cancelled {
+            .assign_worker(&key, &resident.worker_id)
+        {
             return Self::admission_failure(
                 &command_id,
                 &type_name,
                 "Prompt admission was cancelled.",
             );
         }
-        connection.prompt_admissions.update(&key, |admission| {
-            admission.worker_id = Some(resident.worker_id.clone());
-            admission.worker_active_session_id = Some(resident.worker_id.clone());
-        });
         let (command_type, mut payload) = match client_command_payload(command, client_id) {
             Ok(payload) => payload,
             Err(error) => {
@@ -371,13 +392,7 @@ impl Supervisor {
                 key = rebound;
             }
         }
-        // A waiting admission with no worker yet cancels outright (the TS
-        // pre-check: the prompt route fails at its next check).
-        connection.prompt_admissions.update(&key, |admission| {
-            if admission.status == AdmissionStatus::Waiting && admission.worker_id.is_none() {
-                admission.status = AdmissionStatus::Cancelled;
-            }
-        });
+        connection.prompt_admissions.cancel_unrouted(&key);
         let Some(status) = connection
             .prompt_admissions
             .with(&key, |admission| admission.status)
@@ -637,6 +652,37 @@ mod tests {
         table.remove(&new_key);
         assert!(!table.rekey(&new_key, &old_key));
         assert!(table.with(&old_key, |_| ()).is_none());
+    }
+
+    /// The route's worker assignment and an outright cancel are one
+    /// transition, in either order: a cancel that lands first refuses the
+    /// assignment (the prompt never reaches a worker), one that lands after
+    /// it leaves the admission waiting on the worker it now forwards to.
+    #[test]
+    fn a_cancel_and_the_worker_assignment_never_both_win() {
+        let state = |table: &PromptAdmissionTable, key: &str| {
+            table.with(key, |admission| {
+                (admission.status, admission.worker_id.clone())
+            })
+        };
+        let table = PromptAdmissionTable::default();
+        table.register("sess", "cancel-first").expect("register");
+        let key = prompt_admission_key("sess", "cancel-first");
+        table.cancel_unrouted(&key);
+        assert!(!table.assign_worker(&key, "worker-1"));
+        assert_eq!(
+            state(&table, &key),
+            Some((AdmissionStatus::Cancelled, None))
+        );
+
+        table.register("sess", "assign-first").expect("register");
+        let key = prompt_admission_key("sess", "assign-first");
+        assert!(table.assign_worker(&key, "worker-1"));
+        table.cancel_unrouted(&key);
+        assert_eq!(
+            state(&table, &key),
+            Some((AdmissionStatus::Waiting, Some("worker-1".to_string())))
+        );
     }
 
     #[test]
