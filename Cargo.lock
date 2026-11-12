@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "pa-advisor"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "pa-agent",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "pa-anthropic-auth"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anthropic",
  "anyhow",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "pa-bash"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "getrandom 0.3.4",
  "memchr",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "pa-cc-import"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "pa-core",
  "pa-types",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "pa-computer-use"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "atspi-proxies",
  "objc2",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "pa-dream"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "pa-agent",
@@ -2890,7 +2890,7 @@ dependencies = [
 
 [[package]]
 name = "pa-hooks"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "futures",
  "pa-agent",
@@ -2907,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "pa-learning"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "flate2",
  "indexmap",
@@ -2930,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "pa-ledger"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "pa-lsp"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "pa-core",
@@ -2970,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "pa-mermaid"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "serde_json",
  "unicode-segmentation",
@@ -2999,7 +2999,7 @@ dependencies = [
 
 [[package]]
 name = "pa-observer"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "pa-agent",
  "pa-core",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "pa-os-sandbox"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "landlock",
  "libc",
@@ -3040,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "pa-permissions"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "ignore",
  "pa-agent",
@@ -3057,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "pa-plugins"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "pa-agent",
@@ -3075,7 +3075,7 @@ dependencies = [
 
 [[package]]
 name = "pa-ravo"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -3098,7 +3098,7 @@ dependencies = [
 
 [[package]]
 name = "pa-recall"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "fancy-regex",
  "getrandom 0.3.4",
@@ -3130,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "pa-retrieval"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "flyrag",
  "kenyon",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "pa-sandbox"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "reqwest",
  "serde",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "pa-session-index"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "pa-core",
  "serde",
@@ -3182,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "pa-toolforge"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "nix 0.29.0",
@@ -3201,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "pa-trace"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "flate2",
@@ -3271,7 +3271,7 @@ dependencies = [
 
 [[package]]
 name = "pa-web"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "htmd",
@@ -3291,7 +3291,7 @@ dependencies = [
 
 [[package]]
 name = "pa-workflow"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "futures",
