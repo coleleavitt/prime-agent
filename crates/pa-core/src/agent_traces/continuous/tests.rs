@@ -169,6 +169,19 @@ fn competing_delivery_is_nonblocking_and_crash_recoverable() {
     assert!(delivery_lease(&fixture.agent_dir, &path).is_some());
 }
 
+/// A child spawned while a lease is held inherits its descriptor until it
+/// execs; releasing the lease must not wait for that copy to close.
+#[test]
+fn a_released_lease_is_free_while_an_inherited_descriptor_lives() {
+    let fixture = Fixture::new();
+    let path = fixture.write_session("inherited.jsonl", "inherited");
+    let lease = delivery_lease(&fixture.agent_dir, &path).unwrap();
+    let inherited = lease.file.try_clone().unwrap();
+    drop(lease);
+    assert!(delivery_lease(&fixture.agent_dir, &path).is_some());
+    drop(inherited);
+}
+
 #[tokio::test(start_paused = true)]
 async fn controller_drop_cancels_timer_without_waiting_for_delivery() {
     let fixture = Fixture::new();

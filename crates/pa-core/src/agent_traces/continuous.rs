@@ -341,7 +341,23 @@ fn prune_entry(entry: &Path, observed: &str, missing_session: Option<&Path>) {
     }
 }
 
-fn delivery_lease(agent_dir: &Path, path: &Path) -> Option<std::fs::File> {
+/// An exclusive OS lock on one delivery. Dropping it unlocks explicitly:
+/// closing this descriptor alone leaves the lock held while a child forked
+/// meanwhile still carries an inherited copy (until it execs), and the next
+/// sweep or delivery in this process would then find its own lease busy.
+struct DeliveryLease {
+    file: std::fs::File,
+}
+
+impl Drop for DeliveryLease {
+    fn drop(&mut self) {
+        if let Err(error) = crate::platform::unlock_file(&self.file) {
+            tracing::warn!(%error, "trace delivery lease release failed");
+        }
+    }
+}
+
+fn delivery_lease(agent_dir: &Path, path: &Path) -> Option<DeliveryLease> {
     let lock = agent_trace_outbox_entry_path(agent_dir, path).with_extension("lock");
     std::fs::create_dir_all(agent_trace_outbox_dir(agent_dir)).ok()?;
     let mut options = std::fs::OpenOptions::new();
@@ -349,7 +365,7 @@ fn delivery_lease(agent_dir: &Path, path: &Path) -> Option<std::fs::File> {
     crate::platform::perms::set_private_mode(&mut options);
     let file = options.open(lock).ok()?;
     crate::platform::try_lock_exclusive(&file).ok()?;
-    Some(file)
+    Some(DeliveryLease { file })
 }
 
 #[derive(Clone)]
