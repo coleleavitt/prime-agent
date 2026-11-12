@@ -23,6 +23,7 @@ default = [
     "plugins",
     "ravo",
     "recall",
+    "refusal",
     "session-index",
     "toolforge",
     "trace",
@@ -86,6 +87,10 @@ plugins = ["dep:pa-plugins"]
 ravo = ["ledger", "dep:pa-ravo"]
 # Workspace Recall (crates/pa-recall).
 recall = ["dep:pa-recall"]
+# The content filter (crates/pa-refusal): with the `contentFilter` setting on,
+# outbound `anthropic` requests are scored for refusal probability and
+# filtered before sending. Inert while the setting is off (the default).
+refusal = ["dep:pa-refusal"]
 # The persisted saved-session catalog index, session-index.ndjson (crates/pa-session-index).
 session-index = ["dep:pa-session-index"]
 # `rlm.toolforge.publish`: the gated path from agent-written Python to a skill.
@@ -116,6 +121,7 @@ pa-tui = { path = "../pa-tui" }
 pa-telemetry = { path = "../pa-telemetry" }
 pa-workflow = { path = "../pa-workflow", optional = true }
 pa-recall = { path = "../pa-recall", optional = true }
+pa-refusal = { workspace = true, optional = true }
 pa-dream = { path = "../pa-dream", optional = true }
 pa-trace = { path = "../pa-trace", optional = true }
 pa-ledger = { path = "../pa-ledger", optional = true }

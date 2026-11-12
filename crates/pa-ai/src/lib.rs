@@ -12,7 +12,6 @@ pub mod env_api_keys;
 pub mod models;
 pub mod models_generated;
 pub mod oauth;
-pub mod refusal_hooks;
 pub mod registry;
 pub mod request_hooks;
 pub mod types;

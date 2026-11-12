@@ -151,8 +151,9 @@ pub fn install_enabled_features() -> InstalledFeatures {
     install_tui_features();
     // Without an agent dir nothing here may read settings or open the log:
     // the command boundary reports the missing home (`require_agent_dir`).
+    #[cfg(any(feature = "refusal", feature = "trace"))]
     let has_agent_dir = crate::config::require_agent_dir().is_ok();
-    // Install refusal hooks if enabled in settings.
+    #[cfg(feature = "refusal")]
     if let (true, Ok(cwd)) = (has_agent_dir, std::env::current_dir()) {
         let settings =
             pa_core::settings::SettingsManager::create(&cwd, crate::config::get_agent_dir());
@@ -239,10 +240,12 @@ pub fn install_credential_sources() {
     pa_anthropic_auth::install();
 }
 
-/// Install the refusal system hooks if enabled in settings.
+/// (feature `refusal`) Install the content filter's request hooks when the
+/// `contentFilter` setting is on.
+#[cfg(feature = "refusal")]
 pub fn install_refusal_hooks(settings: &pa_core::settings::SettingsManager) {
     if settings.get_content_filter() {
-        pa_ai::refusal_hooks::RefusalHooks::install_all();
+        pa_refusal::RefusalHooks::install_all();
         tracing::info!("Content filter enabled");
     }
 }

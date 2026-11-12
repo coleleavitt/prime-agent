@@ -1,13 +1,14 @@
-//! Refusal system integration with provider request hooks.
+//! The content filter's provider request hooks (`pa_ai::request_hooks`).
 //!
-//! When enabled via settings, intercepts outbound API requests to predict
-//! refusal probability and filter/rewrite content before sending.
+//! When the `contentFilter` setting is on, the composition root installs
+//! these for the `anthropic` provider: every outbound request body is
+//! scored for refusal probability and filtered/rewritten before sending.
 
 use std::sync::Arc;
 
-use pa_refusal::RefusalGuard;
+use pa_ai::request_hooks::{OutgoingRequest, ProviderRequestHooks, install_request_hooks};
 
-use crate::request_hooks::{OutgoingRequest, ProviderRequestHooks, install_request_hooks};
+use crate::guard::RefusalGuard;
 
 /// Request hooks that guard outbound requests against predicted refusals.
 pub struct RefusalHooks {

@@ -15,17 +15,19 @@
 //!
 //! ## Integration
 //!
-//! Consumed via `pa-ai::request_hooks::ProviderRequestHooks::prepare` where the
-//! filter rewrites the request body before sending. Controlled by a `content_filter`
-//! setting that is off by default.
+//! [`RefusalHooks`] plugs into `pa_ai::request_hooks::ProviderRequestHooks::prepare`,
+//! where the filter rewrites the request body before sending. `pa-cli` installs them
+//! (feature `refusal`) when the `contentFilter` setting is on; it is off by default.
 
 pub mod filter;
 pub mod guard;
+mod hooks;
 pub mod logger;
 pub mod surrogate;
 
 pub use filter::{CategoryScore, ContentFilter, EvictResult};
 pub use guard::{GuardResult, RefusalGuard};
+pub use hooks::RefusalHooks;
 pub use logger::FeedbackEvent;
 pub use surrogate::SurrogateModel;
 
