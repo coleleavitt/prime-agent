@@ -2262,22 +2262,55 @@ def arm_color(name, index):
 
 def render(results, out_dir):
     """Write the six PNGs and report.html into out_dir; returns their paths."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
-
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    ser = series(results)
-    head = headline(results)
-    first = results[0]
-    names = arm_names(results)
-    n_seeds = len(results)
-    rounds = first["rounds"]
-    short = rounds < 3
+    figures = _Figures(results, out)
+    paths = {
+        "round_best": figures.round_best(),
+        "compute": figures.compute(),
+        "attempts": figures.attempts(),
+        "proposals": figures.proposals(),
+        "dreaming": figures.dreaming(),
+        "headline": figures.headline_card(),
+    }
+    p_report = out / "report.html"
+    p_report.write_text(build_report(results, figures.ser, figures.head, dict(paths)), encoding="utf-8")
+    return {**paths, "report": p_report}
 
+
+class _Figures:
+    """The render's figures: one method per PNG over the shared results, series,
+    headline and arm names, with the styling helpers they have in common."""
+
+    def __init__(self, results, out):
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
+
+        self.plt = plt
+        self.Line2D = Line2D
+        self.results = results
+        self.out = out
+        self.ser = series(results)
+        self.head = headline(results)
+        self.first = first = results[0]
+        self.names = arm_names(results)
+        self.n_seeds = n_seeds = len(results)
+        self.rounds = rounds = first["rounds"]
+        seeds_text = f"seed {first['seed']}" if n_seeds == 1 else f"{n_seeds} seeds {[r['seed'] for r in results]}"
+        self.base_sub = (
+            f"task {first['task']}"
+            + (f" n={first['n']}" if first["n"] is not None else "")
+            + f" · {seeds_text} · {rounds} rounds · proposer {first['proposer']}, dreamer {first['dreamer']}"
+            + (f" · model {first['model']}" if first["model"] else "")
+        )
+        self.x = list(range(1, rounds + 1))
+
+    # ---------------------------------------------------------------- helpers
+
+    @staticmethod
     def style(ax, title, xl="", yl=""):
         ax.set_facecolor(BG)
         ax.set_title(title, color=FG, fontsize=11, pad=8, loc="left")
@@ -2288,166 +2321,234 @@ def render(results, out_dir):
             s.set_color(GRID)
         ax.grid(True, color=GRID, lw=0.6, alpha=0.7)
 
+    @staticmethod
     def legend(ax, loc="best"):
         ax.legend(facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=8, loc=loc)
 
-    def subtitle(fig, lines):
-        y = 0.905
-        for line in lines:
-            for wrapped in textwrap.wrap(line, 125) or [""]:
-                fig.text(0.07, y, wrapped, color=MUTED, fontsize=8.5, ha="left")
-                y -= 0.032
-
-    def new_fig(title, sub_lines):
-        fig = plt.figure(figsize=(9, 5.8), facecolor=BG)
-        fig.suptitle(title, color=FG, fontsize=13, x=0.07, ha="left", y=0.965)
-        subtitle(fig, sub_lines)
-        ax = fig.add_axes((0.09, 0.11, 0.86, 0.68))
-        return fig, ax
-
-    seeds_text = f"seed {first['seed']}" if n_seeds == 1 else f"{n_seeds} seeds {[r['seed'] for r in results]}"
-    base_sub = (
-        f"task {first['task']}"
-        + (f" n={first['n']}" if first["n"] is not None else "")
-        + f" · {seeds_text} · {rounds} rounds · proposer {first['proposer']}, dreamer {first['dreamer']}"
-        + (f" · model {first['model']}" if first["model"] else "")
-    )
-    x = list(range(1, rounds + 1))
-
+    @staticmethod
     def end_label(ax, name, xy):
         ax.annotate(name, xy, textcoords="offset points", xytext=(6, 0), color=FG, fontsize=8, va="center")
 
-    # (a) round-best vs round -------------------------------------------------
-    fig, ax = new_fig(
-        "Round-best per rollout and cumulative best (Fig 6a)",
-        [
-            base_sub,
-            "points: each seed's round best · bold step: cumulative best"
-            + (" (mean over seeds; thin steps: each seed)" if n_seeds > 1 else ""),
-        ],
-    )
-    style(ax, "", "round", "best valid node score")
-    for i, name in enumerate(names):
-        s = ser[name]
-        color = arm_color(name, i)
-        for per_seed in s["roundBest"]["perSeed"]:
-            ax.scatter(
-                x,
-                per_seed,
-                s=34,
-                color=color,
-                marker=ARM_MARKERS.get(name, "o"),
-                alpha=0.55,
-                edgecolor=BG,
-                linewidth=0.8,
-                zorder=3,
+    def new_fig(self, title, sub_lines):
+        fig = self.plt.figure(figsize=(9, 5.8), facecolor=BG)
+        fig.suptitle(title, color=FG, fontsize=13, x=0.07, ha="left", y=0.965)
+        y = 0.905
+        for line in sub_lines:
+            for wrapped in textwrap.wrap(line, 125) or [""]:
+                fig.text(0.07, y, wrapped, color=MUTED, fontsize=8.5, ha="left")
+                y -= 0.032
+        ax = fig.add_axes((0.09, 0.11, 0.86, 0.68))
+        return fig, ax
+
+    def panel_figure(self, title, sub, n_blocks, block_in, gap_in, bottom_in, empty_text):
+        """A figure of ``n_blocks`` stacked per-arm blocks under a title and its
+        wrapped subtitle; with no block, one that says ``empty_text``. Returns the
+        figure and its height in inches."""
+        line_in = 0.19
+        sub_lines = [wrapped for line in sub for wrapped in (textwrap.wrap(line, 118) or [""])]
+        header_in = 0.62 + line_in * len(sub_lines) + 0.4
+        n_panels = max(1, n_blocks)
+        fig_h = header_in + n_panels * block_in + (n_panels - 1) * gap_in + bottom_in
+        fig = self.plt.figure(figsize=(9, fig_h), facecolor=BG)
+        fig.text(0.07, 1 - 0.3 / fig_h, title, color=FG, fontsize=13, ha="left", va="top")
+        y_text = 1 - 0.62 / fig_h
+        for wrapped in sub_lines:
+            fig.text(0.07, y_text, wrapped, color=MUTED, fontsize=8.5, ha="left", va="top")
+            y_text -= line_in / fig_h
+        if not n_blocks:
+            ax = fig.add_axes((0.09, bottom_in / fig_h, 0.86, block_in / fig_h))
+            self.style(ax, "")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.text(
+                0.5,
+                0.5,
+                empty_text,
+                transform=ax.transAxes,
+                color=WARN,
+                fontsize=9.5,
+                ha="center",
+                va="center",
             )
-        if n_seeds > 1:
-            for per_seed in s["cumulativeBest"]["perSeed"]:
-                ax.plot(
+        return fig, fig_h
+
+    def save(self, fig, file_name):
+        path = self.out / file_name
+        fig.savefig(path, dpi=130, facecolor=BG)
+        self.plt.close(fig)
+        return path
+
+    # ---------------------------------------------------------------- figures
+
+    def round_best(self):
+        """(a) round-best vs round."""
+        names, n_seeds, rounds, x = self.names, self.n_seeds, self.rounds, self.x
+        fig, ax = self.new_fig(
+            "Round-best per rollout and cumulative best (Fig 6a)",
+            [
+                self.base_sub,
+                "points: each seed's round best · bold step: cumulative best"
+                + (" (mean over seeds; thin steps: each seed)" if n_seeds > 1 else ""),
+            ],
+        )
+        self.style(ax, "", "round", "best valid node score")
+        for i, name in enumerate(names):
+            s = self.ser[name]
+            color = arm_color(name, i)
+            for per_seed in s["roundBest"]["perSeed"]:
+                ax.scatter(
                     x,
                     per_seed,
+                    s=34,
                     color=color,
-                    lw=0.9,
-                    ls=ARM_LINESTYLES.get(name, "-"),
-                    drawstyle="steps-mid",
-                    alpha=0.35,
-                    zorder=2,
+                    marker=ARM_MARKERS.get(name, "o"),
+                    alpha=0.55,
+                    edgecolor=BG,
+                    linewidth=0.8,
+                    zorder=3,
                 )
-        mean = s["cumulativeBest"]["mean"]
-        ax.plot(
-            x, mean, color=color, lw=2.2, ls=ARM_LINESTYLES.get(name, "-"), drawstyle="steps-mid", label=name, zorder=4
-        )
-        end_label(ax, name, (x[-1] + 0.5, mean[-1]))
-    ax.set_xticks(x)
-    ax.set_xlim(0.5, rounds + 1.1)
-    if len(names) >= 2:
-        legend(ax)
-    if short:
-        ax.text(
-            0.5,
-            0.06,
-            f"N = {rounds} rounds: too short to show a curve",
-            transform=ax.transAxes,
-            color=WARN,
-            fontsize=9.5,
-            ha="center",
-        )
-    p_round = out / "round_best.png"
-    fig.savefig(p_round, dpi=130, facecolor=BG)
-    plt.close(fig)
-
-    # (b) performance vs cumulative compute -----------------------------------
-    axis_kind, axis_why = compute_axis(results)
-    agent_axis = axis_kind == "agentGenerated"
-    if agent_axis:
-        compute_sub = (
-            "bold: x = cumulative agent-generated calls (candidates a child agent produced), the compute axis · "
-            "thin: x = cumulative probes (every evaluated attempt, local fallbacks included), the headline's axis; "
-            "B is drawn in probes"
-        )
-        x_label = "cumulative calls (bold: agent-generated · thin: all probes)"
-    else:
-        compute_sub = f"x = cumulative probes (evaluated attempts) · agent-generated calls {axis_why}"
-        x_label = "cumulative probes (evaluated attempts)"
-    fig, ax = new_fig(
-        "Cumulative best vs cumulative discovery compute (Figs 3b/5)",
-        [
-            base_sub,
-            compute_sub
-            + " · handler calls and tokens are cost, not on this axis"
-            + (" · one line per seed" if n_seeds > 1 else ""),
-        ],
-    )
-    style(ax, "", x_label, "cumulative best score")
-    bold_field = "cumulativeAgentGeneratedCalls" if agent_axis else "cumulativeProbes"
-    for i, name in enumerate(names):
-        s = ser[name]
-        color = arm_color(name, i)
-        rightmost = None
-        for k, (calls, best) in enumerate(zip(s[bold_field]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True)):
-            points = [(c, v) for c, v in zip(calls, best, strict=True) if c is not None and v is not None]
-            if not points:
-                continue
-            xs_, ys_ = [p[0] for p in points], [p[1] for p in points]
+            if n_seeds > 1:
+                for per_seed in s["cumulativeBest"]["perSeed"]:
+                    ax.plot(
+                        x,
+                        per_seed,
+                        color=color,
+                        lw=0.9,
+                        ls=ARM_LINESTYLES.get(name, "-"),
+                        drawstyle="steps-mid",
+                        alpha=0.35,
+                        zorder=2,
+                    )
+            mean = s["cumulativeBest"]["mean"]
             ax.plot(
-                xs_,
-                ys_,
+                x,
+                mean,
                 color=color,
-                lw=2.0 if n_seeds == 1 else 1.4,
+                lw=2.2,
                 ls=ARM_LINESTYLES.get(name, "-"),
-                marker=ARM_MARKERS.get(name, "o"),
-                ms=5,
-                alpha=1.0 if n_seeds == 1 else 0.8,
-                label=name if k == 0 else None,
-                zorder=3,
+                drawstyle="steps-mid",
+                label=name,
+                zorder=4,
             )
-            if rightmost is None or xs_[-1] > rightmost[0]:
-                rightmost = (xs_[-1], ys_[-1])
+            self.end_label(ax, name, (x[-1] + 0.5, mean[-1]))
+        ax.set_xticks(x)
+        ax.set_xlim(0.5, rounds + 1.1)
+        if len(names) >= 2:
+            self.legend(ax)
+        if rounds < 3:
+            ax.text(
+                0.5,
+                0.06,
+                f"N = {rounds} rounds: too short to show a curve",
+                transform=ax.transAxes,
+                color=WARN,
+                fontsize=9.5,
+                ha="center",
+            )
+        return self.save(fig, "round_best.png")
+
+    def compute(self):
+        """(b) performance vs cumulative compute."""
+        names, n_seeds = self.names, self.n_seeds
+        axis_kind, axis_why = compute_axis(self.results)
+        agent_axis = axis_kind == "agentGenerated"
         if agent_axis:
-            for probes, best in zip(s["cumulativeProbes"]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True):
+            compute_sub = (
+                "bold: x = cumulative agent-generated calls (candidates a child agent produced), the compute axis · "
+                "thin: x = cumulative probes (every evaluated attempt, local fallbacks included), the headline's axis; "
+                "B is drawn in probes"
+            )
+            x_label = "cumulative calls (bold: agent-generated · thin: all probes)"
+        else:
+            compute_sub = f"x = cumulative probes (evaluated attempts) · agent-generated calls {axis_why}"
+            x_label = "cumulative probes (evaluated attempts)"
+        fig, ax = self.new_fig(
+            "Cumulative best vs cumulative discovery compute (Figs 3b/5)",
+            [
+                self.base_sub,
+                compute_sub
+                + " · handler calls and tokens are cost, not on this axis"
+                + (" · one line per seed" if n_seeds > 1 else ""),
+            ],
+        )
+        self.style(ax, "", x_label, "cumulative best score")
+        bold_field = "cumulativeAgentGeneratedCalls" if agent_axis else "cumulativeProbes"
+        for i, name in enumerate(names):
+            s = self.ser[name]
+            color = arm_color(name, i)
+            rightmost = None
+            for k, (calls, best) in enumerate(
+                zip(s[bold_field]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True)
+            ):
+                points = [(c, v) for c, v in zip(calls, best, strict=True) if c is not None and v is not None]
+                if not points:
+                    continue
+                xs_, ys_ = [p[0] for p in points], [p[1] for p in points]
                 ax.plot(
-                    probes,
-                    best,
+                    xs_,
+                    ys_,
                     color=color,
-                    lw=0.9,
+                    lw=2.0 if n_seeds == 1 else 1.4,
                     ls=ARM_LINESTYLES.get(name, "-"),
                     marker=ARM_MARKERS.get(name, "o"),
-                    ms=3,
-                    mfc=BG,
-                    alpha=0.6,
-                    zorder=2,
+                    ms=5,
+                    alpha=1.0 if n_seeds == 1 else 0.8,
+                    label=name if k == 0 else None,
+                    zorder=3,
                 )
-        if rightmost:
-            end_label(ax, name, rightmost)
-    ax.margins(x=0.14)
-    seed_heads = [h for h in (p["headline"] for p in head["perSeed"]) if h is not None]
-    targets = [h["target"] for h in seed_heads]
-    budgets = [h["equalBudget"] for h in seed_heads]
-    if targets and budgets:
+                if rightmost is None or xs_[-1] > rightmost[0]:
+                    rightmost = (xs_[-1], ys_[-1])
+            if agent_axis:
+                for probes, best in zip(s["cumulativeProbes"]["perSeed"], s["cumulativeBest"]["perSeed"], strict=True):
+                    ax.plot(
+                        probes,
+                        best,
+                        color=color,
+                        lw=0.9,
+                        ls=ARM_LINESTYLES.get(name, "-"),
+                        marker=ARM_MARKERS.get(name, "o"),
+                        ms=3,
+                        mfc=BG,
+                        alpha=0.6,
+                        zorder=2,
+                    )
+            if rightmost:
+                self.end_label(ax, name, rightmost)
+        ax.margins(x=0.14)
+        self.control_lines(ax, agent_axis)
+        if agent_axis:
+            handles, labels = ax.get_legend_handles_labels()
+            handles.append(self.Line2D([], [], color=FG, lw=2.0, label="bold: agent-generated calls (compute axis)"))
+            handles.append(
+                self.Line2D(
+                    [], [], color=FG, lw=0.9, alpha=0.6, label="thin: all probes (headline axis, incl. local fallbacks)"
+                )
+            )
+            labels.extend(h.get_label() for h in handles[len(labels) :])
+            ax.legend(handles, labels, facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=8, loc="best")
+        elif len(names) >= 2:
+            self.legend(ax)
+        return self.save(fig, "compute.png")
+
+    def control_lines(self, ax, agent_axis):
+        """The compute figure's target T and equal budget B lines, medians over seeds."""
+        seed_heads = [h for h in (p["headline"] for p in self.head["perSeed"]) if h is not None]
+        targets = [h["target"] for h in seed_heads]
+        budgets = [h["equalBudget"] for h in seed_heads]
+        if not (targets and budgets):
+            ax.text(
+                0.5,
+                0.06,
+                f"no {REFERENCE_ARM} arm: no control lines",
+                transform=ax.transAxes,
+                color=WARN,
+                fontsize=9.5,
+                ha="center",
+            )
+            return
         t = statistics.median(targets)
         b = statistics.median(budgets)
-        agg = " (median over seeds)" if n_seeds > 1 else ""
+        agg = " (median over seeds)" if self.n_seeds > 1 else ""
         ax.axhline(t, color=MUTED, ls="--", lw=1, zorder=2)
         ax.text(
             0.01,
@@ -2471,147 +2572,123 @@ def render(results, out_dir):
             va="bottom",
             ha="right",
         )
-    else:
-        ax.text(
-            0.5,
-            0.06,
-            f"no {REFERENCE_ARM} arm: no control lines",
-            transform=ax.transAxes,
-            color=WARN,
-            fontsize=9.5,
-            ha="center",
-        )
-    if agent_axis:
-        handles, labels = ax.get_legend_handles_labels()
-        handles.append(Line2D([], [], color=FG, lw=2.0, label="bold: agent-generated calls (compute axis)"))
-        handles.append(
-            Line2D([], [], color=FG, lw=0.9, alpha=0.6, label="thin: all probes (headline axis, incl. local fallbacks)")
-        )
-        labels.extend(h.get_label() for h in handles[len(labels) :])
-        ax.legend(handles, labels, facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=8, loc="best")
-    elif len(names) >= 2:
-        legend(ax)
-    p_compute = out / "compute.png"
-    fig.savefig(p_compute, dpi=130, facecolor=BG)
-    plt.close(fig)
 
-    # (c) attempts per round ---------------------------------------------------
-    fig, ax = new_fig(
-        "Evaluated attempts per round (Fig 6b, adaptivity)",
-        [
-            base_sub,
-            "bar = probes the rollout evaluated"
-            + (" (mean over seeds; whisker min-max)" if n_seeds > 1 else "")
-            + " · Δ k/n = the arm's policy differs from the previous round's in k of n seeds"
-            + (
-                f" · {REFERENCE_ARM} runs the same policy every round by construction" if REFERENCE_ARM in names else ""
-            ),
-        ],
-    )
-    style(ax, "", "round", "evaluated attempts (probes)")
-    width = 0.8 / max(1, len(names))
-    for i, name in enumerate(names):
-        s = ser[name]
-        color = arm_color(name, i)
-        means = [v or 0 for v in s["probes"]["mean"]]
-        highs = [mx if mx is not None else m for m, mx in zip(means, s["probes"]["max"], strict=True)]
-        xs = [r + (i - (len(names) - 1) / 2) * width for r in x]
-        ax.bar(xs, means, width=width * 0.92, color=color, edgecolor=BG, linewidth=1.2, label=name, zorder=3)
-        if n_seeds > 1:
-            lo = [m - (mn if mn is not None else m) for m, mn in zip(means, s["probes"]["min"], strict=True)]
-            hi = [h - m for m, h in zip(means, highs, strict=True)]
-            ax.errorbar(xs, means, yerr=[lo, hi], fmt="none", ecolor=FG, elinewidth=0.9, capsize=2.5, zorder=4)
-        for xx, h, changed in zip(xs, highs, s["policyChanges"], strict=True):
-            if changed:
-                ax.annotate(
-                    f"Δ {changed}/{n_seeds}",
-                    (xx, h),
-                    textcoords="offset points",
-                    xytext=(0, 4),
-                    ha="center",
-                    va="bottom",
-                    color=FG,
-                    fontsize=7,
-                    zorder=5,
-                )
-    ax.set_xticks(x)
-    ax.margins(y=0.12)
-    if len(names) >= 2:
-        legend(ax, loc="upper right")
-    # The inert stamp: a dreaming arm whose policy never changed grew every tree with
-    # the control's policy, so its bars differ from the control's by sampling only.
-    stamp_y = 0.97
-    for name in names:
-        never = sum(1 for flag in ser[name]["policyNeverChanged"] if flag)
-        if not never:
-            continue
-        ax.text(
-            0.01,
-            stamp_y,
-            f"{name}: policy never changed in {never}/{n_seeds} seed(s): dreaming inert",
-            transform=ax.transAxes,
-            color=WARN,
-            fontsize=9,
-            ha="left",
-            va="top",
-            zorder=6,
+    def attempts(self):
+        """(c) attempts per round."""
+        names, n_seeds, x = self.names, self.n_seeds, self.x
+        fig, ax = self.new_fig(
+            "Evaluated attempts per round (Fig 6b, adaptivity)",
+            [
+                self.base_sub,
+                "bar = probes the rollout evaluated"
+                + (" (mean over seeds; whisker min-max)" if n_seeds > 1 else "")
+                + " · Δ k/n = the arm's policy differs from the previous round's in k of n seeds"
+                + (
+                    f" · {REFERENCE_ARM} runs the same policy every round by construction"
+                    if REFERENCE_ARM in names
+                    else ""
+                ),
+            ],
         )
-        stamp_y -= 0.07
-    p_attempts = out / "attempts.png"
-    fig.savefig(p_attempts, dpi=130, facecolor=BG)
-    plt.close(fig)
-
-    # (e) LLM-proposal validity per round ------------------------------------------
-    # One panel per arm that recorded provenance; stacked bars of child results per
-    # round: accepted (the arm's hue: these became agent-generated nodes) then each
-    # rejected reason in neutral steps; the local fallbacks those rejections caused
-    # are the marked line. Handler calls and tokens are elsewhere; this is validity.
-    reasons = reasons_seen(results)
-    prov_names = [name for name in names if any(ser[name]["provenanceRecorded"])]
-    recorded_seeds = {name: sum(1 for flag in ser[name]["provenanceRecorded"] if flag) for name in prov_names}
-    prov_sub = [base_sub]
-    if prov_names:
-        prov_sub.append(
-            "bar = child results per round: accepted (arm colour; each is one agent-generated node) stacked with "
-            "rejected by reason (grey) · x-marked line = local fallbacks, attempts whose last child result was rejected"
-            + (
-                " · means over the seeds that recorded it: "
-                + ", ".join(f"{name} {k}/{n_seeds}" for name, k in recorded_seeds.items())
-                if n_seeds > 1
-                else ""
+        self.style(ax, "", "round", "evaluated attempts (probes)")
+        width = 0.8 / max(1, len(names))
+        for i, name in enumerate(names):
+            s = self.ser[name]
+            color = arm_color(name, i)
+            means = [v or 0 for v in s["probes"]["mean"]]
+            highs = [mx if mx is not None else m for m, mx in zip(means, s["probes"]["max"], strict=True)]
+            xs = [r + (i - (len(names) - 1) / 2) * width for r in x]
+            ax.bar(xs, means, width=width * 0.92, color=color, edgecolor=BG, linewidth=1.2, label=name, zorder=3)
+            if n_seeds > 1:
+                lo = [m - (mn if mn is not None else m) for m, mn in zip(means, s["probes"]["min"], strict=True)]
+                hi = [h - m for m, h in zip(means, highs, strict=True)]
+                ax.errorbar(xs, means, yerr=[lo, hi], fmt="none", ecolor=FG, elinewidth=0.9, capsize=2.5, zorder=4)
+            for xx, h, changed in zip(xs, highs, s["policyChanges"], strict=True):
+                if changed:
+                    ax.annotate(
+                        f"Δ {changed}/{n_seeds}",
+                        (xx, h),
+                        textcoords="offset points",
+                        xytext=(0, 4),
+                        ha="center",
+                        va="bottom",
+                        color=FG,
+                        fontsize=7,
+                        zorder=5,
+                    )
+        ax.set_xticks(x)
+        ax.margins(y=0.12)
+        if len(names) >= 2:
+            self.legend(ax, loc="upper right")
+        # The inert stamp: a dreaming arm whose policy never changed grew every tree with
+        # the control's policy, so its bars differ from the control's by sampling only.
+        stamp_y = 0.97
+        for name in names:
+            never = sum(1 for flag in self.ser[name]["policyNeverChanged"] if flag)
+            if not never:
+                continue
+            ax.text(
+                0.01,
+                stamp_y,
+                f"{name}: policy never changed in {never}/{n_seeds} seed(s): dreaming inert",
+                transform=ax.transAxes,
+                color=WARN,
+                fontsize=9,
+                ha="left",
+                va="top",
+                zorder=6,
             )
-        )
-    sub_lines = [wrapped for line in prov_sub for wrapped in (textwrap.wrap(line, 118) or [""])]
-    line_in, panel_in, gap_in, bottom_in = 0.19, 1.75, 0.5, 0.5
-    header_in = 0.62 + line_in * len(sub_lines) + 0.4
-    n_panels = max(1, len(prov_names))
-    fig_h = header_in + n_panels * panel_in + (n_panels - 1) * gap_in + bottom_in
-    fig = plt.figure(figsize=(9, fig_h), facecolor=BG)
-    fig.text(0.07, 1 - 0.3 / fig_h, "LLM-proposal validity per round", color=FG, fontsize=13, ha="left", va="top")
-    y_text = 1 - 0.62 / fig_h
-    for wrapped in sub_lines:
-        fig.text(0.07, y_text, wrapped, color=MUTED, fontsize=8.5, ha="left", va="top")
-        y_text -= line_in / fig_h
-    if not prov_names:
-        ax = fig.add_axes((0.09, bottom_in / fig_h, 0.86, panel_in / fig_h))
-        style(ax, "")
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.text(
-            0.5,
-            0.5,
+            stamp_y -= 0.07
+        return self.save(fig, "attempts.png")
+
+    def proposals(self):
+        """(e) LLM-proposal validity per round.
+
+        One panel per arm that recorded provenance; stacked bars of child results per
+        round: accepted (the arm's hue: these became agent-generated nodes) then each
+        rejected reason in neutral steps; the local fallbacks those rejections caused
+        are the marked line. Handler calls and tokens are elsewhere; this is validity.
+        """
+        names, n_seeds, ser = self.names, self.n_seeds, self.ser
+        prov_names = [name for name in names if any(ser[name]["provenanceRecorded"])]
+        recorded_seeds = {name: sum(1 for flag in ser[name]["provenanceRecorded"] if flag) for name in prov_names}
+        prov_sub = [self.base_sub]
+        if prov_names:
+            prov_sub.append(
+                "bar = child results per round: accepted (arm colour; each is one agent-generated node) stacked with "
+                "rejected by reason (grey) · x-marked line = local fallbacks, attempts whose last child result was "
+                "rejected"
+                + (
+                    " · means over the seeds that recorded it: "
+                    + ", ".join(f"{name} {k}/{n_seeds}" for name, k in recorded_seeds.items())
+                    if n_seeds > 1
+                    else ""
+                )
+            )
+        panel_in, gap_in, bottom_in = 1.75, 0.5, 0.5
+        fig, fig_h = self.panel_figure(
+            "LLM-proposal validity per round",
+            prov_sub,
+            len(prov_names),
+            panel_in,
+            gap_in,
+            bottom_in,
             "LLM-proposal provenance not recorded in this result (predates origin tracking): nothing to show",
-            transform=ax.transAxes,
-            color=WARN,
-            fontsize=9.5,
-            ha="center",
-            va="center",
         )
-    for j, name in enumerate(prov_names):
-        s = ser[name]
-        color = arm_color(name, names.index(name))
-        ax_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + gap_in)) / fig_h
-        ax = fig.add_axes((0.09, ax_bottom, 0.62, panel_in / fig_h))
+        n_panels = max(1, len(prov_names))
+        reasons = reasons_seen(self.results)
+        for j, name in enumerate(prov_names):
+            ax_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + gap_in)) / fig_h
+            ax = fig.add_axes((0.09, ax_bottom, 0.62, panel_in / fig_h))
+            self.proposal_panel(ax, name, reasons, "round" if j == n_panels - 1 else "")
+        return self.save(fig, "proposals.png")
+
+    def proposal_panel(self, ax, name, reasons, x_label):
+        """One arm's validity panel: accepted and rejected child results stacked per
+        round, and the local fallbacks."""
+        s = self.ser[name]
+        x = self.x
+        color = arm_color(name, self.names.index(name))
         handles = []
         accepted = [v or 0 for v in s["llmAccepted"]["mean"]]
         handles.append(
@@ -2670,9 +2747,9 @@ def render(results, out_dir):
             )
             if vals
         )
-        style(ax, f"{name} · totals: {totals_text}", "round" if j == n_panels - 1 else "", "child results")
+        self.style(ax, f"{name} · totals: {totals_text}", x_label, "child results")
         ax.set_xticks(x)
-        ax.set_xlim(0.5, rounds + 0.5)
+        ax.set_xlim(0.5, self.rounds + 0.5)
         ax.margins(y=0.15)
         ax.legend(
             handles=handles,
@@ -2684,75 +2761,80 @@ def render(results, out_dir):
             bbox_to_anchor=(1.01, 1.0),
             borderaxespad=0.0,
         )
-    p_proposals = out / "proposals.png"
-    fig.savefig(p_proposals, dpi=130, facecolor=BG)
-    plt.close(fig)
 
-    # (f) dreaming audit -------------------------------------------------------------
-    # One panel per arm that dreamed. Per round (the step that chose that round's
-    # policy): every candidate's replay value as a point, filled when it competed in
-    # the argmax and hollow when not; llm candidates in the arm's hue, local ones
-    # grey; the incumbent as a tick, the chosen policy starred, the best lever-scan
-    # policy as a triangle, and the words improved / no change with the lever gap.
-    # The strip below is the share of candidates replayed fully in support. A file
-    # without candidateVerdicts falls back to the incumbent and chosen values it does
-    # carry and says the audit is not recorded.
-    dream_names = [name for name in names if any(ser[name]["dreaming"]["recorded"])]
-    audited = {name: sum(ser[name]["dreaming"]["auditRecorded"]) for name in dream_names}
-    dream_sub = [base_sub]
-    if dream_names:
-        dream_sub.append(
-            "point = one candidate's replay value on the frozen pool (filled: eligible for the argmax; hollow: "
-            "identical, duplicate, quality-rejected or unmeasurable) · llm candidates in the arm colour, local grey · "
-            "tick = incumbent · star = chosen · triangle = best lever-scan policy · strip = share of candidates "
-            "replayed fully in support"
-        )
-        if not any(audited.values()):
+    def dreaming(self):
+        """(f) dreaming audit.
+
+        One panel per arm that dreamed. Per round (the step that chose that round's
+        policy): every candidate's replay value as a point, filled when it competed in
+        the argmax and hollow when not; llm candidates in the arm's hue, local ones
+        grey; the incumbent as a tick, the chosen policy starred, the best lever-scan
+        policy as a triangle, and the words improved / no change with the lever gap.
+        The strip below is the share of candidates replayed fully in support. A file
+        without candidateVerdicts falls back to the incumbent and chosen values it does
+        carry and says the audit is not recorded.
+        """
+        names, n_seeds, ser = self.names, self.n_seeds, self.ser
+        dream_names = [name for name in names if any(ser[name]["dreaming"]["recorded"])]
+        audited = {name: sum(ser[name]["dreaming"]["auditRecorded"]) for name in dream_names}
+        dream_sub = [self.base_sub]
+        if dream_names:
             dream_sub.append(
-                "this result predates the per-candidate audit: only the incumbent's and the chosen value are recorded"
+                "point = one candidate's replay value on the frozen pool (filled: eligible for the argmax; hollow: "
+                "identical, duplicate, quality-rejected or unmeasurable) · llm candidates in the arm colour, local "
+                "grey · tick = incumbent · star = chosen · triangle = best lever-scan policy · strip = share of "
+                "candidates replayed fully in support"
             )
-        elif n_seeds > 1:
-            dream_sub.append("one column offset per seed; the words count the seeds whose step improved")
-    sub_lines = [wrapped for line in dream_sub for wrapped in (textwrap.wrap(line, 118) or [""])]
-    strip_in, panel_in, gap_in, bottom_in = 0.45, 2.1, 0.55, 0.5
-    header_in = 0.62 + line_in * len(sub_lines) + 0.4
-    n_panels = max(1, len(dream_names))
-    fig_h = header_in + n_panels * (panel_in + strip_in) + (n_panels - 1) * gap_in + bottom_in
-    fig = plt.figure(figsize=(9, fig_h), facecolor=BG)
-    fig.text(0.07, 1 - 0.3 / fig_h, "Dreaming audit per step", color=FG, fontsize=13, ha="left", va="top")
-    y_text = 1 - 0.62 / fig_h
-    for wrapped in sub_lines:
-        fig.text(0.07, y_text, wrapped, color=MUTED, fontsize=8.5, ha="left", va="top")
-        y_text -= line_in / fig_h
-    if not dream_names:
-        ax = fig.add_axes((0.09, bottom_in / fig_h, 0.86, (panel_in + strip_in) / fig_h))
-        style(ax, "")
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.text(
-            0.5,
-            0.5,
+            if not any(audited.values()):
+                dream_sub.append(
+                    "this result predates the per-candidate audit: only the incumbent's and the chosen value are "
+                    "recorded"
+                )
+            elif n_seeds > 1:
+                dream_sub.append("one column offset per seed; the words count the seeds whose step improved")
+        strip_in, panel_in, gap_in, bottom_in = 0.45, 2.1, 0.55, 0.5
+        fig, fig_h = self.panel_figure(
+            "Dreaming audit per step",
+            dream_sub,
+            len(dream_names),
+            panel_in + strip_in,
+            gap_in,
+            bottom_in,
             "no dreaming step recorded in this result (every arm ran a fixed policy): nothing to audit",
-            transform=ax.transAxes,
-            color=WARN,
-            fontsize=9.5,
-            ha="center",
-            va="center",
         )
-    offsets = [(k - (n_seeds - 1) / 2) * (0.7 / n_seeds) for k in range(n_seeds)]
-    for j, name in enumerate(dream_names):
-        s = ser[name]
-        d = s["dreaming"]
-        color = arm_color(name, names.index(name))
-        block_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + strip_in + gap_in)) / fig_h
-        ax_strip = fig.add_axes((0.09, block_bottom, 0.62, (strip_in - 0.15) / fig_h))
-        ax = fig.add_axes((0.09, block_bottom + strip_in / fig_h, 0.62, panel_in / fig_h), sharex=ax_strip)
-        for arm_rec, dx in zip((arm_of(r, name) for r in results), offsets, strict=True):
+        n_panels = max(1, len(dream_names))
+        for j, name in enumerate(dream_names):
+            block_bottom = (bottom_in + (n_panels - 1 - j) * (panel_in + strip_in + gap_in)) / fig_h
+            ax_strip = fig.add_axes((0.09, block_bottom, 0.62, (strip_in - 0.15) / fig_h))
+            ax = fig.add_axes((0.09, block_bottom + strip_in / fig_h, 0.62, panel_in / fig_h), sharex=ax_strip)
+            color = arm_color(name, names.index(name))
+            self.dream_points(ax, name, color)
+            self.dream_words(ax, name)
+            self.dream_title(ax, name)
+            self.support_strip(ax_strip, name, color, "round" if j == n_panels - 1 else "")
+            ax.legend(
+                handles=self.dream_legend(color),
+                facecolor=BG,
+                edgecolor=GRID,
+                labelcolor=FG,
+                fontsize=8,
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
+                borderaxespad=0.0,
+            )
+        return self.save(fig, "dreaming.png")
+
+    def dream_points(self, ax, name, color):
+        """Each seed's dreaming steps in its own column offset: the candidates, the
+        incumbent, the chosen policy and the best lever-scan policy."""
+        n_seeds = self.n_seeds
+        offsets = [(k - (n_seeds - 1) / 2) * (0.7 / n_seeds) for k in range(n_seeds)]
+        for arm_rec, dx in zip((arm_of(r, name) for r in self.results), offsets, strict=True):
             for i, row in enumerate(arm_rec["rounds"]):
                 rec = row["dreaming"]
                 if rec is None:
                     continue
-                xx = x[i] + dx
+                xx = self.x[i] + dx
                 for v in rec["candidateVerdicts"] or []:
                     c = color if v["origin"] == "llm" else MUTED
                     ax.plot(
@@ -2780,7 +2862,12 @@ def render(results, out_dir):
             lo, hi = ax.get_ylim()
             span = max(hi - lo, 1e-6)
             ax.set_ylim(lo - 0.08 * span, hi + 0.55 * span)
-        for i in range(rounds):
+
+    def dream_words(self, ax, name):
+        """Per round: whether the step improved, and its lever gap."""
+        d = self.ser[name]["dreaming"]
+        x = self.x
+        for i in range(self.rounds):
             if not d["recorded"][i]:
                 if i == 0:
                     ax.text(
@@ -2824,24 +2911,32 @@ def render(results, out_dir):
                 ha="center",
                 va="top",
             )
-        summaries = head["dreaming"].get(name, [])
+
+    def dream_title(self, ax, name):
+        """The audit panel's title (the arm's step totals) and axes."""
+        summaries = self.head["dreaming"].get(name, [])
         phases = sum(sm["phases"] for sm in summaries)
         improved_steps = sum(sm["improved"] for sm in summaries)
         changes = sum(sm["policyChanges"] for sm in summaries)
         inert = sum(1 for sm in summaries if sm["inert"])
         title = f"{name} · steps {phases}, improved {improved_steps}, policy changes {changes}"
         if inert:
-            title += f" · policy never changed in {inert}/{n_seeds} seed(s): dreaming inert"
-        style(ax, title, "", "replay value")
-        ax.set_xticks(x)
-        ax.set_xlim(0.5, rounds + 0.5)
+            title += f" · policy never changed in {inert}/{self.n_seeds} seed(s): dreaming inert"
+        self.style(ax, title, "", "replay value")
+        ax.set_xticks(self.x)
+        ax.set_xlim(0.5, self.rounds + 0.5)
         ax.tick_params(labelbottom=False)
-        style(ax_strip, "", "round" if j == n_panels - 1 else "", "in support")
+
+    def support_strip(self, ax_strip, name, color, x_label):
+        """The share of each step's candidates replayed fully in support."""
+        d = self.ser[name]["dreaming"]
+        x = self.x
+        self.style(ax_strip, "", x_label, "in support")
         ax_strip.set_ylim(0, 1.3)
         ax_strip.set_yticks([0, 1])
         ax_strip.set_yticklabels(["0", "1"])
         coverage = d["supportCoverage"]["mean"]
-        for i in range(rounds):
+        for i in range(self.rounds):
             if not d["recorded"][i]:
                 continue
             if coverage[i] is None:
@@ -2858,9 +2953,12 @@ def render(results, out_dir):
                 va="bottom",
                 zorder=4,
             )
-        proxies = [
-            Line2D([], [], marker="o", ms=6.5, mfc=color, mec=color, ls="none", label="llm candidate, eligible"),
-            Line2D(
+
+    def dream_legend(self, color):
+        line = self.Line2D
+        return [
+            line([], [], marker="o", ms=6.5, mfc=color, mec=color, ls="none", label="llm candidate, eligible"),
+            line(
                 [],
                 [],
                 marker="o",
@@ -2871,90 +2969,51 @@ def render(results, out_dir):
                 ls="none",
                 label="candidate not eligible (hollow)",
             ),
-            Line2D([], [], marker="o", ms=6.5, mfc=MUTED, mec=MUTED, ls="none", label="local candidate"),
-            Line2D([], [], marker="_", ms=16, mew=2.0, color=FG, ls="none", label="incumbent value"),
-            Line2D([], [], marker="*", ms=11, mfc=FG, mec=BG, ls="none", label="chosen policy (green when improved)"),
-            Line2D([], [], marker="^", ms=7, mfc=BG, mec=ACC, mew=1.3, ls="none", label="best lever-scan policy"),
+            line([], [], marker="o", ms=6.5, mfc=MUTED, mec=MUTED, ls="none", label="local candidate"),
+            line([], [], marker="_", ms=16, mew=2.0, color=FG, ls="none", label="incumbent value"),
+            line([], [], marker="*", ms=11, mfc=FG, mec=BG, ls="none", label="chosen policy (green when improved)"),
+            line([], [], marker="^", ms=7, mfc=BG, mec=ACC, mew=1.3, ls="none", label="best lever-scan policy"),
         ]
-        ax.legend(
-            handles=proxies,
-            facecolor=BG,
-            edgecolor=GRID,
-            labelcolor=FG,
-            fontsize=8,
-            loc="upper left",
-            bbox_to_anchor=(1.01, 1.0),
-            borderaxespad=0.0,
-        )
-    p_dreaming = out / "dreaming.png"
-    fig.savefig(p_dreaming, dpi=130, facecolor=BG)
-    plt.close(fig)
 
-    # (d) headline card ----------------------------------------------------------
-    # A row longer than the card is wrapped, its continuation indented; the
-    # monospace rows (10pt) fit ~92 characters on the 9in card, the muted ones ~108.
-    card_lines = []
-    for text, tone in headline_lines(results, head) + provenance_lines(results):
-        width = 108 if tone == "muted" else 92
-        indent = " " * (len(text) - len(text.lstrip(" ")) + 4)
-        wrapped = textwrap.wrap(text, width, subsequent_indent=indent) or [""]
-        card_lines.extend((part, tone) for part in wrapped)
-    height = 1.3 + 0.36 * len(card_lines)
-    fig = plt.figure(figsize=(9, height), facecolor=BG)
-    fig.text(
-        0.05,
-        1 - 0.55 / height,
-        f"Headline against the {REFERENCE_ARM} arm (Recursive Fixed Exploration)",
-        color=FG,
-        fontsize=13,
-        ha="left",
-        va="top",
-    )
-    fig.text(0.05, 1 - 0.95 / height, base_sub, color=MUTED, fontsize=8.5, ha="left", va="top")
-    y = 1 - 1.35 / height
-    for text, tone in card_lines:
-        color = {"ok": OK, "bad": BAD, "warn": WARN, "muted": MUTED}.get(tone, FG)
+    def headline_card(self):
+        """(d) headline card.
+
+        A row longer than the card is wrapped, its continuation indented; the
+        monospace rows (10pt) fit ~92 characters on the 9in card, the muted ones ~108.
+        """
+        card_lines = []
+        for text, tone in headline_lines(self.results, self.head) + provenance_lines(self.results):
+            width = 108 if tone == "muted" else 92
+            indent = " " * (len(text) - len(text.lstrip(" ")) + 4)
+            wrapped = textwrap.wrap(text, width, subsequent_indent=indent) or [""]
+            card_lines.extend((part, tone) for part in wrapped)
+        height = 1.3 + 0.36 * len(card_lines)
+        fig = self.plt.figure(figsize=(9, height), facecolor=BG)
         fig.text(
             0.05,
-            y,
-            text,
-            color=color,
-            fontsize=10 if tone != "muted" else 8.5,
+            1 - 0.55 / height,
+            f"Headline against the {REFERENCE_ARM} arm (Recursive Fixed Exploration)",
+            color=FG,
+            fontsize=13,
             ha="left",
             va="top",
-            family="monospace" if tone != "muted" else None,
         )
-        y -= 0.36 / height
-    p_headline = out / "headline.png"
-    fig.savefig(p_headline, dpi=130, facecolor=BG)
-    plt.close(fig)
-
-    p_report = out / "report.html"
-    p_report.write_text(
-        build_report(
-            results,
-            ser,
-            head,
-            {
-                "round_best": p_round,
-                "compute": p_compute,
-                "attempts": p_attempts,
-                "proposals": p_proposals,
-                "dreaming": p_dreaming,
-                "headline": p_headline,
-            },
-        ),
-        encoding="utf-8",
-    )
-    return {
-        "round_best": p_round,
-        "compute": p_compute,
-        "attempts": p_attempts,
-        "proposals": p_proposals,
-        "dreaming": p_dreaming,
-        "headline": p_headline,
-        "report": p_report,
-    }
+        fig.text(0.05, 1 - 0.95 / height, self.base_sub, color=MUTED, fontsize=8.5, ha="left", va="top")
+        y = 1 - 1.35 / height
+        for text, tone in card_lines:
+            color = {"ok": OK, "bad": BAD, "warn": WARN, "muted": MUTED}.get(tone, FG)
+            fig.text(
+                0.05,
+                y,
+                text,
+                color=color,
+                fontsize=10 if tone != "muted" else 8.5,
+                ha="left",
+                va="top",
+                family="monospace" if tone != "muted" else None,
+            )
+            y -= 0.36 / height
+        return self.save(fig, "headline.png")
 
 
 def ratio_tone(value: float | None) -> str:
