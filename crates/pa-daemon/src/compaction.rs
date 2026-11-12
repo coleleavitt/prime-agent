@@ -155,11 +155,14 @@ impl CompactionManager {
         outcome
     }
 
-    /// `set_auto_compaction`: update the connection-state flag (the
-    /// persistent write lives in the `set_auto_compaction` handler).
-    pub(crate) fn set_auto_compaction(&self, enabled: bool) {
-        let mut core = self.core.lock_or_recover();
-        core.auto_compaction_enabled = enabled;
+    /// `set_auto_compaction`: update the connection-state flag and the built
+    /// session's live toggle (the persistent write lives in the
+    /// `set_auto_compaction` handler).
+    pub(crate) async fn set_auto_compaction(&self, enabled: bool) {
+        self.core.lock_or_recover().auto_compaction_enabled = enabled;
+        let engine = Arc::clone(&self.engine);
+        let _ =
+            tokio::task::spawn_blocking(move || engine.set_auto_compaction_enabled(enabled)).await;
     }
 
     /// Wait until the running turn (if any) has settled.
