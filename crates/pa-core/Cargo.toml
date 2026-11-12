@@ -67,7 +67,6 @@ ignore = "0.4"
 # rule that still uses sse-stream 0.2.
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
 sse-stream = "0.2"
-pa-refusal = { path = "../pa-refusal" }
 
 [dev-dependencies]
 tempfile = "3"
