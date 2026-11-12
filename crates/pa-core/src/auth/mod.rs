@@ -9,6 +9,8 @@ pub(crate) mod prime_inference_login;
 pub(crate) mod prime_traces;
 pub(crate) mod provider_oauth;
 pub(crate) mod resolve_config_value;
+#[cfg(test)]
+mod scripted_http;
 pub(crate) mod storage;
 pub(crate) mod types;
 
