@@ -230,9 +230,8 @@ impl AuthStorage {
 
     /// Provider-scoped request headers (prime-inference team header only):
     /// `PRIME_TEAM_ID`, then the directory context, then the stored team.
-    /// The stored primeTeam survives runtime and environment API-key
-    /// overrides (fleet P5): an ambient `PRIME_API_KEY` supplies the key,
-    /// never the team.
+    /// The stored primeTeam rides only with the stored key: a runtime or
+    /// environment key never borrows the login's team.
     pub fn get_provider_headers(
         &self,
         provider_id: &str,
@@ -249,6 +248,7 @@ impl AuthStorage {
             Some(team_id) => Some(team_id),
             None => match self.directory_selection() {
                 Some(directory) => directory.team_id.clone(),
+                None if self.get_auth_status(provider_id).source != Some(AuthSource::Stored) => None,
                 None => match self.data.credential(provider_id) {
                     Some(AuthCredential::ApiKey { prime_team, .. }) => {
                         prime_team.map(|team| team.team_id)
