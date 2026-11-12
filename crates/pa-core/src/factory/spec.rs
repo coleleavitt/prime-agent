@@ -242,6 +242,55 @@ impl<'a> StatesById<'a> {
     }
 }
 
+/// How a dag node (`noun = "node"`) or a machine state (`noun = "state"`) is named in its
+/// validation errors: `"{noun} {reference}"`.
+#[derive(Clone, Copy)]
+struct StateLabel<'a> {
+    noun: &'a str,
+    reference: &'a str,
+}
+
+impl std::fmt::Display for StateLabel<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} {}", self.noun, self.reference)
+    }
+}
+
+/// The names one port list (`outputs` or `inputs`) declared so far: each repeated name is
+/// reported once.
+#[derive(Default)]
+struct PortNames {
+    seen: HashSet<String>,
+    reported: HashSet<String>,
+}
+
+impl PortNames {
+    /// Check one port's `name` (`kind` is `"output"` or `"input"`): it must be a non-empty
+    /// string not declared earlier in the list.
+    fn check(
+        &mut self,
+        name: &PyValue,
+        index: usize,
+        kind: &str,
+        label: StateLabel<'_>,
+        errors: &mut Vec<String>,
+    ) {
+        match name.as_str() {
+            Some(text) if !text.is_empty() => {
+                if !self.seen.insert(text.to_string()) && self.reported.insert(text.to_string()) {
+                    errors.push(format!(
+                        "{label} declares duplicate {kind} name {}",
+                        py_repr(name)
+                    ));
+                }
+            }
+            _ => errors.push(format!(
+                "{label} {kind}s[{index}] requires a non-empty name"
+            )),
+        }
+    }
+}
+
 /// `_validate_state_fields`: the field rules shared by dag nodes
 /// (`noun = "node"`) and machine states (`noun = "state"`).
 fn validate_state_fields(
@@ -251,11 +300,14 @@ fn validate_state_fields(
     noun: &str,
     errors: &mut Vec<String>,
 ) {
-    let reference = state.get("id").as_str().unwrap_or_default();
+    let label = StateLabel {
+        noun,
+        reference: state.get("id").as_str().unwrap_or_default(),
+    };
     let lifecycle = lifecycle_of(state);
     if state.has("lifecycle") && !str_member(lifecycle, &LIFECYCLES) {
         errors.push(format!(
-            "{noun} {reference} lifecycle must be 'task' or 'resident', got {}",
+            "{label} lifecycle must be 'task' or 'resident', got {}",
             py_repr(lifecycle)
         ));
     }
@@ -263,18 +315,32 @@ fn validate_state_fields(
 
     if !state.get("wait").is_none() {
         errors.push(format!(
-            "{noun} {reference}: wait states require the watch host handlers (rlm.watch.*); \
+            "{label}: wait states require the watch host handlers (rlm.watch.*); \
              they arrive with the communication series - remove the wait block until then"
         ));
     }
+    validate_state_runner(state, resident, label, errors);
+    validate_state_limits(state, run_budget, label, errors);
+    validate_state_outputs(state, resident, label, errors);
+    validate_state_inputs(state, states_by_id, label, errors);
+    validate_state_foreach(state, resident, label, errors);
+}
 
+/// What a state runs: a pure-Python callable, a harness subagent reference, or an inline
+/// subagent.
+fn validate_state_runner(
+    state: &PyValue,
+    resident: bool,
+    label: StateLabel<'_>,
+    errors: &mut Vec<String>,
+) {
     let subagent = state.get("subagent");
     if state.has("python") {
         // A pure-Python state runs a callable instead of spawning a child.
         let python = state.get("python");
         if state.has("subagent") {
             errors.push(format!(
-                "{noun} {reference} declares both subagent and python; use exactly one"
+                "{label} declares both subagent and python; use exactly one"
             ));
         }
         if !(python.is_dict()
@@ -282,71 +348,81 @@ fn validate_state_fields(
             && python.get("callable").is_nonempty_str())
         {
             errors.push(format!(
-                "{noun} {reference} python requires non-empty 'import' and 'callable' strings"
+                "{label} python requires non-empty 'import' and 'callable' strings"
             ));
         }
         if resident {
-            errors.push(format!("python {noun} {reference} cannot be resident"));
+            errors.push(format!("python {label} cannot be resident"));
         }
         if state.has("foreach") {
-            errors.push(format!("python {noun} {reference} cannot use foreach"));
+            errors.push(format!("python {label} cannot use foreach"));
         }
     } else if subagent.is_nonempty_str() {
         // A harness subagent entry id or title; resolved at run time.
     } else if subagent.is_dict() {
-        let prompt_ok = subagent
-            .get("prompt")
-            .as_str()
-            .is_some_and(|prompt| !py_strip(prompt).is_empty());
-        if !prompt_ok {
-            errors.push(format!(
-                "{noun} {reference} inline subagent requires a non-empty prompt"
-            ));
-        }
-        for key in ["name", "model", "thinking"] {
-            let value = subagent.get(key);
-            let valid = match value {
-                PyValue::None => true,
-                PyValue::Str(text) => !py_strip(text).is_empty(),
-                _ => false,
-            };
-            if !valid {
-                errors.push(format!(
-                    "{noun} {reference} inline subagent {key} must be a non-empty string when provided"
-                ));
-            }
-        }
-        if let Some(configured) = subagent.get("name").as_str() {
-            let length = py_strip(configured).chars().count();
-            if length > SUBAGENT_NAME_MAX_LENGTH {
-                errors.push(format!(
-                    "{noun} {reference} inline subagent name must be at most \
-                     {SUBAGENT_NAME_MAX_LENGTH} characters, got {length}"
-                ));
-            }
-        }
+        validate_inline_subagent(subagent, label, errors);
     } else {
         errors.push(format!(
-            "{noun} {reference} requires a subagent: a harness subagent id/title string \
+            "{label} requires a subagent: a harness subagent id/title string \
              or an inline object with a prompt (or a python state: \
              {{\"python\": {{\"import\": \"<module>\", \"callable\": \"<function>\"}}}})"
         ));
     }
+}
 
+/// An inline subagent object: a non-empty prompt and optional non-empty name, model and
+/// thinking strings.
+fn validate_inline_subagent(subagent: &PyValue, label: StateLabel<'_>, errors: &mut Vec<String>) {
+    let prompt_ok = subagent
+        .get("prompt")
+        .as_str()
+        .is_some_and(|prompt| !py_strip(prompt).is_empty());
+    if !prompt_ok {
+        errors.push(format!(
+            "{label} inline subagent requires a non-empty prompt"
+        ));
+    }
+    for key in ["name", "model", "thinking"] {
+        let valid = match subagent.get(key) {
+            PyValue::None => true,
+            PyValue::Str(text) => !py_strip(text).is_empty(),
+            _ => false,
+        };
+        if !valid {
+            errors.push(format!(
+                "{label} inline subagent {key} must be a non-empty string when provided"
+            ));
+        }
+    }
+    if let Some(configured) = subagent.get("name").as_str() {
+        let length = py_strip(configured).chars().count();
+        if length > SUBAGENT_NAME_MAX_LENGTH {
+            errors.push(format!(
+                "{label} inline subagent name must be at most \
+                 {SUBAGENT_NAME_MAX_LENGTH} characters, got {length}"
+            ));
+        }
+    }
+}
+
+/// The per-state limits: `budget_ms` (within the run budget), `retries`, and
+/// `failure_policy`.
+fn validate_state_limits(
+    state: &PyValue,
+    run_budget: Option<&PyValue>,
+    label: StateLabel<'_>,
+    errors: &mut Vec<String>,
+) {
     if state.has("budget_ms") {
         let budget = state.get("budget_ms");
         if !budget.is_positive_int() {
+            errors.push(format!("{label} budget_ms must be a positive integer"));
+        } else if let Some(run_budget) = run_budget.filter(|run| budget.int_greater_than(run)) {
             errors.push(format!(
-                "{noun} {reference} budget_ms must be a positive integer"
+                "{label} budget_ms {} exceeds the run budget_ms {}",
+                py_repr(budget),
+                py_repr(run_budget)
             ));
-        } else if let Some(run_budget) = run_budget {
-            if budget.int_greater_than(run_budget) {
-                errors.push(format!(
-                    "{noun} {reference} budget_ms {} exceeds the run budget_ms {}",
-                    py_repr(budget),
-                    py_repr(run_budget)
-                ));
-            }
         }
     }
 
@@ -354,113 +430,94 @@ fn validate_state_fields(
         let retries = state.get("retries");
         if !(retries.is_int() && retries.int_ge(0) && retries.int_le(MAX_RETRIES)) {
             errors.push(format!(
-                "{noun} {reference} retries must be an integer between 0 and {MAX_RETRIES}"
+                "{label} retries must be an integer between 0 and {MAX_RETRIES}"
             ));
         }
     }
 
     if state.has("failure_policy") && !str_member(state.get("failure_policy"), &FAILURE_POLICIES) {
         errors.push(format!(
-            "{noun} {reference} failure_policy must be one of {}, got {}",
+            "{label} failure_policy must be one of {}, got {}",
             str_list_repr(&FAILURE_POLICIES),
             py_repr(state.get("failure_policy"))
         ));
     }
+}
 
+/// The declared `outputs`: a list of uniquely named, typed ports (none on a resident state).
+fn validate_state_outputs(
+    state: &PyValue,
+    resident: bool,
+    label: StateLabel<'_>,
+    errors: &mut Vec<String>,
+) {
     let outputs = state.get("outputs");
     if !outputs.is_none() && !outputs.is_list() {
-        errors.push(format!("{noun} {reference} outputs must be a list"));
+        errors.push(format!("{label} outputs must be a list"));
     } else if resident && outputs.as_list().is_some_and(|items| !items.is_empty()) {
-        errors.push(format!(
-            "resident {noun} {reference} cannot declare outputs"
-        ));
+        errors.push(format!("resident {label} cannot declare outputs"));
     }
-    let mut seen_outputs: HashSet<String> = HashSet::new();
-    let mut reported_outputs: HashSet<String> = HashSet::new();
+    let mut names = PortNames::default();
     for (index, out) in port_list(state, "outputs").iter().enumerate() {
         if !out.is_dict() {
-            errors.push(format!(
-                "{noun} {reference} outputs[{index}] must be an object"
-            ));
+            errors.push(format!("{label} outputs[{index}] must be an object"));
             continue;
         }
         let name = out.get("name");
-        match name.as_str() {
-            Some(text) if !text.is_empty() => {
-                if seen_outputs.contains(text) {
-                    if reported_outputs.insert(text.to_string()) {
-                        errors.push(format!(
-                            "{noun} {reference} declares duplicate output name {}",
-                            py_repr(name)
-                        ));
-                    }
-                } else {
-                    seen_outputs.insert(text.to_string());
-                }
-            }
-            _ => errors.push(format!(
-                "{noun} {reference} outputs[{index}] requires a non-empty name"
-            )),
-        }
+        names.check(name, index, "output", label, errors);
         if !str_member(out.get("type"), &PORT_TYPES) {
             errors.push(format!(
-                "{noun} {reference} output {} type must be 'text' or 'json'",
+                "{label} output {} type must be 'text' or 'json'",
                 py_repr(name)
             ));
         }
     }
+}
 
+/// The declared `inputs`: uniquely named, typed ports that each read a declared output of
+/// the same type on a non-resident state.
+fn validate_state_inputs(
+    state: &PyValue,
+    states_by_id: &StatesById<'_>,
+    label: StateLabel<'_>,
+    errors: &mut Vec<String>,
+) {
+    let noun = label.noun;
     let inputs = state.get("inputs");
     if !inputs.is_none() && !inputs.is_list() {
-        errors.push(format!("{noun} {reference} inputs must be a list"));
+        errors.push(format!("{label} inputs must be a list"));
     }
-    let mut seen_inputs: HashSet<String> = HashSet::new();
-    let mut reported_inputs: HashSet<String> = HashSet::new();
+    let mut names = PortNames::default();
     let mut output_types_by_source: HashMap<String, HashMap<String, String>> = HashMap::new();
     for (index, input) in port_list(state, "inputs").iter().enumerate() {
         if !input.is_dict() {
-            errors.push(format!(
-                "{noun} {reference} inputs[{index}] must be an object"
-            ));
+            errors.push(format!("{label} inputs[{index}] must be an object"));
             continue;
         }
         let name = input.get("name");
         let port_type = input.get("type");
-        let source = input.get("from");
         let optional = input.get("optional");
         if !optional.is_none() && !matches!(optional, PyValue::Bool(_)) {
             errors.push(format!(
-                "{noun} {reference} input {} optional must be a boolean when provided",
+                "{label} input {} optional must be a boolean when provided",
                 py_repr(name)
             ));
         }
-        match name.as_str() {
-            Some(text) if !text.is_empty() => {
-                if seen_inputs.contains(text) {
-                    if reported_inputs.insert(text.to_string()) {
-                        errors.push(format!(
-                            "{noun} {reference} declares duplicate input name {}",
-                            py_repr(name)
-                        ));
-                    }
-                } else {
-                    seen_inputs.insert(text.to_string());
-                }
-            }
-            _ => errors.push(format!(
-                "{noun} {reference} inputs[{index}] requires a non-empty name"
-            )),
-        }
+        names.check(name, index, "input", label, errors);
         let type_known = str_member(port_type, &PORT_TYPES);
         if !type_known {
             errors.push(format!(
-                "{noun} {reference} input {} type must be 'text' or 'json'",
+                "{label} input {} type must be 'text' or 'json'",
                 py_repr(name)
             ));
         }
-        let Some(source) = source.as_str().filter(|source| source.contains('.')) else {
+        let Some(source) = input
+            .get("from")
+            .as_str()
+            .filter(|source| source.contains('.'))
+        else {
             errors.push(format!(
-                "{noun} {reference} input {} requires a 'from' reference of the form '<node_id>.<output_name>'",
+                "{label} input {} requires a 'from' reference of the form '<node_id>.<output_name>'",
                 py_repr(name)
             ));
             continue;
@@ -468,7 +525,7 @@ fn validate_state_fields(
         let (src_id, src_output) = partition_dot(source);
         let Some(src) = states_by_id.get(src_id) else {
             errors.push(format!(
-                "{noun} {reference} input {} references unknown {noun} {}",
+                "{label} input {} references unknown {noun} {}",
                 py_repr(name),
                 py_str_repr(src_id)
             ));
@@ -476,7 +533,7 @@ fn validate_state_fields(
         };
         if is_resident(src) {
             errors.push(format!(
-                "{noun} {reference} input {} cannot read from resident {noun} {}",
+                "{label} input {} cannot read from resident {noun} {}",
                 py_repr(name),
                 py_str_repr(src_id)
             ));
@@ -487,14 +544,14 @@ fn validate_state_fields(
             .or_insert_with(|| declared_port_types(src, "outputs"));
         match src_types.get(src_output) {
             None => errors.push(format!(
-                "{noun} {reference} input {} references output {} that {noun} {} does not declare",
+                "{label} input {} references output {} that {noun} {} does not declare",
                 py_repr(name),
                 py_str_repr(src_output),
                 py_str_repr(src_id)
             )),
             Some(src_type) if type_known && Some(src_type.as_str()) != port_type.as_str() => {
                 errors.push(format!(
-                    "{noun} {reference} input {} of type {} cannot read from output {} of type {}",
+                    "{label} input {} of type {} cannot read from output {} of type {}",
                     py_repr(name),
                     py_repr(port_type),
                     py_str_repr(src_output),
@@ -504,45 +561,55 @@ fn validate_state_fields(
             Some(_) => {}
         }
     }
+}
 
+/// The `foreach` fan-out: an object naming one of the state's json inputs and a bounded
+/// `max` (not on a resident state).
+fn validate_state_foreach(
+    state: &PyValue,
+    resident: bool,
+    label: StateLabel<'_>,
+    errors: &mut Vec<String>,
+) {
+    let noun = label.noun;
     let foreach = state.get("foreach");
-    if !foreach.is_none() {
-        if resident {
-            errors.push(format!("resident {noun} {reference} cannot use foreach"));
-        }
-        if foreach.is_dict() {
-            let over = foreach.get("over");
-            match over.as_str() {
-                Some(over_name) if !over_name.is_empty() => {
-                    let declared = declared_port_types(state, "inputs");
-                    match declared.get(over_name) {
-                        None => errors.push(format!(
-                            "{noun} {reference} foreach.over must name one of this {noun}'s inputs, got {}",
-                            py_repr(over)
-                        )),
-                        Some(port_type) if port_type != "json" => errors.push(format!(
-                            "{noun} {reference} foreach.over input {} must have type 'json'",
-                            py_repr(over)
-                        )),
-                        Some(_) => {}
-                    }
-                }
-                _ => errors.push(format!(
-                    "{noun} {reference} foreach.over must be a non-empty input name"
+    if foreach.is_none() {
+        return;
+    }
+    if resident {
+        errors.push(format!("resident {label} cannot use foreach"));
+    }
+    if !foreach.is_dict() {
+        errors.push(format!("{label} foreach must be an object"));
+        return;
+    }
+    let over = foreach.get("over");
+    match over.as_str() {
+        Some(over_name) if !over_name.is_empty() => {
+            match declared_port_types(state, "inputs").get(over_name) {
+                None => errors.push(format!(
+                    "{label} foreach.over must name one of this {noun}'s inputs, got {}",
+                    py_repr(over)
                 )),
+                Some(port_type) if port_type != "json" => errors.push(format!(
+                    "{label} foreach.over input {} must have type 'json'",
+                    py_repr(over)
+                )),
+                Some(_) => {}
             }
-            let foreach_max = foreach.get("max");
-            if !(foreach_max.is_int()
-                && foreach_max.int_ge(FOREACH_MAX_MIN)
-                && foreach_max.int_le(FOREACH_MAX_MAX))
-            {
-                errors.push(format!(
-                    "{noun} {reference} foreach.max must be an integer between {FOREACH_MAX_MIN} and {FOREACH_MAX_MAX}"
-                ));
-            }
-        } else {
-            errors.push(format!("{noun} {reference} foreach must be an object"));
         }
+        _ => errors.push(format!(
+            "{label} foreach.over must be a non-empty input name"
+        )),
+    }
+    let foreach_max = foreach.get("max");
+    if !(foreach_max.is_int()
+        && foreach_max.int_ge(FOREACH_MAX_MIN)
+        && foreach_max.int_le(FOREACH_MAX_MAX))
+    {
+        errors.push(format!(
+            "{label} foreach.max must be an integer between {FOREACH_MAX_MIN} and {FOREACH_MAX_MAX}"
+        ));
     }
 }
 
