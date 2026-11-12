@@ -268,7 +268,7 @@ pub(super) struct DaemonBinding {
     pub(super) active_session_id: String,
     /// The create's `client_owned` lifecycle (`--no-session`): the
     /// session ends with the connection.
-    client_owned: bool,
+    pub(super) client_owned: bool,
     pub(super) mcp_owner_id: String,
 }
 

@@ -42,6 +42,9 @@ enum Admission {
     Load {
         acp_session_id: String,
         messages: Vec<Value>,
+        /// The bound session the connection leaves once this one is
+        /// admitted; `None` when the load stays on the bound session.
+        previous: Option<String>,
     },
 }
 
@@ -149,8 +152,14 @@ pub(super) async fn handle_session_list(
             return;
         }
     };
+    // A session without messages has nothing to load (upstream #3845).
     let matching: Vec<&Value> = rows
         .iter()
+        .filter(|row| {
+            row.get("messageCount")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count > 0)
+        })
         .filter(|row| {
             cwd.is_none_or(|cwd| {
                 row.get("cwd")
@@ -244,7 +253,10 @@ async fn saved_session_rows(
 /// transcript before answering. A session a live worker serves is attached
 /// (one file, one worker); a dormant file opens in the connection's own
 /// worker (`switch_session`, with the client's cwd). The cwd rules of
-/// `session/new` apply to the loaded session's real cwd.
+/// `session/new` apply to the loaded session's real cwd. The requested MCP
+/// servers are checked before anything moves, and an attached session
+/// becomes the connection's binding only once its admission succeeded
+/// (upstream #3845): a failed load keeps the previous binding.
 pub(super) async fn handle_session_load(
     id: Value,
     params: Value,
@@ -260,16 +272,19 @@ pub(super) async fn handle_session_load(
     }
     let params = types::LoadSessionParams::parse(&params);
     let loaded = match bind_saved_session(&params, link, state, binding).await {
-        Ok((daemon_session_id, messages, actual_cwd)) => {
+        Ok(opened) => {
             admit_session(
                 AdmissionRequest {
                     id,
                     params: params.admission(),
-                    daemon_session_id,
-                    actual_cwd: actual_cwd.unwrap_or_else(|| options.actual_cwd.clone()),
+                    daemon_session_id: opened.daemon_session_id,
+                    actual_cwd: opened
+                        .actual_cwd
+                        .unwrap_or_else(|| options.actual_cwd.clone()),
                     admission: Admission::Load {
                         acp_session_id: params.session_id,
-                        messages,
+                        messages: opened.messages,
+                        previous: opened.previous,
                     },
                 },
                 link,
@@ -289,6 +304,12 @@ pub(super) async fn handle_session_load(
                     Some(&json!({
                         "reason": format!("Unknown ACP session: {}", params.session_id)
                     })),
+                ),
+                LoadError::InvalidMcpServers(reason) => jsonrpc::error_response(
+                    &id,
+                    jsonrpc::INVALID_PARAMS,
+                    "Invalid params",
+                    Some(&json!({ "reason": reason })),
                 ),
                 LoadError::Daemon(error) => super::internal_error(&id, &format!("{error:#}")),
             });
@@ -315,6 +336,8 @@ pub(super) fn track_session_load(client: &pa_telemetry::TelemetryClient, loaded:
 enum LoadError {
     /// No saved top-level session carries the id.
     UnknownSession,
+    /// The requested MCP servers do not resolve against the session's cwd.
+    InvalidMcpServers(String),
     Daemon(anyhow::Error),
 }
 
@@ -324,44 +347,59 @@ impl From<anyhow::Error> for LoadError {
     }
 }
 
-/// Resolve the saved session, make the connection host it, and read its
-/// transcript: the bound daemon session, the messages, and its live cwd.
+/// The saved session a `session/load` opened, not yet the binding.
+struct OpenedSession {
+    daemon_session_id: String,
+    messages: Vec<Value>,
+    /// The session's live cwd.
+    actual_cwd: Option<PathBuf>,
+    /// The bound daemon session the connection leaves once the attached
+    /// one is admitted; `None` when the load stays on the bound session.
+    previous: Option<String>,
+}
+
+/// Resolve the saved session, check the requested MCP servers against its
+/// cwd, open it, and read its transcript. Attaching a session another
+/// worker serves leaves the connection's binding as it is; the admission
+/// rebinds. A failure after the attach detaches it again.
 async fn bind_saved_session(
     params: &types::LoadSessionParams,
     link: &Arc<DaemonLink>,
     state: &Arc<Mutex<DaemonAcpState>>,
     binding: &DaemonBinding,
-) -> Result<(String, Vec<Value>, Option<PathBuf>), LoadError> {
+) -> Result<OpenedSession, LoadError> {
     if params.session_id.is_empty() {
         return Err(LoadError::UnknownSession);
     }
     let current = bound_daemon_session(state, binding).await;
     let rows = saved_session_rows(link, &current).await?;
-    let Some(path) = rows
+    let Some(row) = rows
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(params.session_id.as_str()))
-        .and_then(|row| row.get("path").and_then(Value::as_str))
-        .map(PathBuf::from)
     else {
         return Err(LoadError::UnknownSession);
     };
+    let Some(path) = row.get("path").and_then(Value::as_str).map(PathBuf::from) else {
+        return Err(LoadError::UnknownSession);
+    };
+    let saved_cwd = row
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let live = live_session_for_file(link, &path).await?;
-    let daemon_session_id = match live {
-        Some(live) if live == current => current,
+    let cwd_override = params.cwd.clone().filter(|cwd| !cwd.is_empty());
+    // A dormant file opens with the client's cwd; a live session keeps its own.
+    let mcp_cwd = match (&live, &cwd_override) {
+        (None, Some(cwd)) => cwd.clone(),
+        _ => saved_cwd,
+    };
+    let resolved = super::mcp::resolve_acp_mcp_servers(&params.mcp_servers, Path::new(&mcp_cwd))
+        .map_err(LoadError::InvalidMcpServers)?;
+    super::mcp::acp_mcp_tool_names(&resolved).map_err(|details| anyhow::anyhow!(details))?;
+    let (daemon_session_id, previous) = match live {
+        Some(live) if live == current => (current, None),
         Some(live) => {
-            // The connection moves to another worker: what it held on the
-            // previous one (a close's input pause, its MCP servers) goes.
-            let closed_pause = {
-                let mut guard = state.lock().await;
-                guard.closed_input_pause_key = None;
-                guard.closed_input_pause_id.take()
-            };
-            if let Some(pause_id) = closed_pause {
-                release_session_input_pause(link, &current, &pause_id).await?;
-            }
-            if !state.lock().await.mcp_server_names.is_empty() {
-                clear_connection_servers(link, &current, &binding.mcp_owner_id, state).await?;
-            }
             link.request_ok(DaemonCommand::Attach {
                 id: None,
                 active_session_id: live.clone(),
@@ -375,26 +413,50 @@ async fn bind_saved_session(
                 rest: Map::default(),
             })
             .await?;
-            state.lock().await.bound_daemon_session_id = Some(live.clone());
-            live
+            (live, Some(current))
         }
         None => {
             link.request_ok(DaemonCommand::SwitchSession {
                 id: None,
                 active_session_id: current.clone(),
                 session_path: path.to_string_lossy().to_string(),
-                cwd_override: params.cwd.clone().filter(|cwd| !cwd.is_empty()),
+                cwd_override,
                 rest: Map::default(),
             })
             .await?;
-            current
+            (current, None)
         }
     };
-    let messages = fetch_messages(link, &daemon_session_id).await?;
+    let messages = match fetch_messages(link, &daemon_session_id).await {
+        Ok(messages) => messages,
+        Err(error) => {
+            if previous.is_some() {
+                detach_daemon_session(link, &daemon_session_id).await;
+            }
+            return Err(error.into());
+        }
+    };
     let actual_cwd = fetch_connection_state(link, &daemon_session_id)
         .await
         .and_then(|state| state.get("cwd").and_then(Value::as_str).map(PathBuf::from));
-    Ok((daemon_session_id, messages, actual_cwd))
+    Ok(OpenedSession {
+        daemon_session_id,
+        messages,
+        actual_cwd,
+        previous,
+    })
+}
+
+/// Drop this connection's attachment to a daemon session (best-effort: the
+/// link's drop detaches it anyway).
+async fn detach_daemon_session(link: &Arc<DaemonLink>, daemon_session_id: &str) {
+    let _ = link
+        .request(DaemonCommand::Detach {
+            id: None,
+            active_session_id: Some(daemon_session_id.to_string()),
+            rest: Map::default(),
+        })
+        .await;
 }
 
 /// The live daemon session serving `path`, if any (the supervisor's `list`,
@@ -492,12 +554,21 @@ async fn admit_session(
         actual_cwd,
         admission,
     } = request;
+    // The bound session a load that attached another one leaves on success.
+    let previous = match &admission {
+        Admission::New => None,
+        Admission::Load { previous, .. } => previous.clone(),
+    };
+    let attached = previous.as_ref().map(|_| daemon_session_id.as_str());
+    // The pending clear targets the bound session, which the earlier
+    // servers were installed on.
+    let bound = previous.as_deref().unwrap_or(&daemon_session_id);
     if !state.lock().await.mcp_server_names.is_empty()
         && let Err(error) =
-            clear_connection_servers(link, &daemon_session_id, &binding.mcp_owner_id, state).await
+            clear_connection_servers(link, bound, &binding.mcp_owner_id, state).await
     {
-        state.lock().await.session_new_in_flight = false;
-        let _ = tx.send(super::internal_error(&id, &error.to_string()));
+        let response = super::internal_error(&id, &error.to_string());
+        fail_admission(link, state, attached, &tx, response).await;
         return false;
     }
     // MCP admission runs after the pending-clear retry: a rejected list
@@ -505,19 +576,19 @@ async fn admit_session(
     let resolved = match super::mcp::resolve_acp_mcp_servers(&params.mcp_servers, &actual_cwd) {
         Ok(resolved) => resolved,
         Err(reason) => {
-            state.lock().await.session_new_in_flight = false;
-            let _ = tx.send(jsonrpc::error_response(
+            let response = jsonrpc::error_response(
                 &id,
                 jsonrpc::INVALID_PARAMS,
                 "Invalid params",
                 Some(&json!({ "reason": reason })),
-            ));
+            );
+            fail_admission(link, state, attached, &tx, response).await;
             return false;
         }
     };
     if let Err(details) = super::mcp::acp_mcp_tool_names(&resolved) {
-        state.lock().await.session_new_in_flight = false;
-        let _ = tx.send(super::internal_error(&id, &details));
+        let response = super::internal_error(&id, &details);
+        fail_admission(link, state, attached, &tx, response).await;
         return false;
     }
 
@@ -551,6 +622,7 @@ async fn admit_session(
         Admission::Load {
             acp_session_id,
             messages,
+            ..
         } => (acp_session_id, Some(messages)),
     };
     let producer = UpdateProducer::new(acp_session_id.clone(), tx.clone());
@@ -599,8 +671,8 @@ async fn admit_session(
             let _ =
                 clear_connection_servers(link, &daemon_session_id, &binding.mcp_owner_id, state)
                     .await;
-            state.lock().await.session_new_in_flight = false;
-            let _ = tx.send(super::internal_error(&id, &error.to_string()));
+            let response = super::internal_error(&id, &error.to_string());
+            fail_admission(link, state, attached, &tx, response).await;
             return false;
         }
         if resolved.is_empty() {
@@ -629,10 +701,16 @@ async fn admit_session(
     // it). The producer gate opens only after the response is queued,
     // so no held update can precede it.
     let producer = Arc::clone(&hosted.producer);
+    // The pause the last close held belongs to the bound session; a
+    // rebinding load releases it with that session instead.
     let inherited_pause = {
         let mut guard = state.lock().await;
         guard.session_new_in_flight = false;
-        if let Some(pause_id) = guard.closed_input_pause_id.clone() {
+        if let Some(pause_id) = guard
+            .closed_input_pause_id
+            .clone()
+            .filter(|_| previous.is_none())
+        {
             hosted.input_pause_id = Some(pause_id);
             hosted.input_pause_key = guard.closed_input_pause_key.clone();
         }
@@ -641,6 +719,7 @@ async fn admit_session(
             .closed_input_pause_id
             .clone()
             .zip(guard.closed_input_pause_key.clone())
+            .filter(|_| previous.is_none())
     };
     let children = match fetch_rlm_children(link, &daemon_session_id).await {
         Ok(children) => children,
@@ -648,14 +727,38 @@ async fn admit_session(
             let _ =
                 clear_connection_servers(link, &daemon_session_id, &binding.mcp_owner_id, state)
                     .await;
-            let mut guard = state.lock().await;
-            guard.session = None;
-            guard.session_new_in_flight = false;
-            drop(guard);
-            let _ = tx.send(super::internal_error(&id, &error.to_string()));
+            state.lock().await.session = None;
+            let response = super::internal_error(&id, &error.to_string());
+            fail_admission(link, state, attached, &tx, response).await;
             return false;
         }
     };
+    // The admitted load rebinds the connection: leave the previous session
+    // (release the pause its last close held, then end the client-owned
+    // startup session or detach it; the pending clear above already removed
+    // the connection's MCP servers from it).
+    if let Some(previous) = &previous {
+        let closed_pause = {
+            let mut guard = state.lock().await;
+            guard.closed_input_pause_key = None;
+            guard.closed_input_pause_id.take()
+        };
+        if let Some(pause_id) = closed_pause {
+            let _ = release_session_input_pause(link, previous, &pause_id).await;
+        }
+        if binding.client_owned && *previous == binding.active_session_id {
+            let _ = link
+                .request(DaemonCommand::CompleteOwnedSession {
+                    id: None,
+                    active_session_id: previous.clone(),
+                    rest: Map::default(),
+                })
+                .await;
+        } else {
+            detach_daemon_session(link, previous).await;
+        }
+        state.lock().await.bound_daemon_session_id = Some(daemon_session_id.clone());
+    }
     {
         let mut guard = state.lock().await;
         if let Some(current) = guard.session.as_mut() {
@@ -700,6 +803,22 @@ async fn admit_session(
     producer.commit_session_new_response().await;
     spawn_command_advertisement(link, daemon_session_id, producer);
     true
+}
+
+/// Answer a failed admission and free the slot. A load that attached
+/// another daemon session detaches it, so the connection keeps its binding.
+async fn fail_admission(
+    link: &Arc<DaemonLink>,
+    state: &Arc<Mutex<DaemonAcpState>>,
+    attached: Option<&str>,
+    tx: &producer::FrameSink,
+    response: Value,
+) {
+    if let Some(daemon_session_id) = attached {
+        detach_daemon_session(link, daemon_session_id).await;
+    }
+    state.lock().await.session_new_in_flight = false;
+    let _ = tx.send(response);
 }
 
 /// Advertise the session's commands once it is admitted (upstream #1308),
