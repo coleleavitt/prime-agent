@@ -42,6 +42,17 @@ enum PackageCommand {
 }
 
 impl PackageCommand {
+    /// The package command a subcommand word names.
+    fn of(word: &str) -> Option<Self> {
+        match word {
+            "uninstall" | "remove" => Some(PackageCommand::Remove),
+            "install" => Some(PackageCommand::Install),
+            "update" => Some(PackageCommand::Update),
+            "list" => Some(PackageCommand::List),
+            _ => None,
+        }
+    }
+
     fn usage(self) -> String {
         match self {
             PackageCommand::Install => format!("{APP_NAME} package install <source> [--local]"),
@@ -94,203 +105,76 @@ struct PackageCommandOptions {
     restart_origin_active_session_id: Option<String>,
 }
 
-fn parse_package_command(args: &[String]) -> Option<PackageCommandOptions> {
-    let command = match args.first().map(String::as_str) {
-        Some("uninstall" | "remove") => Some(PackageCommand::Remove),
-        Some("install") => Some(PackageCommand::Install),
-        Some("update") => Some(PackageCommand::Update),
-        Some("list") => Some(PackageCommand::List),
-        _ => None,
-    }?;
-    let rest = &args[1..];
-    let mut options = PackageCommandOptions::default();
-    let mut channel: Option<&str> = None;
-    let mut self_flag = false;
-    let mut extensions_flag = false;
-    let mut extension_flag_source: Option<String> = None;
-    let mut daemon_socket_seen = false;
+/// An option of the package commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageOption {
+    Help,
+    Local,
+    SelfTarget,
+    Extensions,
+    Force,
+    Rollback,
+    Channel(&'static str),
+    DaemonSocket,
+    RestartCoordinator,
+    RestartStatus,
+    RestartOrigin,
+    Extension,
+}
 
-    let mut index = 0;
-    while index < rest.len() {
-        let arg = rest[index].as_str();
-        match arg {
-            "-h" | "--help" => {
-                options.help = true;
-            }
-            "--local" => {
-                if matches!(command, PackageCommand::Install | PackageCommand::Remove) {
-                    options.local = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            "--self" => {
-                if command == PackageCommand::Update {
-                    self_flag = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            "--extensions" => {
-                if command == PackageCommand::Update {
-                    extensions_flag = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            "--force" => {
-                if command == PackageCommand::Update {
-                    options.force = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            "--rollback" => {
-                if command == PackageCommand::Update {
-                    options.rollback = true;
-                    self_flag = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            "--nightly" | "--stable" => {
-                if command != PackageCommand::Update {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                    index += 1;
-                    continue;
-                }
-                let requested = if arg == "--nightly" {
-                    "nightly"
-                } else {
-                    "stable"
-                };
-                if channel.is_some() && channel != Some(requested) {
-                    options.conflicting_options.get_or_insert_with(|| {
-                        "--nightly and --stable cannot be combined".to_string()
-                    });
-                }
-                channel = Some(requested);
-            }
-            "--daemon-socket" => {
-                if command != PackageCommand::Update {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                    index += 1;
-                    continue;
-                }
-                match rest.get(index + 1) {
-                    Some(value) if !value.starts_with('-') => {
-                        if daemon_socket_seen {
-                            options.conflicting_options.get_or_insert_with(|| {
-                                "--daemon-socket can only be provided once".to_string()
-                            });
-                        } else {
-                            daemon_socket_seen = true;
-                            options.restart_daemon_socket = Some(value.clone());
-                        }
-                        index += 1;
-                    }
-                    _ => {
-                        options
-                            .missing_option_value
-                            .get_or_insert_with(|| arg.to_string());
-                    }
-                }
-            }
-            DAEMON_UPDATE_RESTART_COORDINATOR_FLAG => {
-                if command == PackageCommand::Update {
-                    options.restart_coordinator = true;
-                } else {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-            DAEMON_UPDATE_RESTART_STATUS_FLAG | DAEMON_UPDATE_RESTART_ORIGIN_FLAG => {
-                if command != PackageCommand::Update {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                    index += 1;
-                    continue;
-                }
-                match rest.get(index + 1) {
-                    Some(value) if !value.starts_with('-') => {
-                        if arg == DAEMON_UPDATE_RESTART_STATUS_FLAG {
-                            options.restart_status_path = Some(value.clone());
-                        } else {
-                            options.restart_origin_active_session_id = Some(value.clone());
-                        }
-                        index += 1;
-                    }
-                    _ => {
-                        options
-                            .missing_option_value
-                            .get_or_insert_with(|| arg.to_string());
-                    }
-                }
-            }
-            "--extension" => {
-                if command != PackageCommand::Update {
-                    options
-                        .invalid_option
-                        .get_or_insert_with(|| arg.to_string());
-                    index += 1;
-                    continue;
-                }
-                match rest.get(index + 1) {
-                    Some(value) if !value.starts_with('-') => {
-                        if extension_flag_source.is_some() {
-                            options.conflicting_options.get_or_insert_with(|| {
-                                "--extension can only be provided once".to_string()
-                            });
-                        } else {
-                            extension_flag_source = Some(value.clone());
-                        }
-                        index += 1;
-                    }
-                    _ => {
-                        options
-                            .missing_option_value
-                            .get_or_insert_with(|| arg.to_string());
-                    }
-                }
-            }
-            _ if arg.starts_with('-') => {
-                options
-                    .invalid_option
-                    .get_or_insert_with(|| arg.to_string());
-            }
-            _ => {
-                if options.source.is_none() {
-                    options.source = Some(arg.to_string());
-                } else {
-                    options
-                        .invalid_argument
-                        .get_or_insert_with(|| arg.to_string());
-                }
-            }
-        }
-        index += 1;
+impl PackageOption {
+    fn of(arg: &str) -> Option<Self> {
+        Some(match arg {
+            "-h" | "--help" => Self::Help,
+            "--local" => Self::Local,
+            "--self" => Self::SelfTarget,
+            "--extensions" => Self::Extensions,
+            "--force" => Self::Force,
+            "--rollback" => Self::Rollback,
+            "--nightly" => Self::Channel("nightly"),
+            "--stable" => Self::Channel("stable"),
+            "--daemon-socket" => Self::DaemonSocket,
+            DAEMON_UPDATE_RESTART_COORDINATOR_FLAG => Self::RestartCoordinator,
+            DAEMON_UPDATE_RESTART_STATUS_FLAG => Self::RestartStatus,
+            DAEMON_UPDATE_RESTART_ORIGIN_FLAG => Self::RestartOrigin,
+            "--extension" => Self::Extension,
+            _ => return None,
+        })
     }
 
-    if command == PackageCommand::Update {
-        options.channel = channel.and_then(UpdateChannel::from_wire);
-        if extension_flag_source.is_some() {
-            if self_flag || extensions_flag {
+    fn applies_to(self, command: PackageCommand) -> bool {
+        match self {
+            Self::Help => true,
+            Self::Local => matches!(command, PackageCommand::Install | PackageCommand::Remove),
+            Self::SelfTarget
+            | Self::Extensions
+            | Self::Force
+            | Self::Rollback
+            | Self::Channel(_)
+            | Self::DaemonSocket
+            | Self::RestartCoordinator
+            | Self::RestartStatus
+            | Self::RestartOrigin
+            | Self::Extension => command == PackageCommand::Update,
+        }
+    }
+}
+
+/// The update command's target flags, resolved once every argument is read.
+#[derive(Debug, Default)]
+struct UpdateFlags {
+    channel: Option<&'static str>,
+    self_flag: bool,
+    extensions_flag: bool,
+    extension_source: Option<String>,
+}
+
+impl UpdateFlags {
+    /// Record the first conflict among the target flags, the positional
+    /// source, `--rollback` and the channel flags.
+    fn record_conflicts(&self, options: &mut PackageCommandOptions) {
+        if self.extension_source.is_some() {
+            if self.self_flag || self.extensions_flag {
                 options.conflicting_options.get_or_insert_with(|| {
                     "--extension cannot be combined with --self or --extensions".to_string()
                 });
@@ -301,7 +185,7 @@ fn parse_package_command(args: &[String]) -> Option<PackageCommandOptions> {
                 });
             }
         } else if let Some(source) = &options.source {
-            if !is_self_update_source(source) && (extensions_flag || self_flag) {
+            if !is_self_update_source(source) && (self.extensions_flag || self.self_flag) {
                 options.conflicting_options.get_or_insert_with(|| {
                     "positional update targets cannot be combined with --self or --extensions"
                         .to_string()
@@ -312,48 +196,150 @@ fn parse_package_command(args: &[String]) -> Option<PackageCommandOptions> {
             .source
             .as_deref()
             .is_some_and(|source| !is_self_update_source(source));
-        if options.rollback
-            && (extensions_flag || extension_flag_source.is_some() || positional_source_not_self)
-        {
+        let targets_extensions =
+            self.extensions_flag || self.extension_source.is_some() || positional_source_not_self;
+        if options.rollback && targets_extensions {
             options.conflicting_options =
                 Some("--rollback only applies to Prime Agent itself".to_string());
         }
-        if channel.is_some()
-            && (extensions_flag || extension_flag_source.is_some() || positional_source_not_self)
-        {
+        if self.channel.is_some() && targets_extensions {
             options.conflicting_options.get_or_insert_with(|| {
                 "--nightly and --stable only apply to Prime Agent itself".to_string()
             });
         }
     }
 
-    if command == PackageCommand::Update {
-        let update_target = if let Some(extension_source) = extension_flag_source {
-            UpdateTarget::Extensions {
+    /// What `update` updates, given its positional `source`.
+    fn target(self, source: Option<&String>) -> UpdateTarget {
+        if let Some(extension_source) = self.extension_source {
+            return UpdateTarget::Extensions {
                 source: Some(extension_source),
-            }
-        } else if let Some(source) = &options.source {
-            if is_self_update_source(source) {
+            };
+        }
+        match (source, self.self_flag, self.extensions_flag) {
+            (Some(source), _, extensions_flag) if is_self_update_source(source) => {
                 if extensions_flag {
                     UpdateTarget::All
                 } else {
                     UpdateTarget::SelfOnly
                 }
+            }
+            (Some(source), _, _) => UpdateTarget::Extensions {
+                source: Some(source.clone()),
+            },
+            (None, true, false) => UpdateTarget::SelfOnly,
+            (None, false, true) => UpdateTarget::Extensions { source: None },
+            (None, true, true) | (None, false, false) => UpdateTarget::All,
+        }
+    }
+}
+
+/// The value after the option at `rest[*index]`, moving `index` onto it; a
+/// missing value (absent or another option) is recorded in `missing`.
+fn option_value<'a>(
+    rest: &'a [String],
+    index: &mut usize,
+    missing: &mut Option<String>,
+) -> Option<&'a String> {
+    match rest.get(*index + 1) {
+        Some(value) if !value.starts_with('-') => {
+            *index += 1;
+            Some(value)
+        }
+        _ => {
+            missing.get_or_insert_with(|| rest[*index].clone());
+            None
+        }
+    }
+}
+
+fn parse_package_command(args: &[String]) -> Option<PackageCommandOptions> {
+    let command = PackageCommand::of(args.first()?)?;
+    let rest = &args[1..];
+    let mut options = PackageCommandOptions::default();
+    let mut update = UpdateFlags::default();
+    let mut daemon_socket_seen = false;
+
+    let mut index = 0;
+    while index < rest.len() {
+        let arg = rest[index].as_str();
+        let Some(option) = PackageOption::of(arg).filter(|option| option.applies_to(command))
+        else {
+            if arg.starts_with('-') {
+                options
+                    .invalid_option
+                    .get_or_insert_with(|| arg.to_string());
+            } else if options.source.is_none() {
+                options.source = Some(arg.to_string());
             } else {
-                UpdateTarget::Extensions {
-                    source: Some(source.clone()),
+                options
+                    .invalid_argument
+                    .get_or_insert_with(|| arg.to_string());
+            }
+            index += 1;
+            continue;
+        };
+        let missing = &mut options.missing_option_value;
+        match option {
+            PackageOption::Help => options.help = true,
+            PackageOption::Local => options.local = true,
+            PackageOption::SelfTarget => update.self_flag = true,
+            PackageOption::Extensions => update.extensions_flag = true,
+            PackageOption::Force => options.force = true,
+            PackageOption::Rollback => {
+                options.rollback = true;
+                update.self_flag = true;
+            }
+            PackageOption::Channel(requested) => {
+                if update.channel.is_some() && update.channel != Some(requested) {
+                    options.conflicting_options.get_or_insert_with(|| {
+                        "--nightly and --stable cannot be combined".to_string()
+                    });
+                }
+                update.channel = Some(requested);
+            }
+            PackageOption::DaemonSocket => {
+                if let Some(value) = option_value(rest, &mut index, missing) {
+                    if daemon_socket_seen {
+                        options.conflicting_options.get_or_insert_with(|| {
+                            "--daemon-socket can only be provided once".to_string()
+                        });
+                    } else {
+                        daemon_socket_seen = true;
+                        options.restart_daemon_socket = Some(value.clone());
+                    }
                 }
             }
-        } else if self_flag && extensions_flag {
-            UpdateTarget::All
-        } else if self_flag {
-            UpdateTarget::SelfOnly
-        } else if extensions_flag {
-            UpdateTarget::Extensions { source: None }
-        } else {
-            UpdateTarget::All
-        };
-        options.update_target = Some(update_target);
+            PackageOption::RestartCoordinator => options.restart_coordinator = true,
+            PackageOption::RestartStatus => {
+                if let Some(value) = option_value(rest, &mut index, missing) {
+                    options.restart_status_path = Some(value.clone());
+                }
+            }
+            PackageOption::RestartOrigin => {
+                if let Some(value) = option_value(rest, &mut index, missing) {
+                    options.restart_origin_active_session_id = Some(value.clone());
+                }
+            }
+            PackageOption::Extension => {
+                if let Some(value) = option_value(rest, &mut index, missing) {
+                    if update.extension_source.is_some() {
+                        options.conflicting_options.get_or_insert_with(|| {
+                            "--extension can only be provided once".to_string()
+                        });
+                    } else {
+                        update.extension_source = Some(value.clone());
+                    }
+                }
+            }
+        }
+        index += 1;
+    }
+
+    if command == PackageCommand::Update {
+        options.channel = update.channel.and_then(UpdateChannel::from_wire);
+        update.record_conflicts(&mut options);
+        options.update_target = Some(update.target(options.source.as_ref()));
     }
 
     Some(options)
@@ -383,12 +369,8 @@ pub fn handle_package_command(args: &[String]) -> PackageCommandOutcome {
     let Some(options) = parse_package_command(args) else {
         return PackageCommandOutcome { exit_code: None };
     };
-    let command = match args.first().map(String::as_str) {
-        Some("uninstall" | "remove") => PackageCommand::Remove,
-        Some("install") => PackageCommand::Install,
-        Some("update") => PackageCommand::Update,
-        Some("list") => PackageCommand::List,
-        _ => return PackageCommandOutcome { exit_code: None },
+    let Some(command) = args.first().and_then(|word| PackageCommand::of(word)) else {
+        return PackageCommandOutcome { exit_code: None };
     };
     let command_name = match command {
         PackageCommand::Install => "install",
