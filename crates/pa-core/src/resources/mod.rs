@@ -165,6 +165,12 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
     let instruction_settings = InstructionSettings {
         auto_memory: settings.get_auto_memory_enabled(),
         claude_user_files: settings.get_claude_code_user_instructions(),
+        claude_memory: settings.get_claude_code_memory(),
+        auto_memory_directory_user: settings.get_auto_memory_directory_user(),
+        auto_memory_excludes: auto_memory::MemoryExcludes {
+            excluded: settings.get_auto_memory_excluded(),
+            excluded_prefixes: settings.get_auto_memory_excluded_prefixes(),
+        },
     };
     let claude_user_skills = settings.get_claude_code_user_skills();
     let resolution = resolution::resolve_session_resources(&options, settings)?;
@@ -355,9 +361,27 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         resources.nested_instructions = Some(std::sync::Arc::new(nested));
         let memory_on = instruction_settings.auto_memory && !auto_memory::disabled_by_env();
         if options.auto_memory && memory_on {
-            resources.auto_memory = Some(auto_memory::load_auto_memory(
+            let overlay_sources = if instruction_settings.claude_memory {
+                super::settings::claude_code::ClaudePaths::resolve(&options.cwd)
+                    .memory_root()
+                    .map(|dir| auto_memory::claude_code_overlay_sources(dir, &options.cwd))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let directory_override = auto_memory::resolve_auto_memory_directory(
+                None,
+                &options.agent_dir,
+                instruction_settings.auto_memory_directory_user.as_deref(),
+            );
+            resources.auto_memory = Some(auto_memory::load_auto_memory_with(
                 &options.agent_dir,
                 &options.cwd,
+                &auto_memory::AutoMemoryLoad {
+                    overlay_sources: &overlay_sources,
+                    directory_override: directory_override.as_deref(),
+                    excludes: &instruction_settings.auto_memory_excludes,
+                },
             ));
         }
         if let (Some((agent, scope)), true) = (&options.agent_memory, memory_on) {
@@ -407,6 +431,13 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
 struct InstructionSettings {
     auto_memory: bool,
     claude_user_files: bool,
+    claude_memory: bool,
+    /// `autoMemoryDirectory` user-settings tier (phase-2 of the compat layer
+    /// mirrors Claude Code's `policy > flag > user` precedence here).
+    auto_memory_directory_user: Option<String>,
+    /// `autoMemoryExcluded` + `autoMemoryExcludedPrefixes` applied to every
+    /// tier's enumeration.
+    auto_memory_excludes: auto_memory::MemoryExcludes,
 }
 
 fn diagnostics_path(diagnostic: &ResourceDiagnostic) -> Option<String> {

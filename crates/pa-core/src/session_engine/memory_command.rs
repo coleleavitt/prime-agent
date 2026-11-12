@@ -113,6 +113,7 @@ mod tests {
                 dir: root.join("mem"),
                 index: "- a\n- b".to_string(),
                 truncated: false,
+                overlays: Vec::new(),
             }),
         };
         let r = |path: &str| repo.join(path).display().to_string();

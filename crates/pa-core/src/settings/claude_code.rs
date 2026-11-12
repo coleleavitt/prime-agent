@@ -99,10 +99,21 @@ pub struct ClaudePaths {
     pub cwd: PathBuf,
     pub home: Option<PathBuf>,
     /// Claude Code's user directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`).
+    /// This is the settings root (`settings.json`, `skills/`, `rules/`),
+    /// not necessarily the memory root (see [`Self::memory_root`]).
     pub claude_dir: Option<PathBuf>,
+    /// Claude Code's memory tree root (`CLAUDE_CODE_REMOTE_MEMORY_DIR` when
+    /// set to a non-empty absolute path, else [`Self::claude_dir`]). Claude
+    /// Code's `function Vtt()` picks this for `projects/<slug>/memory/`,
+    /// `agent-memory-local/`, and friends. Settings files still live under
+    /// [`Self::claude_dir`] — only the memory tree moves.
+    pub memory_root: Option<PathBuf>,
     /// The managed settings file.
     pub managed: Option<PathBuf>,
 }
+
+/// The environment variable Claude Code honors to relocate its memory tree.
+pub const REMOTE_MEMORY_DIR_ENV: &str = "CLAUDE_CODE_REMOTE_MEMORY_DIR";
 
 impl ClaudePaths {
     /// The paths of a session at `cwd` on this machine.
@@ -113,6 +124,7 @@ impl ClaudePaths {
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from)
             .or_else(|| home.as_ref().map(|home| home.join(".claude")));
+        let memory_root = resolve_remote_memory_dir().or_else(|| claude_dir.clone());
         let managed = if cfg!(target_os = "macos") {
             PathBuf::from("/Library/Application Support/ClaudeCode/managed-settings.json")
         } else if cfg!(windows) {
@@ -124,10 +136,42 @@ impl ClaudePaths {
             cwd: cwd.to_path_buf(),
             home,
             claude_dir,
+            memory_root,
             managed: Some(managed),
         }
     }
 
+    /// Claude Code's memory tree root at session construction time. See
+    /// [`REMOTE_MEMORY_DIR_ENV`].
+    #[must_use]
+    pub fn memory_root(&self) -> Option<&Path> {
+        self.memory_root.as_deref()
+    }
+}
+
+/// Resolve `CLAUDE_CODE_REMOTE_MEMORY_DIR` to an override path when it is a
+/// non-empty absolute path. Relative or empty values are refused (Claude Code
+/// does the same; a relative remote-memory redirect would break every tool
+/// that writes with a session-specific cwd). Logs at debug on refusal.
+fn resolve_remote_memory_dir() -> Option<PathBuf> {
+    let value = std::env::var_os(REMOTE_MEMORY_DIR_ENV)?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(&value);
+    if !path.is_absolute() {
+        tracing::debug!(
+            target: "pa_core::claude_code",
+            env = REMOTE_MEMORY_DIR_ENV,
+            value = %path.display(),
+            "CLAUDE_CODE_REMOTE_MEMORY_DIR is not an absolute path; ignored"
+        );
+        return None;
+    }
+    Some(path)
+}
+
+impl ClaudePaths {
     /// The file of `scope`; `None` when the scope has no location here.
     #[must_use]
     pub fn file(&self, scope: ClaudeScope) -> Option<PathBuf> {
@@ -686,6 +730,7 @@ mod tests {
             let paths = ClaudePaths {
                 cwd,
                 claude_dir: Some(home.join(".claude")),
+                memory_root: Some(home.join(".claude")),
                 home: Some(home),
                 managed: Some(dir.path().join("managed-settings.json")),
             };

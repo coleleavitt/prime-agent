@@ -32,6 +32,7 @@ impl Tree {
         let paths = ClaudePaths {
             cwd: cwd.clone(),
             claude_dir: Some(home.join(".claude")),
+            memory_root: Some(home.join(".claude")),
             home: Some(home),
             managed: Some(dir.path().join("managed-settings.json")),
         };

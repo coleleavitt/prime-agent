@@ -417,6 +417,43 @@ impl SettingsManager {
         self.settings().claude_code_user_skills.unwrap_or(false)
     }
 
+    /// `claudeCodeMemory`: unset is off.
+    #[must_use]
+    pub fn get_claude_code_memory(&self) -> bool {
+        self.settings().claude_code_memory.unwrap_or(false)
+    }
+
+    /// `autoMemoryDirectory` (user-settings tier). Claude Code's precedence
+    /// orders `policy > flag > user`; this is the user tier only. Callers
+    /// resolve the full precedence through
+    /// [`crate::resources::auto_memory::resolve_auto_memory_directory`].
+    #[must_use]
+    pub fn get_auto_memory_directory_user(&self) -> Option<String> {
+        self.settings()
+            .auto_memory_directory
+            .clone()
+            .filter(|dir| !dir.trim().is_empty())
+    }
+
+    /// `autoMemoryExcluded`: exact filenames skipped from every memory tier.
+    #[must_use]
+    pub fn get_auto_memory_excluded(&self) -> Vec<String> {
+        self.settings()
+            .auto_memory_excluded
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// `autoMemoryExcludedPrefixes`: filename prefixes skipped from every
+    /// memory tier.
+    #[must_use]
+    pub fn get_auto_memory_excluded_prefixes(&self) -> Vec<String> {
+        self.settings()
+            .auto_memory_excluded_prefixes
+            .clone()
+            .unwrap_or_default()
+    }
+
     /// `factory.enabled` setter: persists the opt-in gate to the global
     /// scope (the same shared settings key the daemon's lane advertisement
     /// and the kernel's factory gate read).

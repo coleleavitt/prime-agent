@@ -526,6 +526,36 @@ pub struct Settings {
     /// installing Claude Code never grows this agent's prompt. The project's
     /// `.claude/skills` load in a trusted workspace regardless.
     pub claude_code_user_skills: Option<bool>,
+    /// `claudeCodeMemory`: also load Claude Code's per-project memory tier
+    /// (`~/.claude/projects/<same-slug>/memory/`) and user-scope memory
+    /// (`~/.claude/projects/<home-slug>/memory/`), `CLAUDE_CONFIG_DIR` aware,
+    /// as prompt-level overlays beside prime-agent's own auto memory. Unset
+    /// is OFF, like `claudeCodeUserInstructions`: installing Claude Code
+    /// never grows this agent's prompt. Prime-agent's own memory files win
+    /// on filename collision.
+    pub claude_code_memory: Option<bool>,
+    /// `autoMemoryDirectory` (Claude Code's key): override the auto-memory
+    /// directory for prime-agent's own tier. Claude Code's precedence
+    /// (`policy > flag > user`): an [`AutoMemoryPolicy`] hook can set it
+    /// (hook defaults to `None` — no enterprise layer here), else
+    /// `PRIME_AGENT_AUTO_MEMORY_DIRECTORY` env (the flag equivalent), else
+    /// this user-settings field. Claude Code excludes `projectSettings` for
+    /// security; this agent has no projectSettings tier, so nothing to
+    /// gate — a checked-in `.prime/agent/settings.json` would still be
+    /// workspace-trust gated like every project file. Does NOT affect the
+    /// Claude Code overlay directory (that follows
+    /// `CLAUDE_CODE_REMOTE_MEMORY_DIR` or `~/.claude`). Unset is the default
+    /// `<agent dir>/projects/<slug>/memory/`.
+    pub auto_memory_directory: Option<String>,
+    /// `autoMemoryExcluded` (Claude Code's `excluded` on the memory-read
+    /// filter): memory file names that are skipped during enumeration on
+    /// every tier (primary and overlays). An exact-filename match.
+    /// Default: empty.
+    pub auto_memory_excluded: Option<Vec<String>>,
+    /// `autoMemoryExcludedPrefixes` (Claude Code's `excludedPrefixes`):
+    /// memory file names that start with any of these prefixes are skipped
+    /// on every tier. Default: empty.
+    pub auto_memory_excluded_prefixes: Option<Vec<String>>,
     /// Unknown keys survive load/save round-trips (forward compatibility).
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
