@@ -15,6 +15,7 @@ use super::registry::{InProcessChildRecord, record_matches};
 use super::{InProcessRlmHost, now_ms};
 use crate::kernel::shared::HostRequestHandlers;
 use crate::session_engine::agent_messaging::{
+    AgentChildLifecycle,
     AgentFamilyMember,
     AgentFamilyRelationship,
     AgentMessageController,
@@ -337,6 +338,7 @@ impl InProcessFamilyController {
             rlm_child_id: None,
             first_message: None,
             session_file: None,
+            lifecycle: None,
             pending_tool_calls: AgentObservePendingToolCalls::measure(
                 state.pending_tool_calls.len(),
                 state
@@ -542,16 +544,23 @@ impl AgentObserveController for InProcessFamilyController {
             summaries.push(Self::summary(None, &engine, session_name, &self_kind, true).await);
         }
         for node in self.nodes().await {
-            summaries.push(
-                Self::summary(
-                    Some(node.relationship),
-                    &node.engine,
-                    node.session_name.clone(),
-                    &node.runtime_kind,
-                    false,
-                )
-                .await,
-            );
+            let mut summary = Self::summary(
+                Some(node.relationship),
+                &node.engine,
+                node.session_name.clone(),
+                &node.runtime_kind,
+                false,
+            )
+            .await;
+            if let (AgentFamilyRelationship::Child, Some(record)) =
+                (node.relationship, &node.record)
+            {
+                summary.lifecycle = Some(AgentChildLifecycle::from_verdict(
+                    record.state().await.settled_status,
+                    summary.status,
+                ));
+            }
+            summaries.push(summary);
         }
         // The composed remote family's observe rows ride the roster after
         // the local ones (empty when the seam reports none).

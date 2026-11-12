@@ -22,7 +22,10 @@ _RELATIONSHIPS = ("parent", "child", "sibling")
 class RLMAgent:
     """One reachable agent: ``relationship`` is ``parent`` | ``sibling`` |
     ``child``; ``status`` is ``running`` | ``idle`` | ``inactive`` (no live
-    session in the daemon; a message wakes it)."""
+    session in the daemon; a message wakes it). ``lifecycle`` (child rows
+    only) is where the child's task stands: ``active`` (running, or working
+    on a later message), ``settled_awaiting_steer`` (finished; a message
+    resumes it), ``failed`` or ``cancelled``."""
 
     name: str
     relationship: str
@@ -31,6 +34,7 @@ class RLMAgent:
     session_id: str | None = None
     activity: str | None = None
     cwd: str | None = None
+    lifecycle: str | None = None
 
 
 def _agent_from_row(row: Any) -> RLMAgent | None:
@@ -57,6 +61,7 @@ def _agent_from_row(row: Any) -> RLMAgent | None:
         session_id=optional("sessionId"),
         activity=optional("activity"),
         cwd=optional("cwd"),
+        lifecycle=optional("lifecycle"),
     )
 
 

@@ -13,8 +13,21 @@ FAMILY = {
         {"sessionName": "lead", "relationship": "parent", "status": "running", "activeSessionId": "a-lead"},
         {"sessionName": "me", "relationship": None, "status": "running", "activeSessionId": "a-me"},
         {"sessionName": "scout", "relationship": "sibling", "status": "idle", "sessionId": "s-scout"},
-        {"sessionName": "scout", "relationship": "child", "status": "inactive", "sessionId": "s-kid"},
-        {"sessionName": "fixer", "relationship": "child", "status": "running", "activity": "tool", "cwd": "/w"},
+        {
+            "sessionName": "scout",
+            "relationship": "child",
+            "status": "inactive",
+            "sessionId": "s-kid",
+            "lifecycle": "settled_awaiting_steer",
+        },
+        {
+            "sessionName": "fixer",
+            "relationship": "child",
+            "status": "running",
+            "activity": "tool",
+            "cwd": "/w",
+            "lifecycle": "active",
+        },
     ]
 }
 
@@ -54,8 +67,21 @@ class ListAgentsTest(unittest.TestCase):
             [
                 rlm_module.RLMAgent(name="lead", relationship="parent", status="running", active_session_id="a-lead"),
                 rlm_module.RLMAgent(name="scout", relationship="sibling", status="idle", session_id="s-scout"),
-                rlm_module.RLMAgent(name="scout", relationship="child", status="inactive", session_id="s-kid"),
-                rlm_module.RLMAgent(name="fixer", relationship="child", status="running", activity="tool", cwd="/w"),
+                rlm_module.RLMAgent(
+                    name="scout",
+                    relationship="child",
+                    status="inactive",
+                    session_id="s-kid",
+                    lifecycle="settled_awaiting_steer",
+                ),
+                rlm_module.RLMAgent(
+                    name="fixer",
+                    relationship="child",
+                    status="running",
+                    activity="tool",
+                    cwd="/w",
+                    lifecycle="active",
+                ),
             ],
         )
 

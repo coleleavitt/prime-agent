@@ -25,6 +25,52 @@ impl AgentFamilyStatus {
     }
 }
 
+/// Where a child's task stands from its parent's side: a separate axis
+/// from the residency in [`AgentFamilyStatus`]. A settled child stays in
+/// the roster (a message resumes it), so `status` alone cannot tell a
+/// working child from one that finished. Only child rows carry it: the
+/// verdict lives in the parent's own children registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentChildLifecycle {
+    /// The task runs, or a settled child works on a later message.
+    Active,
+    /// The task finished; the child waits for a message to resume it.
+    SettledAwaitingSteer,
+    Failed,
+    Cancelled,
+}
+
+impl AgentChildLifecycle {
+    /// The lifecycle of a child whose registry verdict is `settled_status`
+    /// (`done` | `error` | `cancelled`, `None` while the task runs) and
+    /// whose family status is `status`. A settled verdict survives the
+    /// follow-up turns a message starts, so a running child reads active
+    /// whatever its verdict.
+    #[must_use]
+    pub fn from_verdict(settled_status: Option<&str>, status: AgentFamilyStatus) -> Self {
+        if status == AgentFamilyStatus::Running {
+            return AgentChildLifecycle::Active;
+        }
+        match settled_status {
+            Some("done") => AgentChildLifecycle::SettledAwaitingSteer,
+            Some("error") => AgentChildLifecycle::Failed,
+            Some("cancelled") => AgentChildLifecycle::Cancelled,
+            // The registries write only the three verdicts above.
+            Some(_) | None => AgentChildLifecycle::Active,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentChildLifecycle::Active => "active",
+            AgentChildLifecycle::SettledAwaitingSteer => "settled_awaiting_steer",
+            AgentChildLifecycle::Failed => "failed",
+            AgentChildLifecycle::Cancelled => "cancelled",
+        }
+    }
+}
+
 /// What a resident session is doing right now (TS #2493
 /// `AgentObserveActivity`): a separate axis from the family lifecycle in
 /// [`AgentFamilyStatus`], absent for members with no live session.
@@ -92,6 +138,8 @@ pub struct AgentObserveSummary {
     pub first_message: Option<String>,
     /// The session's file: a transcript read of a member no worker holds opens it.
     pub session_file: Option<String>,
+    /// A child row's task lifecycle; `None` for every other row.
+    pub lifecycle: Option<AgentChildLifecycle>,
 }
 
 /// The in-flight tool-call progress an observe row reports, so a child
@@ -164,6 +212,9 @@ impl AgentObserveSummary {
         }
         if let Some(first_message) = &self.first_message {
             row["firstMessage"] = json!(first_message);
+        }
+        if let Some(lifecycle) = self.lifecycle {
+            row["lifecycle"] = json!(lifecycle.as_str());
         }
         row
     }

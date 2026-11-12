@@ -3,6 +3,7 @@
 //! the preview text helpers.
 use super::{
     AGENT_OBSERVE_PREVIEW_MAX_CHARS,
+    AgentChildLifecycle,
     AgentFamilyRelationship,
     AgentFamilyStatus,
     AgentObserveActivity,
@@ -22,6 +23,7 @@ use super::{
     row_is_sibling,
     row_str,
 };
+use crate::rlm_children::RlmChildVerdict;
 
 /// `agent_observe.*` controller for daemon workers: message previews and
 /// full session summaries from the supervisor. The roster this controller
@@ -79,29 +81,18 @@ impl LinkAgentObserveController {
         Ok((sessions, identity))
     }
 
-    /// This session's resident children's live active session ids (rows the
-    /// registry owns are Children even before their durable edges hydrate).
-    async fn registry_child_active_ids(&self) -> Vec<String> {
-        match &self.children {
-            Some(children) => children
-                .child_identities()
-                .await
-                .into_iter()
-                .map(|child| child.active_session_id)
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
     /// The nuclear-family summaries every observe handler reads: one
     /// roster walk plus the registry join.
     async fn family_summaries(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
         let (sessions, identity) = self.roster_and_identity().await?;
-        let child_ids = self.registry_child_active_ids().await;
+        let children = match &self.children {
+            Some(children) => children.child_verdicts().await,
+            None => Vec::new(),
+        };
         Ok(summaries_from_roster(
             sessions,
             &identity,
-            &child_ids,
+            &children,
             crate::util::now_ms(),
         ))
     }
@@ -326,10 +317,12 @@ struct SessionMessageRow {
 /// Flatten the supervisor's roster rows into observation summaries of the caller's NUCLEAR
 /// FAMILY: the caller's own row, its parent, its siblings, and its direct children. The
 /// relationship derives from the durable edges, never the row's runtime kind.
+/// The caller's registry `children` make their rows Children even before
+/// their durable edges hydrate, and give child rows their `lifecycle`.
 pub(super) fn summaries_from_roster(
     sessions: Vec<Value>,
     identity: &FamilyIdentity,
-    registry_child_active_ids: &[String],
+    children: &[RlmChildVerdict],
     now_ms: u64,
 ) -> Vec<AgentObserveSummary> {
     sessions
@@ -343,9 +336,9 @@ pub(super) fn summaries_from_roster(
             let is_current = active_session_id == identity.active_session_id;
             let relationship = if is_current {
                 None
-            } else if registry_child_active_ids
+            } else if children
                 .iter()
-                .any(|child| child == &active_session_id)
+                .any(|child| child.active_session_id == active_session_id)
                 || row_is_child(&session, identity)
             {
                 Some(AgentFamilyRelationship::Child)
@@ -406,6 +399,20 @@ pub(super) fn summaries_from_roster(
                 AgentFamilyStatus::Running
             } else {
                 AgentFamilyStatus::Idle
+            };
+            // A reseeded record's live id is its durable id, so the
+            // verdict joins on either.
+            let session_id = row_str(&session, "sessionId");
+            let lifecycle = if relationship == Some(AgentFamilyRelationship::Child) {
+                children
+                    .iter()
+                    .find(|child| {
+                        child.active_session_id == active_session_id
+                            || (session_id.is_some() && child.session_id.as_deref() == session_id)
+                    })
+                    .map(|child| AgentChildLifecycle::from_verdict(child.settled_status, status))
+            } else {
+                None
             };
             // TS #2493 `createAgentObserveSummary`: the live activity is its own axis;
             // `isSessionActive` covers the session's own work, not delegated child work.
@@ -473,6 +480,7 @@ pub(super) fn summaries_from_roster(
                 first_message: row_str(&session, "firstMessage")
                     .map(|text| truncate_chars(text, AGENT_OBSERVE_PREVIEW_MAX_CHARS)),
                 session_file: row_str(&session, "sessionFile").map(str::to_string),
+                lifecycle,
             })
         })
         .collect()

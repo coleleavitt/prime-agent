@@ -148,6 +148,17 @@ pub struct RlmChildIdentity {
     pub session_name: String,
 }
 
+/// One child's terminal verdict beside the selectors a roster row can
+/// carry for it (a reseeded record's live id is its durable id): the
+/// family roster's child `lifecycle` join.
+#[derive(Debug, Clone)]
+pub(crate) struct RlmChildVerdict {
+    pub(crate) active_session_id: String,
+    pub(crate) session_id: Option<String>,
+    /// `done` | `error` | `cancelled`; `None` while the task runs.
+    pub(crate) settled_status: Option<&'static str>,
+}
+
 /// The selector that reaches a child whether or not its worker is
 /// resident: the persisted session id (the session-file stem the
 /// supervisor's ledger wake resolves), else the RLM child id. The
@@ -747,6 +758,22 @@ impl SupervisorChildSessions {
             });
         }
         identities
+    }
+
+    /// Registry snapshot for the family roster: each child's verdict, no
+    /// per-child worker refresh.
+    pub(crate) async fn child_verdicts(&self) -> Vec<RlmChildVerdict> {
+        let children = self.inner.children.lock().await;
+        let mut verdicts = Vec::with_capacity(children.len());
+        for record in children.iter() {
+            let record = record.lock().await;
+            verdicts.push(RlmChildVerdict {
+                active_session_id: record.active_session_id.clone(),
+                session_id: record.session_id.clone(),
+                settled_status: record.settled_status,
+            });
+        }
+        verdicts
     }
 
     /// Re-arm usage observation for a child after an agent message was

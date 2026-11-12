@@ -525,6 +525,7 @@ pub fn register_agent_message_host_handlers<C: AgentMessageController + 'static>
 // every external agent_messaging:: path stable.
 mod observe;
 pub use observe::{
+    AgentChildLifecycle,
     AgentFamilyStatus,
     AgentObserveActivity,
     AgentObserveController,

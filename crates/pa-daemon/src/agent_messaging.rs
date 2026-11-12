@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use pa_core::session_engine::agent_messaging::{
     AGENT_OBSERVE_PREVIEW_MAX_CHARS,
+    AgentChildLifecycle,
     AgentFamilyMember,
     AgentFamilyRelationship,
     AgentFamilyStatus,

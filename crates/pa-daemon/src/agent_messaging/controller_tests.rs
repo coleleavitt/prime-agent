@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use super::observe::summaries_from_roster;
 use super::*;
 use crate::protocol::{response_failure, response_success};
-use crate::rlm_children::RlmChildIdentity;
+use crate::rlm_children::{RlmChildIdentity, RlmChildVerdict};
 use crate::supervisor_link::SupervisorLink;
 
 /// A scripted JSONL supervisor: answers `list` with a roster,
@@ -1138,6 +1138,71 @@ fn observe_rows_report_in_flight_tool_call_progress() {
                 "sess-ch2".to_string(),
                 AgentObservePendingToolCalls::default()
             ),
+        ]
+    );
+}
+
+/// A child row's lifecycle is the caller's registry verdict, joined by the
+/// live id or, for a record reseeded after a restart, the durable id. A
+/// settled child running again (a message resumed it) reads active; a
+/// child the registry does not hold, and every non-child row, carry none.
+#[test]
+fn child_rows_report_their_registry_lifecycle() {
+    let identity = FamilyIdentity {
+        active_session_id: "me000".to_string(),
+        session_id: Some("sess-me".to_string()),
+        ..Default::default()
+    };
+    let child = |live: &str, session: &str| {
+        json!({
+            "activeSessionId": live, "sessionId": session, "runtimeKind": "subagent",
+            "parentActiveSessionId": "me000", "parentSessionId": "sess-me",
+        })
+    };
+    let mut resumed = child("ch222", "sess-ch2");
+    resumed["isSessionActive"] = json!(true);
+    let sessions = vec![
+        json!({ "activeSessionId": "me000", "sessionId": "sess-me" }),
+        child("ch111", "sess-ch1"),
+        resumed,
+        json!({
+            "id": "ch333", "sessionId": "sess-ch3", "runtimeKind": "subagent",
+            "parentActiveSessionId": "me000", "parentSessionId": "sess-me",
+        }),
+        child("ch444", "sess-ch4"),
+        child("ch555", "sess-ch5"),
+        child("ch666", "sess-ch6"),
+    ];
+    let verdict = |live: &str, session: &str, settled_status| RlmChildVerdict {
+        active_session_id: live.to_string(),
+        session_id: Some(session.to_string()),
+        settled_status,
+    };
+    let children = [
+        verdict("ch111", "sess-ch1", Some("done")),
+        verdict("ch222", "sess-ch2", Some("done")),
+        verdict("sess-ch3", "sess-ch3", Some("error")),
+        verdict("ch444", "sess-ch4", Some("cancelled")),
+        verdict("ch555", "sess-ch5", None),
+    ];
+    let lifecycles: Vec<(String, Option<AgentChildLifecycle>)> =
+        summaries_from_roster(sessions, &identity, &children, 0)
+            .into_iter()
+            .map(|summary| (summary.session_id, summary.lifecycle))
+            .collect();
+    assert_eq!(
+        lifecycles,
+        vec![
+            ("sess-me".to_string(), None),
+            (
+                "sess-ch1".to_string(),
+                Some(AgentChildLifecycle::SettledAwaitingSteer)
+            ),
+            ("sess-ch2".to_string(), Some(AgentChildLifecycle::Active)),
+            ("sess-ch3".to_string(), Some(AgentChildLifecycle::Failed)),
+            ("sess-ch4".to_string(), Some(AgentChildLifecycle::Cancelled)),
+            ("sess-ch5".to_string(), Some(AgentChildLifecycle::Active)),
+            ("sess-ch6".to_string(), None),
         ]
     );
 }

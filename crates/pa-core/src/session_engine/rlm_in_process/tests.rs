@@ -16,6 +16,7 @@ use super::{DEFAULT_RLM_MAX_DEPTH, InProcessRlmHost, InProcessRlmHostConfig};
 use crate::models::registry::ModelRegistry;
 use crate::session::manager::{NewSessionOptions, SessionManager};
 use crate::session_engine::agent_messaging::{
+    AgentChildLifecycle,
     AgentMessageController,
     AgentMessageSendInput,
     AgentObserveController,
@@ -1319,6 +1320,18 @@ async fn the_parent_reaches_and_observes_its_children() {
         Some("child")
     );
     assert_eq!(child_row.runtime_kind.as_deref(), Some("subagent"));
+    // The settled child stays listed, and says it finished.
+    assert_eq!(
+        agents
+            .iter()
+            .map(|agent| agent.lifecycle)
+            .collect::<Vec<_>>(),
+        if agents[0].is_current {
+            vec![None, Some(AgentChildLifecycle::SettledAwaitingSteer)]
+        } else {
+            vec![Some(AgentChildLifecycle::SettledAwaitingSteer), None]
+        }
+    );
     // The parent messages the child by name: delivered as the child's
     // own turn.
     let child = rig.first_child().await;
@@ -1515,6 +1528,7 @@ async fn a_composed_remote_family_routes_sends_beyond_the_local_graph() {
                 rlm_child_id: None,
                 first_message: None,
                 session_file: None,
+                lifecycle: None,
                 pending_tool_calls:
                     crate::session_engine::agent_messaging::AgentObservePendingToolCalls::default(),
             }

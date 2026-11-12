@@ -40,7 +40,10 @@ if child is not None:
   for it (`messageCount`, `queuedCount`, `attachedClients`), `cwd` when the
   roster row carries it, the parent edges (`parentActiveSessionId`,
   `parentSessionId`) and `rlmChildId` for subagents, and `firstMessage`
-  (capped at 240 chars) for an inactive child. A member with no live session
+  (capped at 240 chars) for an inactive child. A direct child's row also
+  carries `lifecycle`: `active` (its task runs, or it works on a later
+  message), `settled_awaiting_steer` (finished; it stays listed until deleted
+  and a message resumes it), `failed`, or `cancelled`. A member with no live session
   has no `activeSessionId` and no live detail; address it with
   `agent_message.send` using its `relationship` plus its `sessionName`, or its
   `sessionId` when the member has no name. For direct children,

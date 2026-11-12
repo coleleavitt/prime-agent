@@ -121,6 +121,7 @@ The following programmatic tools are available in the REPL for subagent manageme
   - `relationship: Literal["parent", "sibling", "child"]`
   - `status: Literal["running", "idle", "inactive"]`
   - `active_session_id: str | None`, `session_id: str | None`, `activity: str | None`, `cwd: str | None`
+  - `lifecycle: Literal["active", "settled_awaiting_steer", "failed", "cancelled"] | None`: child rows only; a settled child stays listed until deleted (a message resumes it), so `settled_awaiting_steer` means finished, not still working
 - `RLMModel`
   - `provider: str`
   - `id: str`

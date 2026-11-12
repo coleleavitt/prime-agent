@@ -28,6 +28,7 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         rlm_child_id: None,
         first_message: None,
         session_file: None,
+        lifecycle: None,
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");
@@ -76,6 +77,7 @@ fn observe_rows_carry_in_flight_tool_call_progress() {
         rlm_child_id: None,
         first_message: None,
         session_file: None,
+        lifecycle: None,
     };
     let progress = |value: &Value| {
         [
@@ -533,6 +535,7 @@ fn observe_row(active_session_id: &str, is_current: bool) -> AgentObserveSummary
         first_message: None,
         pending_tool_calls: AgentObservePendingToolCalls::default(),
         session_file: None,
+        lifecycle: None,
     }
 }
 
