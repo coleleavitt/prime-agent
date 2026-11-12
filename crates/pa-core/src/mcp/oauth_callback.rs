@@ -452,6 +452,44 @@ fn oauth_error_page(label: &str, message: &str) -> String {
     render_page(&format!("{label} authentication failed"), message)
 }
 
+/// A loopback port a test holds for its whole run without listening on it. The socket sets
+/// `SO_REUSEADDR` like the callback server's listener, so the server can bind and release the
+/// port while no parallel test's bind or outgoing connection can take it in between (closing a
+/// probe socket and rebinding its port races them). Unix only: on Windows the flag would let a
+/// socket bind over a live listener.
+#[cfg(all(test, unix))]
+pub(super) fn reserved_port() -> (tokio::net::TcpSocket, u16) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_reuseaddr(true).unwrap();
+    socket.bind(([127, 0, 0, 1], 0).into()).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    (socket, port)
+}
+
+/// Wait until nothing listens on `port`, or panic after five seconds. A listener this process
+/// closed stays open in a child that a parallel test forked before the close, until that child
+/// execs. Once closed here, no later fork can copy it, so the wait ends; the probe never listens,
+/// so a copy of it cannot hold the port in turn. The wait blocks the thread: code under test gets
+/// no later poll in which to finish a release it owed synchronously.
+#[cfg(all(test, unix))]
+pub(super) fn assert_port_released(port: u16) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let probe = tokio::net::TcpSocket::new_v4().unwrap();
+        probe.set_reuseaddr(true).unwrap();
+        match probe.bind(([127, 0, 0, 1], port).into()) {
+            Ok(()) => return,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AddrInUse
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => panic!("port {port} is still in use: {error}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,24 +546,22 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn dropping_a_registered_callback_releases_the_port_without_yielding() {
-        let reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = reservation.local_addr().unwrap().port();
-        drop(reservation);
+        let (_reservation, port) = reserved_port();
         let server = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
             .await
             .unwrap();
         drop(server);
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
-            .expect("dropping the callback must release its registered port immediately");
-        drop(rebound);
+        assert_port_released(port);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn registered_port_is_exact_and_released_after_cancel() {
-        let blocker = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = blocker.local_addr().unwrap().port();
+        let (_reservation, port) = reserved_port();
+        let blocker = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
         let error = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
             .await
             .unwrap_err();
@@ -535,6 +571,7 @@ mod tests {
                 .contains(&format!("registered port {port}"))
         );
         drop(blocker);
+        assert_port_released(port);
         let server = CallbackServer::start("Slack", Some(port), &CallbackPorts::ephemeral())
             .await
             .unwrap();
@@ -558,8 +595,7 @@ mod tests {
             })
         );
         server.cancel().await;
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
-        drop(rebound);
+        assert_port_released(port);
     }
 
     #[tokio::test]
@@ -692,18 +728,17 @@ mod tests {
         assert!(error.to_string().contains("callbackPort"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn pinned_port_rebinds_after_drop() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let (_reservation, port) = reserved_port();
         {
             let first = CallbackServer::start("Linear", Some(port), &CallbackPorts::ephemeral())
                 .await
                 .unwrap();
             assert_eq!(first.redirect_uri(), redirect_uri_for(port));
         }
-        tokio::task::yield_now().await;
+        assert_port_released(port);
         let second = CallbackServer::start("Linear", Some(port), &CallbackPorts::ephemeral())
             .await
             .unwrap();

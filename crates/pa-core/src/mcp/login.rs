@@ -535,14 +535,13 @@ mod tests {
 
     /// Google Workspace MCP (live metadata captured 2026-10-19: a trailing-slash PRM issuer, no
     /// registration endpoint) with a user-registered confidential client from `mcpServers`.
+    #[cfg(unix)]
     #[tokio::test]
     async fn google_workspace_login_and_refresh_use_the_configured_client() {
         const SHEETS: &str = "https://sheetsmcp.googleapis.com/mcp/v1";
         const TOKEN: &str = "https://oauth2.googleapis.com/token";
         const SCOPES: &str = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets";
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let (_reservation, port) = crate::mcp::oauth_callback::reserved_port();
         let http = Arc::new(ScriptedHttp::new(vec![
             (SHEETS, 405, ""),
             (

@@ -708,6 +708,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn dropping_a_login_with_a_pending_paste_releases_the_registered_port() {
         struct PendingUi(Mutex<String>);
@@ -739,9 +740,7 @@ mod tests {
             ),
             (ORIGIN_META_URL, 200, None, &json_response(&origin_meta())),
         ]);
-        let reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = reservation.local_addr().unwrap().port();
-        drop(reservation);
+        let (_reservation, port) = crate::mcp::oauth_callback::reserved_port();
         let mut config = config("Slack", ORIGIN_URL);
         config.client_id = Some("registered-client".to_string());
         config.callback_port = Some(port);
@@ -753,9 +752,7 @@ mod tests {
             "login reached browser authorization"
         );
         drop(login);
-        let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
-            .expect("cancelling login must release its callback port before the next attempt");
-        drop(rebound);
+        crate::mcp::oauth_callback::assert_port_released(port);
     }
 
     #[tokio::test(start_paused = true)]
@@ -807,12 +804,9 @@ mod tests {
             // Every schedule must succeed; repetition exercises select's fair branch ordering,
             // rather than retrying a failed login until it happens to succeed.
             for _ in 0..32 {
-                let reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-                let port = reservation.local_addr().unwrap().port();
-                drop(reservation);
+                // The callback binds an OS-assigned port (`config` passes ephemeral candidates).
                 let mut config = config("Slack", ORIGIN_URL);
                 config.client_id = Some("registered-client".to_string());
-                config.callback_port = Some(port);
                 let ui = GraceUi {
                     auth_url: Mutex::default(),
                     input: input.clone(),
@@ -825,6 +819,12 @@ mod tests {
                     .find(|(key, _)| key == "state")
                     .map(|(_, value)| value.into_owned())
                     .unwrap();
+                let redirect_uri = auth_url
+                    .query_pairs()
+                    .find(|(key, _)| key == "redirect_uri")
+                    .map(|(_, value)| Url::parse(&value).unwrap())
+                    .unwrap();
+                let port = redirect_uri.port().unwrap();
                 let response = client
                     .get(format!(
                         "http://127.0.0.1:{port}/callback?code=browser-code&state={state}"
@@ -1458,11 +1458,10 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn pre_registered_client_skips_registration_and_pins_the_redirect() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let (_reservation, port) = crate::mcp::oauth_callback::reserved_port();
         let http = ScriptedHttp::new(vec![
             (ORIGIN_URL, 404, None, ""),
             (
@@ -1524,11 +1523,10 @@ mod tests {
         assert!(body.contains(&encoded_redirect));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn dynamic_registration_advertises_the_pinned_redirect() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let (_reservation, port) = crate::mcp::oauth_callback::reserved_port();
         let http = ScriptedHttp::new(vec![
             (ORIGIN_URL, 404, None, ""),
             (
