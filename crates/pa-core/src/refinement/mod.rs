@@ -516,8 +516,8 @@ pub fn append_global_refinement(
 /// the agent's shared harness dir carrying every local-scope refinement
 /// (admit or reject). This mirror exists so audit trails that ride in
 /// the session jsonl are also observable to taps that read the shared
-/// `harness/` directory (notably `pa-ledger::FeedbackTap` and the
-/// retrieval tick's memory-sync): otherwise a local-scope rejection
+/// `harness/` directory (notably the retrieval feature's feedback tap and
+/// memory sync): otherwise a local-scope rejection
 /// that carries failure fingerprints is dropped from the retrieval
 /// learning loop.
 pub const LOCAL_REFINEMENT_HISTORY_FILE_NAME: &str = "local_refinement_history.jsonl";

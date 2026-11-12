@@ -48,9 +48,8 @@ API. Precedence when they disagree: explicit user instruction → `AGENTS.md` �
 crates; dated TS-era verification records, `docs/evidence/` and `docs/reviews/` are kept as history).
 
 **Fork features live in removable crates** (`docs/fork-feature-crates.md`): one `pa-<feature>` crate each, wired
-only in `pa-cli` behind a Cargo feature; `pa-cli --no-default-features` is the goal but not yet true — `pa-ledger`,
-`pa-retrieval` and `pa-refusal` are currently hard deps of `pa-core`/`pa-daemon`/`pa-ai`, so the native build pulls
-them in. Tracked as drift in "Open".
+only in `pa-cli` behind a Cargo feature; no native crate depends on one, so `pa-cli --no-default-features` builds the
+native product (check with `cargo tree -p pa-core -e normal`, and `pa-daemon`, `pa-ai`).
 
 **Extension points, outermost first:** a skill (`skills/<name>/`, Python, no Rust change) → an `rlm` runtime function
 backed by a host request → a session-engine hook → core surgery.
@@ -235,8 +234,8 @@ the `claude_code` reader and behind workspace trust, the hold-refusal classifier
 The fork's TS-only features are ported as removable feature crates (`docs/fork-feature-crates.md`): `pa-trace`,
 `pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; V2 wire +
 `validate`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
-`pa-retrieval` (fruit-fly RAG shared handle + per-settle retrieval tick for refinement/recurrence),
-`pa-refusal` (shared refusal taxonomy consumed by `pa-bash` and the provider layer),
+`pa-retrieval` (flyrag learning rerank of daemon sessions' harness digest, fed by a tick at every agent stop;
+needs `pa-ledger`), `pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
 `pa-session-index`, `pa-mermaid`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
 `~/.anthropic-accounts` store via the vendored anthropic-rs SDK). The Claude Code parity port added `pa-web`,
 `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp` and `pa-cc-import` (all in pa-cli's default features;
@@ -261,11 +260,6 @@ Open:
   `rlm_in_process::inline` host (children driven turn by turn through `headless::boundary`, notices steered into
   the parent's lane). They share model resolution and roster text but not the hosting; folding print onto the
   resident host changes print's notice and compaction behavior, so it needs its own change with e2e evidence.
-- Feature-crate dependency drift: `pa-core` hard-links `pa-retrieval` + `pa-refusal`; `pa-daemon` hard-links
-  `pa-retrieval` + `pa-ledger`; `pa-ai` hard-links `pa-refusal`. Each violates `docs/fork-feature-crates.md` rule 2
-  ("no native crate depends on a feature crate") and breaks the `--no-default-features = native product` promise.
-  Clean path: lift each into a generic `pa-core` seam (a trait or a `SessionFeature` method) and install the
-  impl from `pa-cli`. `pa-retrieval` and `pa-refusal` also still lack a `README.md` (rule 1).
 - Workflow V2's durable controller: new work, not a port (the TS fork stopped after slices 2-4, which exist here
   dormant: the SQLite store, reducer, capture/settlement, dispatch guard). Remaining are `WORKFLOW-V2.md` slices
   5-9 (controller/executor adapter and create/start, settlement policy/acceptance/budgets/retry, cancellation and

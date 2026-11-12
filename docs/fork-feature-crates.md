@@ -7,7 +7,7 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
 ## Rules
 
 1. **One feature, one crate.** Name `pa-<feature>` (`pa-trace`, `pa-recall`, `pa-toolforge`, `pa-dream`,
-   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`, `pa-cc-import`). The crate's `README.md` states scope, non-goals, public API,
+   `pa-workflow`, `pa-ledger`, `pa-ravo`, `pa-learning`, `pa-retrieval`, `pa-refusal`, `pa-mermaid`, `pa-anthropic-auth`, `pa-plugins`, `pa-hooks`, `pa-web`, `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp`, `pa-cc-import`). The crate's `README.md` states scope, non-goals, public API,
    the seams it plugs into, the files it owns, and its telemetry events.
 2. **Dependencies point down only.** A feature crate may depend on `pa-types`, `pa-telemetry`, `pa-agent`, `pa-ai`,
    `pa-models`, `pa-core`, and on other feature crates listed as its prerequisites. It never depends on `pa-daemon`,
@@ -30,7 +30,8 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      and the tool's non-persisted `host_facts` such as an `ipython` cell's finished `bash()` commands; returned text is
      appended to the result the model sees), `on_message_end` (every finalized message, in order, non-blocking),
      `on_agent_end` (every run end, non-blocking), and `flush` (bounded, once at process exit); the context carries the
-     session's artifact dir. Installed only when a feature is.
+     session's artifact dir and whether it runs `daemonless` (print mode) or in a daemon worker. Installed only when a
+     feature is.
    - policy: `SessionFeature::review_tool_call` (refuse a model tool call after plan mode allowed it; the model sees
      the reason as the tool's error result and the tool never runs), `review_host_request` (refuse a kernel host
      request before its handler is resolved; the session's `HostRequestHandlers::set_gate` gate covers the natively
@@ -59,6 +60,10 @@ every feature crate follows. `AGENTS.md` (crate ownership, dependency direction,
      sections rendered after the entries (heading, then sanitized one-line bullets). Every installed feature's hook
      applies (ranks add, groups and sections append); an empty adjustment renders the native digest byte for byte, a
      non-empty one is folded into the digest's state fingerprint.
+   - digest rerank: `SessionFeature::harness_rerank_hook` hands the session a
+     `pa_core::refinement::ranking::HarnessRerankHook` that, at every digest render with query terms, reorders each
+     kind's editable entries (after the native order and the prompt hooks' ranks; package overlays keep their place;
+     entries the hook omits follow the ones it ordered). The first installed feature that offers one is the session's.
    - automatic refine: `SessionFeature::auto_refine_policy` hands the session a
      `pa_core::refinement::executor::AutoRefinePolicy` (the review's prompt texts and what an approval runs; the
      review's whole reply is on `AutoRefineReview::reply`);
