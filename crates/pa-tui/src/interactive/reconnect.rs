@@ -235,8 +235,7 @@ impl Recovery {
             view,
         );
         // TS #2458's yield rule: the shutdown recovery owns the run — a session-plane retry armed
-        // by an earlier direct-link loss would race it through a dying supervisor, and its expiry
-        // would block submits after a later reconnect lands.
+        // by an earlier direct-link loss would race it through a dying supervisor.
         self.session_reconnect = None;
         self.reconnect = Some(ReconnectLoop::start_shutdown());
         session.dirty = true;
@@ -503,7 +502,6 @@ impl Recovery {
                 // lands on the rebuilt chat.
                 session.resync_view(anchor, view).await;
                 session.note_as("Daemon reconnected", crate::chat::StatusKind::Info, view);
-                session.reconnection_failed = None;
                 session.spawn_heartbeat_refresh();
                 session.dirty = true;
                 return RecoveryStep::Proceed;
