@@ -9,6 +9,7 @@ use serde_json::json;
 use url::Url;
 
 use super::anthropic_callback::{AnthropicCallbackServer, CallbackCode, REDIRECT_URI};
+use super::paste::parse_authorization_input;
 use super::pkce::generate_pkce;
 use super::provider_http::{ProviderHttp, ProviderHttpMethod, ProviderHttpRequest};
 use super::types::{OAuthLoginUi, OAuthPrompt};
@@ -199,44 +200,6 @@ fn parse_paste(input: &str, verifier: &str) -> Result<Option<CallbackCode>, Stri
         code,
         state: echoed.unwrap_or_else(|| verifier.to_string()),
     }))
-}
-
-fn parse_authorization_input(input: &str) -> (Option<String>, Option<String>) {
-    let value = input.trim();
-    if value.is_empty() {
-        return (None, None);
-    }
-    let non_empty = |value: Option<String>| value.filter(|value| !value.is_empty());
-    if let Ok(url) = Url::parse(value) {
-        let get = |name: &str| {
-            non_empty(
-                url.query_pairs()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.to_string()),
-            )
-        };
-        return (get("code"), get("state"));
-    }
-    if value.contains('#') {
-        let mut parts = value.splitn(2, '#');
-        let code = parts.next().unwrap_or_default();
-        let state = parts.next().unwrap_or_default();
-        return (
-            non_empty(Some(code.to_string())),
-            non_empty(Some(state.to_string())),
-        );
-    }
-    if value.contains("code=") {
-        let get = |name: &str| {
-            non_empty(
-                url::form_urlencoded::parse(value.as_bytes())
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.to_string()),
-            )
-        };
-        return (get("code"), get("state"));
-    }
-    (non_empty(Some(value.to_string())), None)
 }
 
 struct TokenResponse {

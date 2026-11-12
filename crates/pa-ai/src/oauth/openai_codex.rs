@@ -15,6 +15,7 @@ use url::Url;
 
 use super::CodexHttp;
 use super::callback::CodexCallbackServer;
+use super::paste::parse_authorization_input;
 
 pub const OPENAI_CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -250,44 +251,6 @@ fn authorization_url(challenge: &str, state: &str, originator: &str) -> String {
         url.query_pairs_mut().append_pair(name, value);
     }
     url.to_string()
-}
-
-fn parse_authorization_input(input: &str) -> (Option<String>, Option<String>) {
-    let value = input.trim();
-    if value.is_empty() {
-        return (None, None);
-    }
-    let non_empty = |value: Option<String>| value.filter(|value| !value.is_empty());
-    if let Ok(url) = Url::parse(value) {
-        let get = |name: &str| {
-            non_empty(
-                url.query_pairs()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.to_string()),
-            )
-        };
-        return (get("code"), get("state"));
-    }
-    if value.contains('#') {
-        let mut parts = value.splitn(2, '#');
-        let code = parts.next().unwrap_or_default();
-        let state = parts.next().unwrap_or_default();
-        return (
-            non_empty(Some(code.to_string())),
-            non_empty(Some(state.to_string())),
-        );
-    }
-    if value.contains("code=") {
-        let get = |name: &str| {
-            non_empty(
-                url::form_urlencoded::parse(value.as_bytes())
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.to_string()),
-            )
-        };
-        return (get("code"), get("state"));
-    }
-    (non_empty(Some(value.to_string())), None)
 }
 
 /// The provider's own extraction is the one owner of the claim path.
@@ -1007,34 +970,5 @@ mod tests {
         let state = create_state();
         assert_eq!(state.len(), 32);
         assert!(state.chars().all(|character| character.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn the_pasted_input_parses_like_the_ts_table() {
-        assert_eq!(
-            parse_authorization_input("https://auth.example/cb?code=a&state=b"),
-            (Some("a".to_string()), Some("b".to_string()))
-        );
-        assert_eq!(
-            parse_authorization_input("https://auth.example/cb?code=a%20b"),
-            (Some("a b".to_string()), None)
-        );
-        assert_eq!(
-            parse_authorization_input("the-code#the-state"),
-            (Some("the-code".to_string()), Some("the-state".to_string()))
-        );
-        assert_eq!(
-            parse_authorization_input("code=a+b&state=c"),
-            (Some("a b".to_string()), Some("c".to_string()))
-        );
-        assert_eq!(
-            parse_authorization_input(" bare "),
-            (Some("bare".to_string()), None)
-        );
-        assert_eq!(parse_authorization_input("  "), (None, None));
-        assert_eq!(
-            parse_authorization_input("https://auth.example/cb?state=b"),
-            (None, Some("b".to_string()))
-        );
     }
 }

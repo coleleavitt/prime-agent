@@ -8,6 +8,7 @@ mod anthropic_callback;
 mod callback;
 mod github_copilot;
 mod openai_codex;
+mod paste;
 mod pkce;
 mod provider_http;
 mod types;
