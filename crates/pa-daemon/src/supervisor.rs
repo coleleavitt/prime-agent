@@ -5,6 +5,7 @@
 
 mod accept_loop;
 mod adoption;
+mod boot_adoptions;
 mod clients;
 mod external_sessions;
 mod launch_budget;
@@ -258,6 +259,9 @@ pub struct Supervisor {
     /// The boot-time restore pass (spec §6): sweep + roster restore + scheduled-work
     /// re-arm; read by the hello resume contract and the `update_restore_status` RPC.
     pub(crate) restore: crate::update_restore::RestoreProgress,
+    /// The boot adoption pass's unsettled descriptors: routing waits for a
+    /// session the pass is still reviving.
+    boot_adoptions: boot_adoptions::BootAdoptions,
     /// The session input-pause leases: pause id -> lease, the bookkeeping
     /// behind `acquire`/`release_session_input_pause`.
     pub(crate) input_pauses: crate::input_pause_lease::SupervisorPauseTable,
@@ -363,6 +367,7 @@ impl Supervisor {
             mutation_drain: MutationDrainLatch::new(),
             update_budget: UpdateTimeoutBudget::from_env(),
             restore: crate::update_restore::RestoreProgress::new(),
+            boot_adoptions: boot_adoptions::BootAdoptions::default(),
             input_pauses: crate::input_pause_lease::SupervisorPauseTable::default(),
             passive_catalog: std::sync::Mutex::new(None),
             passive_scan_gate: tokio::sync::Mutex::new(()),

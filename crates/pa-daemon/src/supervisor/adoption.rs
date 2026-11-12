@@ -102,6 +102,7 @@ impl Supervisor {
     /// [`crate::recovery_pacing::ADOPTION_CONCURRENCY`] to avoid a relaunch storm.
     pub(super) async fn adopt_persisted_workers(self: &Arc<Self>, boot: AdoptionBoot) {
         let descriptors = load_descriptors(&self.descriptor_dir, &self.options.socket_path);
+        self.boot_adoptions.begin(&descriptors);
         let adopted_live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let revived = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let skipped_idle = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -118,9 +119,11 @@ impl Supervisor {
                 let stopped = Arc::clone(&stopped);
                 let failed = Arc::clone(&failed);
                 move || async move {
+                    let worker_id = descriptor.worker_id.clone();
                     let outcome = supervisor
                         .adopt_persisted_worker(path, descriptor, boot)
                         .await;
+                    supervisor.boot_adoptions.settle(&worker_id);
                     let counter = match outcome {
                         AdoptionOutcome::AdoptedLive => adopted_live,
                         AdoptionOutcome::Revived => revived,

@@ -490,8 +490,10 @@ impl Supervisor {
             return Ok((resident, None));
         }
         // Spec §10.4: attach-by-durable-id at any time. A restore pass may still be
-        // bringing the session up, so the command queues server-side behind it.
+        // bringing the session up, so the command queues server-side behind it; so
+        // does a command for a session the boot adoption pass is still reviving.
         self.await_restore_target(selector).await;
+        self.boot_adoptions.wait_for(selector).await;
         if let Ok(resident) = self.registry.resolve(selector).await {
             return Ok((resident, None));
         }
