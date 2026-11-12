@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use serde_json::{Map, Value, json};
+use tokio_util::sync::CancellationToken;
 
 use crate::event_stream::{AssistantMessageEvent, AssistantMessageEventWriter};
 use crate::models::calculate_cost;
@@ -26,7 +27,13 @@ use crate::types::{
     Usage,
     UsageCost,
 };
-use crate::utils_inner::json_parse::{StreamingJsonAccumulator, parse_streaming_json};
+use crate::utils_inner::http::HttpResponse;
+use crate::utils_inner::json_parse::{
+    StreamingJsonAccumulator,
+    parse_json_with_repair,
+    parse_streaming_json,
+};
+use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{
     ProviderError,
     StreamFailureError,
@@ -35,6 +42,7 @@ use crate::utils_inner::stream_failure::{
     classify_stream_failure,
     open_stream_block,
     stream_drop_failure,
+    stream_failure_from_stop_reason,
 };
 
 /// Streaming slot state for one output item.
@@ -661,6 +669,19 @@ impl<'a> ResponsesStreamProcessor<'a> {
         }
     }
 
+    /// One SSE event's data: blank data is skipped, the rest parsed (a
+    /// malformed body repaired) and handled.
+    fn handle_sse_data(&mut self, data: &str) -> Result<(), ProviderError> {
+        if data.trim().is_empty() {
+            return Ok(());
+        }
+        let event = match parse_json_with_repair(data) {
+            Ok(event) => event,
+            Err(_) => parse_streaming_json(Some(data)),
+        };
+        self.handle_event(&event)
+    }
+
     /// Terminal stop reason of the message under construction (read through the processor so
     /// error-path checks can run while the borrow of the output message lives here).
     pub fn stop_reason(&self) -> StopReason {
@@ -711,6 +732,51 @@ impl<'a> ResponsesStreamProcessor<'a> {
             open_stream_block(self.output),
         )))
     }
+}
+
+/// Run a Responses SSE body through a processor. Like the TS try/catch, this
+/// covers the streaming section and the abort and stop-reason checks; on a
+/// failure the partial tool calls settle before the error event carries the
+/// message.
+pub(crate) async fn process_responses_sse(
+    model: &Model,
+    output: &mut AssistantMessage,
+    writer: &AssistantMessageEventWriter,
+    hooks: ResponsesStreamHooks,
+    response: &mut HttpResponse,
+    signal: Option<&CancellationToken>,
+    request_id: Option<&str>,
+) -> Result<(), ProviderError> {
+    let mut processor = ResponsesStreamProcessor::new(model, output, writer, hooks);
+    let result = async {
+        let mut decoder = SseDecoder::new();
+        while let Some(chunk) = response.next_text().await? {
+            for sse in decoder.push_text(&chunk) {
+                processor.handle_sse_data(&sse.data)?;
+            }
+        }
+        for sse in decoder.finish() {
+            processor.handle_sse_data(&sse.data)?;
+        }
+        processor.finish()?;
+        if signal.is_some_and(CancellationToken::is_cancelled) {
+            return Err(ProviderError::Aborted);
+        }
+        if matches!(
+            processor.stop_reason(),
+            StopReason::Aborted | StopReason::Error
+        ) {
+            return Err(ProviderError::StreamFailure(
+                stream_failure_from_stop_reason(processor.stop_reason_raw(), request_id),
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        processor.settle_partial_tool_calls();
+    }
+    result
 }
 
 fn map_responses_stop_reason(status: Option<&str>) -> StopReason {

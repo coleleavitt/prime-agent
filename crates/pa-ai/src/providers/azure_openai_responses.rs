@@ -23,6 +23,7 @@ use crate::providers::openai_responses_shared::{
     convert_responses_messages,
     convert_responses_tools,
 };
+use crate::providers::openai_responses_stream::process_responses_sse;
 use crate::providers::simple_options::build_base_options;
 use crate::providers::stream_end::end_stream;
 use crate::registry::Provider;
@@ -40,13 +41,7 @@ use crate::types::{
 };
 use crate::utils_inner::diagnostics::now_ms;
 use crate::utils_inner::http::{HttpResponse, RequestOptions, send};
-use crate::utils_inner::json_parse::{parse_json_with_repair, parse_streaming_json};
-use crate::utils_inner::sse::SseDecoder;
-use crate::utils_inner::stream_failure::{
-    ProviderError,
-    format_stream_failure_message,
-    stream_failure_from_stop_reason,
-};
+use crate::utils_inner::stream_failure::{ProviderError, format_stream_failure_message};
 
 pub const API_AZURE_OPENAI_RESPONSES: &str = "azure-openai-responses";
 
@@ -371,70 +366,16 @@ async fn run_stream(
         partial: output.clone(),
     });
 
-    let stream_result: Result<(), ProviderError>;
-    {
-        let hooks = ResponsesStreamHooks::default();
-        let mut processor =
-            crate::providers::openai_responses_shared::ResponsesStreamProcessor::new(
-                model, output, writer, hooks,
-            );
-        // The TS try/catch encloses the streaming section and the abort and stop-reason checks; the
-        // catch settles partial tool calls before the error event carries the message.
-        stream_result = async {
-            let mut decoder = SseDecoder::new();
-            loop {
-                let Some(chunk) = response.next_text().await? else {
-                    break;
-                };
-                for sse in decoder.push_text(&chunk) {
-                    if sse.data.trim().is_empty() {
-                        continue;
-                    }
-                    let event = match parse_json_with_repair(&sse.data) {
-                        Ok(event) => event,
-                        Err(_) => parse_streaming_json(Some(&sse.data)),
-                    };
-                    processor.handle_event(&event)?;
-                }
-            }
-            for sse in decoder.finish() {
-                if sse.data.trim().is_empty() {
-                    continue;
-                }
-                let event = match parse_json_with_repair(&sse.data) {
-                    Ok(event) => event,
-                    Err(_) => parse_streaming_json(Some(&sse.data)),
-                };
-                processor.handle_event(&event)?;
-            }
-            processor.finish()?;
-            if options
-                .base
-                .signal
-                .as_ref()
-                .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
-            {
-                return Err(ProviderError::Aborted);
-            }
-            if matches!(
-                processor.stop_reason(),
-                StopReason::Aborted | StopReason::Error
-            ) {
-                return Err(ProviderError::StreamFailure(
-                    stream_failure_from_stop_reason(
-                        processor.stop_reason_raw(),
-                        request_id.as_deref(),
-                    ),
-                ));
-            }
-            Ok(())
-        }
-        .await;
-        if stream_result.is_err() {
-            processor.settle_partial_tool_calls();
-        }
-    }
-    stream_result?;
+    process_responses_sse(
+        model,
+        output,
+        writer,
+        ResponsesStreamHooks::default(),
+        &mut response,
+        options.base.signal.as_ref(),
+        request_id.as_deref(),
+    )
+    .await?;
 
     Ok(())
 }
