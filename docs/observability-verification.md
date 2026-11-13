@@ -57,7 +57,7 @@ After publication each local branch was `0` behind and `0` ahead of its writable
 ## Status in the Rust host
 
 Checked against `crates/pa-trace` and the native crates on `merge-rust-port`. Test names are Rust test functions in the
-files given; run them with `cargo +rustc-master test -p pa-trace --locked`.
+files given; run them with `cargo +rustc-rdr-main test -p pa-trace --locked`.
 
 | # | Requirement | Rust implementation | Rust tests |
 |---|-------------|---------------------|------------|

@@ -326,28 +326,32 @@ export HOME=$S/home PATH=/home/cole/.cargo/bin:$PATH CARGO_HOME=/home/cole/.carg
        CLIPPY_CONF_DIR=$S/clippy UV_CACHE_DIR=/home/cole/.cache/uv UV_PYTHON_INSTALL_DIR=/home/cole/.local/share/uv/python
 unset PA_TS_BINARY PRIME_AGENT_KERNEL_VENV PRIME_AGENT_KERNEL_PYTHON PA_CORE_KERNEL_PYTHON PA_E2E_KERNEL_PYTHON
 
-cargo +rustc-master fmt --all -- --check --config-path /home/cole/.rustfmt.toml   # HEAD's style (HOME is the sandbox here)
-cargo +rustc-master clippy --workspace --all-targets --locked -- -D warnings
-cargo +rustc-master clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
-T=$(cargo +rustc-master metadata --format-version 1 --no-deps | jq -r .target_directory)   # not always ./target
-cargo +rustc-master build --locked --workspace --bins && $T/debug/prime-agent --prime-agent-bootstrap   # kernel venv
-cargo +rustc-master test --workspace --locked --no-fail-fast
-cargo +rustc-master deny --all-features --workspace check advisories licenses
+cargo +rustc-rdr-main fmt --all -- --check --config-path /home/cole/.rustfmt.toml   # HEAD's style (HOME is the sandbox here)
+cargo +rustc-rdr-main clippy --workspace --all-targets --locked -- -D warnings
+cargo +rustc-rdr-main clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+T=$(cargo +rustc-rdr-main metadata --format-version 1 --no-deps | jq -r .target_directory)   # not always ./target
+cargo +rustc-rdr-main build --locked --workspace --bins && $T/debug/prime-agent --prime-agent-bootstrap   # kernel venv
+cargo +rustc-rdr-main test --workspace --locked --no-fail-fast
+cargo +rustc-rdr-main deny --all-features --workspace check advisories licenses
 (cd prime-agent-runtime && uv run python -m unittest discover -s test && uv run ruff check src test)
 (cd skills/computer-use && PYTHONPATH=src:tests ../../prime-agent-runtime/.venv/bin/python -m unittest discover -s tests)
 ```
 
-Formatting: HEAD is formatted with the `rustc-master` rustfmt and the user's
+Formatting: HEAD is formatted with the `rustc-master` rustfmt (`rustc-rdr-main`'s rustfmt gives byte-identical output) and the user's
 `~/.rustfmt.toml` (vertical import lists). Format a touched file through stdin, so its `mod` declarations are not
 followed into untouched files:
-`rustfmt +rustc-master --edition 2024 --config-path /home/cole/.rustfmt.toml < f > f.tmp && mv f.tmp f`.
+`rustfmt +rustc-rdr-main --edition 2024 --config-path /home/cole/.rustfmt.toml < f > f.tmp && mv f.tmp f`.
 Five files still use `gen` as an identifier, which edition 2024 reserves, so rustfmt cannot parse them with
 `--edition 2024`: `pa-ai/src/providers/faux/mod.rs`, `pa-tui/src/{auth_panel.rs,bash_view/tests.rs,session_ui/share.rs,session_ui/auth.rs}`.
 Rename the identifier (or write `r#gen`) when touching one.
 
 There is no CI: these gates and `make check` (the same gates, assuming a default environment) are the merge
-gates, and `make lifecycle-checks` runs the `scripts/check_*.py` real-binary verifiers. This machine has only the
-`rustc-master` toolchain, so every gate above runs on `+rustc-master`. A kernel-backed
+gates, and `make lifecycle-checks` runs the `scripts/check_*.py` real-binary verifiers. Every gate above runs on
+`+rustc-rdr-main`: Cole's personal toolchain (rustc with "relink, don't rebuild" plus a patched cargo; notes in
+`~/RustProjects/forks/cargo-agents/README-personal.md`). A private edit, also in `lib.rs` or one that shifts lines,
+no longer rebuilds the crates that depend on the edited one, and line numbers stay exact. Its clippy and rustfmt
+match `rustc-master` warning for warning. Plain `cargo` in this checkout and its worktrees also selects it
+(a rustup directory override). `rustc-master` remains installed, with the same patched cargo but without RDR. A kernel-backed
 test run needs the sandbox HOME's venv bootstrapped by **this** checkout's binary — two checkouts testing
 concurrently against one venv will clobber each other.
 
@@ -357,7 +361,7 @@ binaries are never deleted by cargo and reached 634 GB on 2026-10-15: check its 
 prune with `cargo sweep --maxsize 150GB`. The runtime finds the checkout's binary in cargo's build directory
 (`CARGO_TARGET_DIR`, else the nearest `build.target-dir` in a `.cargo/config.toml`; `rlm._host.cargo_target_dir`).
 The example plugin has its own gate, `examples/plugins/command-guard/check.sh` (needs the `wasm32-wasip2` target,
-installed for `rustc-master` here).
+installed only for `rustc-master` here, so run that gate with `+rustc-master`).
 
 ## Project Claude Layout
 
