@@ -15,6 +15,7 @@ use super::{
     Worker,
     json,
     queue_lanes,
+    queued_bash_completion_notices,
     response_failure,
     response_success,
     session_snapshot,
@@ -761,6 +762,23 @@ impl Worker {
         response_success(None, "wait_for_idle", None)
     }
 
+    /// The bash lane's outstanding work at a quiescence observation: live
+    /// kernel `bash()` handles plus `[bash-done]` notices still queued for
+    /// delivery. Zero when nothing will wake the session from the bash
+    /// lane. Reported only — never a close/wake behavior.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the session-core mutex is poisoned.
+    pub(crate) fn outstanding_background_jobs(&self) -> u64 {
+        let live = self
+            .agent_engine
+            .as_ref()
+            .map_or(0, |engine| engine.background_bash_handle_count());
+        let queued = queued_bash_completion_notices(&self.core.lock_or_recover());
+        (live + queued) as u64
+    }
+
     /// `wait_for_headless_completion` (TS daemon command): settle the
     /// headless run first (same idle wait as `wait_for_idle`), then answer
     /// the autonomous-run accounting snapshot (`DaemonAutonomousStatus`).
@@ -779,11 +797,17 @@ impl Worker {
             .autonomous_status()
             .await
             .unwrap_or_else(pa_core::autonomous::disabled_autonomous_status);
-        response_success(
-            None,
-            "wait_for_headless_completion",
-            Some(serde_json::to_value(&status).unwrap_or(Value::Null)),
-        )
+        // The bash quiescence count rides the status data as an additive
+        // key (the ACP quiescence observation reads it; a degraded status
+        // still answers).
+        let mut data = serde_json::to_value(&status).unwrap_or(Value::Null);
+        if let Some(object) = data.as_object_mut() {
+            object.insert(
+                "outstandingBackgroundJobs".to_string(),
+                json!(self.outstanding_background_jobs()),
+            );
+        }
+        response_success(None, "wait_for_headless_completion", Some(data))
     }
 }
 /// Agents-view visibility is message-based: a resident subagent is visible

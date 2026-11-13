@@ -2717,6 +2717,121 @@ fn acp_prompt_settles_after_rlm_quiescence() {
     );
 }
 
+/// The bash quiescence observation (the eval harness's `terminalQuiescence`
+/// meta): a turn that launches a detached `bash()` job settles clean while
+/// the job still runs, and the completion and terminal quiescence frames
+/// report the outstanding background job — never the subagent count — so a
+/// host that closes on quiescence holds the episode. After the job's
+/// `[bash-done]` wake is consumed, a quiet turn reports zero.
+#[test]
+fn acp_prompt_reports_outstanding_background_bash_jobs() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let script = json!({
+        "engine": "faux",
+        "responses": [
+            { "content": [
+                { "type": "toolCall", "name": "python_repl", "arguments": { "code":
+                    "from rlm import bash\nhandle = bash('sleep 5; echo QUIESCENT_JOB_DONE')\nprint('job launched', handle.running)" } },
+            ] },
+            { "text": "bash lane turn done" },
+            { "text": "notice seen" },
+            { "text": "quiet turn" },
+        ],
+    });
+    let kernel_python = kernel_python
+        .to_str()
+        .expect("a UTF-8 kernel interpreter path");
+    let mut client = AcpChild::spawn_with_env(
+        &["--mode", "acp"],
+        &script,
+        &[("PRIME_AGENT_KERNEL_PYTHON", kernel_python)],
+    );
+    let init = client.request("initialize", &initialize_params());
+    let _ = client.wait_response(init, TIMEOUT);
+    let session_id = new_session(&mut client);
+
+    // THE TURN: the tool call launches the detached job, the model ends the
+    // turn clean, and the ACP settle observes quiescence while the job runs.
+    let prompt = client.request(
+        "session/prompt",
+        &json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": "run the detached job" }] }),
+    );
+    let completion = client.wait_frame(TIMEOUT, |frame| {
+        let meta = update_meta(frame);
+        meta["phase"] == "event" && !meta["quiescence"].is_null()
+    });
+    assert_eq!(
+        update_meta(&completion)["quiescence"]["outstandingBackgroundJobs"],
+        1,
+        "the completion never reported the live background job: {completion}"
+    );
+    let terminal = client.wait_frame(TIMEOUT, |frame| {
+        update_meta(frame)["phase"] == "terminalQuiescence"
+    });
+    assert_eq!(
+        update_meta(&terminal)["quiescence"]["outstandingSubagents"],
+        0,
+        "the background job must count as bash work, not a subagent: {terminal}"
+    );
+    assert_eq!(
+        update_meta(&terminal)["quiescence"]["outstandingBackgroundJobs"],
+        1,
+        "the terminal quiescence never reported the live background job: {terminal}"
+    );
+    let (prompt_response, _) = client.wait_response(prompt, TIMEOUT);
+    assert_eq!(
+        prompt_response["result"],
+        json!({ "stopReason": "end_turn" })
+    );
+
+    // The job finishes and its `[bash-done]` wake is consumed by the session
+    // (the "notice seen" turn can only follow the notice).
+    client.wait_frame(TIMEOUT, |frame| {
+        frame["params"]["update"]["content"]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("notice seen"))
+    });
+
+    // THE QUIET TURN: nothing will wake the session from the bash lane —
+    // both quiescence frames report zero.
+    let quiet = client.request(
+        "session/prompt",
+        &json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": "are we quiet now" }] }),
+    );
+    let quiet_completion = client.wait_frame(TIMEOUT, |frame| {
+        let meta = update_meta(frame);
+        meta["phase"] == "event" && !meta["quiescence"].is_null()
+    });
+    assert_eq!(
+        update_meta(&quiet_completion)["quiescence"]["outstandingBackgroundJobs"],
+        0,
+        "the quiet turn's completion still reported background work: {quiet_completion}"
+    );
+    let quiet_terminal = client.wait_frame(TIMEOUT, |frame| {
+        update_meta(frame)["phase"] == "terminalQuiescence"
+    });
+    assert_eq!(
+        update_meta(&quiet_terminal)["quiescence"]["outstandingBackgroundJobs"],
+        0,
+        "the quiet turn's terminal quiescence still reported background work: {quiet_terminal}"
+    );
+    let (quiet_response, updates) = client.wait_response(quiet, TIMEOUT);
+    assert_eq!(
+        quiet_response["result"],
+        json!({ "stopReason": "end_turn" })
+    );
+    assert!(
+        updates.iter().all(|frame| {
+            let meta = update_meta(frame);
+            meta["phase"] != "terminalQuiescence"
+                || meta["quiescence"]["outstandingBackgroundJobs"] == 0
+        }),
+        "every terminal frame must report a quiet bash lane: {updates:?}"
+    );
+}
+
 /// A cancel during the settle cancels the outstanding subagents (TS
 /// `cancelOutstandingRlmChildren` inside `stopSessionWork`): the prompt
 /// answers cancelled once the stop sequence cancelled the held child, and

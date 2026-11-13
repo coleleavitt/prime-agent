@@ -54,6 +54,7 @@ pub(crate) use queue::{
     parse_custom_message,
     parse_prompt_images,
     queue_lanes,
+    queued_bash_completion_notices,
     record_queue_checkpoint_locked,
     restore_queue_snapshot,
     restored_turn_policy,
