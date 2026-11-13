@@ -156,6 +156,7 @@ impl AgentSessionEngine {
             runtime,
             config,
             mcp,
+            refinement_completion_sink: std::sync::Mutex::new(None),
             late_agent_message_sink: std::sync::Mutex::new(None),
             feature_status_sink: std::sync::Mutex::new(None),
             feature_notice_sink: std::sync::Mutex::new(None),

@@ -43,7 +43,7 @@ pub(crate) fn run_session_command(
             return None;
         }
     }
-    let execution = match engine.execute_session_command(command, images) {
+    let mut execution = match engine.execute_session_command(command, images) {
         Ok(execution) => execution,
         // Pre-execution failures (model resolution, session build) still record the
         // attempted command as a failure result row (the echo row above already went out).
@@ -55,8 +55,7 @@ pub(crate) fn run_session_command(
                 compaction_skipped: None,
                 continuation_message: None,
                 error: Some(error),
-                refinement: None,
-                refinement_failed: None,
+                pending_refinement: None,
             };
             if !emit_compact_end(command, &execution, emit) {
                 return None;
@@ -69,6 +68,9 @@ pub(crate) fn run_session_command(
             return Some(execution);
         }
     };
+    if let Some(pending) = execution.pending_refinement.take() {
+        engine.report_background_refinement(pending);
+    }
     // The post-compaction kernel notice goes out between the compaction start
     // and its settled end (the `message_start`/`message_end` pair precedes
     // `compaction_end` on the wire); the worker persists the row with the event.
@@ -89,19 +91,6 @@ pub(crate) fn run_session_command(
     // clear; the durable status row follows with the new state.
     if command.name == "autonomous" {
         engine.clear_autonomous_continuations();
-    }
-    if let Some(refinement) = &execution.refinement
-        && let Ok(result) = serde_json::to_value(refinement)
-        && !emit(EngineEvent::RefineComplete { result })
-    {
-        return None;
-    }
-    if let Some(error) = &execution.refinement_failed
-        && !emit(EngineEvent::RefineFailed {
-            error: error.clone(),
-        })
-    {
-        return None;
     }
     // The executor's first row is the echo (already emitted); the rest of
     // the durable rows follow in order.

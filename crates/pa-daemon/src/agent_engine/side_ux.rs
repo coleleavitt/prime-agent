@@ -136,8 +136,11 @@ impl AgentSessionEngine {
                     // in-stream primitive the compaction auto-refine boundary
                     // uses (`agent_engine/turn/boundary.rs`), matching
                     // Claude Code's `appendSystemMessage` placement.
-                    let session_guard = self.session.lock().await;
-                    let Some(engine) = session_guard.as_deref() else {
+                    // The engine is cloned out of the slot: the refinement's
+                    // commit waits for the agent's idle boundary, which must
+                    // not hold the session slot the turn boundary takes.
+                    let engine = self.session.lock().await.clone();
+                    let Some(engine) = engine else {
                         return Ok(SideUxOutcome::Nothing);
                     };
                     let outcome = engine
@@ -149,7 +152,7 @@ impl AgentSessionEngine {
                             user_message_count,
                         )
                         .await;
-                    drop(session_guard);
+                    drop(engine);
                     match outcome {
                         Err(error) => Err(error),
                         Ok(pa_core::session_engine::refine::PerTurnRunOutcome::Skipped(reason)) => {

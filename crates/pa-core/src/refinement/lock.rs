@@ -48,33 +48,79 @@ pub fn lock_harness_state_file(
     state_path: &Path,
     policy: HarnessLockPolicy,
 ) -> io::Result<HeartbeatLock> {
+    let mut wait = HarnessLockWait::new(state_path, policy);
+    loop {
+        match try_lock_harness_state_file(state_path, policy) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                wait.contended()?;
+                std::thread::sleep(policy.retry);
+            }
+            result => return result,
+        }
+    }
+}
+
+/// One attempt at the harness state file's lock, creating its directory:
+/// [`io::ErrorKind::WouldBlock`] while another writer holds it. For a writer
+/// that must release its other locks between attempts; it paces its
+/// retries with [`HarnessLockWait`].
+///
+/// # Errors
+///
+/// [`io::ErrorKind::WouldBlock`] when the lock is held, or the I/O error
+/// that kept the lock from being made.
+pub fn try_lock_harness_state_file(
+    state_path: &Path,
+    policy: HarnessLockPolicy,
+) -> io::Result<HeartbeatLock> {
     if let Some(parent) = state_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let lock_path = LockDir::path_for(state_path);
-    let mut holder = None;
-    let mut deadline = Instant::now() + policy.wait;
-    loop {
-        match LockDir::acquire_owned(state_path, policy.stale) {
-            Ok(held) => return Ok(held.with_heartbeat(policy.stale / 2)),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                let current = LockDir::holder_at(&lock_path);
-                if current.is_some() && current != holder {
-                    holder = current;
-                    deadline = Instant::now() + policy.wait;
-                } else if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!(
-                            "harness state is locked by another process: {} (held longer than {}s)",
-                            lock_path.display(),
-                            policy.wait.as_secs()
-                        ),
-                    ));
-                }
-                std::thread::sleep(policy.retry);
-            }
-            Err(error) => return Err(error),
+    LockDir::acquire_owned(state_path, policy.stale)
+        .map(|held| held.with_heartbeat(policy.stale / 2))
+}
+
+/// The per-holder wait of one writer retrying [`try_lock_harness_state_file`]:
+/// the wait restarts each time the lock changes hands.
+pub struct HarnessLockWait {
+    lock_path: std::path::PathBuf,
+    policy: HarnessLockPolicy,
+    holder: Option<crate::platform::lock_dir::LockHolder>,
+    deadline: Instant,
+}
+
+impl HarnessLockWait {
+    #[must_use]
+    pub fn new(state_path: &Path, policy: HarnessLockPolicy) -> Self {
+        Self {
+            lock_path: LockDir::path_for(state_path),
+            policy,
+            holder: None,
+            deadline: Instant::now() + policy.wait,
         }
+    }
+
+    /// Record one contended attempt.
+    ///
+    /// # Errors
+    ///
+    /// [`io::ErrorKind::TimedOut`] once one holder kept the lock longer than
+    /// the policy's wait.
+    pub fn contended(&mut self) -> io::Result<()> {
+        let current = LockDir::holder_at(&self.lock_path);
+        if current.is_some() && current != self.holder {
+            self.holder = current;
+            self.deadline = Instant::now() + self.policy.wait;
+        } else if Instant::now() >= self.deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "harness state is locked by another process: {} (held longer than {}s)",
+                    self.lock_path.display(),
+                    self.policy.wait.as_secs()
+                ),
+            ));
+        }
+        Ok(())
     }
 }

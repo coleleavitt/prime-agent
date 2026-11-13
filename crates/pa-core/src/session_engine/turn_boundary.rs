@@ -195,6 +195,11 @@ pub struct TurnBoundaryRequests {
     /// The session's read-only package overlay (upstream #2298) a
     /// `refine.preview` plans against.
     package_harness: std::sync::OnceLock<Arc<crate::refinement::HarnessState>>,
+    /// The assembled session's refinement-flight counter — the same Arc
+    /// every `refine::run_refinement` holds its flight guard on. Bound
+    /// once when the session assembles; an unset cell (a session that
+    /// never assembled) answers `in_flight: false`.
+    refinements_in_flight: std::sync::OnceLock<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl TurnBoundaryRequests {
@@ -258,6 +263,12 @@ impl TurnBoundaryRequests {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Bind the assembled session's refinement-flight counter (first bind
+    /// wins): `refine.status` answers from the runs it counts.
+    pub fn bind_refinements_in_flight(&self, in_flight: Arc<std::sync::atomic::AtomicUsize>) {
+        let _ = self.refinements_in_flight.set(in_flight);
     }
 
     /// Re-bind the model facts after a live model switch (the agent and
@@ -545,12 +556,15 @@ impl TurnBoundaryRequests {
                         ));
                     };
                     let pending = requests.refine_pending().await;
-                    // The Rust consumption runs refinement synchronously
-                    // between turns, so a cell never observes it in flight
-                    // (the TS background-planning path is not ported).
+                    let in_flight = requests
+                        .refinements_in_flight
+                        .get()
+                        .is_some_and(|in_flight| {
+                            in_flight.load(std::sync::atomic::Ordering::Acquire) > 0
+                        });
                     Ok(json!({
                         "pending": pending,
-                        "in_flight": false,
+                        "in_flight": in_flight,
                         "preview_ids": requests.refine_preview_ids(),
                     }))
                 })
@@ -729,14 +743,6 @@ impl TurnBoundaryRequests {
     }
 }
 
-/// One turn-boundary consumption: the outcomes the host runtime persists and broadcasts;
-/// `Err` rows surface like the TS failed-compaction / `refine_failed` events.
-#[derive(Debug)]
-pub struct TurnBoundaryConsumption {
-    pub compaction: Option<anyhow::Result<super::compact_session::CompactOutcome>>,
-    pub refinement: Option<anyhow::Result<crate::refinement::RefinementResult>>,
-}
-
 impl SessionEngine {
     /// Consume a pending model-requested compaction at a turn boundary; taken regardless
     /// of outcome, so a failed run is not silently re-run. `abort` cancels the run,
@@ -772,23 +778,24 @@ impl SessionEngine {
         })
     }
 
-    /// Consume a pending model-requested refinement at a turn boundary;
-    /// taken regardless of outcome, so a failed run is not silently re-run.
-    pub async fn consume_pending_refinement(
+    /// Start a pending model-requested refinement without waiting on planning or
+    /// its idle-boundary commit. The host owns only completion reporting.
+    pub async fn start_pending_refinement(
         &self,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
         global_harness_dir: std::path::PathBuf,
-    ) -> Option<anyhow::Result<crate::refinement::RefinementResult>> {
+    ) -> Option<tokio::task::JoinHandle<anyhow::Result<super::refine::CommittedRefinement>>> {
         let pending = self.turn_boundary.take_refine().await?;
         // A pinned plan applies once; the run supersedes every other preview.
         let pinned_plan = match &pending.plan_id {
             Some(plan_id) => {
                 let Some(preview) = self.turn_boundary.take_refine_preview(plan_id) else {
                     self.turn_boundary.clear_refine_previews();
-                    return Some(Err(anyhow::anyhow!(
+                    let expired = anyhow::anyhow!(
                         "refine plan {plan_id} expired before it could apply; call refine.preview() again"
-                    )));
+                    );
+                    return Some(tokio::spawn(async move { Err(expired) }));
                 };
                 if let Some(telemetry) = &self.telemetry {
                     telemetry.note_adoption(super::telemetry::SessionAdoption::RefinePlanRun);
@@ -798,48 +805,20 @@ impl SessionEngine {
             None => None,
         };
         self.turn_boundary.clear_refine_previews();
-        let options = super::refine::RefineOptions {
-            global: pending.global,
-            instructions: pending.instructions,
-            rollback_id: None,
-            trigger: pending.trigger,
-            pinned_plan,
-            package_state: None,
-        };
-        Some(
-            self.session
-                .refine(
-                    &options,
-                    super::refine::RefinementSource::SelfRefine,
-                    model,
-                    api_key,
-                    global_harness_dir,
-                )
-                .await,
-        )
-    }
-
-    /// Consume pending turn-boundary requests after a settled turn: compaction
-    /// first, then refinement; the pieces are exposed separately for hosts that
-    /// mirror the TS sequencing (the overflow arm interleaves).
-    pub async fn consume_turn_boundary_requests(
-        &self,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
-        abort: Option<&pa_agent::abort::AbortSignal>,
-    ) -> TurnBoundaryConsumption {
-        let mut consumption = TurnBoundaryConsumption {
-            compaction: None,
-            refinement: None,
-        };
-        consumption.compaction = self
-            .consume_pending_compaction(model, api_key.clone(), abort)
-            .await;
-        consumption.refinement = self
-            .consume_pending_refinement(model, api_key, global_harness_dir)
-            .await;
-        consumption
+        Some(self.session.start_refinement(
+            super::refine::RefineOptions {
+                global: pending.global,
+                instructions: pending.instructions,
+                rollback_id: None,
+                trigger: pending.trigger,
+                pinned_plan,
+                package_state: None,
+            },
+            super::refine::RefinementSource::SelfRefine,
+            model.clone(),
+            api_key,
+            global_harness_dir,
+        ))
     }
 
     /// Apply a model-driven plan-mode change queued by `rlm.enter_plan_mode`

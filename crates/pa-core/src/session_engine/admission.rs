@@ -88,9 +88,11 @@ impl AgentSession {
         let admission = self.terminal_admission.lock().await;
         self.refuse_if_busy().await?;
         let prompt_messages = self.injected_prompt_messages(message).await?;
+        let agent_admission = self.agent.admission().await;
         let turn = self
             .agent
             .admit_prompt_or_busy(pa_agent::agent::AgentPromptInput::Messages(prompt_messages))?;
+        drop(agent_admission);
         drop(admission);
         turn.settle().await?;
         Ok(PromptOutcome::Prompt)
@@ -116,6 +118,7 @@ impl AgentSession {
         let _admission = self.terminal_admission.lock().await;
         self.refuse_if_busy().await?;
         let prompt_messages = self.injected_prompt_messages(message).await?;
+        let _agent_admission = self.agent.admission().await;
         self.agent
             .admit_prompt_or_busy(pa_agent::agent::AgentPromptInput::Messages(prompt_messages))?;
         Ok(PromptOutcome::Prompt)
@@ -278,9 +281,16 @@ impl AgentSession {
                 };
                 prompt_messages.push(user_prompt_message(&row_text, &row.images));
             }
-            let turn = match self.agent.admit_prompt_or_busy(
-                pa_agent::agent::AgentPromptInput::Messages(prompt_messages.clone()),
-            ) {
+            // A refinement committing at the idle boundary holds the agent's
+            // admission: the prompt waits it out instead of reading busy.
+            let agent_admission = self.agent.admission().await;
+            let claimed =
+                self.agent
+                    .admit_prompt_or_busy(pa_agent::agent::AgentPromptInput::Messages(
+                        prompt_messages.clone(),
+                    ));
+            drop(agent_admission);
+            let turn = match claimed {
                 Ok(turn) => Some(turn),
                 Err(error)
                     if error

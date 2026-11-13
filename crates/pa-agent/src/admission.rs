@@ -748,6 +748,43 @@ mod tests {
         assert!(error.to_string().contains("provider exploded"));
     }
 
+    /// An idle reservation holds the boundary against the synchronous
+    /// admissions too: a batch admitted meanwhile waits as queued steering
+    /// with no run started, and the release arms the idle-queued wake so
+    /// a host pump admits it.
+    #[tokio::test]
+    async fn an_idle_reservation_queues_a_synchronous_admission_and_wakes_it_on_release() {
+        let provider = Arc::new(ScriptedProvider::new(model("session-model")));
+        let agent = agent_with_stream(provider.stream_fn());
+        let reservation = agent.reserve_idle().await;
+        assert_eq!(
+            agent.admit_or_enqueue(AgentMessage::user("mid-commit")),
+            AdmitStatus::Busy
+        );
+        assert!(
+            agent.signal().is_none(),
+            "no run started under the reservation"
+        );
+        assert!(agent.has_queued_messages());
+        let mut wake = agent.idle_queued_wake();
+        assert!(!*wake.borrow_and_update());
+        drop(reservation);
+        assert!(
+            *wake.borrow_and_update(),
+            "the release woke the queued batch"
+        );
+        provider.push_text_turn("ok");
+        assert_eq!(agent.admit_queued_turn(), QueuedAdmission::Admitted);
+        agent.wait_for_idle().await;
+        assert_eq!(
+            transcript(&agent.state().await),
+            vec![
+                ("user", "mid-commit".to_string()),
+                ("assistant", String::new())
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn admitted_turn_drop_does_not_strand_the_claimed_slot() {
         let (called_tx, called_rx) = tokio::sync::watch::channel(0u32);

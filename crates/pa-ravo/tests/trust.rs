@@ -73,7 +73,8 @@ impl ReplayRunner for Probe {
 
 struct Session {
     _root: tempfile::TempDir,
-    manager: SessionManager,
+    manager: tokio::sync::Mutex<SessionManager>,
+    agent: pa_agent::agent::Agent,
     context: Arc<SessionFeatureContext>,
     ravo: RavoFeature,
     ledger: FailureLedgerFeature,
@@ -116,7 +117,8 @@ fn session(global_ledger: bool) -> Session {
     let global_dir = root.path().join("agent").join("harness");
     Session {
         _root: root,
-        manager,
+        manager: tokio::sync::Mutex::new(manager),
+        agent: pa_agent::agent::Agent::new(pa_agent::agent::AgentOptions::default()),
         context,
         ravo,
         ledger,
@@ -237,7 +239,8 @@ impl Session {
             .unwrap(),
         ];
         execute_refinement_gated(
-            &mut self.manager,
+            &self.manager,
+            &self.agent,
             RefinementTranscript {
                 messages: &messages,
                 refinement_history: &[],
@@ -255,11 +258,18 @@ impl Session {
         )
         .await
         .unwrap()
-        .0
+        .result
     }
 
     fn local(&self) -> HarnessDocument {
-        HarnessDocument::load(&self.manager.get_session_dir().join("harness"))
+        HarnessDocument::load(
+            &self
+                .context
+                .session_artifact_dir
+                .as_ref()
+                .expect("a session artifact dir")
+                .join("harness"),
+        )
     }
 
     fn fingerprint(&self) -> String {

@@ -162,8 +162,8 @@ impl PrintRun {
     /// # Errors
     ///
     /// Returns the failure of a turn, a boundary compaction, or a
-    /// continuation admission (the run aborts; [`PrintRun::finish`] is
-    /// not owed).
+    /// continuation admission (the run aborts; [`PrintRun::finish`] still
+    /// drains its background refinements).
     pub async fn run(
         &mut self,
         prompts: Vec<(String, Vec<pa_agent::types::ImageContent>)>,
@@ -196,6 +196,7 @@ impl PrintRun {
                     api_key.clone(),
                     global_harness_dir.clone(),
                     &autonomous_state,
+                    boundary,
                     &command,
                     &images,
                 )
@@ -270,8 +271,7 @@ impl PrintRun {
                     .map_err(|error| format!("{error:#}"))?;
             }
         }
-        // The rejected prompt wait: no later prompts ran, and the disposal
-        // drain still runs.
+        // The rejected prompt wait: no later prompts ran.
         if let Some(error) = command_failure {
             self.unsubscribe().await;
             return Ok(PrintRunOutcome::CommandFailed(error));
@@ -390,9 +390,13 @@ impl PrintRun {
         }
     }
 
-    /// The disposal drain, after the embedding rendered the outcome: a
-    /// compact-trigger auto-refine no later boundary consumed runs here.
-    pub async fn finish(mut self) {
+    /// The disposal drain, after the embedding rendered the outcome — on every
+    /// exit path, a failed [`PrintRun::run`] included: it awaits the in-flight
+    /// background refinements (the session drop right after it would abort
+    /// their planning), and a compact-trigger auto-refine no later boundary
+    /// consumed runs here. Returns whether a `/refine` command's refinement
+    /// failed: the run then exits 1.
+    pub async fn finish(mut self) -> bool {
         self.boundary
             .drain_compact_auto_refine_at_disposal(
                 &self.engine,
@@ -401,5 +405,6 @@ impl PrintRun {
                 self.global_harness_dir.clone(),
             )
             .await;
+        self.boundary.refine_command_failed()
     }
 }

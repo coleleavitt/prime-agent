@@ -1491,7 +1491,17 @@ async fn run_prompts_and_emit(
                 .map(|prompt| (prompt.clone(), Vec::new())),
         )
         .collect();
-    let (goal_no_progress_cap, autonomous_stderr) = match run.run(prompts).await? {
+    let outcome = match run.run(prompts).await {
+        Ok(outcome) => outcome,
+        // The disposal drain runs on every exit path, errors included: the
+        // session drops once this returns, which aborts refinement still
+        // planning (a `/refine` command's too).
+        Err(error) => {
+            run.finish().await;
+            return Err(error);
+        }
+    };
+    let (goal_no_progress_cap, autonomous_stderr) = match outcome {
         // The rejected prompt wait: print the raw command error to stderr and
         // exit 1 — no later prompts ran, and the disposal drain still runs.
         PrintRunOutcome::CommandFailed(error) => {
@@ -1553,9 +1563,13 @@ async fn run_prompts_and_emit(
         eprintln!("{stderr}");
         exit_code = 1;
     }
-    // The disposal order: the exit code first, then the teardown drains a
-    // compact-trigger auto-refine no later boundary consumed.
-    run.finish().await;
+    // The disposal order: the exit code first, then the teardown drains the
+    // in-flight refinements and a compact-trigger auto-refine no later
+    // boundary consumed. A `/refine` whose background refinement failed
+    // fails the run once awaited.
+    if run.finish().await {
+        exit_code = 1;
+    }
     Ok(exit_code)
 }
 

@@ -1,6 +1,13 @@
 //! Worker tests.
 use super::*;
 
+thread_local! {
+    pub(super) static BEFORE_REFINEMENT_ROW_BROADCAST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+mod refinement_row_tests;
+
 /// A created worker over the scripted engine.
 async fn created_dispatch_worker() -> crate::test_support::InTestDir<std::sync::Arc<Worker>> {
     let dir = crate::test_support::TestDir::new("pa-worker-susp-");

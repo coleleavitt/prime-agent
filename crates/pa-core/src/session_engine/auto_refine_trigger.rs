@@ -64,7 +64,7 @@ pub(crate) struct CompactAutoRefineState {
     in_flight: bool,
     /// A branch move bumps it; a round started on an older version drops
     /// its result — a review against the abandoned branch never applies.
-    branch_version: u64,
+    pub(super) branch_version: u64,
     /// An approving review retained behind an active agent turn: the next
     /// serviced boundary runs its refinement without a new review call.
     pending_review: Option<AutoRefineReview>,
@@ -93,13 +93,18 @@ impl AgentSession {
         self.compact_auto_refine.lock_or_recover().branch_version == captured
     }
 
-    /// Drop the armed trigger and bump the branch version — an in-flight
-    /// review started on the abandoned branch never applies its edits.
+    /// Drop the armed trigger, bump the branch version, and cancel in-flight
+    /// refinement planning and commit waits — work started on the abandoned
+    /// branch never lands on the new one.
     pub fn discard_compact_auto_refine(&self) {
         let mut state = self.compact_auto_refine.lock_or_recover();
         state.pending = false;
         state.pending_review = None;
         state.branch_version += 1;
+        drop(state);
+        let mut cancel = self.refinement_cancel.lock_or_recover();
+        cancel.abort();
+        *cancel = pa_agent::abort::AbortController::new();
     }
 
     pub fn note_settled_turn_since_auto_refine_review(&self) {
@@ -122,6 +127,7 @@ impl AgentSession {
         global_harness_dir: std::path::PathBuf,
         surface: CompactAutoRefineSurface,
     ) -> anyhow::Result<Option<RefinementResult>> {
+        let cancel = self.refinement_signal();
         let gates = self.auto_refine_gates();
         // The background observer's per-turn signal arms a review here: taken once,
         // it drives one review like a compaction trigger, under the same gates and
@@ -186,7 +192,7 @@ impl AgentSession {
             // The branch fence: a branch move since the retained round's start
             // dropped this review — the refinement never starts.
             if self.compact_auto_refine_branch_version_unchanged(branch_version) {
-                self.run_approved_refine(review, model, api_key, global_harness_dir)
+                self.run_approved_refine(review, model, api_key, global_harness_dir, cancel)
                     .await
                     .map(AutoRefineRound::Ran)
             } else {
@@ -214,9 +220,15 @@ impl AgentSession {
                         // round resolved against a bumped version never applies.
                         Ok(AutoRefineRound::Declined)
                     } else {
-                        self.run_approved_refine(&review, model, api_key, global_harness_dir)
-                            .await
-                            .map(AutoRefineRound::Ran)
+                        self.run_approved_refine(
+                            &review,
+                            model,
+                            api_key,
+                            global_harness_dir,
+                            cancel,
+                        )
+                        .await
+                        .map(AutoRefineRound::Ran)
                     }
                 }
                 Err(error) => Err(error),

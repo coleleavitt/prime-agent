@@ -449,6 +449,12 @@ pub(crate) struct AgentInner {
     /// subscribed, so an arming is stored even with zero external
     /// subscribers (a fresh clone starts at the current value).
     pub(crate) idle_queued_rx: watch::Receiver<bool>,
+    /// Serializes async run admission with idle-only context commits
+    /// ([`Agent::reserve_idle`]).
+    admission: tokio::sync::Mutex<()>,
+    /// An idle reservation is held: the synchronous claims treat the slot
+    /// as busy (read and written under the `run` lock).
+    idle_reserved: std::sync::atomic::AtomicBool,
     convert_to_llm: ConvertToLlmFn,
     transform_context: Option<TransformContextFn>,
     stream_fn: Option<StreamFn>,
@@ -807,9 +813,13 @@ impl AgentInner {
                 .as_ref()
                 .map_or_else(|| shared.state.model.clone(), |routed| routed.model.clone())
         };
+        // An idle reservation ([`Agent::reserve_idle`]) holds the admission
+        // lock: an async run start waits it out instead of refusing.
+        let admission = self.admission.lock().await;
         let Some(claim) = self.claim_run_slot(Some(run_model)) else {
             anyhow::bail!("Agent is already processing.");
         };
+        drop(admission);
         self.execute_claimed_run(claim, run_override, executor)
             .await
     }
@@ -824,13 +834,19 @@ impl AgentInner {
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if run.is_some() {
+        if self.slot_taken(&run) {
             return None;
         }
         // A user prompt's run: it folds any parked rows (TS `runLoop`).
         self.user_rows_parked
             .store(false, std::sync::atomic::Ordering::SeqCst);
         Some(Self::install_run_locked(&mut run, model))
+    }
+
+    /// Whether the run slot is unavailable to a new claim: a run is active,
+    /// or an idle reservation ([`Agent::reserve_idle`]) holds the boundary.
+    fn slot_taken(&self, run: &Option<ActiveRun>) -> bool {
+        run.is_some() || self.idle_reserved.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Install the claimed run into a known-idle slot.
@@ -858,7 +874,9 @@ impl AgentInner {
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if run.is_some() {
+        // Under an idle reservation the batch waits as steering: the
+        // reservation's release arms the idle-queued wake for it.
+        if self.slot_taken(&run) {
             self.steering_queue
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -880,7 +898,7 @@ impl AgentInner {
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if run.is_some() {
+        if self.slot_taken(&run) {
             return QueuedClaim::Busy;
         }
         let parked = self
@@ -1215,6 +1233,50 @@ impl AgentInner {
     }
 }
 
+/// An idle boundary held by [`Agent::reserve_idle`]: no new run starts
+/// until it drops. The drop wakes the batches a synchronous admission
+/// queued meanwhile, like a finishing run does.
+pub struct IdleReservation<'a> {
+    inner: &'a AgentInner,
+    _admission: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for IdleReservation<'_> {
+    fn drop(&mut self) {
+        let _run = self
+            .inner
+            .run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.inner
+            .idle_reserved
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let parked = self
+            .inner
+            .user_rows_parked
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let steering = self
+            .inner
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let follow_ups = self
+            .inner
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let wake = if parked {
+            steering.has_host_items() || follow_ups.has_host_items()
+        } else {
+            steering.has_items() || follow_ups.has_items()
+        };
+        drop((steering, follow_ups));
+        if wake {
+            self.inner.idle_queued_tx.send_modify(|armed| *armed = true);
+        }
+    }
+}
+
 pub struct Agent {
     /// The shared internals, visible to the sibling admission module (the
     /// admission seam's impl block lives in [`crate::admission`]).
@@ -1250,6 +1312,8 @@ impl Agent {
             run: Mutex::new(None),
             idle_queued_tx,
             idle_queued_rx,
+            admission: tokio::sync::Mutex::new(()),
+            idle_reserved: std::sync::atomic::AtomicBool::new(false),
             convert_to_llm: options
                 .convert_to_llm
                 .unwrap_or_else(AgentLoopConfig::default_convert_to_llm),
@@ -1600,6 +1664,47 @@ impl Agent {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Hold run admission against idle reservations ([`Self::reserve_idle`]):
+    /// the call waits out a reservation in progress, and while the guard
+    /// lives none starts. A synchronous admission made under it
+    /// ([`Self::admit_prompt_or_busy`], [`Self::admit_queued_turn`]) never
+    /// meets a reservation; it decides on the run slot alone.
+    pub async fn admission(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.admission.lock().await
+    }
+
+    /// Reserve an idle boundary until the returned guard is dropped.
+    ///
+    /// Existing runs finish normally, including tools and internal follow-ups.
+    /// New run admission waits for this reservation: an async run start
+    /// waits it out, and a synchronous admission takes its batch as queued
+    /// steering, which the release wakes. Steering and follow-up enqueue
+    /// remain independent. Callers must not await model planning or
+    /// contended storage locks while holding the guard.
+    pub async fn reserve_idle(&self) -> IdleReservation<'_> {
+        loop {
+            let admission = self.inner.admission.lock().await;
+            {
+                let run = self
+                    .inner
+                    .run
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if run.is_none() {
+                    self.inner
+                        .idle_reserved
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    return IdleReservation {
+                        inner: &self.inner,
+                        _admission: admission,
+                    };
+                }
+            }
+            drop(admission);
+            self.wait_for_idle().await;
         }
     }
 

@@ -67,7 +67,8 @@ type Events = Arc<Mutex<Vec<(String, Properties)>>>;
 
 struct Session {
     _root: tempfile::TempDir,
-    manager: SessionManager,
+    manager: tokio::sync::Mutex<SessionManager>,
+    agent: pa_agent::agent::Agent,
     context: Arc<SessionFeatureContext>,
     ravo: RavoFeature,
     ledger: FailureLedgerFeature,
@@ -136,7 +137,8 @@ fn session_with(runner: Arc<dyn ReplayRunner>) -> Session {
     let global_dir = root.path().join("agent").join("harness");
     Session {
         _root: root,
-        manager,
+        manager: tokio::sync::Mutex::new(manager),
+        agent: pa_agent::agent::Agent::new(pa_agent::agent::AgentOptions::default()),
         context,
         ravo,
         ledger,
@@ -228,7 +230,8 @@ impl Session {
             .unwrap(),
         ];
         execute_refinement_gated(
-            &mut self.manager,
+            &self.manager,
+            &self.agent,
             RefinementTranscript {
                 messages: &messages,
                 refinement_history: &[],
@@ -246,11 +249,15 @@ impl Session {
         )
         .await
         .unwrap()
-        .0
+        .result
     }
 
     fn harness_dir(&self) -> PathBuf {
-        self.manager.get_session_dir().join("harness")
+        self.context
+            .session_artifact_dir
+            .as_ref()
+            .expect("a session artifact dir")
+            .join("harness")
     }
 
     fn stored(&self) -> HarnessDocument {
@@ -579,7 +586,7 @@ async fn derived_replay_cases_are_self_checked_once_and_stored_verified() {
 /// it, and once it lands the lock is released.
 #[tokio::test]
 async fn a_global_refine_takes_the_harness_state_lock() {
-    let mut session = session();
+    let session = session();
     let gate = session.ravo.refinement_gate(&session.context).unwrap();
     let messages = vec![
         serde_json::from_value(json!({ "role": "user", "content": "do it twice", "timestamp": 1 }))
@@ -609,8 +616,9 @@ async fn a_global_refine_takes_the_harness_state_lock() {
         })
     };
     held_rx.recv().unwrap();
-    let (result, _) = execute_refinement_gated(
-        &mut session.manager,
+    let result = execute_refinement_gated(
+        &session.manager,
+        &session.agent,
         RefinementTranscript {
             messages: &messages,
             refinement_history: &[],
@@ -624,7 +632,8 @@ async fn a_global_refine_takes_the_harness_state_lock() {
         Some(gating()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .result;
     holder.join().unwrap();
     assert!(result.applied_edits.iter().all(|edit| edit.applied));
     let saved = std::fs::read_to_string(session.global_dir.join("harness_state.json")).unwrap();

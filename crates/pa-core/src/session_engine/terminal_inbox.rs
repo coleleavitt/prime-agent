@@ -201,7 +201,13 @@ pub(super) fn start_pump(agent: Arc<Agent>, mut shutdown: tokio::sync::watch::Re
                 }
                 continue;
             }
-            match agent.admit_queued_turn() {
+            // A refinement committing at the idle boundary holds the agent's
+            // admission: the drain waits it out instead of spinning on busy.
+            let queued = {
+                let _admission = agent.admission().await;
+                agent.admit_queued_turn()
+            };
+            match queued {
                 QueuedAdmission::Admitted | QueuedAdmission::Busy => {
                     tokio::select! {
                         () = agent.wait_for_idle() => {}
