@@ -132,15 +132,9 @@ impl SessionFeature for GuardsFeature {
             {
                 return None;
             }
-            let is_stall = match continue_mode() {
-                continuation::ContinueMode::Interactive => {
-                    continuation::assistant_announces_action(&text)
-                }
-                continuation::ContinueMode::Autonomous => {
-                    continuation::assistant_text_stalls(&text)
-                }
-            };
-            is_stall.then(|| continuation::ContinueReason::Stalled.nudge())
+            continue_mode()
+                .text_stalls(&text)
+                .then(|| continuation::ContinueReason::Stalled.nudge())
         })
     }
 }

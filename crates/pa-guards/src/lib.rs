@@ -28,7 +28,7 @@
 //   clearer here than threading `write!`.
 #![allow(clippy::format_push_string)]
 
-pub mod continuation;
+pub use pa_core::continuation;
 mod feature;
 mod rust_lex;
 pub mod scaffold_detector;

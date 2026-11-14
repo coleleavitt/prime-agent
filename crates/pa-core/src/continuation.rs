@@ -125,10 +125,43 @@ pub fn assistant_text_stalls(text: &str) -> bool {
         return true;
     }
 
+    // Ended on a dumped table/data block with no closing prose, or by listing
+    // what is still undone without claiming the next step — both are "there is
+    // obviously more to do" stalls that a user drives through with "continue".
+    if ends_on_data_block(trimmed) || REMAINING_WORK_MARKERS.iter().any(|m| tail.contains(m)) {
+        return true;
+    }
+
     // A trailing question mark is a weaker but real signal: the turn ended on
     // a question, which in a factory context is a request for direction.
     trimmed.ends_with('?')
 }
+
+/// The turn ended by dumping a markdown table or data block and stopping: the
+/// last non-empty line is a table row with no sentence summarizing it.
+fn ends_on_data_block(text: &str) -> bool {
+    let last = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    last.starts_with('|') && last.ends_with('|') && last.matches('|').count() >= 3
+}
+
+/// Phrases that enumerate remaining work without claiming the next step
+/// ("X still needs...", "Y is still unverified", "after that, ..."). Distinct
+/// from a legitimate wait ("still before the nightly"), which stays undetected.
+const REMAINING_WORK_MARKERS: &[&str] = &[
+    "still needs",
+    "still unverified",
+    "still open",
+    "still to be",
+    "still has to",
+    "what's left",
+    "what remains",
+    "after that,",
+];
 
 /// Strong continue signal: the turn ended by announcing or listing a next
 /// action it did not take ("Now I'll …", "Let me …", "Next steps: 1. …"), or by
@@ -174,9 +207,16 @@ const ACTION_LEADS: &[&str] = &[
     "next let me ",
 ];
 
-/// True when the last sentence of `text` starts with (or, after a connective
-/// like "—"/"so"/"then", contains) a near-future action lead. Checking only the
-/// last sentence keeps a mid-report "let me explain" from tripping it.
+/// Connectives after which an action lead still announces the next step
+/// ("...so first I'll reread", "...then let me check"). Each carries its own
+/// surrounding spaces so a substring match cannot fire inside a word
+/// ("underst`and i'll`").
+const ACTION_CONNECTIVES: &[&str] = &[" so ", " then ", " first ", ", so ", ", then "];
+
+/// True when the last sentence of `text` starts with — or, after a connective
+/// like "—", "so", "then", "first", contains — a near-future action lead.
+/// Checking only the last sentence keeps a mid-report "let me explain" from
+/// tripping it.
 fn last_sentence_announces_action(text: &str) -> bool {
     let last = text
         .rsplit(['.', '!', '?', '\n'])
@@ -188,6 +228,9 @@ fn last_sentence_announces_action(text: &str) -> bool {
         last.starts_with(lead)
             || last.contains(&format!("— {lead}"))
             || last.contains(&format!(". {lead}"))
+            || ACTION_CONNECTIVES
+                .iter()
+                .any(|conn| last.contains(&format!("{conn}{lead}")))
     })
 }
 
@@ -255,6 +298,20 @@ pub enum ContinueMode {
     /// including a bare permission question — drives the next step. This is
     /// jfc's original behavior.
     Autonomous,
+}
+
+impl ContinueMode {
+    /// Whether `text` is a stall this mode drives through — the one place that
+    /// maps a mode to its signal leaf. `Interactive` takes only the strong
+    /// announced-but-untaken-action signal; `Autonomous` takes any stall,
+    /// including a bare permission question.
+    #[must_use]
+    pub fn text_stalls(self, text: &str) -> bool {
+        match self {
+            Self::Interactive => assistant_announces_action(text),
+            Self::Autonomous => assistant_text_stalls(text),
+        }
+    }
 }
 
 /// Why the agent is being pushed into another turn.
@@ -335,8 +392,9 @@ pub fn decide(turn: &TurnEnd<'_>) -> Option<ContinueReason> {
     // filtering) is not a stall to drive through — resuming re-runs the failure.
     // The model correctly waiting on background work it already started is not a
     // stall either — continuing would interrupt the wait.
-    if let Some(text) = turn.last_assistant_text
-        && (looks_like_provider_error(text) || assistant_is_waiting(text))
+    if turn
+        .last_assistant_text
+        .is_some_and(|text| looks_like_provider_error(text) || assistant_is_waiting(text))
     {
         return None;
     }
@@ -346,10 +404,9 @@ pub fn decide(turn: &TurnEnd<'_>) -> Option<ContinueReason> {
     // strong signal (an announced-but-untaken action); a bare permission
     // question is left for the user. Autonomous drives through any stall,
     // including a bare question (jfc's original behavior).
-    let stalled = turn.last_assistant_text.is_some_and(|t| match turn.mode {
-        ContinueMode::Interactive => assistant_announces_action(t),
-        ContinueMode::Autonomous => assistant_text_stalls(t),
-    });
+    let stalled = turn
+        .last_assistant_text
+        .is_some_and(|t| turn.mode.text_stalls(t));
     if !tasks_remain && !stalled && !output_truncated {
         return None;
     }
@@ -412,6 +469,48 @@ mod tests {
         assert!(assistant_text_stalls(
             "I found three candidates. Which one should we tackle first?"
         ));
+    }
+
+    // 2026-11-13 corpus: an announced action reached through a connective
+    // ("...so first I'll reread") is a strong signal — both modes drive it.
+    #[test]
+    fn detects_conjunction_action_lead() {
+        let s = "I'll start a headless camoufox browser. The helper I used earlier                  didn't survive the kernel restart, so first I'll reread how the                  camoufox controller takes commands";
+        assert!(assistant_announces_action(s));
+        assert!(assistant_text_stalls(s));
+    }
+
+    // 2026-11-13 corpus: the turn dumped a results table and stopped (autonomous
+    // leaf). A closing sentence after the table is a completion, not a stall.
+    #[test]
+    fn detects_data_block_end() {
+        let table = "Quick reference:
+                     | Tool | Query | Results |
+                     |------|-------|---------|
+                     | Shodan | port:11434 | 206316 |
+                     | rustscan | -a ips.txt | Port scan |";
+        assert!(assistant_text_stalls(table));
+        let summarized = format!(
+            "{table}
+
+That is the full scan surface; nothing else is open."
+        );
+        assert!(!assistant_text_stalls(&summarized));
+    }
+
+    // 2026-11-13 corpus: remaining work enumerated without claiming it.
+    #[test]
+    fn detects_remaining_work_enumeration() {
+        let s = "I ran the script and reported what it prints. After that, the                  TrollStore app still needs its persistence helper, and whether                  Dopamine works on this A8X is still unverified.";
+        assert!(assistant_text_stalls(s));
+    }
+
+    // A legitimate ETA wait ("still before the nightly") is not remaining-work
+    // enumeration and must not be driven through.
+    #[test]
+    fn eta_wait_is_not_a_remaining_work_stall() {
+        let s = "The fetch finishes around 04:45Z (11:45 PM your time). That is                  still before the 07:00Z nightly, so the backfill has room.";
+        assert!(!assistant_text_stalls(s));
     }
 
     #[test]
