@@ -7,10 +7,10 @@ use super::{Digest, Path, PathBuf, RUNTIME_CONSTRAINTS_FILE, RUNTIME_REQUIREMENT
 /// Directory of the installed `prime-agent-runtime` sources. The Rust binary ships the same sidecar
 /// layout the compiled TS executable uses.
 pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
-    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR") {
-        if !env_dir.is_empty() {
-            return expand_home(&env_dir);
-        }
+    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR")
+        && !env_dir.is_empty()
+    {
+        return expand_home(&env_dir);
     }
     std::env::current_exe()
         .ok()
@@ -80,10 +80,10 @@ pub(in crate::kernel::bootstrap) const RUNTIME_SOURCE_ENV: &str = "PRIME_AGENT_R
 /// never a candidate: it may have moved on from the tree this binary was
 /// built from, and a runtime the host cannot serve breaks the kernel.
 pub(in crate::kernel::bootstrap) fn runtime_candidate_dirs() -> Vec<PathBuf> {
-    if let Ok(explicit) = std::env::var(RUNTIME_SOURCE_ENV) {
-        if !explicit.is_empty() {
-            return vec![expand_home(&explicit)];
-        }
+    if let Ok(explicit) = std::env::var(RUNTIME_SOURCE_ENV)
+        && !explicit.is_empty()
+    {
+        return vec![expand_home(&explicit)];
     }
     if let Some(packaged) = packaged_runtime_dir() {
         return vec![packaged];

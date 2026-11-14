@@ -711,10 +711,10 @@ fn bash_output_to_text(
     }
     if cancelled {
         text.push_str("\n\n(command cancelled)");
-    } else if let Some(code) = exit_code {
-        if code != 0 {
-            let _ = write!(text, "\n\nCommand exited with code {code}");
-        }
+    } else if let Some(code) = exit_code
+        && code != 0
+    {
+        let _ = write!(text, "\n\nCommand exited with code {code}");
     }
     if truncated {
         match full_output_path {

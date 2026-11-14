@@ -138,8 +138,8 @@ pub(super) fn clear_trace_credentials() -> TraceEnvCredentials {
         ),
         ("PRIME_API_KEY", std::env::var_os("PRIME_API_KEY")),
     ];
-    std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
-    std::env::remove_var("PRIME_API_KEY");
+    pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+    pa_types::env::remove_var("PRIME_API_KEY");
     TraceEnvCredentials { saved }
 }
 
@@ -147,8 +147,8 @@ impl Drop for TraceEnvCredentials {
     fn drop(&mut self) {
         for (name, value) in &self.saved {
             match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => pa_types::env::set_var(name, value),
+                None => pa_types::env::remove_var(name),
             }
         }
     }
@@ -181,7 +181,7 @@ async fn the_upload_sends_the_ts_request_and_records_the_cursor() {
     let _credentials = clear_trace_credentials();
     let fixture = Fixture::new();
     let session = fixture.write_session("s.jsonl", "sid-1");
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let http = ScriptedTraceHttp::new(vec![Ok(response(
         200,
         r#"{"session_id":"sid-1","trace_id":"tid","bytes_stored":42,"key":"k"}"#,
@@ -259,7 +259,7 @@ async fn a_missing_credential_short_circuits_the_request() {
 async fn an_oversize_session_reports_the_limit() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     let session = fixture.session_dir.join("big.jsonl");
     let mut file = std::fs::File::create(&session).expect("big file");
@@ -292,7 +292,7 @@ async fn an_oversize_session_reports_the_limit() {
 async fn an_error_response_carries_the_status_and_message() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     let session = fixture.write_session("s.jsonl", "sid");
     let http = ScriptedTraceHttp::new(vec![Ok(response(404, r#"{"error":{"message":"nope"}}"#))]);
@@ -313,7 +313,7 @@ async fn an_error_response_carries_the_status_and_message() {
 async fn the_retriable_statuses_back_off_and_503_honors_retry_after() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     let session = fixture.write_session("s.jsonl", "sid");
     let http = ScriptedTraceHttp::new(vec![
@@ -347,7 +347,7 @@ async fn the_retriable_statuses_back_off_and_503_honors_retry_after() {
 async fn the_outbox_cursor_makes_an_enabled_upload_unchanged() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     let session = fixture.write_session("s.jsonl", "sid");
     // The sharing flag gates the run before the cursor: an enabled
@@ -518,7 +518,7 @@ fn format_http_date(ms: u64) -> String {
 async fn the_upload_all_sweeps_with_the_gate_and_tallies() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     fixture.write_session("a.jsonl", "sid-a");
     let http = ScriptedTraceHttp::new(vec![Ok(response(
@@ -566,7 +566,7 @@ async fn the_upload_all_sweeps_with_the_gate_and_tallies() {
 async fn the_rate_gate_reports_the_wait_and_serializes() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     let http = ScriptedTraceHttp::new(vec![]);
     let gate = TraceRequestGate::new();
@@ -604,7 +604,7 @@ async fn the_rate_gate_reports_the_wait_and_serializes() {
 async fn the_cancel_stops_the_sweep_between_files() {
     let _env = env_lock();
     let _credentials = clear_trace_credentials();
-    std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
+    pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "trace-key");
     let fixture = Fixture::new();
     fixture.write_session("a.jsonl", "sid-a");
     fixture.write_session("b.jsonl", "sid-b");

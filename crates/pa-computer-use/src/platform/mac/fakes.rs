@@ -298,11 +298,11 @@ impl Desktop for FakeDesktop {
     fn running_applications(&self) -> Vec<WorkspaceApp> {
         let mut state = self.state();
         state.running_reads += 1;
-        if let Some((app, after)) = state.launched.clone() {
-            if state.running_reads > after {
-                state.running.push(app);
-                state.launched = None;
-            }
+        if let Some((app, after)) = state.launched.clone()
+            && state.running_reads > after
+        {
+            state.running.push(app);
+            state.launched = None;
         }
         state.running.clone()
     }

@@ -236,44 +236,44 @@ async fn ensure_kernel_python_uncached(
     python_skills: &[BootstrapPythonSkill],
     project: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
-    if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON") {
-        if !override_python.is_empty() {
-            let python = expand_home(&override_python);
-            let python_str = python.to_string_lossy().to_string();
-            let mut missing = Vec::new();
-            if !has_prime_agent_runtime(&python_str) {
-                missing.push(
+    if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON")
+        && !override_python.is_empty()
+    {
+        let python = expand_home(&override_python);
+        let python_str = python.to_string_lossy().to_string();
+        let mut missing = Vec::new();
+        if !has_prime_agent_runtime(&python_str) {
+            missing.push(
                     "a current prime-agent-runtime with callable rlm.spawn, rlm.create_session, rlm.host_request, rlm.progress_note, rlm.rename, rlm._set_completion_notices_wired, and explicit harness CRUD methods".to_string(),
                 );
+        }
+        if missing.is_empty() {
+            let missing_extras = missing_rlm_extra_import_labels(&python_str);
+            if !missing_extras.is_empty() {
+                missing.push(format!(
+                    "default Python packages ({})",
+                    missing_extras.join(", ")
+                ));
             }
-            if missing.is_empty() {
-                let missing_extras = missing_rlm_extra_import_labels(&python_str);
-                if !missing_extras.is_empty() {
-                    missing.push(format!(
-                        "default Python packages ({})",
-                        missing_extras.join(", ")
-                    ));
-                }
-            }
-            if missing.is_empty() && !options.python_skills.is_empty() {
-                let missing_skills =
-                    missing_python_skill_import_labels(&python_str, &options.python_skills);
-                if !missing_skills.is_empty() {
-                    options.report(&format!(
+        }
+        if missing.is_empty() && !options.python_skills.is_empty() {
+            let missing_skills =
+                missing_python_skill_import_labels(&python_str, &options.python_skills);
+            if !missing_skills.is_empty() {
+                options.report(&format!(
                         "Warning: Python skills unavailable in PRIME_AGENT_KERNEL_PYTHON and will be disabled: {}",
                         missing_skills.join(", ")
                     ));
-                }
             }
-            if missing.is_empty() {
-                return Ok(python);
-            }
-            return Err(anyhow!(
-                "PRIME_AGENT_KERNEL_PYTHON points to a Python missing {}: {}",
-                missing.join(" and "),
-                python.display()
-            ));
         }
+        if missing.is_empty() {
+            return Ok(python);
+        }
+        return Err(anyhow!(
+            "PRIME_AGENT_KERNEL_PYTHON points to a Python missing {}: {}",
+            missing.join(" and "),
+            python.display()
+        ));
     }
 
     let location = resolve_kernel_venv_location()?;

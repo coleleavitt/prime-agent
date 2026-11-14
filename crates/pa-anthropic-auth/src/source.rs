@@ -417,11 +417,10 @@ impl SharedStoreSource {
     pub(crate) fn queue_write(&self, write: StoreWrite) {
         match self.jobs.get() {
             Some(sender) => {
-                if let Err(unsent) = sender.send(Job::Write(write)) {
-                    if let Job::Write(write) = unsent.0 {
+                if let Err(unsent) = sender.send(Job::Write(write))
+                    && let Job::Write(write) = unsent.0 {
                         write.apply(&self.config.store_path);
                     }
-                }
             }
             None => write.apply(&self.config.store_path),
         }
@@ -523,16 +522,14 @@ impl SharedStoreSource {
                 &options,
             ))
         });
-        if let Ok(Err(error)) = &resolved {
-            if matches!(
+        if let Ok(Err(error)) = &resolved
+            && matches!(
                 error.kind,
                 AccessErrorKind::Transient | AccessErrorKind::QuotaReserve
-            ) {
-                if let Some(grant) = self.cooling_down_token() {
+            )
+                && let Some(grant) = self.cooling_down_token() {
                     return Ok(Ok(grant));
                 }
-            }
-        }
         resolved
     }
 
@@ -823,11 +820,10 @@ impl ProviderCredentialSource for SharedStoreSource {
         let metadata = std::fs::symlink_metadata(&self.config.store_path).ok()?;
         let stamp = (metadata.len(), metadata.modified().ok()?);
         let mut memo = self.status_memo.lock_or_recover();
-        if let Some((memo_stamp, status)) = memo.as_ref() {
-            if *memo_stamp == stamp {
+        if let Some((memo_stamp, status)) = memo.as_ref()
+            && *memo_stamp == stamp {
                 return status.clone();
             }
-        }
         let status = self.read_status();
         *memo = Some((stamp, status.clone()));
         status

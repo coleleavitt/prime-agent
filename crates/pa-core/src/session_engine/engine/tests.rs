@@ -472,12 +472,11 @@ async fn the_length_continuations_setting_auto_continues_a_truncated_reply() {
         };
         let provider = Arc::new(ScriptedProvider::new(model.clone()));
         let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
-        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-            if let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event
-            {
-                *reason = pa_agent::types::StopReason::Length;
-                message.stop_reason = pa_agent::types::StopReason::Length;
-            }
+        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+            && let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event
+        {
+            *reason = pa_agent::types::StopReason::Length;
+            message.stop_reason = pa_agent::types::StopReason::Length;
         }
         provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
         provider.push_text_turn("the second half");
@@ -813,11 +812,11 @@ async fn a_length_auto_continue_counts_on_session_end() {
     };
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     let mut steps = pa_agent::scripted::text_turn_steps(&model, "the first half");
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event {
-            *reason = pa_agent::types::StopReason::Length;
-            message.stop_reason = pa_agent::types::StopReason::Length;
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let pa_agent::stream::AssistantMessageEvent::Done { reason, message } = &mut **event
+    {
+        *reason = pa_agent::types::StopReason::Length;
+        message.stop_reason = pa_agent::types::StopReason::Length;
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
     provider.push_text_turn("the second half");

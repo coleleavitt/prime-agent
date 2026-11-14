@@ -384,10 +384,10 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
         if let Some(saved) = saved {
             // Saved fields only fill gaps; live data stays authoritative.
             let enrich = |merged: &mut Value, field: &str, saved: &Value| {
-                if merged.get(field).is_none_or(Value::is_null) {
-                    if let Some(value) = saved.get(field).filter(|v| !v.is_null()) {
-                        merged[field] = value.clone();
-                    }
+                if merged.get(field).is_none_or(Value::is_null)
+                    && let Some(value) = saved.get(field).filter(|v| !v.is_null())
+                {
+                    merged[field] = value.clone();
                 }
             };
             enrich(
@@ -406,10 +406,10 @@ pub fn summary_for_record(record: &UnifiedRecord) -> Value {
                 "lastActivityAt",
                 &serde_json::json!({ "lastActivityAt": saved.get("modified") }),
             );
-            if merged.get("model").is_none_or(Value::is_null) {
-                if let Some(model) = saved.get("model") {
-                    merged["model"] = json_model(model);
-                }
+            if merged.get("model").is_none_or(Value::is_null)
+                && let Some(model) = saved.get("model")
+            {
+                merged["model"] = json_model(model);
             }
             // The saved catalog row carries the persisted thinking level: it fills the same gap
             // the model does, so a row that lost its level keeps rendering "model:level".

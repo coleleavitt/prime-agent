@@ -353,11 +353,10 @@ pub(crate) fn find_all_tracked_workers(agent_dir: &Path) -> Vec<TrackedWorker> {
             continue;
         };
         for file in files.flatten() {
-            if file.file_name().to_string_lossy().ends_with(".json") {
-                if let Some(worker) = read_tracked_worker(&file.path()) {
+            if file.file_name().to_string_lossy().ends_with(".json")
+                && let Some(worker) = read_tracked_worker(&file.path()) {
                     workers.push(worker);
                 }
-            }
         }
     }
     workers
@@ -467,8 +466,8 @@ pub(crate) fn probe_daemon(socket_path: &Path) -> ProbeResult {
         include_remote_mesh: None,
         rest: serde_json::Map::default(),
     };
-    if let Ok(response) = client.request_with_timeout(list, timeout_ms) {
-        if response.success {
+    if let Ok(response) = client.request_with_timeout(list, timeout_ms)
+        && response.success {
             probe.session_count = response
                 .data
                 .as_ref()
@@ -476,7 +475,6 @@ pub(crate) fn probe_daemon(socket_path: &Path) -> ProbeResult {
                 .and_then(serde_json::Value::as_array)
                 .map(|sessions| sessions.len() as u64);
         }
-    }
     probe
 }
 
@@ -511,11 +509,10 @@ pub(crate) fn verify_hello_supervisor_pid(
         // EPERM-equivalent: the process exists but is not ours to signal.
         Ok(false) | Err(_) => return None,
     }
-    if let Some(expected) = expected_process_start_id {
-        if pa_types::platform::process::process_start_id(pid).as_deref() != Some(expected) {
+    if let Some(expected) = expected_process_start_id
+        && pa_types::platform::process::process_start_id(pid).as_deref() != Some(expected) {
             return None;
         }
-    }
     Some(pid)
 }
 

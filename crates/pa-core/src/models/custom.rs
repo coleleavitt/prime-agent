@@ -226,21 +226,21 @@ pub fn validate_config(
             if model.id.is_empty() {
                 return Err(format!("Provider {provider_name}: model missing \"id\""));
             }
-            if let Some(window) = model.context_window {
-                if window == 0 {
-                    return Err(format!(
-                        "Provider {provider_name}, model {}: invalid contextWindow",
-                        model.id
-                    ));
-                }
+            if let Some(window) = model.context_window
+                && window == 0
+            {
+                return Err(format!(
+                    "Provider {provider_name}, model {}: invalid contextWindow",
+                    model.id
+                ));
             }
-            if let Some(max_tokens) = model.max_tokens {
-                if max_tokens == 0 {
-                    return Err(format!(
-                        "Provider {provider_name}, model {}: invalid maxTokens",
-                        model.id
-                    ));
-                }
+            if let Some(max_tokens) = model.max_tokens
+                && max_tokens == 0
+            {
+                return Err(format!(
+                    "Provider {provider_name}, model {}: invalid maxTokens",
+                    model.id
+                ));
             }
         }
     }
@@ -285,18 +285,18 @@ pub fn merge_compat(base: Option<&ModelCompat>, over: Option<ModelCompat>) -> Op
     let mut merged = base.map(|compat| compat.raw.clone()).unwrap_or_default();
     for (key, value) in over.raw {
         // Routing sub-objects merge instead of replacing.
-        if matches!(key.as_str(), "openRouterRouting" | "vercelGatewayRouting") {
-            if let (Some(existing), Some(incoming)) = (
+        if matches!(key.as_str(), "openRouterRouting" | "vercelGatewayRouting")
+            && let (Some(existing), Some(incoming)) = (
                 merged.get(&key).and_then(|v| v.as_object()).cloned(),
                 value.as_object(),
-            ) {
-                let mut combined = existing;
-                for (sub_key, sub_value) in incoming {
-                    combined.insert(sub_key.clone(), sub_value.clone());
-                }
-                merged.insert(key.clone(), serde_json::Value::Object(combined));
-                continue;
+            )
+        {
+            let mut combined = existing;
+            for (sub_key, sub_value) in incoming {
+                combined.insert(sub_key.clone(), sub_value.clone());
             }
+            merged.insert(key.clone(), serde_json::Value::Object(combined));
+            continue;
         }
         merged.insert(key.clone(), value.clone());
     }

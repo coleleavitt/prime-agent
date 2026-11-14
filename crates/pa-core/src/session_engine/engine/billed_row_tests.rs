@@ -95,13 +95,13 @@ async fn a_billed_row_counts_into_the_run_cost() {
     let model = scripted_model();
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     let mut steps = pa_agent::scripted::text_turn_steps(&model, "done");
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
-            message.usage.input = 100;
-            message.usage.output = 10;
-            message.usage.total_tokens = 110;
-            message.usage.cost.total = 0.5;
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event
+    {
+        message.usage.input = 100;
+        message.usage.output = 10;
+        message.usage.total_tokens = 110;
+        message.usage.cost.total = 0.5;
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
     let mock = Arc::new(pa_telemetry::MockSink::new());

@@ -241,14 +241,14 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         ));
     }
 
-    if let Some(extra) = options.append_system_prompt.as_deref() {
-        if !extra.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "appended-prompt",
-                "--append-system-prompt",
-                extra.to_string(),
-            ));
-        }
+    if let Some(extra) = options.append_system_prompt.as_deref()
+        && !extra.is_empty()
+    {
+        segments.push(PromptSegment::dynamic_segment(
+            "appended-prompt",
+            "--append-system-prompt",
+            extra.to_string(),
+        ));
     }
 
     let assembled = segments

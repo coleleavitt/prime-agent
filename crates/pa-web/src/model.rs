@@ -85,11 +85,10 @@ pub fn resolve_selector(
     allowed_models: Option<&[String]>,
 ) -> Result<ResolvedModel, String> {
     let wanted = selector.trim().to_lowercase();
-    if let Some(allowlist) = allowed_models {
-        if !pa_core::models::model_allowed(&wanted, allowlist) {
+    if let Some(allowlist) = allowed_models
+        && !pa_core::models::model_allowed(&wanted, allowlist) {
             return Err(format!("model {selector} is outside the allowedModels pin"));
         }
-    }
     let mut registry = registry(agent_dir, cwd);
     let model = registry
         .get_all()
@@ -141,11 +140,10 @@ pub fn resolve_search_model(
         .find(|model| model.provider == session_provider && model.id == session_id)
         .filter(|model| first_party(model) && allowed(model))
         .cloned();
-    if let Some(model) = session {
-        if let Ok(resolved) = with_auth(&mut registry, &model) {
+    if let Some(model) = session
+        && let Ok(resolved) = with_auth(&mut registry, &model) {
             return Ok(Some(resolved));
         }
-    }
     let candidates: Vec<Model> = registry
         .get_available()
         .into_iter()

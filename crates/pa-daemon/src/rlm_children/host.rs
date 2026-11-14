@@ -112,16 +112,13 @@ fn create_session_launch_env(model: &str) -> std::collections::BTreeMap<String, 
         .map_or(model, |(provider, _)| provider);
     if let Some(env_key) =
         pa_ai::env_api_keys::find_env_keys(provider).and_then(|keys| keys.first().cloned())
-    {
-        if let Ok(value) = std::env::var(&env_key) {
+        && let Ok(value) = std::env::var(&env_key) {
             env.insert(env_key, value);
         }
-    }
-    if provider == "prime-inference" {
-        if let Ok(team) = std::env::var("PRIME_TEAM_ID") {
+    if provider == "prime-inference"
+        && let Ok(team) = std::env::var("PRIME_TEAM_ID") {
             env.insert("PRIME_TEAM_ID".to_string(), team);
         }
-    }
     env
 }
 
@@ -379,8 +376,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // command queues ahead of the task prompt (durable in the
                 // child's file, and its kernel guard arms first). A child
                 // that cannot enter plan mode never runs the task.
-                if plan_mode {
-                    if let Err(error) = watcher_this
+                if plan_mode
+                    && let Err(error) = watcher_this
                         .prompt_child(&child_active_session_id, "/plan on", &[], None)
                         .await
                     {
@@ -395,7 +392,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                             .await;
                         return;
                     }
-                }
                 if let Err(error) = watcher_this
                     .prompt_child(
                         &child_active_session_id,
@@ -993,13 +989,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
             } else {
                 None
             };
-            if let Some(record) = &record {
-                if record.lock().await.closed_by_parent {
+            if let Some(record) = &record
+                && record.lock().await.closed_by_parent {
                     bail!(
                         "rlm.rename can only rename the current session or one of its direct children"
                     );
                 }
-            }
             // The rename itself is daemon-owned: the supervisor's live
             // rename route reserves the name, asserts sibling uniqueness
             // across the family, and appends the child's RLM ledger

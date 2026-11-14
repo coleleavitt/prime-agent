@@ -435,10 +435,10 @@ fn resolve_server_config(
             return Ok(json!({}));
         }
         let mut config = serde_json::to_value(&integration.config).map_err(anyhow::Error::new)?;
-        if integration.static_token_eligible {
-            if let Value::Object(map) = &mut config {
-                map.insert("credentialSource".to_string(), json!("static-token"));
-            }
+        if integration.static_token_eligible
+            && let Value::Object(map) = &mut config
+        {
+            map.insert("credentialSource".to_string(), json!("static-token"));
         }
         if let Some(report) = usage {
             report("config", server);
@@ -894,8 +894,8 @@ impl McpManager {
                             ));
                         }
                     };
-                    if let Some(status) = status.as_deref() {
-                        if !matches!(
+                    if let Some(status) = status.as_deref()
+                        && !matches!(
                             status,
                             "connected"
                                 | "pending"
@@ -903,11 +903,11 @@ impl McpManager {
                                 | "setup_required"
                                 | "disabled"
                                 | "error"
-                        ) {
-                            return Err(anyhow::anyhow!(
-                                "mcp.list_plugins received an unknown connectionStatus: {status}"
-                            ));
-                        }
+                        )
+                    {
+                        return Err(anyhow::anyhow!(
+                            "mcp.list_plugins received an unknown connectionStatus: {status}"
+                        ));
                     }
                     let limit = bounded_limit(payload.data.get("limit"), 50, 200)?;
                     let cursor = match payload.data.get("cursor") {

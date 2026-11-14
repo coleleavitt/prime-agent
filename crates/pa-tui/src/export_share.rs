@@ -217,16 +217,16 @@ mod tests {
     #[test]
     fn share_viewer_urls() {
         // SAFETY: single-threaded test setup for a std::env var.
-        std::env::remove_var("PI_SHARE_VIEWER_URL");
+        pa_types::env::remove_var("PI_SHARE_VIEWER_URL");
         assert_eq!(share_viewer_url("abc123"), "https://pi.dev/session/#abc123");
-        std::env::set_var("PI_SHARE_VIEWER_URL", "https://example.test/view/");
+        pa_types::env::set_var("PI_SHARE_VIEWER_URL", "https://example.test/view/");
         assert_eq!(
             share_viewer_url("abc123"),
             "https://example.test/view/#abc123"
         );
-        std::env::set_var("PI_SHARE_VIEWER_URL", "");
+        pa_types::env::set_var("PI_SHARE_VIEWER_URL", "");
         assert_eq!(share_viewer_url("abc123"), "https://pi.dev/session/#abc123");
-        std::env::remove_var("PI_SHARE_VIEWER_URL");
+        pa_types::env::remove_var("PI_SHARE_VIEWER_URL");
     }
 
     /// The full gh spawn path against a stub `gh` (the e2e harness uses the
@@ -260,20 +260,20 @@ esac
         std::fs::write(&upload, "<html></html>").expect("write upload");
 
         let previous = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{}", dir.path().display(), previous));
+        pa_types::env::set_var("PATH", format!("{}:{}", dir.path().display(), previous));
         assert_eq!(probe_gh_auth(), GhAuthStatus::Ok);
         let child = spawn_gist_create(&upload).expect("spawn gh");
         let outcome = gist_outcome(child).await.expect("gist outcome");
-        std::env::set_var("PATH", previous.clone());
+        pa_types::env::set_var("PATH", previous.clone());
         assert_eq!(outcome.gist_url, "https://gist.github.com/testuser/abc123");
         assert_eq!(outcome.preview_url, "https://pi.dev/session/#abc123");
 
-        std::env::set_var("PATH", format!("{}:{}", dir.path().display(), previous));
+        pa_types::env::set_var("PATH", format!("{}:{}", dir.path().display(), previous));
         let child = spawn_gist_create(&dir.path().join("nope.html")).expect("spawn gh");
         let error = gist_outcome(child)
             .await
             .expect_err("missing upload must fail");
-        std::env::set_var("PATH", previous.clone());
+        pa_types::env::set_var("PATH", previous.clone());
         assert_eq!(error, "gist: upload file missing");
     }
 }

@@ -322,11 +322,10 @@ impl Client {
                 Ok(0) => return,
                 Ok(_) if line.trim().is_empty() => line.clear(),
                 Ok(_) => {
-                    if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
-                        if event.get("type").and_then(Value::as_str) == Some("session_event") {
+                    if let Ok(event) = serde_json::from_str::<Value>(line.trim())
+                        && event.get("type").and_then(Value::as_str) == Some("session_event") {
                             self.events.push(event["event"].clone());
                         }
-                    }
                     line.clear();
                 }
                 Err(_) => {}
@@ -653,11 +652,10 @@ fn worker_pid(agent_dir: &Path) -> u32 {
                 let Ok(descriptor) = serde_json::from_str::<Value>(&content) else {
                     continue;
                 };
-                if let Some(pid) = descriptor.get("pid").and_then(Value::as_u64) {
-                    if pid > 0 {
+                if let Some(pid) = descriptor.get("pid").and_then(Value::as_u64)
+                    && pid > 0 {
                         return pid as u32;
                     }
-                }
             }
         }
         std::thread::sleep(Duration::from_millis(50));

@@ -65,10 +65,10 @@ fn python_path_vars(lines: &[String]) -> std::collections::HashMap<String, Strin
         if let Some(c) = m {
             let name = c.get(1).map(|g| g.as_str().to_string());
             let value = c.get(3).map(|g| g.as_str().to_string());
-            if let (Some(name), Some(value)) = (name, value) {
-                if value.contains('/') {
-                    vars.insert(name, value);
-                }
+            if let (Some(name), Some(value)) = (name, value)
+                && value.contains('/')
+            {
+                vars.insert(name, value);
             }
         }
     }
@@ -148,12 +148,11 @@ fn python_preview_line(
         r"^{S}*(?:if|elif|else|for|while|with|try|except|finally)\b.*:\s*$"
     ))
     .is_match(line)
+        && let Some(child_index) = first_python_child_line(lines, index)
     {
-        if let Some(child_index) = first_python_child_line(lines, index) {
-            let head = re_once!(r":\s*$").replace(js_trim(line), ":");
-            let child = lines.get(child_index).cloned().unwrap_or_default();
-            return format!("{head} {}", simplify_python_preview_line(&child, paths));
-        }
+        let head = re_once!(r":\s*$").replace(js_trim(line), ":");
+        let child = lines.get(child_index).cloned().unwrap_or_default();
+        return format!("{head} {}", simplify_python_preview_line(&child, paths));
     }
     simplify_python_preview_line(line, paths)
 }

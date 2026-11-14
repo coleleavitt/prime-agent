@@ -143,10 +143,8 @@ impl<A: AtSpi> Accessibility<A> {
             .get("is_focused")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        if focused_window {
-            if let Some(first) = active.first() {
-                return Some((*first).clone());
-            }
+        if focused_window && let Some(first) = active.first() {
+            return Some((*first).clone());
         }
         if let [only] = &frames[..] {
             return Some(only.clone());

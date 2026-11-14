@@ -99,6 +99,6 @@ const INHERITED_WORKER_ENV: &[&str] = &[
 /// invocation that is not the supervisor-spawned `worker` subcommand.
 pub fn strip_inherited_worker_env() {
     for key in INHERITED_WORKER_ENV {
-        std::env::remove_var(key);
+        pa_types::env::remove_var(key);
     }
 }

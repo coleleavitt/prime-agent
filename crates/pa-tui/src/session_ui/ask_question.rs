@@ -402,11 +402,11 @@ impl SessionUi {
             .retain(|id| questions.iter().any(|(question_id, _)| question_id == id));
         questions.retain(|(id, _)| !self.answered_ask_questions.contains(id));
         self.ask_questions = questions;
-        if let Some(panel) = view.ask_question.as_ref() {
-            if !self.ask_questions.iter().any(|(id, _)| id == &panel.id) {
-                view.ask_question = None;
-                self.dirty = true;
-            }
+        if let Some(panel) = view.ask_question.as_ref()
+            && !self.ask_questions.iter().any(|(id, _)| id == &panel.id)
+        {
+            view.ask_question = None;
+            self.dirty = true;
         }
         self.open_next_ask_question(view);
     }
@@ -563,16 +563,15 @@ impl SessionUi {
     ) {
         questions.retain(|question| !self.answered_ask_questions.contains(&question.id));
         self.choice_questions = questions;
-        if let Some(PendingConfirm::ChoiceQuestion { id, .. }) = &self.pending_confirm {
-            if !self
+        if let Some(PendingConfirm::ChoiceQuestion { id, .. }) = &self.pending_confirm
+            && !self
                 .choice_questions
                 .iter()
                 .any(|question| &question.id == id)
-            {
-                self.pending_confirm = None;
-                view.confirm = None;
-                self.dirty = true;
-            }
+        {
+            self.pending_confirm = None;
+            view.confirm = None;
+            self.dirty = true;
         }
         self.open_next_choice_question(view);
     }

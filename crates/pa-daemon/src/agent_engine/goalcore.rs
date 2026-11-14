@@ -53,14 +53,13 @@ impl AgentSessionEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        if let Some(max_depth) = pending {
-            if let Err(error) = manager.append_custom_entry(
+        if let Some(max_depth) = pending
+            && let Err(error) = manager.append_custom_entry(
                 "rlm_max_depth_state",
                 Some(json!({ "maxDepth": max_depth })),
             ) {
                 eprintln!("pa-daemon: failed to flush pending rlm_max_depth_state: {error:#}");
             }
-        }
     }
 
     /// Persist the create's agent definition as the session's durable

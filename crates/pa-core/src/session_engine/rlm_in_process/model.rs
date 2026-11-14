@@ -74,13 +74,13 @@ pub fn resolve_child_model(
             .ok_or_else(|| anyhow::anyhow!("No model selected. Use /model to pick one."));
     };
     let normalized = reference.to_lowercase();
-    if let Some(parent) = parent_model {
-        if format!("{}/{}", parent.provider, parent.id).to_lowercase() == normalized {
-            return Ok(ResolvedChildModel {
-                selector: format!("{}/{}", parent.provider, parent.id),
-                model: parent.clone(),
-            });
-        }
+    if let Some(parent) = parent_model
+        && format!("{}/{}", parent.provider, parent.id).to_lowercase() == normalized
+    {
+        return Ok(ResolvedChildModel {
+            selector: format!("{}/{}", parent.provider, parent.id),
+            model: parent.clone(),
+        });
     }
     let catalog = catalog(registry);
     let selector_of = |model: &Model| format!("{}/{}", model.provider, model.id);
@@ -146,10 +146,10 @@ pub fn resolve_child_selector(
     };
     let reference = reference.trim();
     let normalized = reference.to_lowercase();
-    if let Some(parent) = parent_model {
-        if parent.to_lowercase() == normalized {
-            return Ok(parent.to_string());
-        }
+    if let Some(parent) = parent_model
+        && parent.to_lowercase() == normalized
+    {
+        return Ok(parent.to_string());
     }
     let candidates = catalog_infos(registry);
     let selector_of = |model: &RlmModelInfo| format!("{}/{}", model.provider, model.id);
@@ -171,10 +171,10 @@ pub fn resolve_child_selector(
     match short_matches.len() {
         1 => return Ok(selector_of(short_matches[0])),
         0 => {
-            if let Some(parent) = parent_model {
-                if parent.to_lowercase().ends_with(&format!("/{normalized}")) {
-                    return Ok(parent.to_string());
-                }
+            if let Some(parent) = parent_model
+                && parent.to_lowercase().ends_with(&format!("/{normalized}"))
+            {
+                return Ok(parent.to_string());
             }
         }
         _ => {}

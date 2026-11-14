@@ -126,11 +126,10 @@ impl OpeningPhase {
                 // A closed reader parks the arm instead of hot-spinning on the instantly-ready
                 // closed channel while the open task still runs.
                 maybe_input = next_ui_input(ui_rx, &mut self.input_closed), if self.serves_input => {
-                    if let Some(input) = maybe_input {
-                        if self.on_input(input, view) {
+                    if let Some(input) = maybe_input
+                        && self.on_input(input, view) {
                             return Ok(OpeningEnd::Exited);
                         }
-                    }
                     self.paint_echo(view, renderer)?;
                 }
                 // The coalesced echo frame's deadline (armed only while a dirty frame waits out

@@ -189,11 +189,11 @@ impl ViewLoop {
         renderer: &Renderer,
         redraw: &mut bool,
     ) -> bool {
-        if self.wait_render_deadline.is_some() {
-            if let Some(index) = self.pending.iter().position(is_daemon_answer) {
-                let input = self.pending.remove(index);
-                self.pending.insert(0, input);
-            }
+        if self.wait_render_deadline.is_some()
+            && let Some(index) = self.pending.iter().position(is_daemon_answer)
+        {
+            let input = self.pending.remove(index);
+            self.pending.insert(0, input);
         }
         while let Some(UiInput::WaitRender { needle, timeout_ms }) = self.pending.first() {
             let frames = renderer.headless_frames();
@@ -585,11 +585,11 @@ impl ViewLoop {
         }
         // The unfolded rest of the store: a scroll near the list's end fetches the next page, a
         // search fetches all of it (its rows stream in as they fold).
-        if self.catalog_request.is_none() {
-            if let Some((cursor, limit)) = mode.next_saved_fetch() {
-                mode.saved_page_requested = false;
-                self.catalog_request = Some(self.spawn_catalog_fetch(Some(cursor), limit));
-            }
+        if self.catalog_request.is_none()
+            && let Some((cursor, limit)) = mode.next_saved_fetch()
+        {
+            mode.saved_page_requested = false;
+            self.catalog_request = Some(self.spawn_catalog_fetch(Some(cursor), limit));
         }
         redraw
     }

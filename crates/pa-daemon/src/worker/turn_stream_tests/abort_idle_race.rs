@@ -93,14 +93,14 @@ async fn abort_and_send_idle_race_rate_harness() {
     // rep-marker line per rep, the frames append behind each marker.
     let event_log = std::env::var("PA_RACE_EVENT_LOG").ok();
     if let Some(path) = &event_log {
-        std::env::set_var("PA_DAEMON_EVENT_LOG", path);
+        pa_types::env::set_var("PA_DAEMON_EVENT_LOG", path);
     }
     let mut lost_aborts = 0usize;
     let mut fixture_leaks = 0usize;
     let mut green_reps = 0usize;
     for rep in 1..=reps {
-        if let Some(path) = &event_log {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
+        if let Some(path) = &event_log
+            && let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)
@@ -108,7 +108,6 @@ async fn abort_and_send_idle_race_rate_harness() {
                 use std::io::Write;
                 let _ = writeln!(file, "=== RATE_HARNESS rep {rep} ===");
             }
-        }
         let dir = crate::test_support::TestDir::new(&format!("pa-worker-abort-race-{rep}-"));
         let config = WorkerConfig {
             socket_path: dir.join("worker.sock"),

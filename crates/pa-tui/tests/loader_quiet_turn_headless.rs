@@ -237,7 +237,7 @@ const QUIET_TURN_MS: u64 = 3500;
 fn a_quiet_turn_keeps_the_loader_animating() {
     // The ambient TMUX variable adds a startup notice to the
     // transcript; scrub it so the run is the same inside tmux and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);

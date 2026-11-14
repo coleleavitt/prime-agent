@@ -682,12 +682,12 @@ impl AgentsViewMode {
     /// The in-flight draft goes back only when the composer is still armed on the
     /// same target with an empty editor (the user did not re-arm or start typing).
     fn restore_reply_draft(&mut self, key: &str) {
-        if let Composer::Reply(reply) = &mut self.composer {
-            if reply.target.key == key && reply.editor.get_text().is_empty() {
-                if let Some(draft) = reply.in_flight.take() {
-                    reply.editor.set_text(&draft);
-                }
-            }
+        if let Composer::Reply(reply) = &mut self.composer
+            && reply.target.key == key
+            && reply.editor.get_text().is_empty()
+            && let Some(draft) = reply.in_flight.take()
+        {
+            reply.editor.set_text(&draft);
         }
     }
 

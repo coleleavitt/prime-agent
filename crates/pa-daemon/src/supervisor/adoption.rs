@@ -370,14 +370,13 @@ impl Supervisor {
                 // A restore pass that owns this session's roster row can settle it now (spec
                 // §10.4): the waiters attach to the live worker instead of queueing behind the
                 // recovery — unless the row still needs its §10.5 continuation prompt.
-                if let Some(session_file) = resident.descriptor.lock().await.session_file.clone() {
-                    if let Some(stem) = Path::new(&session_file)
+                if let Some(session_file) = resident.descriptor.lock().await.session_file.clone()
+                    && let Some(stem) = Path::new(&session_file)
                         .file_stem()
                         .map(|stem| stem.to_string_lossy().to_string())
                     {
                         self.restore.settle_adopted(&stem);
                     }
-                }
                 self.log_line(&format!(
                     "adopted session worker {worker_id} (was alive: {alive})"
                 ));

@@ -54,12 +54,11 @@ fn find_parent_index(
 /// parent path.
 fn parent_keys(record: &UnifiedRecord) -> Vec<String> {
     let mut keys = parent_reference_keys(record);
-    if let Some(saved) = &record.saved {
-        if let Some(parent_path) = saved.get("parentSessionPath").and_then(Value::as_str) {
-            if !parent_path.is_empty() {
-                keys.push(crate::agents_view_state::file_identity(parent_path));
-            }
-        }
+    if let Some(saved) = &record.saved
+        && let Some(parent_path) = saved.get("parentSessionPath").and_then(Value::as_str)
+        && !parent_path.is_empty()
+    {
+        keys.push(crate::agents_view_state::file_identity(parent_path));
     }
     keys
 }
@@ -306,15 +305,15 @@ pub fn compute_rollups(records: &[UnifiedRecord]) -> HashMap<String, Rollup> {
 
 /// The record a scope key resolves to (active id first, then session id).
 fn scope_root_index(records: &[UnifiedRecord], scope: &AgentsViewScope) -> Option<usize> {
-    if let Some(active) = &scope.active_session_id {
-        if let Some(position) = records.iter().position(|record| {
+    if let Some(active) = &scope.active_session_id
+        && let Some(position) = records.iter().position(|record| {
             summary_for_record(record)
                 .get("activeSessionId")
                 .and_then(Value::as_str)
                 == Some(active.as_str())
-        }) {
-            return Some(position);
-        }
+        })
+    {
+        return Some(position);
     }
     scope.session_id.as_ref().and_then(|session| {
         records.iter().position(|record| {

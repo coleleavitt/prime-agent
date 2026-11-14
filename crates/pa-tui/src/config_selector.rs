@@ -162,11 +162,10 @@ impl ConfigSelector {
                 checked: row_checked,
                 ..
             } = row
+                && row_key == key
             {
-                if row_key == key {
-                    *row_checked = checked;
-                    return;
-                }
+                *row_checked = checked;
+                return;
             }
         }
     }
@@ -623,10 +622,10 @@ fn run_selector_surface(
                 None => {}
             }
         }
-        if let Some(ms) = options.auto_exit_ms {
-            if start.elapsed() >= Duration::from_millis(ms) {
-                break;
-            }
+        if let Some(ms) = options.auto_exit_ms
+            && start.elapsed() >= Duration::from_millis(ms)
+        {
+            break;
         }
     }
     crate::exit_restore::restore_terminal();

@@ -114,10 +114,10 @@ fn assistant_usage(message: &AgentMessage) -> Option<pa_types::ai::Usage> {
 #[must_use]
 pub fn get_last_assistant_usage(entries: &[FileEntry]) -> Option<pa_types::ai::Usage> {
     for entry in entries.iter().rev() {
-        if let FileEntry::Message { message, .. } = entry {
-            if let Some(usage) = assistant_usage(message) {
-                return Some(usage);
-            }
+        if let FileEntry::Message { message, .. } = entry
+            && let Some(usage) = assistant_usage(message)
+        {
+            return Some(usage);
         }
     }
     None

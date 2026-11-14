@@ -134,16 +134,15 @@ impl SessionUi {
             .retain(|id| questions.iter().any(|question| &question.id == id));
         questions.retain(|question| !self.answered_questions.contains(&question.id));
         self.feature_questions = questions;
-        if let Some(PendingConfirm::FeatureQuestion { id }) = &self.pending_confirm {
-            if !self
+        if let Some(PendingConfirm::FeatureQuestion { id }) = &self.pending_confirm
+            && !self
                 .feature_questions
                 .iter()
                 .any(|question| &question.id == id)
-            {
-                self.pending_confirm = None;
-                view.confirm = None;
-                self.dirty = true;
-            }
+        {
+            self.pending_confirm = None;
+            view.confirm = None;
+            self.dirty = true;
         }
         self.open_next_feature_question(view);
     }

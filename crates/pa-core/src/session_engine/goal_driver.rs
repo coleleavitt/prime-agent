@@ -120,16 +120,16 @@ impl GoalDriver {
     #[must_use]
     pub fn load_persisted(session: &SessionManager) -> Self {
         let mut state = Self::latest_persisted_state(session);
-        if state.status == GoalStatus::Active {
-            if let Some(error) = session.stale_active_goal_failure() {
-                state = GoalState {
-                    active: false,
-                    status: GoalStatus::Error,
-                    last_reason: Some(error.clone()),
-                    last_error: Some(error),
-                    ..state
-                };
-            }
+        if state.status == GoalStatus::Active
+            && let Some(error) = session.stale_active_goal_failure()
+        {
+            state = GoalState {
+                active: false,
+                status: GoalStatus::Error,
+                last_reason: Some(error.clone()),
+                last_error: Some(error),
+                ..state
+            };
         }
         Self::restore_persisted(state)
     }
@@ -657,10 +657,10 @@ impl GoalDriver {
         // SANCTIONED DIVERGENCE (the 402 diagnosis, operator ruling): the
         // mint checks progress. TS mints whenever the goal is Active; here
         // the just-settled turn gates the mint.
-        if let Some(turn) = last_turn {
-            if !self.progress_gate(session, turn)? {
-                return Ok(None);
-            }
+        if let Some(turn) = last_turn
+            && !self.progress_gate(session, turn)?
+        {
+            return Ok(None);
         }
 
         // The cap enforcement is UNCONDITIONAL: a restored goal already

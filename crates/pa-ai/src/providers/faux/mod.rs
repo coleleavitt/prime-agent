@@ -282,7 +282,7 @@ fn estimate_tokens(text: &str) -> u64 {
 #[must_use]
 pub fn random_id(prefix: &str) -> String {
     let mut rng = rand::thread_rng();
-    let random: u32 = rng.gen();
+    let random: u32 = rng.r#gen();
     format!("{prefix}:{}:{random:x}", now_ms())
 }
 
@@ -351,13 +351,13 @@ fn serialize_context(context: &Context) -> String {
     for message in &context.messages {
         parts.push(format!("{}:{}", message.role(), message_to_text(message)));
     }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            parts.push(format!(
-                "tools:{}",
-                serde_json::to_string(&tools).unwrap_or_default()
-            ));
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        parts.push(format!(
+            "tools:{}",
+            serde_json::to_string(&tools).unwrap_or_default()
+        ));
     }
     parts.join("\n\n")
 }
@@ -393,29 +393,29 @@ fn with_usage_estimate(
         )
     });
 
-    if let Some(session_id) = session_id {
-        if !cache_retention_none.unwrap_or(false) {
-            let mut cache = prompt_cache.lock_or_recover();
-            if let Some(previous_prompt) = cache.get(&session_id).cloned() {
-                let cached_chars = common_prefix_length(&previous_prompt, &prompt_text);
-                let cached_prefix: String = previous_prompt.chars().take(cached_chars).collect();
-                cache_read = estimate_tokens(&cached_prefix);
-                let remaining: String = prompt_text.chars().skip(cached_chars).collect();
-                cache_write = estimate_tokens(&remaining);
-                // input, cache_read and cache_write are disjoint parts of the
-                // prompt (as real Anthropic reports them): the cached prefix
-                // (cache_read) plus the freshly-written remainder (cache_write)
-                // already cover the whole prompt, so nothing is left as raw
-                // input. Summing all three must equal the prompt, not double it.
-                input = prompt_tokens
-                    .saturating_sub(cache_read)
-                    .saturating_sub(cache_write);
-            } else {
-                cache_write = prompt_tokens;
-                input = prompt_tokens.saturating_sub(cache_write);
-            }
-            cache.insert(session_id, prompt_text);
+    if let Some(session_id) = session_id
+        && !cache_retention_none.unwrap_or(false)
+    {
+        let mut cache = prompt_cache.lock_or_recover();
+        if let Some(previous_prompt) = cache.get(&session_id).cloned() {
+            let cached_chars = common_prefix_length(&previous_prompt, &prompt_text);
+            let cached_prefix: String = previous_prompt.chars().take(cached_chars).collect();
+            cache_read = estimate_tokens(&cached_prefix);
+            let remaining: String = prompt_text.chars().skip(cached_chars).collect();
+            cache_write = estimate_tokens(&remaining);
+            // input, cache_read and cache_write are disjoint parts of the
+            // prompt (as real Anthropic reports them): the cached prefix
+            // (cache_read) plus the freshly-written remainder (cache_write)
+            // already cover the whole prompt, so nothing is left as raw
+            // input. Summing all three must equal the prompt, not double it.
+            input = prompt_tokens
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write);
+        } else {
+            cache_write = prompt_tokens;
+            input = prompt_tokens.saturating_sub(cache_write);
         }
+        cache.insert(session_id, prompt_text);
     }
 
     message.usage = Usage {
@@ -501,14 +501,14 @@ fn create_aborted_message(partial: &AssistantMessage) -> AssistantMessage {
 }
 
 async fn schedule_chunk(chunk: &str, tokens_per_second: Option<f64>) {
-    if let Some(rate) = tokens_per_second {
-        if rate > 0.0 {
-            // The streaming rate delay is f64 math (tokens / rate -> ms); Duration's unit is u64 ms.
-            #[allow(clippy::cast_precision_loss)]
-            let delay_ms = (estimate_tokens(chunk) as f64 / rate) * 1000.0;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
-        }
+    if let Some(rate) = tokens_per_second
+        && rate > 0.0
+    {
+        // The streaming rate delay is f64 math (tokens / rate -> ms); Duration's unit is u64 ms.
+        #[allow(clippy::cast_precision_loss)]
+        let delay_ms = (estimate_tokens(chunk) as f64 / rate) * 1000.0;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
     }
 }
 
@@ -751,16 +751,16 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
             let tokens_per_second = self.tokens_per_second;
 
             tokio::spawn(async move {
-                if let Some(options) = options.as_ref() {
-                    if let Some(on_response) = &options.on_response {
-                        on_response(
-                            crate::types::ProviderResponse {
-                                status: 200,
-                                headers: BTreeMap::default(),
-                            },
-                            &model,
-                        );
-                    }
+                if let Some(options) = options.as_ref()
+                    && let Some(on_response) = &options.on_response
+                {
+                    on_response(
+                        crate::types::ProviderResponse {
+                            status: 200,
+                            headers: BTreeMap::default(),
+                        },
+                        &model,
+                    );
                 }
                 let Some(step) = step else {
                     let mut message = create_error_message(

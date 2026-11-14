@@ -621,10 +621,10 @@ impl SessionUi {
             view.push_entry(entry);
         }
         for entry in &view.chat {
-            if let ChatEntry::Tool(card) = entry {
-                if card.result.is_none() || card.result_partial {
-                    self.pending_tools.insert(card.id.clone());
-                }
+            if let ChatEntry::Tool(card) = entry
+                && (card.result.is_none() || card.result_partial)
+            {
+                self.pending_tools.insert(card.id.clone());
             }
         }
     }
@@ -749,12 +749,11 @@ impl SessionUi {
                                 Self::flush_pending_bash(view);
                             }
                         }
-                        if self.side_bash.take().is_some() {
-                            if let Some(pane) = view.side_pane.as_mut() {
-                                if let Some(bash) = pane.bash.as_mut() {
-                                    bash.running = false;
-                                }
-                            }
+                        if self.side_bash.take().is_some()
+                            && let Some(pane) = view.side_pane.as_mut()
+                            && let Some(bash) = pane.bash.as_mut()
+                        {
+                            bash.running = false;
                         }
                         self.side_bash_discarded = None;
                     }

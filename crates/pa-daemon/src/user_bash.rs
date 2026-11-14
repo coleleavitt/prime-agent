@@ -919,11 +919,10 @@ impl OutputSpill {
     }
 
     fn finalize(mut self) -> Option<String> {
-        if let Some(file) = self.file.as_mut() {
-            if file.flush().is_err() {
+        if let Some(file) = self.file.as_mut()
+            && file.flush().is_err() {
                 self.failed = true;
             }
-        }
         self.file = None;
         if self.failed { None } else { self.path }
     }

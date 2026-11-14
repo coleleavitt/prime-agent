@@ -371,14 +371,13 @@ impl SessionEngine for ScriptedEngine {
         }
         // The fixture's mid-turn goal announcement (the real engine's
         // `goal_update` path).
-        if let Some(goal) = self.goal.as_ref().filter(|goal| goal.emit_update_on_prompt) {
-            if !emit(EngineEvent::GoalUpdate {
+        if let Some(goal) = self.goal.as_ref().filter(|goal| goal.emit_update_on_prompt)
+            && !emit(EngineEvent::GoalUpdate {
                 goal: goal.state.clone(),
             }) {
                 emit(cancelled());
                 return;
             }
-        }
         let usage = scripted_usage();
         if !emit(EngineEvent::AssistantUpdate {
             message: AssistantSnapshot::Wire(
@@ -445,11 +444,10 @@ impl SessionEngine for ScriptedEngine {
             // A running tool holds the turn for its scripted duration (the
             // real loop waits on the tool): the roster activity feed ships a
             // delta while the tool executes, so the gap must outlast it.
-            if let Some(delay) = call.get("delayMs").and_then(Value::as_u64) {
-                if delay > 0 {
+            if let Some(delay) = call.get("delayMs").and_then(Value::as_u64)
+                && delay > 0 {
                     std::thread::sleep(std::time::Duration::from_millis(delay));
                 }
-            }
             if !emit(EngineEvent::ToolExecutionEnd {
                 tool_call_id: tool_call_id.clone(),
                 result: json!({

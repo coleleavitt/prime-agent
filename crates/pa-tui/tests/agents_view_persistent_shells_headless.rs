@@ -90,8 +90,8 @@ fn serve(listener: &UnixListener) -> Vec<String> {
             "tail_persistent_shell" => {
                 // Deliver the old shell's error only once another shell's
                 // pane has opened and requested its output.
-                if command["shellId"] == "o" {
-                    if let Some(kill_id) = pending_kill_failure.take() {
+                if command["shellId"] == "o"
+                    && let Some(kill_id) = pending_kill_failure.take() {
                         respond_failure(
                             &mut writer,
                             &kill_id,
@@ -99,7 +99,6 @@ fn serve(listener: &UnixListener) -> Vec<String> {
                             "old shell kill failed",
                         );
                     }
-                }
                 json!({ "shellId": command["shellId"], "tail": "watching..." })
             }
             "kill_persistent_shell" => {

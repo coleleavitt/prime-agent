@@ -170,16 +170,16 @@ fn load_template_from_file(file_path: &Path, source_info: SourceInfo) -> Option<
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
-    if description.is_empty() {
-        if let Some(first_line) = body.lines().map(str::trim).find(|line| !line.is_empty()) {
-            // JS slice(0, 60) counts UTF-16 code units; keep chars for parity
-            // on the common ASCII case.
-            let chars: Vec<char> = first_line.chars().collect();
-            if chars.len() > 60 {
-                description = chars[..60].iter().collect::<String>() + "...";
-            } else {
-                description = first_line.to_string();
-            }
+    if description.is_empty()
+        && let Some(first_line) = body.lines().map(str::trim).find(|line| !line.is_empty())
+    {
+        // JS slice(0, 60) counts UTF-16 code units; keep chars for parity
+        // on the common ASCII case.
+        let chars: Vec<char> = first_line.chars().collect();
+        if chars.len() > 60 {
+            description = chars[..60].iter().collect::<String>() + "...";
+        } else {
+            description = first_line.to_string();
         }
     }
     let argument_hint = frontmatter
@@ -317,10 +317,11 @@ pub fn load_prompt_templates(options: &LoadPromptTemplatesOptions) -> Vec<Prompt
         }
         if resolved.is_dir() {
             templates.extend(load_templates_from_dir(&resolved, &get_source_info));
-        } else if resolved.is_file() && resolved.to_string_lossy().ends_with(".md") {
-            if let Some(template) = load_template_from_file(&resolved, get_source_info(&resolved)) {
-                templates.push(template);
-            }
+        } else if resolved.is_file()
+            && resolved.to_string_lossy().ends_with(".md")
+            && let Some(template) = load_template_from_file(&resolved, get_source_info(&resolved))
+        {
+            templates.push(template);
         }
     }
     templates

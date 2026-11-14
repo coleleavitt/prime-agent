@@ -83,14 +83,14 @@ pub struct TraceCredential {
 
 #[must_use]
 pub fn trace_credential(agent_dir: &Path) -> Option<TraceCredential> {
-    if let Ok(value) = std::env::var("PRIME_AGENT_TRACES_API_KEY") {
-        if !value.trim().is_empty() {
-            return Some(TraceCredential {
-                api_key: value,
-                source: TraceCredentialSource::Environment,
-                label: "PRIME_AGENT_TRACES_API_KEY".to_string(),
-            });
-        }
+    if let Ok(value) = std::env::var("PRIME_AGENT_TRACES_API_KEY")
+        && !value.trim().is_empty()
+    {
+        return Some(TraceCredential {
+            api_key: value,
+            source: TraceCredentialSource::Environment,
+            label: "PRIME_AGENT_TRACES_API_KEY".to_string(),
+        });
     }
     let mut auth = crate::auth::AuthStorage::create(agent_dir);
     if let Some(key) = stored_key(&mut auth, PRIME_AGENT_TRACES_PROVIDER_ID) {
@@ -100,14 +100,14 @@ pub fn trace_credential(agent_dir: &Path) -> Option<TraceCredential> {
             label: "Prime Agent Traces credential".to_string(),
         });
     }
-    if let Ok(value) = std::env::var("PRIME_API_KEY") {
-        if !value.trim().is_empty() {
-            return Some(TraceCredential {
-                api_key: value,
-                source: TraceCredentialSource::Environment,
-                label: "PRIME_API_KEY".to_string(),
-            });
-        }
+    if let Ok(value) = std::env::var("PRIME_API_KEY")
+        && !value.trim().is_empty()
+    {
+        return Some(TraceCredential {
+            api_key: value,
+            source: TraceCredentialSource::Environment,
+            label: "PRIME_API_KEY".to_string(),
+        });
     }
     if let Some(key) = stored_key(&mut auth, PRIME_INFERENCE_PROVIDER_ID) {
         return Some(TraceCredential {
@@ -429,18 +429,18 @@ fn active_git_context(
         let Some(entry) = current else {
             break;
         };
-        if entry.kind == "git_state" {
-            if let Some(git) = &entry.git {
-                let repo = git
-                    .get("repoUrl")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let commit = git
-                    .get("commit")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                return (repo, commit);
-            }
+        if entry.kind == "git_state"
+            && let Some(git) = &entry.git
+        {
+            let repo = git
+                .get("repoUrl")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let commit = git
+                .get("commit")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            return (repo, commit);
         }
         current = entry.parent_id.as_deref().and_then(find);
     }

@@ -85,10 +85,10 @@ pub(super) fn git_call(invocation: &Invocation) -> Option<GitCall<'_>> {
             });
         }
         if VALUE_OPTIONS.contains(&text) {
-            if text == "-c" {
-                if let Some(value) = argv.get(index + 1) {
-                    configs.push(value);
-                }
+            if text == "-c"
+                && let Some(value) = argv.get(index + 1)
+            {
+                configs.push(value);
             }
             index += 2;
             continue;
@@ -223,10 +223,10 @@ impl GitCall<'_> {
                 git.push_str(&quote(text));
                 continue;
             };
-            if let Some((key, var)) = config.split_once('=') {
-                if crate::model::wrappers::is_name(var) {
-                    config_env(key, var, &mut git, &mut line);
-                }
+            if let Some((key, var)) = config.split_once('=')
+                && crate::model::wrappers::is_name(var)
+            {
+                config_env(key, var, &mut git, &mut line);
             }
         }
         // Filter and diff drivers have names of their own: blank every one

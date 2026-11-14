@@ -477,11 +477,10 @@ impl SessionUi {
                 // updates leave any current note alone. The note rides the landed-result gate so an
                 // aborted card's late frames cannot clobber the delivered turn's loader.
                 let loader_message = crate::snapshot::working_message_from_update(&partial);
-                if self.apply_tool_result(&tool_call_id, &partial, false, true, view) {
-                    if let (Some(message), Some(working)) = (loader_message, view.working.as_mut())
-                    {
-                        working.message = Some(message);
-                    }
+                if self.apply_tool_result(&tool_call_id, &partial, false, true, view)
+                    && let (Some(message), Some(working)) = (loader_message, view.working.as_mut())
+                {
+                    working.message = Some(message);
                 }
             }
             TurnUpdate::ToolExecutionEnd {
@@ -728,10 +727,9 @@ impl SessionUi {
                     if let Some(draft) =
                         self.queue_selection
                             .refresh_at(&view.queued, lane, index, &text)
+                        && view.editor.get_text() == text
                     {
-                        if view.editor.get_text() == text {
-                            view.editor.set_text(&draft);
-                        }
+                        view.editor.set_text(&draft);
                     }
                 }
                 self.sync_queue_selection(view);

@@ -225,11 +225,10 @@ pub fn run_online_exploration(
                 workers: usize::try_from(workers).unwrap_or(usize::MAX),
             };
             let cells = interpret_policy(&options.policy, &view);
-            if !cells.is_empty() {
-                if let Err(error) = assert_legal_batch(&view, &cells) {
+            if !cells.is_empty()
+                && let Err(error) = assert_legal_batch(&view, &cells) {
                     panic!("illegal rollout batch: {error}");
                 }
-            }
             cells
         };
         if cells.is_empty() {

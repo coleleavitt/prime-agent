@@ -82,11 +82,11 @@ pub fn resolve_auxiliary_model(
     // The daemon's `allowedModels` pin (rust-only guardrail, no TS
     // equivalent) covers every pass model: a selector outside the pin
     // falls back to the session model.
-    if let Some(allowlist) = settings.get_allowed_models() {
-        if !crate::models::model_allowed(&selector, &allowlist) {
-            warn_fallback(&selector, purpose);
-            return fallback();
-        }
+    if let Some(allowlist) = settings.get_allowed_models()
+        && !crate::models::model_allowed(&selector, &allowlist)
+    {
+        warn_fallback(&selector, purpose);
+        return fallback();
     }
     // The TS find runs over the authenticated, non-stale catalog
     // (`_authenticatedRlmModels`); the registry's set is the same filter.
@@ -106,11 +106,12 @@ pub fn resolve_auxiliary_model(
         warn_fallback(&selector, purpose);
         return fallback();
     }
-    if let Some(required) = required_context_tokens {
-        if model.context_window > 0 && model.context_window < required {
-            warn_fallback(&selector, purpose);
-            return fallback();
-        }
+    if let Some(required) = required_context_tokens
+        && model.context_window > 0
+        && model.context_window < required
+    {
+        warn_fallback(&selector, purpose);
+        return fallback();
     }
     ResolvedAuxiliaryModel {
         model,

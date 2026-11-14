@@ -184,10 +184,11 @@ fn extra_allows(
     if extra == request_type {
         return true;
     }
-    if let Some(prefix) = extra.strip_suffix('*') {
-        if prefix.contains('.') && request_type.starts_with(prefix) {
-            return true;
-        }
+    if let Some(prefix) = extra.strip_suffix('*')
+        && prefix.contains('.')
+        && request_type.starts_with(prefix)
+    {
+        return true;
     }
     if capability == WorkerCapability::Mcp {
         let Some(server) = extra.strip_prefix("mcp__") else {

@@ -9,13 +9,13 @@ impl SessionManager {
     #[must_use]
     pub fn active_context(&self) -> super::SessionContext {
         let mut context = super::build_session_context(&self.file_entries, self.get_leaf_id());
-        if let Some(window) = &self.window {
-            if !window.full_history() {
-                let settings = window.settings();
-                context.thinking_level.clone_from(&settings.thinking_level);
-                context.service_tier = settings.service_tier;
-                context.model.clone_from(&settings.model);
-            }
+        if let Some(window) = &self.window
+            && !window.full_history()
+        {
+            let settings = window.settings();
+            context.thinking_level.clone_from(&settings.thinking_level);
+            context.service_tier = settings.service_tier;
+            context.model.clone_from(&settings.model);
         }
         context
     }

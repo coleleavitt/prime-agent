@@ -93,11 +93,10 @@ pub fn find(root: &Path, selector: &str, cwd: &Path) -> ExternalMatch {
         return ExternalMatch::None;
     }
     if looks_like_id(selector) {
-        if selector.len() == 36 {
-            if let Some(found) = find_by_id(root, selector).and_then(|path| summarize(&path)) {
+        if selector.len() == 36
+            && let Some(found) = find_by_id(root, selector).and_then(|path| summarize(&path)) {
                 return ExternalMatch::One(Box::new(row(found)));
             }
-        }
         let prefixed: Vec<SessionSummary> = list_project(root, cwd)
             .into_iter()
             .filter(|summary| summary.id.starts_with(selector))

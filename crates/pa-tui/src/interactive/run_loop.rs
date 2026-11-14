@@ -229,13 +229,13 @@ impl RunLoop {
     /// OSC 8 hyperlink gate. The flush shutdown can wait out a slow endpoint, so the hyperlink
     /// event is spawned instead of awaited.
     pub(super) async fn report_capabilities(&mut self, session: &SessionUi) {
-        if self.enhanced_keys_pending {
-            if let Some((kitty, modify_other_keys)) = crate::enhanced_keys::settle_state() {
-                if let Some(telemetry) = &session.telemetry {
-                    telemetry.enhanced_keys(kitty, modify_other_keys).await;
-                }
-                self.enhanced_keys_pending = false;
+        if self.enhanced_keys_pending
+            && let Some((kitty, modify_other_keys)) = crate::enhanced_keys::settle_state()
+        {
+            if let Some(telemetry) = &session.telemetry {
+                telemetry.enhanced_keys(kitty, modify_other_keys).await;
             }
+            self.enhanced_keys_pending = false;
         }
         if self.hyperlinks_pending {
             if let Some(telemetry) = session.telemetry.clone() {

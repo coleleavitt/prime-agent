@@ -42,16 +42,16 @@ impl SessionUi {
                 rest: Map::default(),
             })
             .await;
-        if let Ok(response) = snapshot {
-            if response.success {
-                self.roster = response
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.get("roster"))
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-            }
+        if let Ok(response) = snapshot
+            && response.success
+        {
+            self.roster = response
+                .data
+                .as_ref()
+                .and_then(|data| data.get("roster"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
         }
     }
 

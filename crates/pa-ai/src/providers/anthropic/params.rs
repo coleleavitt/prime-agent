@@ -85,26 +85,25 @@ pub(crate) fn build_params(
 
     // Temperature is incompatible with extended thinking (adaptive or budget-based), and always-on
     // models reject sampling params outright.
-    if let Some(temperature) = base.temperature {
-        if options.map(|options| options.thinking_enabled) != Some(Some(true))
-            && !is_always_on_adaptive_thinking_model(&model.id)
-        {
-            params.insert("temperature".into(), json!(temperature));
-        }
+    if let Some(temperature) = base.temperature
+        && options.map(|options| options.thinking_enabled) != Some(Some(true))
+        && !is_always_on_adaptive_thinking_model(&model.id)
+    {
+        params.insert("temperature".into(), json!(temperature));
     }
 
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            params.insert(
-                "tools".into(),
-                json!(convert_tools(
-                    tools,
-                    is_oauth_token,
-                    get_anthropic_compat(model).supports_eager_tool_input_streaming,
-                    cache_control,
-                )),
-            );
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        params.insert(
+            "tools".into(),
+            json!(convert_tools(
+                tools,
+                is_oauth_token,
+                get_anthropic_compat(model).supports_eager_tool_input_streaming,
+                cache_control,
+            )),
+        );
     }
 
     // Configure thinking mode: adaptive, budget-based, or explicitly disabled.
@@ -138,10 +137,10 @@ pub(crate) fn build_params(
         }
     }
 
-    if let Some(metadata) = &base.metadata {
-        if let Some(user_id) = metadata.get("user_id").and_then(|value| value.as_str()) {
-            params.insert("metadata".into(), json!({ "user_id": user_id }));
-        }
+    if let Some(metadata) = &base.metadata
+        && let Some(user_id) = metadata.get("user_id").and_then(|value| value.as_str())
+    {
+        params.insert("metadata".into(), json!({ "user_id": user_id }));
     }
 
     if let Some(tool_choice) = options.and_then(|options| options.tool_choice.as_ref()) {

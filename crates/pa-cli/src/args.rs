@@ -356,13 +356,12 @@ impl Parser<'_> {
             },
             "--print" | "-p" => {
                 self.result.print = true;
-                if let Some(next) = next {
-                    if !next.starts_with('@') && (!next.starts_with('-') || next.starts_with("---"))
+                if let Some(next) = next
+                    && !next.starts_with('@') && (!next.starts_with('-') || next.starts_with("---"))
                     {
                         self.result.messages.push(next.clone());
                         self.index += 1;
                     }
-                }
             }
             "--export" => self.export(),
             "--list-models" => self.list_models(),

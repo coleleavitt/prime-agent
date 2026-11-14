@@ -419,18 +419,18 @@ pub fn resolve_cli_model(
 
     let mut pattern = cli_model.to_string();
     let mut inferred_provider = false;
-    if provider.is_none() {
-        if let Some(slash) = cli_model.find('/') {
-            let maybe_provider = &cli_model[..slash];
-            let canonical = all_models
-                .iter()
-                .find(|model| model.provider.to_lowercase() == maybe_provider.to_lowercase())
-                .map(|model| model.provider.clone());
-            if let Some(p) = canonical {
-                provider = Some(p);
-                pattern = cli_model[slash + 1..].to_string();
-                inferred_provider = true;
-            }
+    if provider.is_none()
+        && let Some(slash) = cli_model.find('/')
+    {
+        let maybe_provider = &cli_model[..slash];
+        let canonical = all_models
+            .iter()
+            .find(|model| model.provider.to_lowercase() == maybe_provider.to_lowercase())
+            .map(|model| model.provider.clone());
+        if let Some(p) = canonical {
+            provider = Some(p);
+            pattern = cli_model[slash + 1..].to_string();
+            inferred_provider = true;
         }
     }
 
@@ -450,12 +450,12 @@ pub fn resolve_cli_model(
         }
     }
 
-    if let Some(provider) = &provider {
-        if cli_provider.is_some() {
-            let prefix = format!("{provider}/");
-            if pattern.to_lowercase().starts_with(&prefix.to_lowercase()) {
-                pattern = pattern[prefix.len()..].to_string();
-            }
+    if let Some(provider) = &provider
+        && cli_provider.is_some()
+    {
+        let prefix = format!("{provider}/");
+        if pattern.to_lowercase().starts_with(&prefix.to_lowercase()) {
+            pattern = pattern[prefix.len()..].to_string();
         }
     }
 
@@ -502,23 +502,23 @@ pub fn resolve_cli_model(
         }
     }
 
-    if let Some(provider) = &provider {
-        if let Some(fallback_model) = build_fallback_model(provider, &pattern, all_models) {
-            let fallback_warning = match parsed.warning {
-                Some(warning) => format!(
-                    "{warning} Model \"{pattern}\" not found for provider \"{provider}\". Using custom model id."
-                ),
-                None => format!(
-                    "Model \"{pattern}\" not found for provider \"{provider}\". Using custom model id."
-                ),
-            };
-            return ResolveCliModelResult {
-                model: Some(fallback_model),
-                thinking_level: None,
-                warning: Some(fallback_warning),
-                error: None,
-            };
-        }
+    if let Some(provider) = &provider
+        && let Some(fallback_model) = build_fallback_model(provider, &pattern, all_models)
+    {
+        let fallback_warning = match parsed.warning {
+            Some(warning) => format!(
+                "{warning} Model \"{pattern}\" not found for provider \"{provider}\". Using custom model id."
+            ),
+            None => format!(
+                "Model \"{pattern}\" not found for provider \"{provider}\". Using custom model id."
+            ),
+        };
+        return ResolveCliModelResult {
+            model: Some(fallback_model),
+            thinking_level: None,
+            warning: Some(fallback_warning),
+            error: None,
+        };
     }
 
     let display = match &provider {
@@ -667,10 +667,10 @@ pub fn find_initial_model(options: &InitialModelOptions<'_>) -> Option<Model> {
         // A saved id missing from this build's snapshot survives on the
         // provider template — except private Prime Inference ids, whose
         // template route is authorized per team.
-        if !is_private_prime_inference_reference(provider, id) {
-            if let Some(rebuilt) = build_fallback_model(provider, id, options.available_models) {
-                return Some(rebuilt);
-            }
+        if !is_private_prime_inference_reference(provider, id)
+            && let Some(rebuilt) = build_fallback_model(provider, id, options.available_models)
+        {
+            return Some(rebuilt);
         }
     }
     find_preferred_default_model(options.available_models)

@@ -268,11 +268,10 @@ async fn wait_for_event(
 ) -> pa_types::daemon::cloud::CloudFamilyEvent {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        if let Ok(events) = requester.events_after(0) {
-            if let Some(event) = events.first() {
+        if let Ok(events) = requester.events_after(0)
+            && let Some(event) = events.first() {
                 return event.clone();
             }
-        }
         assert!(
             tokio::time::Instant::now() < deadline,
             "no request event was admitted to the durable log"

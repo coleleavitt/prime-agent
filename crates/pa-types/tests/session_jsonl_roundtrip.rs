@@ -18,10 +18,9 @@ fn canonicalize_foreign_spelling(mut value: Value) -> Value {
         .get_mut("message")
         .and_then(Value::as_object_mut)
         .and_then(|message| message.get_mut("stopReason"))
+        && stop_reason == "tool_calls"
     {
-        if stop_reason == "tool_calls" {
-            *stop_reason = Value::String("toolUse".to_string());
-        }
+        *stop_reason = Value::String("toolUse".to_string());
     }
     value
 }

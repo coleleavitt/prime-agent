@@ -260,22 +260,19 @@ fn batch_preview(batch: &[AgentMessage]) -> String {
     batch
         .iter()
         .filter_map(|message| match message {
-            AgentMessage::Standard(crate::types::Message::User(user)) => {
-                let text = match &user.content {
-                    crate::types::UserContent::Text(text) => Some(text.clone()),
-                    crate::types::UserContent::Parts(parts) => {
-                        let text: Vec<&str> = parts
-                            .iter()
-                            .filter_map(|part| match part {
-                                crate::types::UserPart::Text(text) => Some(text.text.as_str()),
-                                crate::types::UserPart::Image(_) => None,
-                            })
-                            .collect();
-                        (!text.is_empty()).then(|| text.join(" "))
-                    }
-                };
-                text
-            }
+            AgentMessage::Standard(crate::types::Message::User(user)) => match &user.content {
+                crate::types::UserContent::Text(text) => Some(text.clone()),
+                crate::types::UserContent::Parts(parts) => {
+                    let text: Vec<&str> = parts
+                        .iter()
+                        .filter_map(|part| match part {
+                            crate::types::UserPart::Text(text) => Some(text.text.as_str()),
+                            crate::types::UserPart::Image(_) => None,
+                        })
+                        .collect();
+                    (!text.is_empty()).then(|| text.join(" "))
+                }
+            },
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -549,10 +546,9 @@ impl AgentInner {
             }
             AgentEvent::TurnEnd { message, .. } => {
                 if let AgentMessage::Standard(crate::types::Message::Assistant(assistant)) = message
+                    && let Some(error_message) = &assistant.error_message
                 {
-                    if let Some(error_message) = &assistant.error_message {
-                        shared.state.error_message = Some(error_message.clone());
-                    }
+                    shared.state.error_message = Some(error_message.clone());
                 }
             }
             AgentEvent::AgentEnd { .. } => {
@@ -2165,10 +2161,10 @@ mod tests {
             .subscribe(move |event, _| {
                 let assistant_started_tx = Arc::clone(&assistant_started_tx);
                 Box::pin(async move {
-                    if let crate::types::AgentEvent::MessageStart { message } = &event {
-                        if message.role() == "assistant" {
-                            assistant_started_tx.send_replace(true);
-                        }
+                    if let crate::types::AgentEvent::MessageStart { message } = &event
+                        && message.role() == "assistant"
+                    {
+                        assistant_started_tx.send_replace(true);
                     }
                     Ok(())
                 })

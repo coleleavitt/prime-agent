@@ -572,11 +572,10 @@ impl SessionRegistry {
     /// session name; errors for unknown and ambiguous selectors (the
     /// quarantined miss drives reconciliation).
     pub(crate) async fn resolve(&self, selector: &str) -> Result<Arc<ResidentWorker>> {
-        if let Some(resident) = self.get(selector).await {
-            if !resident.identity_quarantined() {
+        if let Some(resident) = self.get(selector).await
+            && !resident.identity_quarantined() {
                 return Ok(resident);
             }
-        }
         let mut matches: Vec<(Arc<ResidentWorker>, String, String)> = Vec::new();
         for resident in self.list().await {
             if resident.identity_quarantined() {

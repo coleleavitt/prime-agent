@@ -532,41 +532,40 @@ impl ModelRegistry {
             },
         );
         // Provider/model request config from the parsed document.
-        if result.error.is_none() {
-            if let Ok(config) =
+        if result.error.is_none()
+            && let Ok(config) =
                 super::custom::parse_models_config(&super::custom::strip_json_comments(&content))
-            {
-                for (provider, provider_config) in config.providers {
-                    if provider_config.api_key.is_some()
-                        || provider_config.headers.is_some()
-                        || provider_config.auth_header.is_some()
-                    {
-                        self.provider_request_configs.insert(
-                            provider.clone(),
-                            ProviderRequestConfig {
-                                api_key: provider_config.api_key,
-                                headers: provider_config.headers,
-                                auth_header: provider_config.auth_header,
-                            },
+        {
+            for (provider, provider_config) in config.providers {
+                if provider_config.api_key.is_some()
+                    || provider_config.headers.is_some()
+                    || provider_config.auth_header.is_some()
+                {
+                    self.provider_request_configs.insert(
+                        provider.clone(),
+                        ProviderRequestConfig {
+                            api_key: provider_config.api_key,
+                            headers: provider_config.headers,
+                            auth_header: provider_config.auth_header,
+                        },
+                    );
+                }
+                if let Some(model_overrides) = provider_config.model_overrides {
+                    for (model_id, model_override) in model_overrides {
+                        self.store_model_headers(
+                            &provider,
+                            &model_id,
+                            model_override.headers.clone(),
                         );
                     }
-                    if let Some(model_overrides) = provider_config.model_overrides {
-                        for (model_id, model_override) in model_overrides {
-                            self.store_model_headers(
-                                &provider,
-                                &model_id,
-                                model_override.headers.clone(),
-                            );
-                        }
-                    }
-                    if let Some(model_defs) = provider_config.models {
-                        for model_def in model_defs {
-                            self.store_model_headers(
-                                &provider,
-                                &model_def.id,
-                                model_def.headers.clone(),
-                            );
-                        }
+                }
+                if let Some(model_defs) = provider_config.models {
+                    for model_def in model_defs {
+                        self.store_model_headers(
+                            &provider,
+                            &model_def.id,
+                            model_def.headers.clone(),
+                        );
                     }
                 }
             }
@@ -716,28 +715,25 @@ impl ModelRegistry {
                 refreshed_at,
                 ..
             }) = cached
+                && cached_fingerprint == fingerprint
             {
-                if cached_fingerprint == fingerprint {
-                    self.authorized_private_models.clone_from(&models);
-                    self.authorized_private_ids =
-                        models.iter().map(|model| model.id.clone()).collect();
-                    self.authorized_team_id = Some(team_id.clone());
-                    self.load_models();
-                    let fresh =
-                        now_millis() - refreshed_at < PRIVATE_PRIME_AUTHORIZATION_CACHE_TTL_MS;
-                    if is_offline_mode_enabled() || fresh {
-                        return;
-                    }
-                    return self
-                        .background_private_refresh(
-                            api_key,
-                            team_headers,
-                            team_id,
-                            fingerprint,
-                            cache_path,
-                        )
-                        .await;
+                self.authorized_private_models.clone_from(&models);
+                self.authorized_private_ids = models.iter().map(|model| model.id.clone()).collect();
+                self.authorized_team_id = Some(team_id.clone());
+                self.load_models();
+                let fresh = now_millis() - refreshed_at < PRIVATE_PRIME_AUTHORIZATION_CACHE_TTL_MS;
+                if is_offline_mode_enabled() || fresh {
+                    return;
                 }
+                return self
+                    .background_private_refresh(
+                        api_key,
+                        team_headers,
+                        team_id,
+                        fingerprint,
+                        cache_path,
+                    )
+                    .await;
             }
         }
         if is_offline_mode_enabled() {
@@ -882,16 +878,13 @@ impl ModelRegistry {
             .get_api_key_with_source_token(&model.provider, false);
         let mut api_key = stored.api_key;
         let provider_config = self.provider_request_configs.get(&model.provider).cloned();
-        if api_key.is_none() {
-            if let Some(config) = &provider_config {
-                if let Some(configured) = &config.api_key {
-                    if let Some(resolved) =
-                        crate::auth::resolve_config_value::resolve_config_value(configured)
-                    {
-                        api_key = Some(resolved);
-                    }
-                }
-            }
+        if api_key.is_none()
+            && let Some(config) = &provider_config
+            && let Some(configured) = &config.api_key
+            && let Some(resolved) =
+                crate::auth::resolve_config_value::resolve_config_value(configured)
+        {
+            api_key = Some(resolved);
         }
         if api_key.is_none() && stored.oauth_refresh_failed {
             return ResolvedRequestAuth {
@@ -983,11 +976,12 @@ impl ModelRegistry {
             // TS refuses a custom Authorization header on the subscription
             // shape (model-registry.ts:1653-1657): only the bearer of the
             // serving credential may ride the request.
-            if let Some(bearer) = api_key.as_deref().map(|key| format!("Bearer {key}")) {
-                if headers.iter().any(|(name, value)| {
+            if let Some(bearer) = api_key.as_deref().map(|key| format!("Bearer {key}"))
+                && headers.iter().any(|(name, value)| {
                     name.eq_ignore_ascii_case("authorization") && *value != bearer
-                }) {
-                    return ResolvedRequestAuth {
+                })
+            {
+                return ResolvedRequestAuth {
                         ok: false,
                         error: Some(
                             "Grok subscription cannot use a custom Authorization header. Remove the header or use /login and select the xAI API-key entry."
@@ -995,7 +989,6 @@ impl ModelRegistry {
                         ),
                         ..Default::default()
                     };
-                }
             }
         }
         ResolvedRequestAuth {

@@ -140,11 +140,11 @@ impl UsageLimitMonitor {
             return;
         };
         let mut state = self.state.lock_or_recover();
-        if let ArmedWindow::Resetting(reset) = state.armed_window {
-            if now_secs > reset {
-                state.pending = false;
-                state.armed_window = ArmedWindow::Never;
-            }
+        if let ArmedWindow::Resetting(reset) = state.armed_window
+            && now_secs > reset
+        {
+            state.pending = false;
+            state.armed_window = ArmedWindow::Never;
         }
         if reading.resets_at.is_some_and(|reset| reset <= now_secs) {
             return;

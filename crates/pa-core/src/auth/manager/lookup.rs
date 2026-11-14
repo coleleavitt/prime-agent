@@ -31,18 +31,17 @@ impl AuthStorage {
         self.refresh_from_external_changes();
         self.save_unsaved_refreshes();
         // 1. Runtime override.
-        if let Some(candidate) = self.runtime_candidate(provider_id) {
-            if !self.is_stale(provider_id, &candidate) {
-                if let Some(api_key) = self.runtime_overrides.get(provider_id).cloned() {
-                    return AuthApiKeyResult {
-                        api_key: Some(api_key),
-                        source_token: Self::token_for(provider_id, &candidate),
-                        credential_type: Some("api_key"),
-                        oauth_refresh_failed: false,
-                        headers: None,
-                    };
-                }
-            }
+        if let Some(candidate) = self.runtime_candidate(provider_id)
+            && !self.is_stale(provider_id, &candidate)
+            && let Some(api_key) = self.runtime_overrides.get(provider_id).cloned()
+        {
+            return AuthApiKeyResult {
+                api_key: Some(api_key),
+                source_token: Self::token_for(provider_id, &candidate),
+                credential_type: Some("api_key"),
+                oauth_refresh_failed: false,
+                headers: None,
+            };
         }
 
         // 1b. A login auth.json still holds is offered to the provider's
@@ -51,34 +50,34 @@ impl AuthStorage {
         // its failure is the authentication failure, never a fall-through
         // to a credential it may have superseded.
         self.offer_stored_login_to_source(provider_id);
-        if let Some(candidate) = self.credential_source_candidate(provider_id) {
-            if !self.is_stale(provider_id, &candidate) {
-                match credential_source(provider_id)
-                    .map_or(Err(CredentialSourceError::NotConfigured), |source| {
-                        source.credential()
-                    }) {
-                    Ok(credential) => {
-                        return AuthApiKeyResult {
-                            api_key: Some(credential.api_key),
-                            source_token: Self::token_for(provider_id, &candidate),
-                            credential_type: Some("oauth"),
-                            oauth_refresh_failed: false,
-                            headers: (!credential.headers.is_empty()).then_some(credential.headers),
-                        };
-                    }
-                    Err(CredentialSourceError::NotConfigured) => {}
-                    Err(CredentialSourceError::Unavailable(message)) => {
-                        tracing::warn!(
-                            provider = provider_id,
-                            error = %message,
-                            "the provider's credential source produced no credential"
-                        );
-                        return AuthApiKeyResult {
-                            credential_type: Some("oauth"),
-                            oauth_refresh_failed: true,
-                            ..AuthApiKeyResult::default()
-                        };
-                    }
+        if let Some(candidate) = self.credential_source_candidate(provider_id)
+            && !self.is_stale(provider_id, &candidate)
+        {
+            match credential_source(provider_id)
+                .map_or(Err(CredentialSourceError::NotConfigured), |source| {
+                    source.credential()
+                }) {
+                Ok(credential) => {
+                    return AuthApiKeyResult {
+                        api_key: Some(credential.api_key),
+                        source_token: Self::token_for(provider_id, &candidate),
+                        credential_type: Some("oauth"),
+                        oauth_refresh_failed: false,
+                        headers: (!credential.headers.is_empty()).then_some(credential.headers),
+                    };
+                }
+                Err(CredentialSourceError::NotConfigured) => {}
+                Err(CredentialSourceError::Unavailable(message)) => {
+                    tracing::warn!(
+                        provider = provider_id,
+                        error = %message,
+                        "the provider's credential source produced no credential"
+                    );
+                    return AuthApiKeyResult {
+                        credential_type: Some("oauth"),
+                        oauth_refresh_failed: true,
+                        ..AuthApiKeyResult::default()
+                    };
                 }
             }
         }
@@ -87,34 +86,33 @@ impl AuthStorage {
         let env_candidate = self.environment_candidate(provider_id);
 
         // 2. Prime-inference: environment before stored.
-        if provider_id == PRIME_INFERENCE_PROVIDER_ID {
-            if let (Some(api_key), Some(candidate)) = (env_key.clone(), env_candidate.clone()) {
-                if !self.is_stale(provider_id, &candidate) {
-                    return AuthApiKeyResult {
-                        api_key: Some(api_key),
-                        source_token: Self::token_for(provider_id, &candidate),
-                        credential_type: Some("api_key"),
-                        oauth_refresh_failed: false,
-                        headers: None,
-                    };
-                }
-            }
+        if provider_id == PRIME_INFERENCE_PROVIDER_ID
+            && let (Some(api_key), Some(candidate)) = (env_key.clone(), env_candidate.clone())
+            && !self.is_stale(provider_id, &candidate)
+        {
+            return AuthApiKeyResult {
+                api_key: Some(api_key),
+                source_token: Self::token_for(provider_id, &candidate),
+                credential_type: Some("api_key"),
+                oauth_refresh_failed: false,
+                headers: None,
+            };
         }
 
         // 2b. Prime-inference: the saved context the session directory
         // selects. Its key replaces the stored login there (the stored key
         // is another account's), so a stale context key skips stored too.
         let directory_candidate = self.directory_context_candidate(provider_id);
-        if let Some(candidate) = &directory_candidate {
-            if !self.is_stale(provider_id, candidate) {
-                return AuthApiKeyResult {
-                    api_key: self.directory_context_api_key(),
-                    source_token: Self::token_for(provider_id, candidate),
-                    credential_type: Some("api_key"),
-                    oauth_refresh_failed: false,
-                    headers: None,
-                };
-            }
+        if let Some(candidate) = &directory_candidate
+            && !self.is_stale(provider_id, candidate)
+        {
+            return AuthApiKeyResult {
+                api_key: self.directory_context_api_key(),
+                source_token: Self::token_for(provider_id, candidate),
+                credential_type: Some("api_key"),
+                oauth_refresh_failed: false,
+                headers: None,
+            };
         }
 
         // 3. Stored credential.
@@ -122,131 +120,123 @@ impl AuthStorage {
             .data
             .credential(provider_id)
             .filter(|_| directory_candidate.is_none())
-        {
-            if let Some(candidate) =
+            && let Some(candidate) =
                 self.stored_candidate(provider_id, /*resolved_command_value*/ None)
-            {
-                if !self.is_stale(provider_id, &candidate) {
-                    match &credential {
-                        AuthCredential::ApiKey { key, .. } => {
-                            let has_stale_record =
-                                !self.matching_stale(provider_id, &candidate).is_empty();
-                            let api_key = if key.starts_with('!') && has_stale_record {
-                                resolve_config_value_uncached(key)
-                            } else {
-                                resolve_config_value(key)
-                            };
-                            // The source token reuses the value this lookup
-                            // just resolved (TS's `resolvedCommandValue`):
-                            // a command key resolves once per lookup, never
-                            // again through the candidate's lazy fingerprint.
-                            // A FAILED resolution produced no value: the
-                            // deferred fingerprint is dropped too — the
-                            // source token is None either way, and a failed
-                            // command still retries once per lookup (TS
-                            // #2497), not twice.
-                            let candidate = api_key
-                                .as_deref()
-                                .and_then(|resolved| {
-                                    self.stored_candidate(provider_id, Some(resolved))
-                                })
-                                .unwrap_or_else(|| AuthSourceCandidate {
-                                    resolve_value_fingerprint: None,
-                                    ..candidate.clone()
-                                });
+            && !self.is_stale(provider_id, &candidate)
+        {
+            match &credential {
+                AuthCredential::ApiKey { key, .. } => {
+                    let has_stale_record = !self.matching_stale(provider_id, &candidate).is_empty();
+                    let api_key = if key.starts_with('!') && has_stale_record {
+                        resolve_config_value_uncached(key)
+                    } else {
+                        resolve_config_value(key)
+                    };
+                    // The source token reuses the value this lookup
+                    // just resolved (TS's `resolvedCommandValue`):
+                    // a command key resolves once per lookup, never
+                    // again through the candidate's lazy fingerprint.
+                    // A FAILED resolution produced no value: the
+                    // deferred fingerprint is dropped too — the
+                    // source token is None either way, and a failed
+                    // command still retries once per lookup (TS
+                    // #2497), not twice.
+                    let candidate = api_key
+                        .as_deref()
+                        .and_then(|resolved| self.stored_candidate(provider_id, Some(resolved)))
+                        .unwrap_or_else(|| AuthSourceCandidate {
+                            resolve_value_fingerprint: None,
+                            ..candidate.clone()
+                        });
+                    return AuthApiKeyResult {
+                        api_key,
+                        source_token: Self::token_for(provider_id, &candidate),
+                        credential_type: Some("api_key"),
+                        oauth_refresh_failed: false,
+                        headers: None,
+                    };
+                }
+                AuthCredential::Oauth { expires, .. } => {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(i64::MAX, |d| d.as_millis() as i64);
+                    if now_ms >= *expires {
+                        if let Some(refreshed) = self.refresh_oauth(provider_id) {
+                            let candidate = self.stored_candidate(
+                                provider_id,
+                                /*resolved_command_value*/ None,
+                            );
                             return AuthApiKeyResult {
-                                api_key,
-                                source_token: Self::token_for(provider_id, &candidate),
-                                credential_type: Some("api_key"),
-                                oauth_refresh_failed: false,
-                                headers: None,
-                            };
-                        }
-                        AuthCredential::Oauth { expires, .. } => {
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_or(i64::MAX, |d| d.as_millis() as i64);
-                            if now_ms >= *expires {
-                                if let Some(refreshed) = self.refresh_oauth(provider_id) {
-                                    let candidate = self.stored_candidate(
-                                        provider_id,
-                                        /*resolved_command_value*/ None,
-                                    );
-                                    return AuthApiKeyResult {
-                                        api_key: self.oauth.api_key_for(provider_id, &refreshed),
-                                        source_token: candidate
-                                            .and_then(|c| Self::token_for(provider_id, &c)),
-                                        credential_type: Some("oauth"),
-                                        oauth_refresh_failed: false,
-                                        headers: None,
-                                    };
-                                }
-                                // Refresh failed: keep credentials for a
-                                // later retry; the caller reports the
-                                // failed refresh, not a missing key.
-                                return AuthApiKeyResult {
-                                    credential_type: Some("oauth"),
-                                    oauth_refresh_failed: true,
-                                    headers: None,
-                                    ..AuthApiKeyResult::default()
-                                };
-                            }
-                            return AuthApiKeyResult {
-                                api_key: self.oauth.api_key_for(provider_id, &credential),
-                                source_token: Self::token_for(provider_id, &candidate),
+                                api_key: self.oauth.api_key_for(provider_id, &refreshed),
+                                source_token: candidate
+                                    .and_then(|c| Self::token_for(provider_id, &c)),
                                 credential_type: Some("oauth"),
                                 oauth_refresh_failed: false,
                                 headers: None,
                             };
                         }
-                        // A pasted MCP static token IS the api key for its
-                        // `mcp:<server>` provider: the bearer value, used verbatim.
-                        AuthCredential::McpStaticToken { bearer, .. } => {
-                            return AuthApiKeyResult {
-                                api_key: Some(bearer.clone()),
-                                source_token: Self::token_for(provider_id, &candidate),
-                                credential_type: Some("mcp_static_token"),
-                                oauth_refresh_failed: false,
-                                headers: None,
-                            };
-                        }
+                        // Refresh failed: keep credentials for a
+                        // later retry; the caller reports the
+                        // failed refresh, not a missing key.
+                        return AuthApiKeyResult {
+                            credential_type: Some("oauth"),
+                            oauth_refresh_failed: true,
+                            headers: None,
+                            ..AuthApiKeyResult::default()
+                        };
                     }
+                    return AuthApiKeyResult {
+                        api_key: self.oauth.api_key_for(provider_id, &credential),
+                        source_token: Self::token_for(provider_id, &candidate),
+                        credential_type: Some("oauth"),
+                        oauth_refresh_failed: false,
+                        headers: None,
+                    };
+                }
+                // A pasted MCP static token IS the api key for its
+                // `mcp:<server>` provider: the bearer value, used verbatim.
+                AuthCredential::McpStaticToken { bearer, .. } => {
+                    return AuthApiKeyResult {
+                        api_key: Some(bearer.clone()),
+                        source_token: Self::token_for(provider_id, &candidate),
+                        credential_type: Some("mcp_static_token"),
+                        oauth_refresh_failed: false,
+                        headers: None,
+                    };
                 }
             }
         }
 
         // 4. Environment for non-prime-inference providers.
-        if provider_id != PRIME_INFERENCE_PROVIDER_ID {
-            if let (Some(api_key), Some(candidate)) = (env_key, env_candidate) {
-                if !self.is_stale(provider_id, &candidate) {
-                    return AuthApiKeyResult {
-                        api_key: Some(api_key),
-                        source_token: Self::token_for(provider_id, &candidate),
-                        credential_type: None,
-                        oauth_refresh_failed: false,
-                        headers: None,
-                    };
-                }
-            }
+        if provider_id != PRIME_INFERENCE_PROVIDER_ID
+            && let (Some(api_key), Some(candidate)) = (env_key, env_candidate)
+            && !self.is_stale(provider_id, &candidate)
+        {
+            return AuthApiKeyResult {
+                api_key: Some(api_key),
+                source_token: Self::token_for(provider_id, &candidate),
+                credential_type: None,
+                oauth_refresh_failed: false,
+                headers: None,
+            };
         }
 
         // 5. Fallback resolver.
-        if include_fallback {
-            if let Some(candidate) = self.fallback_candidate(provider_id) {
-                if !self.is_stale(provider_id, &candidate) {
-                    let api_key = self
-                        .fallback_resolver
-                        .as_ref()
-                        .and_then(|resolver| resolver(provider_id));
-                    return AuthApiKeyResult {
-                        api_key,
-                        source_token: Self::token_for(provider_id, &candidate),
-                        credential_type: None,
-                        oauth_refresh_failed: false,
-                        headers: None,
-                    };
-                }
-            }
+        if include_fallback
+            && let Some(candidate) = self.fallback_candidate(provider_id)
+            && !self.is_stale(provider_id, &candidate)
+        {
+            let api_key = self
+                .fallback_resolver
+                .as_ref()
+                .and_then(|resolver| resolver(provider_id));
+            return AuthApiKeyResult {
+                api_key,
+                source_token: Self::token_for(provider_id, &candidate),
+                credential_type: None,
+                oauth_refresh_failed: false,
+                headers: None,
+            };
         }
 
         AuthApiKeyResult::default()

@@ -62,25 +62,25 @@ pub fn parse_refine_command_options(args: &str) -> Result<RefineCommandOptions, 
     if rest == "rollback" {
         return Err("Usage: /refine rollback <refinement-id>".to_string());
     }
-    if let Some(tail) = rest.strip_prefix("rollback") {
-        if tail.starts_with('\t') || tail.starts_with(' ') {
-            let mut rollback_id = rest["rollback".len()..].trim().to_string();
-            if rollback_id == "--global" {
-                return Err("Usage: /refine rollback <refinement-id>".to_string());
-            }
-            if rollback_id.ends_with(" --global") {
-                global = true;
-                rollback_id = rollback_id.trim_end_matches(" --global").trim().to_string();
-            }
-            if rollback_id.is_empty() {
-                return Err("Usage: /refine rollback <refinement-id>".to_string());
-            }
-            return Ok(RefineCommandOptions {
-                instructions: None,
-                rollback_id: Some(rollback_id),
-                global,
-            });
+    if let Some(tail) = rest.strip_prefix("rollback")
+        && (tail.starts_with('\t') || tail.starts_with(' '))
+    {
+        let mut rollback_id = rest["rollback".len()..].trim().to_string();
+        if rollback_id == "--global" {
+            return Err("Usage: /refine rollback <refinement-id>".to_string());
         }
+        if rollback_id.ends_with(" --global") {
+            global = true;
+            rollback_id = rollback_id.trim_end_matches(" --global").trim().to_string();
+        }
+        if rollback_id.is_empty() {
+            return Err("Usage: /refine rollback <refinement-id>".to_string());
+        }
+        return Ok(RefineCommandOptions {
+            instructions: None,
+            rollback_id: Some(rollback_id),
+            global,
+        });
     }
     Ok(RefineCommandOptions {
         instructions: (!rest.is_empty()).then(|| rest.to_string()),

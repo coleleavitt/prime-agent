@@ -447,12 +447,13 @@ impl AgentView {
             return (rows, self.scroll_top);
         }
         let mut window = self.sparse_window.expect("sparse window established above");
-        if !self.following && height != self.window_rows {
-            if let Anchor::Tail(distance) = &mut window.anchor {
-                *distance = distance
-                    .saturating_add(self.window_rows)
-                    .saturating_sub(height);
-            }
+        if !self.following
+            && height != self.window_rows
+            && let Anchor::Tail(distance) = &mut window.anchor
+        {
+            *distance = distance
+                .saturating_add(self.window_rows)
+                .saturating_sub(height);
         }
         self.prepare_layout(width);
         let detail_transition = window.detail != self.detail;
@@ -636,12 +637,11 @@ impl AgentView {
         // TS `precededByToolActivity` = the compact set.
         let preceded_by_tool = index > 0 && Self::is_compact_neighbor(&self.chat[index - 1]);
         let spacing = self.entry_spacing(index, entry, index == 0, preceded_by_tool);
-        if Self::entry_cacheable(entry) {
-            if let Some(layout) = &self.entry_layout[index][detail] {
-                if layout.spacing == spacing {
-                    return EntryRows::Packed(layout.rows.clone());
-                }
-            }
+        if Self::entry_cacheable(entry)
+            && let Some(layout) = &self.entry_layout[index][detail]
+            && layout.spacing == spacing
+        {
+            return EntryRows::Packed(layout.rows.clone());
         }
         let rows = std::sync::Arc::new(self.render_entry(
             index,

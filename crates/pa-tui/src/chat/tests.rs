@@ -147,11 +147,11 @@ fn user_block_styles() -> (Style, Style, Style, Style, Style) {
 fn row_runs(row: &Line) -> Vec<(String, Style)> {
     let mut runs: Vec<(String, Style)> = Vec::new();
     for span in row {
-        if let Some((text, style)) = runs.last_mut() {
-            if *style == span.style {
-                text.push_str(&span.content);
-                continue;
-            }
+        if let Some((text, style)) = runs.last_mut()
+            && *style == span.style
+        {
+            text.push_str(&span.content);
+            continue;
         }
         runs.push((span.content.clone(), span.style));
     }

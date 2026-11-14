@@ -53,7 +53,7 @@ pub(crate) struct BusAtSpi {
 
 /// Build one blocking proxy of `$proxy` for a node.
 macro_rules! proxy {
-    ($self:ident, $proxy:ident, $node:expr) => {{
+    ($self:ident, $proxy:ident, $node:expr_2021) => {{
         let connection = $self.connection().ok()?;
         $proxy::builder(&connection)
             .destination($node.name.clone())

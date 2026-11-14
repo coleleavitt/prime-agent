@@ -353,10 +353,10 @@ fn parse_class_relation(st: &str) -> Option<ClassRelation> {
 /// `Class "1"` — a quoted cardinality trailing the left-hand name.
 fn strip_cardinality_suffix(s: &str) -> (&str, &str) {
     let t = js_text::trim_end(s);
-    if let Some(rest) = t.strip_suffix('"') {
-        if let Some(q) = rest.rfind('"') {
-            return (js_text::trim_end(&rest[..q]), &rest[q + 1..]);
-        }
+    if let Some(rest) = t.strip_suffix('"')
+        && let Some(q) = rest.rfind('"')
+    {
+        return (js_text::trim_end(&rest[..q]), &rest[q + 1..]);
     }
     (t, "")
 }
@@ -364,10 +364,10 @@ fn strip_cardinality_suffix(s: &str) -> (&str, &str) {
 /// `"0..*" Class` — a quoted cardinality leading the right-hand name.
 fn strip_cardinality_prefix(s: &str) -> (&str, &str) {
     let t = js_text::trim_start(s);
-    if let Some(rest) = t.strip_prefix('"') {
-        if let Some(q) = rest.find('"') {
-            return (js_text::trim_start(&rest[q + 1..]), &rest[..q]);
-        }
+    if let Some(rest) = t.strip_prefix('"')
+        && let Some(q) = rest.find('"')
+    {
+        return (js_text::trim_start(&rest[q + 1..]), &rest[..q]);
     }
     (t, "")
 }

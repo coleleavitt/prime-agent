@@ -83,13 +83,13 @@ pub enum ParsedSource {
 /// three URL shapes the product accepts (scp-like, protocol, shorthand).
 fn split_ref(url: &str) -> (String, Option<String>) {
     // scp-like: git@host:path[@ref]
-    if let Some(rest) = url.strip_prefix("git@") {
-        if let Some((host, path_with_ref)) = rest.split_once(':') {
-            if let Some((repo_path, r)) = split_ref_after(path_with_ref) {
-                return (format!("git@{host}:{repo_path}"), Some(r.to_string()));
-            }
-            return (url.to_string(), None);
+    if let Some(rest) = url.strip_prefix("git@")
+        && let Some((host, path_with_ref)) = rest.split_once(':')
+    {
+        if let Some((repo_path, r)) = split_ref_after(path_with_ref) {
+            return (format!("git@{host}:{repo_path}"), Some(r.to_string()));
         }
+        return (url.to_string(), None);
     }
 
     // protocol URLs: ref is the segment after '@' in the path
@@ -102,10 +102,10 @@ fn split_ref(url: &str) -> (String, Option<String>) {
     }
 
     // shorthand: host/path[@ref]
-    if let Some((host, path_with_ref)) = url.split_once('/') {
-        if let Some((repo_path, r)) = split_ref_after(path_with_ref) {
-            return (format!("{host}/{repo_path}"), Some(r.to_string()));
-        }
+    if let Some((host, path_with_ref)) = url.split_once('/')
+        && let Some((repo_path, r)) = split_ref_after(path_with_ref)
+    {
+        return (format!("{host}/{repo_path}"), Some(r.to_string()));
     }
 
     (url.to_string(), None)

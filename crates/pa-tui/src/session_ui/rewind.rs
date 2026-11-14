@@ -128,12 +128,11 @@ impl SessionUi {
             }
             self.rebuild_transcript(view).await;
             // Claude Code puts the prompt back in the input to edit and resend.
-            if restore_conversation {
-                if let Some(text) = conversation.get("editorText").and_then(Value::as_str) {
-                    if view.editor.get_text().trim().is_empty() {
-                        view.editor.set_text(text);
-                    }
-                }
+            if restore_conversation
+                && let Some(text) = conversation.get("editorText").and_then(Value::as_str)
+                && view.editor.get_text().trim().is_empty()
+            {
+                view.editor.set_text(text);
             }
         }
         // One status row: a later note replaces an earlier one.

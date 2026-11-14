@@ -238,10 +238,9 @@ fn unaddressed_recurring_for_prompt(state: &HarnessState) -> Option<String> {
         if let Some(non_actionable) = record
             .get("nonActionableCount")
             .and_then(serde_json::Value::as_u64)
+            && non_actionable >= count
         {
-            if non_actionable >= count {
-                continue;
-            }
+            continue;
         }
         let kind = fp.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
         let source = fp.get("source").and_then(|v| v.as_str()).unwrap_or("");

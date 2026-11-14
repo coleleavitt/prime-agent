@@ -206,11 +206,10 @@ impl Supervisor {
                 snapshot.scanned_at.elapsed()
                     < std::time::Duration::from_millis(PASSIVE_CATALOG_REFRESH_MS)
             });
-        if still_fresh {
-            if let Some(snapshot) = self.passive_catalog.lock_or_recover().as_ref() {
+        if still_fresh
+            && let Some(snapshot) = self.passive_catalog.lock_or_recover().as_ref() {
                 return snapshot.rows.clone();
             }
-        }
         let epoch = self.passive_catalog_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let rows = self.collect_passive_scheduled_jobs(true).await;
         // Compare-and-swap publish: a newer epoch means an invalidation raced the scan —

@@ -378,7 +378,7 @@ fn a_failed_assertion_restores_the_process_path() {
         // then the poisoned value, so the unwind restores the `PATH` the
         // panic left live.
         let _path = PathGuard::capture();
-        std::env::set_var("PATH", ".:/definitely/poisoned");
+        pa_types::env::set_var("PATH", ".:/definitely/poisoned");
         panic!("simulate a failed assertion while the poisoned PATH is live");
     });
     assert!(unwind.is_err(), "the simulated assertion must unwind");
@@ -491,7 +491,7 @@ fn the_public_commands_never_execute_a_tailscale_shadowing_the_cwd() {
     // the shims' own shell tools (and any concurrently running test's
     // `PATH` binaries) keep resolving. The trusted resolution takes the
     // first trusted entry holding the CLI, which is the real shim.
-    std::env::set_var(
+    pa_types::env::set_var(
         "PATH",
         format!(
             ".:{}:{}:{}",
@@ -615,8 +615,8 @@ impl PathGuard {
 impl Drop for PathGuard {
     fn drop(&mut self) {
         match self.0.as_ref() {
-            Some(path) => std::env::set_var("PATH", path),
-            None => std::env::remove_var("PATH"),
+            Some(path) => pa_types::env::set_var("PATH", path),
+            None => pa_types::env::remove_var("PATH"),
         }
     }
 }

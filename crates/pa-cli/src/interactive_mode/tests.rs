@@ -767,12 +767,12 @@ fn fork_startup_selection_expands_a_tilde_selector() {
     std::fs::rename(&source, &home_file).expect("move the source under home");
     let _env = crate::config::env_lock();
     let previous_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", &home);
+    pa_types::env::set_var("HOME", &home);
     let selector = format!("~/sessions/{id}.jsonl");
     let selection = fork_startup_selection(&selector, &project, Some(&session_dir));
     match previous_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
+        Some(value) => pa_types::env::set_var("HOME", value),
+        None => pa_types::env::remove_var("HOME"),
     }
     let selection = selection.expect("the tilde selector forks");
     let SessionSelection::Resume(fork) = &selection else {

@@ -161,10 +161,10 @@ fn parse_rpc_response(
         let text = std::str::from_utf8(body).map_err(|_| PROBE_ERROR_INVALID_RESPONSE)?;
         let mut parsed = None;
         for line in text.lines() {
-            if let Some(data) = line.strip_prefix("data:") {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) {
-                    parsed = Some(value);
-                }
+            if let Some(data) = line.strip_prefix("data:")
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim())
+            {
+                parsed = Some(value);
             }
         }
         parsed

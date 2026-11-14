@@ -18,14 +18,14 @@ pub struct KeybindingDefinition {
 }
 
 macro_rules! def {
-    ($keys:expr, $desc:expr) => {
+    ($keys:expr_2021, $desc:expr_2021) => {
         KeybindingDefinition {
             default_keys: $keys,
             description: $desc,
             default_key_scope: None,
         }
     };
-    ($keys:expr, $desc:expr, scope $scope:expr) => {
+    ($keys:expr_2021, $desc:expr_2021, scope $scope:expr_2021) => {
         KeybindingDefinition {
             default_keys: $keys,
             description: $desc,

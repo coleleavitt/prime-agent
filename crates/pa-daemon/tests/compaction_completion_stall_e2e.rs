@@ -539,11 +539,10 @@ impl TimedClient {
                 Ok(0) => return,
                 Ok(_) if line.trim().is_empty() => line.clear(),
                 Ok(_) => {
-                    if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
-                        if event.get("type").and_then(Value::as_str) == Some("session_event") {
+                    if let Ok(event) = serde_json::from_str::<Value>(line.trim())
+                        && event.get("type").and_then(Value::as_str) == Some("session_event") {
                             self.events.push((event["event"].clone(), Instant::now()));
                         }
-                    }
                     line.clear();
                 }
                 Err(_) => {}

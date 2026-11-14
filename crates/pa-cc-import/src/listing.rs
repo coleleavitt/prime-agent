@@ -69,11 +69,9 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(path)
-    {
-        if (*size, *time) == key {
+        && (*size, *time) == key {
             return row.clone();
         }
-    }
     let row = summarize_uncached(path, &metadata);
     cache
         .lock()

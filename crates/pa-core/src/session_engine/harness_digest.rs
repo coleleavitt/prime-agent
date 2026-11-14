@@ -145,10 +145,10 @@ fn render_digest_with_fingerprint(
     // feature's user/self-correction taps read this sidecar to attribute Misled
     // signals to the exact memories shown. Append-only JSONL; failures
     // are logged and skipped — the digest render must never fail a turn.
-    if let Ok(ids) = rendered_memory_ids.lock() {
-        if !ids.is_empty() {
-            append_digest_memories_sidecar(&context.global_dir, &state_fingerprint, &ids);
-        }
+    if let Ok(ids) = rendered_memory_ids.lock()
+        && !ids.is_empty()
+    {
+        append_digest_memories_sidecar(&context.global_dir, &state_fingerprint, &ids);
     }
     HarnessDigestRender {
         digest,
@@ -560,13 +560,12 @@ impl super::AgentSession {
             .is_some_and(|details| details.state_fingerprint.is_none())
         {
             let session = self.session.lock().await;
-            if let Some(typed) = latest_typed_digest_details(&session.active_context().messages) {
-                if latest
+            if let Some(typed) = latest_typed_digest_details(&session.active_context().messages)
+                && latest
                     .as_ref()
                     .is_some_and(|details| details.digest == typed.digest)
-                {
-                    latest.as_mut().unwrap().state_fingerprint = typed.state_fingerprint;
-                }
+            {
+                latest.as_mut().unwrap().state_fingerprint = typed.state_fingerprint;
             }
         }
         let fresh_matches = match latest {

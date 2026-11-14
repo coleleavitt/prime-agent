@@ -369,11 +369,10 @@ impl SessionLease {
         }
         self.write_sidecars();
         let _ = with_lease_guard(&self.directory, GuardWait::Fast, || {
-            if let Ok(Some(owner)) = read_owner(&self.directory) {
-                if owner.token == self.token {
+            if let Ok(Some(owner)) = read_owner(&self.directory)
+                && owner.token == self.token {
                     reclaim_stale(&self.directory);
                 }
-            }
             Ok(())
         });
     }
@@ -634,7 +633,7 @@ mod tests {
     #[test]
     fn lease_conflicts_and_releases() {
         let dir = crate::test_support::TestDir::new("pa-lease-");
-        std::env::set_var(SESSION_LEASES_ENABLED_ENV, "1");
+        pa_types::env::set_var(SESSION_LEASES_ENABLED_ENV, "1");
         let session = dir.join("s.jsonl");
         std::fs::write(&session, "{}").unwrap();
         let lease = acquire_session_lease(Some(&session), &dir)
@@ -647,7 +646,7 @@ mod tests {
             .unwrap()
             .unwrap();
         second.release();
-        std::env::remove_var(SESSION_LEASES_ENABLED_ENV);
+        pa_types::env::remove_var(SESSION_LEASES_ENABLED_ENV);
         let _ = fs::remove_dir_all(&dir);
     }
 

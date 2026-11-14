@@ -241,11 +241,10 @@ impl Drop for InputLiveHarness {
         // thread to the process exit instead of hanging the drop).
         let _ = self.child.kill();
         let _ = self.child.wait();
-        if self.connected.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Some(server) = self.server.take() {
+        if self.connected.load(std::sync::atomic::Ordering::SeqCst)
+            && let Some(server) = self.server.take() {
                 let _ = server.join();
             }
-        }
     }
 }
 
@@ -368,11 +367,10 @@ impl PtyReader {
                         4
                     };
                     let end = (i + len).min(bytes.len());
-                    if let Ok(text) = std::str::from_utf8(&bytes[i..end]) {
-                        if let Some(ch) = text.chars().next() {
+                    if let Ok(text) = std::str::from_utf8(&bytes[i..end])
+                        && let Some(ch) = text.chars().next() {
                             self.put(ch);
                         }
-                    }
                     i = end;
                 }
             }

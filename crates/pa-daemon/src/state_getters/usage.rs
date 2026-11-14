@@ -130,11 +130,10 @@ pub(crate) fn compute_own_and_total_usage(
         let Some(target_id) = entry.fields.get("targetId").and_then(Value::as_str) else {
             continue;
         };
-        if branch_assistant_ids.contains(target_id) {
-            if let Some(child_usage) = entry.fields.get("childUsage") {
+        if branch_assistant_ids.contains(target_id)
+            && let Some(child_usage) = entry.fields.get("childUsage") {
                 subtract_usage(&mut own, child_usage);
             }
-        }
     }
     (own, total)
 }

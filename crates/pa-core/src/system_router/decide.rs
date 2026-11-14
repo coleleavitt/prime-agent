@@ -162,10 +162,10 @@ fn object_candidates_from_text(trimmed: &str) -> Vec<Map<String, Value>> {
     let Some(start) = trimmed.find('{') else {
         return candidates;
     };
-    if let Some(end) = trimmed.rfind('}') {
-        if end > start {
-            push_object_candidate(&mut candidates, &trimmed[start..=end]);
-        }
+    if let Some(end) = trimmed.rfind('}')
+        && end > start
+    {
+        push_object_candidate(&mut candidates, &trimmed[start..=end]);
     }
     // The balanced scan advances past each slice to the next open brace: a
     // brace pair in prose before the decision object must not pin every slice
@@ -221,10 +221,10 @@ fn balanced_object_end(text: &str, from: usize) -> Option<usize> {
 }
 
 fn push_object_candidate(candidates: &mut Vec<Map<String, Value>>, slice: &str) {
-    if let Ok(value) = serde_json::from_str::<Value>(slice) {
-        if let Some(object) = value.as_object() {
-            candidates.push(object.clone());
-        }
+    if let Ok(value) = serde_json::from_str::<Value>(slice)
+        && let Some(object) = value.as_object()
+    {
+        candidates.push(object.clone());
     }
 }
 

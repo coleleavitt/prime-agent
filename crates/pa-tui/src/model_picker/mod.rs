@@ -200,14 +200,13 @@ impl ModelPicker {
         self.resolve_scope_positions();
         let query = self.search.value().to_string();
         self.filter_models(&query);
-        if let Some(key) = selected_key {
-            if let Some(index) = self
+        if let Some(key) = selected_key
+            && let Some(index) = self
                 .filtered
                 .iter()
                 .position(|&index| self.key_at(index) == key)
-            {
-                self.selected = index;
-            }
+        {
+            self.selected = index;
         }
     }
 
@@ -242,12 +241,11 @@ impl ModelPicker {
             for (binding, direction) in
                 [("tui.editor.cursorLeft", -1), ("tui.editor.cursorRight", 1)]
             {
-                if kb.matches(key, binding) {
-                    if let Some(model) = self.selected_model().cloned() {
-                        if self.adjust_effort(&model, direction) {
-                            return ModelPickerAction::None;
-                        }
-                    }
+                if kb.matches(key, binding)
+                    && let Some(model) = self.selected_model().cloned()
+                    && self.adjust_effort(&model, direction)
+                {
+                    return ModelPickerAction::None;
                 }
             }
         }

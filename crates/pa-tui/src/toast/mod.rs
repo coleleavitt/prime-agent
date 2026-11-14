@@ -214,11 +214,11 @@ fn slice_columns_keeping_escapes(line: &Line, start: usize, length: usize) -> Li
 /// Append `text` to the slice, merging into the trailing span when the
 /// style already matches (the width module's span-merge shape).
 fn push_slice_text(out: &mut Line, style: ratatui::style::Style, text: &str) {
-    if let Some(last) = out.last_mut() {
-        if last.style == style {
-            last.content.push_str(text);
-            return;
-        }
+    if let Some(last) = out.last_mut()
+        && last.style == style
+    {
+        last.content.push_str(text);
+        return;
     }
     out.push(Span::styled(text.to_string(), style));
 }

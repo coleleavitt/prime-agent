@@ -20,11 +20,11 @@ fn tmux_advertising_hyperlinks_enables_osc8() {
     .expect("write fake tmux");
     std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     let path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{path}", dir.path().display()));
-    std::env::set_var("TMUX", "/tmp/tmux-test/default,1234,0");
-    std::env::set_var("TMUX_PANE", "%7");
-    std::env::set_var("TERM", "tmux-256color");
-    std::env::remove_var("TERM_PROGRAM");
+    pa_types::env::set_var("PATH", format!("{}:{path}", dir.path().display()));
+    pa_types::env::set_var("TMUX", "/tmp/tmux-test/default,1234,0");
+    pa_types::env::set_var("TMUX_PANE", "%7");
+    pa_types::env::set_var("TERM", "tmux-256color");
+    pa_types::env::remove_var("TERM_PROGRAM");
 
     assert!(pa_tui::hyperlinks::hyperlinks_enabled());
     // The probe runs once per process; later calls read the cached answer.

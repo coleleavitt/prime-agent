@@ -58,7 +58,7 @@ async fn scrub_credentials_drops_provider_keys_from_the_kernel_and_its_children(
         ("GITHUB_TOKEN", "ghp-test"),
         ("PA_TEST_UNRELATED", "kept"),
     ] {
-        std::env::set_var(key, value);
+        pa_types::env::set_var(key, value);
     }
     assert_eq!(
         (

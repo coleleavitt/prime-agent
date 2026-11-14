@@ -189,11 +189,11 @@ impl FileAuthStorageBackend {
     }
 
     fn ensure_parent_dir(&self) -> Result<()> {
-        if let Some(dir) = self.auth_path.parent() {
-            if !dir.exists() {
-                fs::create_dir_all(dir)?;
-                crate::platform::perms::restrict_dir(dir)?;
-            }
+        if let Some(dir) = self.auth_path.parent()
+            && !dir.exists()
+        {
+            fs::create_dir_all(dir)?;
+            crate::platform::perms::restrict_dir(dir)?;
         }
         Ok(())
     }
@@ -325,11 +325,11 @@ impl AuthStorageBackend for FileAuthStorageBackend {
             let cache = read_cache()
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(entry) = cache.get(&self.auth_path) {
-                if entry.identity == identity {
-                    self.remember(Some(identity));
-                    return Ok(Some(entry.content.clone()));
-                }
+            if let Some(entry) = cache.get(&self.auth_path)
+                && entry.identity == identity
+            {
+                self.remember(Some(identity));
+                return Ok(Some(entry.content.clone()));
             }
         }
         self.ensure_parent_dir()?;

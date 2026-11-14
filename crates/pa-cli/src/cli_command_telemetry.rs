@@ -78,11 +78,10 @@ fn report_in(cwd: &Path, agent_dir: &Path, command: CliCommand, ok: bool, wait: 
                 let _ = tokio::time::timeout(FLUSH_BUDGET, client.shutdown()).await;
             });
         });
-    if wait {
-        if let Ok(worker) = worker {
+    if wait
+        && let Ok(worker) = worker {
             let _ = worker.join();
         }
-    }
 }
 
 #[cfg(test)]

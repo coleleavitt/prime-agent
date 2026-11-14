@@ -145,20 +145,18 @@ fn apply_child_usage_attributions(entries: &mut [FileEntry]) {
             message: AgentMessage::Assistant(_assistant),
             ..
         } = entry
+            && let Some(id) = entry.id().map(str::to_string)
         {
-            if let Some(id) = entry.id().map(str::to_string) {
-                assistant_index.insert(id, index);
-            }
+            assistant_index.insert(id, index);
         }
     }
     let mut updates: Vec<(usize, pa_types::ai::Usage)> = Vec::new();
     for entry in entries.iter() {
-        if let FileEntry::ChildUsageAttributed { payload, .. } = entry {
-            if let Some(&target_index) =
+        if let FileEntry::ChildUsageAttributed { payload, .. } = entry
+            && let Some(&target_index) =
                 Some(payload.target_id.as_str()).and_then(|id| assistant_index.get(id))
-            {
-                updates.push((target_index, payload.aggregate_usage));
-            }
+        {
+            updates.push((target_index, payload.aggregate_usage));
         }
     }
     for (index, usage) in updates {
@@ -203,15 +201,14 @@ fn migrate_v1_to_v2(entries: &mut [FileEntry]) {
         prev_id = Some(id);
         // Compaction firstKeptEntryIndex references an earlier entry whose id
         // this pass just assigned; resolve after the loop.
-        if let FileEntry::Compaction { payload, .. } = entry {
-            if let Some(index) = payload
+        if let FileEntry::Compaction { payload, .. } = entry
+            && let Some(index) = payload
                 .details
                 .as_ref()
                 .and_then(|details| details.get("firstKeptEntryIndex"))
                 .and_then(serde_json::Value::as_u64)
-            {
-                compaction_fixes.push((position, index as usize));
-            }
+        {
+            compaction_fixes.push((position, index as usize));
         }
         position += 1;
     }
@@ -370,12 +367,12 @@ pub fn build_session_context(entries: &[FileEntry], leaf_id: Option<&str>) -> Se
     let mut newest_digest_path_idx: Option<usize> = None;
     let mut newest_digest_entry_id: Option<String> = None;
     for (path_idx, &index) in path.iter().enumerate().rev() {
-        if let FileEntry::CustomMessage { payload, .. } = &entries[index] {
-            if payload.custom_type == crate::session_engine::headless::HARNESS_DIGEST_CUSTOM_TYPE {
-                newest_digest_path_idx = Some(path_idx);
-                newest_digest_entry_id = entries[index].id().map(str::to_string);
-                break;
-            }
+        if let FileEntry::CustomMessage { payload, .. } = &entries[index]
+            && payload.custom_type == crate::session_engine::headless::HARNESS_DIGEST_CUSTOM_TYPE
+        {
+            newest_digest_path_idx = Some(path_idx);
+            newest_digest_entry_id = entries[index].id().map(str::to_string);
+            break;
         }
     }
     // Likewise only the newest post-compaction `ipython_state` notice: each copy restates the

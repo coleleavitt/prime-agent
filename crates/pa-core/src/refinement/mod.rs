@@ -480,10 +480,10 @@ pub fn infer_refinement_result_scope(result: &RefinementResult) -> Option<Harnes
             .as_ref()
             .or(edit.before.as_ref())
             .and_then(|entry| entry.scope);
-        if let Some(scope) = scope {
-            if !scopes.contains(&scope) {
-                scopes.push(scope);
-            }
+        if let Some(scope) = scope
+            && !scopes.contains(&scope)
+        {
+            scopes.push(scope);
         }
     }
     (scopes.len() == 1).then(|| scopes[0])

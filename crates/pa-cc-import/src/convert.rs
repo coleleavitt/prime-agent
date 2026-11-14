@@ -204,11 +204,10 @@ fn tool_results(transcript: &Transcript) -> HashMap<String, (String, bool)> {
 fn reply_groups(transcript: &Transcript) -> HashMap<&str, Vec<&Entry>> {
     let mut groups: HashMap<&str, Vec<&Entry>> = HashMap::new();
     for entry in &transcript.entries {
-        if entry.kind == Kind::Assistant && !entry.sidechain {
-            if let Some(id) = entry.message_id() {
+        if entry.kind == Kind::Assistant && !entry.sidechain
+            && let Some(id) = entry.message_id() {
                 groups.entry(id).or_default().push(entry);
             }
-        }
     }
     groups
 }

@@ -151,10 +151,10 @@ fn isolate_harness_env() {
         .filter_map(|name| Some((*name, std::env::var_os(name)?)));
     for name in protected_redirects(inherited) {
         eprintln!("test isolation: ignoring the inherited {name}, which points at the real state");
-        std::env::remove_var(name);
+        crate::env::remove_var(name);
     }
     for name in SESSION_KERNEL_VARS {
-        std::env::remove_var(name);
+        crate::env::remove_var(name);
     }
     if let Some(home) = super::dirs::raw_home_dir() {
         let _ = harness_home(home);
@@ -291,7 +291,7 @@ fn is_protected_home(home: &Path) -> bool {
 pub(crate) fn harness_home(home: PathBuf) -> PathBuf {
     match harness_replacement_home(&home) {
         Some(test_home) => {
-            std::env::set_var("HOME", &test_home);
+            crate::env::set_var("HOME", &test_home);
             test_home
         }
         None => home,
@@ -474,10 +474,10 @@ pub fn test_home() -> PathBuf {
     if let Some(home) = std::env::var_os(TEST_HOME_ENV).filter(|home| !home.is_empty()) {
         return PathBuf::from(home);
     }
-    if let Some(home) = super::dirs::raw_home_dir() {
-        if !is_protected_home(&home) {
-            return home;
-        }
+    if let Some(home) = super::dirs::raw_home_dir()
+        && !is_protected_home(&home)
+    {
+        return home;
     }
     let home = std::env::temp_dir().join(format!("pa-test-home-{}", user_key()));
     let _ = std::fs::create_dir_all(&home);
@@ -677,8 +677,8 @@ mod tests {
     #[test]
     fn a_harness_drops_what_a_session_told_its_kernel() {
         // A `cargo test` started from a prime-agent session inherits these.
-        std::env::set_var("PRIME_AGENT_KERNEL_OWNER_PID", "1");
-        std::env::set_var("PRIME_AGENT_HOST_BASH", "1");
+        crate::env::set_var("PRIME_AGENT_KERNEL_OWNER_PID", "1");
+        crate::env::set_var("PRIME_AGENT_HOST_BASH", "1");
         isolate_harness_env();
         assert_eq!(
             [

@@ -96,16 +96,16 @@ pub fn run_command_capture(
                 );
             }
             Ok(None) => {
-                if let Some(deadline) = deadline {
-                    if Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        anyhow::bail!(
-                            "{program} {} timed out after {}ms",
-                            args.join(" "),
-                            timeout.map_or(0, |t| t.as_millis())
-                        );
-                    }
+                if let Some(deadline) = deadline
+                    && Instant::now() >= deadline
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!(
+                        "{program} {} timed out after {}ms",
+                        args.join(" "),
+                        timeout.map_or(0, |t| t.as_millis())
+                    );
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }

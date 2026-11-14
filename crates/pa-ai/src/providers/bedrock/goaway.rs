@@ -133,10 +133,10 @@ impl tokio::io::AsyncRead for TrackedReadHalf {
     ) -> std::task::Poll<std::io::Result<()>> {
         let filled_before = buf.filled().len();
         let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let std::task::Poll::Ready(Ok(())) = &poll {
-            if let Ok(mut tracker) = self.observer.inner.lock() {
-                tracker.observe(&buf.filled()[filled_before..]);
-            }
+        if let std::task::Poll::Ready(Ok(())) = &poll
+            && let Ok(mut tracker) = self.observer.inner.lock()
+        {
+            tracker.observe(&buf.filled()[filled_before..]);
         }
         poll
     }

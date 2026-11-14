@@ -236,11 +236,10 @@ fn run_turn(client: &mut Client, session_id: &str, message: &str, id: &str) {
 fn await_receipt(receipt: &Path) -> String {
     let deadline = Instant::now() + Duration::from_mins(1);
     loop {
-        if let Ok(content) = std::fs::read_to_string(receipt) {
-            if !content.is_empty() {
+        if let Ok(content) = std::fs::read_to_string(receipt)
+            && !content.is_empty() {
                 return content;
             }
-        }
         assert!(
             Instant::now() < deadline,
             "kernel cell receipt never appeared at {}",
@@ -453,13 +452,13 @@ fn sigkill_closes_the_spawned_child_and_passivates_the_row() {
             .join("session-artifacts")
             .join(parent_session_id)
             .join(&child_id);
-        let file = std::fs::read_dir(&child_dir)
+        
+        std::fs::read_dir(&child_dir)
             .expect("child session dir")
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("jsonl"))
-            .expect("one child session file");
-        file
+            .expect("one child session file")
     };
     let child_session =
         std::fs::read_to_string(&child_session_file).expect("read child session file");

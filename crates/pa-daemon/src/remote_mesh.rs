@@ -521,11 +521,10 @@ impl MeshShared {
             }
         }
         inner.entries = entries;
-        if !changed.is_empty() || !removed.is_empty() {
-            if let Some(on_roster_change) = &self.on_roster_change {
+        if (!changed.is_empty() || !removed.is_empty())
+            && let Some(on_roster_change) = &self.on_roster_change {
                 on_roster_change(&changed, &removed);
             }
-        }
     }
 }
 

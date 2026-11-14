@@ -142,14 +142,13 @@ impl FactoryHost {
             .or_else(|| argument_object.get("nodes"))?
             .as_array()?;
         let mut subagents: Vec<(Scope, crate::refinement::HarnessEntry)> = Vec::new();
-        if let Some(local) = &local {
-            if let Some(entries) = local
+        if let Some(local) = &local
+            && let Some(entries) = local
                 .entries
                 .get(&crate::refinement::RefinementKind::Subagent)
-            {
-                for entry in entries.values() {
-                    subagents.push((Scope::Local, entry.clone()));
-                }
+        {
+            for entry in entries.values() {
+                subagents.push((Scope::Local, entry.clone()));
             }
         }
         if let Some(entries) = global
@@ -464,15 +463,15 @@ enum Scope {
 /// store (`x` must be non-empty, or the prefix stays part of the id),
 /// anything else is unprefixed.
 fn split_harness_scope(id: &str) -> (Scope, &str) {
-    if let Some(rest) = id.strip_prefix("local:") {
-        if !rest.is_empty() {
-            return (Scope::Local, rest);
-        }
+    if let Some(rest) = id.strip_prefix("local:")
+        && !rest.is_empty()
+    {
+        return (Scope::Local, rest);
     }
-    if let Some(rest) = id.strip_prefix("global:") {
-        if !rest.is_empty() {
-            return (Scope::Global, rest);
-        }
+    if let Some(rest) = id.strip_prefix("global:")
+        && !rest.is_empty()
+    {
+        return (Scope::Global, rest);
     }
     (Scope::Any, id)
 }
@@ -515,12 +514,12 @@ impl FactoryActivityRequest {
         if action != "graph" && action != "run" && run_id.is_none_or(|id| id.trim().is_empty()) {
             return Err(anyhow!("factory activity {action} requires runId"));
         }
-        if let Some(timeout_ms) = timeout_ms {
-            if timeout_ms > ACTIVITY_TIMEOUT_MS_CAP {
-                return Err(anyhow!(
-                    "factory activity timeoutMs must be at most {ACTIVITY_TIMEOUT_MS_CAP}"
-                ));
-            }
+        if let Some(timeout_ms) = timeout_ms
+            && timeout_ms > ACTIVITY_TIMEOUT_MS_CAP
+        {
+            return Err(anyhow!(
+                "factory activity timeoutMs must be at most {ACTIVITY_TIMEOUT_MS_CAP}"
+            ));
         }
         Ok(Self {
             action,

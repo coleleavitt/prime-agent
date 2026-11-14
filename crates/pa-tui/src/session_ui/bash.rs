@@ -264,10 +264,8 @@ impl SessionUi {
                 let rows_settled =
                     crate::bash_view::registry_rows_moved(&self.bash_activities, &data);
                 self.bash_activities = data;
-                if rows_settled {
-                    if let Some(bash_view) = view.bash_view.as_mut() {
-                        bash_view.clear_error();
-                    }
+                if rows_settled && let Some(bash_view) = view.bash_view.as_mut() {
+                    bash_view.clear_error();
                 }
                 self.update_subagent_summary(view);
             }
@@ -509,13 +507,12 @@ impl SessionUi {
         // The pane route only while its row is the active run: `bash_output` carries no run
         // identity, so a settled row from an earlier side run must not swallow a later run's
         // output.
-        if let Some(pane) = view.side_pane.as_mut() {
-            if let Some(bash) = pane.bash.as_mut() {
-                if bash.running {
-                    bash.output.push_str(chunk);
-                    return;
-                }
-            }
+        if let Some(pane) = view.side_pane.as_mut()
+            && let Some(bash) = pane.bash.as_mut()
+            && bash.running
+        {
+            bash.output.push_str(chunk);
+            return;
         }
         let Some(card_id) = self.user_bash_card.clone() else {
             return;
@@ -552,14 +549,14 @@ impl SessionUi {
         view: &mut AgentView,
     ) {
         self.user_bash_running = false;
-        if let Some(discarded) = self.side_bash_discarded.clone() {
-            if run_id == Some(discarded.as_str()) {
-                // Only the discarded run's own end consumes the marker (bash_start
-                // already cleared it for any other run).
-                self.side_bash_discarded = None;
-                self.user_bash_card = None;
-                return;
-            }
+        if let Some(discarded) = self.side_bash_discarded.clone()
+            && run_id == Some(discarded.as_str())
+        {
+            // Only the discarded run's own end consumes the marker (bash_start
+            // already cleared it for any other run).
+            self.side_bash_discarded = None;
+            self.user_bash_card = None;
+            return;
         }
         // An own side run: settle the pane's row and seed the follow-up transcript.
         if let Some(run) = self.side_bash.take() {
@@ -619,13 +616,13 @@ impl SessionUi {
                 view.mark_entry_stale(index);
                 settled = true;
             }
-            if !settled {
-                if let Some(card) = view.pending_bash.iter_mut().find(|card| card.id == card_id) {
-                    match &error_message {
-                        Some(message) => card.set_failed(message),
-                        None => {
-                            card.set_complete(exit_code, cancelled, truncated, full_output_path);
-                        }
+            if !settled
+                && let Some(card) = view.pending_bash.iter_mut().find(|card| card.id == card_id)
+            {
+                match &error_message {
+                    Some(message) => card.set_failed(message),
+                    None => {
+                        card.set_complete(exit_code, cancelled, truncated, full_output_path);
                     }
                 }
             }

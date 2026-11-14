@@ -86,14 +86,14 @@ pub fn roster_agent_id(
     rlm_child_id: Option<&str>,
     parent_key: Option<&str>,
 ) -> String {
-    if runtime_kind == "subagent" {
-        if let Some(child_id) = rlm_child_id {
-            // No-session parents have no path; their live parent id disambiguates.
-            return match parent_key {
-                Some(key) if !key.is_empty() => format!("{key}#{child_id}"),
-                _ => child_id.to_string(),
-            };
-        }
+    if runtime_kind == "subagent"
+        && let Some(child_id) = rlm_child_id
+    {
+        // No-session parents have no path; their live parent id disambiguates.
+        return match parent_key {
+            Some(key) if !key.is_empty() => format!("{key}#{child_id}"),
+            _ => child_id.to_string(),
+        };
     }
     session_id.to_string()
 }
@@ -141,10 +141,11 @@ pub fn session_activity_detail(summary: &Value, options: &SessionActivityOptions
     let active = |name: &str| summary.get(name).and_then(Value::as_bool) == Some(true);
     // A non-ready worker cannot report fresh runtime flags; its state is the row's story. A
     // ledger-marked row keeps the mark out of the activity (its surface shows it as the status).
-    if let Some(worker_state) = str_field("workerState") {
-        if str_field("statusLabel").is_none() && worker_state != "ready" {
-            return worker_state.to_string();
-        }
+    if let Some(worker_state) = str_field("workerState")
+        && str_field("statusLabel").is_none()
+        && worker_state != "ready"
+    {
+        return worker_state.to_string();
     }
     if summary
         .get("isCompacting")

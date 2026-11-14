@@ -325,8 +325,8 @@ fn validate_bash(rule: &RuleValue, content: &str, behavior: RuleBehavior) -> Opt
             Some("Specify a command prefix before :*".to_string()),
         ));
     }
-    if behavior == RuleBehavior::Allow {
-        if let Some(word) = wildcard_before_rest(content) {
+    if behavior == RuleBehavior::Allow
+        && let Some(word) = wildcard_before_rest(content) {
             let (git, example) = if word == "git" {
                 (
                     " For git, options such as -c and --exec-path can run arbitrary commands.",
@@ -342,7 +342,6 @@ fn validate_bash(rule: &RuleValue, content: &str, behavior: RuleBehavior) -> Opt
                  subcommand{example}."
             )));
         }
-    }
     if let Some(prefix) = legacy_prefix(content).map(str::trim_end) {
         if has_unescaped_star(prefix) {
             return Some(Validation::Warning(format!(
@@ -396,11 +395,10 @@ pub fn validate(text: &str, behavior: RuleBehavior) -> Validation {
     let Some(content) = rule.content.as_deref() else {
         return Validation::Valid;
     };
-    if rule.tool == BASH_TOOL {
-        if let Some(found) = validate_bash(&rule, content, behavior) {
+    if rule.tool == BASH_TOOL
+        && let Some(found) = validate_bash(&rule, content, behavior) {
             return found;
         }
-    }
     if FILE_PATTERN_TOOLS.contains(&rule.tool.as_str()) && content.contains(":*") {
         return Validation::invalid(
             "The \":*\" syntax is only for Bash prefix rules",

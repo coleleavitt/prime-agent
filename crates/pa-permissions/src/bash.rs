@@ -112,14 +112,13 @@ impl BashPattern {
         if let Some(prefix) = legacy_prefix(content) {
             return BashPattern::Prefix(prefix.to_string());
         }
-        if has_unescaped_star(content) {
-            if let Some(regex) = wildcard_regex(content) {
+        if has_unescaped_star(content)
+            && let Some(regex) = wildcard_regex(content) {
                 return BashPattern::Wildcard {
                     pattern: content.to_string(),
                     regex,
                 };
             }
-        }
         BashPattern::Exact(content.to_string())
     }
 

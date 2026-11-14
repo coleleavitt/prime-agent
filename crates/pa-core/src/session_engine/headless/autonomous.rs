@@ -87,13 +87,11 @@ impl HeadlessAutonomous {
                                 pa_agent::types::Message::Assistant(assistant),
                             ),
                     } = &event
-                    {
-                        if let Some(message) =
+                        && let Some(message) =
                             json_round_trip::<_, pa_types::ai::AssistantMessage>(assistant)
-                        {
-                            let mut state = state.lock().await;
-                            driver.account_message(&mut state, &message);
-                        }
+                    {
+                        let mut state = state.lock().await;
+                        driver.account_message(&mut state, &message);
                     }
                     Ok(())
                 })
@@ -232,13 +230,14 @@ impl HeadlessAutonomous {
                 limit_text
             ));
         }
-        if status.enabled && status.gates.commands.is_empty() {
-            if let Some(reason) = limit {
-                return Some(format!(
-                    "Autonomous run stopped before terminal evidence; {}",
-                    describe_autonomous_limit(&status, reason, now)
-                ));
-            }
+        if status.enabled
+            && status.gates.commands.is_empty()
+            && let Some(reason) = limit
+        {
+            return Some(format!(
+                "Autonomous run stopped before terminal evidence; {}",
+                describe_autonomous_limit(&status, reason, now)
+            ));
         }
         None
     }

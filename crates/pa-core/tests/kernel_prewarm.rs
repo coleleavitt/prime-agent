@@ -299,7 +299,7 @@ impl CleanTelemetryEnv {
             .iter()
             .map(|var| {
                 let value = std::env::var(var).ok();
-                std::env::remove_var(var);
+                pa_types::env::remove_var(var);
                 (*var, value)
             })
             .collect();
@@ -314,8 +314,8 @@ impl Drop for CleanTelemetryEnv {
     fn drop(&mut self) {
         for (var, value) in self.saved.drain(..) {
             match value {
-                Some(value) => std::env::set_var(var, value),
-                None => std::env::remove_var(var),
+                Some(value) => pa_types::env::set_var(var, value),
+                None => pa_types::env::remove_var(var),
             }
         }
     }

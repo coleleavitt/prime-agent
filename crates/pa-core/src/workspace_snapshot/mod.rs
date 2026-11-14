@@ -477,7 +477,8 @@ fn build_manifest(
 /// commit's content; the format follows the repository (SHA-1 or SHA-256).
 pub(crate) fn git_blob_oid(content: &[u8], sha256: bool) -> String {
     let header = format!("blob {}\0", content.len());
-    let digest = if sha256 {
+
+    if sha256 {
         let mut hasher = Sha256::new();
         hasher.update(header.as_bytes());
         hasher.update(content);
@@ -487,8 +488,7 @@ pub(crate) fn git_blob_oid(content: &[u8], sha256: bool) -> String {
         hasher.update(header.as_bytes());
         hasher.update(content);
         format!("{:x}", hasher.finalize())
-    };
-    digest
+    }
 }
 
 /// What a single path's worktree leaf turned out to be.

@@ -81,14 +81,13 @@ fn port_list<'a>(node: &'a PyValue, key: &str) -> &'a [PyValue] {
 fn declared_port_types(node: &PyValue, key: &str) -> HashMap<String, String> {
     let mut ports = HashMap::new();
     for entry in port_list(node, key) {
-        if entry.is_dict() {
-            if let (Some(name), Some(port_type)) =
+        if entry.is_dict()
+            && let (Some(name), Some(port_type)) =
                 (entry.get("name").as_str(), entry.get("type").as_str())
-            {
-                if !name.is_empty() && PORT_TYPES.contains(&port_type) {
-                    ports.insert(name.to_string(), port_type.to_string());
-                }
-            }
+            && !name.is_empty()
+            && PORT_TYPES.contains(&port_type)
+        {
+            ports.insert(name.to_string(), port_type.to_string());
         }
     }
     ports
@@ -106,10 +105,10 @@ fn input_sources(node: &PyValue) -> Vec<String> {
         if !input.is_dict() {
             continue;
         }
-        if let Some(source) = input.get("from").as_str() {
-            if source.contains('.') {
-                sources.push(partition_dot(source).0.to_string());
-            }
+        if let Some(source) = input.get("from").as_str()
+            && source.contains('.')
+        {
+            sources.push(partition_dot(source).0.to_string());
         }
     }
     sources
@@ -768,62 +767,61 @@ pub fn validate_factory_machine(machine: &PyValue) -> Vec<String> {
     for (state_id, state) in states_by_id.iter() {
         validate_state_fields(state, run_budget, &states_by_id, "state", &mut errors);
         let subagent = state.get("subagent");
-        if subagent.is_dict() {
-            if let Some(name) = subagent
+        if subagent.is_dict()
+            && let Some(name) = subagent
                 .get("name")
                 .as_str()
                 .filter(|name| !name.is_empty())
-            {
-                let configured = py_strip(name).to_string();
-                let state_of = |seen: &str| {
-                    seen_names
-                        .iter()
-                        .find(|(name, _)| name == seen)
-                        .map(|(_, state)| state.clone())
-                        .unwrap_or_default()
-                };
-                let base_seen = seen_names
+        {
+            let configured = py_strip(name).to_string();
+            let state_of = |seen: &str| {
+                seen_names
+                    .iter()
+                    .find(|(name, _)| name == seen)
+                    .map(|(_, state)| state.clone())
+                    .unwrap_or_default()
+            };
+            let base_seen = seen_names
+                .iter()
+                .map(|(seen, _)| seen.clone())
+                .find(|seen| suffixed_spawn_form(seen, &configured));
+            let base_current = if base_seen.is_some() {
+                None
+            } else {
+                seen_names
                     .iter()
                     .map(|(seen, _)| seen.clone())
-                    .find(|seen| suffixed_spawn_form(seen, &configured));
-                let base_current = if base_seen.is_some() {
-                    None
-                } else {
-                    seen_names
-                        .iter()
-                        .map(|(seen, _)| seen.clone())
-                        .find(|seen| suffixed_spawn_form(&configured, seen))
-                };
-                if seen_names.iter().any(|(seen, _)| *seen == configured) {
-                    errors.push(format!(
-                        "state {state_id} subagent name {} is already configured by state {}",
-                        py_str_repr(&configured),
-                        py_str_repr(&state_of(&configured))
-                    ));
-                } else if let Some(base) = base_seen {
-                    errors.push(format!(
-                        "state {state_id} subagent name {} collides with the suffixed spawn labels \
+                    .find(|seen| suffixed_spawn_form(&configured, seen))
+            };
+            if seen_names.iter().any(|(seen, _)| *seen == configured) {
+                errors.push(format!(
+                    "state {state_id} subagent name {} is already configured by state {}",
+                    py_str_repr(&configured),
+                    py_str_repr(&state_of(&configured))
+                ));
+            } else if let Some(base) = base_seen {
+                errors.push(format!(
+                    "state {state_id} subagent name {} collides with the suffixed spawn labels \
                          of state {} (configured {}): re-entry, foreach, and retries name children \
                          {}-i<n> and {}-a<n>",
-                        py_str_repr(&configured),
-                        py_str_repr(&state_of(&base)),
-                        py_str_repr(&base),
-                        py_str_repr(&base),
-                        py_str_repr(&base)
-                    ));
-                } else if let Some(base) = base_current {
-                    errors.push(format!(
-                        "state {state_id} subagent name {} suffixed by re-entry, foreach, and retries \
+                    py_str_repr(&configured),
+                    py_str_repr(&state_of(&base)),
+                    py_str_repr(&base),
+                    py_str_repr(&base),
+                    py_str_repr(&base)
+                ));
+            } else if let Some(base) = base_current {
+                errors.push(format!(
+                    "state {state_id} subagent name {} suffixed by re-entry, foreach, and retries \
                          ({}-i<n>, {}-a<n>) collides with state {} (configured {})",
-                        py_str_repr(&configured),
-                        py_str_repr(&configured),
-                        py_str_repr(&configured),
-                        py_str_repr(&state_of(&base)),
-                        py_str_repr(&base)
-                    ));
-                } else {
-                    seen_names.push((configured, state_id.to_string()));
-                }
+                    py_str_repr(&configured),
+                    py_str_repr(&configured),
+                    py_str_repr(&configured),
+                    py_str_repr(&state_of(&base)),
+                    py_str_repr(&base)
+                ));
+            } else {
+                seen_names.push((configured, state_id.to_string()));
             }
         }
         if state.has("entry") && !matches!(state.get("entry"), PyValue::Bool(_)) {
@@ -855,14 +853,15 @@ pub fn validate_factory_machine(machine: &PyValue) -> Vec<String> {
                 ));
                 continue;
             }
-            if let Some(source) = input.get("from").as_str() {
-                if source.contains('.') && partition_dot(source).0 == state_id {
-                    errors.push(format!(
-                        "state {state_id} input {} cannot require itself: mark the self-input \
+            if let Some(source) = input.get("from").as_str()
+                && source.contains('.')
+                && partition_dot(source).0 == state_id
+            {
+                errors.push(format!(
+                    "state {state_id} input {} cannot require itself: mark the self-input \
                          optional - a required one can never bind on the state's first entry",
-                        py_repr(input.get("name"))
-                    ));
-                }
+                    py_repr(input.get("name"))
+                ));
             }
         }
     }
@@ -940,14 +939,14 @@ pub fn validate_factory_machine(machine: &PyValue) -> Vec<String> {
                 py_repr(dst)
             ));
         }
-        if let Some(on) = transition.entry("on") {
-            if !str_member(on, &TRANSITION_ON_KINDS) {
-                errors.push(format!(
-                    "transitions[{index}] on must be one of {}, got {}",
-                    str_list_repr(&TRANSITION_ON_KINDS),
-                    py_repr(on)
-                ));
-            }
+        if let Some(on) = transition.entry("on")
+            && !str_member(on, &TRANSITION_ON_KINDS)
+        {
+            errors.push(format!(
+                "transitions[{index}] on must be one of {}, got {}",
+                str_list_repr(&TRANSITION_ON_KINDS),
+                py_repr(on)
+            ));
         }
         for src in &sources {
             let Some(src_state) = src
@@ -983,10 +982,11 @@ pub fn validate_factory_machine(machine: &PyValue) -> Vec<String> {
 fn effective_dag_edges(node: &PyValue) -> Vec<String> {
     let mut edges: Vec<String> = Vec::new();
     for dep in port_list(node, "depends_on") {
-        if let Some(dep) = dep.as_str() {
-            if !dep.is_empty() && !edges.iter().any(|edge| edge == dep) {
-                edges.push(dep.to_string());
-            }
+        if let Some(dep) = dep.as_str()
+            && !dep.is_empty()
+            && !edges.iter().any(|edge| edge == dep)
+        {
+            edges.push(dep.to_string());
         }
     }
     for source in input_sources(node) {

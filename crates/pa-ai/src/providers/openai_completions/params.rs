@@ -67,12 +67,12 @@ pub(crate) fn build_params(
     }
 
     let mut tools: Option<Vec<Value>> = None;
-    if let Some(context_tools) = &context.tools {
-        if !context_tools.is_empty() {
-            tools = Some(convert_tools(context_tools, compat));
-            if compat.zai_tool_stream {
-                params.insert("tool_stream".into(), json!(true));
-            }
+    if let Some(context_tools) = &context.tools
+        && !context_tools.is_empty()
+    {
+        tools = Some(convert_tools(context_tools, compat));
+        if compat.zai_tool_stream {
+            params.insert("tool_stream".into(), json!(true));
         }
     }
     if tools.is_none() && has_tool_history(&context.messages) {
@@ -195,43 +195,41 @@ pub(crate) fn build_params(
     // (https://openrouter.ai/docs/guides/features/service-tiers). Prime Inference tolerates but
     // ignores the field (probed 2026-09-01), so it is not forwarded; other OpenAI-compatible
     // gateways may reject unknown fields.
-    if let Some(service_tier) = options.base.service_tier {
-        if model.provider == "openai" || model.provider == "openrouter" {
+    if let Some(service_tier) = options.base.service_tier
+        && (model.provider == "openai" || model.provider == "openrouter")
+    {
+        params.insert(
+            "service_tier".into(),
+            serde_json::to_value(service_tier).unwrap_or(Value::Null),
+        );
+    }
+
+    if model.base_url.contains("openrouter.ai")
+        && let Some(crate::types::CompatKind::OpenAiCompletions(compat)) = model.compat_kind()
+        && let Some(routing) = &compat.as_ref().open_router_routing
+    {
+        params.insert(
+            "provider".into(),
+            serde_json::to_value(routing).unwrap_or(Value::Null),
+        );
+    }
+
+    if model.base_url.contains("ai-gateway.vercel.sh")
+        && let Some(crate::types::CompatKind::OpenAiCompletions(compat)) = model.compat_kind()
+        && let Some(routing) = &compat.as_ref().vercel_gateway_routing
+    {
+        let mut gateway_options = Map::new();
+        if let Some(only) = &routing.only {
+            gateway_options.insert("only".into(), json!(only));
+        }
+        if let Some(order) = &routing.order {
+            gateway_options.insert("order".into(), json!(order));
+        }
+        if !gateway_options.is_empty() {
             params.insert(
-                "service_tier".into(),
-                serde_json::to_value(service_tier).unwrap_or(Value::Null),
+                "providerOptions".into(),
+                json!({ "gateway": Value::Object(gateway_options) }),
             );
-        }
-    }
-
-    if model.base_url.contains("openrouter.ai") {
-        if let Some(crate::types::CompatKind::OpenAiCompletions(compat)) = model.compat_kind() {
-            if let Some(routing) = &compat.as_ref().open_router_routing {
-                params.insert(
-                    "provider".into(),
-                    serde_json::to_value(routing).unwrap_or(Value::Null),
-                );
-            }
-        }
-    }
-
-    if model.base_url.contains("ai-gateway.vercel.sh") {
-        if let Some(crate::types::CompatKind::OpenAiCompletions(compat)) = model.compat_kind() {
-            if let Some(routing) = &compat.as_ref().vercel_gateway_routing {
-                let mut gateway_options = Map::new();
-                if let Some(only) = &routing.only {
-                    gateway_options.insert("only".into(), json!(only));
-                }
-                if let Some(order) = &routing.order {
-                    gateway_options.insert("order".into(), json!(order));
-                }
-                if !gateway_options.is_empty() {
-                    params.insert(
-                        "providerOptions".into(),
-                        json!({ "gateway": Value::Object(gateway_options) }),
-                    );
-                }
-            }
         }
     }
 
@@ -246,13 +244,12 @@ fn apply_anthropic_cache_control(
     if let Some(tools) = params
         .get_mut("tools")
         .and_then(|value| value.as_array_mut())
+        && let Some(last_tool) = tools.last_mut()
     {
-        if let Some(last_tool) = tools.last_mut() {
-            last_tool
-                .as_object_mut()
-                .expect("tools entries are objects")
-                .insert("cache_control".into(), cache_control.to_json());
-        }
+        last_tool
+            .as_object_mut()
+            .expect("tools entries are objects")
+            .insert("cache_control".into(), cache_control.to_json());
     }
     let Some(messages) = params
         .get_mut("messages")
@@ -338,12 +335,12 @@ pub(crate) fn build_headers(
         headers.push((name.clone(), value.clone()));
     }
 
-    if let Some(session_id) = cache_session_id {
-        if compat.send_session_affinity_headers {
-            headers.push(("session_id".into(), session_id.to_string()));
-            headers.push(("x-client-request-id".into(), session_id.to_string()));
-            headers.push(("x-session-affinity".into(), session_id.to_string()));
-        }
+    if let Some(session_id) = cache_session_id
+        && compat.send_session_affinity_headers
+    {
+        headers.push(("session_id".into(), session_id.to_string()));
+        headers.push(("x-client-request-id".into(), session_id.to_string()));
+        headers.push(("x-session-affinity".into(), session_id.to_string()));
     }
 
     if let Some(options_headers) = options_headers {
@@ -369,12 +366,12 @@ mod tests {
     /// storage is the single owner of the team header).
     #[test]
     fn prime_inference_adds_no_team_header_the_caller_did_not_pass() {
-        std::env::set_var("PRIME_TEAM_ID", "cli-profile-team");
+        pa_types::env::set_var("PRIME_TEAM_ID", "cli-profile-team");
         let model = models_generated::get_model("prime-inference", "z-ai/glm-5.3")
             .expect("the catalog carries a prime-inference model");
         let compat = crate::providers::openai_completions::get_compat(model);
         let headers = build_headers(model, "k", None, None, &compat, None);
-        std::env::remove_var("PRIME_TEAM_ID");
+        pa_types::env::remove_var("PRIME_TEAM_ID");
         assert!(
             headers
                 .iter()

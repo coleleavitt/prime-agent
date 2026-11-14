@@ -266,7 +266,7 @@ fn resolves_symlinked_user_and_project_resources_once() {
     }
     // Alone in its process: setting HOME cannot reach another test.
     let mut fixture = Fixture::new();
-    std::env::set_var("HOME", &fixture.temp_dir);
+    pa_types::env::set_var("HOME", &fixture.temp_dir);
 
     let shared = fixture.temp_dir.join("shared-resources");
     let shared_skills = shared.join("skills");
@@ -390,7 +390,7 @@ fn home_agents_skills_stays_user_scoped_when_cwd_is_under_home() {
     }
     // Alone in its process: setting HOME cannot reach another test.
     let fixture = Fixture::new();
-    std::env::set_var("HOME", &fixture.temp_dir);
+    pa_types::env::set_var("HOME", &fixture.temp_dir);
 
     let home_skill = skill_md(
         &fixture.temp_dir.join(".agents").join("skills"),
@@ -431,7 +431,7 @@ fn user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills() {
     }
     // Alone in its process: setting HOME cannot reach another test.
     let mut fixture = Fixture::new();
-    std::env::set_var("HOME", &fixture.temp_dir);
+    pa_types::env::set_var("HOME", &fixture.temp_dir);
 
     let agents_skills = fixture.temp_dir.join(".agents").join("skills");
     std::fs::create_dir_all(&agents_skills).unwrap();
@@ -899,7 +899,7 @@ fn project_package_cannot_add_resources_beside_a_user_package() {
 fn offline_mode_skips_installing_missing_sources() {
     let _guard = lock_env();
     let previous = std::env::var("PI_OFFLINE").ok();
-    std::env::set_var("PI_OFFLINE", "1");
+    pa_types::env::set_var("PI_OFFLINE", "1");
     let mut fixture = Fixture::new();
     fixture.set_user_packages(serde_json::json!(["npm:missing-package"]));
     let project_dir = fixture.manager.cwd().join(crate::settings::CONFIG_DIR_NAME);
@@ -922,8 +922,8 @@ fn offline_mode_skips_installing_missing_sources() {
     );
 
     match previous {
-        Some(value) => std::env::set_var("PI_OFFLINE", value),
-        None => std::env::remove_var("PI_OFFLINE"),
+        Some(value) => pa_types::env::set_var("PI_OFFLINE", value),
+        None => pa_types::env::remove_var("PI_OFFLINE"),
     }
 }
 

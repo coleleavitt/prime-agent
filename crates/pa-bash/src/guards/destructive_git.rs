@@ -86,10 +86,8 @@ impl Rule for DestructiveGit {
                     continue;
                 };
                 let mut listing = listing;
-                if truncated {
-                    if let Some(cut) = listing.rfind('\n') {
-                        listing.truncate(cut);
-                    }
+                if truncated && let Some(cut) = listing.rfind('\n') {
+                    listing.truncate(cut);
                 }
                 let paths: Vec<String> = listing
                     .split('\n')

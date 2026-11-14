@@ -98,10 +98,10 @@ pub(super) fn render(
 
     if filtered_len == 0 {
         lines.push(no_match_row(theme, width, "No matching models"));
-    } else if let Some(model) = picker.selected_model().cloned() {
-        if picker.detail_rows() > 0 {
-            lines.extend(detail_lines(theme, width, &model));
-        }
+    } else if let Some(model) = picker.selected_model().cloned()
+        && picker.detail_rows() > 0
+    {
+        lines.extend(detail_lines(theme, width, &model));
     }
 
     lines.push(hint_line(theme, width, kb));

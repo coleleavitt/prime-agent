@@ -319,13 +319,14 @@ pub fn refresh_cell_dimensions() {
     if image_protocol().is_none() {
         return;
     }
-    if let Ok(size) = crossterm::terminal::window_size() {
-        if size.columns > 0 && size.rows > 0 {
-            set_cell_dimensions(CellDimensions {
-                width_px: u32::from(size.width) / u32::from(size.columns),
-                height_px: u32::from(size.height) / u32::from(size.rows),
-            });
-        }
+    if let Ok(size) = crossterm::terminal::window_size()
+        && size.columns > 0
+        && size.rows > 0
+    {
+        set_cell_dimensions(CellDimensions {
+            width_px: u32::from(size.width) / u32::from(size.columns),
+            height_px: u32::from(size.height) / u32::from(size.rows),
+        });
     }
 }
 

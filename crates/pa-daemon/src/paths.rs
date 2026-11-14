@@ -145,8 +145,8 @@ impl RotatingLog {
             return;
         };
         let payload = format!("{line}\n");
-        if let Ok(metadata) = file.metadata() {
-            if metadata.len() + payload.len() as u64 > self.max_bytes {
+        if let Ok(metadata) = file.metadata()
+            && metadata.len() + payload.len() as u64 > self.max_bytes {
                 drop(file);
                 let rotated = self.path.with_extension("log.1");
                 let _ = std::fs::rename(&self.path, &rotated);
@@ -159,7 +159,6 @@ impl RotatingLog {
                     Err(_) => return,
                 }
             }
-        }
         let _ = file.write_all(payload.as_bytes());
     }
 }

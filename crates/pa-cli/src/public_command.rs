@@ -108,14 +108,13 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
     let removed: HashSet<&str> = REMOVED_COMMAND_NAMES.iter().copied().collect();
     let args = rotate_global_flags_before_command(args, &public, &removed);
 
-    if args.first().map(String::as_str) == Some("help") {
-        if let Some(help_path) = extract_help_command_path(&args, 1) {
+    if args.first().map(String::as_str) == Some("help")
+        && let Some(help_path) = extract_help_command_path(&args, 1) {
             let help_path_ref: Vec<&str> = help_path.iter().map(String::as_str).collect();
             if is_help_command_request(&help_path_ref) {
                 return print_requested_help(&help_path);
             }
         }
-    }
 
     let Some(command) = args.first() else {
         return continue_with(args);
@@ -683,11 +682,10 @@ fn run_package(args: &[String]) -> PublicCommandResult {
         if rest.len() > 1 {
             return fail(format!("Usage: {APP_NAME} package update [source]"), None);
         }
-        if let Some(source) = rest.first() {
-            if is_self_update_source(source) {
+        if let Some(source) = rest.first()
+            && is_self_update_source(source) {
                 return fail("Use \"prime-agent update\" to update Prime Agent.", None);
             }
-        }
         let mut package_args: Vec<String> = vec!["update".to_string()];
         if rest.is_empty() {
             package_args.push("--extensions".to_string());
@@ -762,8 +760,8 @@ fn run_update_command(args: &[String]) -> PublicCommandResult {
     };
     // `--rollback` and `--archive` on an installer install run the bundled
     // installer; any other binary stays on the managed-install flow.
-    if options.rollback || options.archive.is_some() {
-        if let Some(prefix) = pa_core::update::installer::running_installer_prefix() {
+    if (options.rollback || options.archive.is_some())
+        && let Some(prefix) = pa_core::update::installer::running_installer_prefix() {
             if options.source.is_some() {
                 return fail(
                     "--source only applies to managed installs.",
@@ -797,7 +795,6 @@ fn run_update_command(args: &[String]) -> PublicCommandResult {
                 options.archive.as_deref(),
             ));
         }
-    }
     let persisted_wire = std::env::current_dir()
         .ok()
         .and_then(|cwd| {
@@ -1087,7 +1084,7 @@ mod trace_reader_dispatch_tests {
     fn routes_the_readers_and_exits_with_their_codes() {
         let _guard = crate::config::env_lock();
         let previous = std::env::var_os("DO_NOT_TRACK");
-        std::env::set_var("DO_NOT_TRACK", "1");
+        pa_types::env::set_var("DO_NOT_TRACK", "1");
         let dir = tempfile::TempDir::new().expect("temp dir");
         let log = dir.path().join("agent.jsonl");
         std::fs::write(
@@ -1109,8 +1106,8 @@ mod trace_reader_dispatch_tests {
         })
         .collect();
         match previous {
-            Some(previous) => std::env::set_var("DO_NOT_TRACK", previous),
-            None => std::env::remove_var("DO_NOT_TRACK"),
+            Some(previous) => pa_types::env::set_var("DO_NOT_TRACK", previous),
+            None => pa_types::env::remove_var("DO_NOT_TRACK"),
         }
         assert_eq!(
             codes,

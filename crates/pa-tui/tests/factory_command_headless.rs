@@ -510,7 +510,7 @@ fn run_plan_config_with_graph_error(
     factory_graph_error: Option<String>,
     steps: Vec<HeadlessStep>,
 ) -> Vec<String> {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind_with(

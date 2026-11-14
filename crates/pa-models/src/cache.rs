@@ -171,11 +171,11 @@ impl<T: Clone + Send + Sync + 'static> CatalogCache<T> {
             return;
         }
         state.snapshot = None;
-        if let Some(path) = &self.cache_path {
-            if let Err(error) = std::fs::remove_file(path) {
-                // Read-only cache directories do not prevent model discovery.
-                tracing::debug!(path = %path.display(), %error, "catalog cache clear failed");
-            }
+        if let Some(path) = &self.cache_path
+            && let Err(error) = std::fs::remove_file(path)
+        {
+            // Read-only cache directories do not prevent model discovery.
+            tracing::debug!(path = %path.display(), %error, "catalog cache clear failed");
         }
     }
 

@@ -849,11 +849,11 @@ fn scripted_event_shapes_round_trip_through_the_event_enum() {
 /// A text turn that ends at the output-token limit (`stopReason: length`).
 fn length_turn(provider: &ScriptedProvider, text: &str) {
     let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
-            *reason = StopReason::Length;
-            message.stop_reason = StopReason::Length;
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let AssistantMessageEvent::Done { reason, message } = &mut **event
+    {
+        *reason = StopReason::Length;
+        message.stop_reason = StopReason::Length;
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
 }
@@ -1157,11 +1157,11 @@ fn undelivered_turn(
     stop_reason: StopReason,
 ) {
     let mut steps = pa_agent::scripted::text_turn_steps(model, text);
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
-            *reason = stop_reason;
-            message.stop_reason = stop_reason;
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let AssistantMessageEvent::Done { reason, message } = &mut **event
+    {
+        *reason = stop_reason;
+        message.stop_reason = stop_reason;
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
 }
@@ -1347,12 +1347,12 @@ fn cut_off_tool_call_turn(
     output: u64,
 ) {
     let mut steps = pa_agent::scripted::tool_call_turn_steps(model, None, calls);
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
-            *reason = StopReason::Length;
-            message.stop_reason = StopReason::Length;
-            message.usage.output = output;
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let AssistantMessageEvent::Done { reason, message } = &mut **event
+    {
+        *reason = StopReason::Length;
+        message.stop_reason = StopReason::Length;
+        message.usage.output = output;
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
 }
@@ -1504,17 +1504,17 @@ async fn a_call_followed_by_cut_off_text_still_runs() {
         None,
         vec![("call-1", "echo", serde_json::json!({ "text": "x" }))],
     );
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let AssistantMessageEvent::Done { reason, message } = &mut **event {
-            *reason = StopReason::Length;
-            message.stop_reason = StopReason::Length;
-            message.content.push(
-                serde_json::from_value(
-                    serde_json::json!({ "type": "text", "text": "And then I will" }),
-                )
-                .expect("a text block"),
-            );
-        }
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let AssistantMessageEvent::Done { reason, message } = &mut **event
+    {
+        *reason = StopReason::Length;
+        message.stop_reason = StopReason::Length;
+        message.content.push(
+            serde_json::from_value(
+                serde_json::json!({ "type": "text", "text": "And then I will" }),
+            )
+            .expect("a text block"),
+        );
     }
     provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
     provider.push_text_turn("done");

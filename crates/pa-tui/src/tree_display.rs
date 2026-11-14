@@ -111,10 +111,10 @@ pub fn user_entry_text(entry: &FileEntry) -> Option<String> {
 /// or the truncated-JSON fallback (TS `formatToolCall`).
 fn format_tool_call(theme: &Theme, name: &str, arguments: &Value) -> Line {
     let shorten_path = |p: &str| -> String {
-        if let Some(home) = std::env::var("HOME").ok().filter(|home| !home.is_empty()) {
-            if let Some(rest) = p.strip_prefix(&home) {
-                return format!("~{rest}");
-            }
+        if let Some(home) = std::env::var("HOME").ok().filter(|home| !home.is_empty())
+            && let Some(rest) = p.strip_prefix(&home)
+        {
+            return format!("~{rest}");
         }
         p.to_string()
     };

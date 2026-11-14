@@ -256,7 +256,7 @@ async fn renders_the_collapsed_worker_crash_notice_line() {
     )
     .expect("write fixture log");
     let previous = std::env::var_os("PRIME_AGENT_CODING_AGENT_DIR");
-    std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
+    pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
 
     let plan = AgentsHeadlessPlan {
         steps: vec![AgentsStep::WaitSettle { timeout_ms: 2_500 }],
@@ -273,8 +273,8 @@ async fn renders_the_collapsed_worker_crash_notice_line() {
     .outcome;
 
     match previous {
-        Some(previous) => std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
-        None => std::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
+        Some(previous) => pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
+        None => pa_types::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
     }
 
     let frames_text = outcome.frames.join("\n");
@@ -318,7 +318,7 @@ async fn dismisses_with_esc_and_the_dismissal_survives_reentry() {
     )
     .expect("write fixture log");
     let previous = std::env::var_os("PRIME_AGENT_CODING_AGENT_DIR");
-    std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
+    pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
 
     let plan = AgentsHeadlessPlan {
         steps: vec![
@@ -367,8 +367,8 @@ async fn dismisses_with_esc_and_the_dismissal_survives_reentry() {
             .outcome;
 
     match previous {
-        Some(previous) => std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
-        None => std::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
+        Some(previous) => pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
+        None => pa_types::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
     }
 
     let frames_text = second.frames.join("\n");
@@ -402,7 +402,7 @@ async fn esc_cancels_an_armed_delete_confirmation_and_keeps_the_notice() {
     )
     .expect("write fixture log");
     let previous = std::env::var_os("PRIME_AGENT_CODING_AGENT_DIR");
-    std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
+    pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", agent_dir.path());
 
     // ctrl+x arms the stop-or-delete confirm over the selected row; Esc must cancel it and keep the
     // notice, or the next ctrl+x would fire without a fresh confirmation.
@@ -425,8 +425,8 @@ async fn esc_cancels_an_armed_delete_confirmation_and_keeps_the_notice() {
     .outcome;
 
     match previous {
-        Some(previous) => std::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
-        None => std::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
+        Some(previous) => pa_types::env::set_var("PRIME_AGENT_CODING_AGENT_DIR", previous),
+        None => pa_types::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR"),
     }
 
     // The run exited through the empty-editor Esc (the delete confirm consumed the dismissal), and

@@ -296,15 +296,17 @@ fn matches_failure(
     // ("ModuleNotFoundError", "ImportError", "<cell-123>") — a verbatim
     // substring match is a strong link. Skip generic one-word matches
     // like bare "Error".
-    if let Some(class) = failure.exception_class.as_deref() {
-        if is_distinctive_token(class) && lower_text.contains(&class.to_ascii_lowercase()) {
-            return true;
-        }
+    if let Some(class) = failure.exception_class.as_deref()
+        && is_distinctive_token(class)
+        && lower_text.contains(&class.to_ascii_lowercase())
+    {
+        return true;
     }
-    if let Some(source) = failure.source.as_deref() {
-        if is_distinctive_token(source) && lower_text.contains(&source.to_ascii_lowercase()) {
-            return true;
-        }
+    if let Some(source) = failure.source.as_deref()
+        && is_distinctive_token(source)
+        && lower_text.contains(&source.to_ascii_lowercase())
+    {
+        return true;
     }
     // Signal 3: ≥ DISTINCTIVE_TOKEN_MATCH_MIN distinctive tokens shared
     // between edit and excerpt.

@@ -69,8 +69,8 @@ pub fn flat_tree(store: &SessionFile) -> Vec<Value> {
         .map(|entry| {
             let entry = serde_json::to_value(entry).unwrap_or(Value::Null);
             let mut node = json!({ "entry": entry });
-            if let Some(id) = entry.get("id").and_then(Value::as_str) {
-                if let Some(label) = labels.labels.get(id) {
+            if let Some(id) = entry.get("id").and_then(Value::as_str)
+                && let Some(label) = labels.labels.get(id) {
                     node["label"] = json!(label);
                     node["labelTimestamp"] = json!(
                         labels
@@ -80,7 +80,6 @@ pub fn flat_tree(store: &SessionFile) -> Vec<Value> {
                             .unwrap_or_default()
                     );
                 }
-            }
             node
         })
         .collect()

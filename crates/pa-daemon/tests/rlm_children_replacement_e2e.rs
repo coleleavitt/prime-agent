@@ -445,13 +445,13 @@ fn new_session_closes_the_spawned_child_and_empties_the_roster() {
             .join("session-artifacts")
             .join(parent_session_id)
             .join(&child_id);
-        let file = std::fs::read_dir(&child_dir)
+        
+        std::fs::read_dir(&child_dir)
             .expect("child session dir")
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("jsonl"))
-            .expect("one child session file");
-        file
+            .expect("one child session file")
     };
     let child_session =
         std::fs::read_to_string(&child_session_file).expect("read child session file");

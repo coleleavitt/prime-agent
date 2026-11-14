@@ -93,11 +93,11 @@ fn parse_graph(src: &str) -> Option<Graph> {
 
 /// `subgraph id[Title]`, `subgraph "Title"`, or a bare title.
 fn parse_subgraph_decl(rest: &str) -> (String, String) {
-    if let Some(quoted) = rest.strip_prefix('"') {
-        if let Some(close) = quoted.find('"') {
-            let label = &quoted[..close];
-            return (label.to_owned(), decode_html_entities(label));
-        }
+    if let Some(quoted) = rest.strip_prefix('"')
+        && let Some(close) = quoted.find('"')
+    {
+        let label = &quoted[..close];
+        return (label.to_owned(), decode_html_entities(label));
     }
     if let Some(open) = rest.find('[') {
         let id = js_text::trim(&rest[..open]);
@@ -426,11 +426,11 @@ fn parse_link(chars: &[char], start: usize) -> Option<Link> {
     } else {
         Head::None
     };
-    if right == Head::None {
-        if let Some((head, next)) = trailing_head(chars, i) {
-            right = head;
-            i = next;
-        }
+    if right == Head::None
+        && let Some((head, next)) = trailing_head(chars, i)
+    {
+        right = head;
+        i = next;
     }
 
     if chars.get(i) == Some(&'|') {

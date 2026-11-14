@@ -189,10 +189,10 @@ async fn run_stream(
     })?;
 
     let mut body = build_request_body(model, context, &options);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(body.clone(), model) {
-            body = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(body.clone(), model)
+    {
+        body = next;
     }
 
     let session_id = options.base.session_id.clone();
@@ -659,16 +659,16 @@ fn build_request_body(
     if let Some(service_tier) = options.service_tier {
         body.insert("service_tier".into(), json!(service_tier_str(service_tier)));
     }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            body.insert(
-                "tools".into(),
-                Value::Array(convert_responses_tools(
-                    tools,
-                    ConvertResponsesToolsOptions { strict: None },
-                )),
-            );
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        body.insert(
+            "tools".into(),
+            Value::Array(convert_responses_tools(
+                tools,
+                ConvertResponsesToolsOptions { strict: None },
+            )),
+        );
     }
 
     if let Some(reasoning_effort) = options.reasoning_effort {

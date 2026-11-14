@@ -373,13 +373,13 @@ impl<T: Tools> WindowDirectory for X11Platform<T> {
     fn list_apps(&self) -> Result<Vec<AppEntry>> {
         let mut apps: Vec<AppEntry> = Vec::new();
         for window in self.root_windows()? {
-            if let Some(class) = window.wm_class {
-                if !apps.iter().any(|app| app.id == class) {
-                    apps.push(AppEntry {
-                        id: class.clone(),
-                        name: class,
-                    });
-                }
+            if let Some(class) = window.wm_class
+                && !apps.iter().any(|app| app.id == class)
+            {
+                apps.push(AppEntry {
+                    id: class.clone(),
+                    name: class,
+                });
             }
         }
         Ok(apps)

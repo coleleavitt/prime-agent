@@ -177,10 +177,10 @@ impl SessionUi {
         }
         self.rebuild_transcript(view).await;
         // A user-message target re-enters its text in the editor when it is empty.
-        if let Some(editor_text) = data.get("editorText").and_then(Value::as_str) {
-            if view.editor.get_text().trim().is_empty() {
-                view.editor.set_text(editor_text);
-            }
+        if let Some(editor_text) = data.get("editorText").and_then(Value::as_str)
+            && view.editor.get_text().trim().is_empty()
+        {
+            view.editor.set_text(editor_text);
         }
         self.note("Navigated to selected point", view);
         self.dirty = true;

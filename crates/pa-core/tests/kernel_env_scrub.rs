@@ -36,7 +36,7 @@ async fn the_kernel_does_not_inherit_the_daemon_worker_identity() {
         ("PRIME_AGENT_INTERNAL_SESSION_LEASE_OWNER_ID", "owner"),
         ("PRIME_AGENT_TEST_UNRELATED", "kept"),
     ] {
-        std::env::set_var(key, value);
+        pa_types::env::set_var(key, value);
     }
     let dir = tempfile::TempDir::new().unwrap();
     let provisioner = IpythonKernelProvisioner::new(

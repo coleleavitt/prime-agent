@@ -337,21 +337,18 @@ fn sender_parent_edge_is(
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
     };
-    if let Some(parent) = sender_parent("parentSessionId") {
-        if own_session_id.is_some_and(|id| id == parent) {
+    if let Some(parent) = sender_parent("parentSessionId")
+        && own_session_id.is_some_and(|id| id == parent) {
             return true;
         }
-    }
-    if let Some(parent) = sender_parent("parentActiveSessionId") {
-        if parent == own_active_session_id {
+    if let Some(parent) = sender_parent("parentActiveSessionId")
+        && parent == own_active_session_id {
             return true;
         }
-    }
-    if let (Some(parent), Some(file)) = (sender_parent("parentSessionPath"), own_session_file) {
-        if crate::agent_messaging::same_session_file(parent, &file.to_string_lossy()) {
+    if let (Some(parent), Some(file)) = (sender_parent("parentSessionPath"), own_session_file)
+        && crate::agent_messaging::same_session_file(parent, &file.to_string_lossy()) {
             return true;
         }
-    }
     false
 }
 

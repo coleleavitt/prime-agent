@@ -336,14 +336,14 @@ async fn summary_call_with_retry(
     super::compaction_trace::trace("compact.summarizer_retry", &serde_json::Value::Null);
     // The retry request: the same single-user-message request with the
     // shorter-summary instruction as one more text block.
-    if let Some(AgentMessage::User(user)) = request.first_mut() {
-        if let UserContent::Blocks(blocks) = &mut user.content {
-            blocks.push(UserContentBlock::Text(TextContent {
-                text: super::compaction::SHORTER_SUMMARY_INSTRUCTION.to_string(),
-                text_signature: None,
-                rest: serde_json::Map::default(),
-            }));
-        }
+    if let Some(AgentMessage::User(user)) = request.first_mut()
+        && let UserContent::Blocks(blocks) = &mut user.content
+    {
+        blocks.push(UserContentBlock::Text(TextContent {
+            text: super::compaction::SHORTER_SUMMARY_INSTRUCTION.to_string(),
+            text_signature: None,
+            rest: serde_json::Map::default(),
+        }));
     }
     let retry = super::semantic_edges::summary_slice_call(compaction, summary_headers, |headers| {
         complete_summary_call(

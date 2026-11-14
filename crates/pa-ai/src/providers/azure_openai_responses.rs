@@ -167,10 +167,10 @@ fn resolve_responses_url(
         .filter(|value| !value.is_empty());
 
     let mut resolved_base_url = base_url;
-    if resolved_base_url.is_none() {
-        if let Some(resource) = resource_name {
-            resolved_base_url = Some(build_default_base_url(&resource));
-        }
+    if resolved_base_url.is_none()
+        && let Some(resource) = resource_name
+    {
+        resolved_base_url = Some(build_default_base_url(&resource));
     }
     if resolved_base_url.is_none() && !model.base_url.is_empty() {
         resolved_base_url = Some(model.base_url.clone());
@@ -206,10 +206,10 @@ fn build_params(
     // TS #2948: Azure stores responses server-side by default — pin `store: false`, and drop
     // `prompt_cache_key` when the caller pinned cacheRetention to none; Azure does not send
     // `prompt_cache_retention` (support unclear) — that stays as-is.
-    if options.base.cache_retention != Some(CacheRetention::None) {
-        if let Some(session_id) = &options.base.session_id {
-            params.insert("prompt_cache_key".into(), json!(session_id));
-        }
+    if options.base.cache_retention != Some(CacheRetention::None)
+        && let Some(session_id) = &options.base.session_id
+    {
+        params.insert("prompt_cache_key".into(), json!(session_id));
     }
     params.insert("store".into(), json!(false));
     if let Some(max_tokens) = options.base.max_tokens {
@@ -218,16 +218,16 @@ fn build_params(
     if let Some(temperature) = options.base.temperature {
         params.insert("temperature".into(), json!(temperature));
     }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            params.insert(
-                "tools".into(),
-                json!(convert_responses_tools(
-                    tools,
-                    ConvertResponsesToolsOptions { strict: None }
-                )),
-            );
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        params.insert(
+            "tools".into(),
+            json!(convert_responses_tools(
+                tools,
+                ConvertResponsesToolsOptions { strict: None }
+            )),
+        );
     }
     if supports_thinking(model) {
         if options.reasoning_effort.is_some() || options.reasoning_summary.is_some() {
@@ -310,10 +310,10 @@ async fn run_stream(
     let url = resolve_responses_url(model, Some(&options)).map_err(ProviderError::Message)?;
 
     let mut params = build_params(model, context, &options, &deployment_name);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(params.clone(), model)
+    {
+        params = next;
     }
 
     let mut headers: Vec<(String, String)> = Vec::new();

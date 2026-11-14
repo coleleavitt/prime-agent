@@ -192,10 +192,10 @@ async fn answer_or_cancelled<T>(
 
 fn parse_paste(input: &str, expected_state: &str) -> Result<Option<String>, String> {
     let (code, echoed) = parse_authorization_input(input);
-    if let Some(echoed) = echoed {
-        if echoed != expected_state {
-            return Err("State mismatch".to_string());
-        }
+    if let Some(echoed) = echoed
+        && echoed != expected_state
+    {
+        return Err("State mismatch".to_string());
     }
     Ok(code)
 }

@@ -103,7 +103,7 @@ async fn scrub_credentials_hides_provider_keys_from_stdio_servers() {
     let Some(python) = python() else {
         return;
     };
-    std::env::set_var("OPENAI_API_KEY", "sk-test-openai");
+    pa_types::env::set_var("OPENAI_API_KEY", "sk-test-openai");
     assert_eq!(
         (
             fixture_env(&python, KernelEnvironment::Inherit).await,

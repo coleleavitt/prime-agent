@@ -191,10 +191,10 @@ enum RaceOutcome {
 
 fn parse_paste(input: &str, verifier: &str) -> Result<Option<CallbackCode>, String> {
     let (code, echoed) = parse_authorization_input(input);
-    if let Some(echoed) = &echoed {
-        if echoed != verifier {
-            return Err("OAuth state mismatch".to_string());
-        }
+    if let Some(echoed) = &echoed
+        && echoed != verifier
+    {
+        return Err("OAuth state mismatch".to_string());
     }
     Ok(code.map(|code| CallbackCode {
         code,

@@ -164,19 +164,20 @@ fn apply_tool_result(chat: &mut [ChatEntry], result: ToolResultReplay) -> Option
         view,
     } = result;
     for entry in chat.iter_mut() {
-        if let ChatEntry::Tool(card) = entry {
-            if card.id == tool_call_id && card.result.is_none() {
-                card.started = true;
-                // Replayed cards never saw the live execution: the timing
-                // collapses to the rebuild instant, so the bash `Took` row
-                // renders the same `0.0s` the TS component does on replay.
-                let now = std::time::Instant::now();
-                card.started_at = Some(now);
-                card.ended_at = Some(now);
-                card.result = Some(view);
-                card.result_partial = false;
-                return None;
-            }
+        if let ChatEntry::Tool(card) = entry
+            && card.id == tool_call_id
+            && card.result.is_none()
+        {
+            card.started = true;
+            // Replayed cards never saw the live execution: the timing
+            // collapses to the rebuild instant, so the bash `Took` row
+            // renders the same `0.0s` the TS component does on replay.
+            let now = std::time::Instant::now();
+            card.started_at = Some(now);
+            card.ended_at = Some(now);
+            card.result = Some(view);
+            card.result_partial = false;
+            return None;
         }
     }
     Some(OrphanResult {

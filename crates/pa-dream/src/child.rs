@@ -277,11 +277,10 @@ fn js_trim(text: &str) -> &str {
 /// `child output contains no JSON <container>` when none parses.
 pub fn extract_json_value(output: &str, container: JsonContainer) -> Result<Value, String> {
     let text = js_trim(output);
-    if let Ok(whole) = json::parse(text) {
-        if container.wants(&whole) {
+    if let Ok(whole) = json::parse(text)
+        && container.wants(&whole) {
             return Ok(whole);
         }
-    }
     let bytes = text.as_bytes();
     let opener = container.opener();
     let find = |from: usize| {

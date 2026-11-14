@@ -89,13 +89,12 @@ impl AgentSessionEngine {
             return AutoCompactionRun::NotDue;
         }
         let core = self.session.blocking_lock().clone();
-        if let Some(core) = core {
-            if !self.runtime.block_on(core.offer_autocompaction()) {
+        if let Some(core) = core
+            && !self.runtime.block_on(core.offer_autocompaction()) {
                 self.autocompact_offer_suppressed
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 return AutoCompactionRun::NotDue;
             }
-        }
         // A capped compaction about to run discloses, once per session, that
         // its configured cap was raised to the anti-thrash floor (#2100); taken
         // here (after the offer is accepted) so a declined offer does not
@@ -108,13 +107,12 @@ impl AgentSessionEngine {
         };
         // The display-only row persists with its event; `convert_to_llm`
         // keeps it out of model context.
-        if let Some(notice) = clamp_notice {
-            if !emit(EngineEvent::CustomMessage(
+        if let Some(notice) = clamp_notice
+            && !emit(EngineEvent::CustomMessage(
                 crate::session_commands::custom_message_value(&notice),
             )) {
                 return AutoCompactionRun::Cancelled;
             }
-        }
         // TS `_runAutoCompaction` emits the start event before the
         // summarizer runs, so attached surfaces see the loader.
         if !emit(EngineEvent::CompactionStart {

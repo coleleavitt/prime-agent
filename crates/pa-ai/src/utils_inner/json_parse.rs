@@ -233,10 +233,12 @@ impl PartialParser {
         };
         // Keep integers as integers so partial parses compare equal to the strict-JSON
         // representation (JS numbers are indistinguishable between 12 and 12.0).
-        if !candidate.contains('.') && !candidate.contains('e') && !candidate.contains('E') {
-            if let Ok(int) = candidate.parse::<i64>() {
-                return Ok(Value::Number(int.into()));
-            }
+        if !candidate.contains('.')
+            && !candidate.contains('e')
+            && !candidate.contains('E')
+            && let Ok(int) = candidate.parse::<i64>()
+        {
+            return Ok(Value::Number(int.into()));
         }
         Ok(Value::Number(
             serde_json::Number::from_f64(number).ok_or(ParseError::Invalid)?,
@@ -296,15 +298,15 @@ impl PartialParser {
                                         }
                                     }
                                     if complete {
-                                        if let Ok(low_value) = u16::from_str_radix(&low, 16) {
-                                            if (0xDC00..0xE000).contains(&low_value) {
-                                                let combined = 0x10000
-                                                    + ((u32::from(value) - 0xD800) << 10)
-                                                    + (u32::from(low_value) - 0xDC00);
-                                                if let Some(ch) = char::from_u32(combined) {
-                                                    out.push(ch);
-                                                    continue;
-                                                }
+                                        if let Ok(low_value) = u16::from_str_radix(&low, 16)
+                                            && (0xDC00..0xE000).contains(&low_value)
+                                        {
+                                            let combined = 0x10000
+                                                + ((u32::from(value) - 0xD800) << 10)
+                                                + (u32::from(low_value) - 0xDC00);
+                                            if let Some(ch) = char::from_u32(combined) {
+                                                out.push(ch);
+                                                continue;
                                             }
                                         }
                                     } else {

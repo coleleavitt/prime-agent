@@ -363,7 +363,7 @@ fn run_plan(
     session: MockSession,
     steps: Vec<HeadlessStep>,
 ) -> Vec<String> {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, session);

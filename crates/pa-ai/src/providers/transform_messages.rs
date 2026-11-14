@@ -194,14 +194,13 @@ pub fn transform_messages_with_normalizer(
         .map(|msg| match msg {
             Message::User(_) => Some(msg.clone()),
             Message::ToolResult(tool_result) => {
-                if let Some(normalized) = tool_call_id_map.get(&tool_result.tool_call_id) {
-                    if normalized != &tool_result.tool_call_id {
+                if let Some(normalized) = tool_call_id_map.get(&tool_result.tool_call_id)
+                    && normalized != &tool_result.tool_call_id {
                         return Some(Message::ToolResult(ToolResultMessage {
                             tool_call_id: normalized.clone(),
                             ..tool_result.clone()
                         }));
                     }
-                }
                 Some(msg.clone())
             }
             Message::Assistant(assistant) => {
@@ -248,17 +247,14 @@ pub fn transform_messages_with_normalizer(
                             if !is_same_model && tool_call.thought_signature.is_some() {
                                 normalized.thought_signature = None;
                             }
-                            if !is_same_model {
-                                if let Some(normalizer) =
+                            if !is_same_model
+                                && let Some(normalizer) =
                                     normalize_tool_call_id(&tool_call.id, model, assistant)
-                                {
-                                    if normalizer != tool_call.id {
+                                    && normalizer != tool_call.id {
                                         tool_call_id_map
                                             .insert(tool_call.id.clone(), normalizer.clone());
                                         normalized.id = normalizer;
                                     }
-                                }
-                            }
                             vec![AssistantContent::ToolCall(normalized)]
                         }
                     })

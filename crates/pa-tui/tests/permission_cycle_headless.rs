@@ -267,7 +267,7 @@ fn wait(needle: &str) -> HeadlessStep {
 
 #[test]
 fn remembered_answers_and_the_mode_cycle_reach_the_daemon() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     // The feature's command, as `pa_core::features::install` registers it.
     pa_types::slash_commands::register_feature_slash_commands(vec![
         pa_types::slash_commands::BuiltinSlashCommand {

@@ -156,14 +156,13 @@ pub fn render_ascii_chart(series: &[ChartSeries], options: &ChartOptions) -> Vec
     if axis.iter().any(|cell| *cell != ' ') {
         lines.push(format!("{gutter}{}", axis.iter().collect::<String>()));
     }
-    if let (Some(first), Some(last)) = (options.x_labels.first(), options.x_labels.last()) {
-        if !first.is_empty() && !last.is_empty() {
+    if let (Some(first), Some(last)) = (options.x_labels.first(), options.x_labels.last())
+        && !first.is_empty() && !last.is_empty() {
             let gap = columns
                 .saturating_sub(crate::js::js_len(first) + crate::js::js_len(last))
                 .max(1);
             lines.push(format!("{gutter}{first}{}{last}", " ".repeat(gap)));
         }
-    }
     let legend: Vec<String> = bucketed
         .iter()
         .map(|(mark, label, _)| format!("{mark} {label}"))

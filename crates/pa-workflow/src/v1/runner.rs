@@ -129,8 +129,8 @@ pub(crate) async fn run_turn(turn: Turn) -> TurnReport {
     if !drained {
         request.abort();
     }
-    let report = classify(&lock(&shared), drained, turn.max_result_utf8_bytes);
-    report
+    
+    classify(&lock(&shared), drained, turn.max_result_utf8_bytes)
 }
 
 struct RequestAuth {

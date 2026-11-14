@@ -76,22 +76,22 @@ impl AgentsViewMode {
         lines.extend(crate::chrome::render_splash(&chrome, theme, width));
         lines.extend(self.render_incident_notice(width));
         // The scoped view's back label, dim, over the full width under the splash.
-        if self.scope_active {
-            if let Some(scope) = &self.options.scope {
-                let title = scope
-                    .session_name
-                    .clone()
-                    .filter(|name| !name.trim().is_empty())
-                    .unwrap_or_else(|| "Untitled agent".to_string());
-                let label = truncate_text(
-                    &format!("\u{2190} back \u{b7} {title} \u{203a} subagents"),
-                    width,
-                );
-                let mut row = vec![crate::Span::styled(label, theme.fg_style(ThemeColor::Dim))];
-                row = crate::width::pad_line(row, width);
-                lines.push(row);
-                lines.push(vec![]);
-            }
+        if self.scope_active
+            && let Some(scope) = &self.options.scope
+        {
+            let title = scope
+                .session_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| "Untitled agent".to_string());
+            let label = truncate_text(
+                &format!("\u{2190} back \u{b7} {title} \u{203a} subagents"),
+                width,
+            );
+            let mut row = vec![crate::Span::styled(label, theme.fg_style(ThemeColor::Dim))];
+            row = crate::width::pad_line(row, width);
+            lines.push(row);
+            lines.push(vec![]);
         }
 
         // The prompt's editor mutates its own scroll state, so the theme borrow
@@ -413,10 +413,10 @@ impl AgentsViewMode {
                     }
                     if include {
                         push_row(&mut display, index, row);
-                        if index == self.selected {
-                            if let Some(details) = note_details.take() {
-                                display.extend(details.into_iter().map(DisplayItem::Detail));
-                            }
+                        if index == self.selected
+                            && let Some(details) = note_details.take()
+                        {
+                            display.extend(details.into_iter().map(DisplayItem::Detail));
                         }
                     }
                 }
@@ -424,10 +424,10 @@ impl AgentsViewMode {
         } else {
             for (index, row) in self.rows.iter().enumerate() {
                 push_row(&mut display, index, row);
-                if index == self.selected {
-                    if let Some(details) = note_details.take() {
-                        display.extend(details.into_iter().map(DisplayItem::Detail));
-                    }
+                if index == self.selected
+                    && let Some(details) = note_details.take()
+                {
+                    display.extend(details.into_iter().map(DisplayItem::Detail));
                 }
             }
         }
@@ -1035,24 +1035,23 @@ impl AgentsViewMode {
             if let Some(keys) = all("app.agents.reply").filter(|_| self.reply_target().is_some()) {
                 segments.push(format!("{keys} reply"));
             }
-            if let Some(pending) = self.delete_arm_target() {
-                if let Some(keys) = all("app.agents.delete") {
-                    let word = if pending.stop { "stop" } else { "delete" };
-                    segments.push(format!("{keys} {word}"));
-                }
+            if let Some(pending) = self.delete_arm_target()
+                && let Some(keys) = all("app.agents.delete")
+            {
+                let word = if pending.stop { "stop" } else { "delete" };
+                segments.push(format!("{keys} {word}"));
             }
             if self
                 .program_target()
                 .is_some_and(|summary| summary.has_spawn_code)
+                && let Some(keys) = all("app.agents.program")
             {
-                if let Some(keys) = all("app.agents.program") {
-                    segments.push(format!("{keys} program"));
-                }
+                segments.push(format!("{keys} program"));
             }
-            if self.scope_active {
-                if let Some(back) = first("app.agents.back") {
-                    segments.push(format!("{back} parent"));
-                }
+            if self.scope_active
+                && let Some(back) = first("app.agents.back")
+            {
+                segments.push(format!("{back} parent"));
             }
         }
         if let Some(new) = first("app.agents.new") {
@@ -1065,11 +1064,11 @@ impl AgentsViewMode {
                 segments.push(format!("{toggle} saved:{}", self.saved_scope.hint_word()));
             }
             // The worktree slot (Claude Code's `Ctrl+W`) only exists with several worktrees.
-            if self.project.several() {
-                if let Some(toggle) = first("app.agents.worktreeFilter") {
-                    let word = if self.all_worktrees { "all" } else { "current" };
-                    segments.push(format!("{toggle} worktree:{word}"));
-                }
+            if self.project.several()
+                && let Some(toggle) = first("app.agents.worktreeFilter")
+            {
+                let word = if self.all_worktrees { "all" } else { "current" };
+                segments.push(format!("{toggle} worktree:{word}"));
             }
         }
         // The branch filter's slot names the branch it narrows to; the preview's slot shows
@@ -1078,20 +1077,18 @@ impl AgentsViewMode {
             .git_head
             .as_ref()
             .and_then(|head| head.branch.as_deref())
+            && let Some(toggle) = first("app.agents.branchFilter")
         {
-            if let Some(toggle) = first("app.agents.branchFilter") {
-                let word = if self.branch_only { branch } else { "all" };
-                segments.push(format!("{toggle} branch:{word}"));
-            }
+            let word = if self.branch_only { branch } else { "all" };
+            segments.push(format!("{toggle} branch:{word}"));
         }
         if self
             .rows
             .get(self.selected)
             .is_some_and(|row| matches!(row.kind, RowKind::Agent | RowKind::Subagent))
+            && let Some(preview) = first("app.agents.preview")
         {
-            if let Some(preview) = first("app.agents.preview") {
-                segments.push(format!("{preview} preview"));
-            }
+            segments.push(format!("{preview} preview"));
         }
         let hints = segments.join("   ");
         truncate_line(&vec![theme.fg(ThemeColor::Muted, hints)], width)
@@ -1292,19 +1289,17 @@ impl Renderer {
                                 ] {
                                     if let Some(event) =
                                         crate::mouse::parse_sgr_mouse_event(&sequence)
+                                        && ui_tx.send(UiInput::Mouse(event)).is_err()
                                     {
-                                        if ui_tx.send(UiInput::Mouse(event)).is_err() {
-                                            return;
-                                        }
+                                        return;
                                     }
                                 }
                             }
                             AgentsStep::Mouse(sequence) => {
                                 if let Some(event) = crate::mouse::parse_sgr_mouse_event(&sequence)
+                                    && ui_tx.send(UiInput::Mouse(event)).is_err()
                                 {
-                                    if ui_tx.send(UiInput::Mouse(event)).is_err() {
-                                        return;
-                                    }
+                                    return;
                                 }
                             }
                             AgentsStep::Notify(notify) => {
@@ -1342,29 +1337,29 @@ impl Renderer {
                     let rendered: Vec<ratatui::text::Line<'static>> =
                         lines.iter().map(crate::markdown::to_ratatui_line).collect();
                     f.render_widget(ratatui::text::Text::from(rendered), area);
-                    if show {
-                        if let Some((row, col)) = cursor {
-                            if row < area.height as usize && col < area.width as usize {
-                                f.set_cursor_position(ratatui::layout::Position::new(
-                                    col as u16, row as u16,
-                                ));
-                            }
-                        }
+                    if show
+                        && let Some((row, col)) = cursor
+                        && row < area.height as usize
+                        && col < area.width as usize
+                    {
+                        f.set_cursor_position(ratatui::layout::Position::new(
+                            col as u16, row as u16,
+                        ));
                     }
                 })
                 .expect("draw frame");
-                if !show {
-                    if let Some((row, col)) = cursor {
-                        if row < area.height as usize && col < area.width as usize {
-                            // execute! (not queue!): the paint's flush already ran inside `draw`,
-                            // so a queued write would sit in the stdout buffer until the next
-                            // frame.
-                            let _ = crossterm::execute!(
-                                std::io::stdout(),
-                                crossterm::cursor::MoveTo(col as u16, row as u16)
-                            );
-                        }
-                    }
+                if !show
+                    && let Some((row, col)) = cursor
+                    && row < area.height as usize
+                    && col < area.width as usize
+                {
+                    // execute! (not queue!): the paint's flush already ran inside `draw`,
+                    // so a queued write would sit in the stdout buffer until the next
+                    // frame.
+                    let _ = crossterm::execute!(
+                        std::io::stdout(),
+                        crossterm::cursor::MoveTo(col as u16, row as u16)
+                    );
                 }
                 None
             }

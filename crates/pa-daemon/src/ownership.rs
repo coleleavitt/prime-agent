@@ -181,15 +181,14 @@ impl Supervisor {
         // worker another client owns is invisible through this selector.
         {
             let descriptor = resident.descriptor.lock().await;
-            if let Some(owner) = descriptor.owner_client_id.as_deref() {
-                if owner != effective_client_id {
+            if let Some(owner) = descriptor.owner_client_id.as_deref()
+                && owner != effective_client_id {
                     return Self::owned_failure(
                         command_id,
                         type_name,
                         &format!("Unknown active session: {active_session_id}"),
                     );
                 }
-            }
         }
         if self.is_stopping(&resident) {
             return Self::owned_failure(

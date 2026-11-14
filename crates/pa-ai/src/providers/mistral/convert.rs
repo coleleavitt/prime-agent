@@ -88,10 +88,10 @@ pub(crate) fn build_chat_payload(
     payload.insert("model".into(), json!(model.id));
     payload.insert("stream".into(), json!(true));
     payload.insert("messages".into(), Value::Array(messages));
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            payload.insert("tools".into(), json!(to_function_tools(tools)));
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        payload.insert("tools".into(), json!(to_function_tools(tools)));
     }
     if let Some(temperature) = options.base.temperature {
         payload.insert("temperature".into(), json!(temperature));

@@ -184,10 +184,8 @@ pub fn slot_image_model_router(
                     }
                     _ => true,
                 };
-                if still_routed {
-                    if let Some(target) = captured.or(current) {
-                        *provider_target.write_or_recover() = Some(target);
-                    }
+                if still_routed && let Some(target) = captured.or(current) {
+                    *provider_target.write_or_recover() = Some(target);
                 }
             }
         })

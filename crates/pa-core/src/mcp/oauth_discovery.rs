@@ -618,10 +618,10 @@ pub(crate) fn parse_redirect_input(input: &str, expected_state: &str) -> Result<
     } else {
         (Some(value.to_string()), None)
     };
-    if let Some(state) = &state {
-        if state != expected_state {
-            bail!("OAuth state mismatch");
-        }
+    if let Some(state) = &state
+        && state != expected_state
+    {
+        bail!("OAuth state mismatch");
     }
     match code {
         Some(code) if !code.is_empty() => {

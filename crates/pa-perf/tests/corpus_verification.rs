@@ -132,11 +132,9 @@ fn the_same_seed_rebuilds_the_identical_tree() {
             if let Some(hash) = file
                 .strip_prefix("agent/rlm-ledger/")
                 .and_then(|rest| rest.strip_suffix(".jsonl"))
-            {
-                if !hash.contains('/') {
+                && !hash.contains('/') {
                     *file = "agent/rlm-ledger/<hash>.jsonl".to_string();
                 }
-            }
         }
         files
     }

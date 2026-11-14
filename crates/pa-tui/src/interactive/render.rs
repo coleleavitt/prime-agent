@@ -298,14 +298,11 @@ impl Renderer {
                             HeadlessStep::Mouse(sequence) => {
                                 if crate::mouse_tracking::active()
                                     && crate::mouse::is_mouse_sequence(&sequence)
-                                {
-                                    if let Some(event) =
+                                    && let Some(event) =
                                         crate::mouse::parse_sgr_mouse_event(&sequence)
-                                    {
-                                        if ui_tx.send(UiInput::Mouse(event)).is_err() {
-                                            return;
-                                        }
-                                    }
+                                    && ui_tx.send(UiInput::Mouse(event)).is_err()
+                                {
+                                    return;
                                 }
                             }
                             HeadlessStep::Timestamp(sender) => {

@@ -253,10 +253,10 @@ impl AgentsViewMode {
             ListKey::Program => self.cycle_program_for_selected(),
             ListKey::Expand => {
                 let selected = self.rows.get(self.selected).cloned();
-                if let Some(row) = selected {
-                    if row.kind == RowKind::SubagentSummary || row.descendant_count > 0 {
-                        self.toggle_subagent_list(&row);
-                    }
+                if let Some(row) = selected
+                    && (row.kind == RowKind::SubagentSummary || row.descendant_count > 0)
+                {
+                    self.toggle_subagent_list(&row);
                 }
             }
             ListKey::Open => self.open_selected(),

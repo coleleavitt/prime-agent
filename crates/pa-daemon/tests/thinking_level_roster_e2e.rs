@@ -185,14 +185,13 @@ impl Client {
                 Instant::now() < deadline,
                 "no matching roster_update arrived (the roster push never carried the change)"
             );
-            if let Some(line) = self.try_read_line() {
-                if line["type"] == "roster_update" {
+            if let Some(line) = self.try_read_line()
+                && line["type"] == "roster_update" {
                     if accept(&line) {
                         return line;
                     }
                     self.roster_updates.push(line);
                 }
-            }
         }
     }
 
@@ -217,11 +216,10 @@ impl Client {
         seen.append(&mut self.roster_updates);
         let deadline = Instant::now() + window;
         while Instant::now() < deadline {
-            if let Some(line) = self.try_read_line() {
-                if line["type"] == "roster_update" {
+            if let Some(line) = self.try_read_line()
+                && line["type"] == "roster_update" {
                     seen.push(line);
                 }
-            }
         }
         seen
     }

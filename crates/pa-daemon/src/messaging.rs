@@ -257,8 +257,8 @@ impl Supervisor {
         // only inside one host - a copied session on the peer is a
         // sibling, not this session. The source is local here, so its
         // scope is the empty host.
-        if let Some(source_summary) = source_summary {
-            if let Some(target_active) = target.active_session_id.as_deref() {
+        if let Some(source_summary) = source_summary
+            && let Some(target_active) = target.active_session_id.as_deref() {
                 let source_id = source_summary
                     .get("activeSessionId")
                     .and_then(Value::as_str)
@@ -277,7 +277,6 @@ impl Supervisor {
                     return Err("Agent messaging cannot target the sending session".to_string());
                 }
             }
-        }
         Ok(Some(target))
     }
 
@@ -632,11 +631,10 @@ fn sender_endpoint_from_summary(summary: &Value, client_id: &str) -> Value {
             .unwrap_or(json!("top-level")),
         "clientId": client_id,
     });
-    if let Some(name) = summary.get("sessionName").and_then(Value::as_str) {
-        if !name.is_empty() {
+    if let Some(name) = summary.get("sessionName").and_then(Value::as_str)
+        && !name.is_empty() {
             sender["sessionName"] = json!(name);
         }
-    }
     // The durable parent edge rides the supervisor-routed endpoint too, so
     // the receiving session can label the delivery by its TRUE relationship.
     for field in [

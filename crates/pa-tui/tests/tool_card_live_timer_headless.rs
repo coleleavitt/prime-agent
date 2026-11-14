@@ -495,7 +495,7 @@ fn row_tenths(frame: &str, label: &str) -> Option<u64> {
 fn a_running_tool_card_ticks_and_settles_to_the_final_duration() {
     // The ambient TMUX variable adds a startup notice to the
     // transcript; scrub it so the run is the same inside tmux and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, Scenario::Quiet);
@@ -584,7 +584,7 @@ fn a_running_tool_card_ticks_and_settles_to_the_final_duration() {
 /// `Elapsed`, and the late end frame lands on nothing.
 #[test]
 fn a_straggler_tool_card_freezes_at_the_turn_settle() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, Scenario::Straggler);
@@ -661,7 +661,7 @@ fn a_straggler_tool_card_freezes_at_the_turn_settle() {
 /// sweep never stamps a card the turn did not track.
 #[test]
 fn a_lost_turns_card_settles_when_the_next_turn_starts() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, Scenario::LostTurn);
@@ -727,7 +727,7 @@ fn a_lost_turns_card_settles_when_the_next_turn_starts() {
 /// the ipython summary keeps its duration segment.
 #[test]
 fn a_python_repl_straggler_freezes_its_duration_slot() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, Scenario::IpythonStraggler);

@@ -294,17 +294,14 @@ fn extract_file_operations(
     prev_compaction_index: Option<usize>,
 ) -> FileOperations {
     let mut ops = FileOperations::default();
-    if let Some(index) = prev_compaction_index {
-        if let Some(FileEntry::Compaction { payload, .. }) = entries.get(index) {
-            if payload.from_hook != Some(true) {
-                if let Some(details) = payload.details.clone() {
-                    if let Ok(details) = serde_json::from_value::<CompactionDetails>(details) {
-                        ops.read.extend(details.read_files);
-                        ops.edited.extend(details.modified_files);
-                    }
-                }
-            }
-        }
+    if let Some(index) = prev_compaction_index
+        && let Some(FileEntry::Compaction { payload, .. }) = entries.get(index)
+        && payload.from_hook != Some(true)
+        && let Some(details) = payload.details.clone()
+        && let Ok(details) = serde_json::from_value::<CompactionDetails>(details)
+    {
+        ops.read.extend(details.read_files);
+        ops.edited.extend(details.modified_files);
     }
     for message in messages {
         extract_file_ops_from_message(message, &mut ops);

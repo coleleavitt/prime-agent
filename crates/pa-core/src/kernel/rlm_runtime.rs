@@ -431,14 +431,11 @@ pub fn find_unique_rlm_short_form_model_match<'a>(
     if matches.len() == 1 {
         return Some(matches[0]);
     }
-    if matches.is_empty() {
-        if let Some(fallback) = fallback {
-            if find_rlm_short_form_model_matches(reference, std::slice::from_ref(fallback)).len()
-                == 1
-            {
-                return Some(fallback);
-            }
-        }
+    if matches.is_empty()
+        && let Some(fallback) = fallback
+        && find_rlm_short_form_model_matches(reference, std::slice::from_ref(fallback)).len() == 1
+    {
+        return Some(fallback);
     }
     None
 }

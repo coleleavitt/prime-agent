@@ -29,10 +29,10 @@ fn bash_cell_magic_match(code: &str) -> Option<usize> {
     }
     i += "%%bash".len();
     // \b: the char after "%%bash" must not be a word char.
-    if let Some(next) = code[i..].chars().next() {
-        if next.is_alphanumeric() || next == '_' {
-            return None;
-        }
+    if let Some(next) = code[i..].chars().next()
+        && (next.is_alphanumeric() || next == '_')
+    {
+        return None;
     }
     // [^\r\n]* then (\r?\n or end of string)
     while i < bytes.len() && bytes[i] != b'\r' && bytes[i] != b'\n' {

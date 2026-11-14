@@ -274,11 +274,10 @@ fn saved_rows(client: &mut Client, id: &str, cwd: &Path) -> Vec<Value> {
     );
     loop {
         let line = client.read_line();
-        if line.get("id").and_then(Value::as_str) == Some(id) {
-            if let Some(sessions) = line["data"]["sessions"].as_array() {
+        if line.get("id").and_then(Value::as_str) == Some(id)
+            && let Some(sessions) = line["data"]["sessions"].as_array() {
                 return sessions.clone();
             }
-        }
     }
 }
 

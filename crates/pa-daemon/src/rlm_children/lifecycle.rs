@@ -740,8 +740,8 @@ impl SupervisorChildSessionsInner {
             (record.settled_status == Some("done"))
                 .then(|| (record.session_dir.clone(), record.rlm_child_id.clone()))
         };
-        if let Some((session_dir, child_id)) = completed {
-            if let Err(error) = tokio::task::spawn_blocking(move || {
+        if let Some((session_dir, child_id)) = completed
+            && let Err(error) = tokio::task::spawn_blocking(move || {
                 let Some(mut display) =
                     crate::rlm_ledger::read_rlm_subagent_display(Path::new(&session_dir))
                 else {
@@ -758,7 +758,6 @@ impl SupervisorChildSessionsInner {
             {
                 eprintln!("pa-daemon: RLM child display completion failed: {error:#}");
             }
-        }
         // A settled child releases an owed goal continuation (TS
         // `_maybeResumeGoalContinuationAfterRlmWork` at the child settle
         // sites).
@@ -963,13 +962,12 @@ impl SupervisorChildSessionsInner {
             }
             record.settled_status = Some("error");
             record.notice_delivered = true;
-            if let Some(text) = exit_text {
-                if !record.answer_captured || record.answer_preview.is_none() {
+            if let Some(text) = exit_text
+                && (!record.answer_captured || record.answer_preview.is_none()) {
                     record.answer_preview = Some(compact_rlm_text(&text));
                     record.answer_text = Some(cap_text(&text, ANSWER_TEXT_MAX_CHARS));
                     record.answer_captured = true;
                 }
-            }
             let message = create_rlm_child_failure_message_with(
                 &record.rlm_child_id,
                 &record.session_name,

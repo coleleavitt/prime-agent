@@ -261,10 +261,10 @@ impl SettingsStorage for FileSettingsStorage {
             let cache = read_cache()
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(entry) = cache.get(path) {
-                if entry.identity == identity {
-                    return Ok(Some(entry.content.clone()));
-                }
+            if let Some(entry) = cache.get(path)
+                && entry.identity == identity
+            {
+                return Ok(Some(entry.content.clone()));
             }
         }
         let guard = Self::acquire_lock(path)?;
@@ -302,10 +302,10 @@ impl SettingsStorage for FileSettingsStorage {
         };
         let mut next = update(current);
         if next.is_some() {
-            if let Some(dir) = path.parent() {
-                if !dir.exists() {
-                    fs::create_dir_all(dir)?;
-                }
+            if let Some(dir) = path.parent()
+                && !dir.exists()
+            {
+                fs::create_dir_all(dir)?;
             }
             if held.is_none() {
                 held = Some(Self::acquire_lock(path)?);

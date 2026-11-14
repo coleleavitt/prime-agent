@@ -116,23 +116,21 @@ fn settle_last_row(rows: &mut [ArtRow]) {
 /// Append `rows` to the paragraph-like block the output ends with when `joins` (no blank
 /// line between), else start a new diagram paragraph.
 fn push_rows(out: &mut Vec<Block>, sep_blank: bool, rows: Vec<ArtRow>) {
-    if !sep_blank {
-        if let Some(last) = out.last_mut() {
-            if let BlockKind::Paragraph = last.kind {
-                let mut inline: Vec<ArtRow> = std::mem::take(&mut last.lines)
-                    .into_iter()
-                    .map(ArtRow::Inline)
-                    .collect();
-                settle_last_row(&mut inline);
-                inline.extend(rows);
-                last.kind = BlockKind::ArtParagraph { rows: inline };
-                return;
-            }
-            if let BlockKind::ArtParagraph { rows: existing } = &mut last.kind {
-                settle_last_row(existing);
-                existing.extend(rows);
-                return;
-            }
+    if !sep_blank && let Some(last) = out.last_mut() {
+        if let BlockKind::Paragraph = last.kind {
+            let mut inline: Vec<ArtRow> = std::mem::take(&mut last.lines)
+                .into_iter()
+                .map(ArtRow::Inline)
+                .collect();
+            settle_last_row(&mut inline);
+            inline.extend(rows);
+            last.kind = BlockKind::ArtParagraph { rows: inline };
+            return;
+        }
+        if let BlockKind::ArtParagraph { rows: existing } = &mut last.kind {
+            settle_last_row(existing);
+            existing.extend(rows);
+            return;
         }
     }
     out.push(Block {

@@ -136,32 +136,32 @@ pub fn parse_agent_cron_schedule(
     }
     // `in <n> <unit>`: one-shot.
     let lower = text.to_lowercase();
-    if let Some(rest) = lower.strip_prefix("in ") {
-        if let Some(next) = parse_in_delay(rest, now_millis) {
-            return Ok((
-                AgentCronSchedule {
-                    kind: ScheduleKind::Once,
-                    expression: text,
-                    interval_ms: None,
-                },
-                next,
-            ));
-        }
+    if let Some(rest) = lower.strip_prefix("in ")
+        && let Some(next) = parse_in_delay(rest, now_millis)
+    {
+        return Ok((
+            AgentCronSchedule {
+                kind: ScheduleKind::Once,
+                expression: text,
+                interval_ms: None,
+            },
+            next,
+        ));
     }
     // `every|each <n> <unit>`: recurring interval.
     for prefix in ["every ", "each "] {
-        if let Some(rest) = lower.strip_prefix(prefix) {
-            if let Some(next) = parse_every_delay(rest, now_millis)? {
-                let interval_ms = next - now_millis;
-                return Ok((
-                    AgentCronSchedule {
-                        kind: ScheduleKind::Interval,
-                        expression: text,
-                        interval_ms: Some(interval_ms),
-                    },
-                    next,
-                ));
-            }
+        if let Some(rest) = lower.strip_prefix(prefix)
+            && let Some(next) = parse_every_delay(rest, now_millis)?
+        {
+            let interval_ms = next - now_millis;
+            return Ok((
+                AgentCronSchedule {
+                    kind: ScheduleKind::Interval,
+                    expression: text,
+                    interval_ms: Some(interval_ms),
+                },
+                next,
+            ));
         }
     }
     // `at <ISO date>`: one-shot.
@@ -254,10 +254,11 @@ pub fn normalize_heartbeat_schedule(input: Option<&str>) -> String {
     let Some(text) = text else {
         return DEFAULT_HEARTBEAT_SCHEDULE.to_string();
     };
-    if let Some((_, unit)) = split_amount_unit(text) {
-        if !unit.is_empty() && unit_multiplier(unit, true).is_some() {
-            return format!("every {text}");
-        }
+    if let Some((_, unit)) = split_amount_unit(text)
+        && !unit.is_empty()
+        && unit_multiplier(unit, true).is_some()
+    {
+        return format!("every {text}");
     }
     text.to_string()
 }
@@ -442,13 +443,13 @@ fn consume_trailing_delivery_flag(text: &str) -> anyhow::Result<Option<(Delivery
         }
     }
     for token in ["--follow-up", "--follow_up", "--steer"] {
-        if let Some(index) = lower.rfind(&format!(" {token}")) {
-            if index + token.len() + 1 == text.len() {
-                return Ok(Some((
-                    parse_delivery_mode_token(&token[2..])?,
-                    text[..index].to_string(),
-                )));
-            }
+        if let Some(index) = lower.rfind(&format!(" {token}"))
+            && index + token.len() + 1 == text.len()
+        {
+            return Ok(Some((
+                parse_delivery_mode_token(&token[2..])?,
+                text[..index].to_string(),
+            )));
         }
     }
     Ok(None)

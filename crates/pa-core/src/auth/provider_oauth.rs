@@ -92,7 +92,8 @@ impl ProviderOAuth {
                     .enable_all()
                     .build()
                     .map_err(|_| OAuthRefreshError::Failed)?;
-                let refreshed = match provider_id.as_str() {
+
+                match provider_id.as_str() {
                     OPENAI_CODEX_PROVIDER_ID => {
                         let credentials = runtime
                             .block_on(refresh_openai_codex_token(http.as_ref(), &refresh_token))
@@ -177,8 +178,7 @@ impl ProviderOAuth {
                     // The match arms cover the four subscription ids;
                     // `refresh` never dispatches another.
                     _ => Err(OAuthRefreshError::Failed),
-                };
-                refreshed
+                }
             })
             .map_err(|_| OAuthRefreshError::Failed)?
             .join()

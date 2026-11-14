@@ -204,14 +204,13 @@ impl HeartbeatsPicker {
 
     /// Drop a detail pane whose heartbeat vanished.
     fn dirty_conform_mode(&mut self) {
-        if let Mode::Detail { heartbeat_id, .. } = self.mode.clone() {
-            if !self
+        if let Mode::Detail { heartbeat_id, .. } = self.mode.clone()
+            && !self
                 .heartbeats
                 .iter()
                 .any(|entry| entry.job.id == heartbeat_id)
-            {
-                self.mode = Mode::List;
-            }
+        {
+            self.mode = Mode::List;
         }
     }
 

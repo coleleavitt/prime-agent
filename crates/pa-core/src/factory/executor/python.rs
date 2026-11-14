@@ -339,17 +339,16 @@ impl FactoryRun {
             for (entry_position, entry) in state.entries.iter().enumerate() {
                 for (instance_position, instance) in entry.instances.iter().enumerate() {
                     if let (Status::Running, Some(deadline)) = (instance.status, instance.deadline)
+                        && instance.child_id.is_none()
                     {
-                        if instance.child_id.is_none() {
-                            slots.push((
-                                Slot {
-                                    state: state_position,
-                                    entry: entry_position,
-                                    instance: instance_position,
-                                },
-                                deadline,
-                            ));
-                        }
+                        slots.push((
+                            Slot {
+                                state: state_position,
+                                entry: entry_position,
+                                instance: instance_position,
+                            },
+                            deadline,
+                        ));
                     }
                 }
             }

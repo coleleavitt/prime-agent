@@ -664,14 +664,14 @@ mod tests {
         // Bind first: the MutexGuard temporaries must drop before the
         // block's locals (a trailing struct literal keeps them alive to
         // the end of the block).
-        let harness = Harness {
+
+        Harness {
             attempts: attempts.load(std::sync::atomic::Ordering::SeqCst),
             switches: switches.lock().unwrap().clone(),
             restores: restores.lock().unwrap().clone(),
             waits: waits.lock().unwrap().clone(),
             events: events.lock().unwrap().clone(),
-        };
-        harness
+        }
     }
 
     #[test]

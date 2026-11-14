@@ -419,11 +419,11 @@ impl SessionUi {
                 .await;
             }
             "show-images" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_show_images(value == "true") {
-                        self.error_row(&format!("{error:#}"), view);
-                        return;
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_show_images(value == "true")
+                {
+                    self.error_row(&format!("{error:#}"), view);
+                    return;
                 }
                 self.show_images = value == "true";
                 view.show_images = value == "true";
@@ -470,10 +470,10 @@ impl SessionUi {
                 );
             }
             "web-search-provider" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_web_search_provider(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_web_search_provider(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
                 }
             }
             "builtin-skills" => {
@@ -488,32 +488,30 @@ impl SessionUi {
             "show-hardware-cursor" => {
                 // A failed persist changes nothing: the live flag flips only when the
                 // setting actually persisted.
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_show_hardware_cursor(value == "true") {
-                        self.error_row(&format!("{error:#}"), view);
-                        return;
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_show_hardware_cursor(value == "true")
+                {
+                    self.error_row(&format!("{error:#}"), view);
+                    return;
                 }
                 // The very next frame shows or hides the hardware cursor at the focused
                 // caret.
                 view.show_hardware_cursor = value == "true";
             }
             "editor-padding" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Ok(padding) = value.parse::<u64>() {
-                        if let Err(error) = settings.set_editor_padding_x(padding) {
-                            self.error_row(&format!("{error:#}"), view);
-                        }
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Ok(padding) = value.parse::<u64>()
+                    && let Err(error) = settings.set_editor_padding_x(padding)
+                {
+                    self.error_row(&format!("{error:#}"), view);
                 }
             }
             "autocomplete-max-visible" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Ok(max_visible) = value.parse::<u64>() {
-                        if let Err(error) = settings.set_autocomplete_max_visible(max_visible) {
-                            self.error_row(&format!("{error:#}"), view);
-                        }
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Ok(max_visible) = value.parse::<u64>()
+                    && let Err(error) = settings.set_autocomplete_max_visible(max_visible)
+                {
+                    self.error_row(&format!("{error:#}"), view);
                 }
             }
             "clear-on-shrink" => {
@@ -531,10 +529,10 @@ impl SessionUi {
                 );
             }
             "idle-eviction-minutes" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_idle_eviction_minutes(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_idle_eviction_minutes(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
                 }
             }
             "steering-mode" => {
@@ -584,11 +582,11 @@ impl SessionUi {
             "default-service-tier" => {
                 // Persist the default tier (new sessions start on it), then apply it to
                 // the running session through the same daemon tier switch `/tier` uses.
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_default_service_tier(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                        return;
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_default_service_tier(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
+                    return;
                 }
                 let tier = match serde_json::from_value::<pa_types::ai::ServiceTier>(Value::String(
                     value.to_string(),
@@ -636,10 +634,10 @@ impl SessionUi {
             }
 
             "mermaid-rendering" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_mermaid_rendering_mode(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_mermaid_rendering_mode(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
                 }
                 // TS `onMermaidRenderingModeChange` invalidates the chat: the mode is a layout
                 // option, so every assistant entry re-renders under it.
@@ -653,11 +651,11 @@ impl SessionUi {
                 );
             }
             "tree-filter-mode" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_tree_filter_mode(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                        return;
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_tree_filter_mode(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
+                    return;
                 }
                 // The `/tree` selector reads the live field.
                 self.tree_filter_mode = crate::tree_list::filter_mode_from_str(value);
@@ -673,11 +671,11 @@ impl SessionUi {
                 self.apply_thinking_level(value, view).await;
             }
             "theme" => {
-                if let Some(settings) = &self.client_settings {
-                    if let Err(error) = settings.set_theme(value) {
-                        self.error_row(&format!("{error:#}"), view);
-                        return;
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Err(error) = settings.set_theme(value)
+                {
+                    self.error_row(&format!("{error:#}"), view);
+                    return;
                 }
                 view.theme = crate::app::load_theme(value);
             }
@@ -694,10 +692,10 @@ impl SessionUi {
         value: &str,
         view: &mut AgentView,
     ) {
-        if let Some(settings) = &self.client_settings {
-            if let Err(error) = set(settings.as_ref(), value == "true") {
-                self.error_row(&format!("{error:#}"), view);
-            }
+        if let Some(settings) = &self.client_settings
+            && let Err(error) = set(settings.as_ref(), value == "true")
+        {
+            self.error_row(&format!("{error:#}"), view);
         }
     }
 
@@ -753,10 +751,10 @@ impl SessionUi {
             return;
         }
         let state = self.connection_state(view).await;
-        if let Some(state) = state {
-            if let Some(tier) = state.get("serviceTier").and_then(Value::as_str) {
-                self.service_tier = Some(tier.to_string());
-            }
+        if let Some(state) = state
+            && let Some(tier) = state.get("serviceTier").and_then(Value::as_str)
+        {
+            self.service_tier = Some(tier.to_string());
         }
         // The tray badge and the `/tier` completions follow the applied tier.
         view.chrome.service_tier.clone_from(&self.service_tier);
@@ -945,10 +943,10 @@ impl SessionUi {
         } else {
             crate::client_settings::EditorMode::Normal
         };
-        if let Some(settings) = &self.client_settings {
-            if let Err(error) = settings.set_editor_mode(mode) {
-                self.error_row(&format!("{error:#}"), view);
-            }
+        if let Some(settings) = &self.client_settings
+            && let Err(error) = settings.set_editor_mode(mode)
+        {
+            self.error_row(&format!("{error:#}"), view);
         }
         self.note(
             if enabled {
@@ -1027,10 +1025,10 @@ impl SessionUi {
                 view.editor.set_keybindings(keybindings);
                 // An unknown theme name keeps the current theme (the startup loader's
                 // fallback).
-                if let Some(settings) = &self.client_settings {
-                    if let Some(name) = settings.theme() {
-                        view.theme = crate::app::load_theme(&name);
-                    }
+                if let Some(settings) = &self.client_settings
+                    && let Some(name) = settings.theme()
+                {
+                    view.theme = crate::app::load_theme(&name);
                 }
                 // The model catalog re-fetch lands through the run loop's channel.
                 self.spawn_model_catalog_refresh();

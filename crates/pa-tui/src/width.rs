@@ -195,10 +195,10 @@ pub fn str_width(s: &str) -> usize {
     let mut cache = width_cache().lock_or_recover();
     // TS caps its width cache at 512 entries, evicting the oldest key; the
     // HashMap has no insertion order, so evict an arbitrary key instead.
-    if cache.len() >= WIDTH_CACHE_SIZE {
-        if let Some(key) = cache.keys().next().cloned() {
-            cache.remove(&key);
-        }
+    if cache.len() >= WIDTH_CACHE_SIZE
+        && let Some(key) = cache.keys().next().cloned()
+    {
+        cache.remove(&key);
     }
     cache.insert(s.to_string().into_boxed_str(), width);
     width
@@ -511,11 +511,11 @@ pub fn normalize_terminal_output(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     let mut rest = s;
     while let Some(c) = rest.chars().next() {
-        if c == '\x1b' {
-            if let Some(len) = escape_len(rest) {
-                rest = &rest[len..];
-                continue;
-            }
+        if c == '\x1b'
+            && let Some(len) = escape_len(rest)
+        {
+            rest = &rest[len..];
+            continue;
         }
         match c {
             '\u{0e33}' => out.push_str("\u{0e4d}\u{0e32}"),
@@ -609,11 +609,11 @@ fn ellipsis_span_style(line: &Line) -> ratatui::style::Style {
 }
 
 fn push_char(out: &mut Line, style: ratatui::style::Style, c: char) {
-    if let Some(last) = out.last_mut() {
-        if last.style == style {
-            last.content.push(c);
-            return;
-        }
+    if let Some(last) = out.last_mut()
+        && last.style == style
+    {
+        last.content.push(c);
+        return;
     }
     out.push(Span::styled(c.to_string(), style));
 }

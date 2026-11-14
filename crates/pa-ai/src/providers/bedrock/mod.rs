@@ -439,10 +439,10 @@ async fn run_stream(
     if let Some(max_tokens) = options.base.max_tokens {
         inference_config.insert("maxTokens".into(), json!(max_tokens));
     }
-    if let Some(temperature) = options.base.temperature {
-        if !supports_always_on_adaptive_thinking(&model.id, Some(&model.name)) {
-            inference_config.insert("temperature".into(), json!(temperature));
-        }
+    if let Some(temperature) = options.base.temperature
+        && !supports_always_on_adaptive_thinking(&model.id, Some(&model.name))
+    {
+        inference_config.insert("temperature".into(), json!(temperature));
     }
 
     let mut command_input = Map::new();
@@ -472,10 +472,10 @@ async fn run_stream(
     }
 
     let mut payload = Value::Object(command_input);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(payload.clone(), model) {
-            payload = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(payload.clone(), model)
+    {
+        payload = next;
     }
 
     let (endpoint, region) = resolve_endpoint(model, &options);

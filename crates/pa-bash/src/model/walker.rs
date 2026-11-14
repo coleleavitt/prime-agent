@@ -274,10 +274,11 @@ pub(super) struct Resolver<'a, 'e> {
 
 impl Resolver<'_, '_> {
     fn lookup(&self, name: &str) -> Lookup {
-        if name == "PWD" && !self.state.vars.set_by_script("PWD") {
-            if let ([dir], None) = (self.state.cwd.dirs.as_slice(), &self.state.cwd.unknown) {
-                return Lookup::Value(dir.display().to_string());
-            }
+        if name == "PWD"
+            && !self.state.vars.set_by_script("PWD")
+            && let ([dir], None) = (self.state.cwd.dirs.as_slice(), &self.state.cwd.unknown)
+        {
+            return Lookup::Value(dir.display().to_string());
         }
         if name == "0" {
             return Lookup::Value("bash".to_string());

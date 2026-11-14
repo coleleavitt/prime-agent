@@ -1039,14 +1039,12 @@ impl RavoVerdict {
                 .entries
                 .get_mut(&edit.kind)
                 .and_then(|records| records.get_mut(&edit.id))
-            {
-                if let Some(trust) = after.extensions.get(TRUST_KEY) {
+                && let Some(trust) = after.extensions.get(TRUST_KEY) {
                     stored
                         .extensions
                         .entry(TRUST_KEY.to_string())
                         .or_insert_with(|| trust.clone());
                 }
-            }
             let entry_ref = harness_entry_ref(kind_str(edit.kind), &edit.id);
             if edit.kind == RefinementKind::Skill {
                 let imports = reference_imports(&after.reference);

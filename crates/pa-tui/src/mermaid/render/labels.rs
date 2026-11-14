@@ -182,18 +182,18 @@ fn strip_html_tags(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '<' {
-            if let Some((name, end)) = html_tag_at(&chars, i) {
-                let lower = name.to_ascii_lowercase();
-                if lower == "br" {
-                    out.push(' ');
-                    i = end;
-                    continue;
-                }
-                if HTML_FORMAT_TAGS.contains(&lower.as_str()) {
-                    i = end;
-                    continue;
-                }
+        if chars[i] == '<'
+            && let Some((name, end)) = html_tag_at(&chars, i)
+        {
+            let lower = name.to_ascii_lowercase();
+            if lower == "br" {
+                out.push(' ');
+                i = end;
+                continue;
+            }
+            if HTML_FORMAT_TAGS.contains(&lower.as_str()) {
+                i = end;
+                continue;
             }
         }
         out.push(chars[i]);

@@ -138,7 +138,7 @@ mod tests {
     fn the_dispatcher_routes_learning_and_exits_with_its_codes() {
         let _guard = crate::config::env_lock();
         let previous = std::env::var_os("DO_NOT_TRACK");
-        std::env::set_var("DO_NOT_TRACK", "1");
+        pa_types::env::set_var("DO_NOT_TRACK", "1");
         let dir = tempfile::TempDir::new().expect("temp dir");
         let index = dir.path().join("days");
         let args = |values: &[&str]| -> Vec<String> {
@@ -157,8 +157,8 @@ mod tests {
         })
         .collect();
         match previous {
-            Some(previous) => std::env::set_var("DO_NOT_TRACK", previous),
-            None => std::env::remove_var("DO_NOT_TRACK"),
+            Some(previous) => pa_types::env::set_var("DO_NOT_TRACK", previous),
+            None => pa_types::env::remove_var("DO_NOT_TRACK"),
         }
         assert_eq!(
             results,

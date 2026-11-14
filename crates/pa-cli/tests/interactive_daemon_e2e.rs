@@ -43,7 +43,7 @@ fn install_clipboard_fixture() {
         std::fs::write(&path, MINIMAL_PNG).expect("write fixture image");
         path
     });
-    std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", path);
+    pa_types::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_IMAGE", path);
 }
 
 struct Supervisor {
@@ -1297,11 +1297,11 @@ async fn ensure_daemon_running_spawns_supervisor_and_tui_attaches() {
             continue;
         }
         match value {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
+            Some(value) => pa_types::env::set_var(name, value),
+            None => pa_types::env::remove_var(name),
         }
     }
-    std::env::set_var(
+    pa_types::env::set_var(
         pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
         "15000",
     );
@@ -3361,11 +3361,10 @@ async fn tui_renames_session_through_slash_command() {
         }
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         for line in content.lines() {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                if value["type"] == "session_info" && value["name"] == "my session" {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line)
+                && value["type"] == "session_info" && value["name"] == "my session" {
                     saw_name = true;
                 }
-            }
         }
     }
     assert!(
@@ -4074,11 +4073,10 @@ async fn tui_prompt_stash_survives_the_agents_view_handoff() {
         .flatten()
     {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+            && let Ok(text) = std::fs::read_to_string(&path) {
                 persisted_with_image |= text.contains("image/png");
             }
-        }
     }
     assert!(
         persisted_with_image,
@@ -4223,14 +4221,12 @@ async fn tui_prompt_stash_restores_a_pasted_image_with_the_draft() {
         .flatten()
     {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if text.contains("image/png") {
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+            && let Ok(text) = std::fs::read_to_string(&path)
+                && text.contains("image/png") {
                     persisted_with_image = text;
                     break;
                 }
-            }
-        }
     }
     assert!(
         !persisted_with_image.is_empty(),
@@ -4385,11 +4381,10 @@ async fn tui_ctrl_s_stashes_and_restores_the_prompt_draft() {
         .flatten()
     {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+            && let Ok(text) = std::fs::read_to_string(&path) {
                 persisted_with_image |= text.contains("image/png");
             }
-        }
     }
     assert!(
         persisted_with_image,

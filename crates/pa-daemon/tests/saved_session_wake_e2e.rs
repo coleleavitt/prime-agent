@@ -360,11 +360,10 @@ fn saved_session_wake(location: SavedLocation) {
     let saved_rows = loop {
         let line = client.read_line();
         let sessions = line["data"]["sessions"].as_array().cloned();
-        if line.get("id").and_then(Value::as_str) == Some("l2") {
-            if let Some(sessions) = sessions {
+        if line.get("id").and_then(Value::as_str) == Some("l2")
+            && let Some(sessions) = sessions {
                 break sessions;
             }
-        }
     };
     assert_eq!(saved_rows.len(), 1, "the killed session is saved");
     assert_eq!(saved_rows[0]["name"], "alpha");

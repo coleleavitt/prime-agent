@@ -83,14 +83,12 @@ pub fn find_env_keys(provider: &str) -> Option<Vec<String>> {
 /// "<authenticated>" for ambient credential sources (Google Vertex ADC, Amazon Bedrock profiles).
 #[must_use]
 pub fn get_env_api_key(provider: &str) -> Option<String> {
-    if let Some(keys) = find_env_keys(provider) {
-        if let Some(first) = keys.first() {
-            if let Ok(value) = std::env::var(first) {
-                if !value.is_empty() {
-                    return Some(value);
-                }
-            }
-        }
+    if let Some(keys) = find_env_keys(provider)
+        && let Some(first) = keys.first()
+        && let Ok(value) = std::env::var(first)
+        && !value.is_empty()
+    {
+        return Some(value);
     }
 
     if provider == "google-vertex" {
@@ -121,10 +119,10 @@ pub fn get_env_api_key(provider: &str) -> Option<String> {
 }
 
 fn has_vertex_adc_credentials() -> bool {
-    if let Ok(gac_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
-        if !gac_path.is_empty() {
-            return std::path::Path::new(&gac_path).exists();
-        }
+    if let Ok(gac_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        && !gac_path.is_empty()
+    {
+        return std::path::Path::new(&gac_path).exists();
     }
     default_adc_path().exists()
 }

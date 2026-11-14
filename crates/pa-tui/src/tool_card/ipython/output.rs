@@ -30,12 +30,12 @@ fn split_traceback(text: &str, error_name: Option<&str>) -> Option<(String, Stri
     let mut traceback_index = lines
         .iter()
         .position(|line| line.contains("Traceback (most recent call last):"));
-    if traceback_index.is_none() {
-        if let Some(error_name) = error_name {
-            traceback_index = lines
-                .iter()
-                .position(|line| line.trim_start().starts_with(&format!("{error_name}:")));
-        }
+    if traceback_index.is_none()
+        && let Some(error_name) = error_name
+    {
+        traceback_index = lines
+            .iter()
+            .position(|line| line.trim_start().starts_with(&format!("{error_name}:")));
     }
     let traceback_index = traceback_index?;
     let output = lines[..traceback_index].join("\n").trim_end().to_string();
@@ -162,24 +162,20 @@ pub(super) fn render_output(
             );
         }
         let result_text = details.result.as_deref().filter(|s| !s.trim().is_empty());
-        if let Some(result) = result_text {
-            if !is_edit_confirmation(details.result.as_deref(), &details.diffs)
-                && !is_agent_message_receipt(
-                    details.result.as_deref(),
-                    &details.sent_agent_messages,
-                )
-            {
-                start_output(&mut output_started, lines);
-                rendered_text_output = true;
-                render_output_text(
-                    lines,
-                    &normalize_error_details(result),
-                    &OutputLabel::Out,
-                    &mut output_marker_pending,
-                    theme,
-                    width,
-                );
-            }
+        if let Some(result) = result_text
+            && !is_edit_confirmation(details.result.as_deref(), &details.diffs)
+            && !is_agent_message_receipt(details.result.as_deref(), &details.sent_agent_messages)
+        {
+            start_output(&mut output_started, lines);
+            rendered_text_output = true;
+            render_output_text(
+                lines,
+                &normalize_error_details(result),
+                &OutputLabel::Out,
+                &mut output_marker_pending,
+                theme,
+                width,
+            );
         }
     } else if let Some((output, _)) = &traceback {
         if !output.is_empty() {

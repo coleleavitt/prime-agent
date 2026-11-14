@@ -160,12 +160,11 @@ impl CatalogFetcher {
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<usize>().ok())
+            && length > self.max_bytes
         {
-            if length > self.max_bytes {
-                return Err(FetchError::Transport {
-                    message: "Catalog is too large".into(),
-                });
-            }
+            return Err(FetchError::Transport {
+                message: "Catalog is too large".into(),
+            });
         }
         let mut body = Vec::new();
         let mut response = response;

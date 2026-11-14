@@ -461,7 +461,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 }
 
 fn run_plan(steps: Vec<HeadlessStep>) -> Vec<String> {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);
@@ -486,7 +486,7 @@ fn run_plan(steps: Vec<HeadlessStep>) -> Vec<String> {
 /// The same plan run with the mock's prompt recorder: the frames plus every `prompt` request that
 /// reached the daemon (the guard's wire proof — a blocked submission stays off the wire).
 fn run_plan_with_prompts(steps: Vec<HeadlessStep>) -> (Vec<String>, Vec<Value>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);
@@ -541,7 +541,7 @@ fn skill_commands_surface_in_the_slash_menu() {
 /// seam at all.
 #[test]
 fn skills_surface_without_a_settings_seam() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);
@@ -577,7 +577,7 @@ fn skills_surface_without_a_settings_seam() {
 #[test]
 fn disabled_skill_commands_stay_out_of_the_menu() {
     use pa_tui::client_settings::ClientSettings;
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);

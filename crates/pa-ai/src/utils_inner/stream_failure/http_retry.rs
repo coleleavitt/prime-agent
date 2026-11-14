@@ -17,13 +17,13 @@ pub(super) fn header_value<S: std::hash::BuildHasher>(
 pub fn parse_retry_after_ms<S: std::hash::BuildHasher>(
     headers: &std::collections::HashMap<String, String, S>,
 ) -> Option<u64> {
-    if let Some(value) = header_value(headers, "retry-after-ms") {
-        if let Ok(ms) = value.parse::<f64>() {
-            // The wire's retry-after-ms is a lenient header value (finite, non-negative); u64 ms is the wait's unit.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            if ms.is_finite() && ms >= 0.0 {
-                return Some(ms as u64);
-            }
+    if let Some(value) = header_value(headers, "retry-after-ms")
+        && let Ok(ms) = value.parse::<f64>()
+    {
+        // The wire's retry-after-ms is a lenient header value (finite, non-negative); u64 ms is the wait's unit.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        if ms.is_finite() && ms >= 0.0 {
+            return Some(ms as u64);
         }
     }
     let raw = header_value(headers, "retry-after")?;

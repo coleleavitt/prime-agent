@@ -221,8 +221,8 @@ impl Server {
                             "range": range(index, 0, line.len()), "selectionRange": range(index, 3, line.len()),
                             "children": [],
                         }));
-                    } else if let Some(variable) = line.trim().strip_prefix("let ") {
-                        if let Some(Value::Array(children)) =
+                    } else if let Some(variable) = line.trim().strip_prefix("let ")
+                        && let Some(Value::Array(children)) =
                             symbols.last_mut().map(|symbol| &mut symbol["children"])
                         {
                             children.push(json!({
@@ -230,7 +230,6 @@ impl Server {
                                 "range": range(index, 2, line.len()), "selectionRange": range(index, 6, line.len()),
                             }));
                         }
-                    }
                 }
                 Value::Array(symbols)
             }

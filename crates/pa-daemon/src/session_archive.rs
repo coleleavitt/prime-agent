@@ -56,8 +56,8 @@ pub fn plan_archive<'a>(
             }
         }
     }
-    if let Some(max_sessions) = policy.max_sessions {
-        if candidates.len() > max_sessions {
+    if let Some(max_sessions) = policy.max_sessions
+        && candidates.len() > max_sessions {
             // Keep the newest `max_sessions` files by mtime (ties by path
             // for determinism); everything older archives unless protected.
             let mut ranked: Vec<&SweepCandidate> = candidates.iter().collect();
@@ -69,7 +69,6 @@ pub fn plan_archive<'a>(
             });
             doomed.extend(ranked[max_sessions..].iter().filter(|c| !c.protected));
         }
-    }
     doomed.sort_by(|left, right| {
         left.modified
             .cmp(&right.modified)

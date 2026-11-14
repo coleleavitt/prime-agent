@@ -127,12 +127,11 @@ fn snapshot_files(session_dir: &Path, cursor: Option<&str>) -> (String, Arc<Vec<
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         snapshots.retain(|_, snapshot| snapshot.last_used.elapsed() < Duration::from_secs(300));
-        if let Some(snapshot) = snapshots.get_mut(id) {
-            if snapshot.session_dir == session_dir && offset <= snapshot.files.len() {
+        if let Some(snapshot) = snapshots.get_mut(id)
+            && snapshot.session_dir == session_dir && offset <= snapshot.files.len() {
                 snapshot.last_used = Instant::now();
                 return (id.to_string(), Arc::clone(&snapshot.files), offset);
             }
-        }
     }
     let mut files: Vec<(WalkKey, PathBuf)> = fs::read_dir(session_dir)
         .into_iter()
@@ -162,15 +161,14 @@ fn retain_snapshot(id: String, session_dir: &Path, files: Arc<Vec<PathBuf>>) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     snapshots.retain(|_, snapshot| snapshot.last_used.elapsed() < Duration::from_secs(300));
-    if !snapshots.contains_key(&id) && snapshots.len() >= 32 {
-        if let Some(oldest) = snapshots
+    if !snapshots.contains_key(&id) && snapshots.len() >= 32
+        && let Some(oldest) = snapshots
             .iter()
             .min_by_key(|(_, snapshot)| snapshot.last_used)
             .map(|(id, _)| id.clone())
         {
             snapshots.remove(&oldest);
         }
-    }
     snapshots.insert(
         id,
         WalkSnapshot {
@@ -259,11 +257,10 @@ fn list_sessions_through(
     // The snapshot is the whole directory listing, so a cache sweep evicts
     // only rows for files that are gone - safe even on a partial page. A
     // stopped scan (the consumer went away) never reports a finished scan.
-    if let Some(cache) = cache {
-        if !stopped {
+    if let Some(cache) = cache
+        && !stopped {
             cache.scan_finished(session_dir, snapshot.as_slice());
         }
-    }
     let remaining = files.len() - walked;
     let next_cursor = (remaining > 0).then(|| {
         let cursor = format!("snapshot:{snapshot_id}:{}", start + walked);

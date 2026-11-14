@@ -46,10 +46,10 @@ fn forked_branch_entries(entries: Vec<FileEntry>) -> Vec<FileEntry> {
     // git_state rows describe the source repo; the fork reports its own.
     let mut dropped_parent: HashMap<String, Option<String>> = HashMap::new();
     for entry in &entries {
-        if is_source_scoped(entry) {
-            if let Some(id) = entry.id() {
-                dropped_parent.insert(id.to_string(), entry.parent_id().map(str::to_string));
-            }
+        if is_source_scoped(entry)
+            && let Some(id) = entry.id()
+        {
+            dropped_parent.insert(id.to_string(), entry.parent_id().map(str::to_string));
         }
     }
     // Resolve each dropped id to its nearest kept ancestor lazily (memoized
@@ -235,13 +235,13 @@ impl SessionManager {
         // A non-regular source (a FIFO or a device) would block the copy's
         // read until a writer appears; a missing path falls through to the
         // empty-or-invalid contract.
-        if let Ok(metadata) = std::fs::metadata(source_path) {
-            if !metadata.is_file() {
-                return Err(format!(
-                    "Cannot fork: source session file is not a regular file: {}",
-                    source_path.display()
-                ));
-            }
+        if let Ok(metadata) = std::fs::metadata(source_path)
+            && !metadata.is_file()
+        {
+            return Err(format!(
+                "Cannot fork: source session file is not a regular file: {}",
+                source_path.display()
+            ));
         }
         // Read-only: repairing would REWRITE the source (dropping a torn row
         // mid-append); the copy skips a torn tail like TS `loadEntriesFromFile`.
@@ -377,12 +377,13 @@ impl SessionManager {
             self.session_id = header_id.unwrap_or_else(create_session_id);
 
             let mut should_rewrite = migrate_to_current_version(&mut entries);
-            if let Some(FileEntry::Header { header }) = entries.first_mut() {
-                if header.parent_session.is_some() && !is_valid_rlm_depth(header.rlm_depth) {
-                    let depth = resolve_session_rlm_depth(header, &path);
-                    header.rlm_depth = Some(depth);
-                    should_rewrite = true;
-                }
+            if let Some(FileEntry::Header { header }) = entries.first_mut()
+                && header.parent_session.is_some()
+                && !is_valid_rlm_depth(header.rlm_depth)
+            {
+                let depth = resolve_session_rlm_depth(header, &path);
+                header.rlm_depth = Some(depth);
+                should_rewrite = true;
             }
             self.file_entries = entries;
             if should_rewrite {

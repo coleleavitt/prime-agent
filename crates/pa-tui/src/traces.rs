@@ -14,11 +14,11 @@ pub type TracesFuture<T> = Pin<Box<dyn std::future::Future<Output = T> + Send>>;
 fn normalize_base_url(value: &str) -> String {
     let trimmed = value.trim();
     let stripped = trimmed.trim_end_matches('/');
-    let stripped = stripped
+
+    stripped
         .strip_suffix("/api/v1")
         .unwrap_or(stripped)
-        .to_string();
-    stripped
+        .to_string()
 }
 
 /// The `PRIME_AGENT_TRACES_BASE_URL` override normalized, else the
@@ -471,14 +471,14 @@ mod tests {
 
     #[test]
     fn the_base_url_normalizes_like_ts() {
-        std::env::set_var("PRIME_AGENT_TRACES_BASE_URL", "https://api.example.com///");
+        pa_types::env::set_var("PRIME_AGENT_TRACES_BASE_URL", "https://api.example.com///");
         assert_eq!(traces_base_url(), "https://api.example.com");
-        std::env::set_var(
+        pa_types::env::set_var(
             "PRIME_AGENT_TRACES_BASE_URL",
             "https://api.example.com/api/v1/",
         );
         assert_eq!(traces_base_url(), "https://api.example.com");
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         assert_eq!(traces_base_url(), "https://api.primeintellect.ai");
     }
 

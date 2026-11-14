@@ -665,11 +665,12 @@ impl AgentView {
     /// entry changes every LATER spacing-driven row, so those go stale too.
     pub fn mark_entry_stale(&mut self, index: usize) {
         self.pending_handoff = None;
-        if let Some((pending, before)) = self.sparse_mutation.take() {
-            if pending == index && self.layout_width > 0 {
-                let after = self.count_entry_rows(index, self.layout_width);
-                self.sparse_tail_delta(after as isize - before as isize, index);
-            }
+        if let Some((pending, before)) = self.sparse_mutation.take()
+            && pending == index
+            && self.layout_width > 0
+        {
+            let after = self.count_entry_rows(index, self.layout_width);
+            self.sparse_tail_delta(after as isize - before as isize, index);
         }
         if let Some(slot) = self.entry_layout.get_mut(index) {
             *slot = [None, None, None];

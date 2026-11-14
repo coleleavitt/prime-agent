@@ -197,10 +197,10 @@ impl SessionTasks {
         };
         if let Some(tasks) = durable {
             let path = self.durable_path.lock_or_recover().clone();
-            if let Some(path) = path {
-                if let Err(error) = write_durable_tasks(&path, &tasks) {
-                    tracing::warn!(%error, path = %path.display(), "scheduled tasks not saved");
-                }
+            if let Some(path) = path
+                && let Err(error) = write_durable_tasks(&path, &tasks)
+            {
+                tracing::warn!(%error, path = %path.display(), "scheduled tasks not saved");
             }
         }
         if wake {

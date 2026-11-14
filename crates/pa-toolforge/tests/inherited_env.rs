@@ -20,8 +20,8 @@ async fn the_exit_test_inherits_variables_and_the_users_python_path() {
         "EXPECTED = \"a-b\"\n",
     )
     .unwrap();
-    std::env::set_var("PRIME_AGENT_TOOLFORGE_GATE_PROBE", "inherited");
-    std::env::set_var("PYTHONPATH", &user_root);
+    pa_types::env::set_var("PRIME_AGENT_TOOLFORGE_GATE_PROBE", "inherited");
+    pa_types::env::set_var("PYTHONPATH", &user_root);
     let installs = Arc::new(Mutex::new(Vec::new()));
     let options = options(&dir.path().join("agent"), &python, &installs);
 
@@ -42,8 +42,8 @@ async fn the_exit_test_inherits_variables_and_the_users_python_path() {
         &options,
     )
     .await;
-    std::env::remove_var("PRIME_AGENT_TOOLFORGE_GATE_PROBE");
-    std::env::remove_var("PYTHONPATH");
+    pa_types::env::remove_var("PRIME_AGENT_TOOLFORGE_GATE_PROBE");
+    pa_types::env::remove_var("PYTHONPATH");
 
     assert_eq!(result.reason, None);
     assert_eq!(result.status, PublishStatus::Published);

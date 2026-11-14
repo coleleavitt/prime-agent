@@ -259,10 +259,10 @@ fn home_dir() -> std::path::PathBuf {
 /// The `@`-attachment token at the cursor: the token feeds the fuzzy
 /// file search below the session cwd (or the typed scope).
 pub(crate) fn extract_at_prefix(text: &[char]) -> Option<String> {
-    if let Some(quoted) = extract_quoted_prefix(text) {
-        if quoted.starts_with("@\"") {
-            return Some(quoted);
-        }
+    if let Some(quoted) = extract_quoted_prefix(text)
+        && quoted.starts_with("@\"")
+    {
+        return Some(quoted);
     }
     let token_start = text
         .iter()
@@ -926,51 +926,49 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         if let Some(at_prefix) = extract_at_prefix(&before) {
             return fuzzy_file_search::lookup(&self.paths.base, &self.file_index, at_prefix);
         }
-        if !force {
-            if let Some(context) = get_slash_command_context(lines, cursor_line, cursor_col) {
-                match context.kind {
-                    SlashKind::Name => {
-                        let items = self.slash_suggestions(&context.prefix);
-                        if items.is_empty() {
-                            return None;
-                        }
-                        return Some(SuggestionLookup::Ready(Suggestions {
-                            prefix: context.prefix,
-                            kind: Some(SuggestionKind::SlashCommand),
-                            items,
-                        }));
+        if !force && let Some(context) = get_slash_command_context(lines, cursor_line, cursor_col) {
+            match context.kind {
+                SlashKind::Name => {
+                    let items = self.slash_suggestions(&context.prefix);
+                    if items.is_empty() {
+                        return None;
                     }
-                    // Argument items answer at the argument position (filtered by the typed
-                    // term); commands without items and terms with no match answer nothing
-                    // (the force-triggered path completion is the file surface there).
-                    SlashKind::Argument => {
-                        let command = context.command_name.as_deref()?;
-                        if DIRECTORY_ARGUMENT_COMMANDS.contains(&command) {
-                            return Some(SuggestionLookup::Searching(
-                                fuzzy_file_search::spawn_with_mode(
-                                    &self.paths.base,
-                                    self.file_index.clone(),
-                                    context.prefix.clone(),
-                                    fuzzy_file_search::SearchMode::DirectoryArgument,
-                                ),
-                            ));
-                        }
-                        let items = self.arguments.get(command)?;
-                        let term = context.prefix.trim().to_lowercase();
-                        let matches: Vec<CompletionItem> = items
-                            .iter()
-                            .filter(|item| term.is_empty() || item.value.starts_with(&term))
-                            .cloned()
-                            .collect();
-                        if matches.is_empty() {
-                            return None;
-                        }
-                        return Some(SuggestionLookup::Ready(Suggestions {
-                            prefix: context.prefix.clone(),
-                            kind: Some(SuggestionKind::SlashCommand),
-                            items: matches,
-                        }));
+                    return Some(SuggestionLookup::Ready(Suggestions {
+                        prefix: context.prefix,
+                        kind: Some(SuggestionKind::SlashCommand),
+                        items,
+                    }));
+                }
+                // Argument items answer at the argument position (filtered by the typed
+                // term); commands without items and terms with no match answer nothing
+                // (the force-triggered path completion is the file surface there).
+                SlashKind::Argument => {
+                    let command = context.command_name.as_deref()?;
+                    if DIRECTORY_ARGUMENT_COMMANDS.contains(&command) {
+                        return Some(SuggestionLookup::Searching(
+                            fuzzy_file_search::spawn_with_mode(
+                                &self.paths.base,
+                                self.file_index.clone(),
+                                context.prefix.clone(),
+                                fuzzy_file_search::SearchMode::DirectoryArgument,
+                            ),
+                        ));
                     }
+                    let items = self.arguments.get(command)?;
+                    let term = context.prefix.trim().to_lowercase();
+                    let matches: Vec<CompletionItem> = items
+                        .iter()
+                        .filter(|item| term.is_empty() || item.value.starts_with(&term))
+                        .cloned()
+                        .collect();
+                    if matches.is_empty() {
+                        return None;
+                    }
+                    return Some(SuggestionLookup::Ready(Suggestions {
+                        prefix: context.prefix.clone(),
+                        kind: Some(SuggestionKind::SlashCommand),
+                        items: matches,
+                    }));
                 }
             }
         }

@@ -156,13 +156,13 @@ pub fn extract_json_object(text: &str) -> Result<serde_json::Value, String> {
     }
     let start = trimmed.find('{');
     let end = trimmed.rfind('}');
-    if let (Some(start), Some(end)) = (start, end) {
-        if end > start {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&trimmed[start..=end]) {
-                return Ok(value);
-            }
-            return parse_json_candidate(&trimmed[start..]);
+    if let (Some(start), Some(end)) = (start, end)
+        && end > start
+    {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&trimmed[start..=end]) {
+            return Ok(value);
         }
+        return parse_json_candidate(&trimmed[start..]);
     }
     if is_incomplete_json(trimmed) {
         return Err(TRUNCATED_JSON_ERROR.to_string());

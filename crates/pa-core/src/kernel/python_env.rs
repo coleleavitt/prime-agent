@@ -209,10 +209,10 @@ pub(crate) fn sanitize_uv_path(env: &mut HashMap<OsString, OsString>, project: O
     for key in keys {
         env.remove(&key);
     }
-    if !entries.is_empty() {
-        if let Ok(value) = std::env::join_paths(entries) {
-            env.insert(OsString::from("PATH"), value);
-        }
+    if !entries.is_empty()
+        && let Ok(value) = std::env::join_paths(entries)
+    {
+        env.insert(OsString::from("PATH"), value);
     }
 }
 

@@ -303,14 +303,13 @@ pub(crate) fn has_tool_history(messages: &[crate::types::Message]) -> bool {
         if let Message::ToolResult(_) = msg {
             return true;
         }
-        if let Message::Assistant(assistant) = msg {
-            if assistant
+        if let Message::Assistant(assistant) = msg
+            && assistant
                 .content
                 .iter()
                 .any(|block| matches!(block, AssistantContent::ToolCall(_)))
-            {
-                return true;
-            }
+        {
+            return true;
         }
     }
     false

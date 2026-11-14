@@ -56,12 +56,12 @@ pub fn installed_kernel_python() -> Option<PathBuf> {
 /// manifest an install goes through.
 fn resolve_installed_kernel_python() -> (Option<PathBuf>, PathBuf) {
     let venv = kernel_venv_dir();
-    if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON") {
-        if !override_python.is_empty() {
-            let expanded = expand_home(&override_python);
-            let resolved = std::path::absolute(&expanded).unwrap_or(expanded);
-            return (resolved.exists().then_some(resolved), venv);
-        }
+    if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON")
+        && !override_python.is_empty()
+    {
+        let expanded = expand_home(&override_python);
+        let resolved = std::path::absolute(&expanded).unwrap_or(expanded);
+        return (resolved.exists().then_some(resolved), venv);
     }
     let mut candidates = Vec::new();
     if std::env::var("PRIME_AGENT_KERNEL_VENV").is_ok_and(|v| !v.is_empty()) {

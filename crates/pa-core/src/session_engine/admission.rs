@@ -175,10 +175,11 @@ impl AgentSession {
         }
         // A Claude Code command's shell blocks run only now, once the text is
         // known to be a prompt (classification above never runs them).
-        if expand && crate::skills::is_claude_command(&skill_expanded, &self.prompt_templates) {
-            if let Some(telemetry) = &self.skill_telemetry {
-                telemetry.note_custom_command_used();
-            }
+        if expand
+            && crate::skills::is_claude_command(&skill_expanded, &self.prompt_templates)
+            && let Some(telemetry) = &self.skill_telemetry
+        {
+            telemetry.note_custom_command_used();
         }
         let normalized = if expand {
             let cwd = self.session.lock().await.get_cwd().to_path_buf();
@@ -206,10 +207,8 @@ impl AgentSession {
                     .iter()
                     .any(|skill| skill.name == block.name)
             });
-        if skill_used {
-            if let Some(telemetry) = &self.skill_telemetry {
-                telemetry.note_skill_used();
-            }
+        if skill_used && let Some(telemetry) = &self.skill_telemetry {
+            telemetry.note_skill_used();
         }
         if busy && options.streaming_behavior.is_none() {
             anyhow::bail!(
@@ -307,20 +306,20 @@ impl AgentSession {
                     }
                 }
                 Err(error) => {
-                    if !self.agent.state().await.is_streaming {
-                        if let Some(router) = self.image_model_router.as_ref() {
-                            (router.swap_target)(None);
-                            self.agent.set_model_override(None);
-                        }
+                    if !self.agent.state().await.is_streaming
+                        && let Some(router) = self.image_model_router.as_ref()
+                    {
+                        (router.swap_target)(None);
+                        self.agent.set_model_override(None);
                     }
                     return Err(error);
                 }
             };
             drop(admission);
-            if let Some(turn) = turn {
-                if !options.return_after_accepted {
-                    turn.settle().await?;
-                }
+            if let Some(turn) = turn
+                && !options.return_after_accepted
+            {
+                turn.settle().await?;
             }
         }
         Ok(PromptOutcome::Prompt)

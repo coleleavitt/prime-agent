@@ -206,10 +206,10 @@ pub fn clear_continuation(session_id: &str, connection_id: u64) {
     let Ok(mut state) = session_state().lock() else {
         return;
     };
-    if let Some(entry) = state.connections.get_mut(session_id) {
-        if entry.connection_id == connection_id {
-            entry.continuation = None;
-        }
+    if let Some(entry) = state.connections.get_mut(session_id)
+        && entry.connection_id == connection_id
+    {
+        entry.continuation = None;
     }
 }
 

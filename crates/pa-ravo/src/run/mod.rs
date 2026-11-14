@@ -1833,8 +1833,7 @@ impl ControllerHooks for RunHooks {
             proposal_id,
             certificate,
         } = event
-        {
-            if !certificate.committed {
+            && !certificate.committed {
                 *lock(&self.rejected_since_commit) += 1;
                 lock(&self.mirror)
                     .evaluated_proposal_ids
@@ -1847,7 +1846,6 @@ impl ControllerHooks for RunHooks {
                     rejection_cause(decision, certificate),
                 );
             }
-        }
         let value = event_value(event);
         if let ProgressEvent::Stopped { .. } = event {
             self.service

@@ -501,14 +501,13 @@ pub fn local_harness_state_dir(session: &SessionManager) -> PathBuf {
 fn strip_display_prefixes(plan: RefinementPlan) -> RefinementPlan {
     let mut plan = plan;
     for edit in &mut plan.proposal.edits {
-        if let Some(id) = &edit.id {
-            if let Some(stripped) = id
+        if let Some(id) = &edit.id
+            && let Some(stripped) = id
                 .strip_prefix("local:")
                 .or_else(|| id.strip_prefix("global:"))
                 .or_else(|| id.strip_prefix("package:"))
-            {
-                edit.id = Some(stripped.to_string());
-            }
+        {
+            edit.id = Some(stripped.to_string());
         }
     }
     plan

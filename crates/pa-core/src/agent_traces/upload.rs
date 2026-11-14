@@ -290,10 +290,10 @@ pub(super) async fn fetch_with_retry(
             }
         }
         let backoff_ms = retry_delay_ms.unwrap_or_else(|| trace_upload_retry_delay(attempt));
-        if !options.cancel.is_some_and(TraceUploadCancel::is_cancelled) {
-            if let Some(sink) = &options.on_upload_delay {
-                sink(TraceUploadDelay::RetryBackoff(backoff_ms));
-            }
+        if !options.cancel.is_some_and(TraceUploadCancel::is_cancelled)
+            && let Some(sink) = &options.on_upload_delay
+        {
+            sink(TraceUploadDelay::RetryBackoff(backoff_ms));
         }
         delay(backoff_ms, options.cancel).await;
         if options.cancel.is_some_and(TraceUploadCancel::is_cancelled) {

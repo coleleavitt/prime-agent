@@ -2233,32 +2233,31 @@ pub fn resolve_factory_kernel_python(
     };
     // 1. The caller's explicit pin: trusted as-is (the pin is the caller's
     // statement that this python is the right one), but still probed.
-    if let Some(python) = explicit_pin {
-        if python.exists()
-            && probe_factory_kernel_python(&python, std::env::var("PYTHONPATH").ok().as_deref())
-        {
-            return (
-                Some(FactoryKernelPython {
-                    python,
-                    python_path: std::env::var("PYTHONPATH").ok(),
-                }),
-                shared_exists,
-            );
-        }
+    if let Some(python) = explicit_pin
+        && python.exists()
+        && probe_factory_kernel_python(&python, std::env::var("PYTHONPATH").ok().as_deref())
+    {
+        return (
+            Some(FactoryKernelPython {
+                python,
+                python_path: std::env::var("PYTHONPATH").ok(),
+            }),
+            shared_exists,
+        );
     }
     // 2. The checkout-local runtime venv: an editable install of this
     //    checkout, so it runs the code under test with no injected path.
     let (venv, _) = checkout_runtime_dirs();
-    if let Some(python) = venv {
-        if probe_factory_kernel_python(&python, std::env::var("PYTHONPATH").ok().as_deref()) {
-            return (
-                Some(FactoryKernelPython {
-                    python,
-                    python_path: std::env::var("PYTHONPATH").ok(),
-                }),
-                shared_exists,
-            );
-        }
+    if let Some(python) = venv
+        && probe_factory_kernel_python(&python, std::env::var("PYTHONPATH").ok().as_deref())
+    {
+        return (
+            Some(FactoryKernelPython {
+                python,
+                python_path: std::env::var("PYTHONPATH").ok(),
+            }),
+            shared_exists,
+        );
     }
     // 3. The shared kernel venv (primary, then the XDG fallback): the venv's
     //    installed runtime is not this checkout's (the factory stack is not

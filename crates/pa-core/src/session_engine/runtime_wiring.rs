@@ -442,16 +442,15 @@ fn kernel_harness_env(
     }
     // Only the product binary serves the one-shot; a test harness or an
     // embedding binary does not.
-    if let Ok(executable) = std::env::current_exe() {
-        if executable
+    if let Ok(executable) = std::env::current_exe()
+        && executable
             .file_stem()
             .is_some_and(|stem| stem == "prime-agent")
-        {
-            env.push((
-                "PRIME_AGENT_EXECUTABLE".to_string(),
-                executable.to_string_lossy().to_string(),
-            ));
-        }
+    {
+        env.push((
+            "PRIME_AGENT_EXECUTABLE".to_string(),
+            executable.to_string_lossy().to_string(),
+        ));
     }
     env
 }

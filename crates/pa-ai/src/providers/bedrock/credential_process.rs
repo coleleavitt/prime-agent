@@ -43,10 +43,11 @@ fn find_command(config: &str, profile: &str) -> Option<String> {
         if !in_section {
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            if key.trim() == "credential_process" && !value.trim().is_empty() {
-                return Some(value.trim().to_string());
-            }
+        if let Some((key, value)) = trimmed.split_once('=')
+            && key.trim() == "credential_process"
+            && !value.trim().is_empty()
+        {
+            return Some(value.trim().to_string());
         }
     }
     None
@@ -160,15 +161,13 @@ pub(crate) async fn credentials_from_process(
     let now = unix_now();
     let command = find_command(config, profile)?;
     let cache_key = format!("{profile}\0{command}");
-    if let Ok(cache) = CACHE.lock() {
-        if let Some(entry) = cache.get(&cache_key) {
-            if entry
-                .expires_at
-                .is_none_or(|expires_at| expires_at > now + REFRESH_MARGIN_SECS)
-            {
-                return Some(entry.credentials.clone());
-            }
-        }
+    if let Ok(cache) = CACHE.lock()
+        && let Some(entry) = cache.get(&cache_key)
+        && entry
+            .expires_at
+            .is_none_or(|expires_at| expires_at > now + REFRESH_MARGIN_SECS)
+    {
+        return Some(entry.credentials.clone());
     }
     let Some((credentials, expiry)) = run(&command).await.as_deref().and_then(parse_output) else {
         tracing::warn!("AWS credential_process printed no usable credentials");

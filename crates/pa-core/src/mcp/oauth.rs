@@ -480,14 +480,14 @@ pub async fn mcp_refresh_token(
     let token_endpoint = stored_token_endpoint
         .clone()
         .unwrap_or_else(|| discovery.metadata.token_endpoint.clone());
-    if let Some(stored_endpoint) = stored_token_endpoint {
-        if stored_endpoint != discovery.metadata.token_endpoint {
-            bail!(
-                "Stored OAuth token endpoint does not match current authorization-server \
+    if let Some(stored_endpoint) = stored_token_endpoint
+        && stored_endpoint != discovery.metadata.token_endpoint
+    {
+        bail!(
+            "Stored OAuth token endpoint does not match current authorization-server \
                  metadata for {}",
-                config.url
-            );
-        }
+            config.url
+        );
     }
     let client_id = client_id
         .clone()

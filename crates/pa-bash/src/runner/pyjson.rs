@@ -90,11 +90,11 @@ pub(crate) fn splitlines(text: &str) -> Vec<&str> {
         }
         lines.push(&text[start..index]);
         let mut next = index + ch.len_utf8();
-        if ch == '\r' {
-            if let Some((_, '\n')) = chars.peek() {
-                chars.next();
-                next += 1;
-            }
+        if ch == '\r'
+            && let Some((_, '\n')) = chars.peek()
+        {
+            chars.next();
+            next += 1;
         }
         start = next;
     }

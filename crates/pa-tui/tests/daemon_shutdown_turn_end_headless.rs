@@ -384,7 +384,7 @@ fn options_with_session(socket: PathBuf, session: SessionSelection) -> Interacti
 fn a_turn_settling_with_the_shutdown_does_not_stall_the_recovery() {
     // The ambient TMUX variable adds a startup notice; scrub it so runs are the same inside tmux
     // and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let first = FirstGeneration::bind(&socket);

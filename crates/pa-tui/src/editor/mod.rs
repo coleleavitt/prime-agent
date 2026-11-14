@@ -707,10 +707,10 @@ impl Editor {
         if filtered.starts_with(['/', '~', '.']) {
             let line = &self.lines[self.cursor_line];
             let char_before = char_at(line, self.cursor_col.saturating_sub(1));
-            if let Some(c) = char_before {
-                if c.is_alphanumeric() || c == '_' {
-                    filtered = format!(" {filtered}");
-                }
+            if let Some(c) = char_before
+                && (c.is_alphanumeric() || c == '_')
+            {
+                filtered = format!(" {filtered}");
             }
         }
         let line_count = filtered.split('\n').count();

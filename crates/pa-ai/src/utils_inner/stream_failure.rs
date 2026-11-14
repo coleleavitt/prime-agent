@@ -380,8 +380,7 @@ impl ProviderConnectionError {
             }
             (
                 ConnectionErrorProfile::AwsHttp2 { .. },
-                ConnectionErrorKind::H2Request(ref failure)
-                | ConnectionErrorKind::H2MidStream(ref failure),
+                ConnectionErrorKind::H2Request(failure) | ConnectionErrorKind::H2MidStream(failure),
             ) => match failure {
                 H2Failure::StreamReset { .. } => Some("ERR_HTTP2_STREAM_ERROR"),
                 H2Failure::SessionClosed { .. } => Some("ERR_HTTP2_SESSION_ERROR"),
@@ -800,29 +799,29 @@ struct ExtractedParts {
 fn extract_parts_from_http(error: &ProviderHttpError) -> ExtractedParts {
     let mut body_type: Option<String> = None;
     let mut body_message: Option<String> = None;
-    if let Some(body) = &error.body {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) {
-            // Error bodies come nested differently per SDK: Anthropic/OpenAI expose `error.error =
-            // {type|code, message}` (sometimes doubly nested).
-            let mut node = &parsed;
-            if let Some(nested) = node.get("error") {
-                if nested.is_object() && nested.get("error").is_some() {
-                    node = nested.get("error").unwrap();
-                }
-                if nested.is_object() {
-                    node = nested;
-                }
+    if let Some(body) = &error.body
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body)
+    {
+        // Error bodies come nested differently per SDK: Anthropic/OpenAI expose `error.error =
+        // {type|code, message}` (sometimes doubly nested).
+        let mut node = &parsed;
+        if let Some(nested) = node.get("error") {
+            if nested.is_object() && nested.get("error").is_some() {
+                node = nested.get("error").unwrap();
             }
-            if let Some(value) = node.get("type").or_else(|| node.get("code")) {
-                if let Some(text) = value.as_str() {
-                    body_type = Some(text.to_string());
-                }
+            if nested.is_object() {
+                node = nested;
             }
-            if let Some(value) = node.get("message") {
-                if let Some(text) = value.as_str() {
-                    body_message = Some(text.to_string());
-                }
-            }
+        }
+        if let Some(value) = node.get("type").or_else(|| node.get("code"))
+            && let Some(text) = value.as_str()
+        {
+            body_type = Some(text.to_string());
+        }
+        if let Some(value) = node.get("message")
+            && let Some(text) = value.as_str()
+        {
+            body_message = Some(text.to_string());
         }
     }
 

@@ -247,16 +247,14 @@ pub fn read_private_prime_authorization_cache(
     let before = std::fs::metadata(&path)
         .ok()
         .and_then(|m| cache_file_identity(&m));
-    if let Some(identity) = before {
-        if let Some(entry) = parse_cache()
+    if let Some(identity) = before
+        && let Some(entry) = parse_cache()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&path)
-        {
-            if entry.identity == identity {
-                return Some(entry.cache.clone());
-            }
-        }
+        && entry.identity == identity
+    {
+        return Some(entry.cache.clone());
     }
     let Some(cache) = parse_private_prime_authorization_cache(&path) else {
         // A failed read never pins: drop any superseded entry so the next

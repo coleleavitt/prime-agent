@@ -883,10 +883,10 @@ impl RlmHostBridge {
         let handle = match self.host.spawn(request).await {
             Ok(handle) => handle,
             Err(error) => {
-                if let Some(worktree) = worktree {
-                    if let Err(cleanup) = crate::worktree::remove_if_unchanged(&worktree) {
-                        tracing::warn!(error = %cleanup, "rlm.spawn: the failed child's worktree stays");
-                    }
+                if let Some(worktree) = worktree
+                    && let Err(cleanup) = crate::worktree::remove_if_unchanged(&worktree)
+                {
+                    tracing::warn!(error = %cleanup, "rlm.spawn: the failed child's worktree stays");
                 }
                 return Err(error);
             }

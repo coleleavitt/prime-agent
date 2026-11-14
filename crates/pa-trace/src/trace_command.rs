@@ -287,11 +287,11 @@ pub(crate) fn build_trace_tree(trace_id: &str, lines: &[TraceLogLine]) -> TraceT
     let mut index = 0;
     while index < builder.nodes.len() {
         let node = &builder.nodes[index];
-        if let Some(parent) = node.parent_span_id.clone() {
-            if parent != node.span_id {
-                let at = node.start_ms;
-                builder.placeholder(&parent, None, at);
-            }
+        if let Some(parent) = node.parent_span_id.clone()
+            && parent != node.span_id
+        {
+            let at = node.start_ms;
+            builder.placeholder(&parent, None, at);
         }
         index += 1;
     }
@@ -378,13 +378,13 @@ fn format_span_heading(node: &SpanNode) -> String {
             parts.push(rendered);
         }
     }
-    if let Some(Value::String(error)) = end.get("error") {
-        if !error.is_empty() {
-            parts.push(format!(
-                "error={}",
-                format_value(&Value::from(error.as_str()))
-            ));
-        }
+    if let Some(Value::String(error)) = end.get("error")
+        && !error.is_empty()
+    {
+        parts.push(format!(
+            "error={}",
+            format_value(&Value::from(error.as_str()))
+        ));
     }
     parts.push(format!("[{}]", node.span_id));
     parts.join("  ")

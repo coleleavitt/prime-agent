@@ -594,11 +594,10 @@ impl Worker {
                 ConnectionRole::SessionClient { ref session } => {
                     // The connection token rides the attach/detach payloads; the registry
                     // keys this connection's retained ids by it.
-                    if matches!(command_type.as_str(), "attach" | "detach") {
-                        if let Some(object) = payload.as_object_mut() {
+                    if matches!(command_type.as_str(), "attach" | "detach")
+                        && let Some(object) = payload.as_object_mut() {
                             object.insert("connectionToken".to_string(), json!(connection_token));
                         }
-                    }
                     // A direct peer may only run session-plane commands for
                     // the grant's session (TS `peerClaims` gate).
                     if !peer_command_allowed(&command_type, &payload, &session.grant) {
@@ -756,15 +755,14 @@ impl Worker {
         {
             return Err(anyhow!("Worker authentication failed"));
         }
-        if let Some(instance) = payload.get("workerInstanceId") {
-            if !instance.is_null()
+        if let Some(instance) = payload.get("workerInstanceId")
+            && !instance.is_null()
                 && instance.as_str() != Some("")
                 && instance.as_str().map(str::to_string)
                     != Some(self.config.worker_instance_id.clone())
             {
                 return Err(anyhow!("Worker authentication failed"));
             }
-        }
         Ok(())
     }
 

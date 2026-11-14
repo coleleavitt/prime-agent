@@ -244,10 +244,10 @@ impl AgentSession {
             state.settled_turns_since_review = 0;
             // A retained review's terminal outcomes consume it; a
             // failed retained run keeps it for a post-cooldown retry.
-            if retained_review.is_some() {
-                if let Ok(AutoRefineRound::Ran(_)) = &outcome {
-                    state.pending_review = None;
-                }
+            if retained_review.is_some()
+                && let Ok(AutoRefineRound::Ran(_)) = &outcome
+            {
+                state.pending_review = None;
             }
             outcome
         };

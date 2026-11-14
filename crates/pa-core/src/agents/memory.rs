@@ -220,12 +220,12 @@ pub fn agent_prompt(definition: &AgentDefinition, memory: Option<&AgentMemory>) 
         return super::agent_instructions(definition);
     };
     let mut definition = definition.clone();
-    if !memory.read_only {
-        if let Some(tools) = definition.tools.as_mut() {
-            for tool in ["Read", "Write", "Edit"] {
-                if !tools.iter().any(|known| known.trim() == tool) {
-                    tools.push(tool.to_string());
-                }
+    if !memory.read_only
+        && let Some(tools) = definition.tools.as_mut()
+    {
+        for tool in ["Read", "Write", "Edit"] {
+            if !tools.iter().any(|known| known.trim() == tool) {
+                tools.push(tool.to_string());
             }
         }
     }

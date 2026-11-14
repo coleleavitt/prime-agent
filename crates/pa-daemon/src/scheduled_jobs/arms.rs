@@ -395,11 +395,10 @@ impl Worker {
                 return response_failure(None, "heartbeat_update", &error.to_string(), None);
             }
         };
-        if let Some(job) = &outcome {
-            if !resume {
+        if let Some(job) = &outcome
+            && !resume {
                 self.scheduled.remove_queued_heartbeat_follow_up(job);
             }
-        }
         self.scheduled.wake().await;
         let heartbeat = outcome
             .and_then(|job| serde_json::to_value(&job).ok())

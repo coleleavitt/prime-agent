@@ -118,13 +118,12 @@ pub(crate) fn client_command_payload(
             );
         }
         // Create carries its fields under `config`; the worker reads them flat.
-        if let Some(config) = object.remove("config") {
-            if let Some(config) = config.as_object() {
+        if let Some(config) = object.remove("config")
+            && let Some(config) = config.as_object() {
                 for (key, value) in config {
                     object.insert(key.clone(), value.clone());
                 }
             }
-        }
     }
     Ok((type_name, payload))
 }
@@ -323,13 +322,12 @@ impl Supervisor {
         // short auth window (TS #2517's review fix: the auth window runs
         // from the handshake, not from accept, so a pre-ready client is
         // not closed before it ever saw the greeting).
-        if let Some(deadline_tx) = tcp_deadline_tx.as_ref() {
-            if !tcp_authenticated {
+        if let Some(deadline_tx) = tcp_deadline_tx.as_ref()
+            && !tcp_authenticated {
                 deadline_tx.send_replace(
                     tokio::time::Instant::now() + crate::tcp::DAEMON_TCP_AUTH_TIMEOUT,
                 );
             }
-        }
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
         let mut events = self.events.subscribe();
@@ -387,11 +385,10 @@ impl Supervisor {
             // traffic only (the pre-auth windows stay absolute - nothing
             // re-arms them, so a dribbling peer cannot renew its
             // admission).
-            if let Some(deadline_tx) = tcp_deadline_tx.as_mut() {
-                if tcp_authenticated && saw_socket_traffic {
+            if let Some(deadline_tx) = tcp_deadline_tx.as_mut()
+                && tcp_authenticated && saw_socket_traffic {
                     deadline_tx.send_replace(tokio::time::Instant::now() + self.tcp_idle_timeout());
                 }
-            }
             saw_socket_traffic = false;
             // The deadline this iteration's client writes are bounded by:
             // the same watch value the expiry watchdog fires at, so a
@@ -558,14 +555,13 @@ impl Supervisor {
                         // armed window leaves no fired watchdog (no
                         // leftover expiry signal to drop the live peer at
                         // the next select).
-                        if let Some(deadline_tx) = tcp_deadline_tx.as_ref() {
-                            if tcp_authenticated {
+                        if let Some(deadline_tx) = tcp_deadline_tx.as_ref()
+                            && tcp_authenticated {
                                 let renewed =
                                     tokio::time::Instant::now() + self.tcp_idle_timeout();
                                 deadline_tx.send_replace(renewed);
                                 write_deadline = Some(renewed);
                             }
-                        }
                     }
                     if stop {
                         // The initiating client's response and daemon_closing lines are flushed
@@ -876,9 +872,9 @@ impl Supervisor {
             &envelope.command,
             DaemonCommand::PrepareUpdateRestart { .. } | DaemonCommand::CommitUpdateRestart { .. }
         );
-        if !is_update_driver {
-            if let Some(state) = self.update_prepare.active_state() {
-                if update_gate_refuses(state, &type_name) {
+        if !is_update_driver
+            && let Some(state) = self.update_prepare.active_state()
+                && update_gate_refuses(state, &type_name) {
                     return (
                         vec![Outbound::Line(response_line(&response_failure(
                             Some(&command_id),
@@ -891,8 +887,6 @@ impl Supervisor {
                         false,
                     );
                 }
-            }
-        }
         // Mutating commands count against the prepare transaction's drain.
         let mutating =
             !is_update_driver && pa_types::daemon::is_daemon_mutating_command(&type_name);

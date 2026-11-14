@@ -206,15 +206,14 @@ impl SourcePaths {
     fn all_files(&self, claude_code: bool) -> Vec<(SourceKind, PathBuf, PathBuf)> {
         let home_root = self.home.clone().unwrap_or_else(|| self.cwd.clone());
         let mut files = Vec::new();
-        if claude_code {
-            if let Some(managed) = &self.managed {
+        if claude_code
+            && let Some(managed) = &self.managed {
                 files.push((
                     SourceKind::ClaudeManaged,
                     managed.clone(),
                     PathBuf::from("/"),
                 ));
             }
-        }
         files.push((SourceKind::Local, self.local_file(), self.cwd.clone()));
         files.push((
             SourceKind::Project,

@@ -260,18 +260,18 @@ impl AgentsViewMode {
         // The in-flight draft marks the composer that dispatched the rename (a
         // re-armed composer carries no in-flight draft). Success disarms it; failure
         // restores the draft under the empty-editor guard.
-        if let Composer::Reply(reply) = &mut self.composer {
-            if reply.in_flight.is_some() {
-                match &outcome {
-                    Ok(()) => {
-                        self.disarm_reply();
-                    }
-                    Err(_) => {
-                        if reply.editor.get_text().is_empty() {
-                            if let Some(draft) = reply.in_flight.take() {
-                                reply.editor.set_text(&draft);
-                            }
-                        }
+        if let Composer::Reply(reply) = &mut self.composer
+            && reply.in_flight.is_some()
+        {
+            match &outcome {
+                Ok(()) => {
+                    self.disarm_reply();
+                }
+                Err(_) => {
+                    if reply.editor.get_text().is_empty()
+                        && let Some(draft) = reply.in_flight.take()
+                    {
+                        reply.editor.set_text(&draft);
                     }
                 }
             }
@@ -281,31 +281,31 @@ impl AgentsViewMode {
             Ok(()) => {
                 self.set_status(&format!("Renamed to {}", rename.name));
                 self.actions.push("renamed");
-                if let RenameTarget::Saved { session_path } = &rename.target {
-                    if let Some(saved) = self.saved.iter_mut().find(|saved| {
+                if let RenameTarget::Saved { session_path } = &rename.target
+                    && let Some(saved) = self.saved.iter_mut().find(|saved| {
                         saved.get("path").and_then(Value::as_str) == Some(session_path.as_str())
-                    }) {
-                        saved["name"] = serde_json::json!(rename.name);
-                    }
+                    })
+                {
+                    saved["name"] = serde_json::json!(rename.name);
                 }
             }
             Err(error) => {
                 self.set_status(&format!("Failed to rename agent: {error}"));
             }
         }
-        if let Some(session_id) = rename.session_id.as_deref() {
-            if let Some(pending) = self.pending_renames.get_mut(session_id) {
-                pending.writing = None;
-                if pending.name != rename.name {
-                    pending.writing = Some(pending.name.clone());
-                    self.pending_rename = Some(Rename {
-                        target: rename.target,
-                        name: pending.name.clone(),
-                        session_id: Some(session_id.to_string()),
-                    });
-                } else if !succeeded {
-                    self.pending_renames.remove(session_id);
-                }
+        if let Some(session_id) = rename.session_id.as_deref()
+            && let Some(pending) = self.pending_renames.get_mut(session_id)
+        {
+            pending.writing = None;
+            if pending.name != rename.name {
+                pending.writing = Some(pending.name.clone());
+                self.pending_rename = Some(Rename {
+                    target: rename.target,
+                    name: pending.name.clone(),
+                    session_id: Some(session_id.to_string()),
+                });
+            } else if !succeeded {
+                self.pending_renames.remove(session_id);
             }
         }
         self.rebuild_rows();

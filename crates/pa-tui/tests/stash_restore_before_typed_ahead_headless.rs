@@ -259,7 +259,7 @@ fn options(
 /// stalled attach (no restore, no draft, empty frames).
 #[test]
 fn the_reopen_restores_the_stash_before_the_queued_exit_key_evaluates() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);

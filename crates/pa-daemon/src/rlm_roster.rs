@@ -132,17 +132,15 @@ pub(crate) fn rlm_child_metadata(
     edge: &RlmLedgerEdge,
     registry_cache: &mut HashMap<PathBuf, Vec<LegacyRlmSubagentEntry>>,
 ) -> RlmChildMetadata {
-    if let Some(child_dir) = Path::new(&edge.child).parent() {
-        if let Some(display) = read_rlm_subagent_display(child_dir) {
-            if display.child_id == edge.child_id {
+    if let Some(child_dir) = Path::new(&edge.child).parent()
+        && let Some(display) = read_rlm_subagent_display(child_dir)
+            && display.child_id == edge.child_id {
                 return RlmChildMetadata {
                     spawn_code: display.spawn_code,
                     rlm_parent_node_id: display.rlm_parent_node_id,
                     parent_session_id: None,
                 };
             }
-        }
-    }
     let parent = Path::new(&edge.parent).to_path_buf();
     let registry = registry_cache
         .entry(parent)

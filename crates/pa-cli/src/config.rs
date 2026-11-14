@@ -60,11 +60,10 @@ pub fn version() -> &'static str {
 /// the executable, launcher symlinks resolved through pa-core's
 /// `exe_dir_of`).
 fn package_dir() -> PathBuf {
-    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR") {
-        if !env_dir.is_empty() {
+    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR")
+        && !env_dir.is_empty() {
             return expand_tilde_path(&env_dir);
         }
-    }
     std::env::current_exe()
         .ok()
         .and_then(|exe| pa_core::packages::exe_dir_of(&exe))
@@ -190,8 +189,8 @@ mod tests {
     impl Drop for RestoreEnv {
         fn drop(&mut self) {
             match self.previous.take() {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
+                Some(value) => pa_types::env::set_var(self.key, value),
+                None => pa_types::env::remove_var(self.key),
             }
         }
     }
@@ -203,7 +202,7 @@ mod tests {
         // agent-dir test cannot move it between the two reads.
         let _env = env_lock();
         let default = pa_daemon::socket::default_daemon_socket_path();
-        std::env::set_var(ENV_DAEMON_SOCKET, "/tmp/rust-launcher.sock");
+        pa_types::env::set_var(ENV_DAEMON_SOCKET, "/tmp/rust-launcher.sock");
         assert_eq!(
             resolve_daemon_socket_path(None),
             PathBuf::from("/tmp/rust-launcher.sock")
@@ -212,7 +211,7 @@ mod tests {
             resolve_daemon_socket_path(Some("/tmp/flag.sock")),
             PathBuf::from("/tmp/flag.sock")
         );
-        std::env::remove_var(ENV_DAEMON_SOCKET);
+        pa_types::env::remove_var(ENV_DAEMON_SOCKET);
         assert_eq!(resolve_daemon_socket_path(None), default);
     }
 
@@ -231,11 +230,11 @@ mod tests {
         // unkeyed default there while the keyed names resolve to the current dir.
         let _tmpdir = RestoreEnv::new("TMPDIR");
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("TMPDIR", tmp.path());
+        pa_types::env::set_var("TMPDIR", tmp.path());
         let socket_for = |agent_dir: Option<&Path>| {
             match agent_dir {
-                Some(dir) => std::env::set_var(ENV_AGENT_DIR, dir),
-                None => std::env::remove_var(ENV_AGENT_DIR),
+                Some(dir) => pa_types::env::set_var(ENV_AGENT_DIR, dir),
+                None => pa_types::env::remove_var(ENV_AGENT_DIR),
             }
             pa_daemon::socket::default_daemon_socket_path()
         };
@@ -289,7 +288,7 @@ mod tests {
     fn expands_tilde() {
         let _env = env_lock();
         let _home = RestoreEnv::new("HOME");
-        std::env::set_var("HOME", "/home/tester");
+        pa_types::env::set_var("HOME", "/home/tester");
         assert_eq!(expand_tilde_path("~"), PathBuf::from("/home/tester"));
         assert_eq!(
             expand_tilde_path("~/sessions"),
@@ -306,8 +305,8 @@ mod tests {
         let _env = env_lock();
         let _home = RestoreEnv::new("HOME");
         let _profile = RestoreEnv::new("USERPROFILE");
-        std::env::remove_var("HOME");
-        std::env::set_var("USERPROFILE", r"C:\Users\tester");
+        pa_types::env::remove_var("HOME");
+        pa_types::env::set_var("USERPROFILE", r"C:\Users\tester");
         assert_eq!(
             expand_tilde_path(r"~\sessions"),
             PathBuf::from(r"C:\Users\tester\sessions")

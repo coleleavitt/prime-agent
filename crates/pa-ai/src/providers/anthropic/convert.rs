@@ -249,37 +249,33 @@ pub fn convert_messages(
     }
 
     // Add cache_control to the last user message to cache conversation history.
-    if let Some(cache_control) = cache_control {
-        if let Some(last) = params.last_mut() {
-            if last.get("role").and_then(|value| value.as_str()) == Some("user") {
-                let content_value = &mut last["content"];
-                if let Value::String(text) = content_value {
-                    let text = text.clone();
-                    *last = json!({
-                        "role": "user",
-                        "content": [{
-                            "type": "text",
-                            "text": text,
-                            "cache_control": cache_control.to_json(),
-                        }],
-                    });
-                } else if let Value::Array(blocks) = content_value {
-                    if let Some(last_block) = blocks.last_mut() {
-                        let block_type = last_block
-                            .get("type")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("");
-                        if block_type == "text"
-                            || block_type == "image"
-                            || block_type == "tool_result"
-                        {
-                            last_block
-                                .as_object_mut()
-                                .expect("content blocks are objects")
-                                .insert("cache_control".into(), cache_control.to_json());
-                        }
-                    }
-                }
+    if let Some(cache_control) = cache_control
+        && let Some(last) = params.last_mut()
+        && last.get("role").and_then(|value| value.as_str()) == Some("user")
+    {
+        let content_value = &mut last["content"];
+        if let Value::String(text) = content_value {
+            let text = text.clone();
+            *last = json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": text,
+                    "cache_control": cache_control.to_json(),
+                }],
+            });
+        } else if let Value::Array(blocks) = content_value
+            && let Some(last_block) = blocks.last_mut()
+        {
+            let block_type = last_block
+                .get("type")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if block_type == "text" || block_type == "image" || block_type == "tool_result" {
+                last_block
+                    .as_object_mut()
+                    .expect("content blocks are objects")
+                    .insert("cache_control".into(), cache_control.to_json());
             }
         }
     }
@@ -318,11 +314,10 @@ pub fn convert_tools(
                     "required": tool.parameters.get("required").cloned().unwrap_or_else(|| json!([])),
                 }),
             );
-            if let Some(cache_control) = cache_control {
-                if index == tools.len() - 1 {
+            if let Some(cache_control) = cache_control
+                && index == tools.len() - 1 {
                     entry.insert("cache_control".into(), cache_control.to_json());
                 }
-            }
             Value::Object(entry)
         })
         .collect()

@@ -466,15 +466,14 @@ fn render_cells(theme: &Theme, cells: Vec<SplashCell>) -> Line {
     let mut current: Option<ThemeColor> = None;
     let mut segment = String::new();
     for cell in cells {
-        if current != Some(cell.tone) {
-            if let Some(tone) = current.replace(cell.tone) {
-                if !segment.is_empty() {
-                    row.push(Span::styled(
-                        std::mem::take(&mut segment),
-                        theme.fg_style(tone),
-                    ));
-                }
-            }
+        if current != Some(cell.tone)
+            && let Some(tone) = current.replace(cell.tone)
+            && !segment.is_empty()
+        {
+            row.push(Span::styled(
+                std::mem::take(&mut segment),
+                theme.fg_style(tone),
+            ));
         }
         segment.push(cell.character);
     }

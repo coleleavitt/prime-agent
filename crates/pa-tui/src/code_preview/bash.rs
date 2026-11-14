@@ -183,7 +183,7 @@ impl Rx {
 /// One interned preview regex at a call site: the pattern runs once per site and later calls
 /// clone the pooled program (the code-preview equivalent of a JS regex literal).
 macro_rules! re_once {
-    ($pattern:expr $(,)?) => {{
+    ($pattern:expr_2021 $(,)?) => {{
         static INTERNED: std::sync::OnceLock<$crate::code_preview::bash::Rx> =
             std::sync::OnceLock::new();
         INTERNED
@@ -353,27 +353,26 @@ fn simplify_runner_command(line: &str) -> Option<String> {
         .position(|w| re_once!(r"(?:^|/)vitest/dist/cli\.js$").is_match(w));
     if words.first().map(String::as_str) == Some("npx")
         && words.get(1).map(String::as_str) == Some("tsx")
+        && let Some(vi) = vitest_index.filter(|&i| i >= 2)
     {
-        if let Some(vi) = vitest_index.filter(|&i| i >= 2) {
-            return Some(
-                format!("vitest {}", words[vi + 1..].join(" "))
-                    .trim()
-                    .to_string(),
-            );
-        }
+        return Some(
+            format!("vitest {}", words[vi + 1..].join(" "))
+                .trim()
+                .to_string(),
+        );
     }
     if words.first().map(String::as_str) == Some("npm") {
         let prefix_index = words.iter().position(|w| w == "--prefix");
         let cwd = prefix_index.and_then(|i| words.get(i + 1)).cloned();
-        if let Some(ri) = words.iter().position(|w| w == "run") {
-            if let Some(next) = words.get(ri + 1) {
-                let command = format!("npm {} {}", next, words[ri + 2..].join(" "))
-                    .trim()
-                    .to_string();
-                return cwd
-                    .map(|cwd| format!("{command} ({})", path_tail(&cwd)))
-                    .or(Some(command));
-            }
+        if let Some(ri) = words.iter().position(|w| w == "run")
+            && let Some(next) = words.get(ri + 1)
+        {
+            let command = format!("npm {} {}", next, words[ri + 2..].join(" "))
+                .trim()
+                .to_string();
+            return cwd
+                .map(|cwd| format!("{command} ({})", path_tail(&cwd)))
+                .or(Some(command));
         }
     }
     if words.first().map(String::as_str) == Some("pnpm") {
@@ -392,14 +391,13 @@ fn simplify_runner_command(line: &str) -> Option<String> {
     }
     if words.first().map(String::as_str) == Some("uv")
         && words.get(1).map(String::as_str) == Some("run")
+        && let Some(pi) = words.iter().position(|w| w == "pytest")
     {
-        if let Some(pi) = words.iter().position(|w| w == "pytest") {
-            return Some(
-                format!("pytest {}", words[pi + 1..].join(" "))
-                    .trim()
-                    .to_string(),
-            );
-        }
+        return Some(
+            format!("pytest {}", words[pi + 1..].join(" "))
+                .trim()
+                .to_string(),
+        );
     }
     if matches!(
         words.first().map(String::as_str),
@@ -429,15 +427,15 @@ fn simplify_mutation_command(line: &str) -> Option<String> {
     if first == "cat" && words.get(1).map(String::as_str) == Some(">") && words.len() > 2 {
         return Some(format!("write {}", path_tail(&words[2])));
     }
-    if first == "tee" {
-        if let Some(last) = words.last() {
-            let action = if words.iter().any(|w| w == "-a") {
-                "append"
-            } else {
-                "write"
-            };
-            return Some(format!("{action} {}", path_tail(last)));
-        }
+    if first == "tee"
+        && let Some(last) = words.last()
+    {
+        let action = if words.iter().any(|w| w == "-a") {
+            "append"
+        } else {
+            "write"
+        };
+        return Some(format!("{action} {}", path_tail(last)));
     }
     if first == "apply_patch" {
         return Some("apply patch".to_string());

@@ -108,10 +108,8 @@ impl McpCredentials {
         })
         .await
         .unwrap_or(false);
-        if refreshed {
-            if let Some(report) = &self.usage {
-                report("refresh", server);
-            }
+        if refreshed && let Some(report) = &self.usage {
+            report("refresh", server);
         }
         refreshed
     }

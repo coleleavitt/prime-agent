@@ -61,10 +61,11 @@ struct Own {
 fn shell_names(model: &Model, shell: &str) -> Vec<String> {
     let mut names = vec![comm(shell)];
     for invocation in &model.invocations {
-        if let Some(program) = invocation.program() {
-            if crate::model::wrappers::is_shell(program) && !names.contains(&comm(program)) {
-                names.push(comm(program));
-            }
+        if let Some(program) = invocation.program()
+            && crate::model::wrappers::is_shell(program)
+            && !names.contains(&comm(program))
+        {
+            names.push(comm(program));
         }
     }
     names

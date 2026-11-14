@@ -9,6 +9,7 @@
 pub mod ai;
 pub mod compaction;
 pub mod daemon;
+pub mod env;
 pub mod goal;
 pub mod incident;
 pub mod js;

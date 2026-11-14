@@ -128,16 +128,16 @@ fn process_start_id(pid: u32, env: &BTreeMap<String, String>) -> Option<String> 
     if cfg!(windows) {
         return windows_start_id(pid, env);
     }
-    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        if let Some(close) = stat.rfind(')') {
-            let fields: Vec<&str> = stat
-                .get(close + 2..)
-                .unwrap_or_default()
-                .split(' ')
-                .collect();
-            if let Some(start) = fields.get(19).filter(|field| !field.is_empty()) {
-                return Some(format!("proc:{start}"));
-            }
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        && let Some(close) = stat.rfind(')')
+    {
+        let fields: Vec<&str> = stat
+            .get(close + 2..)
+            .unwrap_or_default()
+            .split(' ')
+            .collect();
+        if let Some(start) = fields.get(19).filter(|field| !field.is_empty()) {
+            return Some(format!("proc:{start}"));
         }
     }
     let ps = if cfg!(target_os = "macos") {

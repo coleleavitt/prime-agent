@@ -396,12 +396,12 @@ impl TaskCheck<'_> {
                     &answer.defects,
                     "defect",
                 );
-                if let (Some(text), Some(rounds)) = (text, answer.rounds) {
-                    if !text.contains(&rounds.to_string()) {
-                        self.problems.push(format!(
-                            "ANSWER rounds {rounds} is not present in the baseline collect ledger"
-                        ));
-                    }
+                if let (Some(text), Some(rounds)) = (text, answer.rounds)
+                    && !text.contains(&rounds.to_string())
+                {
+                    self.problems.push(format!(
+                        "ANSWER rounds {rounds} is not present in the baseline collect ledger"
+                    ));
                 }
             }
             Evidence::Ledger(Some(ledger)) => self.pr_manager_ledger(ledger, &issues),

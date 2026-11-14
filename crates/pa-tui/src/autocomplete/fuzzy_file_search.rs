@@ -447,13 +447,13 @@ pub(super) fn top_ranked<'a>(
             if best.len() == MAX_SUGGESTIONS {
                 best.sort_unstable_by(RankedForm::cmp);
             }
-        } else if let Some(worst) = best.last() {
-            if RankedForm::cmp(&ranked, worst) == Ordering::Less {
-                best.pop();
-                let position =
-                    best.partition_point(|kept| RankedForm::cmp(kept, &ranked) == Ordering::Less);
-                best.insert(position, ranked);
-            }
+        } else if let Some(worst) = best.last()
+            && RankedForm::cmp(&ranked, worst) == Ordering::Less
+        {
+            best.pop();
+            let position =
+                best.partition_point(|kept| RankedForm::cmp(kept, &ranked) == Ordering::Less);
+            best.insert(position, ranked);
         }
     }
     // The fill phase above only sorts at capacity; a short candidate list arrives in

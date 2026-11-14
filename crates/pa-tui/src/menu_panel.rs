@@ -543,14 +543,14 @@ pub(crate) fn pane_header_lines(
         }
     }
     let mut lines = vec![rule_row(theme, width), truncate_line(&title_row, width, "")];
-    if let Some(subtitle) = subtitle {
-        if !subtitle.is_empty() {
-            let line = vec![
-                Span::raw("  "),
-                theme.fg_span(ThemeColor::Muted, subtitle.to_string()),
-            ];
-            lines.push(truncate_line(&line, width, ""));
-        }
+    if let Some(subtitle) = subtitle
+        && !subtitle.is_empty()
+    {
+        let line = vec![
+            Span::raw("  "),
+            theme.fg_span(ThemeColor::Muted, subtitle.to_string()),
+        ];
+        lines.push(truncate_line(&line, width, ""));
     }
     lines.push(Vec::new());
     lines

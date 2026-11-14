@@ -199,9 +199,9 @@ impl LaunchSettings {
     /// removes the variable.
     pub fn publish(&self) {
         if self.is_empty() {
-            std::env::remove_var(LAUNCH_SETTINGS_ENV);
+            pa_types::env::remove_var(LAUNCH_SETTINGS_ENV);
         } else {
-            std::env::set_var(LAUNCH_SETTINGS_ENV, self.to_env_value());
+            pa_types::env::set_var(LAUNCH_SETTINGS_ENV, self.to_env_value());
         }
     }
 

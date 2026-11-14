@@ -131,8 +131,8 @@ async fn login_options_list_providers_only() {
     let dir = tempfile::tempdir().expect("temp dir");
     let agent = dir.path().join("agent");
     std::fs::create_dir_all(&agent).expect("agent dir");
-    std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
-    std::env::remove_var("PRIME_API_KEY");
+    pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+    pa_types::env::remove_var("PRIME_API_KEY");
     let auth = ProviderAuth::new(dir.path(), agent.clone());
     let rows = auth.login_options().await;
     // The TS OAuth registry rows render; every subscription flow is
@@ -176,7 +176,7 @@ async fn the_anthropic_subscription_warning_matches_the_active_credential() {
     let dir = tempfile::tempdir().expect("temp dir");
     let agent = dir.path().join("agent");
     std::fs::create_dir_all(&agent).expect("agent dir");
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    pa_types::env::remove_var("ANTHROPIC_API_KEY");
     let auth = ProviderAuth::new(dir.path(), agent.clone());
 
     // No credential: no warning.
@@ -230,9 +230,9 @@ async fn the_anthropic_subscription_warning_matches_the_active_credential() {
 
     // An env subscription key resolves active with no stored credential.
     storage.remove("anthropic");
-    std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-oat-env");
+    pa_types::env::set_var("ANTHROPIC_API_KEY", "sk-ant-oat-env");
     assert!(auth.anthropic_subscription_warning().await.is_some());
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    pa_types::env::remove_var("ANTHROPIC_API_KEY");
 }
 
 #[tokio::test]

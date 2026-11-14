@@ -62,12 +62,11 @@ pub(crate) fn parse_incident_options(
         let arg = args[index].as_str();
         let mut name = arg;
         let mut value: Option<String> = None;
-        if arg.starts_with("--") {
-            if let Some(equals_index) = arg.find('=') {
+        if arg.starts_with("--")
+            && let Some(equals_index) = arg.find('=') {
                 name = &arg[..equals_index];
                 value = Some(arg[equals_index + 1..].to_string());
             }
-        }
         if !matches!(name, "--since" | "--until" | "--session") {
             return Err(IncidentUsageError(format!(
                 "Unknown option for incident: {arg}"

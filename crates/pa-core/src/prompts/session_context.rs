@@ -379,10 +379,10 @@ pub fn render_environment_update(previous: &EnvironmentFields, next: &Environmen
             &removed,
         ));
     }
-    if next.is_git_repo != previous.is_git_repo {
-        if let Some(is_git_repo) = next.is_git_repo {
-            lines.push(format!("Is a git repository: {is_git_repo}"));
-        }
+    if next.is_git_repo != previous.is_git_repo
+        && let Some(is_git_repo) = next.is_git_repo
+    {
+        lines.push(format!("Is a git repository: {is_git_repo}"));
     }
     if next.git_branch != previous.git_branch {
         match (&next.git_branch, &previous.git_branch) {
@@ -401,18 +401,18 @@ pub fn render_environment_update(previous: &EnvironmentFields, next: &Environmen
             next.shell.as_deref().unwrap_or("the default")
         ));
     }
-    if next.os_version != previous.os_version {
-        if let Some(os_version) = &next.os_version {
-            lines.push(format!("OS version: {os_version}"));
-        }
+    if next.os_version != previous.os_version
+        && let Some(os_version) = &next.os_version
+    {
+        lines.push(format!("OS version: {os_version}"));
     }
-    if next.model != previous.model {
-        if let Some(model) = &next.model {
-            lines.push(match &previous.model {
-                Some(was) => format!("Model: {model} (was {was})"),
-                None => format!("Model: {model}"),
-            });
-        }
+    if next.model != previous.model
+        && let Some(model) = &next.model
+    {
+        lines.push(match &previous.model {
+            Some(was) => format!("Model: {model} (was {was})"),
+            None => format!("Model: {model}"),
+        });
     }
     if next.conversation_log != previous.conversation_log {
         lines.push(conversation_log_line(next.conversation_log.as_deref()));

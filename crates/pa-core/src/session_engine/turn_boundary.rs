@@ -582,13 +582,12 @@ impl TurnBoundaryRequests {
                         "plan_id",
                         "refine.run plan_id must be a string when provided",
                     )?;
-                    if let Some(plan_id) = &plan_id {
-                        if !requests.refine_preview_ids().contains(plan_id) {
+                    if let Some(plan_id) = &plan_id
+                        && !requests.refine_preview_ids().contains(plan_id) {
                             anyhow::bail!(
                                 "refine.run plan_id {plan_id} is unknown or expired; call refine.preview() again"
                             );
                         }
-                    }
                     let Some(runtime) = requests.bound() else {
                         return Ok(no_active_turn(
                             "no active turn; refine can only be requested while a turn is running",
@@ -877,14 +876,14 @@ impl SessionEngine {
             // per-turn and fallback notices follow `set_plan_mode`'s own.
             self.session
                 .queue_next_turn_row(super::plan_mode::plan_mode_change_row(request.enabled));
-            if request.enabled {
-                if let Some(reason) = self.plan_mode_fallback() {
-                    self.session
-                        .queue_next_turn_row(super::plan_mode::hidden_row(
-                            super::plan_mode::PLAN_MODE_EXITED_CUSTOM_TYPE,
-                            &super::plan_mode::fallback_notice(reason),
-                        ));
-                }
+            if request.enabled
+                && let Some(reason) = self.plan_mode_fallback()
+            {
+                self.session
+                    .queue_next_turn_row(super::plan_mode::hidden_row(
+                        super::plan_mode::PLAN_MODE_EXITED_CUSTOM_TYPE,
+                        &super::plan_mode::fallback_notice(reason),
+                    ));
             }
         }
         Some(PlanModeConsumption {

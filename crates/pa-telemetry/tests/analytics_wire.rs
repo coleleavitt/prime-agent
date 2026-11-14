@@ -232,10 +232,10 @@ fn spawn_stub(responses: Vec<(u16, serde_json::Value)>) -> (String, mpsc::Receiv
 
 fn content_length(header_text: &str) -> Option<usize> {
     for line in header_text.lines() {
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
-                return value.trim().parse().ok();
-            }
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("content-length")
+        {
+            return value.trim().parse().ok();
         }
     }
     None

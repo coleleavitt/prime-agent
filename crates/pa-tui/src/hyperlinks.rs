@@ -232,15 +232,15 @@ fn scan_span(
                     });
                 }
                 *carry = Some((row, *col, url.to_string()));
-            } else if is_osc8_close(seq) {
-                if let Some((start_row, start_col, url)) = carry.take() {
-                    ranges.push(LinkRange {
-                        row: start_row,
-                        start_col,
-                        end_col: *col,
-                        url,
-                    });
-                }
+            } else if is_osc8_close(seq)
+                && let Some((start_row, start_col, url)) = carry.take()
+            {
+                ranges.push(LinkRange {
+                    row: start_row,
+                    start_col,
+                    end_col: *col,
+                    url,
+                });
             }
             i += len;
             continue;
@@ -740,8 +740,8 @@ mod tests {
                 .draw(|frame| frame.render_widget(line, area))
                 .unwrap();
         }
-        let bytes = sink.0.borrow().clone();
-        bytes
+
+        sink.0.borrow().clone()
     }
 
     /// A minimal terminal that measures graphemes with `columns` (the width choice vt100 cannot

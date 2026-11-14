@@ -330,10 +330,10 @@ pub fn is_process_alive(pid: u32) -> anyhow::Result<bool> {
     }
     if std::path::Path::new(&format!("/proc/{pid}")).exists() {
         // A zombie still owns /proc; treat it as dead for lease purposes.
-        if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-            if let Some(state) = status.lines().find_map(|l| l.strip_prefix("State:")) {
-                return Ok(!state.trim_start().starts_with('Z'));
-            }
+        if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status"))
+            && let Some(state) = status.lines().find_map(|l| l.strip_prefix("State:"))
+        {
+            return Ok(!state.trim_start().starts_with('Z'));
         }
         return Ok(true);
     }

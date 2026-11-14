@@ -27,8 +27,8 @@ pub(crate) fn parse_incident_time_bound(
         ))
     };
     // `^(\d{2}):(\d{2})$` — a bare time reads as today, UTC.
-    if raw.len() == 5 && raw.as_bytes()[2] == b':' {
-        if let (Some(hour), Some(minute)) = (digits(&raw[..2]), digits(&raw[3..])) {
+    if raw.len() == 5 && raw.as_bytes()[2] == b':'
+        && let (Some(hour), Some(minute)) = (digits(&raw[..2]), digits(&raw[3..])) {
             if hour > 23 || minute > 59 {
                 return Err(invalid());
             }
@@ -36,7 +36,6 @@ pub(crate) fn parse_incident_time_bound(
             let midnight = now_ms.div_euclid(86_400_000) * 86_400_000;
             return Ok(midnight + i64::from(hour) * 3_600_000 + i64::from(minute) * 60_000);
         }
-    }
     // `^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}(?::?\d{2})?)?$`
     let mut rest = raw;
     let Some(year) = take_digits(&mut rest, 4).map(i64::from) else {

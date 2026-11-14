@@ -424,7 +424,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_login_reuses_an_eligible_prime_cli_key() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let dir = tempfile::tempdir().expect("temp dir");
         let config_path = dir.path().join("config.json");
         std::fs::write(
@@ -457,7 +457,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_browser_login_completes_the_challenge_round_trip() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let http = ScriptedHttp::new(vec![whoami_ok(true)]);
         let auth = Mutex::new(Vec::<String>::new());
         let logged = Mutex::new(Vec::<String>::new());
@@ -510,7 +510,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_browser_key_without_traces_access_reports_the_ts_error() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let http = ScriptedHttp::new(vec![whoami_ok(false)]);
         let logged = Mutex::new(Vec::<String>::new());
         let callbacks = PrimeAgentTracesCallbacks {
@@ -534,7 +534,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn an_ineligible_cli_key_falls_through_to_the_browser() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let dir = tempfile::tempdir().expect("temp dir");
         let config_path = dir.path().join("config.json");
         std::fs::write(
@@ -572,7 +572,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn an_expired_challenge_reports_the_ts_error() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         // The dynamic generate stays off so the queue owns every answer.
         let http = ScriptedHttp::without_dynamic(vec![
             (

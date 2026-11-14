@@ -421,7 +421,7 @@ fn options(socket: PathBuf, settings: Arc<StubSettings>) -> InteractiveOptions {
 }
 
 fn run_plan(settings: Arc<StubSettings>, steps: Vec<HeadlessStep>) -> Vec<String> {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);

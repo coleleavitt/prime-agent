@@ -354,10 +354,10 @@ impl InProcessFamilyController {
     /// The engine a target selector addresses: self first, then the
     /// family nodes.
     async fn engine_for(&self, target: &str) -> Option<Arc<SessionEngine>> {
-        if let Some(engine) = self.self_engine() {
-            if engine.session.session_id().await == target {
-                return Some(engine);
-            }
+        if let Some(engine) = self.self_engine()
+            && engine.session.session_id().await == target
+        {
+            return Some(engine);
         }
         self.nodes()
             .await

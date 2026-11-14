@@ -250,12 +250,13 @@ fn validate_entry(
     if record.get("id").and_then(Value::as_str) != Some(id) {
         return Err(format!("package harness entry id must match file id {id}"));
     }
-    if let Some(scope) = record.get("scope") {
-        if scope != "local" && scope != "global" {
-            return Err(
-                "package harness entry scope must be local or global when provided".to_string(),
-            );
-        }
+    if let Some(scope) = record.get("scope")
+        && scope != "local"
+        && scope != "global"
+    {
+        return Err(
+            "package harness entry scope must be local or global when provided".to_string(),
+        );
     }
     let path = match record.get("path") {
         None => if kind == RefinementKind::Prompt {

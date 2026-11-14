@@ -477,10 +477,10 @@ mod tests {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            if let Ok(raw) = std::fs::read_to_string(&path) {
-                if parse_jsonl(&raw).is_ok() {
-                    loaded += 1;
-                }
+            if let Ok(raw) = std::fs::read_to_string(&path)
+                && parse_jsonl(&raw).is_ok()
+            {
+                loaded += 1;
             }
         }
         assert!(loaded > 0, "no sessions parsed");

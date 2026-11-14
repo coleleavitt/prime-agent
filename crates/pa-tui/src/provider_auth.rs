@@ -499,15 +499,14 @@ impl ProviderAuthSelector {
             };
             lines.push(vec![theme.fg_span(ThemeColor::Muted, message.to_string())]);
         }
-        if count > 0 {
-            if let Some(provider) = self.selected_row() {
-                if let Some(status) = provider.status {
-                    lines.push(Vec::new());
-                    lines.push(vec![
-                        theme.fg_span(ThemeColor::Muted, format!(" {}", status.label)),
-                    ]);
-                }
-            }
+        if count > 0
+            && let Some(provider) = self.selected_row()
+            && let Some(status) = provider.status
+        {
+            lines.push(Vec::new());
+            lines.push(vec![
+                theme.fg_span(ThemeColor::Muted, format!(" {}", status.label)),
+            ]);
         }
         let hints = [
             key_hint(kb, &["tui.select.up", "tui.select.down"], "navigate"),

@@ -325,11 +325,10 @@ fn artifact_session_index(agent_dir: &Path) -> ArtifactIndex {
             };
             for file in files.flatten() {
                 let path = file.path();
-                if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-                    if let Some(stem) = path.file_stem() {
+                if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                    && let Some(stem) = path.file_stem() {
                         index.paths.insert(stem.to_string_lossy().to_string(), path);
                     }
-                }
             }
         }
     }

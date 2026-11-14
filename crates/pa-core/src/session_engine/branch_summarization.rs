@@ -165,15 +165,13 @@ fn prepare_branch_entries_with_refinements(
     let mut file_ops = FileOperations::default();
     // Cumulative tracking from prior branch summaries (never hooked ones).
     for entry in entries {
-        if let FileEntry::BranchSummary { payload, .. } = entry {
-            if payload.from_hook != Some(true) {
-                if let Some(details) = payload.details.clone() {
-                    if let Ok(details) = serde_json::from_value::<BranchSummaryDetails>(details) {
-                        file_ops.read.extend(details.read_files);
-                        file_ops.edited.extend(details.modified_files);
-                    }
-                }
-            }
+        if let FileEntry::BranchSummary { payload, .. } = entry
+            && payload.from_hook != Some(true)
+            && let Some(details) = payload.details.clone()
+            && let Ok(details) = serde_json::from_value::<BranchSummaryDetails>(details)
+        {
+            file_ops.read.extend(details.read_files);
+            file_ops.edited.extend(details.modified_files);
         }
     }
     let mut messages: Vec<AgentMessage> = Vec::new();

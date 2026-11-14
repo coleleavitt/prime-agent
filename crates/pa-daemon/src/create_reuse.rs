@@ -158,11 +158,10 @@ impl Supervisor {
             .opening_files
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(entry) = map.get(key) {
-            if Arc::strong_count(entry) == 1 {
+        if let Some(entry) = map.get(key)
+            && Arc::strong_count(entry) == 1 {
                 map.remove(key);
             }
-        }
     }
 
     /// TS `createOrReuseWorker`'s reuse half: when a resident already serves the create's

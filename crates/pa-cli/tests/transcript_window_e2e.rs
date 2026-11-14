@@ -46,8 +46,8 @@ struct Supervisor {
 impl Drop for Supervisor {
     fn drop(&mut self) {
         use std::io::{BufRead, BufReader, Write};
-        if let Ok(stream) = std::os::unix::net::UnixStream::connect(&self.socket) {
-            if let Ok(mut writer) = stream.try_clone() {
+        if let Ok(stream) = std::os::unix::net::UnixStream::connect(&self.socket)
+            && let Ok(mut writer) = stream.try_clone() {
                 let mut reader = BufReader::new(stream);
                 let mut hello = String::new();
                 let _ = reader.read_line(&mut hello);
@@ -63,7 +63,6 @@ impl Drop for Supervisor {
                 let mut response = String::new();
                 let _ = reader.read_line(&mut response);
             }
-        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -324,11 +323,10 @@ fn key(code: crossterm::event::KeyCode) -> HeadlessStep {
 fn turn_markers(frame: &str) -> Vec<usize> {
     let mut seen: Vec<usize> = Vec::new();
     for token in frame.split(|c: char| !c.is_ascii_alphanumeric() && c != '-') {
-        if let Some(turn) = token.strip_prefix("turn-").and_then(|t| t.parse().ok()) {
-            if seen.last() != Some(&turn) {
+        if let Some(turn) = token.strip_prefix("turn-").and_then(|t| t.parse().ok())
+            && seen.last() != Some(&turn) {
                 seen.push(turn);
             }
-        }
     }
     seen
 }

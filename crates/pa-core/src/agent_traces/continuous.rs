@@ -672,10 +672,10 @@ async fn run_controller(
             let pending_on_disk = entry.is_file() || entry.with_extension("pending.json").is_file();
             if pending_on_disk {
                 let mut pending = controller.pending.lock().unwrap();
-                if let Some((current, schedule)) = pending.as_mut() {
-                    if current == &path {
-                        schedule.persist(Instant::now());
-                    }
+                if let Some((current, schedule)) = pending.as_mut()
+                    && current == &path
+                {
+                    schedule.persist(Instant::now());
                 }
             }
         }
@@ -776,10 +776,10 @@ async fn run_controller(
         drop(permit);
         if let Some(controller) = weak.upgrade() {
             let mut pending = controller.pending.lock().unwrap();
-            if let Some((current, schedule)) = pending.as_mut() {
-                if current == &path {
-                    schedule.settle(Instant::now(), generation, &result);
-                }
+            if let Some((current, schedule)) = pending.as_mut()
+                && current == &path
+            {
+                schedule.settle(Instant::now(), generation, &result);
             }
         }
     }

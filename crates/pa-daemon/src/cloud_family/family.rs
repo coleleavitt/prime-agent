@@ -131,19 +131,17 @@ fn same_family_parent(left: &CloudFamilyRow, right: &CloudFamilyRow) -> bool {
     if let (Some(left_parent), Some(right_parent)) = (
         left.parent_session_path.as_deref(),
         right.parent_session_path.as_deref(),
-    ) {
-        if left_parent == right_parent {
+    )
+        && left_parent == right_parent {
             return true;
         }
-    }
     if let (Some(left_parent), Some(right_parent)) = (
         left.parent_session_id.as_deref(),
         right.parent_session_id.as_deref(),
-    ) {
-        if left_parent == right_parent {
+    )
+        && left_parent == right_parent {
             return true;
         }
-    }
     let has_catalog_parent_pair = |parent_session_id: &str, parent_session_path: &str| {
         [left, right].iter().any(|entry| {
             (entry.id == parent_session_id
@@ -155,19 +153,17 @@ fn same_family_parent(left: &CloudFamilyRow, right: &CloudFamilyRow) -> bool {
     if let (Some(left_parent_id), Some(right_parent_path)) = (
         left.parent_session_id.as_deref(),
         right.parent_session_path.as_deref(),
-    ) {
-        if has_catalog_parent_pair(left_parent_id, right_parent_path) {
+    )
+        && has_catalog_parent_pair(left_parent_id, right_parent_path) {
             return true;
         }
-    }
     if let (Some(right_parent_id), Some(left_parent_path)) = (
         right.parent_session_id.as_deref(),
         left.parent_session_path.as_deref(),
-    ) {
-        if has_catalog_parent_pair(right_parent_id, left_parent_path) {
+    )
+        && has_catalog_parent_pair(right_parent_id, left_parent_path) {
             return true;
         }
-    }
     left.depth == 0
         && right.depth == 0
         && left.parent_session_path.is_none()

@@ -77,13 +77,12 @@ pub(crate) fn to_claude_code_name(name: &str) -> String {
 }
 
 pub(crate) fn from_claude_code_name(name: &str, tools: Option<&[Tool]>) -> String {
-    if let Some(tools) = tools {
-        if let Some(matched) = tools
+    if let Some(tools) = tools
+        && let Some(matched) = tools
             .iter()
             .find(|tool| tool.name.eq_ignore_ascii_case(name))
-        {
-            return matched.name.clone();
-        }
+    {
+        return matched.name.clone();
     }
     name.to_string()
 }

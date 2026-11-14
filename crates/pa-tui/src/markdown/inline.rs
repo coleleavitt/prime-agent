@@ -236,17 +236,15 @@ impl InlineRender<'_> {
             return Some(i + 1);
         }
         let is_triple = i + 2 < bytes.len() && bytes[i + 1] == c && bytes[i + 2] == c;
-        if is_triple {
-            if let Some(close) = find_closing(bytes, i + 3, c, 3) {
-                let inner: String = bytes[i + 3..close].iter().collect();
-                self.flush();
-                self.bold = !self.bold;
-                self.italic = !self.italic;
-                self.append_nested(&inner, self.in_link, self.style.bold | self.style.italic);
-                self.bold = !self.bold;
-                self.italic = !self.italic;
-                return Some(close + 3);
-            }
+        if is_triple && let Some(close) = find_closing(bytes, i + 3, c, 3) {
+            let inner: String = bytes[i + 3..close].iter().collect();
+            self.flush();
+            self.bold = !self.bold;
+            self.italic = !self.italic;
+            self.append_nested(&inner, self.in_link, self.style.bold | self.style.italic);
+            self.bold = !self.bold;
+            self.italic = !self.italic;
+            return Some(close + 3);
         }
         let doubled = bytes[i + 1] == c;
         let (len, close_search) = if doubled { (2, i + 2) } else { (1, i + 1) };
@@ -258,10 +256,8 @@ impl InlineRender<'_> {
             close = find_closing(bytes, resume, c, len);
         }
         let close = close?;
-        if doubled {
-            if let Some(next) = self.strong_with_nested_closer(c, close_search, close) {
-                return Some(next);
-            }
+        if doubled && let Some(next) = self.strong_with_nested_closer(c, close_search, close) {
+            return Some(next);
         }
         let inner: String = self.chars[close_search..close].iter().collect();
         if inner.trim().is_empty() {
@@ -386,11 +382,11 @@ fn unmatched_inner_opener(bytes: &[char], c: char, from: usize, close: usize) ->
             at += 2;
             continue;
         }
-        if bytes[at] == '`' {
-            if let Some(end) = (at + 1..close).find(|&k| bytes[k] == '`') {
-                at = end + 1;
-                continue;
-            }
+        if bytes[at] == '`'
+            && let Some(end) = (at + 1..close).find(|&k| bytes[k] == '`')
+        {
+            at = end + 1;
+            continue;
         }
         if bytes[at] != c {
             at += 1;

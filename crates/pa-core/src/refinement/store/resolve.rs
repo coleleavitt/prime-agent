@@ -33,10 +33,11 @@ use crate::refinement::{HarnessEntry, RefinementKind};
 /// `_strip_scope_prefix`: an id shown as `local:<id>`/`global:<id>` routes
 /// to that store (`true` for the global one).
 fn strip_scope_prefix(id: &Arg) -> (Arg, bool) {
-    if let Some((scope, rest)) = id.as_str().and_then(|id| id.split_once(':')) {
-        if !rest.is_empty() && (scope == "local" || scope == "global") {
-            return (Arg::new(json!(rest), Some("str")), scope == "global");
-        }
+    if let Some((scope, rest)) = id.as_str().and_then(|id| id.split_once(':'))
+        && !rest.is_empty()
+        && (scope == "local" || scope == "global")
+    {
+        return (Arg::new(json!(rest), Some("str")), scope == "global");
     }
     (id.clone(), false)
 }
@@ -91,10 +92,10 @@ fn references(spec: &PyValue) -> Vec<String> {
     };
     let mut seen: Vec<String> = Vec::new();
     for row in rows.as_list().unwrap_or_default() {
-        if let Some(reference) = row.get("subagent").as_str() {
-            if !seen.iter().any(|known| known == reference) {
-                seen.push(reference.to_string());
-            }
+        if let Some(reference) = row.get("subagent").as_str()
+            && !seen.iter().any(|known| known == reference)
+        {
+            seen.push(reference.to_string());
         }
     }
     seen

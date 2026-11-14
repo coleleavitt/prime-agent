@@ -401,7 +401,7 @@ fn run_scenario(
 ) -> pa_tui::interactive::InteractiveOutcome {
     // The ambient TMUX variable adds a startup notice; scrub it so runs are the same inside tmux
     // and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, heartbeats, goal, roster, pushes, factory_lane);

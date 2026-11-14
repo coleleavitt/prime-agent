@@ -53,11 +53,11 @@ async fn execute(
     manager: &ReplKernelManager,
     code: &str,
 ) -> pa_core::kernel::shared::ExecuteResult {
-    let result = manager
+    
+    manager
         .execute(code, ExecuteOptions::default())
         .await
-        .expect("execute must not fail");
-    result
+        .expect("execute must not fail")
 }
 
 fn file_bytes(path: &Path) -> Vec<u8> {

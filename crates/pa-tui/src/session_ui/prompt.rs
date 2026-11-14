@@ -682,21 +682,19 @@ impl SessionUi {
             }
         }
         let active = self.active_side_question_id.take();
-        if abort {
-            if let Some(side_question_id) = active {
-                let client = self.client.clone();
-                let active_session_id = self.active_session_id.clone();
-                tokio::spawn(async move {
-                    let _ = client
-                        .request_ok(DaemonCommand::AbortSideQuestion {
-                            id: None,
-                            active_session_id,
-                            side_question_id,
-                            rest: Map::default(),
-                        })
-                        .await;
-                });
-            }
+        if abort && let Some(side_question_id) = active {
+            let client = self.client.clone();
+            let active_session_id = self.active_session_id.clone();
+            tokio::spawn(async move {
+                let _ = client
+                    .request_ok(DaemonCommand::AbortSideQuestion {
+                        id: None,
+                        active_session_id,
+                        side_question_id,
+                        rest: Map::default(),
+                    })
+                    .await;
+            });
         }
         view.side_pane = None;
         self.dirty = true;
@@ -1009,19 +1007,19 @@ impl SessionUi {
                     });
                 }
                 // A submission while a turn runs parks in the queue behind it.
-                if note.turn_was_active {
-                    if let Some(telemetry) = self.telemetry.clone() {
-                        let lane = match note.behavior {
-                            SubmitBehavior::Steer => "steering",
-                            SubmitBehavior::FollowUp => "follow_up",
-                        };
-                        // The adoption event carries the queue delivery mode (`steering_mode`):
-                        // batched-delivery exposure is the multi-steer batch adoption signal.
-                        let steering_mode = self.steering_mode.clone();
-                        tokio::spawn(async move {
-                            telemetry.queued_input(lane, steering_mode).await;
-                        });
-                    }
+                if note.turn_was_active
+                    && let Some(telemetry) = self.telemetry.clone()
+                {
+                    let lane = match note.behavior {
+                        SubmitBehavior::Steer => "steering",
+                        SubmitBehavior::FollowUp => "follow_up",
+                    };
+                    // The adoption event carries the queue delivery mode (`steering_mode`):
+                    // batched-delivery exposure is the multi-steer batch adoption signal.
+                    let steering_mode = self.steering_mode.clone();
+                    tokio::spawn(async move {
+                        telemetry.queued_input(lane, steering_mode).await;
+                    });
                 }
                 // The daemon can stream the complete turn before the ACK reaches this channel:
                 // turn_end already owns the idle state, and re-arming it would strand WaitIdle
@@ -1034,18 +1032,18 @@ impl SessionUi {
                 }
                 // TS `onSubmit`'s finally: the current submit's admitted prompt
                 // restores the stash head it captured, if that is still the head.
-                if note.generation == self.input_submission_generation {
-                    if let Some(captured) = note.stash_to_restore {
-                        let head_unchanged = self
-                            .prompt_stash
-                            .lock_or_recover()
-                            .for_session(&self.stash_session_id)
-                            .stash
-                            .as_ref()
-                            == Some(&captured);
-                        if head_unchanged {
-                            self.restore_prompt_stash_if_editor_empty(view, false);
-                        }
+                if note.generation == self.input_submission_generation
+                    && let Some(captured) = note.stash_to_restore
+                {
+                    let head_unchanged = self
+                        .prompt_stash
+                        .lock_or_recover()
+                        .for_session(&self.stash_session_id)
+                        .stash
+                        .as_ref()
+                        == Some(&captured);
+                    if head_unchanged {
+                        self.restore_prompt_stash_if_editor_empty(view, false);
                     }
                 }
                 Ok(())

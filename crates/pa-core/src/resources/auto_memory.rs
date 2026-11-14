@@ -460,13 +460,13 @@ pub fn claude_code_overlay_sources(memory_root: &Path, cwd: &Path) -> Vec<Overla
         "Claude Code project memory",
         normalize_nfc(&project_memory),
     )];
-    if let Some(home_slug) = home_user_slug() {
-        if home_slug != project_slug {
-            sources.push(OverlaySource::confirmed(
-                "Claude Code user memory",
-                normalize_nfc(&memory_root.join("projects").join(&home_slug).join("memory")),
-            ));
-        }
+    if let Some(home_slug) = home_user_slug()
+        && home_slug != project_slug
+    {
+        sources.push(OverlaySource::confirmed(
+            "Claude Code user memory",
+            normalize_nfc(&memory_root.join("projects").join(&home_slug).join("memory")),
+        ));
     }
     sources.push(OverlaySource::confirmed(
         "Claude Code agent-memory-local",
@@ -1142,7 +1142,7 @@ mod tests {
 
         // Env unset, user unset: None.
         unsafe {
-            std::env::remove_var(DIRECTORY_FLAG_ENV);
+            pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
         }
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, None),
@@ -1161,7 +1161,7 @@ mod tests {
         );
         // Flag beats user.
         unsafe {
-            std::env::set_var(DIRECTORY_FLAG_ENV, &flag_dir);
+            pa_types::env::set_var(DIRECTORY_FLAG_ENV, &flag_dir);
         }
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, user_dir.to_str()),
@@ -1181,14 +1181,14 @@ mod tests {
         );
         // A relative flag is refused and the resolver falls to user.
         unsafe {
-            std::env::set_var(DIRECTORY_FLAG_ENV, "relative/path");
+            pa_types::env::set_var(DIRECTORY_FLAG_ENV, "relative/path");
         }
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, user_dir.to_str()),
             Some(user_dir.clone())
         );
         unsafe {
-            std::env::remove_var(DIRECTORY_FLAG_ENV);
+            pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
         }
     }
 
@@ -1337,12 +1337,12 @@ mod tests {
         let remote = tmp.path().join("remote");
         std::fs::create_dir_all(&remote).unwrap();
         unsafe {
-            std::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, &remote);
+            pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, &remote);
         }
         let paths = crate::settings::claude_code::ClaudePaths::resolve(tmp.path());
         assert_eq!(paths.memory_root(), Some(remote.as_path()));
         unsafe {
-            std::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
+            pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
         }
     }
 
@@ -1350,7 +1350,7 @@ mod tests {
     fn remote_memory_dir_env_refuses_relative_and_empty() {
         let _env = crate::packages::test_support::lock_env();
         unsafe {
-            std::env::set_var(
+            pa_types::env::set_var(
                 crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV,
                 "relative/path",
             );
@@ -1359,12 +1359,12 @@ mod tests {
         // Relative value refused; falls back to claude_dir.
         assert_eq!(paths.memory_root(), paths.claude_dir.as_deref());
         unsafe {
-            std::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, "");
+            pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, "");
         }
         let paths = crate::settings::claude_code::ClaudePaths::resolve(Path::new("/tmp"));
         assert_eq!(paths.memory_root(), paths.claude_dir.as_deref());
         unsafe {
-            std::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
+            pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
         }
     }
 }

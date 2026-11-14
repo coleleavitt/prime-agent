@@ -103,10 +103,10 @@ impl PreparedSandbox {
     #[must_use]
     pub fn command(&self, program: impl AsRef<OsStr>) -> Command {
         let request = self.inner.launch_request(program.as_ref());
-        if request.confine.is_some() {
-            if let Some(command) = launch::launcher_command(&request) {
-                return command;
-            }
+        if request.confine.is_some()
+            && let Some(command) = launch::launcher_command(&request)
+        {
+            return command;
         }
         self.inner.command(program.as_ref())
     }

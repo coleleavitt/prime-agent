@@ -212,7 +212,7 @@ async fn tui_export_and_share_surface() {
     write_stub_gh(&stub_dir);
     let previous_path = std::env::var("PATH").unwrap_or_default();
     let previous_viewer_url = std::env::var("PI_SHARE_VIEWER_URL").ok();
-    std::env::set_var("PATH", format!("{}:{}", stub_dir.display(), previous_path));
+    pa_types::env::set_var("PATH", format!("{}:{}", stub_dir.display(), previous_path));
 
     // The faux engine (`engine: "faux"`) drives the real agent engine, so
     // the export embeds the real session's tools section.
@@ -311,10 +311,10 @@ async fn tui_export_and_share_surface() {
             .await
             .expect("interactive run");
 
-    std::env::set_var("PATH", previous_path);
+    pa_types::env::set_var("PATH", previous_path);
     match previous_viewer_url {
-        Some(value) => std::env::set_var("PI_SHARE_VIEWER_URL", value),
-        None => std::env::remove_var("PI_SHARE_VIEWER_URL"),
+        Some(value) => pa_types::env::set_var("PI_SHARE_VIEWER_URL", value),
+        None => pa_types::env::remove_var("PI_SHARE_VIEWER_URL"),
     }
 
     let rendered = outcome.frames.join("\n");

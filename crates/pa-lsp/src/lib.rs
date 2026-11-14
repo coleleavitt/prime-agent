@@ -249,8 +249,8 @@ fn written_paths(result: &ToolResultObservation, cwd: &Path) -> Vec<PathBuf> {
             .map(PathBuf::from)
             .collect();
     }
-    if result.tool_name == "edit" {
-        if let Some(path) = result.args.get("path").and_then(Value::as_str) {
+    if result.tool_name == "edit"
+        && let Some(path) = result.args.get("path").and_then(Value::as_str) {
             let path = Path::new(path);
             return vec![if path.is_absolute() {
                 path.to_path_buf()
@@ -258,7 +258,6 @@ fn written_paths(result: &ToolResultObservation, cwd: &Path) -> Vec<PathBuf> {
                 cwd.join(path)
             }];
         }
-    }
     Vec::new()
 }
 

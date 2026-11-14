@@ -286,8 +286,8 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_credential_labels_follow_the_ts_precedence() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
-        std::env::remove_var("PRIME_API_KEY");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+        pa_types::env::remove_var("PRIME_API_KEY");
         let (_dir, agent) = temp_agent_dir();
         let traces = ClientTraces::new("/tmp", agent.clone());
         assert_eq!(traces.credential().await, None);
@@ -314,12 +314,12 @@ mod tests {
             traces.credential().await.as_deref(),
             Some("Prime Agent Traces credential")
         );
-        std::env::set_var("PRIME_AGENT_TRACES_API_KEY", "env-key");
+        pa_types::env::set_var("PRIME_AGENT_TRACES_API_KEY", "env-key");
         assert_eq!(
             traces.credential().await.as_deref(),
             Some("PRIME_AGENT_TRACES_API_KEY")
         );
-        std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
     }
 
     #[tokio::test]
@@ -357,8 +357,8 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_report_formats_the_engine_rows() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
-        std::env::remove_var("PRIME_API_KEY");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+        pa_types::env::remove_var("PRIME_API_KEY");
         let (_dir, agent) = temp_agent_dir();
         let traces = ClientTraces::new("/tmp", agent.clone());
         // No session file: the engine's no-file row.

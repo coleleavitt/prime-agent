@@ -533,11 +533,10 @@ pub fn create_daemon_replay_info(
         to_cursor: Some(to_cursor.clone()),
         reason: Some(reason.to_string()),
     };
-    if let Some(from) = &from_cursor {
-        if from.generation != generation {
+    if let Some(from) = &from_cursor
+        && from.generation != generation {
             return unavailable("event_generation_changed");
         }
-    }
     if resume_sequence > last_event_sequence {
         return unavailable("resume_cursor_ahead_of_session");
     }

@@ -132,10 +132,11 @@ const SHAPES: [(&str, &str); 6] = [
 fn node_text(body: &str) -> String {
     // `id((text))` — an optional id may precede the bracket.
     for (open, close) in SHAPES {
-        if let Some(at) = body.find(open) {
-            if body.ends_with(close) && body.len() >= at + open.len() + close.len() {
-                return clean_label(&body[at + open.len()..body.len() - close.len()]);
-            }
+        if let Some(at) = body.find(open)
+            && body.ends_with(close)
+            && body.len() >= at + open.len() + close.len()
+        {
+            return clean_label(&body[at + open.len()..body.len() - close.len()]);
         }
     }
     clean_label(body)

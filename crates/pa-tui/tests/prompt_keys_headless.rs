@@ -381,7 +381,7 @@ fn run_detach(
     detach: DetachAnswer,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>, Vec<String>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let commands: Commands = Arc::default();

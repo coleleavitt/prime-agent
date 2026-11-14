@@ -336,10 +336,8 @@ impl TaskBook {
                 "Too many scheduled jobs (max {MAX_TASKS}). Cancel one first."
             ));
         }
-        if durable {
-            if let Durability::Unavailable(reason) = &self.durability {
-                return Err(reason.clone());
-            }
+        if durable && let Durability::Unavailable(reason) = &self.durability {
+            return Err(reason.clone());
         }
         let id = self.mint_id();
         let task = ScheduledTask {

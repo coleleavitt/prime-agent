@@ -44,20 +44,16 @@ fn guarded(op: &str, value: PyValue) -> PyValue {
         ],
         "transitions": [{ "from": "a", "to": "b", "when": { "output": "verdict", "op": op } }]
     }));
-    if let PyValue::Dict(pairs) = &mut machine {
-        if let Some((_, PyValue::List(transitions))) = pairs
+    if let PyValue::Dict(pairs) = &mut machine
+        && let Some((_, PyValue::List(transitions))) = pairs
             .iter_mut()
             .find(|(k, _)| k.as_str() == Some("transitions"))
-        {
-            if let Some(PyValue::Dict(transition)) = transitions.first_mut() {
-                if let Some((_, PyValue::Dict(when))) = transition
-                    .iter_mut()
-                    .find(|(k, _)| k.as_str() == Some("when"))
-                {
-                    when.push((PyValue::Str("value".into()), value));
-                }
-            }
-        }
+        && let Some(PyValue::Dict(transition)) = transitions.first_mut()
+        && let Some((_, PyValue::Dict(when))) = transition
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("when"))
+    {
+        when.push((PyValue::Str("value".into()), value));
     }
     machine
 }

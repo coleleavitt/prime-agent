@@ -300,21 +300,21 @@ where
         event.record(&mut visitor);
         let span = ctx.event_span(event);
         if metadata.target() == SPAN_ATTRIBUTES_TARGET {
-            if let Some(span) = &span {
-                if let Some(state) = span.extensions_mut().get_mut::<SpanState>() {
-                    state.attrs.extend(visitor.fields);
-                }
+            if let Some(span) = &span
+                && let Some(state) = span.extensions_mut().get_mut::<SpanState>()
+            {
+                state.attrs.extend(visitor.fields);
             }
             return;
         }
         let Some(message) = visitor.message else {
             // `#[instrument(err)]`: the error ends the span that returned it.
-            if *metadata.level() == tracing::Level::ERROR && visitor.error.is_some() {
-                if let Some(span) = &span {
-                    if let Some(state) = span.extensions_mut().get_mut::<SpanState>() {
-                        state.error = visitor.error;
-                    }
-                }
+            if *metadata.level() == tracing::Level::ERROR
+                && visitor.error.is_some()
+                && let Some(span) = &span
+                && let Some(state) = span.extensions_mut().get_mut::<SpanState>()
+            {
+                state.error = visitor.error;
             }
             return;
         };
@@ -413,11 +413,10 @@ impl FieldVisitor {
                 // `<key>.json`: JSON text recorded as the value it parses to.
                 if let (Some(key), Value::String(text)) =
                     (name.strip_suffix(JSON_FIELD_SUFFIX), &value)
+                    && let Ok(parsed) = serde_json::from_str::<Value>(text)
                 {
-                    if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-                        self.fields.insert(key.to_string(), parsed);
-                        return;
-                    }
+                    self.fields.insert(key.to_string(), parsed);
+                    return;
                 }
                 self.fields.insert(name.to_string(), value);
             }

@@ -421,7 +421,7 @@ fn a_test_never_reads_the_real_homes_state_files() {
     Fixture::write(&real_home.join("AGENTS.md"), "home agents");
     Fixture::write(&repo.join("AGENTS.md"), "repo agents");
     let previous = std::env::var_os(pa_types::platform::test_isolation::PROTECTED_HOME_ENV);
-    std::env::set_var(
+    pa_types::env::set_var(
         pa_types::platform::test_isolation::PROTECTED_HOME_ENV,
         &real_home,
     );
@@ -433,11 +433,11 @@ fn a_test_never_reads_the_real_homes_state_files() {
         additional_dirs: Vec::new(),
     });
     match previous {
-        Some(value) => std::env::set_var(
+        Some(value) => pa_types::env::set_var(
             pa_types::platform::test_isolation::PROTECTED_HOME_ENV,
             value,
         ),
-        None => std::env::remove_var(pa_types::platform::test_isolation::PROTECTED_HOME_ENV),
+        None => pa_types::env::remove_var(pa_types::platform::test_isolation::PROTECTED_HOME_ENV),
     }
     let paths: Vec<PathBuf> = files.into_iter().map(|file| file.path).collect();
     assert_eq!(paths, [real_home.join("AGENTS.md"), repo.join("AGENTS.md")]);

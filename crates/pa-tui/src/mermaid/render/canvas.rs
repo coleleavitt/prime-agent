@@ -226,10 +226,10 @@ impl Canvas {
             }
         }
         for (glyph, &role) in self.ch.iter_mut().zip(&self.role) {
-            if let Glyph::Char(c) = glyph {
-                if !is_text_role(role) {
-                    *c = flip_glyph_v(*c);
-                }
+            if let Glyph::Char(c) = glyph
+                && !is_text_role(role)
+            {
+                *c = flip_glyph_v(*c);
             }
         }
     }
@@ -247,10 +247,10 @@ impl Canvas {
             }
         }
         for (glyph, &role) in self.ch.iter_mut().zip(&self.role) {
-            if let Glyph::Char(c) = glyph {
-                if !is_text_role(role) {
-                    *c = flip_glyph_h(*c);
-                }
+            if let Glyph::Char(c) = glyph
+                && !is_text_role(role)
+            {
+                *c = flip_glyph_h(*c);
             }
         }
         for y in 0..h {
@@ -355,10 +355,11 @@ pub(super) fn draw_text_over_edges(canvas: &mut Canvas, text: &str, x: i64, y: i
             continue;
         }
         for k in 0..cw as i64 {
-            if cur + k < canvas.w && y < canvas.h {
-                if let Some(i) = canvas.idx(cur + k, y) {
-                    canvas.mask[i] = 0;
-                }
+            if cur + k < canvas.w
+                && y < canvas.h
+                && let Some(i) = canvas.idx(cur + k, y)
+            {
+                canvas.mask[i] = 0;
             }
             let glyph = if k == 0 {
                 Glyph::of(cluster)

@@ -253,14 +253,14 @@ pub(crate) fn embedded_bundle_dir() -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let memo = guard.get_or_insert_with(HashMap::new);
-    if let Some((dir, marked)) = memo.get_mut(&root) {
-        if dir.is_dir() {
-            if marked.elapsed() >= TOUCH_INTERVAL {
-                touch_last_used(dir);
-                *marked = Instant::now();
-            }
-            return Some(dir.clone());
+    if let Some((dir, marked)) = memo.get_mut(&root)
+        && dir.is_dir()
+    {
+        if marked.elapsed() >= TOUCH_INTERVAL {
+            touch_last_used(dir);
+            *marked = Instant::now();
         }
+        return Some(dir.clone());
     }
     match materialize(&root, EMBEDDED_FILES) {
         Ok(dir) => {

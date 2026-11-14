@@ -265,58 +265,56 @@ pub(crate) async fn run_loop(
         // #2530) retries once, after every other continuation declined.
         if let (Some(hook), Some(context)) =
             (config.get_tool_intent_recovery.as_ref(), last_turn.clone())
+            && !tool_intent_recovery_used
+            && config.model.api == "openai-completions"
+            && matches!(
+                config.tool_choice,
+                None | Some(pa_types::ai::RequestToolChoice::Auto)
+            )
+            && super::ended_without_delivered_tool_call(&context.message, current_context)
         {
-            if !tool_intent_recovery_used
-                && config.model.api == "openai-completions"
-                && matches!(
-                    config.tool_choice,
-                    None | Some(pa_types::ai::RequestToolChoice::Auto)
-                )
-                && super::ended_without_delivered_tool_call(&context.message, current_context)
-            {
-                let stop_reason = context.message.stop_reason;
-                let recovery = settle_post_turn(
-                    race_with_abort(
-                        async {
-                            // A failing hook declines (TS catches it).
-                            Ok(hook(context).await.unwrap_or_else(|error| {
-                                tracing::warn!(
-                                    target: "pa_agent::tool_intent_recovery",
-                                    error = %error,
-                                    "the dropped-tool-call recovery hook failed; ending the run"
-                                );
-                                None
-                            }))
-                        },
-                        signal,
-                    ),
+            let stop_reason = context.message.stop_reason;
+            let recovery = settle_post_turn(
+                race_with_abort(
+                    async {
+                        // A failing hook declines (TS catches it).
+                        Ok(hook(context).await.unwrap_or_else(|error| {
+                            tracing::warn!(
+                                target: "pa_agent::tool_intent_recovery",
+                                error = %error,
+                                "the dropped-tool-call recovery hook failed; ending the run"
+                            );
+                            None
+                        }))
+                    },
                     signal,
-                )
-                .await?;
-                match recovery {
-                    PostTurnResult::Aborted => {
-                        emit(AgentEvent::AgentEnd {
-                            messages: new_messages.clone(),
-                        })
-                        .await?;
-                        return Ok(());
-                    }
-                    PostTurnResult::Completed(Some(message)) => {
-                        tool_intent_recovery_used = true;
-                        // A length finish may be ordinary truncation, so
-                        // only a `toolUse` finish requires a tool call.
-                        recovery_tool_choice = (stop_reason == StopReason::ToolUse)
-                            .then_some(pa_types::ai::RequestToolChoice::Required);
-                        tracing::info!(
-                            target: "pa_agent::tool_intent_recovery",
-                            stop_reason = ?stop_reason,
-                            "retrying a reply that delivered no tool call"
-                        );
-                        pending_messages = vec![message];
-                        continue;
-                    }
-                    PostTurnResult::Completed(None) => {}
+                ),
+                signal,
+            )
+            .await?;
+            match recovery {
+                PostTurnResult::Aborted => {
+                    emit(AgentEvent::AgentEnd {
+                        messages: new_messages.clone(),
+                    })
+                    .await?;
+                    return Ok(());
                 }
+                PostTurnResult::Completed(Some(message)) => {
+                    tool_intent_recovery_used = true;
+                    // A length finish may be ordinary truncation, so
+                    // only a `toolUse` finish requires a tool call.
+                    recovery_tool_choice = (stop_reason == StopReason::ToolUse)
+                        .then_some(pa_types::ai::RequestToolChoice::Required);
+                    tracing::info!(
+                        target: "pa_agent::tool_intent_recovery",
+                        stop_reason = ?stop_reason,
+                        "retrying a reply that delivered no tool call"
+                    );
+                    pending_messages = vec![message];
+                    continue;
+                }
+                PostTurnResult::Completed(None) => {}
             }
         }
 

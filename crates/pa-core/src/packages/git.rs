@@ -95,19 +95,19 @@ fn get_local_git_update_target(installed_path: &Path) -> GitUpdateTarget {
         &[],
     );
     let trimmed_upstream = upstream.unwrap_or_default();
-    if let Some(branch) = trimmed_upstream.strip_prefix("origin/") {
-        if !branch.is_empty() {
-            return GitUpdateTarget {
-                git_ref: "@{upstream}".to_string(),
-                fetch_args: vec![
-                    "fetch".into(),
-                    "--prune".into(),
-                    "--no-tags".into(),
-                    "origin".into(),
-                    format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
-                ],
-            };
-        }
+    if let Some(branch) = trimmed_upstream.strip_prefix("origin/")
+        && !branch.is_empty()
+    {
+        return GitUpdateTarget {
+            git_ref: "@{upstream}".to_string(),
+            fetch_args: vec![
+                "fetch".into(),
+                "--prune".into(),
+                "--no-tags".into(),
+                "origin".into(),
+                format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
+            ],
+        };
     }
 
     // No usable upstream branch: re-detect the remote HEAD and fetch it.

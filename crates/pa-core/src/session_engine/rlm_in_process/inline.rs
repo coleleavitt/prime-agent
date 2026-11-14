@@ -814,13 +814,13 @@ impl RlmSubagentHost for InlineHost {
             // Every inline child shares the invocation's directory: a child
             // placed elsewhere (`cwd=`, `isolation="worktree"`) needs the
             // daemon's per-child workers.
-            if let Some(cwd) = request.cwd.as_deref() {
-                if std::path::Path::new(cwd) != config.cwd.as_path() {
-                    anyhow::bail!(
-                        "rlm.spawn cwd= and isolation=\"worktree\" need the daemon: a print run's \
+            if let Some(cwd) = request.cwd.as_deref()
+                && std::path::Path::new(cwd) != config.cwd.as_path()
+            {
+                anyhow::bail!(
+                    "rlm.spawn cwd= and isolation=\"worktree\" need the daemon: a print run's \
                          subagents share the session's directory"
-                    );
-                }
+                );
             }
             let child_id = request.child_id.clone().unwrap_or_else(|| {
                 format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8])

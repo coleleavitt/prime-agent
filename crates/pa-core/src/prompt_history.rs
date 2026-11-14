@@ -175,10 +175,10 @@ pub fn load(agent_dir: &Path, cwd: &Path, limit: usize) -> Vec<HistoryEntry> {
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(entry) = serde_json::from_str::<HistoryEntry>(trimmed) {
-            if !entry.display.trim().is_empty() {
-                entries.push(entry);
-            }
+        if let Ok(entry) = serde_json::from_str::<HistoryEntry>(trimmed)
+            && !entry.display.trim().is_empty()
+        {
+            entries.push(entry);
         }
     }
     let mut seen: HashSet<String> = HashSet::new();

@@ -540,28 +540,28 @@ impl<P: Platform> Session<P> {
         if let Some(actions) = self.platform.element_actions() {
             let (position, element, handle) = self.element(app, &index)?;
             if single_left {
-                if let Some(fields) = actions.field_focus() {
-                    if fields.is_text_field(&handle) {
-                        // Clicking into a field focuses it; its default
-                        // action (activate = Enter) never stands in for that.
-                        if !fields.grab_focus(&handle) {
-                            let center = self.element_point(app, &index)?;
-                            self.platform
-                                .click(app.target, center, MouseButton::Left, 1)?;
-                            if !fields.wait_focused(&handle) {
-                                return Err(ComputerUseError::new(
-                                    ErrorCode::InjectionFailed,
-                                    format!(
-                                        "element [{position}] did not take keyboard focus; \
+                if let Some(fields) = actions.field_focus()
+                    && fields.is_text_field(&handle)
+                {
+                    // Clicking into a field focuses it; its default
+                    // action (activate = Enter) never stands in for that.
+                    if !fields.grab_focus(&handle) {
+                        let center = self.element_point(app, &index)?;
+                        self.platform
+                            .click(app.target, center, MouseButton::Left, 1)?;
+                        if !fields.wait_focused(&handle) {
+                            return Err(ComputerUseError::new(
+                                ErrorCode::InjectionFailed,
+                                format!(
+                                    "element [{position}] did not take keyboard focus; \
                                          re-observe and retry, or use set_value() for an \
                                          editable field"
-                                    ),
-                                )
-                                .with_details(json!({"element_index": position})));
-                            }
+                                ),
+                            )
+                            .with_details(json!({"element_index": position})));
                         }
-                        return Ok(());
                     }
+                    return Ok(());
                 }
                 if let Some(press) = actions.default_action(&element.actions) {
                     return actions.perform(&handle, &press);

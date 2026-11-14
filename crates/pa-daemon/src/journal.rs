@@ -176,11 +176,10 @@ fn establish_private_journal_parent_inner(
                             // acknowledged append must never lose an
                             // ancestor to a crash. Fail closed on the
                             // sync error.
-                            if let Some(fail_first_mkdir_sync) = fail_first_mkdir_sync {
-                                if fail_first_mkdir_sync.swap(false, Ordering::SeqCst) {
+                            if let Some(fail_first_mkdir_sync) = fail_first_mkdir_sync
+                                && fail_first_mkdir_sync.swap(false, Ordering::SeqCst) {
                                     anyhow::bail!("injected ancestor sync failure after mkdirat");
                                 }
-                            }
                             current
                                 .sync_all()
                                 .with_context(|| format!("sync ancestor {}", name.display()))?;
@@ -773,8 +772,8 @@ fn scan_worker_journal(path: &Path) -> Result<JournalScan> {
     // The undelimited trailing fragment: a complete record that lost
     // only its delimiter byte is KEPT (the repair rewrite re-delimits
     // it — the record is not lost); anything else is the torn tail.
-    if let Some(fragment) = undelimited_tail {
-        if !fragment.is_empty() {
+    if let Some(fragment) = undelimited_tail
+        && !fragment.is_empty() {
             let valid = std::str::from_utf8(fragment)
                 .ok()
                 .filter(|text| !matches!(classify_journal_line(text), ScannedLine::Malformed));
@@ -802,7 +801,6 @@ fn scan_worker_journal(path: &Path) -> Result<JournalScan> {
                 }
             }
         }
-    }
     if corruption == JournalCorruption::Clean && malformed_seen {
         corruption = JournalCorruption::TornTail;
     }
@@ -1383,14 +1381,13 @@ impl WorkerRecoveryJournal {
         operation: &str,
     ) -> Result<()> {
         self.require_writable()?;
-        if let Some(previous) = self.latest.get(active_session_id) {
-            if previous.busy == busy
+        if let Some(previous) = self.latest.get(active_session_id)
+            && previous.busy == busy
                 && previous.operation == operation
                 && previous.session_file.as_deref() == session_file
             {
                 return Ok(());
             }
-        }
         let record = WorkerRecoveryRecord {
             active_session_id: active_session_id.to_string(),
             session_id: session_id.to_string(),

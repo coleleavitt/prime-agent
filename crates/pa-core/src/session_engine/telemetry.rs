@@ -1105,20 +1105,20 @@ fn handle_event(
                 let Some(run) = state.active_run.as_mut() else {
                     return;
                 };
-                if run.first_model_event_ms.is_none() {
-                    if let Some(first_turn) = run.first_turn_started_at {
-                        run.first_model_event_ms = Some(now.saturating_sub(first_turn));
-                    }
+                if run.first_model_event_ms.is_none()
+                    && let Some(first_turn) = run.first_turn_started_at
+                {
+                    run.first_model_event_ms = Some(now.saturating_sub(first_turn));
                 }
-                if run.visible_ttft_ms.is_none() {
-                    if let Some(first_turn) = run.first_turn_started_at {
-                        let is_text_delta = matches!(
-                            assistant_message_event.as_ref(),
-                            pa_agent::stream::AssistantMessageEvent::TextDelta { delta, .. } if !delta.is_empty()
-                        );
-                        if is_text_delta {
-                            run.visible_ttft_ms = Some(now.saturating_sub(first_turn));
-                        }
+                if run.visible_ttft_ms.is_none()
+                    && let Some(first_turn) = run.first_turn_started_at
+                {
+                    let is_text_delta = matches!(
+                        assistant_message_event.as_ref(),
+                        pa_agent::stream::AssistantMessageEvent::TextDelta { delta, .. } if !delta.is_empty()
+                    );
+                    if is_text_delta {
+                        run.visible_ttft_ms = Some(now.saturating_sub(first_turn));
                     }
                 }
                 if run.run_to_first_text_ms.is_none() {
@@ -1135,10 +1135,8 @@ fn handle_event(
                         assistant_message_event.as_ref(),
                         pa_agent::stream::AssistantMessageEvent::ThinkingDelta { delta, .. } if !delta.is_empty()
                     );
-                    if is_reasoning_delta {
-                        if let Some(first_turn) = run.first_turn_started_at {
-                            run.first_reasoning_ms = Some(now.saturating_sub(first_turn));
-                        }
+                    if is_reasoning_delta && let Some(first_turn) = run.first_turn_started_at {
+                        run.first_reasoning_ms = Some(now.saturating_sub(first_turn));
                     }
                 }
                 if let Some(last) = run.last_stream_event_at {

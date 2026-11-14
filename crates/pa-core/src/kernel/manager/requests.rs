@@ -233,10 +233,10 @@ impl ReplKernelManager {
         execution_timeout_ms: Option<u64>,
     ) -> anyhow::Result<InternalExecuteResult> {
         let started = Instant::now();
-        if let Some(signal) = &opts.signal {
-            if signal.is_aborted() {
-                return Ok(InternalExecuteResult::aborted(started));
-            }
+        if let Some(signal) = &opts.signal
+            && signal.is_aborted()
+        {
+            return Ok(InternalExecuteResult::aborted(started));
         }
         self.start(KernelStartOptions {
             signal: opts.signal.clone(),
@@ -255,10 +255,10 @@ impl ReplKernelManager {
         }
         // Aborted while waiting on the re-bootstrap: settle now instead of
         // parking on the queue slot behind the still-running bootstrap.
-        if let Some(signal) = &opts.signal {
-            if signal.is_aborted() {
-                return Ok(InternalExecuteResult::aborted(started));
-            }
+        if let Some(signal) = &opts.signal
+            && signal.is_aborted()
+        {
+            return Ok(InternalExecuteResult::aborted(started));
         }
         // Re-check: a final flush may have started while this request awaited the lazy
         // re-bootstrap; admitting it now would splice it between the flush\'s captured queue
@@ -279,10 +279,10 @@ impl ReplKernelManager {
 
         self.wait_for_active_execution_to_clear_for_reuse(opts.signal.as_ref())
             .await?;
-        if let Some(signal) = &opts.signal {
-            if signal.is_aborted() {
-                return Ok(InternalExecuteResult::aborted(started));
-            }
+        if let Some(signal) = &opts.signal
+            && signal.is_aborted()
+        {
+            return Ok(InternalExecuteResult::aborted(started));
         }
         if self.state() == KernelState::Shutdown {
             return Err(anyhow!("Kernel has been shut down"));
@@ -313,12 +313,11 @@ impl ReplKernelManager {
         let mut result = self.execute_inner(request, opts, started).await;
         if let Some((fired, settled)) = &timeout {
             settled.abort();
-            if fired.is_aborted() {
-                if let Ok(settled) = &mut result {
-                    if settled.result.status == ExecuteStatus::Aborted {
-                        settled.result.timed_out = true;
-                    }
-                }
+            if fired.is_aborted()
+                && let Ok(settled) = &mut result
+                && settled.result.status == ExecuteStatus::Aborted
+            {
+                settled.result.timed_out = true;
             }
         }
         result
@@ -363,10 +362,10 @@ impl ReplKernelManager {
             result
         };
 
-        if let Some(signal) = &opts.signal {
-            if signal.is_aborted() {
-                return settle(Ok(InternalExecuteResult::aborted(started)));
-            }
+        if let Some(signal) = &opts.signal
+            && signal.is_aborted()
+        {
+            return settle(Ok(InternalExecuteResult::aborted(started)));
         }
         if lock(&self.inner.guarded).active_execution.is_some() {
             return settle(Err(anyhow!("Kernel already has an active execution")));
@@ -488,31 +487,29 @@ impl ReplKernelManager {
         // Only `Request::Execute` is eligible, and only when the caller is
         // not synthetic (`internal: false`) — state ops (snapshot/restore,
         // list_names, mcp_status) have no detach future in the kernel.
-        if movable {
-            if let Some(ms) = execution.opts.auto_background_ms.filter(|ms| *ms > 0) {
-                let inner = Arc::downgrade(&self.inner);
-                let weak_exec = Arc::downgrade(&execution);
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(ms)).await;
-                    let Some(execution) = weak_exec.upgrade() else {
-                        return;
-                    };
-                    let Some(inner) = inner.upgrade() else {
-                        return;
-                    };
-                    // A cell that settled under budget has nothing to move; a
-                    // failed write leaves it to the time limit or the caller's
-                    // abort signal.
-                    if inner.detach_active(&execution).await {
-                        tracing::info!(
-                            target: "pa_core::kernel::auto_background",
-                            budget_ms = ms,
-                            request_id = %execution.request_id,
-                            "cell auto-backgrounded by wall-clock timer",
-                        );
-                    }
-                });
-            }
+        if movable && let Some(ms) = execution.opts.auto_background_ms.filter(|ms| *ms > 0) {
+            let inner = Arc::downgrade(&self.inner);
+            let weak_exec = Arc::downgrade(&execution);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                let Some(execution) = weak_exec.upgrade() else {
+                    return;
+                };
+                let Some(inner) = inner.upgrade() else {
+                    return;
+                };
+                // A cell that settled under budget has nothing to move; a
+                // failed write leaves it to the time limit or the caller's
+                // abort signal.
+                if inner.detach_active(&execution).await {
+                    tracing::info!(
+                        target: "pa_core::kernel::auto_background",
+                        budget_ms = ms,
+                        request_id = %execution.request_id,
+                        "cell auto-backgrounded by wall-clock timer",
+                    );
+                }
+            });
         }
 
         let mut frame = request.to_json();

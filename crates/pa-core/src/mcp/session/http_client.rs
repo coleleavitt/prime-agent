@@ -293,12 +293,11 @@ impl StreamableHttpClient for McpHttpClient {
                 .await
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             // A JSON-RPC error body is the server's real answer.
-            if is_json {
-                if let Ok(message @ JsonRpcMessage::Error(_)) =
+            if is_json
+                && let Ok(message @ JsonRpcMessage::Error(_)) =
                     serde_json::from_str::<ServerJsonRpcMessage>(&body)
-                {
-                    return Ok(StreamableHttpPostResponse::Json(message, session_id));
-                }
+            {
+                return Ok(StreamableHttpPostResponse::Json(message, session_id));
             }
             return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(
                 format!("HTTP {status}: {body}"),

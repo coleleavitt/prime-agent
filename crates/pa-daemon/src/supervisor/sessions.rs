@@ -869,26 +869,23 @@ pub(super) fn saved_session_summary(info: &crate::session_store::SessionInfo) ->
     });
     // TS `summaryForInactiveSession` publishes the header binding: the
     // parent path only when one is recorded (TS's `undefined` is omitted).
-    if let Some(parent) = &info.parent_session_path {
-        if let Some(object) = row.as_object_mut() {
+    if let Some(parent) = &info.parent_session_path
+        && let Some(object) = row.as_object_mut() {
             object.insert("parentSessionPath".to_string(), json!(parent));
         }
-    }
     // The persisted thinking level rides every saved-session summary row: the agents-view
     // Model column renders "model:level" for sessions without a live worker.
-    if let Some(level) = &info.thinking_level {
-        if let Some(object) = row.as_object_mut() {
+    if let Some(level) = &info.thinking_level
+        && let Some(object) = row.as_object_mut() {
             object.insert("thinkingLevel".to_string(), json!(level));
         }
-    }
     // TS `summaryForInactiveSession` publishes the scan's own-usage summary:
     // the roster record reads it before the saved catalog row's (own cost
     // `daemon.usage ?? saved.usage`), so rollups never double count.
-    if let Some(usage) = &info.usage {
-        if let Some(object) = row.as_object_mut() {
+    if let Some(usage) = &info.usage
+        && let Some(object) = row.as_object_mut() {
             object.insert("usage".to_string(), json!(usage));
         }
-    }
     row
 }
 

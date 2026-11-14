@@ -40,13 +40,13 @@ fn with_switch<T>(value: Option<&str>, body: impl FnOnce() -> T) -> T {
     let _guard = env_lock();
     let previous = std::env::var_os(TRAJECTORY_INDEX_ENV);
     match value {
-        Some(value) => std::env::set_var(TRAJECTORY_INDEX_ENV, value),
-        None => std::env::remove_var(TRAJECTORY_INDEX_ENV),
+        Some(value) => pa_types::env::set_var(TRAJECTORY_INDEX_ENV, value),
+        None => pa_types::env::remove_var(TRAJECTORY_INDEX_ENV),
     }
     let result = body();
     match previous {
-        Some(previous) => std::env::set_var(TRAJECTORY_INDEX_ENV, previous),
-        None => std::env::remove_var(TRAJECTORY_INDEX_ENV),
+        Some(previous) => pa_types::env::set_var(TRAJECTORY_INDEX_ENV, previous),
+        None => pa_types::env::remove_var(TRAJECTORY_INDEX_ENV),
     }
     result
 }

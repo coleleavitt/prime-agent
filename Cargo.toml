@@ -45,7 +45,7 @@ crossterm = { path = "vendor/crossterm" }
 
 [workspace.package]
 version = "0.10.3"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
@@ -80,7 +80,7 @@ toml = "0.9"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 # The pedantic gate the five clippy campaigns earned (pa-daemon #3029,

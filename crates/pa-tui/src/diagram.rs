@@ -146,13 +146,13 @@ fn pending_lines(pending: Pending) -> Vec<TextLine> {
     let mut lines: Vec<TextLine> = vec![Vec::new()];
     for (text, level) in pending {
         let mut parts = text.split('\n');
-        if let Some(first) = parts.next() {
-            if !first.is_empty() {
-                lines
-                    .last_mut()
-                    .expect("one line")
-                    .push((first.to_owned(), level));
-            }
+        if let Some(first) = parts.next()
+            && !first.is_empty()
+        {
+            lines
+                .last_mut()
+                .expect("one line")
+                .push((first.to_owned(), level));
         }
         for part in parts {
             let mut line = Vec::new();

@@ -302,7 +302,7 @@ fn run_plan_with(
     open_panel: Option<SessionPanel>,
     factory_graph: Option<Value>,
 ) -> InteractiveOutcome {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, factory_graph);

@@ -312,7 +312,7 @@ impl SessionFeature for HooksFeature {
         // A statement, not the tail: the guard must drop before `hooks`.
         if let Ok(mut start) = hooks.start.try_lock() {
             *start = StartContext::Running(task);
-        };
+        }
     }
 
     fn prompt_context(

@@ -655,15 +655,14 @@ fn csi_u_key(body: &[u8]) -> Option<Event> {
         c if (57344..=63743).contains(&c) => return None,
         c => (KeyCode::Char(char::from_u32(c)?), KeyEventState::empty()),
     };
-    if modifiers.contains(KeyModifiers::SHIFT) {
-        if let Some(shifted) = codepoints
+    if modifiers.contains(KeyModifiers::SHIFT)
+        && let Some(shifted) = codepoints
             .next()
             .and_then(|c| c.parse::<u32>().ok())
             .and_then(char::from_u32)
-        {
-            code = KeyCode::Char(shifted);
-            modifiers.set(KeyModifiers::SHIFT, false);
-        }
+    {
+        code = KeyCode::Char(shifted);
+        modifiers.set(KeyModifiers::SHIFT, false);
     }
     Some(Event::Key(KeyEvent::new_with_kind_and_state(
         code,

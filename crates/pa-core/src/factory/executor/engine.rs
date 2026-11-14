@@ -838,11 +838,10 @@ impl Inner {
                             to: target_id.clone(),
                             signature,
                         });
-                    } else if let Some(when) = transition.get("when").filter(|when| !when.is_null()) {
-                        if !guard_passes(when, &outputs) {
+                    } else if let Some(when) = transition.get("when").filter(|when| !when.is_null())
+                        && !guard_passes(when, &outputs) {
                             continue;
                         }
-                    }
                     let Some(target) = run.position(&target_id) else {
                         continue;
                     };
@@ -1755,15 +1754,15 @@ impl Inner {
                 for (state_position, state) in run.states.iter().enumerate() {
                     for (entry_position, entry) in state.entries.iter().enumerate() {
                         for (instance_position, instance) in entry.instances.iter().enumerate() {
-                            if instance.status == Status::Running {
-                                if let Some(child) = instance.child_id.clone() {
-                                    let slot = Slot {
-                                        state: state_position,
-                                        entry: entry_position,
-                                        instance: instance_position,
-                                    };
-                                    return Some((slot, child));
-                                }
+                            if instance.status == Status::Running
+                                && let Some(child) = instance.child_id.clone()
+                            {
+                                let slot = Slot {
+                                    state: state_position,
+                                    entry: entry_position,
+                                    instance: instance_position,
+                                };
+                                return Some((slot, child));
                             }
                         }
                     }
@@ -1904,18 +1903,18 @@ impl Inner {
                 for (state_position, state) in run.states.iter().enumerate() {
                     for (entry_position, entry) in state.entries.iter().enumerate() {
                         for (instance_position, instance) in entry.instances.iter().enumerate() {
-                            if instance.status == Status::Running {
-                                if let Some(child) = &instance.child_id {
-                                    slots.push((
-                                        Slot {
-                                            state: state_position,
-                                            entry: entry_position,
-                                            instance: instance_position,
-                                        },
-                                        child.clone(),
-                                        state.resident(),
-                                    ));
-                                }
+                            if instance.status == Status::Running
+                                && let Some(child) = &instance.child_id
+                            {
+                                slots.push((
+                                    Slot {
+                                        state: state_position,
+                                        entry: entry_position,
+                                        instance: instance_position,
+                                    },
+                                    child.clone(),
+                                    state.resident(),
+                                ));
                             }
                         }
                     }

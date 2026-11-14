@@ -229,10 +229,10 @@ impl AgentView {
                 // segment or tray hint carries the ONE light band; the focused group's
                 // selection band stays.
                 Some(click::ClickAction::OpenDockGroup(_) | click::ClickAction::OpenAgentsView) => {
-                    if let Some(region) = self.dock_region_at(row, col) {
-                        if let Some(line) = frame.get_mut(row) {
-                            self.theme.paint_hover_band(line, region.cols.clone());
-                        }
+                    if let Some(region) = self.dock_region_at(row, col)
+                        && let Some(line) = frame.get_mut(row)
+                    {
+                        self.theme.paint_hover_band(line, region.cols.clone());
                     }
                 }
                 _ => self.hover_pos = None,
@@ -243,18 +243,19 @@ impl AgentView {
         if self.following {
             self.unseen_messages = 0;
         }
-        if !self.following && !self.window_shows_tail {
-            if let Some(row) = frame.get_mut(window_height) {
-                let key = self
-                    .editor
-                    .keybindings()
-                    .first_key("tui.viewport.follow")
-                    .unwrap_or_else(|| "ctrl+shift+down".to_string());
-                let label = follow_hint_label(self.unseen_messages, &key);
-                *row = composite_follow_hint(row, &label, width);
-                // The hint's row never reads as the content beneath it.
-                self.click.mask_rows(window_height, window_height + 1);
-            }
+        if !self.following
+            && !self.window_shows_tail
+            && let Some(row) = frame.get_mut(window_height)
+        {
+            let key = self
+                .editor
+                .keybindings()
+                .first_key("tui.viewport.follow")
+                .unwrap_or_else(|| "ctrl+shift+down".to_string());
+            let label = follow_hint_label(self.unseen_messages, &key);
+            *row = composite_follow_hint(row, &label, width);
+            // The hint's row never reads as the content beneath it.
+            self.click.mask_rows(window_height, window_height + 1);
         }
         self.frame_rows = frame.len();
         self.apply_frame_selection(

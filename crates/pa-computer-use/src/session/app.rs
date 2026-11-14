@@ -333,17 +333,16 @@ impl<P: Platform> Session<P> {
             .observation
             .as_ref()
             .and_then(|observation| observation.window_id);
-        if let (Some(shot), Some(current)) = (app.shot, current_window) {
-            if shot
+        if let (Some(shot), Some(current)) = (app.shot, current_window)
+            && shot
                 .window_id
                 .is_some_and(|shot_window| shot_window != current)
-            {
-                return Err(transport(
-                    "the focused window changed since the screenshot; take a fresh screenshot \
+        {
+            return Err(transport(
+                "the focused window changed since the screenshot; take a fresh screenshot \
                      before clicking image coordinates",
-                )
-                .with_details(json!({})));
-            }
+            )
+            .with_details(json!({})));
         }
         if let Some(shot) = app.shot {
             if shot.size != (shot.rect.width, shot.rect.height) {
@@ -430,13 +429,13 @@ impl<P: Platform> Session<P> {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        if count > 0 && self.context.first_instructions(&app.bundle_id) {
-            if let Some(instructions) =
+        if count > 0
+            && self.context.first_instructions(&app.bundle_id)
+            && let Some(instructions) =
                 load_instructions(app.instructions_dir.as_deref(), &app.bundle_id)
-            {
-                text.push('\n');
-                text.push_str(&instructions);
-            }
+        {
+            text.push('\n');
+            text.push_str(&instructions);
         }
         text
     }

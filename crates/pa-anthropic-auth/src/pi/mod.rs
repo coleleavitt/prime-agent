@@ -106,14 +106,13 @@ pub(crate) fn build_outgoing(
     );
     let mut body = built.body;
     let server_fallback = fallback::is_fallback_model(model);
-    if server_fallback {
-        if let Some(map) = body.as_object_mut() {
+    if server_fallback
+        && let Some(map) = body.as_object_mut() {
             map.insert(
                 "fallbacks".to_string(),
                 Value::String("default".to_string()),
             );
         }
-    }
     let markers_changed = fallback::rewrite_stored_markers(&mut body, server_fallback);
     let mut extra_betas: Vec<&'static str> = Vec::new();
     if server_fallback {
@@ -196,11 +195,9 @@ pub(crate) fn response_event(mut event: Value) -> Vec<Value> {
     if let Some(block) = event
         .get_mut("content_block")
         .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
-    {
-        if block.get("name").and_then(Value::as_str) == Some(convert::DEEP_RESEARCH_WIRE_TOOL) {
+        && block.get("name").and_then(Value::as_str) == Some(convert::DEEP_RESEARCH_WIRE_TOOL) {
             block["name"] = Value::String(convert::DEEP_RESEARCH_TOOL.to_string());
         }
-    }
     vec![event]
 }
 

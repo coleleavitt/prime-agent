@@ -312,12 +312,11 @@ impl<'s> Parser<'s> {
         }
         let mut bodies = std::mem::take(&mut self.bodies);
         super::walk::visit_redirects_mut(list, &mut |redirect| {
-            if let Some(heredoc) = redirect.heredoc.as_mut() {
-                if let Some(index) = heredoc.slot.take() {
-                    if let Some(body) = bodies.get_mut(index).and_then(Option::take) {
-                        *heredoc = body;
-                    }
-                }
+            if let Some(heredoc) = redirect.heredoc.as_mut()
+                && let Some(index) = heredoc.slot.take()
+                && let Some(body) = bodies.get_mut(index).and_then(Option::take)
+            {
+                *heredoc = body;
             }
         });
     }

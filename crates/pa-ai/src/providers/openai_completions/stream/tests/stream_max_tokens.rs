@@ -46,23 +46,23 @@ async fn serve_sse_capturing(body: String) -> (SocketAddr, Arc<Mutex<Vec<u8>>>) 
                 break;
             }
             request.extend_from_slice(&chunk[..read]);
-            if head_end.is_none() {
-                if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                    head_end = Some(pos + 4);
-                    let head = String::from_utf8_lossy(&request[..pos]).to_lowercase();
-                    content_length = head
-                        .lines()
-                        .find_map(|line| {
-                            line.strip_prefix("content-length:")
-                                .and_then(|value| value.trim().parse().ok())
-                        })
-                        .unwrap_or(0);
-                }
+            if head_end.is_none()
+                && let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n")
+            {
+                head_end = Some(pos + 4);
+                let head = String::from_utf8_lossy(&request[..pos]).to_lowercase();
+                content_length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse().ok())
+                    })
+                    .unwrap_or(0);
             }
-            if let Some(end) = head_end {
-                if request.len() >= end + content_length {
-                    break;
-                }
+            if let Some(end) = head_end
+                && request.len() >= end + content_length
+            {
+                break;
             }
         }
         *sink.lock().unwrap() = request;

@@ -21,8 +21,8 @@ impl Drop for FixtureEnvironment {
     fn drop(&mut self) {
         for (name, previous) in self.0.drain(..) {
             match previous {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => pa_types::env::set_var(name, value),
+                None => pa_types::env::remove_var(name),
             }
         }
     }
@@ -128,7 +128,7 @@ async fn the_first_codex_websocket_trusts_node_extra_ca_certs() {
         .map(|name| (name, std::env::var_os(name)))
         .collect(),
     );
-    std::env::set_var("NODE_EXTRA_CA_CERTS", bundle.path());
+    pa_types::env::set_var("NODE_EXTRA_CA_CERTS", bundle.path());
     // Even an unexpected HTTP fallback must remain local to this fixture.
     for name in [
         "HTTP_PROXY",
@@ -138,10 +138,10 @@ async fn the_first_codex_websocket_trusts_node_extra_ca_certs() {
         "ALL_PROXY",
         "all_proxy",
     ] {
-        std::env::remove_var(name);
+        pa_types::env::remove_var(name);
     }
-    std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
-    std::env::set_var("no_proxy", "127.0.0.1,localhost");
+    pa_types::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+    pa_types::env::set_var("no_proxy", "127.0.0.1,localhost");
     assert!(
         CryptoProvider::get_default().is_none(),
         "fixture must not initialize the default TLS provider"

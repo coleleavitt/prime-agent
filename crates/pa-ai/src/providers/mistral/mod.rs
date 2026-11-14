@@ -132,10 +132,10 @@ pub(crate) fn build_request_headers(
     }
     // Mistral infrastructure uses `x-affinity` for KV-cache reuse (prefix caching). Respect
     // explicit caller-provided header values.
-    if let Some(session_id) = &options.base.session_id {
-        if !headers.iter().any(|(name, _)| name == "x-affinity") {
-            headers.push(("x-affinity".into(), session_id.clone()));
-        }
+    if let Some(session_id) = &options.base.session_id
+        && !headers.iter().any(|(name, _)| name == "x-affinity")
+    {
+        headers.push(("x-affinity".into(), session_id.clone()));
     }
     headers
 }

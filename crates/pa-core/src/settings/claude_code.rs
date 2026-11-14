@@ -636,25 +636,26 @@ impl ClaudeLayer {
                 None => {}
             }
         }
-        if own.output_style.is_none() {
-            if let Some((_, Value::String(style))) = claude.get("outputStyle") {
-                layer.settings.output_style = Some(style.clone());
-            }
+        if own.output_style.is_none()
+            && let Some((_, Value::String(style))) = claude.get("outputStyle")
+        {
+            layer.settings.output_style = Some(style.clone());
         }
-        if own.default_model.is_none() && own.default_provider.is_none() {
-            if let Some((scope, Value::String(model))) = claude.get("model") {
-                match claude_model_id(model) {
-                    Some(id) => {
-                        layer.settings.default_provider = Some(CLAUDE_MODEL_PROVIDER.to_string());
-                        layer.settings.default_model = Some(id);
-                        layer.model = true;
-                    }
-                    None => layer.notes.push(format!(
-                        "{}: model {model:?} is not a full Claude model id (set defaultModel \
-                         instead)",
-                        scope.label()
-                    )),
+        if own.default_model.is_none()
+            && own.default_provider.is_none()
+            && let Some((scope, Value::String(model))) = claude.get("model")
+        {
+            match claude_model_id(model) {
+                Some(id) => {
+                    layer.settings.default_provider = Some(CLAUDE_MODEL_PROVIDER.to_string());
+                    layer.settings.default_model = Some(id);
+                    layer.model = true;
                 }
+                None => layer.notes.push(format!(
+                    "{}: model {model:?} is not a full Claude model id (set defaultModel \
+                         instead)",
+                    scope.label()
+                )),
             }
         }
         if own.session_archive_max_age_days.is_none() {

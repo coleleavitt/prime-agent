@@ -333,9 +333,9 @@ impl SessionUi {
                 view.auth_panel = None;
                 self.note(&note, view);
             }
-            AuthPanelRequest::TracesSettled { outcome, gen } => {
+            AuthPanelRequest::TracesSettled { outcome, r#gen } => {
                 // A superseded run's late settle cannot clear a newer login: the generation guard.
-                if gen == self.traces_login_gen {
+                if r#gen == self.traces_login_gen {
                     view.auth_panel = None;
                     self.finish_traces_login(outcome, view).await;
                 }

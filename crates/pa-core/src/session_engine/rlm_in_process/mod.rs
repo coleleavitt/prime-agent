@@ -495,11 +495,11 @@ impl InProcessRlmHost {
                 // Freeze the actual state under the retry gate before any
                 // descendant await. The 5s parked wake cannot reactivate
                 // a notice after this generation begins closing.
-                if record.freeze_for_close().await {
-                    if let Some(error) = record.parked_error().await {
-                        tracing::error!(child_id = %record.rlm_child_id, %error,
+                if record.freeze_for_close().await
+                    && let Some(error) = record.parked_error().await
+                {
+                    tracing::error!(child_id = %record.rlm_child_id, %error,
                             "closing parent with a parked terminal notice");
-                    }
                 }
                 Box::pin(record.child_host.close_children()).await;
                 record.engine.session.agent().abort();
@@ -605,13 +605,13 @@ impl RlmSubagentHost for InProcessRlmHost {
                 .read_or_recover()
                 .as_ref()
                 .map(|binding| binding.session_id.clone());
-            if let Some(target) = &session_id {
-                if parent_session_id.as_deref() != Some(target.as_str()) {
-                    anyhow::bail!(
-                        "rlm.rename of a child session is unsupported in an in-process \
+            if let Some(target) = &session_id
+                && parent_session_id.as_deref() != Some(target.as_str())
+            {
+                anyhow::bail!(
+                    "rlm.rename of a child session is unsupported in an in-process \
                          session host; rename from within the child session"
-                    );
-                }
+                );
             }
             engine
                 .session

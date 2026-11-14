@@ -234,15 +234,15 @@ fn digit_step(bytes: &[u8], i: usize) -> Option<usize> {
 /// a float must contain a decimal point, so no word boundary is needed.
 fn pointfloat_at(text: &str, i: usize) -> Option<usize> {
     let bytes = text.as_bytes();
-    if let Some(int_len) = digitpart_at(bytes, i) {
-        if bytes.get(i + int_len) == Some(&b'.') {
-            let after = i + int_len + 1;
-            if let Some(frac) = digitpart_at(bytes, after) {
-                return Some(frac + 1 + int_len);
-            }
-            // `123.` matches the trailing-dot variant.
-            return Some(int_len + 1);
+    if let Some(int_len) = digitpart_at(bytes, i)
+        && bytes.get(i + int_len) == Some(&b'.')
+    {
+        let after = i + int_len + 1;
+        if let Some(frac) = digitpart_at(bytes, after) {
+            return Some(frac + 1 + int_len);
         }
+        // `123.` matches the trailing-dot variant.
+        return Some(int_len + 1);
     }
     if bytes.get(i) == Some(&b'.') {
         let frac = digitpart_at(bytes, i + 1)?;

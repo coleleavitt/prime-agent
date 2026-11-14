@@ -337,12 +337,13 @@ pub fn word_wrap_line(
         let next_starts_word = next.is_some_and(|n| {
             is_atomic_marker(&n.segment) || n.segment.chars().any(|c| !is_whitespace_char(c))
         });
-        if is_ws && next_starts_word {
-            if let Some(next) = next {
-                wrap_opp_index = next.index as isize;
-                wrap_opp_width = current_width;
-                wrap_opp_byte = seg_bytes[i + 1];
-            }
+        if is_ws
+            && next_starts_word
+            && let Some(next) = next
+        {
+            wrap_opp_index = next.index as isize;
+            wrap_opp_width = current_width;
+            wrap_opp_byte = seg_bytes[i + 1];
         }
     }
 

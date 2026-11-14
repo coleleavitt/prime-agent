@@ -259,12 +259,12 @@ fn percent_decode(value: &str) -> String {
         if bytes[index] == b'%' && index + 2 < bytes.len() {
             // The two bytes after `%` are decoded as bytes — a string slice there could split a
             // multi-byte character, so malformed escapes fall through to the literal byte.
-            if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte);
-                    index += 3;
-                    continue;
-                }
+            if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3])
+                && let Ok(byte) = u8::from_str_radix(hex, 16)
+            {
+                out.push(byte);
+                index += 3;
+                continue;
             }
         }
         out.push(bytes[index]);

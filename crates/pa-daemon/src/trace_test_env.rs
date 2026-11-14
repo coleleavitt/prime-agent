@@ -21,8 +21,8 @@ pub(crate) fn lock_env() -> TraceEnv {
         ),
         ("PRIME_API_KEY", std::env::var_os("PRIME_API_KEY")),
     ];
-    std::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
-    std::env::remove_var("PRIME_API_KEY");
+    pa_types::env::remove_var("PRIME_AGENT_TRACES_API_KEY");
+    pa_types::env::remove_var("PRIME_API_KEY");
     TraceEnv { lock, saved }
 }
 
@@ -30,9 +30,9 @@ impl Drop for TraceEnv {
     fn drop(&mut self) {
         for (name, value) in &self.saved {
             if let Some(value) = value {
-                std::env::set_var(name, value);
+                pa_types::env::set_var(name, value);
             } else {
-                std::env::remove_var(name);
+                pa_types::env::remove_var(name);
             }
         }
     }

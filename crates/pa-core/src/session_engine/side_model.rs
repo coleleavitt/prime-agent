@@ -587,12 +587,12 @@ mod tests {
     async fn a_side_call_records_its_usage_on_the_billed_session() {
         let provider = Arc::new(ScriptedProvider::new(test_model()));
         let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), "the verdict");
-        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-            if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
-                message.usage.input = 40;
-                message.usage.output = 2;
-                message.usage.total_tokens = 42;
-            }
+        if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+            && let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event
+        {
+            message.usage.input = 40;
+            message.usage.output = 2;
+            message.usage.total_tokens = 42;
         }
         provider.push_turn(pa_agent::scripted::ScriptedTurn::Events(steps));
         let store = Arc::new(super::super::billed_calls::RecordingStore::default());

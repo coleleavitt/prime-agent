@@ -286,11 +286,10 @@ fn read_recorded(dir: &Path, name: &str) -> Value {
     let path = dir.join(name);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(value) = serde_json::from_str(&content) {
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(value) = serde_json::from_str(&content) {
                 return value;
             }
-        }
         assert!(
             Instant::now() < deadline,
             "record {name} never appeared or never parsed in {}: existing: {}; \
@@ -311,11 +310,10 @@ fn read_error_record(dir: &Path, name: &str) -> String {
     let path = dir.join(format!("{name}.error"));
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if !content.is_empty() {
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && !content.is_empty() {
                 return content;
             }
-        }
         assert!(
             Instant::now() < deadline,
             "error record {name} never appeared in {}: existing: {}; success receipt: {}; \

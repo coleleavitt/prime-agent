@@ -48,10 +48,10 @@ pub fn extract_file_ops_from_message(message: &AgentMessage, file_ops: &mut File
                 return;
             };
             for diff in diffs {
-                if let Some(path) = diff.get("path").and_then(|p| p.as_str()) {
-                    if !path.is_empty() {
-                        file_ops.edited.insert(path.to_string());
-                    }
+                if let Some(path) = diff.get("path").and_then(|p| p.as_str())
+                    && !path.is_empty()
+                {
+                    file_ops.edited.insert(path.to_string());
                 }
             }
         }

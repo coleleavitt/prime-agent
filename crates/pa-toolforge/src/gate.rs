@@ -113,8 +113,8 @@ fn parse_outcome(
             detail: "replay case completed without raising".to_string(),
         };
     }
-    if code == Some(3) {
-        if let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
+    if code == Some(3)
+        && let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
             let (class, message) = body.split_once('\n').unwrap_or((body, ""));
             let class = class.trim();
             let message = message.trim();
@@ -130,7 +130,6 @@ fn parse_outcome(
                 };
             }
         }
-    }
     let reported = Some(trim_detail(stderr))
         .filter(|detail| !detail.is_empty())
         .unwrap_or_else(|| trim_detail(stdout));

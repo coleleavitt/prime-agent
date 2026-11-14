@@ -179,16 +179,16 @@ async fn drive_onboarding_pane(
         view.onboarding = Some(screen);
         match drive.renderer {
             Renderer::Terminal { .. } => {
-                if let Some(renderer) = drive.renderer.is_terminal_mut() {
-                    if let Err(error) = crate::app::draw(renderer, view) {
-                        // A failed frame ends the pane: end a still-running login flow with it
-                        // (the cooperative cancel reaches the blocking login body, so no path
-                        // leaves a detached flow writing credentials).
-                        if let Some(task) = flow.take() {
-                            task.end().await;
-                        }
-                        return Err(error);
+                if let Some(renderer) = drive.renderer.is_terminal_mut()
+                    && let Err(error) = crate::app::draw(renderer, view)
+                {
+                    // A failed frame ends the pane: end a still-running login flow with it
+                    // (the cooperative cancel reaches the blocking login body, so no path
+                    // leaves a detached flow writing credentials).
+                    if let Some(task) = flow.take() {
+                        task.end().await;
                     }
+                    return Err(error);
                 }
             }
             Renderer::Headless { .. } => drive.renderer.render_headless_pane(view),
@@ -247,8 +247,8 @@ async fn drive_onboarding_pane(
                     let holds_now = drive.renderer.headless_frames().is_some_and(|frames| {
                         frames.last().is_some_and(|frame| frame.contains(needle.as_str()))
                     });
-                    if !holds_now {
-                        if let Some(frames) = drive.renderer.headless_frames() {
+                    if !holds_now
+                        && let Some(frames) = drive.renderer.headless_frames() {
                             barrier = Some(PaneBarrier::Render {
                                 needle,
                                 baseline: frames.len(),
@@ -256,7 +256,6 @@ async fn drive_onboarding_pane(
                                     + Duration::from_millis(timeout_ms),
                             });
                         }
-                    }
                 }
                 UiInput::WaitGone { needle, timeout_ms } => {
                     let holds_now = drive.renderer.headless_frames().is_some_and(|frames| {
@@ -690,10 +689,10 @@ async fn run_onboarding_flow(
     }
     // Only a completed flow whose model is ready marks onboarding seen — a flow whose
     // sign-in left the home without a usable model stays unset and retries next launch.
-    if (task.model_ready)() {
-        if let Err(error) = task.sink.mark_onboarding_complete() {
-            warn_onboarding_persist_failure(session, view, &error);
-        }
+    if (task.model_ready)()
+        && let Err(error) = task.sink.mark_onboarding_complete()
+    {
+        warn_onboarding_persist_failure(session, view, &error);
     }
     Ok(false)
 }

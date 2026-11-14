@@ -108,11 +108,10 @@ fn agent_model(model: &pa_types::ai::Model) -> pa_agent::types::Model {
 async fn wait_for_boot(engine: &pa_core::session_engine::engine::SessionEngine, cold: bool) {
     let deadline = Instant::now() + Duration::from_mins(1);
     loop {
-        if let Some(provisioner) = engine.kernel_provisioner_weak().upgrade() {
-            if provisioner.has_running_kernel() && (cold || provisioner.last_restore().is_some()) {
+        if let Some(provisioner) = engine.kernel_provisioner_weak().upgrade()
+            && provisioner.has_running_kernel() && (cold || provisioner.last_restore().is_some()) {
                 return;
             }
-        }
         assert!(
             Instant::now() < deadline,
             "the kernel never reported a cold={cold} boot"

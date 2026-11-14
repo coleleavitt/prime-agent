@@ -72,8 +72,8 @@ impl AgentSessionEngine {
                 None => None,
             }
         };
-        if let Some(pending) = scheduled {
-            if !emit(EngineEvent::CompactionStart {
+        if let Some(pending) = scheduled
+            && !emit(EngineEvent::CompactionStart {
                 event: crate::compaction::compaction_start_event(
                     "requested",
                     pending.instructions.as_deref(),
@@ -81,7 +81,6 @@ impl AgentSessionEngine {
             }) {
                 return BoundaryRun::Cancelled;
             }
-        }
         // The requested run owns the abort slot for its duration: an
         // `abort_compaction` lands in the slot and cancels the in-flight
         // summarizer.
@@ -116,13 +115,12 @@ impl AgentSessionEngine {
             Some(Ok(pa_core::session_engine::compact_session::CompactOutcome::Ran(run))) => {
                 // The post-compaction kernel notice goes out before the settled end;
                 // its pair precedes `compaction_end`.
-                if let Some(message) = &run.ipython_state {
-                    if !emit(EngineEvent::CustomMessage(
+                if let Some(message) = &run.ipython_state
+                    && !emit(EngineEvent::CustomMessage(
                         crate::session_commands::custom_message_value(message),
                     )) {
                         return BoundaryRun::Cancelled;
                     }
-                }
                 {
                     let guard = self.session.blocking_lock();
                     if let Some(telemetry) = guard
@@ -212,11 +210,10 @@ impl AgentSessionEngine {
                         return BoundaryRun::Cancelled;
                     }
                 }
-                if let Ok(result) = serde_json::to_value(&refinement) {
-                    if !emit(EngineEvent::RefineComplete { result }) {
+                if let Ok(result) = serde_json::to_value(&refinement)
+                    && !emit(EngineEvent::RefineComplete { result }) {
                         return BoundaryRun::Cancelled;
                     }
-                }
             }
             Some(Err(error)) => {
                 eprintln!("pa-daemon: requested refinement failed: {error:#}");
@@ -242,8 +239,8 @@ impl AgentSessionEngine {
                 None => None,
             }
         };
-        if let Some(outcome) = plan_mode {
-            if let Some(mode) = outcome.permission_mode {
+        if let Some(outcome) = plan_mode
+            && let Some(mode) = outcome.permission_mode {
                 let command = pa_core::session_engine::slash_commands::SessionSlashCommand {
                     name: "permissions",
                     args: format!("mode {mode}"),
@@ -254,7 +251,6 @@ impl AgentSessionEngine {
                     return BoundaryRun::Cancelled;
                 }
             }
-        }
         if stopped_for_compaction {
             BoundaryRun::StoppedForCompaction { compacted }
         } else {

@@ -344,15 +344,15 @@ pub(crate) mod tests {
             .map(|key| ((*key).to_string(), std::env::var(key).ok()))
             .collect();
         for key in vars {
-            std::env::remove_var(key);
+            pa_types::env::remove_var(key);
         }
         // Restore the env FIRST, then resume the panic: a failed assertion must
         // fail the test (never swallow).
         let outcome = std::panic::catch_unwind(body);
         for (key, value) in saved {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                Some(value) => pa_types::env::set_var(key, value),
+                None => pa_types::env::remove_var(key),
             }
         }
         if let Err(panic) = outcome {
@@ -383,13 +383,13 @@ pub(crate) mod tests {
             let agent_dir = dir.path().join("agent");
             let settings = pa_core::settings::SettingsManager::create(dir.path(), agent_dir);
             // `PRIME_AGENT_TELEMETRY=1` re-enables over the settings default.
-            std::env::set_var("PRIME_AGENT_TELEMETRY", "1");
+            pa_types::env::set_var("PRIME_AGENT_TELEMETRY", "1");
             assert!(!telemetry_disabled(&settings));
             // But DO_NOT_TRACK outranks it: still disabled.
-            std::env::set_var("DO_NOT_TRACK", "1");
+            pa_types::env::set_var("DO_NOT_TRACK", "1");
             assert!(telemetry_disabled(&settings));
             // And PI_OFFLINE outranks the re-enable too.
-            std::env::set_var("PI_OFFLINE", "1");
+            pa_types::env::set_var("PI_OFFLINE", "1");
             assert!(telemetry_disabled(&settings));
         });
     }

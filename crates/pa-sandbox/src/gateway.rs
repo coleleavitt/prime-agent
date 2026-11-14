@@ -390,12 +390,12 @@ impl<T: SandboxTransport> PrimeSandboxClient<T> {
         let declared_length = response
             .header("content-length")
             .and_then(|value| value.trim().parse::<usize>().ok());
-        if let Some(declared) = declared_length {
-            if declared > MAX_TRANSFER_BYTES {
-                return Err(SandboxError::too_large(format!(
-                    "Download of {path} declares {declared} bytes, exceeding the {MAX_TRANSFER_BYTES} byte limit"
-                )));
-            }
+        if let Some(declared) = declared_length
+            && declared > MAX_TRANSFER_BYTES
+        {
+            return Err(SandboxError::too_large(format!(
+                "Download of {path} declares {declared} bytes, exceeding the {MAX_TRANSFER_BYTES} byte limit"
+            )));
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.body.next_chunk().await? {
@@ -594,19 +594,19 @@ fn validate_exec_request(request: &ExecRequest) -> Result<(), SandboxError> {
             "command must be a non-empty NUL-free string",
         ));
     }
-    if let Some(working_dir) = request.working_dir.as_deref() {
-        if working_dir.is_empty() {
-            return Err(SandboxError::invalid_request(
-                "workingDir must be a non-empty string",
-            ));
-        }
+    if let Some(working_dir) = request.working_dir.as_deref()
+        && working_dir.is_empty()
+    {
+        return Err(SandboxError::invalid_request(
+            "workingDir must be a non-empty string",
+        ));
     }
-    if let Some(user) = request.user.as_deref() {
-        if user.is_empty() {
-            return Err(SandboxError::invalid_request(
-                "user must be a non-empty string",
-            ));
-        }
+    if let Some(user) = request.user.as_deref()
+        && user.is_empty()
+    {
+        return Err(SandboxError::invalid_request(
+            "user must be a non-empty string",
+        ));
     }
     if let Some(env) = request.env.as_ref() {
         for (key, value) in env {
@@ -622,12 +622,12 @@ fn validate_exec_request(request: &ExecRequest) -> Result<(), SandboxError> {
             }
         }
     }
-    if let Some(timeout) = request.timeout_seconds {
-        if !(1..=MAX_EXEC_TIMEOUT_SECONDS).contains(&timeout) {
-            return Err(SandboxError::invalid_request(format!(
-                "timeoutSeconds must be an integer from 1 to {MAX_EXEC_TIMEOUT_SECONDS}"
-            )));
-        }
+    if let Some(timeout) = request.timeout_seconds
+        && !(1..=MAX_EXEC_TIMEOUT_SECONDS).contains(&timeout)
+    {
+        return Err(SandboxError::invalid_request(format!(
+            "timeoutSeconds must be an integer from 1 to {MAX_EXEC_TIMEOUT_SECONDS}"
+        )));
     }
     Ok(())
 }

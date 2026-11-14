@@ -294,8 +294,7 @@ impl Supervisor {
         }
         if let Err(error) =
             crate::descriptor::persist_worker(&resident.descriptor_path, &descriptor)
-        {
-            if old_stop_requested_at.is_none() {
+            && old_stop_requested_at.is_none() {
                 // No durable intent anywhere: roll the in-memory mutation back (a later
                 // descriptor write must not carry a tombstone the rejected stop never
                 // durably set) and fail the stop.
@@ -303,7 +302,6 @@ impl Supervisor {
                 descriptor.archive_on_stop = old_archive_on_stop;
                 return Err(error);
             }
-        }
         drop(descriptor);
         resident
             .intentional_stop

@@ -28,7 +28,7 @@ impl Default for CleanTelemetryEnv {
             .iter()
             .map(|var| {
                 let value = std::env::var(var).ok();
-                std::env::remove_var(var);
+                pa_types::env::remove_var(var);
                 (*var, value)
             })
             .collect();
@@ -45,8 +45,8 @@ impl Drop for CleanTelemetryEnv {
         // while the env lock is still held.
         for (var, value) in self.saved.drain(..) {
             match value {
-                Some(value) => std::env::set_var(var, value),
-                None => std::env::remove_var(var),
+                Some(value) => pa_types::env::set_var(var, value),
+                None => pa_types::env::remove_var(var),
             }
         }
     }
@@ -977,11 +977,10 @@ async fn a_saved_session_listing_reads_each_sessions_harness_store_once() {
     let mut streamed = Vec::new();
     while let Some((bundle, _)) = frames.recv().await {
         for frame in bundle {
-            if let Outbound::Line(line) = frame {
-                if line["type"] == "session_list_item" {
+            if let Outbound::Line(line) = frame
+                && line["type"] == "session_list_item" {
                     streamed.push(line["session"].clone());
                 }
-            }
         }
     }
     let sessions_served = lines[0]["data"]["sessions"].as_array().unwrap();

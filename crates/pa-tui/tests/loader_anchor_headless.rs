@@ -239,7 +239,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 fn loader_elapsed_secs(prompt_age_ms: u64) -> u64 {
     // The ambient TMUX variable adds a startup notice; scrub it so runs are the same inside tmux
     // and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, prompt_age_ms);
@@ -278,13 +278,13 @@ fn loader_elapsed_secs(prompt_age_ms: u64) -> u64 {
                 outcome.frames.len()
             )
         });
-    let elapsed = loader_line
+
+    loader_line
         .split("·")
         .nth(1)
         .and_then(|tail| tail.trim().split(|c: char| !c.is_ascii_digit()).next())
         .and_then(|secs| secs.parse::<u64>().ok())
-        .unwrap_or_else(|| panic!("the loader carries an elapsed readout: {loader_line}"));
-    elapsed
+        .unwrap_or_else(|| panic!("the loader carries an elapsed readout: {loader_line}"))
 }
 
 /// The operator's contract (2026-09-28): the waiting/executing timer counts since the LAST HUMAN

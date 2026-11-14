@@ -804,12 +804,11 @@ pub fn collect_incident_events(
         if lifecycle_classes().contains(incident.event_class.as_str()) {
             let key = format!("{}|{}", incident.category.as_str(), incident.summary);
             let previous = last_seen.get(&key);
-            if let Some((previous_time_ms, previous_component)) = previous {
-                if previous_component != &entry.component
-                    && (incident.time_ms - previous_time_ms).abs() <= 2000
-                {
-                    continue;
-                }
+            if let Some((previous_time_ms, previous_component)) = previous
+                && previous_component != &entry.component
+                && (incident.time_ms - previous_time_ms).abs() <= 2000
+            {
+                continue;
             }
             last_seen.insert(key, (incident.time_ms, entry.component.clone()));
         }

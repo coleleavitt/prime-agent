@@ -61,11 +61,10 @@ impl PluginSettings {
             metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
         );
         let mut memo = self.memo.lock_or_recover();
-        if let Some((seen, value)) = memo.as_ref() {
-            if *seen == stamp {
+        if let Some((seen, value)) = memo.as_ref()
+            && *seen == stamp {
                 return value.clone();
             }
-        }
         let value = match std::fs::read_to_string(&self.path)
             .map_err(|error| error.to_string())
             .and_then(|text| {

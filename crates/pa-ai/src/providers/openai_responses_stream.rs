@@ -305,13 +305,12 @@ impl<'a> ResponsesStreamProcessor<'a> {
         let Some(content_index) = self.slot_block(output_index, "thinking") else {
             return;
         };
-        if let Some(slot) = self.current_slot(output_index) {
-            if let Some(Value::String(text)) = item_parts(&mut slot.item, "summary")
+        if let Some(slot) = self.current_slot(output_index)
+            && let Some(Value::String(text)) = item_parts(&mut slot.item, "summary")
                 .and_then(|summary| summary.last_mut())
                 .and_then(|last_part| last_part.get_mut("text"))
-            {
-                text.push_str("\n\n");
-            }
+        {
+            text.push_str("\n\n");
         }
         self.push_thinking_delta(content_index, "\n\n");
     }
@@ -389,12 +388,11 @@ impl<'a> ResponsesStreamProcessor<'a> {
         let parsed = self
             .current_slot(output_index)
             .and_then(|slot| slot.partial_json.append(delta));
-        if let Some(parsed) = parsed {
-            if let Some(AssistantContent::ToolCall(tool_call)) =
+        if let Some(parsed) = parsed
+            && let Some(AssistantContent::ToolCall(tool_call)) =
                 self.output.content.get_mut(content_index)
-            {
-                tool_call.arguments = parsed.as_object().cloned().unwrap_or_default();
-            }
+        {
+            tool_call.arguments = parsed.as_object().cloned().unwrap_or_default();
         }
         self.writer.push(AssistantMessageEvent::ToolcallDelta {
             content_index: content_index as u64,
@@ -422,14 +420,14 @@ impl<'a> ResponsesStreamProcessor<'a> {
         {
             tool_call.arguments = parsed.as_object().cloned().unwrap_or_default();
         }
-        if let Some(delta) = arguments.strip_prefix(&previous_partial) {
-            if !delta.is_empty() {
-                self.writer.push(AssistantMessageEvent::ToolcallDelta {
-                    content_index: content_index as u64,
-                    delta: delta.to_string(),
-                    partial: self.output.clone(),
-                });
-            }
+        if let Some(delta) = arguments.strip_prefix(&previous_partial)
+            && !delta.is_empty()
+        {
+            self.writer.push(AssistantMessageEvent::ToolcallDelta {
+                content_index: content_index as u64,
+                delta: delta.to_string(),
+                partial: self.output.clone(),
+            });
         }
     }
 
@@ -622,10 +620,10 @@ impl<'a> ResponsesStreamProcessor<'a> {
         if has_tool_call && self.output.stop_reason == StopReason::Stop {
             self.output.stop_reason = StopReason::ToolUse;
         }
-        if self.output.stop_reason == StopReason::Error {
-            if let Some(status) = status {
-                self.output.stop_reason_raw = Some(status.to_string());
-            }
+        if self.output.stop_reason == StopReason::Error
+            && let Some(status) = status
+        {
+            self.output.stop_reason_raw = Some(status.to_string());
         }
     }
 

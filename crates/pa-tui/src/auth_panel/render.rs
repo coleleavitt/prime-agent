@@ -298,10 +298,10 @@ pub(crate) fn auth_actions_row(
 ) -> Line {
     let mut row: Line = vec![Span::raw(" ".to_string())];
     let mut parts: Vec<Line> = Vec::new();
-    if input_visible {
-        if let Some(hint) = key_hint_row(theme, keybindings, "tui.select.confirm", "submit") {
-            parts.push(hint);
-        }
+    if input_visible
+        && let Some(hint) = key_hint_row(theme, keybindings, "tui.select.confirm", "submit")
+    {
+        parts.push(hint);
     }
     if let Some(state) = copy_state {
         let tone = match state {

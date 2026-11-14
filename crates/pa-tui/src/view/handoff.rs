@@ -95,10 +95,10 @@ impl AgentView {
             {
                 continue;
             }
-            if let Some(slots) = self.entry_layout.get(section.entry) {
-                if slots.iter().any(Option::is_some) {
-                    packs.insert(section.entry, slots.clone());
-                }
+            if let Some(slots) = self.entry_layout.get(section.entry)
+                && slots.iter().any(Option::is_some)
+            {
+                packs.insert(section.entry, slots.clone());
             }
         }
         if packs.is_empty() {

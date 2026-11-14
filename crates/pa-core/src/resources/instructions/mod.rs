@@ -218,23 +218,23 @@ impl Loader {
             &agent_dir,
             &mut out,
         );
-        if self.options.claude_user_files {
-            if let Some(home) = self.options.home_dir.clone() {
-                let claude = home.join(CLAUDE_DIR);
-                self.load_file(
-                    &claude.join("CLAUDE.md"),
-                    Origin::plain(InstructionKind::User, None),
-                    0,
-                    None,
-                    &mut out,
-                );
-                self.load_rules_dir(
-                    &claude.join(RULES_DIR),
-                    InstructionKind::User,
-                    &home,
-                    &mut out,
-                );
-            }
+        if self.options.claude_user_files
+            && let Some(home) = self.options.home_dir.clone()
+        {
+            let claude = home.join(CLAUDE_DIR);
+            self.load_file(
+                &claude.join("CLAUDE.md"),
+                Origin::plain(InstructionKind::User, None),
+                0,
+                None,
+                &mut out,
+            );
+            self.load_rules_dir(
+                &claude.join(RULES_DIR),
+                InstructionKind::User,
+                &home,
+                &mut out,
+            );
         }
         let cwd = self.options.cwd.clone();
         let mut ancestors: Vec<PathBuf> = cwd.ancestors().map(Path::to_path_buf).collect();
@@ -403,16 +403,16 @@ impl Loader {
                 continue;
             };
             let resolved = lexical(&resolved);
-            if let Some(base) = import_base {
-                if !canonical(&resolved).starts_with(canonical(base)) {
-                    tracing::debug!(
-                        target: "pa_core::instructions",
-                        import = %resolved.display(),
-                        from = %path.display(),
-                        "an import outside the project directory is not loaded"
-                    );
-                    continue;
-                }
+            if let Some(base) = import_base
+                && !canonical(&resolved).starts_with(canonical(base))
+            {
+                tracing::debug!(
+                    target: "pa_core::instructions",
+                    import = %resolved.display(),
+                    from = %path.display(),
+                    "an import outside the project directory is not loaded"
+                );
+                continue;
             }
             let before = out.len();
             let imported = Origin {

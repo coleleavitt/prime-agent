@@ -197,11 +197,10 @@ fn is_retry_recovery(prior_cmd: &str, follow_cmd: &str, follow_text: &str) -> bo
         // etc. count as distinct classes.
         if first == "python" || first == "python3" {
             let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-            if let Some(idx) = tokens.iter().position(|t| *t == "-m") {
-                if let Some(module) = tokens.get(idx + 1) {
+            if let Some(idx) = tokens.iter().position(|t| *t == "-m")
+                && let Some(module) = tokens.get(idx + 1) {
                     return format!("{first}:{module}");
                 }
-            }
         }
         first.to_string()
     };

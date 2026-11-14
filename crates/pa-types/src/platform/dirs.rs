@@ -130,15 +130,15 @@ mod tests {
             .collect();
         for (name, value) in names {
             match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => crate::env::set_var(name, value),
+                None => crate::env::remove_var(name),
             }
         }
         body();
         for (name, value) in previous {
             match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => crate::env::set_var(name, value),
+                None => crate::env::remove_var(name),
             }
         }
     }

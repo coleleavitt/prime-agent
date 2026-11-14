@@ -46,8 +46,8 @@ pub fn acquire(
     std::fs::create_dir_all(&socket_dir)
         .with_context(|| format!("create {}", socket_dir.display()))?;
     let intent_path = update_intent_path(&socket_dir);
-    if let Some(existing) = read_intent(&intent_path) {
-        if is_intent_holder_alive(&existing) {
+    if let Some(existing) = read_intent(&intent_path)
+        && is_intent_holder_alive(&existing) {
             let join_path = existing
                 .rest
                 .get("status_path")
@@ -57,7 +57,6 @@ pub fn acquire(
                 status_path: join_path,
             });
         }
-    }
     let intent = intent_record(update_id, u64::from(std::process::id()), status_path);
     write_atomically(&intent_path, &intent)?;
     // Another coordinator may have stolen between the read and the write: re-read and let the

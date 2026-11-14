@@ -79,10 +79,10 @@ const LAUNCHER_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// elsewhere.
 #[must_use]
 pub fn installer_script_url(channel: Option<&str>) -> String {
-    if let Ok(url) = std::env::var(ENV_INSTALLER_URL) {
-        if !url.trim().is_empty() {
-            return url;
-        }
+    if let Ok(url) = std::env::var(ENV_INSTALLER_URL)
+        && !url.trim().is_empty()
+    {
+        return url;
     }
     match channel {
         Some("beta") => format!(
@@ -107,10 +107,10 @@ pub fn download_base_url() -> String {
 /// the installer's own `~/.local` default).
 #[must_use]
 pub fn install_prefix() -> PathBuf {
-    if let Some(prefix) = std::env::var_os(ENV_PREFIX) {
-        if !prefix.is_empty() {
-            return PathBuf::from(prefix);
-        }
+    if let Some(prefix) = std::env::var_os(ENV_PREFIX)
+        && !prefix.is_empty()
+    {
+        return PathBuf::from(prefix);
     }
     if let Some(prefix) = running_installer_prefix() {
         return prefix;
@@ -1179,8 +1179,8 @@ echo "installed: 9.9.8-continuous.fedcba9876543210"
         // environment must survive it.
         let prior_override = std::env::var(ENV_INSTALLER_URL).ok();
         let prior_base = std::env::var(ENV_DOWNLOAD_BASE_URL).ok();
-        std::env::remove_var(ENV_INSTALLER_URL);
-        std::env::remove_var(ENV_DOWNLOAD_BASE_URL);
+        pa_types::env::remove_var(ENV_INSTALLER_URL);
+        pa_types::env::remove_var(ENV_DOWNLOAD_BASE_URL);
         assert_eq!(
             installer_script_url(Some("stable")),
             "https://app.primeintellect.ai/prime-agent/install.sh"
@@ -1190,13 +1190,13 @@ echo "installed: 9.9.8-continuous.fedcba9876543210"
             installer_script_url(Some("beta")),
             "https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev/install-beta.sh"
         );
-        std::env::set_var(ENV_DOWNLOAD_BASE_URL, "https://mirror.example/");
+        pa_types::env::set_var(ENV_DOWNLOAD_BASE_URL, "https://mirror.example/");
         assert_eq!(
             installer_script_url(Some("beta")),
             "https://mirror.example/install-beta.sh"
         );
         assert_eq!(installer_script_url(Some("stable")), OFFICIAL_INSTALLER_URL);
-        std::env::set_var(ENV_INSTALLER_URL, "http://127.0.0.1:9/pinned.sh");
+        pa_types::env::set_var(ENV_INSTALLER_URL, "http://127.0.0.1:9/pinned.sh");
         assert_eq!(
             installer_script_url(Some("beta")),
             "http://127.0.0.1:9/pinned.sh"
@@ -1210,8 +1210,8 @@ echo "installed: 9.9.8-continuous.fedcba9876543210"
             (ENV_DOWNLOAD_BASE_URL, prior_base),
         ] {
             match prior {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => pa_types::env::set_var(name, value),
+                None => pa_types::env::remove_var(name),
             }
         }
     }

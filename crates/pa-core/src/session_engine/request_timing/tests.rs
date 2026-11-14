@@ -160,16 +160,14 @@ fn scripted_provider(
                     let _ = on_payload(payload(), &hook_model);
                 }
                 let _ = response_gate.await;
-                if with_response_hook {
-                    if let Some(on_response) = options.on_response.as_ref() {
-                        on_response(
-                            pa_agent::stream::ProviderResponse {
-                                status: 200,
-                                headers: std::collections::BTreeMap::default(),
-                            },
-                            &hook_model,
-                        );
-                    }
+                if with_response_hook && let Some(on_response) = options.on_response.as_ref() {
+                    on_response(
+                        pa_agent::stream::ProviderResponse {
+                            status: 200,
+                            headers: std::collections::BTreeMap::default(),
+                        },
+                        &hook_model,
+                    );
                 }
                 handle.push(AssistantMessageEvent::Start {
                     partial: final_msg.clone(),
@@ -760,14 +758,14 @@ fn truthy_env_flag_follows_the_offline_convention() {
 async fn the_env_override_enables_request_timing() {
     let _guard = REQUEST_TIMING_ENV_LOCK.lock().await;
     let previous = std::env::var(REQUEST_TIMING_ENV).ok();
-    std::env::remove_var(REQUEST_TIMING_ENV);
+    pa_types::env::remove_var(REQUEST_TIMING_ENV);
     assert!(!is_request_timing_enabled(false), "off without the flag");
-    std::env::set_var(REQUEST_TIMING_ENV, "1");
+    pa_types::env::set_var(REQUEST_TIMING_ENV, "1");
     assert!(is_request_timing_enabled(false), "the env alone is on");
     assert!(is_request_timing_enabled(true), "either half is on");
     match previous {
-        Some(value) => std::env::set_var(REQUEST_TIMING_ENV, value),
-        None => std::env::remove_var(REQUEST_TIMING_ENV),
+        Some(value) => pa_types::env::set_var(REQUEST_TIMING_ENV, value),
+        None => pa_types::env::remove_var(REQUEST_TIMING_ENV),
     }
 }
 
@@ -800,7 +798,7 @@ async fn engine_sessions_emit_the_timeline_only_when_the_flag_is_on() {
     // `PI_REQUEST_TIMING` in `beforeEach` for the same isolation).
     let _env = REQUEST_TIMING_ENV_LOCK.lock().await;
     let previous_env = std::env::var(REQUEST_TIMING_ENV).ok();
-    std::env::remove_var(REQUEST_TIMING_ENV);
+    pa_types::env::remove_var(REQUEST_TIMING_ENV);
 
     let dir = tempfile::tempdir().unwrap();
     let agent_dir = dir.path().join("agent");
@@ -916,8 +914,8 @@ async fn engine_sessions_emit_the_timeline_only_when_the_flag_is_on() {
         "flag off writes no entries"
     );
     match previous_env {
-        Some(value) => std::env::set_var(REQUEST_TIMING_ENV, value),
-        None => std::env::remove_var(REQUEST_TIMING_ENV),
+        Some(value) => pa_types::env::set_var(REQUEST_TIMING_ENV, value),
+        None => pa_types::env::remove_var(REQUEST_TIMING_ENV),
     }
 }
 
@@ -1038,7 +1036,7 @@ async fn engine_sessions_capture_the_outbound_payload_when_the_flag_is_on() {
     let _writer_lock = super::payload::WRITER_TEST_LOCK.lock().await;
     let _env = REQUEST_TIMING_ENV_LOCK.lock().await;
     let previous_env = std::env::var(REQUEST_TIMING_ENV).ok();
-    std::env::remove_var(REQUEST_TIMING_ENV);
+    pa_types::env::remove_var(REQUEST_TIMING_ENV);
 
     let dir = tempfile::tempdir().unwrap();
     let agent_dir = dir.path().join("agent");
@@ -1104,7 +1102,7 @@ async fn engine_sessions_capture_the_outbound_payload_when_the_flag_is_on() {
         "flag off leaves no capture"
     );
     match previous_env {
-        Some(value) => std::env::set_var(REQUEST_TIMING_ENV, value),
-        None => std::env::remove_var(REQUEST_TIMING_ENV),
+        Some(value) => pa_types::env::set_var(REQUEST_TIMING_ENV, value),
+        None => pa_types::env::remove_var(REQUEST_TIMING_ENV),
     }
 }

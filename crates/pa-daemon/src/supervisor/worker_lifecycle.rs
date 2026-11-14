@@ -335,11 +335,10 @@ impl Supervisor {
         }
         // A child's RLM identity rides the durable create command too, so a
         // respawned or adopted child stays identifiable for ledger appends.
-        if let Some(metadata) = &runtime_metadata {
-            if let Some(value) = metadata.get("rlmChildId") {
+        if let Some(metadata) = &runtime_metadata
+            && let Some(value) = metadata.get("rlmChildId") {
                 durable_rest.insert("rlmChildId".to_string(), value.clone());
             }
-        }
         // The whole subagent runtime identity rides the durable create command
         // too, so a respawned child keeps its roster identity (parentPath#childId).
         if let Some(runtime_metadata) = &runtime_metadata {
@@ -731,11 +730,10 @@ impl Supervisor {
         };
         // The idle claim the worker reported must match the live setting (a stale ask
         // against a raised threshold is refused).
-        if let Some(reported) = idle_minutes {
-            if reported != threshold {
+        if let Some(reported) = idle_minutes
+            && reported != threshold {
                 return response_success(Some(command_id), type_name, None);
             }
-        }
         // TS `withEvictionFence`: holding every in-flight route permit
         // proves no routed request is still running on this worker (a
         // drained `cron_add` or prompt would fail TS's fresh

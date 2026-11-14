@@ -403,11 +403,11 @@ fn format_execute_text(
         // Replaces the KeyboardInterrupt traceback, which only says where the cell was.
         text.push_str(if text.is_empty() { "" } else { "\n" });
         text.push_str(&cell_timeout_message(limit_ms, kernel_restarted));
-    } else if result.status == ExecuteStatus::Error {
-        if let Some(error) = &result.error {
-            text.push_str(if text.is_empty() { "" } else { "\n" });
-            text.push_str(&error.traceback.join("\n"));
-        }
+    } else if result.status == ExecuteStatus::Error
+        && let Some(error) = &result.error
+    {
+        text.push_str(if text.is_empty() { "" } else { "\n" });
+        text.push_str(&error.traceback.join("\n"));
     }
     if let Some(background) = background_output {
         let separator = if text.is_empty() { "" } else { "\n" };

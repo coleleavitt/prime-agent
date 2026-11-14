@@ -92,21 +92,21 @@ pub(crate) fn resolve_spawn_agent(
         if request.model.is_none() {
             request.model.clone_from(&definition.model);
         }
-        if request.thinking.is_none() {
-            if let Some(effort) = &definition.effort {
-                let level =
-                    crate::kernel::rlm_runtime::normalize_requested_rlm_subagent_thinking_level(
-                        Some(effort),
-                        OPERATION,
+        if request.thinking.is_none()
+            && let Some(effort) = &definition.effort
+        {
+            let level =
+                crate::kernel::rlm_runtime::normalize_requested_rlm_subagent_thinking_level(
+                    Some(effort),
+                    OPERATION,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "agent {name:?} ({}) has an invalid effort: {error}",
+                        definition.path.display()
                     )
-                    .map_err(|error| {
-                        anyhow!(
-                            "agent {name:?} ({}) has an invalid effort: {error}",
-                            definition.path.display()
-                        )
-                    })?;
-                request.thinking = level.map(str::to_string);
-            }
+                })?;
+            request.thinking = level.map(str::to_string);
         }
         isolation = isolation.or(definition.isolation);
         request.agent = Some(definition);

@@ -77,10 +77,10 @@ impl GoogleStreamState {
         writer: &AssistantMessageEventWriter,
     ) -> Result<(), String> {
         use AssistantMessageEvent;
-        if output.response_id.is_none() {
-            if let Some(id) = chunk.get("responseId").and_then(|value| value.as_str()) {
-                output.response_id = Some(id.to_string());
-            }
+        if output.response_id.is_none()
+            && let Some(id) = chunk.get("responseId").and_then(|value| value.as_str())
+        {
+            output.response_id = Some(id.to_string());
         }
         let candidate = chunk
             .get("candidates")

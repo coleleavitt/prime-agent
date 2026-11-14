@@ -135,12 +135,11 @@ impl CloudFamilyRequester {
                 },
                 PendingKind::Message(sender),
             ) => {
-                if ok {
-                    if let Some(receipt) = receipt {
+                if ok
+                    && let Some(receipt) = receipt {
                         let _ = sender.send(Ok(receipt));
                         return ResolveOutcome::Resolved;
                     }
-                }
                 let _ = sender.send(Err(error.unwrap_or_else(|| {
                     "the supervisor could not deliver the agent message".to_string()
                 })));

@@ -347,11 +347,7 @@ fn worker_to_worker_kernel_send_delivers_over_the_peer_transport() {
     let Some(messaging) = setup_messaging() else {
         return;
     };
-    let Messaging {
-        ref alpha,
-        ref beta,
-        ..
-    } = &messaging;
+    let Messaging { alpha, beta, .. } = &messaging;
     let (mut client, _hello) = Client::connect(&messaging.socket);
 
     prompt(

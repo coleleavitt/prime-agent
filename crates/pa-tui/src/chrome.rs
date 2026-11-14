@@ -479,10 +479,10 @@ pub fn render_splash(state: &ChromeState, theme: &Theme, width: usize) -> Vec<Li
             spans.push(Span::styled(" ".repeat(fill), Style::default()));
         }
         let meta_index = index as isize - meta_start as isize;
-        if meta_index >= 0 {
-            if let Some(meta_line) = meta_lines.get(meta_index as usize) {
-                spans.extend(meta_line.iter().cloned());
-            }
+        if meta_index >= 0
+            && let Some(meta_line) = meta_lines.get(meta_index as usize)
+        {
+            spans.extend(meta_line.iter().cloned());
         }
         let used: usize = spans.iter().map(|s| str_width(&s.content)).sum();
         spans.push(Span::styled(

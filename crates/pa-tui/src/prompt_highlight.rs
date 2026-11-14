@@ -304,11 +304,11 @@ impl PromptTokenMask {
     /// run; literal mask-range characters stay untouched.
     pub fn restore_line(&self, theme: &Theme, line: &Line) -> Line {
         let push = |out: &mut Line, content: &str, style: Style| {
-            if let Some(last) = out.last_mut() {
-                if last.style == style {
-                    last.content.push_str(content);
-                    return;
-                }
+            if let Some(last) = out.last_mut()
+                && last.style == style
+            {
+                last.content.push_str(content);
+                return;
             }
             out.push(Span::styled(content.to_string(), style));
         };
@@ -397,12 +397,11 @@ pub fn editor_chunk_highlights(
             span.color,
         ));
     }
-    if let Some(command) = command {
-        if SlashCommandRegistry::builtin_cached().is_builtin(&command.name)
-            && cursor_col.is_none_or(|cursor| cursor >= command.end)
-        {
-            out.push((command.start, command.end, ThemeColor::Accent));
-        }
+    if let Some(command) = command
+        && SlashCommandRegistry::builtin_cached().is_builtin(&command.name)
+        && cursor_col.is_none_or(|cursor| cursor >= command.end)
+    {
+        out.push((command.start, command.end, ThemeColor::Accent));
     }
     out
 }

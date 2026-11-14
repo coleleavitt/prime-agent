@@ -156,11 +156,10 @@ fn a_cancel_mid_run_settles_cancelled_without_an_error() {
         rng: Some(SeededRng::new(&Seed::Number(5))),
         llm_experiments: true,
         on_update: Arc::new(move |status| {
-            if status.phase == DreamRunPhase::Rollout {
-                if let Some(service) = canceller.get() {
+            if status.phase == DreamRunPhase::Rollout
+                && let Some(service) = canceller.get() {
                     assert!(service.cancel());
                 }
-            }
         }),
     });
     let _ = cell.set(service.clone());
@@ -428,11 +427,10 @@ fn a_cancel_at_the_first_arm_settles_cancelled_and_writes_no_result() {
         rng: None,
         llm_experiments: true,
         on_update: Arc::new(move |status| {
-            if status.arm.is_some() {
-                if let Some(service) = canceller.get() {
+            if status.arm.is_some()
+                && let Some(service) = canceller.get() {
                     service.cancel();
                 }
-            }
         }),
     });
     let _ = cell.set(service.clone());
@@ -731,11 +729,9 @@ fn a_cancel_after_the_first_seed_keeps_its_result_and_stops() {
                 .result_paths
                 .as_ref()
                 .is_some_and(|paths| paths.len() == 1)
-            {
-                if let Some(service) = canceller.get() {
+                && let Some(service) = canceller.get() {
                     service.cancel();
                 }
-            }
         }),
     });
     let _ = cell.set(service.clone());

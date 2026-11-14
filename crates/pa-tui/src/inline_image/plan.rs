@@ -40,10 +40,10 @@ fn cells_blank(line: &Line, tag: &Marker) -> bool {
 pub(crate) fn markers(frame: &[Line]) -> Vec<Marker> {
     let mut seen: Vec<Marker> = Vec::new();
     for line in frame {
-        if let Some(tag) = line.iter().find_map(|span| parse_marker(&span.content)) {
-            if !seen.iter().any(|known| known.key == tag.key) {
-                seen.push(tag);
-            }
+        if let Some(tag) = line.iter().find_map(|span| parse_marker(&span.content))
+            && !seen.iter().any(|known| known.key == tag.key)
+        {
+            seen.push(tag);
         }
     }
     seen

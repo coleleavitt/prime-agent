@@ -166,11 +166,10 @@ fn read_tail(path: &Path) -> Result<Option<String>> {
     file.take(SCAN_BYTES)
         .read_to_end(&mut bytes)
         .with_context(|| format!("read worker stderr log {}", path.display()))?;
-    if start > 0 {
-        if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
+    if start > 0
+        && let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
             bytes.drain(..=newline);
         }
-    }
     let window = String::from_utf8_lossy(&bytes);
     let collapsed = elide_backtraces(&window, start > 0);
     let contents = last_whole_lines(collapsed.trim_end(), TAIL_BYTES);

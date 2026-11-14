@@ -193,10 +193,10 @@ pub fn main_repo_root(cwd: &Path) -> Result<PathBuf, WorktreeError> {
     )
     .map_err(|_| not_a_repo())?;
     let common = PathBuf::from(common);
-    if common.file_name().is_some_and(|name| name == ".git") {
-        if let Some(root) = common.parent() {
-            return Ok(root.to_path_buf());
-        }
+    if common.file_name().is_some_and(|name| name == ".git")
+        && let Some(root) = common.parent()
+    {
+        return Ok(root.to_path_buf());
     }
     git::stdout(cwd, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
@@ -228,28 +228,28 @@ pub fn is_managed_path(repo_root: &Path, path: &Path) -> bool {
 pub fn create(request: &CreateRequest) -> Result<Worktree, WorktreeError> {
     let name = request.name.clone().unwrap_or_else(random_name);
     validate_name(&name)?;
-    if let Some(context) = &request.hooks {
-        if let Some(created) = hooks().and_then(|hooks| hooks.create(context, &name)) {
-            let path = created.map_err(WorktreeError::Hook)?;
-            if !path.is_absolute() || !path.is_dir() {
-                return Err(WorktreeError::Hook(format!(
-                    "the hook's path {} is not an existing absolute directory (the hook must \
+    if let Some(context) = &request.hooks
+        && let Some(created) = hooks().and_then(|hooks| hooks.create(context, &name))
+    {
+        let path = created.map_err(WorktreeError::Hook)?;
+        if !path.is_absolute() || !path.is_dir() {
+            return Err(WorktreeError::Hook(format!(
+                "the hook's path {} is not an existing absolute directory (the hook must \
                      print the directory it created as the last line of its stdout)",
-                    path.display()
-                )));
-            }
-            let base_commit = git::resolve_commit(&path, "HEAD");
-            return Ok(Worktree {
-                name,
-                repo_root: main_repo_root(&path).ok(),
-                path,
-                branch: None,
-                base_commit,
-                existed: false,
-                hook_based: true,
-                copied: Vec::new(),
-            });
+                path.display()
+            )));
         }
+        let base_commit = git::resolve_commit(&path, "HEAD");
+        return Ok(Worktree {
+            name,
+            repo_root: main_repo_root(&path).ok(),
+            path,
+            branch: None,
+            base_commit,
+            existed: false,
+            hook_based: true,
+            copied: Vec::new(),
+        });
     }
     let repo_root = main_repo_root(&request.from)?;
     let dir = worktrees_dir(&repo_root);

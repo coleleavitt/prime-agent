@@ -98,19 +98,18 @@ pub fn state_report(state: &StateRun, include_answer: bool) -> Value {
                 .count(),
         ),
     );
-    if include_answer {
-        if let Some(answer) = state
+    if include_answer
+        && let Some(answer) = state
             .latest_settle()
             .and_then(|entry| entry.answer.as_deref())
             .filter(|answer| !answer.is_empty())
-        {
-            // The report previews compactly; the full binding text stays
-            // on the entry.
-            report.insert(
-                "answer_preview".into(),
-                Value::from(char_prefix(answer, ANSWER_CAPTURE_CAP)),
-            );
-        }
+    {
+        // The report previews compactly; the full binding text stays
+        // on the entry.
+        report.insert(
+            "answer_preview".into(),
+            Value::from(char_prefix(answer, ANSWER_CAPTURE_CAP)),
+        );
     }
     if let Some(error) = &state.error {
         report.insert("error".into(), Value::from(error.clone()));
@@ -599,18 +598,18 @@ fn wire_row_is_live(row: &Value) -> bool {
 /// row never drops and one row always stays.
 fn shed_runs(runs: &mut Vec<Value>) -> bool {
     for row in runs.iter_mut() {
-        if let Some(tail) = row.get_mut("events").and_then(Value::as_array_mut) {
-            if tail.len() > 1 {
-                tail.remove(0);
-                return true;
-            }
-        }
-    }
-    if runs.len() > 1 {
-        if let Some(index) = runs.iter().position(|row| !wire_row_is_live(row)) {
-            runs.remove(index);
+        if let Some(tail) = row.get_mut("events").and_then(Value::as_array_mut)
+            && tail.len() > 1
+        {
+            tail.remove(0);
             return true;
         }
+    }
+    if runs.len() > 1
+        && let Some(index) = runs.iter().position(|row| !wire_row_is_live(row))
+    {
+        runs.remove(index);
+        return true;
     }
     false
 }
@@ -625,20 +624,18 @@ pub fn cap_factory_frame(frame: &mut Value) {
         if let Some(events) = result
             .and_then(|result| result.get_mut("events"))
             .and_then(Value::as_array_mut)
+            && events.len() > 1
         {
-            if events.len() > 1 {
-                events.remove(0);
-                continue;
-            }
+            events.remove(0);
+            continue;
         }
         if let Some(runs) = frame
             .get_mut("result")
             .and_then(|result| result.get_mut("runs"))
             .and_then(Value::as_array_mut)
+            && shed_runs(runs)
         {
-            if shed_runs(runs) {
-                continue;
-            }
+            continue;
         }
         if let Some(object) = frame.as_object_mut() {
             object.remove("result");

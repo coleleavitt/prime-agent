@@ -39,10 +39,10 @@ fn registry() -> std::sync::MutexGuard<'static, Registry> {
 fn update(session_id: &str, change: impl FnOnce(&mut Facts)) {
     let mut registry = registry();
     if !registry.facts.contains_key(session_id) {
-        if registry.order.len() >= MAX_SESSIONS {
-            if let Some(oldest) = registry.order.pop_front() {
-                registry.facts.remove(&oldest);
-            }
+        if registry.order.len() >= MAX_SESSIONS
+            && let Some(oldest) = registry.order.pop_front()
+        {
+            registry.facts.remove(&oldest);
         }
         registry.order.push_back(session_id.to_string());
     }

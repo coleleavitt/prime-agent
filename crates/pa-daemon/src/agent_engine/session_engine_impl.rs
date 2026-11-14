@@ -1128,12 +1128,11 @@ impl SessionEngine for AgentSessionEngine {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Value>> + Send + '_>> {
         Box::pin(async move {
             // This port builds the core session lazily; a read before any turn builds it now.
-            if let Ok(model) = self.resolve_model() {
-                if let Err(error) = self.ensure_core_session_async(&model).await {
+            if let Ok(model) = self.resolve_model()
+                && let Err(error) = self.ensure_core_session_async(&model).await {
                     eprintln!("get_commands session build failed: {error:#}");
                     return Vec::new();
                 }
-            }
             let guard = self.session.lock().await;
             let Some(engine) = guard.as_deref() else {
                 return Vec::new();

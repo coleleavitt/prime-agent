@@ -44,8 +44,8 @@ impl EnvOverride {
             .collect();
         for (key, value) in pairs {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                Some(value) => pa_types::env::set_var(key, value),
+                None => pa_types::env::remove_var(key),
             }
         }
         EnvOverride { saved }
@@ -56,8 +56,8 @@ impl Drop for EnvOverride {
     fn drop(&mut self) {
         for (key, value) in &self.saved {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                Some(value) => pa_types::env::set_var(key, value),
+                None => pa_types::env::remove_var(key),
             }
         }
     }
@@ -138,8 +138,8 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         )],
     );
     for step in &mut steps {
-        if let ScriptStep::Event(event) = step {
-            if let AssistantMessageEvent::Done { message, .. } = &mut **event {
+        if let ScriptStep::Event(event) = step
+            && let AssistantMessageEvent::Done { message, .. } = &mut **event {
                 message.usage = pa_agent::types::Usage {
                     input: 100,
                     output: 20,
@@ -149,7 +149,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
                     cost: pa_agent::types::UsageCost::default(),
                 };
             }
-        }
     }
     provider.push_turn(ScriptedTurn::Events(steps));
     provider.push_text_turn("boundary reached");

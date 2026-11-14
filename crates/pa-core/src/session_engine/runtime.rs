@@ -218,10 +218,10 @@ impl SessionRuntime {
                         )?;
                         // The embedding's post-mutation work: withdraw the
                         // queued fire and re-arm the cron scheduler.
-                        if let Some(mutation) = outcome.mutation {
-                            if let Some(hook) = &mutation_hook {
-                                hook(mutation).await;
-                            }
+                        if let Some(mutation) = outcome.mutation
+                            && let Some(hook) = &mutation_hook
+                        {
+                            hook(mutation).await;
                         }
                         Ok(outcome.response)
                     })

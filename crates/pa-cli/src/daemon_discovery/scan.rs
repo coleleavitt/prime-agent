@@ -271,11 +271,10 @@ fn proc_socket_inodes() -> Vec<(u32, String, std::collections::HashSet<String>)>
                 let Some(target) = target.to_str() else {
                     continue;
                 };
-                if let Some(rest) = target.strip_prefix("socket:[") {
-                    if let Some(inode) = rest.strip_suffix(']') {
+                if let Some(rest) = target.strip_prefix("socket:[")
+                    && let Some(inode) = rest.strip_suffix(']') {
                         inodes.insert(inode.to_string());
                     }
-                }
             }
         }
         processes.push((pid, comm.trim_end().to_string(), inodes));

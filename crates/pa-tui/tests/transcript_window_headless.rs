@@ -243,7 +243,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 }
 
 fn run(paging: Paging, steps: Vec<HeadlessStep>) -> (Vec<String>, Vec<Value>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let pages = Arc::new(Mutex::new(Vec::new()));

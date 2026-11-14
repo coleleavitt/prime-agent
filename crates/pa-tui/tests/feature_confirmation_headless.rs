@@ -242,7 +242,7 @@ fn key(code: KeyCode) -> HeadlessStep {
 
 #[test]
 fn hook_questions_open_the_confirm_panel_and_send_the_answers() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let answers: Answers = Arc::default();

@@ -287,11 +287,11 @@ impl Editor {
         let Some(vim) = self.vim.as_mut() else {
             return;
         };
-        if let Some(digit) = key.to_digit(10) {
-            if digit != 0 || vim.count.is_some() {
-                vim.count = Some(vim.count.unwrap_or(0) * 10 + digit as usize);
-                return;
-            }
+        if let Some(digit) = key.to_digit(10)
+            && (digit != 0 || vim.count.is_some())
+        {
+            vim.count = Some(vim.count.unwrap_or(0) * 10 + digit as usize);
+            return;
         }
         let count = vim.count.take().unwrap_or(1);
         if let Some((operator, operator_count)) = vim.operator.take() {

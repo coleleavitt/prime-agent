@@ -211,13 +211,12 @@ async fn drive(
             .map_err(PhaseFailure::after_stop)?;
     }
     // `Stopped`: fence-free predecessor exit wait (spec §9).
-    if let Some(identity) = &predecessor {
-        if !wait_for_exit(identity, budget.predecessor_exit_ms).await {
+    if let Some(identity) = &predecessor
+        && !wait_for_exit(identity, budget.predecessor_exit_ms).await {
             return Err(PhaseFailure::after_stop(
                 "the predecessor supervisor did not exit within its budget",
             ));
         }
-    }
     // Wait the persisted fence out before anything takes the socket again
     // (TS package-manager-cli.ts:1440, `UPDATE_RESTART_PREDECESSOR_FENCE_TIMEOUT_MS`):
     // the record clears only when the pinned predecessor process is gone -

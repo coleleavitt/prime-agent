@@ -415,10 +415,10 @@ impl IpythonKernelProvisioner {
         on_progress: Option<KernelBootstrapProgressHandler>,
         signal: Option<AbortSignal>,
     ) -> anyhow::Result<ReplKernelManager> {
-        if let Some(signal) = &signal {
-            if signal.is_aborted() {
-                return Err(anyhow!("Python execution aborted"));
-            }
+        if let Some(signal) = &signal
+            && signal.is_aborted()
+        {
+            return Err(anyhow!("Python execution aborted"));
         }
         // The guard is strictly scoped to this decision block: a
         // conditionally-dropped non-Send MutexGuard would make ensure()
@@ -428,16 +428,16 @@ impl IpythonKernelProvisioner {
             if state.disposed {
                 return Err(anyhow!("Kernel provisioner disposed"));
             }
-            if let Some(manager) = &state.manager {
-                if manager.is_defunct() {
-                    // A kernel that died on its own is replaced by the boot
-                    // below; its exit is kept for the one-time notice.
-                    if let Some(exit) = manager.unexpected_exit() {
-                        state.unreported_exit = Some(exit);
-                    }
-                    state.manager = None;
-                    state.startup = None;
+            if let Some(manager) = &state.manager
+                && manager.is_defunct()
+            {
+                // A kernel that died on its own is replaced by the boot
+                // below; its exit is kept for the one-time notice.
+                if let Some(exit) = manager.unexpected_exit() {
+                    state.unreported_exit = Some(exit);
                 }
+                state.manager = None;
+                state.startup = None;
             }
             if let Some(manager) = state.manager.clone() {
                 return Ok(manager);
@@ -587,10 +587,10 @@ impl IpythonKernelProvisioner {
             },
             None => wait.await,
         };
-        if let Some(signal) = &signal {
-            if signal.is_aborted() {
-                return Err(anyhow!("Python execution aborted"));
-            }
+        if let Some(signal) = &signal
+            && signal.is_aborted()
+        {
+            return Err(anyhow!("Python execution aborted"));
         }
         completion.map_err(|error| anyhow!("kernel startup task closed: {error}"))?;
         let settled = startup
@@ -1482,10 +1482,9 @@ async fn start_kernel_impl(
                         .startup
                         .as_ref()
                         .is_some_and(|armed| armed.same_channel(memo))
+                    && let Some(on_unavailable_skills) = &inner.options.on_unavailable_skills
                 {
-                    if let Some(on_unavailable_skills) = &inner.options.on_unavailable_skills {
-                        on_unavailable_skills(&errors);
-                    }
+                    on_unavailable_skills(&errors);
                 }
             }
         }
@@ -2034,15 +2033,15 @@ mod tests {
     fn boot_concurrency_defaults_and_override() {
         let default = default_kernel_boot_concurrency();
         assert!(default >= 4);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "2");
+        pa_types::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "2");
         assert_eq!(resolve_kernel_boot_concurrency(), 2);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "0");
+        pa_types::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "0");
         assert_eq!(resolve_kernel_boot_concurrency(), default);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "junk");
+        pa_types::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "junk");
         assert_eq!(resolve_kernel_boot_concurrency(), default);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "1000");
+        pa_types::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "1000");
         assert_eq!(resolve_kernel_boot_concurrency(), 64);
-        std::env::remove_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS");
+        pa_types::env::remove_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS");
     }
 
     #[tokio::test]

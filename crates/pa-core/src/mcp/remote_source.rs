@@ -60,12 +60,12 @@ pub fn remote_plugins_snapshot(agent_dir: &Path) -> Option<PluginsCatalog> {
 /// The validated last-good disk cache: The packaged bundle is deliberately NOT part of this read.
 fn cache_plugins_snapshot(agent_dir: &Path) -> Option<PluginsCatalog> {
     for path in cache_candidates(agent_dir) {
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Some(catalog) = snapshot_catalog(&bytes) {
-                return Some(catalog);
-            }
-            // An unusable candidate falls through to the next one.
+        if let Ok(bytes) = std::fs::read(&path)
+            && let Some(catalog) = snapshot_catalog(&bytes)
+        {
+            return Some(catalog);
         }
+        // An unusable candidate falls through to the next one.
     }
     None
 }

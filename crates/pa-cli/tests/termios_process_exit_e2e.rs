@@ -110,11 +110,10 @@ fn diff_view_child_mode() {
         pa_tui::agents_view::AgentsViewUiMode::Terminal,
         None,
     ));
-    if let Ok(view) = view {
-        if let Some(link) = view.link {
+    if let Ok(view) = view
+        && let Some(link) = view.link {
             link.close();
         }
-    }
     harness::quiet_child_epilogue();
 }
 
@@ -156,11 +155,10 @@ fn assert_no_process_holds_the_pty(master: &std::fs::File, context: &str) {
             continue;
         };
         for fd in fds.flatten() {
-            if let Ok(link) = std::fs::read_link(fd.path()) {
-                if link == slave {
+            if let Ok(link) = std::fs::read_link(fd.path())
+                && link == slave {
                     holders.push(pid);
                 }
-            }
         }
     }
     assert!(

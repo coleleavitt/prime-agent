@@ -333,7 +333,7 @@ fn run_attached_with_validation(
     history_leaf_id: Option<&'static str>,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -365,7 +365,7 @@ fn run_attached_holding_backfill(
     height: u16,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let requests = Arc::new(Mutex::new(Vec::new()));

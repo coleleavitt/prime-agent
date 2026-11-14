@@ -129,7 +129,7 @@ pub enum AuthPanelRequest {
     /// run loop's counter so a superseded run's late settle cannot clear a newer login.
     TracesSettled {
         outcome: TraceLoginOutcome,
-        gen: u64,
+        r#gen: u64,
     },
 }
 

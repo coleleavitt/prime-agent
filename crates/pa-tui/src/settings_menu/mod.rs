@@ -128,11 +128,12 @@ pub fn settings_menu_rows(current: &SettingsCurrentValues) -> Vec<SettingsMenuRo
         .map(ToString::to_string)
         .chain([30, 60, 90, 180, 360].iter().map(ToString::to_string))
         .collect();
-    if let Ok(minutes) = current.idle_eviction_minutes.parse::<u32>() {
-        if minutes > 0 && !idle_values.contains(&minutes.to_string()) {
-            idle_values.push(minutes.to_string());
-            idle_values[1..].sort_by_key(|value| value.parse::<u32>().unwrap_or(0));
-        }
+    if let Ok(minutes) = current.idle_eviction_minutes.parse::<u32>()
+        && minutes > 0
+        && !idle_values.contains(&minutes.to_string())
+    {
+        idle_values.push(minutes.to_string());
+        idle_values[1..].sort_by_key(|value| value.parse::<u32>().unwrap_or(0));
     }
     let percent =
         if pa_types::compaction::is_valid_threshold_percent(current.compaction_threshold_percent) {
@@ -481,18 +482,16 @@ impl SettingsMenu {
         if key == "right" {
             return self.cycle_selected(1);
         }
-        if self.tabs[self.tab].search.value().is_empty() {
-            if let [character] = key.chars().collect::<Vec<char>>()[..] {
-                if let Some(tab) = character
-                    .to_digit(10)
-                    .filter(|digit| *digit > 0)
-                    .map(|digit| digit as usize - 1)
-                    .filter(|tab| *tab < self.tabs.len())
-                {
-                    self.switch_tab(tab);
-                    return SettingsMenuAction::None;
-                }
-            }
+        if self.tabs[self.tab].search.value().is_empty()
+            && let [character] = key.chars().collect::<Vec<char>>()[..]
+            && let Some(tab) = character
+                .to_digit(10)
+                .filter(|digit| *digit > 0)
+                .map(|digit| digit as usize - 1)
+                .filter(|tab| *tab < self.tabs.len())
+        {
+            self.switch_tab(tab);
+            return SettingsMenuAction::None;
         }
         if kb.matches(key, "tui.select.up") {
             let tab = self.active_mut();

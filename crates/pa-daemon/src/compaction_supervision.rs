@@ -421,7 +421,7 @@ impl crate::supervisor::Supervisor {
         resident: &Arc<crate::registry::ResidentWorker>,
         command: &pa_types::daemon::DaemonCommand,
         client_id: &str,
-    ) -> impl std::future::Future<Output = Option<Result<pa_types::daemon::DaemonResponse>>> + Send
+    ) -> impl std::future::Future<Output = Option<Result<pa_types::daemon::DaemonResponse>>> + Send + use<>
     {
         let payload = crate::supervisor::client_command_payload(command, client_id)
             .ok()

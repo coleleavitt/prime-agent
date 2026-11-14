@@ -744,10 +744,10 @@ impl ReplKernelManager {
     ///
     /// Returns an error when the abort signal fires or the kernel fails to spawn or bootstrap.
     pub async fn start(&self, options: KernelStartOptions) -> anyhow::Result<()> {
-        if let Some(signal) = &options.signal {
-            if signal.is_aborted() {
-                return Err(anyhow!("Kernel startup aborted"));
-            }
+        if let Some(signal) = &options.signal
+            && signal.is_aborted()
+        {
+            return Err(anyhow!("Kernel startup aborted"));
         }
         // The guard is strictly scoped: a conditionally dropped non-Send
         // MutexGuard would make the whole future non-Send.

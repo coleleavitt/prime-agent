@@ -135,10 +135,10 @@ fn pattern_reaches_into(patterns: &[&str], dir: &str) -> bool {
         if pattern.starts_with(dir) {
             return true;
         }
-        if let Some(glob) = pattern.find(['*', '?', '[']).filter(|&at| at > 0) {
-            if dir.starts_with(&pattern[..glob]) {
-                return true;
-            }
+        if let Some(glob) = pattern.find(['*', '?', '[']).filter(|&at| at > 0)
+            && dir.starts_with(&pattern[..glob])
+        {
+            return true;
         }
         let mut floating = pattern;
         while let Some(rest) = floating.strip_prefix("**/") {

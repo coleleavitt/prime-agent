@@ -280,11 +280,10 @@ fn session_state(session_file: &Path) -> String {
         let Ok(entry) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
-        if entry.get("type").and_then(Value::as_str) == Some("session_state") {
-            if let Some(status) = entry["state"]["status"].as_str() {
+        if entry.get("type").and_then(Value::as_str) == Some("session_state")
+            && let Some(status) = entry["state"]["status"].as_str() {
                 state = status.to_string();
             }
-        }
     }
     state
 }

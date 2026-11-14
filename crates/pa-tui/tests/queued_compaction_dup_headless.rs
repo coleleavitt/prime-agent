@@ -285,7 +285,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 fn a_row_racing_the_post_compaction_collapse_renders_once() {
     // The ambient TMUX variable adds a startup notice to the
     // transcript; scrub it so the run is the same inside tmux and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor {
@@ -331,7 +331,7 @@ fn a_row_racing_the_post_compaction_collapse_renders_once() {
 /// collapse.
 #[test]
 fn a_settled_compaction_refreshes_the_tray_stats() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor {
@@ -368,7 +368,7 @@ fn a_settled_compaction_refreshes_the_tray_stats() {
 /// Replay both sides of the daemon's atomic custom-row/collapse ordering.
 #[test]
 fn custom_rows_before_and_after_collapse_render_once() {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor {

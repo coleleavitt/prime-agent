@@ -43,10 +43,10 @@ impl Rule for SecretEcho {
                     invocation.shown()
                 )));
             }
-            if let Some((path, reveals)) = secret_read(invocation, home.as_deref()) {
-                if reaches_transcript(check.model, invocation, reveals, 0) {
-                    return Some(message(&format!("a known secret file ({path}{place})")));
-                }
+            if let Some((path, reveals)) = secret_read(invocation, home.as_deref())
+                && reaches_transcript(check.model, invocation, reveals, 0)
+            {
+                return Some(message(&format!("a known secret file ({path}{place})")));
             }
         }
         let (node, evidence) =
@@ -529,11 +529,12 @@ fn secret_read(invocation: &Invocation, home: Option<&Path>) -> Option<(String, 
             skip = false;
             continue;
         }
-        if let Some(text) = arg.known() {
-            if text.starts_with('-') && text.len() > 1 {
-                skip = matches!(text, "-n" | "-c" | "--lines" | "--bytes");
-                continue;
-            }
+        if let Some(text) = arg.known()
+            && text.starts_with('-')
+            && text.len() > 1
+        {
+            skip = matches!(text, "-n" | "-c" | "--lines" | "--bytes");
+            continue;
         }
         let shown = arg.shown();
         let candidates: Vec<String> = match arg {

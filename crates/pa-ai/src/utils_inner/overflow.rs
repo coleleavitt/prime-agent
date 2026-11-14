@@ -62,18 +62,18 @@ fn non_overflow_patterns() -> &'static Vec<Regex> {
 /// length-stop overflow (server truncates input, returns `stop_reason` "length" with zero output).
 #[must_use]
 pub fn is_context_overflow(message: &AssistantMessage, context_window: Option<u64>) -> bool {
-    if message.stop_reason == StopReason::Error {
-        if let Some(error_message) = &message.error_message {
-            let is_non_overflow = non_overflow_patterns()
+    if message.stop_reason == StopReason::Error
+        && let Some(error_message) = &message.error_message
+    {
+        let is_non_overflow = non_overflow_patterns()
+            .iter()
+            .any(|p| p.is_match(error_message));
+        if !is_non_overflow
+            && overflow_patterns()
                 .iter()
-                .any(|p| p.is_match(error_message));
-            if !is_non_overflow
-                && overflow_patterns()
-                    .iter()
-                    .any(|p| p.is_match(error_message))
-            {
-                return true;
-            }
+                .any(|p| p.is_match(error_message))
+        {
+            return true;
         }
     }
 

@@ -234,10 +234,10 @@ async fn run_stream(
         });
 
     let mut payload = build_chat_payload(model, context, &transformed_messages, &options);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(payload.clone(), model) {
-            payload = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(payload.clone(), model)
+    {
+        payload = next;
     }
 
     // The mistralai SDK defaults to https://api.mistral.ai and posts to /v1/chat/completions; a
@@ -476,12 +476,11 @@ impl MistralStreamState {
         writer: &AssistantMessageEventWriter,
     ) {
         // Keep the first non-empty streamed id as the response identifier.
-        if output.response_id.is_none() {
-            if let Some(id) = chunk.get("id").and_then(Value::as_str) {
-                if !id.is_empty() {
-                    output.response_id = Some(id.to_string());
-                }
-            }
+        if output.response_id.is_none()
+            && let Some(id) = chunk.get("id").and_then(Value::as_str)
+            && !id.is_empty()
+        {
+            output.response_id = Some(id.to_string());
         }
 
         if let Some(usage) = chunk.get("usage").filter(|usage| usage.is_object()) {
@@ -664,10 +663,10 @@ impl MistralStreamState {
                 .entry(block_index)
                 .or_default()
                 .append(&args_delta);
-            if let Some(parsed) = parsed {
-                if let AssistantContent::ToolCall(block) = &mut output.content[block_index] {
-                    block.arguments = json_object(parsed);
-                }
+            if let Some(parsed) = parsed
+                && let AssistantContent::ToolCall(block) = &mut output.content[block_index]
+            {
+                block.arguments = json_object(parsed);
             }
             writer.push(AssistantMessageEvent::ToolcallDelta {
                 content_index: block_index as u64,

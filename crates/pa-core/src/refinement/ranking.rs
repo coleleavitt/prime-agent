@@ -362,32 +362,33 @@ pub fn format_harness_state_for_prompt(
         // an external reranker's ordering over this kind's entries if one
         // is attached. Packages keep their position (they're read-only
         // overlays); only editable entries are reordered among themselves.
-        if let (Some(hook), Some(terms)) = (options.rerank_hook.as_ref(), query_terms.as_ref()) {
-            if !entries.is_empty() && !terms.is_empty() {
-                let (packages, editable): (Vec<_>, Vec<_>) = entries.into_iter().partition(package);
-                if let Some(ids) = hook(&editable, terms) {
-                    let by_id: std::collections::HashMap<String, HarnessEntry> =
-                        editable.into_iter().map(|e| (e.id.clone(), e)).collect();
-                    let mut reordered: Vec<HarnessEntry> = Vec::with_capacity(by_id.len());
-                    for id in &ids {
-                        if let Some(entry) = by_id.get(id) {
-                            reordered.push(entry.clone());
-                        }
+        if let (Some(hook), Some(terms)) = (options.rerank_hook.as_ref(), query_terms.as_ref())
+            && !entries.is_empty()
+            && !terms.is_empty()
+        {
+            let (packages, editable): (Vec<_>, Vec<_>) = entries.into_iter().partition(package);
+            if let Some(ids) = hook(&editable, terms) {
+                let by_id: std::collections::HashMap<String, HarnessEntry> =
+                    editable.into_iter().map(|e| (e.id.clone(), e)).collect();
+                let mut reordered: Vec<HarnessEntry> = Vec::with_capacity(by_id.len());
+                for id in &ids {
+                    if let Some(entry) = by_id.get(id) {
+                        reordered.push(entry.clone());
                     }
-                    // Any editable entry the hook omitted falls to the end,
-                    // native-order (so a dropped doc still shows under
-                    // `+N more`).
-                    for (_, entry) in by_id {
-                        if !reordered.iter().any(|e| e.id == entry.id) {
-                            reordered.push(entry);
-                        }
-                    }
-                    entries = packages;
-                    entries.extend(reordered);
-                } else {
-                    entries = packages;
-                    entries.extend(editable);
                 }
+                // Any editable entry the hook omitted falls to the end,
+                // native-order (so a dropped doc still shows under
+                // `+N more`).
+                for (_, entry) in by_id {
+                    if !reordered.iter().any(|e| e.id == entry.id) {
+                        reordered.push(entry);
+                    }
+                }
+                entries = packages;
+                entries.extend(reordered);
+            } else {
+                entries = packages;
+                entries.extend(editable);
             }
         }
         total_entries += entries.len();
@@ -402,21 +403,21 @@ pub fn format_harness_state_for_prompt(
         } else {
             lines.push(format!("{kind_name}: {}{disabled_suffix}", entries.len()));
         }
-        if let Some(terms) = query_terms.as_ref() {
-            if !terms.is_empty() && entries.len() > max_entries_per_kind {
-                lines.push(
-                    "(entries ranked by relevance to the current task; see harness.search)"
-                        .to_string(),
-                );
-            }
+        if let Some(terms) = query_terms.as_ref()
+            && !terms.is_empty()
+            && entries.len() > max_entries_per_kind
+        {
+            lines.push(
+                "(entries ranked by relevance to the current task; see harness.search)".to_string(),
+            );
         }
         let rendered = entries.iter().take(max_entries_per_kind);
-        if kind == "memory" {
-            if let Some(sink) = options.record_rendered_memory_ids.as_ref() {
-                let ids: Vec<String> = rendered.clone().map(|e| e.id.clone()).collect();
-                if let Ok(mut guard) = sink.lock() {
-                    guard.extend(ids);
-                }
+        if kind == "memory"
+            && let Some(sink) = options.record_rendered_memory_ids.as_ref()
+        {
+            let ids: Vec<String> = rendered.clone().map(|e| e.id.clone()).collect();
+            if let Ok(mut guard) = sink.lock() {
+                guard.extend(ids);
             }
         }
         for entry in rendered {

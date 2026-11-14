@@ -94,8 +94,8 @@ impl Worker {
                 // A replace onto another lane is an arrival there: the item
                 // keeps its priority and enqueues by it. The non-overlapping
                 // direction pairs only - `target != lane` holds for every reached arm.
-                if mutation_type == "replace" {
-                    if let Some(target) =
+                if mutation_type == "replace"
+                    && let Some(target) =
                         wire_lane(mutation.get("lane")).filter(|target| *target != lane)
                     {
                         let item = match (lane, target) {
@@ -111,7 +111,6 @@ impl Worker {
                             crate::worker::enqueue_priority(target_lane, item);
                         }
                     }
-                }
                 crate::worker::clear_withdrawn_progress_note(&core, self.engine.as_ref());
                 (status, true)
             } else {
@@ -170,11 +169,10 @@ fn mutate_lane(
     }
     match mutation_type {
         "delete" => {
-            if let Some(mut item) = lane.remove(index) {
-                if let Some(done) = item.done.take() {
+            if let Some(mut item) = lane.remove(index)
+                && let Some(done) = item.done.take() {
                     let _ = done.send(TurnSettle::Withdrawn(deleted_message.to_string()));
                 }
-            }
         }
         "move" => {
             let direction = mutation

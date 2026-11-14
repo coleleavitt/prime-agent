@@ -326,21 +326,21 @@ pub async fn parse_error_response(response: &mut HttpResponse) -> CodexApiError 
         raw.clone()
     };
 
-    if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
-        if let Some(err) = parsed.get("error") {
-            let payload = error_payload(err);
-            code = payload.code.or(payload.type_).map(str::to_string);
-            if let Some((friendly, body_retry_after_ms)) =
-                codex_usage_limit_message(&payload, Some(status))
-            {
-                message = friendly;
-                // Neither server delay (Retry-After header, resets_at body) may undercut the other.
-                if let Some(body_retry_after_ms) = body_retry_after_ms {
-                    retry_after_ms = Some(retry_after_ms.unwrap_or(0).max(body_retry_after_ms));
-                }
-            } else if let Some(err_message) = payload.message {
-                message = err_message.to_string();
+    if let Ok(parsed) = serde_json::from_str::<Value>(&raw)
+        && let Some(err) = parsed.get("error")
+    {
+        let payload = error_payload(err);
+        code = payload.code.or(payload.type_).map(str::to_string);
+        if let Some((friendly, body_retry_after_ms)) =
+            codex_usage_limit_message(&payload, Some(status))
+        {
+            message = friendly;
+            // Neither server delay (Retry-After header, resets_at body) may undercut the other.
+            if let Some(body_retry_after_ms) = body_retry_after_ms {
+                retry_after_ms = Some(retry_after_ms.unwrap_or(0).max(body_retry_after_ms));
             }
+        } else if let Some(err_message) = payload.message {
+            message = err_message.to_string();
         }
     }
 

@@ -297,8 +297,8 @@ impl SessionNavigation {
         file.lease = lease;
         let cwd =
             cwd_override.or_else(|| (!file.header.cwd.is_empty()).then(|| file.header.cwd.clone()));
-        if let Some(cwd) = cwd.as_deref() {
-            if !std::path::Path::new(cwd).is_dir() {
+        if let Some(cwd) = cwd.as_deref()
+            && !std::path::Path::new(cwd).is_dir() {
                 let fallback = {
                     let core = self.core.lock_or_recover();
                     core.cwd.clone()
@@ -320,7 +320,6 @@ impl SessionNavigation {
                     }),
                 ));
             }
-        }
         Ok(PreparedReplacement {
             file,
             cwd,

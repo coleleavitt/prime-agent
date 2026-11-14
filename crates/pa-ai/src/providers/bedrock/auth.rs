@@ -401,10 +401,10 @@ fn env_region_or_profile(
         if !in_section {
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            if key.trim() == "region" {
-                return Some(value.trim().to_string());
-            }
+        if let Some((key, value)) = trimmed.split_once('=')
+            && key.trim() == "region"
+        {
+            return Some(value.trim().to_string());
         }
     }
     None

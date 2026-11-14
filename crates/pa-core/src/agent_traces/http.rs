@@ -172,11 +172,12 @@ pub fn retry_after_delay(retry_after: Option<&str>, cap_ms: u64) -> Option<u64> 
     if value.is_empty() {
         return None;
     }
-    if let Ok(seconds) = value.parse::<f64>() {
-        if seconds.is_finite() && seconds >= 0.0 {
-            let capped = (seconds * 1000.0).ceil().min(cap_ms as f64);
-            return Some(capped as u64);
-        }
+    if let Ok(seconds) = value.parse::<f64>()
+        && seconds.is_finite()
+        && seconds >= 0.0
+    {
+        let capped = (seconds * 1000.0).ceil().min(cap_ms as f64);
+        return Some(capped as u64);
     }
     let retry_at = parse_http_date(value)?;
     let delta = retry_at.saturating_sub(now_ms());

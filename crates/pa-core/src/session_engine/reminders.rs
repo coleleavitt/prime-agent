@@ -469,11 +469,12 @@ impl Reminders {
         let window = self
             .context_window
             .load(std::sync::atomic::Ordering::Relaxed);
-        if self.toggles.tokens_left && window > 0 {
-            if let Some(used) = context_tokens(messages) {
-                parts.push(tokens_left_text(window.saturating_sub(used)));
-                kinds.push(ReminderKind::TokensLeft);
-            }
+        if self.toggles.tokens_left
+            && window > 0
+            && let Some(used) = context_tokens(messages)
+        {
+            parts.push(tokens_left_text(window.saturating_sub(used)));
+            kinds.push(ReminderKind::TokensLeft);
         }
         if parts.is_empty() {
             return None;

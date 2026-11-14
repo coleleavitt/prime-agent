@@ -136,10 +136,10 @@ impl StreamingState {
     ) -> usize {
         let mut block =
             stream_index.and_then(|index| self.tool_call_blocks_by_index.get(&index).copied());
-        if block.is_none() {
-            if let Some(id) = id {
-                block = self.tool_call_blocks_by_id.get(id).copied();
-            }
+        if block.is_none()
+            && let Some(id) = id
+        {
+            block = self.tool_call_blocks_by_id.get(id).copied();
         }
         if let Some(index) = block {
             if let Some(stream_index) = stream_index {
@@ -227,26 +227,25 @@ fn handle_chunk(
     if !chunk.is_object() {
         return;
     }
-    if let Some(id) = chunk.get("id").and_then(|value| value.as_str()) {
-        if state.output.response_id.is_none() {
-            state.output.response_id = Some(id.to_string());
-        }
+    if let Some(id) = chunk.get("id").and_then(|value| value.as_str())
+        && state.output.response_id.is_none()
+    {
+        state.output.response_id = Some(id.to_string());
     }
     if let Some(service_tier) = chunk.get("service_tier").and_then(|value| value.as_str()) {
         state.response_service_tier = Some(service_tier.to_string());
     }
-    if let Some(chunk_model) = chunk.get("model").and_then(|value| value.as_str()) {
-        if !chunk_model.is_empty()
-            && chunk_model != model.id
-            && state.output.response_model.is_none()
-        {
-            state.output.response_model = Some(chunk_model.to_string());
-        }
+    if let Some(chunk_model) = chunk.get("model").and_then(|value| value.as_str())
+        && !chunk_model.is_empty()
+        && chunk_model != model.id
+        && state.output.response_model.is_none()
+    {
+        state.output.response_model = Some(chunk_model.to_string());
     }
-    if let Some(usage) = chunk.get("usage") {
-        if usage.is_object() {
-            state.output.usage = parse_chunk_usage(usage, model, cache_write_cost);
-        }
+    if let Some(usage) = chunk.get("usage")
+        && usage.is_object()
+    {
+        state.output.usage = parse_chunk_usage(usage, model, cache_write_cost);
     }
 
     let Some(choice) = chunk
@@ -258,12 +257,11 @@ fn handle_chunk(
     };
 
     // Fallback: some providers (e.g., Moonshot) return usage in choice.usage.
-    if !chunk.get("usage").is_some_and(serde_json::Value::is_object) {
-        if let Some(usage) = choice.get("usage") {
-            if usage.is_object() {
-                state.output.usage = parse_chunk_usage(usage, model, cache_write_cost);
-            }
-        }
+    if !chunk.get("usage").is_some_and(serde_json::Value::is_object)
+        && let Some(usage) = choice.get("usage")
+        && usage.is_object()
+    {
+        state.output.usage = parse_chunk_usage(usage, model, cache_write_cost);
     }
 
     if let Some(finish_reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
@@ -279,29 +277,29 @@ fn handle_chunk(
         return;
     };
 
-    if let Some(content) = delta.get("content").and_then(|value| value.as_str()) {
-        if !content.is_empty() {
-            let index = state.ensure_text_block(writer);
-            if let Some(AssistantContent::Text(text)) = state.output.content.get_mut(index) {
-                text.text.push_str(content);
-            }
-            writer.push(AssistantMessageEvent::TextDelta {
-                content_index: index as u64,
-                delta: content.to_string(),
-                partial: state.output.clone(),
-            });
+    if let Some(content) = delta.get("content").and_then(|value| value.as_str())
+        && !content.is_empty()
+    {
+        let index = state.ensure_text_block(writer);
+        if let Some(AssistantContent::Text(text)) = state.output.content.get_mut(index) {
+            text.text.push_str(content);
         }
+        writer.push(AssistantMessageEvent::TextDelta {
+            content_index: index as u64,
+            delta: content.to_string(),
+            partial: state.output.clone(),
+        });
     }
 
     // Some endpoints return reasoning in reasoning_content (llama.cpp), or reasoning (other openai
     // compatible endpoints). Use the first non-empty reasoning field to avoid duplication.
     let mut found_reasoning_field: Option<(&str, &str)> = None;
     for field in REASONING_FIELDS {
-        if let Some(value) = delta.get(field).and_then(|value| value.as_str()) {
-            if !value.is_empty() {
-                found_reasoning_field = Some((field, value));
-                break;
-            }
+        if let Some(value) = delta.get(field).and_then(|value| value.as_str())
+            && !value.is_empty()
+        {
+            found_reasoning_field = Some((field, value));
+            break;
         }
     }
     if let Some((field, reasoning_delta)) = found_reasoning_field {
@@ -326,20 +324,19 @@ fn handle_chunk(
                 .filter(|id| !id.is_empty());
             let index = state.ensure_tool_call_block(stream_index, id, writer);
             if let Some(AssistantContent::ToolCall(block)) = state.output.content.get_mut(index) {
-                if block.id.is_empty() {
-                    if let Some(id) = id {
-                        block.id = id.to_string();
-                        state.tool_call_blocks_by_id.insert(id.to_string(), index);
-                    }
+                if block.id.is_empty()
+                    && let Some(id) = id
+                {
+                    block.id = id.to_string();
+                    state.tool_call_blocks_by_id.insert(id.to_string(), index);
                 }
-                if block.name.is_empty() {
-                    if let Some(name) = tool_call
+                if block.name.is_empty()
+                    && let Some(name) = tool_call
                         .get("function")
                         .and_then(|function| function.get("name"))
                         .and_then(|value| value.as_str())
-                    {
-                        block.name = name.to_string();
-                    }
+                {
+                    block.name = name.to_string();
                 }
             }
             let mut delta_text = String::new();
@@ -354,12 +351,11 @@ fn handle_chunk(
                     .entry(index)
                     .or_default()
                     .append(arguments);
-                if let Some(parsed) = parsed {
-                    if let Some(AssistantContent::ToolCall(block)) =
+                if let Some(parsed) = parsed
+                    && let Some(AssistantContent::ToolCall(block)) =
                         state.output.content.get_mut(index)
-                    {
-                        block.arguments = parsed.as_object().cloned().unwrap_or_default();
-                    }
+                {
+                    block.arguments = parsed.as_object().cloned().unwrap_or_default();
                 }
             }
             writer.push(AssistantMessageEvent::ToolcallDelta {
@@ -405,18 +401,18 @@ fn handle_chunk(
                     .push((index, detail_object.clone()));
             }
 
-            if detail.get("type").and_then(|value| value.as_str()) == Some("reasoning.encrypted") {
-                if let (Some(id), Some(data)) = (
+            if detail.get("type").and_then(|value| value.as_str()) == Some("reasoning.encrypted")
+                && let (Some(id), Some(data)) = (
                     detail.get("id").and_then(|value| value.as_str()),
                     detail.get("data").filter(|value| !value.is_null()),
-                ) {
-                    let _ = data;
-                    for block in &mut state.output.content {
-                        if let AssistantContent::ToolCall(tool_call) = block {
-                            if tool_call.id == id {
-                                tool_call.thought_signature = Some(detail.to_string());
-                            }
-                        }
+                )
+            {
+                let _ = data;
+                for block in &mut state.output.content {
+                    if let AssistantContent::ToolCall(tool_call) = block
+                        && tool_call.id == id
+                    {
+                        tool_call.thought_signature = Some(detail.to_string());
                     }
                 }
             }
@@ -553,10 +549,10 @@ async fn run_stream(
         cache_retention,
         cache_control.as_ref(),
     );
-    if let Some(on_payload) = &base_options.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
+    if let Some(on_payload) = &base_options.on_payload
+        && let Some(next) = on_payload(params.clone(), model)
+    {
+        params = next;
     }
 
     let url = format!("{}/chat/completions", model.base_url.trim_end_matches('/'));

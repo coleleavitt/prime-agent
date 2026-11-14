@@ -172,28 +172,26 @@ pub(crate) fn gemini_request_body(
             json!({ "parts": [{ "text": sanitize_surrogates(system_prompt) }] }),
         );
     }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            if let Some(converted) = convert_tools(tools, false) {
-                body.insert("tools".into(), json!(converted));
-            }
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+        && let Some(converted) = convert_tools(tools, false)
+    {
+        body.insert("tools".into(), json!(converted));
     }
     if context
         .tools
         .as_ref()
         .is_some_and(|tools| !tools.is_empty())
+        && let Some(tool_choice) = tool_choice
     {
-        if let Some(tool_choice) = tool_choice {
-            body.insert(
-                "toolConfig".into(),
-                json!({
-                    "functionCallingConfig": {
-                        "mode": crate::providers::google_shared::map_tool_choice(tool_choice.as_str()),
-                    },
-                }),
-            );
-        }
+        body.insert(
+            "toolConfig".into(),
+            json!({
+                "functionCallingConfig": {
+                    "mode": crate::providers::google_shared::map_tool_choice(tool_choice.as_str()),
+                },
+            }),
+        );
     }
 
     Value::Object(body)
@@ -226,10 +224,10 @@ async fn run_stream(
     }
 
     let mut params = build_params(model, context, &options);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(params.clone(), model)
+    {
+        params = next;
     }
 
     // @google/genai default: https://generativelanguage.googleapis.com with the v1beta version

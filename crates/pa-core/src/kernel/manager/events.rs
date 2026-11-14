@@ -158,14 +158,14 @@ impl Inner {
                             buffers.status = ExecuteStatus::Error;
                             // State requests report failures as a done reason
                             // without an error event.
-                            if buffers.error.is_none() {
-                                if let Some(reason) = fields.get("reason").and_then(Value::as_str) {
-                                    buffers.error = Some(KernelError {
-                                        ename: "KernelError".to_string(),
-                                        evalue: reason.to_string(),
-                                        traceback: Vec::new(),
-                                    });
-                                }
+                            if buffers.error.is_none()
+                                && let Some(reason) = fields.get("reason").and_then(Value::as_str)
+                            {
+                                buffers.error = Some(KernelError {
+                                    ename: "KernelError".to_string(),
+                                    evalue: reason.to_string(),
+                                    traceback: Vec::new(),
+                                });
                             }
                         }
                     }
@@ -221,10 +221,10 @@ impl Inner {
             return;
         }
         let mut buffers = lock(&execution.buffers);
-        if let Some(payload) = data.get(DIFF_DISPLAY_MIME) {
-            if let Some(diff) = parse_diff_display(payload) {
-                buffers.diffs.push(diff);
-            }
+        if let Some(payload) = data.get(DIFF_DISPLAY_MIME)
+            && let Some(diff) = parse_diff_display(payload)
+        {
+            buffers.diffs.push(diff);
         }
         match data
             .get(ATTACHMENT_DISPLAY_MIME)
@@ -246,32 +246,32 @@ impl Inner {
             Some(Ok(attachment)) => buffers.attachments.push(attachment),
             None => {}
         }
-        if let Some(payload) = data.get(AGENT_MESSAGE_DISPLAY_MIME) {
-            if let Some(message) = parse_sent_agent_message(payload) {
-                buffers.sent_agent_messages.push(message);
-            }
+        if let Some(payload) = data.get(AGENT_MESSAGE_DISPLAY_MIME)
+            && let Some(message) = parse_sent_agent_message(payload)
+        {
+            buffers.sent_agent_messages.push(message);
         }
         if let Some(read) = data.get(TRANSCRIPT_READ_DISPLAY_MIME) {
             buffers.transcript_reads.push(read.clone());
         }
-        if let Some(payload) = data.get(BASH_COMMAND_DISPLAY_MIME) {
-            if let (Some(command), Some(lines)) = (
+        if let Some(payload) = data.get(BASH_COMMAND_DISPLAY_MIME)
+            && let (Some(command), Some(lines)) = (
                 payload.get("command").and_then(Value::as_str),
                 payload
                     .get("lines")
                     .and_then(Value::as_u64)
                     .and_then(|lines| usize::try_from(lines).ok()),
-            ) {
-                if let Some(bash) = buffers.bash_commands.as_mut() {
-                    bash.count += 1;
-                    bash.lines += lines;
-                } else {
-                    buffers.bash_commands = Some(KernelBashCommands {
-                        first: command.to_string(),
-                        count: 1,
-                        lines,
-                    });
-                }
+            )
+        {
+            if let Some(bash) = buffers.bash_commands.as_mut() {
+                bash.count += 1;
+                bash.lines += lines;
+            } else {
+                buffers.bash_commands = Some(KernelBashCommands {
+                    first: command.to_string(),
+                    count: 1,
+                    lines,
+                });
             }
         }
     }

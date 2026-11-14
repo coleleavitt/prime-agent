@@ -221,8 +221,8 @@ fn a_foreign_lease_holder_rejects_the_create_with_the_hold_refusal() {
 
     // The foreign holder: THIS test process takes the runtime lease, naming a known
     // active session — the same record the TypeScript product's holder writes.
-    std::env::set_var(pa_daemon::lease::SESSION_LEASES_ENABLED_ENV, "1");
-    std::env::set_var(
+    pa_types::env::set_var(pa_daemon::lease::SESSION_LEASES_ENABLED_ENV, "1");
+    pa_types::env::set_var(
         pa_daemon::lease::SESSION_LEASE_OWNER_ID_ENV,
         "foreign01ab3c",
     );
@@ -342,6 +342,6 @@ fn a_foreign_lease_holder_rejects_the_create_with_the_hold_refusal() {
     );
 
     holder.release();
-    std::env::remove_var(pa_daemon::lease::SESSION_LEASE_OWNER_ID_ENV);
-    std::env::remove_var(pa_daemon::lease::SESSION_LEASES_ENABLED_ENV);
+    pa_types::env::remove_var(pa_daemon::lease::SESSION_LEASE_OWNER_ID_ENV);
+    pa_types::env::remove_var(pa_daemon::lease::SESSION_LEASES_ENABLED_ENV);
 }

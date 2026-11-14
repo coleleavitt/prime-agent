@@ -235,11 +235,11 @@ async fn the_fixture_plugin_reviews_the_kernels_bash_and_answers_calls() {
     };
     install();
     // Process env: this is the only test in the binary that sets it.
-    std::env::set_var(
+    pa_types::env::set_var(
         "PRIME_AGENT_KERNEL_PYTHON",
         kernel_python.display().to_string(),
     );
-    std::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR");
+    pa_types::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR");
     let tmp = tempfile::tempdir().unwrap();
     let agent_dir = agent_dir(tmp.path());
     let cwd = tmp.path().join("project");

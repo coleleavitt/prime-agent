@@ -278,18 +278,16 @@ async fn finish_run(
     };
     if let Some(row) =
         super::notices::terminal_row(record, kind, error.as_deref(), preview, &extras)
-    {
-        if !super::notices::admit_claimed_row(
+        && !super::notices::admit_claimed_row(
             record,
             parent.expect("notice has parent"),
             super::notices::AdmissionRow::Terminal(row),
             super::notices::RetryPolicy::SparseWhileOpen,
         )
         .await
-        {
-            record.unsubscribe_listener().await;
-            return;
-        }
+    {
+        record.unsubscribe_listener().await;
+        return;
     }
     let error = if kind == NoticeKind::ParentGone {
         Some("Parent session ended".to_string())
@@ -828,26 +826,26 @@ pub(super) fn delete_subagent(
             if !record.await_settled_or_parked().await {
                 // A retry of the same delete may complete its own parked
                 // Cancelled claim, but never changes a different winner.
-                if record.claimed_kind().await == Some(NoticeKind::Cancelled) {
-                    if let Some(parent) = parent {
-                        let row = super::notices::terminal_row(
-                            &record,
-                            NoticeKind::Cancelled,
-                            None,
-                            None,
-                            &crate::session_engine::rlm_notices::RlmChildNoticeExtras::default(),
-                        )
-                        .expect("cancelled notice");
-                        if super::notices::admit_claimed_row(
-                            &record,
-                            parent,
-                            super::notices::AdmissionRow::Terminal(row),
-                            super::notices::RetryPolicy::ParkAfterBurst,
-                        )
-                        .await
-                        {
-                            record.publish_verdict(NoticeKind::Cancelled, None).await;
-                        }
+                if record.claimed_kind().await == Some(NoticeKind::Cancelled)
+                    && let Some(parent) = parent
+                {
+                    let row = super::notices::terminal_row(
+                        &record,
+                        NoticeKind::Cancelled,
+                        None,
+                        None,
+                        &crate::session_engine::rlm_notices::RlmChildNoticeExtras::default(),
+                    )
+                    .expect("cancelled notice");
+                    if super::notices::admit_claimed_row(
+                        &record,
+                        parent,
+                        super::notices::AdmissionRow::Terminal(row),
+                        super::notices::RetryPolicy::ParkAfterBurst,
+                    )
+                    .await
+                    {
+                        record.publish_verdict(NoticeKind::Cancelled, None).await;
                     }
                 }
                 if record.is_running().await {

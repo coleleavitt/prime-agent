@@ -31,11 +31,11 @@ fn with_agent_dir(body: impl FnOnce(&Path)) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().to_path_buf();
     std::fs::create_dir_all(agent_dir.join("logs")).expect("logs dir");
-    std::env::set_var(crate::config::ENV_AGENT_DIR, &agent_dir);
+    pa_types::env::set_var(crate::config::ENV_AGENT_DIR, &agent_dir);
     body(&agent_dir);
     match previous {
-        Some(previous) => std::env::set_var(crate::config::ENV_AGENT_DIR, previous),
-        None => std::env::remove_var(crate::config::ENV_AGENT_DIR),
+        Some(previous) => pa_types::env::set_var(crate::config::ENV_AGENT_DIR, previous),
+        None => pa_types::env::remove_var(crate::config::ENV_AGENT_DIR),
     }
 }
 

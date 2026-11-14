@@ -225,7 +225,7 @@ struct Run {
 
 /// Run the TUI against a mock daemon publishing `statuses`.
 fn run(statuses: Vec<(&'static str, Value)>, steps: Vec<HeadlessStep>) -> Run {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let listener = UnixListener::bind(&socket).expect("bind mock socket");

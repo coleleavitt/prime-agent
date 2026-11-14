@@ -85,23 +85,21 @@ fn violation(model: &Model, invocation: &Invocation) -> Option<String> {
     if piped
         && (invocation.reads_code_from_stdin
             || matches!(invocation.argv.first(), Some(Arg::Unknown(_))))
-    {
-        if let Some(download) = model
+        && let Some(download) = model
             .producers(invocation)
             .into_iter()
             .find(|producer| is_download(producer))
-        {
-            let into = if invocation.reads_code_from_stdin {
-                "a shell"
-            } else {
-                "a command the scan cannot resolve"
-            };
-            return Some(format!(
-                "a download piped into {into}: `{}` feeds {}",
-                download.shown(),
-                shown()
-            ));
-        }
+    {
+        let into = if invocation.reads_code_from_stdin {
+            "a shell"
+        } else {
+            "a command the scan cannot resolve"
+        };
+        return Some(format!(
+            "a download piped into {into}: `{}` feeds {}",
+            download.shown(),
+            shown()
+        ));
     }
     // `$(curl URL) args`: the download becomes the command line.
     if matches!(invocation.argv.first(), Some(Arg::Unknown(_))) {

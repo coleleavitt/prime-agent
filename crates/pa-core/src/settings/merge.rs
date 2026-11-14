@@ -45,24 +45,23 @@ pub fn migrate(document: &mut serde_json::Map<String, Value>) {
     if let Some(queue_mode) = document.remove("queueMode") {
         document.entry("steeringMode").or_insert(queue_mode);
     }
-    if !document.contains_key("transport") {
-        if let Some(websockets) = document.remove("websockets") {
-            if websockets.is_boolean() {
-                let transport = if websockets == Value::Bool(true) {
-                    "websocket"
-                } else {
-                    "sse"
-                };
-                document.insert("transport".into(), Value::String(transport.into()));
-            }
-        }
+    if !document.contains_key("transport")
+        && let Some(websockets) = document.remove("websockets")
+        && websockets.is_boolean()
+    {
+        let transport = if websockets == Value::Bool(true) {
+            "websocket"
+        } else {
+            "sse"
+        };
+        document.insert("transport".into(), Value::String(transport.into()));
     }
     if let Some(skills) = document.remove("skills") {
         if let Value::Object(mut skills_obj) = skills {
-            if let Some(flag) = skills_obj.remove("enableSkillCommands") {
-                if document.get("enableSkillCommands").is_none() {
-                    document.insert("enableSkillCommands".into(), flag);
-                }
+            if let Some(flag) = skills_obj.remove("enableSkillCommands")
+                && document.get("enableSkillCommands").is_none()
+            {
+                document.insert("enableSkillCommands".into(), flag);
             }
             match skills_obj.remove("customDirectories") {
                 Some(Value::Array(dirs)) if !dirs.is_empty() => {
@@ -98,10 +97,10 @@ pub fn migrate(document: &mut serde_json::Map<String, Value>) {
         }
         _ => {}
     }
-    if let Some(markdown) = document.get("markdown") {
-        if !markdown.is_object() {
-            document.remove("markdown");
-        }
+    if let Some(markdown) = document.get("markdown")
+        && !markdown.is_object()
+    {
+        document.remove("markdown");
     }
 }
 

@@ -486,7 +486,7 @@ fn run_plan_with(
     capabilities: Vec<&'static str>,
     steps: Vec<HeadlessStep>,
 ) -> (Vec<String>, Vec<Value>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, capabilities);

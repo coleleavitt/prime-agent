@@ -408,13 +408,12 @@ impl AgentSessionEngine {
         // `.prime/context.json`, or one naming a missing saved context)
         // fails a Prime Inference run instead of billing the stored team,
         // as the prime CLI refuses to run under it (no TS equivalent).
-        if preflight_model.provider == pa_core::auth::PRIME_INFERENCE_PROVIDER_ID {
-            if let Err(error) = self.session_auth().prime_directory_selection() {
+        if preflight_model.provider == pa_core::auth::PRIME_INFERENCE_PROVIDER_ID
+            && let Err(error) = self.session_auth().prime_directory_selection() {
                 return Err(format!(
                     "Invalid Prime team selection: {error}\n\nFix it, or run `prime config unpin` in this directory."
                 ));
             }
-        }
         if self.current_selection().api_key.is_some() {
             return Ok(());
         }
@@ -447,8 +446,8 @@ impl AgentSessionEngine {
                 pa_core::auth::oauth_refresh_failed_message(&preflight_model.provider)
             }));
         }
-        if resolved.ok {
-            if let Some(target) =
+        if resolved.ok
+            && let Some(target) =
                 self.provider_target
                     .write_or_recover()
                     .as_mut()
@@ -460,7 +459,6 @@ impl AgentSessionEngine {
                 target.api_key = resolved.api_key;
                 target.headers = resolved.headers;
             }
-        }
         Ok(())
     }
 

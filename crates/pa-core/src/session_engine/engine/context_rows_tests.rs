@@ -198,10 +198,10 @@ async fn a_tool_batch_brings_the_changed_file_note_and_the_token_countdown() {
         vec![("call-1", "touch", serde_json::json!({}))],
     );
     for step in &mut steps {
-        if let pa_agent::scripted::ScriptStep::Event(event) = step {
-            if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = event.as_mut() {
-                message.usage.input = 4_000;
-            }
+        if let pa_agent::scripted::ScriptStep::Event(event) = step
+            && let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = event.as_mut()
+        {
+            message.usage.input = 4_000;
         }
     }
     fixture

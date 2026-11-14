@@ -124,7 +124,7 @@ impl MockBoot {
 }
 
 fn run_boot_plan(steps: Vec<HeadlessStep>) -> pa_tui::interactive::InteractiveOutcome {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket: PathBuf = dir.path().join("tui.sock");
     let supervisor = MockBoot::bind(&socket);

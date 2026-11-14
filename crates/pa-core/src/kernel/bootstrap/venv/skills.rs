@@ -98,10 +98,10 @@ pub(super) fn read_python_skill_dependency_names(skill: &BootstrapPythonSkill) -
                     dependencies.push(name);
                 }
             }
-        } else if let Some(rest) = trimmed.strip_prefix("dependencies") {
-            if rest.trim_start().starts_with('=') {
-                in_dependencies = true;
-            }
+        } else if let Some(rest) = trimmed.strip_prefix("dependencies")
+            && rest.trim_start().starts_with('=')
+        {
+            in_dependencies = true;
         }
     }
     dependencies

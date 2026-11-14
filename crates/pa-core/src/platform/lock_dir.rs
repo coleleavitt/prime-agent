@@ -595,10 +595,10 @@ impl LockDir {
                 return;
             }
         }
-        if let Err(error) = fs::remove_dir(&self.path) {
-            if error.kind() != io::ErrorKind::NotFound {
-                tracing::warn!("failed to release lock {}: {error}", self.path.display());
-            }
+        if let Err(error) = fs::remove_dir(&self.path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!("failed to release lock {}: {error}", self.path.display());
         }
     }
 }

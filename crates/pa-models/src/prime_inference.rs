@@ -256,10 +256,11 @@ fn parse_string_array(value: Option<&serde_json::Value>) -> Option<Vec<String>> 
     let mut seen: std::collections::HashSet<&str> =
         std::collections::HashSet::with_capacity(items.len());
     for item in items {
-        if let Some(text) = item.as_str() {
-            if !text.is_empty() && seen.insert(text) {
-                entries.push(text.to_string());
-            }
+        if let Some(text) = item.as_str()
+            && !text.is_empty()
+            && seen.insert(text)
+        {
+            entries.push(text.to_string());
         }
     }
     (!entries.is_empty()).then_some(entries)

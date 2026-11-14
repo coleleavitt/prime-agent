@@ -224,11 +224,10 @@ impl EventCollector {
     pub fn finish(mut self, fallback_query: &str) -> Vec<SearchItem> {
         self.flush_commentary();
         for item in &mut self.items {
-            if let SearchItem::Search { query, .. } = item {
-                if query.is_empty() {
+            if let SearchItem::Search { query, .. } = item
+                && query.is_empty() {
                     fallback_query.clone_into(query);
                 }
-            }
         }
         self.items
     }
@@ -280,14 +279,13 @@ impl SearchBackend for AnthropicSearch {
             let searched = items
                 .iter()
                 .any(|item| matches!(item, SearchItem::Search { .. } | SearchItem::Error(_)));
-            if let Err(error) = result {
-                if !searched {
+            if let Err(error) = result
+                && !searched {
                     return Err(SearchError(format!(
                         "Anthropic web search failed ({}/{}): {error}",
                         model.model.provider, model.model.id
                     )));
                 }
-            }
             Ok(SearchOutcome {
                 backend: "anthropic",
                 model: Some(format!("{}/{}", model.model.provider, model.model.id)),

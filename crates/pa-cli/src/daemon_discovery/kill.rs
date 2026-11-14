@@ -95,11 +95,10 @@ pub(super) fn stop_tracked_process(pid: u32, expected_start_id: Option<&str>) ->
     if !is_alive(pid) {
         return true;
     }
-    if let Some(expected) = expected_start_id {
-        if process_start_id(pid).as_deref() != Some(expected) {
+    if let Some(expected) = expected_start_id
+        && process_start_id(pid).as_deref() != Some(expected) {
             return false;
         }
-    }
     let _ = kill_pid(pid as i32, Signal::Term);
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     while is_alive(pid) && std::time::Instant::now() < deadline {
@@ -108,11 +107,10 @@ pub(super) fn stop_tracked_process(pid: u32, expected_start_id: Option<&str>) ->
     if !is_alive(pid) {
         return true;
     }
-    if let Some(expected) = expected_start_id {
-        if process_start_id(pid).as_deref() != Some(expected) {
+    if let Some(expected) = expected_start_id
+        && process_start_id(pid).as_deref() != Some(expected) {
             return false;
         }
-    }
     let _ = kill_pid(pid as i32, Signal::Kill);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while is_alive(pid) && std::time::Instant::now() < deadline {

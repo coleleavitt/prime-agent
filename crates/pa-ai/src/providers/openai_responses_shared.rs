@@ -41,24 +41,22 @@ pub struct ParsedTextSignature {
 
 fn parse_text_signature(signature: Option<&str>) -> Option<ParsedTextSignature> {
     let signature = signature?;
-    if signature.starts_with('{') {
-        if let Ok(parsed) = serde_json::from_str::<Value>(signature) {
-            if parsed.get("v") == Some(&json!(1)) {
-                if let Some(id) = parsed.get("id").and_then(|value| value.as_str()) {
-                    let phase = match parsed.get("phase").and_then(|value| value.as_str()) {
-                        Some("commentary") => Some(TextSignaturePhase::Commentary),
-                        Some("final_answer") => Some(TextSignaturePhase::FinalAnswer),
-                        _ => None,
-                    };
-                    return Some(ParsedTextSignature {
-                        id: id.to_string(),
-                        phase,
-                    });
-                }
-            }
-        }
-        // Fall through to legacy plain-string handling.
+    if signature.starts_with('{')
+        && let Ok(parsed) = serde_json::from_str::<Value>(signature)
+        && parsed.get("v") == Some(&json!(1))
+        && let Some(id) = parsed.get("id").and_then(|value| value.as_str())
+    {
+        let phase = match parsed.get("phase").and_then(|value| value.as_str()) {
+            Some("commentary") => Some(TextSignaturePhase::Commentary),
+            Some("final_answer") => Some(TextSignaturePhase::FinalAnswer),
+            _ => None,
+        };
+        return Some(ParsedTextSignature {
+            id: id.to_string(),
+            phase,
+        });
     }
+    // Fall through to legacy plain-string handling.
     Some(ParsedTextSignature {
         id: signature.to_string(),
         phase: None,
@@ -154,18 +152,16 @@ pub fn convert_responses_messages(
         });
 
     let include_system_prompt = options.include_system_prompt;
-    if include_system_prompt {
-        if let Some(system_prompt) = &context.system_prompt {
-            let role = if model.reasoning {
-                "developer"
-            } else {
-                "system"
-            };
-            messages.push(json!({
-                "role": role,
-                "content": sanitize_surrogates(system_prompt),
-            }));
-        }
+    if include_system_prompt && let Some(system_prompt) = &context.system_prompt {
+        let role = if model.reasoning {
+            "developer"
+        } else {
+            "system"
+        };
+        messages.push(json!({
+            "role": role,
+            "content": sanitize_surrogates(system_prompt),
+        }));
     }
 
     for (msg_index, msg) in transformed.iter().enumerate() {
@@ -212,17 +208,16 @@ pub fn convert_responses_messages(
                 for block in &assistant.content {
                     match block {
                         AssistantContent::Thinking(thinking) => {
-                            if let Some(signature) = &thinking.thinking_signature {
-                                if let Ok(mut reasoning_item) =
+                            if let Some(signature) = &thinking.thinking_signature
+                                && let Ok(mut reasoning_item) =
                                     serde_json::from_str::<Value>(signature)
+                            {
+                                if model.provider == "xai"
+                                    && let Some(item) = reasoning_item.as_object_mut()
                                 {
-                                    if model.provider == "xai" {
-                                        if let Some(item) = reasoning_item.as_object_mut() {
-                                            item.remove("status");
-                                        }
-                                    }
-                                    output.push(reasoning_item);
+                                    item.remove("status");
                                 }
+                                output.push(reasoning_item);
                             }
                         }
                         AssistantContent::Text(text) => {
@@ -257,10 +252,10 @@ pub fn convert_responses_messages(
                             );
                             entry.insert("status".into(), json!("completed"));
                             entry.insert("id".into(), json!(msg_id));
-                            if let Some(signature) = &parsed_signature {
-                                if let Some(phase) = signature.phase {
-                                    entry.insert("phase".into(), json!(phase));
-                                }
+                            if let Some(signature) = &parsed_signature
+                                && let Some(phase) = signature.phase
+                            {
+                                entry.insert("phase".into(), json!(phase));
                             }
                             output.push(Value::Object(entry));
                         }

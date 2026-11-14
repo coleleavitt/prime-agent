@@ -101,10 +101,10 @@ fn resolve_location(options: &GoogleVertexOptions) -> Result<String, String> {
 /// `GOOGLE_OAUTH_ACCESS_TOKEN` env var or the gcloud CLI's credential source; failures surface as
 /// provider errors.
 fn resolve_adc_access_token() -> Result<String, String> {
-    if let Ok(token) = std::env::var("GOOGLE_OAUTH_ACCESS_TOKEN") {
-        if !token.trim().is_empty() {
-            return Ok(token.trim().to_string());
-        }
+    if let Ok(token) = std::env::var("GOOGLE_OAUTH_ACCESS_TOKEN")
+        && !token.trim().is_empty()
+    {
+        return Ok(token.trim().to_string());
     }
     let output = std::process::Command::new("gcloud")
         .args(["auth", "print-access-token"])
@@ -199,10 +199,10 @@ async fn run_stream(
     }
 
     let mut params = build_params(model, context, &options);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(params.clone(), model)
+    {
+        params = next;
     }
 
     // Endpoint: <base>/projects/<project>/locations/<location>/publishers/google/models/<model>:streamGenerateContent?alt=sse

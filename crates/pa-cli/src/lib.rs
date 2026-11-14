@@ -190,7 +190,7 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
             std::env::var(crate::config::ENV_OFFLINE).ok().as_deref(),
         );
     if offline_mode {
-        std::env::set_var(crate::config::ENV_OFFLINE, "1");
+        pa_types::env::set_var(crate::config::ENV_OFFLINE, "1");
     }
 
     if let Some(exit) = internal_entry(args) {
@@ -646,7 +646,7 @@ fn publish_launch_layer(parsed: &mut args::Args, cwd: &std::path::Path) -> Resul
     if launch.bare {
         parsed.no_context_files = true;
         // Travels to daemon workers with the launch env.
-        std::env::set_var("PRIME_AGENT_DISABLE_AUTO_MEMORY", "1");
+        pa_types::env::set_var("PRIME_AGENT_DISABLE_AUTO_MEMORY", "1");
     }
     launch.publish();
     Ok(())

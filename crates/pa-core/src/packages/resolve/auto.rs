@@ -138,19 +138,20 @@ impl PackageManager {
             global_base_dir,
         );
 
-        if let Some(bundled_dir) = self.bundled_skills_dir() {
-            if self.enable_builtin_skills() {
-                let builtin_metadata = PathMetadata {
-                    source: MetadataSource::Builtin,
-                    scope: super::super::SourceScope::User,
-                    origin: ResourceOrigin::TopLevel,
-                    base_dir: Some(bundled_dir.clone()),
-                };
-                let builtin_entries = collect_skill_entries(bundled_dir, SkillDiscoveryMode::Pi);
-                // Bundled skills must ship with the package; warn instead of
-                // silently exposing none.
-                if builtin_entries.is_empty() {
-                    accumulator.diagnostics.push(ResourceDiagnostic::Warning {
+        if let Some(bundled_dir) = self.bundled_skills_dir()
+            && self.enable_builtin_skills()
+        {
+            let builtin_metadata = PathMetadata {
+                source: MetadataSource::Builtin,
+                scope: super::super::SourceScope::User,
+                origin: ResourceOrigin::TopLevel,
+                base_dir: Some(bundled_dir.clone()),
+            };
+            let builtin_entries = collect_skill_entries(bundled_dir, SkillDiscoveryMode::Pi);
+            // Bundled skills must ship with the package; warn instead of
+            // silently exposing none.
+            if builtin_entries.is_empty() {
+                accumulator.diagnostics.push(ResourceDiagnostic::Warning {
                         message: if bundled_dir.exists() {
                             "built-in skills directory contains no skills; this build may be packaged incorrectly"
                                 .to_string()
@@ -160,50 +161,48 @@ impl PackageManager {
                         },
                         path: Some(bundled_dir.display().to_string()),
                     });
-                }
-                let mut builtin_skill_overrides = user_overrides[0].clone();
-                if !self.bundled_websearch_enabled() {
-                    // No key for the selected web search provider on the
-                    // machine (and no explicit settings override): web search
-                    // stays off so the prompt never advertises a tool that
-                    // errors on use.
-                    builtin_skill_overrides.push("-websearch/SKILL.md".to_string());
-                }
-                builtin_skill_overrides
-                    .extend(self.extra_builtin_skill_overrides().iter().cloned());
+            }
+            let mut builtin_skill_overrides = user_overrides[0].clone();
+            if !self.bundled_websearch_enabled() {
+                // No key for the selected web search provider on the
+                // machine (and no explicit settings override): web search
+                // stays off so the prompt never advertises a tool that
+                // errors on use.
+                builtin_skill_overrides.push("-websearch/SKILL.md".to_string());
+            }
+            builtin_skill_overrides.extend(self.extra_builtin_skill_overrides().iter().cloned());
+            add_resources(
+                accumulator,
+                ResourceType::Skills,
+                builtin_entries,
+                &builtin_metadata,
+                &builtin_skill_overrides,
+                bundled_dir,
+            );
+            // Skills installed features contribute: built-ins too, under
+            // the hidden feature directory, overridable as
+            // `-<name>/SKILL.md` like any other built-in.
+            let feature_root = bundled_dir.join(super::super::FEATURE_SKILLS_DIR);
+            let feature_entries: Vec<_> = self
+                .feature_skills()
+                .iter()
+                .flat_map(|name| {
+                    collect_skill_entries(&feature_root.join(name), SkillDiscoveryMode::Pi)
+                })
+                .collect();
+            if !feature_entries.is_empty() {
+                let feature_metadata = PathMetadata {
+                    base_dir: Some(feature_root.clone()),
+                    ..builtin_metadata
+                };
                 add_resources(
                     accumulator,
                     ResourceType::Skills,
-                    builtin_entries,
-                    &builtin_metadata,
+                    feature_entries,
+                    &feature_metadata,
                     &builtin_skill_overrides,
-                    bundled_dir,
+                    &feature_root,
                 );
-                // Skills installed features contribute: built-ins too, under
-                // the hidden feature directory, overridable as
-                // `-<name>/SKILL.md` like any other built-in.
-                let feature_root = bundled_dir.join(super::super::FEATURE_SKILLS_DIR);
-                let feature_entries: Vec<_> = self
-                    .feature_skills()
-                    .iter()
-                    .flat_map(|name| {
-                        collect_skill_entries(&feature_root.join(name), SkillDiscoveryMode::Pi)
-                    })
-                    .collect();
-                if !feature_entries.is_empty() {
-                    let feature_metadata = PathMetadata {
-                        base_dir: Some(feature_root.clone()),
-                        ..builtin_metadata
-                    };
-                    add_resources(
-                        accumulator,
-                        ResourceType::Skills,
-                        feature_entries,
-                        &feature_metadata,
-                        &builtin_skill_overrides,
-                        &feature_root,
-                    );
-                }
             }
         }
 

@@ -80,9 +80,9 @@ async fn a_published_skill_is_callable_in_the_cell_that_published_it() {
     let receipt = dir.path().join("toolforge-receipt.json");
 
     // This binary carries one test, so the process env is ours to set.
-    std::env::set_var("PRIME_AGENT_KERNEL_PYTHON", &kernel_python);
-    std::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR");
-    std::env::remove_var("PRIME_API_KEY");
+    pa_types::env::set_var("PRIME_AGENT_KERNEL_PYTHON", &kernel_python);
+    pa_types::env::remove_var("PRIME_AGENT_CODING_AGENT_DIR");
+    pa_types::env::remove_var("PRIME_API_KEY");
 
     // Installed exactly as `pa-cli` installs it, but promoting without
     // touching the shared kernel venv.

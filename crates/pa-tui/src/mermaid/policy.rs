@@ -155,26 +155,26 @@ pub fn layout(source: &str, available_width: usize, streaming: bool) -> Layout {
     let mut chosen: Option<Art> = art.filter(|a| a.width <= available_width).cloned();
     let mut rotated_on = None;
     let mut needed_width = art.map(|a| a.width);
-    if chosen.is_none() {
-        if let (Some(art), Some(rotated)) = (art, rotate_flowchart(source)) {
-            let rotated_art = render_cached(&rotated.source);
-            if let Some(rotated_art) = rotated_art.as_ref() {
-                needed_width = Some(art.width.min(rotated_art.width));
-                if rotated_art.width <= available_width {
-                    chosen = Some(rotated_art.clone());
-                    rotated_on = Some(rotated.axis);
-                    if !streaming {
-                        let axis = match rotated.axis {
-                            Axis::LeftToRight => "left to right",
-                            Axis::TopToBottom => "top to bottom",
-                        };
-                        notices.push(Notice {
-                            level: NoticeLevel::Info,
-                            text: format!(
-                                "Mermaid diagram drawn {axis} to fit {available_width} columns"
-                            ),
-                        });
-                    }
+    if chosen.is_none()
+        && let (Some(art), Some(rotated)) = (art, rotate_flowchart(source))
+    {
+        let rotated_art = render_cached(&rotated.source);
+        if let Some(rotated_art) = rotated_art.as_ref() {
+            needed_width = Some(art.width.min(rotated_art.width));
+            if rotated_art.width <= available_width {
+                chosen = Some(rotated_art.clone());
+                rotated_on = Some(rotated.axis);
+                if !streaming {
+                    let axis = match rotated.axis {
+                        Axis::LeftToRight => "left to right",
+                        Axis::TopToBottom => "top to bottom",
+                    };
+                    notices.push(Notice {
+                        level: NoticeLevel::Info,
+                        text: format!(
+                            "Mermaid diagram drawn {axis} to fit {available_width} columns"
+                        ),
+                    });
                 }
             }
         }

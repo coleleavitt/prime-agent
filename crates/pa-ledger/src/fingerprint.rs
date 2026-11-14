@@ -387,12 +387,11 @@ pub fn parse_python_traceback(text: &str) -> Option<ParsedTraceback> {
             message = js_trim(&text).to_string();
             continue;
         }
-        if let Some(bare) = BARE_EXCEPTION_LINE.captures(js_trim(line)) {
-            if last_frame.is_some() && exception_class.is_none() {
+        if let Some(bare) = BARE_EXCEPTION_LINE.captures(js_trim(line))
+            && last_frame.is_some() && exception_class.is_none() {
                 exception_class = Some(bare[1].to_string());
                 message.clear();
             }
-        }
     }
     let exception_class = exception_class?;
     let exception_line = if message.is_empty() {

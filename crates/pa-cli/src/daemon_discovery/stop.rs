@@ -257,8 +257,8 @@ fn run_shutdown_converging(
     for action in actions {
         let socket_path = action.daemon.socket_path.display().to_string();
         let pid = action.daemon.pid;
-        if let Some(pid) = pid {
-            if handled_pids.contains(&pid) {
+        if let Some(pid) = pid
+            && handled_pids.contains(&pid) {
                 assert().map_err(|error| error.to_string())?;
                 remove_socket_file(&action.daemon.socket_path);
                 stopped.push((
@@ -278,7 +278,6 @@ fn run_shutdown_converging(
                 }
                 continue;
             }
-        }
         match action.kind {
             ReapActionKind::Skip => {
                 failed.push((socket_path.clone(), action.reason.unwrap_or_default()));

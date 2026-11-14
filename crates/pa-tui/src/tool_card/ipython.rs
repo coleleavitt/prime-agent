@@ -63,16 +63,15 @@ impl CardStatus {
         }
         let result = card.result.as_ref();
         let is_error = result.is_some_and(|r| r.is_error);
-        if !card.result_partial {
-            if let Some(background) =
+        if !card.result_partial
+            && let Some(background) =
                 result.and_then(|r| read_background_shell(cell_code(card), &r.details))
-            {
-                return match background.exit_code {
-                    Some(0) => CardStatus::Done,
-                    Some(_) => CardStatus::Error,
-                    None => CardStatus::Running,
-                };
-            }
+        {
+            return match background.exit_code {
+                Some(0) => CardStatus::Done,
+                Some(_) => CardStatus::Error,
+                None => CardStatus::Running,
+            };
         }
         let status = details.status.as_deref();
         if is_error || status == Some("error") {
@@ -374,10 +373,10 @@ fn collapsed_line(
             parts.push(vec![Span::styled(ename, error)]);
         }
     }
-    if let Some(exit_code) = background.and_then(|shell| shell.exit_code) {
-        if exit_code != 0 {
-            parts.push(vec![Span::styled(format!("exit {exit_code}"), error)]);
-        }
+    if let Some(exit_code) = background.and_then(|shell| shell.exit_code)
+        && exit_code != 0
+    {
+        parts.push(vec![Span::styled(format!("exit {exit_code}"), error)]);
     }
 
     // The live timer is only useful on screen, but the summary clips

@@ -475,10 +475,10 @@ fn walk(
     if depth > MAX_TREE_DEPTH {
         return;
     }
-    if let Ok(canonical) = std::fs::canonicalize(dir) {
-        if !visited.insert(canonical) {
-            return;
-        }
+    if let Ok(canonical) = std::fs::canonicalize(dir)
+        && !visited.insert(canonical)
+    {
+        return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -546,10 +546,9 @@ fn tree_digest(root: &Path) -> Vec<u8> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(root)
+        && *cached_stamp == stamp
     {
-        if *cached_stamp == stamp {
-            return digest.clone();
-        }
+        return digest.clone();
     }
     let mut hasher = Sha256::new();
     for file in &files {

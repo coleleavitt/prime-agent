@@ -410,10 +410,10 @@ impl TreeList {
                 let Some(id) = node.data.entry.id() else {
                     continue;
                 };
-                if let Some(parent) = node.data.entry.parent_id() {
-                    if self.folded.contains(parent) || skip.contains(parent) {
-                        skip.insert(id.to_string());
-                    }
+                if let Some(parent) = node.data.entry.parent_id()
+                    && (self.folded.contains(parent) || skip.contains(parent))
+                {
+                    skip.insert(id.to_string());
                 }
             }
             self.filtered.retain(|index| {
@@ -762,12 +762,11 @@ impl TreeList {
                 .get(&Some(parent.clone()))
                 .cloned()
                 .unwrap_or_default();
-            if children.len() > 1 {
-                if let Some(start) = positions.get(current.as_str()) {
-                    if *start < self.selected {
-                        return *start;
-                    }
-                }
+            if children.len() > 1
+                && let Some(start) = positions.get(current.as_str())
+                && *start < self.selected
+            {
+                return *start;
             }
             current = parent;
         }

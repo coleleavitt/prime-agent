@@ -22,9 +22,9 @@ mod tests {
     #[test]
     fn parses_offline_values() {
         let yes = |raw: &str| {
-            std::env::remove_var("PI_OFFLINE");
+            pa_types::env::remove_var("PI_OFFLINE");
             // SAFETY: single-threaded test runtime before tokio starts.
-            std::env::set_var("PI_OFFLINE", raw);
+            pa_types::env::set_var("PI_OFFLINE", raw);
             is_catalog_offline()
         };
         assert!(yes("1"));
@@ -34,7 +34,7 @@ mod tests {
         assert!(!yes("0"));
         assert!(!yes("no"));
         assert!(!yes("maybe"));
-        std::env::remove_var("PI_OFFLINE");
+        pa_types::env::remove_var("PI_OFFLINE");
         assert!(!is_catalog_offline());
     }
 }

@@ -112,8 +112,8 @@ fn parse_outcome(
             detail: "replay case completed without raising".to_string(),
         };
     }
-    if code == Some(3) {
-        if let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
+    if code == Some(3)
+        && let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
             let (class, message) = body.split_once('\n').unwrap_or((body, ""));
             let exception_class = class.trim().to_string();
             let message = message.trim();
@@ -129,7 +129,6 @@ fn parse_outcome(
                 };
             }
         }
-    }
     let reported = [trim_detail(stderr), trim_detail(stdout)]
         .into_iter()
         .find(|text| !text.is_empty());
@@ -181,11 +180,10 @@ fn replay_environment(
         .filter(|root| !root.is_empty())
         .map(PathBuf::from)
         .collect();
-    if environment == ReplayEnvironment::SkillImport {
-        if let Some(host) = std::env::var_os("PYTHONPATH") {
+    if environment == ReplayEnvironment::SkillImport
+        && let Some(host) = std::env::var_os("PYTHONPATH") {
             roots.extend(std::env::split_paths(&host).filter(|root| !root.as_os_str().is_empty()));
         }
-    }
     let mut resolved: Vec<PathBuf> = Vec::new();
     for root in roots {
         let absolute = std::path::absolute(&root).unwrap_or(root);
@@ -193,14 +191,13 @@ fn replay_environment(
             resolved.push(absolute);
         }
     }
-    if let Ok(joined) = std::env::join_paths(&resolved) {
-        if !resolved.is_empty() {
+    if let Ok(joined) = std::env::join_paths(&resolved)
+        && !resolved.is_empty() {
             env.push((
                 "PYTHONPATH".to_string(),
                 joined.to_string_lossy().into_owned(),
             ));
         }
-    }
     env
 }
 

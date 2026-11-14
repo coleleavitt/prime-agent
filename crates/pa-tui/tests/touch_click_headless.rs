@@ -386,7 +386,7 @@ fn options(socket: PathBuf, catalog: Vec<Model>) -> InteractiveOptions {
 /// process-global.
 fn run_plan(steps: Vec<HeadlessStep>, catalog: Vec<Model>) -> Vec<String> {
     let _guard = run_lock();
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket, catalog.clone());

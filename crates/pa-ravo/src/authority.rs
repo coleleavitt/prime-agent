@@ -197,15 +197,12 @@ pub fn normalize_assisted_ravo_state(value: Option<&Value>) -> RavoState {
         && record
             .get("opponents")
             .is_some_and(|value| !is_falsy(value))
-    {
-        if let Ok(state) = serde_json::from_value::<RavoState>(with_known_window_clocks(
+        && let Ok(state) = serde_json::from_value::<RavoState>(with_known_window_clocks(
             &Value::Object(record.clone()),
-        )) {
-            if ravo_w(&state) {
+        ))
+            && ravo_w(&state) {
                 return state;
             }
-        }
-    }
     let legacy_criteria = record
         .get("evaluator")
         .and_then(|evaluator| evaluator.get("criteria"))

@@ -321,10 +321,10 @@ fn next_auto(auto: &mut usize) -> String {
 
 /// The first branch-name token and the text after it; quotes let a name carry spaces.
 fn name_token(rest: &str) -> (Option<&str>, &str) {
-    if let Some(quoted) = rest.strip_prefix('"') {
-        if let Some(close) = quoted.find('"') {
-            return (Some(&quoted[..close]), &quoted[close + 1..]);
-        }
+    if let Some(quoted) = rest.strip_prefix('"')
+        && let Some(close) = quoted.find('"')
+    {
+        return (Some(&quoted[..close]), &quoted[close + 1..]);
     }
     match js_text::words(rest).first() {
         Some(&w) => (Some(w), &rest[w.len()..]),

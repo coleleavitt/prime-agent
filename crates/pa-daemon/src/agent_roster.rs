@@ -255,12 +255,11 @@ impl AgentRoster {
             self.drop_indexes(&previous);
         }
         if let Some(file) = file {
-            if let Some(existing) = self.agent_id_by_session_file.get(&file) {
-                if existing != &agent_id {
+            if let Some(existing) = self.agent_id_by_session_file.get(&file)
+                && existing != &agent_id {
                     let existing = existing.clone();
                     self.delete(&existing);
                 }
-            }
             self.agent_id_by_session_file.insert(file, agent_id.clone());
         }
         if let Some(active) = stored
@@ -397,15 +396,13 @@ impl AgentRoster {
             .get("activeSessionId")
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty())
-        {
-            if self
+            && self
                 .agent_id_by_active_session_id
                 .get(active)
                 .is_some_and(|agent_id| agent_id == &entry.agent_id)
             {
                 self.agent_id_by_active_session_id.remove(active);
             }
-        }
         if let Some(file) = entry
             .summary
             .get("sessionFile")

@@ -482,10 +482,10 @@ impl<'w> Builder<'w> {
         match piece {
             Piece::Text(text) if split => {
                 let mut pieces = text.split([' ', '\t', '\n']);
-                if let Some(first) = pieces.next() {
-                    if !first.is_empty() {
-                        self.push_literal(first, true);
-                    }
+                if let Some(first) = pieces.next()
+                    && !first.is_empty()
+                {
+                    self.push_literal(first, true);
                 }
                 for piece in pieces {
                     self.end_field();
@@ -628,23 +628,23 @@ pub(crate) fn expand_braces(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut at = 0;
     while at < chars.len() {
-        if chars[at] == '{' {
-            if let Some((alternatives, end)) = brace_group(&chars, at) {
-                let mut next = Vec::new();
-                for prefix in &results {
-                    for alternative in &alternatives {
-                        for expanded in expand_braces(alternative) {
-                            next.push(format!("{prefix}{expanded}"));
-                            if next.len() > BRACE_CAP {
-                                return vec![text.to_string()];
-                            }
+        if chars[at] == '{'
+            && let Some((alternatives, end)) = brace_group(&chars, at)
+        {
+            let mut next = Vec::new();
+            for prefix in &results {
+                for alternative in &alternatives {
+                    for expanded in expand_braces(alternative) {
+                        next.push(format!("{prefix}{expanded}"));
+                        if next.len() > BRACE_CAP {
+                            return vec![text.to_string()];
                         }
                     }
                 }
-                results = next;
-                at = end + 1;
-                continue;
             }
+            results = next;
+            at = end + 1;
+            continue;
         }
         if chars[at] == '\\' && at + 1 < chars.len() {
             for result in &mut results {

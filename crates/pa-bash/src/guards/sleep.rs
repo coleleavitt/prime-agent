@@ -91,10 +91,10 @@ fn inspect(list: &List, inside: Option<&str>, depth: usize) -> Option<String> {
         }
         for pipeline in item.pipelines() {
             for command in &pipeline.commands {
-                if let Command::Simple(simple) = command {
-                    if let Some(refusal) = descend(simple, inside, depth) {
-                        return Some(refusal);
-                    }
+                if let Command::Simple(simple) = command
+                    && let Some(refusal) = descend(simple, inside, depth)
+                {
+                    return Some(refusal);
                 }
             }
         }
@@ -299,11 +299,13 @@ fn shell_c_inner(shell_name: &str, args: &[Word]) -> Option<(String, String)> {
         }
         // Bundled short flags: `-lc`, `-ic`, `-ec`, etc. The command script
         // is still the word after the bundle. `--long` never bundles `c`.
-        if let Some(bundled) = text.strip_prefix('-') {
-            if !bundled.is_empty() && !bundled.starts_with('-') && bundled.contains('c') {
-                let script = args.get(i + 1)?.as_static()?;
-                return Some((format!("{shell_name} {text}"), script));
-            }
+        if let Some(bundled) = text.strip_prefix('-')
+            && !bundled.is_empty()
+            && !bundled.starts_with('-')
+            && bundled.contains('c')
+        {
+            let script = args.get(i + 1)?.as_static()?;
+            return Some((format!("{shell_name} {text}"), script));
         }
     }
     None

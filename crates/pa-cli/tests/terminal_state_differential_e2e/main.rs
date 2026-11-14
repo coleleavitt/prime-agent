@@ -102,11 +102,10 @@ fn diff_chat_child_mode() {
             AgentsViewUiMode::Terminal,
             None,
         ));
-        if let Ok(view) = view {
-            if let Some(link) = view.link {
+        if let Ok(view) = view
+            && let Some(link) = view.link {
                 link.close();
             }
-        }
     }
     quiet_child_epilogue();
 }
@@ -128,11 +127,10 @@ fn diff_view_child_mode() {
         AgentsViewUiMode::Terminal,
         None,
     ));
-    if let Ok(view) = view {
-        if let Some(link) = view.link {
+    if let Ok(view) = view
+        && let Some(link) = view.link {
             link.close();
         }
-    }
     quiet_child_epilogue();
 }
 

@@ -342,15 +342,14 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WaylandPlatform<T, N
     fn map_point(&self, window_id: Target, placement: &Placement, point: Pair) -> Result<Pair> {
         let (x, y) = (placement.origin.0 + point.0, placement.origin.1 + point.1);
         let repr = format!("({}, {})", repr_float(point.0), repr_float(point.1));
-        if let Some(visible) = placement.visible {
-            if !(visible.x..visible.x + visible.width).contains(&x)
-                || !(visible.y..visible.y + visible.height).contains(&y)
-            {
-                return Err(refused(
-                    window_id,
-                    &format!("point {repr} of the window is off screen"),
-                ));
-            }
+        if let Some(visible) = placement.visible
+            && (!(visible.x..visible.x + visible.width).contains(&x)
+                || !(visible.y..visible.y + visible.height).contains(&y))
+        {
+            return Err(refused(
+                window_id,
+                &format!("point {repr} of the window is off screen"),
+            ));
         }
         if let Some(hit) = self.niri.window_at((x, y))? {
             if let Some(layer) = hit.layer {
@@ -569,13 +568,13 @@ impl<T: Tools, N: NiriTransport, A: AtSpi, I: VirtualInput> WindowDirectory
     fn list_apps(&self) -> Result<Vec<AppEntry>> {
         let mut apps: Vec<AppEntry> = Vec::new();
         for window in self.niri.windows()? {
-            if let Some(id) = app_id(&window) {
-                if !apps.iter().any(|app| app.id == id) {
-                    apps.push(AppEntry {
-                        id: id.to_string(),
-                        name: id.to_string(),
-                    });
-                }
+            if let Some(id) = app_id(&window)
+                && !apps.iter().any(|app| app.id == id)
+            {
+                apps.push(AppEntry {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                });
             }
         }
         Ok(apps)

@@ -452,11 +452,11 @@ fn append_locked(
     if state.disabled {
         return false;
     }
-    if let Some(path) = ledger_path {
-        if let Err(error) = ledger::append_event(path, event) {
-            disable(state, path, &error.to_string());
-            return false;
-        }
+    if let Some(path) = ledger_path
+        && let Err(error) = ledger::append_event(path, event)
+    {
+        disable(state, path, &error.to_string());
+        return false;
     }
     replay_event(state, session_id, event);
     true

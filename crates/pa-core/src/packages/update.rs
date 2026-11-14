@@ -23,27 +23,27 @@ impl PackageManager {
         for scope in [UserOrProject::User, UserOrProject::Project] {
             for entry in self.packages_for_scope(scope).unwrap_or_default() {
                 let (source_str, _) = super::manager::split_entry(&entry);
-                if let Some(identity) = &identity {
-                    if &self.get_source_match_key_for_settings(&source_str, scope) != identity {
-                        continue;
-                    }
+                if let Some(identity) = &identity
+                    && &self.get_source_match_key_for_settings(&source_str, scope) != identity
+                {
+                    continue;
                 }
                 matched = true;
                 update_sources.push((source_str, scope));
             }
         }
 
-        if let Some(source) = source {
-            if !matched {
-                let configured = [
-                    self.packages_for_scope(UserOrProject::User)
-                        .unwrap_or_default(),
-                    self.packages_for_scope(UserOrProject::Project)
-                        .unwrap_or_default(),
-                ]
-                .concat();
-                bail!(Self::build_no_matching_package_message(source, &configured));
-            }
+        if let Some(source) = source
+            && !matched
+        {
+            let configured = [
+                self.packages_for_scope(UserOrProject::User)
+                    .unwrap_or_default(),
+                self.packages_for_scope(UserOrProject::Project)
+                    .unwrap_or_default(),
+            ]
+            .concat();
+            bail!(Self::build_no_matching_package_message(source, &configured));
         }
 
         self.update_configured_sources(update_sources)
@@ -66,27 +66,27 @@ impl PackageManager {
                 }
                 match parse_source(&source) {
                     ParsedSource::Npm(parsed) if !parsed.pinned => {
-                        if let Some(installed) = self.get_installed_path(&source, scope) {
-                            if self.npm_has_available_update(&parsed, &installed) {
-                                updates.push(PackageUpdate {
-                                    source,
-                                    display_name: parsed.name,
-                                    kind: "npm",
-                                    scope,
-                                });
-                            }
+                        if let Some(installed) = self.get_installed_path(&source, scope)
+                            && self.npm_has_available_update(&parsed, &installed)
+                        {
+                            updates.push(PackageUpdate {
+                                source,
+                                display_name: parsed.name,
+                                kind: "npm",
+                                scope,
+                            });
                         }
                     }
                     ParsedSource::Git(parsed) if !parsed.pinned => {
-                        if let Some(installed) = self.get_installed_path(&source, scope) {
-                            if super::git::git_has_available_update(&installed) {
-                                updates.push(PackageUpdate {
-                                    source,
-                                    display_name: format!("{}/{}", parsed.host, parsed.path),
-                                    kind: "git",
-                                    scope,
-                                });
-                            }
+                        if let Some(installed) = self.get_installed_path(&source, scope)
+                            && super::git::git_has_available_update(&installed)
+                        {
+                            updates.push(PackageUpdate {
+                                source,
+                                display_name: format!("{}/{}", parsed.host, parsed.path),
+                                kind: "git",
+                                scope,
+                            });
                         }
                     }
                     _ => {}

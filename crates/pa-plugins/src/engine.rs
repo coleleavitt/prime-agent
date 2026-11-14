@@ -88,11 +88,9 @@ pub(crate) fn prepare(path: &Path) -> Result<Arc<PluginPre<State>>, String> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(path)
-    {
-        if *cached == current {
+        && *cached == current {
             return Ok(Arc::clone(pre));
         }
-    }
     let component = Component::from_file(engine, path).map_err(|error| format!("{error:#}"))?;
     let pre = prepare_component(engine, &component)?;
     cache()

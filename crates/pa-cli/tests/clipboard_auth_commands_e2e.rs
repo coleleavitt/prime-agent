@@ -647,7 +647,7 @@ async fn tui_copy_emits_the_ts_osc52_sequence() {
         "SSH_CLIENT",
         "MOSH_CONNECTION",
     ] {
-        std::env::remove_var(var);
+        pa_types::env::remove_var(var);
     }
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().join("agent");
@@ -726,7 +726,7 @@ async fn tui_copy_toast_coalesces_consecutive_copies_and_auto_dismisses() {
         "SSH_CLIENT",
         "MOSH_CONNECTION",
     ] {
-        std::env::remove_var(var);
+        pa_types::env::remove_var(var);
     }
     let dir = tempfile::TempDir::new().expect("temp dir");
     let agent_dir = dir.path().join("agent");

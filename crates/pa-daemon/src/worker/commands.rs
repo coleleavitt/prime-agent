@@ -64,11 +64,10 @@ impl Worker {
                 None,
             );
         }
-        if needs_history(command_type, payload) {
-            if let Err(error) = self.hydrate_history().await {
+        if needs_history(command_type, payload)
+            && let Err(error) = self.hydrate_history().await {
                 return response_failure(None, command_type, &error.to_string(), None);
             }
-        }
         let response = self.route_command(command_type, payload).await;
         // A command admitted just before the fsync failure must not send a
         // success after the keyed delivery quarantined the worker. The
@@ -551,11 +550,9 @@ impl Worker {
             .get("includeMessagingStats")
             .and_then(Value::as_bool)
             == Some(true)
-        {
-            if let Ok(messaging) = serde_json::to_value(self.agent_digest.messaging_snapshot()) {
+            && let Ok(messaging) = serde_json::to_value(self.agent_digest.messaging_snapshot()) {
                 stats["messagingStats"] = messaging;
             }
-        }
         response_success(None, "get_session_stats", Some(stats))
     }
 
@@ -647,11 +644,11 @@ impl Worker {
             // The fork keys each running call to its start time; the read needs the ids.
             let running: std::collections::HashSet<String> =
                 core.running_tool_calls.keys().cloned().collect();
-            let slice = core
+            
+            core
                 .store
                 .as_mut()
-                .and_then(|store| query.read(store, &running));
-            slice
+                .and_then(|store| query.read(store, &running))
         };
         let mut slice = read();
         if slice.is_none() {
@@ -875,16 +872,14 @@ impl Worker {
             let mut core = self.core.lock_or_recover();
             // `shutdown` keeps the resume entry, so its file stays
             // live on disk; the killed and replaced closes archive.
-            if reason != KillCloseReason::Shutdown {
-                if let Some(store) = core.store.as_mut() {
-                    if let Err(error) = store.persist_entry(
+            if reason != KillCloseReason::Shutdown
+                && let Some(store) = core.store.as_mut()
+                    && let Err(error) = store.persist_entry(
                         "session_state",
                         json!({ "state": { "status": "archived" } }),
                     ) {
                         return response_failure(None, "kill", &error.to_string(), None);
                     }
-                }
-            }
             core.created = false;
         }
         // The abort funnel fires BEFORE every close step that can wait on the
@@ -909,8 +904,8 @@ impl Worker {
         // A killed or replaced session never delivers its queued agent
         // messages (a shutdown close keeps them for the later wake): tell
         // their senders before the worker's route goes away (upstream #2329).
-        if reason != KillCloseReason::Shutdown {
-            if let Some(route) = self.drop_notice_route() {
+        if reason != KillCloseReason::Shutdown
+            && let Some(route) = self.drop_notice_route() {
                 route
                     .notify(
                         dropped,
@@ -918,7 +913,6 @@ impl Worker {
                     )
                     .await;
             }
-        }
         self.compaction.abort();
         self.tree_navigation.abort();
         self.engine.abort_in_flight_turn();
@@ -987,11 +981,10 @@ impl Worker {
             .store
             .as_ref()
             .and_then(|store| store.session_name().map(str::to_string));
-        if let Some(store) = core.store.as_mut() {
-            if let Err(error) = store.persist_entry("session_info", json!({ "name": name })) {
+        if let Some(store) = core.store.as_mut()
+            && let Err(error) = store.persist_entry("session_info", json!({ "name": name })) {
                 return response_failure(None, command, &error.to_string(), None);
             }
-        }
         let summary = self.summary_locked(&core, inputs);
         // TS #2529 `applyStateSessionName`: a rename that changed an
         // existing name leaves the renamed session a displayed transcript

@@ -238,10 +238,10 @@ impl CronExpr {
         let mut steps = SEARCH_STEPS;
         let mut best: Option<(i64, NaiveDateTime)> = None;
         while let Some(wall) = self.next_wall_match(at, &mut steps) {
-            if let Some((_, best_wall)) = best {
-                if wall > best_wall + Duration::minutes(MAX_BACKWARD_SHIFT_MINUTES) {
-                    break;
-                }
+            if let Some((_, best_wall)) = best
+                && wall > best_wall + Duration::minutes(MAX_BACKWARD_SHIFT_MINUTES)
+            {
+                break;
             }
             for instant in self.eligible_instants(wall, zone, &mut steps) {
                 if instant > after_ms && best.is_none_or(|(current, _)| instant < current) {
@@ -421,10 +421,10 @@ pub fn human_schedule(expression: &str) -> String {
         return format!("Every day at {at}");
     }
     if *dom == "*" && *month == "*" {
-        if dow.len() == 1 {
-            if let Some(day) = number(dow) {
-                return format!("Every {} at {at}", WEEKDAYS[(day % 7) as usize]);
-            }
+        if dow.len() == 1
+            && let Some(day) = number(dow)
+        {
+            return format!("Every {} at {at}", WEEKDAYS[(day % 7) as usize]);
         }
         if *dow == "1-5" {
             return format!("Weekdays at {at}");

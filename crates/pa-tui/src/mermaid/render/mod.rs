@@ -151,10 +151,10 @@ pub fn render_cached(src: &str) -> Arc<Option<Art>> {
     let art = Arc::new(render(src));
     let mut cache = cache.lock_or_recover();
     if !cache.entries.contains_key(src) {
-        if cache.order.len() >= RENDER_CACHE_ENTRIES {
-            if let Some(oldest) = cache.order.pop_front() {
-                cache.entries.remove(&oldest);
-            }
+        if cache.order.len() >= RENDER_CACHE_ENTRIES
+            && let Some(oldest) = cache.order.pop_front()
+        {
+            cache.entries.remove(&oldest);
         }
         cache.order.push_back(src.to_owned());
         cache.entries.insert(src.to_owned(), Arc::clone(&art));

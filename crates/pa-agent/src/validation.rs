@@ -139,12 +139,12 @@ fn coerce_children(schema: &Value, value: &mut Value) {
                 }
             }
             // Coerce entries under `additionalProperties: { ... }` schemas too.
-            if let Some(additional_schema) = schema.get("additionalProperties") {
-                if additional_schema.is_object() {
-                    for (key, v) in map.iter_mut() {
-                        if !properties.contains_key(key) {
-                            coerce(additional_schema, v);
-                        }
+            if let Some(additional_schema) = schema.get("additionalProperties")
+                && additional_schema.is_object()
+            {
+                for (key, v) in map.iter_mut() {
+                    if !properties.contains_key(key) {
+                        coerce(additional_schema, v);
                     }
                 }
             }
@@ -239,23 +239,23 @@ fn check(schema: &Value, value: &Value, path: &str, errors: &mut Vec<(String, St
         return;
     }
 
-    if let Some(Value::Array(enum_values)) = schema.get("enum") {
-        if !enum_values.iter().any(|allowed| allowed == value) {
-            let base = format_path(path);
-            errors.push((
-                base,
-                "Value did not match any of the expected enum values".to_string(),
-            ));
-        }
+    if let Some(Value::Array(enum_values)) = schema.get("enum")
+        && !enum_values.iter().any(|allowed| allowed == value)
+    {
+        let base = format_path(path);
+        errors.push((
+            base,
+            "Value did not match any of the expected enum values".to_string(),
+        ));
     }
-    if let Some(expected_const) = schema.get("const") {
-        if expected_const != value {
-            let base = format_path(path);
-            errors.push((
-                base,
-                "Value did not match the expected const value".to_string(),
-            ));
-        }
+    if let Some(expected_const) = schema.get("const")
+        && expected_const != value
+    {
+        let base = format_path(path);
+        errors.push((
+            base,
+            "Value did not match the expected const value".to_string(),
+        ));
     }
 
     match value {
@@ -283,20 +283,20 @@ fn check(schema: &Value, value: &Value, path: &str, errors: &mut Vec<(String, St
                     }
                 }
             }
-            if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
-                if let Some(Value::Object(properties)) = schema.get("properties") {
-                    for key in map.keys() {
-                        if !properties.contains_key(key) {
-                            let sub_path = if path.is_empty() {
-                                key.clone()
-                            } else {
-                                format!("{path}.{key}")
-                            };
-                            errors.push((
-                                sub_path,
-                                "Property is not allowed by additionalProperties".to_string(),
-                            ));
-                        }
+            if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
+                && let Some(Value::Object(properties)) = schema.get("properties")
+            {
+                for key in map.keys() {
+                    if !properties.contains_key(key) {
+                        let sub_path = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        errors.push((
+                            sub_path,
+                            "Property is not allowed by additionalProperties".to_string(),
+                        ));
                     }
                 }
             }
@@ -325,23 +325,23 @@ fn check(schema: &Value, value: &Value, path: &str, errors: &mut Vec<(String, St
             }
         }
         Value::Number(n) => {
-            if let Some(min) = schema.get("minimum").and_then(Value::as_f64) {
-                if n.as_f64().unwrap_or(f64::MIN) < min {
-                    let base = format_path(path);
-                    errors.push((
-                        base,
-                        format!("Expected value to be greater than or equal to {min}"),
-                    ));
-                }
+            if let Some(min) = schema.get("minimum").and_then(Value::as_f64)
+                && n.as_f64().unwrap_or(f64::MIN) < min
+            {
+                let base = format_path(path);
+                errors.push((
+                    base,
+                    format!("Expected value to be greater than or equal to {min}"),
+                ));
             }
-            if let Some(max) = schema.get("maximum").and_then(Value::as_f64) {
-                if n.as_f64().unwrap_or(f64::MAX) > max {
-                    let base = format_path(path);
-                    errors.push((
-                        base,
-                        format!("Expected value to be less than or equal to {max}"),
-                    ));
-                }
+            if let Some(max) = schema.get("maximum").and_then(Value::as_f64)
+                && n.as_f64().unwrap_or(f64::MAX) > max
+            {
+                let base = format_path(path);
+                errors.push((
+                    base,
+                    format!("Expected value to be less than or equal to {max}"),
+                ));
             }
         }
         _ => {}

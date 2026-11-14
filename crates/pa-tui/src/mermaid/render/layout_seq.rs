@@ -227,10 +227,10 @@ pub(super) fn layout_sequence(seq: &Sequence) -> Option<Canvas> {
     for a in &seq.activations {
         let y1 = a.to.map_or(bottom_top - 1, end_row);
         for y in start_row(a.from)..=y1 {
-            if let Some(i) = canvas.idx(xs[a.at], y) {
-                if canvas.mask[i] != 0 {
-                    canvas.set_glyph(i, '║');
-                }
+            if let Some(i) = canvas.idx(xs[a.at], y)
+                && canvas.mask[i] != 0
+            {
+                canvas.set_glyph(i, '║');
             }
         }
     }

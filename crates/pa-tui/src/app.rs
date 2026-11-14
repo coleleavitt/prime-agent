@@ -147,10 +147,10 @@ fn run_app_surface(
         view.editor.materialize_autocomplete();
         let _ = view.editor.take_events();
 
-        if let Some(ms) = options.auto_exit_ms {
-            if start.elapsed() >= Duration::from_millis(ms) {
-                running = false;
-            }
+        if let Some(ms) = options.auto_exit_ms
+            && start.elapsed() >= Duration::from_millis(ms)
+        {
+            running = false;
         }
         if !running && stream_ended {
             break;
@@ -290,23 +290,23 @@ pub(crate) fn draw(
         let lines: Vec<ratatui::text::Line<'static>> =
             frame.iter().map(crate::markdown::to_ratatui_line).collect();
         f.render_widget(ratatui::text::Text::from(lines), frame_area);
-        if show_hardware_cursor {
-            if let Some((row, col)) = cursor {
-                if row < height && col < width {
-                    f.set_cursor_position(ratatui::layout::Position::new(col as u16, row as u16));
-                }
-            }
+        if show_hardware_cursor
+            && let Some((row, col)) = cursor
+            && row < height
+            && col < width
+        {
+            f.set_cursor_position(ratatui::layout::Position::new(col as u16, row as u16));
         }
     });
     // The hidden case still positions: IME candidates anchor at the caret whether or not it
     // is visible. The bare MoveTo rides the same sync bracket, after the paint.
-    if !show_hardware_cursor {
-        if let Some((row, col)) = cursor {
-            if row < height && col < width {
-                use crossterm::cursor::MoveTo;
-                crossterm::queue!(stdout(), MoveTo(col as u16, row as u16))?;
-            }
-        }
+    if !show_hardware_cursor
+        && let Some((row, col)) = cursor
+        && row < height
+        && col < width
+    {
+        use crossterm::cursor::MoveTo;
+        crossterm::queue!(stdout(), MoveTo(col as u16, row as u16))?;
     }
     let images_written = if painted.is_ok() {
         // Inline images go over their reserved cells after the cell flush,

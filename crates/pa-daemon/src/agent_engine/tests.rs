@@ -72,7 +72,7 @@ pub(crate) fn telemetry_opt_in() -> TelemetryOptIn {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = std::env::var_os("DO_NOT_TRACK");
-    std::env::set_var("DO_NOT_TRACK", "0");
+    pa_types::env::set_var("DO_NOT_TRACK", "0");
     TelemetryOptIn {
         previous,
         _guard: guard,
@@ -87,8 +87,8 @@ pub(crate) struct TelemetryOptIn {
 impl Drop for TelemetryOptIn {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => std::env::set_var("DO_NOT_TRACK", value),
-            None => std::env::remove_var("DO_NOT_TRACK"),
+            Some(value) => pa_types::env::set_var("DO_NOT_TRACK", value),
+            None => pa_types::env::remove_var("DO_NOT_TRACK"),
         }
     }
 }

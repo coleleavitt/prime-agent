@@ -303,11 +303,10 @@ fn find_reps(source: &str) -> Option<(usize, usize, u64)> {
                 let boundary = !bytes
                     .get(cursor)
                     .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
-                if cursor > digits_start && boundary {
-                    if let Ok(value) = source[digits_start..cursor].parse() {
+                if cursor > digits_start && boundary
+                    && let Ok(value) = source[digits_start..cursor].parse() {
                         return Some((digits_start, cursor, value));
                     }
-                }
             }
         }
         let next = source[line_start..].find('\n')?;

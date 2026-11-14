@@ -281,10 +281,10 @@ async fn run_stream(
         );
 
         let mut params = build_params(model, context, is_oauth, options, cache_control.as_ref());
-        if let Some(on_payload) = &base_options.on_payload {
-            if let Some(next) = on_payload(params.clone(), model) {
-                params = next;
-            }
+        if let Some(on_payload) = &base_options.on_payload
+            && let Some(next) = on_payload(params.clone(), model)
+        {
+            params = next;
         }
         let mut body: Option<String> = None;
         if let Some(hooks) = &hooks {
@@ -340,8 +340,8 @@ async fn run_stream(
                 429 => Some(Rejection::RateLimited),
                 _ => None,
             };
-            if let (Some(hooks), Some(rejection)) = (&hooks, rejection) {
-                if let Some(next) = resend_credential(
+            if let (Some(hooks), Some(rejection)) = (&hooks, rejection)
+                && let Some(next) = resend_credential(
                     hooks,
                     model,
                     &api_key,
@@ -351,10 +351,9 @@ async fn run_stream(
                     &mut attempts,
                 )
                 .await
-                {
-                    api_key = next;
-                    continue;
-                }
+            {
+                api_key = next;
+                continue;
             }
             return Err(ProviderError::from_http_status_body(
                 response.status,
@@ -367,8 +366,8 @@ async fn run_stream(
         // with hooks, read its first event before reporting the start.
         if let Some(hooks) = &hooks {
             opening = read_opening_events(&mut response, &mut decoder).await?;
-            if let Some(error_data) = opening_rate_limit(&opening) {
-                if let Some(next) = resend_credential(
+            if let Some(error_data) = opening_rate_limit(&opening)
+                && let Some(next) = resend_credential(
                     hooks,
                     model,
                     &api_key,
@@ -378,12 +377,11 @@ async fn run_stream(
                     &mut attempts,
                 )
                 .await
-                {
-                    api_key = next;
-                    decoder = SseDecoder::new();
-                    opening.clear();
-                    continue;
-                }
+            {
+                api_key = next;
+                decoder = SseDecoder::new();
+                opening.clear();
+                continue;
             }
         }
         break (response, request_id, is_oauth);
@@ -398,7 +396,7 @@ async fn run_stream(
     let mut saw_message_end = false;
 
     macro_rules! handle_event {
-        ($event:expr) => {{
+        ($event:expr_2021) => {{
             let event: Value = $event;
             (|| {
                 match event

@@ -530,10 +530,10 @@ pub fn get_disabled_thinking_config(model: &Model) -> Value {
     // Level-based Gemini keeps thinking on, so off sends the lowest supported level without
     // includeThoughts and the hidden thinking stays invisible. A catalog map names that level
     // when it cannot turn thinking off (`off: null`).
-    if let Some(minimum) = pa_types::ai::minimum_reasoning(model) {
-        if let Some(level) = mapped_thinking_level(model, minimum) {
-            return json!({ "thinkingLevel": level.as_str() });
-        }
+    if let Some(minimum) = pa_types::ai::minimum_reasoning(model)
+        && let Some(level) = mapped_thinking_level(model, minimum)
+    {
+        return json!({ "thinkingLevel": level.as_str() });
     }
     // Without a map, Gemma 4 goes down to MINIMAL (it has no LOW); every other level-based Gemini
     // takes LOW, which they all accept.

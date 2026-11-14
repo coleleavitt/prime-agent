@@ -292,11 +292,11 @@ impl<H: AgentCronSchedulerHooks + 'static> AgentCronScheduler<H> {
         let mut timer = self.timer.lock().await;
         // A live task is never aborted: the parked loop re-evaluates on the notify, so a mid-pass
         // wake needs no respawn.
-        if let Some(previous) = timer.as_ref() {
-            if !previous.is_finished() {
-                self.core.wake.notify_waiters();
-                return;
-            }
+        if let Some(previous) = timer.as_ref()
+            && !previous.is_finished()
+        {
+            self.core.wake.notify_waiters();
+            return;
         }
         timer.take();
         let core = self.core.clone();

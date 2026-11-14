@@ -227,10 +227,10 @@ fn local_violation(
             return Some((Reason::Unresolvable(why), None));
         }
     };
-    if !text.starts_with('/') {
-        if let Some(unknown) = &invocation.cwd.unknown {
-            return Some((Reason::Relocated(unknown.clone()), None));
-        }
+    if !text.starts_with('/')
+        && let Some(unknown) = &invocation.cwd.unknown
+    {
+        return Some((Reason::Relocated(unknown.clone()), None));
     }
     for dir in &invocation.cwd.dirs {
         let paths = match target {

@@ -101,10 +101,10 @@ impl Shared {
 
     /// Fail every pending request with `message` and remember it.
     fn fail_all(&self, message: &str) {
-        if let Ok(mut failure) = self.failure.lock() {
-            if failure.is_none() {
-                *failure = Some(message.to_string());
-            }
+        if let Ok(mut failure) = self.failure.lock()
+            && failure.is_none()
+        {
+            *failure = Some(message.to_string());
         }
         let requests = match self.pending.lock() {
             Ok(mut pending) => pending
@@ -483,12 +483,11 @@ impl Drop for StdioRouterEnvironment {
     fn drop(&mut self) {
         // A handle dropped without `close` must not leak a live adapter
         // (kill_on_drop reaps the direct child; this reaches its group).
-        if let Ok(inner) = self.inner.try_lock() {
-            if !inner.closed {
-                if let Some(pid) = inner.pid {
-                    let _ = crate::platform::kill_process_group_or_pid(pid as i32);
-                }
-            }
+        if let Ok(inner) = self.inner.try_lock()
+            && !inner.closed
+            && let Some(pid) = inner.pid
+        {
+            let _ = crate::platform::kill_process_group_or_pid(pid as i32);
         }
     }
 }

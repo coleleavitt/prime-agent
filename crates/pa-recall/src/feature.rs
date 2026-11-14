@@ -307,11 +307,10 @@ impl Inner {
 
     fn git_timeout_until(&self, repo_root: &str, repo_key: &str, agent_dir: &Path) -> Option<i64> {
         let now = self.now();
-        if let Some(until) = lock(&self.state).timed_out_repos.get(repo_key).copied() {
-            if until > now {
+        if let Some(until) = lock(&self.state).timed_out_repos.get(repo_key).copied()
+            && until > now {
                 return Some(until);
             }
-        }
         let stored = read_recall_skip(repo_root, agent_dir, now);
         let mut state = lock(&self.state);
         match stored {

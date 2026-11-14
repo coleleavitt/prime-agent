@@ -503,10 +503,10 @@ async fn run_interactive_surface(
         &surface_mounted,
     )?;
     let mut opening = OpeningPhase::new(&options, headless);
-    if opening.paints {
-        if let Some(terminal) = renderer.is_terminal_mut() {
-            crate::app::draw(terminal, &mut view)?;
-        }
+    if opening.paints
+        && let Some(terminal) = renderer.is_terminal_mut()
+    {
+        crate::app::draw(terminal, &mut view)?;
     }
     let mut open_task = spawn_session_open(first_connection, &options, &senders, &route);
     let opened = match opening
@@ -721,12 +721,11 @@ async fn run_interactive_surface(
                 status_line.fire(tokio::time::Instant::now());
             }
             maybe_status = status_line_rx.recv() => {
-                if let Some(rows) = maybe_status.and_then(|run| status_line.apply(run)) {
-                    if view.chrome.status_line != rows {
+                if let Some(rows) = maybe_status.and_then(|run| status_line.apply(run))
+                    && view.chrome.status_line != rows {
                         view.chrome.status_line = rows;
                         session.dirty = true;
                     }
-                }
             }
             Some(note) = receivers.page.recv() => session.apply_transcript_page(note, &mut view),
             Some(outcome) = receivers.compaction_abort.recv() => {

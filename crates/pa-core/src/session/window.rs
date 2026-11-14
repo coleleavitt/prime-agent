@@ -696,10 +696,10 @@ impl WindowedSessionStore {
         let generation = Generation::of(&file.metadata()?);
         let size = file.metadata()?.len();
         let mut reads = WindowReadStats::default();
-        if let Some(snapshot) = window_cache::load(path, &file, &mut reads) {
-            if let Some(store) = Self::from_snapshot(path, &mut file, snapshot, reads.clone())? {
-                return Ok(Some(store));
-            }
+        if let Some(snapshot) = window_cache::load(path, &file, &mut reads)
+            && let Some(store) = Self::from_snapshot(path, &mut file, snapshot, reads.clone())?
+        {
+            return Ok(Some(store));
         }
         if size == 0 {
             return Ok(None);
@@ -907,22 +907,22 @@ impl WindowedSessionStore {
     }
     /// Fold a newly persisted linear entry without hydrating historical bodies.
     pub fn append_entry(&mut self, entry: FileEntry) {
-        if !self.detached {
-            if let FileEntry::ChildUsageAttributed { payload, .. } = &entry {
-                // A live append must fold into the retained assistant copy too, or
-                // `context()` serves stale usage until reopen; a detached window
-                // holds no bodies — the manager's append folds its copy.
-                for retained in self.entries.iter_mut().rev() {
-                    if retained.id() == Some(payload.target_id.as_str()) {
-                        if let FileEntry::Message {
-                            message: pa_types::session::AgentMessage::Assistant(assistant),
-                            ..
-                        } = retained
-                        {
-                            assistant.usage = payload.aggregate_usage;
-                        }
-                        break;
+        if !self.detached
+            && let FileEntry::ChildUsageAttributed { payload, .. } = &entry
+        {
+            // A live append must fold into the retained assistant copy too, or
+            // `context()` serves stale usage until reopen; a detached window
+            // holds no bodies — the manager's append folds its copy.
+            for retained in self.entries.iter_mut().rev() {
+                if retained.id() == Some(payload.target_id.as_str()) {
+                    if let FileEntry::Message {
+                        message: pa_types::session::AgentMessage::Assistant(assistant),
+                        ..
+                    } = retained
+                    {
+                        assistant.usage = payload.aggregate_usage;
                     }
+                    break;
                 }
             }
         }
@@ -1081,14 +1081,13 @@ fn apply_attributions(entries: &mut [FileEntry], metadata: &[String]) {
     for row in metadata {
         if let Ok(FileEntry::ChildUsageAttributed { payload, .. }) = serde_json::from_str(row) {
             for entry in entries.iter_mut() {
-                if entry.id() == Some(payload.target_id.as_str()) {
-                    if let FileEntry::Message {
+                if entry.id() == Some(payload.target_id.as_str())
+                    && let FileEntry::Message {
                         message: pa_types::session::AgentMessage::Assistant(message),
                         ..
                     } = entry
-                    {
-                        message.usage = payload.aggregate_usage;
-                    }
+                {
+                    message.usage = payload.aggregate_usage;
                 }
             }
         }

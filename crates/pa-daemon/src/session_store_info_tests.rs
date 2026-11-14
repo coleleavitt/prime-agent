@@ -140,19 +140,17 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                         .and_then(|usages| serde_json::from_value(usages.clone()).ok())
                         .unwrap_or_default();
                     usage_scan.fold_discarded_attempts(role, &discarded);
-                    if role == Some("assistant") {
-                        if let (Some(provider), Some(model_id)) = (
+                    if role == Some("assistant")
+                        && let (Some(provider), Some(model_id)) = (
                             message.get("provider").and_then(Value::as_str),
                             message.get("model").and_then(Value::as_str),
                         ) {
                             model = Some((provider.to_string(), model_id.to_string()));
                         }
-                    }
-                    if matches!(role, Some("user" | "assistant")) {
-                        if let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
+                    if matches!(role, Some("user" | "assistant"))
+                        && let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
                             last_activity_ms = Some(last_activity_ms.unwrap_or(0).max(timestamp));
                         }
-                    }
                     if (role == Some("user") && first_message.is_empty())
                         || (matches!(role, Some("user" | "assistant"))
                             && search_text_chars < SESSION_LIST_SEARCH_TEXT_MAX_CHARS)

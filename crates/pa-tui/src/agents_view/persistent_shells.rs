@@ -270,10 +270,10 @@ impl AgentsViewMode {
         if data == self.persistent_shells {
             return;
         }
-        if crate::bash_view::registry_rows_moved(&self.persistent_shells, &data) {
-            if let Some(view) = self.shell_view.as_mut() {
-                view.clear_error();
-            }
+        if crate::bash_view::registry_rows_moved(&self.persistent_shells, &data)
+            && let Some(view) = self.shell_view.as_mut()
+        {
+            view.clear_error();
         }
         self.session_activity.persistent_shells = shell_counts_by_session(&data);
         self.persistent_shells = data;

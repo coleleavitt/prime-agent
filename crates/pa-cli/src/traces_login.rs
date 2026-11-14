@@ -365,7 +365,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_cli_candidate_logs_in_without_a_prompt() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (dir, agent) = temp_agent();
         let config = dir.path().join("prime-config.json");
         std::fs::write(
@@ -410,7 +410,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_manual_key_wins_the_race_and_checks_access() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (_dir, agent) = temp_agent();
         // The browser flow starts (the generate answer arms the prompt), the pending status poll
         // yields, and the pasted key wins.
@@ -455,7 +455,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn the_browser_login_completes_when_the_prompt_never_answers() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (_dir, agent) = temp_agent();
         let http = ScriptedHttp::new(vec![whoami_ok()]);
         let ui = ScriptedUi::new(vec![Some("never".to_string())]);
@@ -493,7 +493,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn a_denied_manual_key_reports_the_ts_error() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (_dir, agent) = temp_agent();
         // The browser cannot start (the generate answer is down), the fallback prompt arms, and the
         // pasted key is denied.
@@ -531,7 +531,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn a_cancelled_prompt_stays_silent() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (_dir, agent) = temp_agent();
         // The browser flow arms the prompt; the closed input cancels the login (the pending status
         // poll yields first).
@@ -554,7 +554,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn a_failed_browser_falls_back_to_the_paste_prompt() {
         let _env = env_lock();
-        std::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
+        pa_types::env::remove_var("PRIME_AGENT_TRACES_BASE_URL");
         let (_dir, agent) = temp_agent();
         // The challenge generate endpoint is down (the browser flow fails before any URL shows).
         let http = ScriptedHttp::without_dynamic(vec![

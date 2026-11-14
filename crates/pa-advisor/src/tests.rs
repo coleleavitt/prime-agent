@@ -103,13 +103,12 @@ fn bill_channel(
 /// A scripted text turn whose reply bills 40 input and 2 output tokens.
 fn billed_text_turn(text: &str) -> pa_agent::scripted::ScriptedTurn {
     let mut steps = pa_agent::scripted::text_turn_steps(&test_model(), text);
-    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut() {
-        if let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
+    if let Some(pa_agent::scripted::ScriptStep::Event(event)) = steps.last_mut()
+        && let pa_agent::stream::AssistantMessageEvent::Done { message, .. } = &mut **event {
             message.usage.input = 40;
             message.usage.output = 2;
             message.usage.total_tokens = 42;
         }
-    }
     pa_agent::scripted::ScriptedTurn::Events(steps)
 }
 

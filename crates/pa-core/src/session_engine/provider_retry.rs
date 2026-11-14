@@ -291,10 +291,11 @@ pub fn provider_retry_delay(
     retry_after_ms: Option<u64>,
     policy: &ProviderRetryPolicy,
 ) -> ProviderRetryDelay {
-    if let Some(retry_after_ms) = retry_after_ms {
-        if policy.max_retry_delay_ms > 0 && retry_after_ms > policy.max_retry_delay_ms {
-            return ProviderRetryDelay::ExceedsCap { retry_after_ms };
-        }
+    if let Some(retry_after_ms) = retry_after_ms
+        && policy.max_retry_delay_ms > 0
+        && retry_after_ms > policy.max_retry_delay_ms
+    {
+        return ProviderRetryDelay::ExceedsCap { retry_after_ms };
     }
     let exponential = policy
         .base_delay_ms

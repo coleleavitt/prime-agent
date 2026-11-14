@@ -280,13 +280,13 @@ fn parse_subagent_keep_alive_ms(value: &str) -> Result<u64, String> {
     if digits == "0" {
         return Ok(0);
     }
-    if !digits.is_empty() && !digits.starts_with('0') && digits.bytes().all(|b| b.is_ascii_digit())
+    if !digits.is_empty()
+        && !digits.starts_with('0')
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(parsed) = digits.parse::<u64>()
+        && parsed <= crate::autonomous::MAX_SUBAGENT_KEEP_ALIVE_MS
     {
-        if let Ok(parsed) = digits.parse::<u64>() {
-            if parsed <= crate::autonomous::MAX_SUBAGENT_KEEP_ALIVE_MS {
-                return Ok(parsed);
-            }
-        }
+        return Ok(parsed);
     }
     Err(format!(
         "--subagent-keep-alive-ms must be 0 or a positive integer up to {}. {AUTONOMOUS_BUDGET_USAGE}",

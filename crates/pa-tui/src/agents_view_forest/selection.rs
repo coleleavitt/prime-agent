@@ -55,13 +55,13 @@ pub fn resolve_selection(
     }
     let pinned_kind = identity.and_then(pinned_row_kind);
     let preserves_kind = |row: &AgentsViewRow| pinned_kind.is_none_or(|kind| row.kind == kind);
-    if let Some(identity) = identity {
-        if let Some(index) = find_selectable(rows, |row| row.identity == identity) {
-            // Synthetic nested rows deliberately reuse their parent's session key, so their
-            // exact row identity must win over the active-runtime fallback.
-            if rows[index].kind != RowKind::Agent {
-                return index;
-            }
+    if let Some(identity) = identity
+        && let Some(index) = find_selectable(rows, |row| row.identity == identity)
+    {
+        // Synthetic nested rows deliberately reuse their parent's session key, so their
+        // exact row identity must win over the active-runtime fallback.
+        if rows[index].kind != RowKind::Agent {
+            return index;
         }
     }
     // Id fallbacks stay host-scoped, like the row identity (TS #2516's
@@ -91,16 +91,16 @@ pub fn resolve_selection(
         // The pinned line vanished (its count dropped to zero): stay with this session by
         // landing on its parent row rather than keeping an index that may now be another
         // session's row.
-        if pinned_kind.is_some() {
-            if let Some(index) = find_selectable(rows, matches_active) {
-                return index;
-            }
-        }
-    }
-    if let Some(identity) = identity {
-        if let Some(index) = find_selectable(rows, |row| row.identity == identity) {
+        if pinned_kind.is_some()
+            && let Some(index) = find_selectable(rows, matches_active)
+        {
             return index;
         }
+    }
+    if let Some(identity) = identity
+        && let Some(index) = find_selectable(rows, |row| row.identity == identity)
+    {
+        return index;
     }
     if let Some(session) = key.and_then(|key| key.session_id.as_deref()) {
         let matches_session = |row: &AgentsViewRow| {
@@ -111,10 +111,10 @@ pub fn resolve_selection(
         }) {
             return index;
         }
-        if pinned_kind.is_some() {
-            if let Some(index) = find_selectable(rows, matches_session) {
-                return index;
-            }
+        if pinned_kind.is_some()
+            && let Some(index) = find_selectable(rows, matches_session)
+        {
+            return index;
         }
     }
     let bounded = current.min(rows.len() - 1);

@@ -137,8 +137,8 @@ impl Worker {
             // The reserved child-status kinds are daemon provenance (the queue-fold
             // anti-spoof): a restored row claiming one refuses the whole snapshot
             // before any action admits; only the recovery journal may park one.
-            if let Some(row) = payload.get("customMessage") {
-                if crate::child_status_notices::is_reserved_child_status_custom_type(row) {
+            if let Some(row) = payload.get("customMessage")
+                && crate::child_status_notices::is_reserved_child_status_custom_type(row) {
                     return response_failure(
                         None,
                         "restore_actions",
@@ -149,7 +149,6 @@ impl Worker {
                         None,
                     );
                 }
-            }
         }
         // Restore pass: each action lands in its delivery lane —
         // `next_turn_boundary` is the steering schedule, `when_run_idle` the follow-up one.

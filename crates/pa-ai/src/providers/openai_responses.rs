@@ -187,10 +187,10 @@ fn build_params(model: &Model, context: &Context, options: &OpenAIResponsesOptio
     params.insert("model".into(), json!(model.id));
     params.insert("input".into(), json!(messages));
     params.insert("stream".into(), json!(true));
-    if cache_retention != CacheRetention::None {
-        if let Some(session_id) = &options.base.session_id {
-            params.insert("prompt_cache_key".into(), json!(session_id));
-        }
+    if cache_retention != CacheRetention::None
+        && let Some(session_id) = &options.base.session_id
+    {
+        params.insert("prompt_cache_key".into(), json!(session_id));
     }
     if let Some(retention) = get_prompt_cache_retention(&compat, cache_retention) {
         params.insert("prompt_cache_retention".into(), json!(retention));
@@ -210,16 +210,16 @@ fn build_params(model: &Model, context: &Context, options: &OpenAIResponsesOptio
             serde_json::to_value(options.service_tier).unwrap_or(Value::Null),
         );
     }
-    if let Some(tools) = &context.tools {
-        if !tools.is_empty() {
-            params.insert(
-                "tools".into(),
-                json!(convert_responses_tools(
-                    tools,
-                    ConvertResponsesToolsOptions { strict: None }
-                )),
-            );
-        }
+    if let Some(tools) = &context.tools
+        && !tools.is_empty()
+    {
+        params.insert(
+            "tools".into(),
+            json!(convert_responses_tools(
+                tools,
+                ConvertResponsesToolsOptions { strict: None }
+            )),
+        );
     }
     if supports_thinking(model) {
         if options.reasoning_effort.is_some() || options.reasoning_summary.is_some() {
@@ -283,10 +283,10 @@ async fn run_stream(
     };
 
     let mut params = build_params(model, context, &options);
-    if let Some(on_payload) = &options.base.on_payload {
-        if let Some(next) = on_payload(params.clone(), model) {
-            params = next;
-        }
+    if let Some(on_payload) = &options.base.on_payload
+        && let Some(next) = on_payload(params.clone(), model)
+    {
+        params = next;
     }
 
     let url = format!("{}/responses", model.base_url.trim_end_matches('/'));

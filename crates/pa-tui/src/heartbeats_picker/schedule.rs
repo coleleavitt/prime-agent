@@ -89,18 +89,16 @@ pub fn human_schedule(expression: &str) -> String {
     }
     if dom == CronField::Any {
         if let (CronField::Value(d), CronField::Value(h), CronField::Value(m)) = (dow, hour, minute)
+            && let Some(day) = cron_day_name(d)
         {
-            if let Some(day) = cron_day_name(d) {
-                return format!("{day}s {}", at(h, m));
-            }
+            return format!("{day}s {}", at(h, m));
         }
         return trimmed.to_string();
     }
-    if dow == CronField::Any {
-        if let (CronField::Value(1), CronField::Value(h), CronField::Value(m)) = (dom, hour, minute)
-        {
-            return format!("monthly {}", at(h, m));
-        }
+    if dow == CronField::Any
+        && let (CronField::Value(1), CronField::Value(h), CronField::Value(m)) = (dom, hour, minute)
+    {
+        return format!("monthly {}", at(h, m));
     }
     trimmed.to_string()
 }

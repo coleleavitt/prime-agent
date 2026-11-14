@@ -174,10 +174,8 @@ fn with_store<T>(
     write: bool,
     op: impl FnOnce(&mut Session) -> Result<T, StoreError>,
 ) -> Result<(T, Outcome), StoreError> {
-    if write {
-        if let Some(message) = &target.write_error {
-            return Err(StoreError::new(StoreErrorKind::Runtime, message.clone()));
-        }
+    if write && let Some(message) = &target.write_error {
+        return Err(StoreError::new(StoreErrorKind::Runtime, message.clone()));
     }
     let (lock, loaded) = match &target.location {
         StoreLocation::File(path) => {

@@ -308,10 +308,10 @@ impl AgentCronJobStore {
                     if job.id != id || job.status != JobStatus::Active {
                         return job;
                     }
-                    if let Some(current) = job.next_run_at.as_deref().and_then(parse_iso_millis) {
-                        if current >= until_ms {
-                            return job;
-                        }
+                    if let Some(current) = job.next_run_at.as_deref().and_then(parse_iso_millis)
+                        && current >= until_ms
+                    {
+                        return job;
                     }
                     job.next_run_at = Some(until_iso.clone());
                     job.updated_at = iso_from_millis(now_millis());

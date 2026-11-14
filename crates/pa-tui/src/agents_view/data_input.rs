@@ -182,10 +182,10 @@ impl AgentsViewMode {
         if let Some(anchor) = self.options.anchor_session_id.as_deref() {
             preserved.push(anchor);
         }
-        if let Some(scope) = self.options.scope.as_ref() {
-            if let Some(session) = scope.session_id.as_deref() {
-                preserved.push(session);
-            }
+        if let Some(scope) = self.options.scope.as_ref()
+            && let Some(session) = scope.session_id.as_deref()
+        {
+            preserved.push(session);
         }
         let filtered = filter_empty_sessions(working, &preserved);
         let filtered = if self.query.trim().is_empty() {

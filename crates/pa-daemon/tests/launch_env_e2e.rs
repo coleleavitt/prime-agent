@@ -31,7 +31,7 @@ struct RemoveEnvVarAtDrop(&'static str);
 #[cfg(target_os = "linux")]
 impl Drop for RemoveEnvVarAtDrop {
     fn drop(&mut self) {
-        std::env::remove_var(self.0);
+        pa_types::env::remove_var(self.0);
     }
 }
 
@@ -302,11 +302,9 @@ fn child_descriptor_pid(descriptor_dir: &Path, child_id: &str) -> Option<u32> {
         if descriptor["sessionFile"]
             .as_str()
             .is_some_and(|file| file.contains(child_id))
-        {
-            if let Some(pid) = descriptor["pid"].as_u64().filter(|pid| *pid > 0) {
+            && let Some(pid) = descriptor["pid"].as_u64().filter(|pid| *pid > 0) {
                 return u32::try_from(pid).ok();
             }
-        }
     }
     None
 }
@@ -517,7 +515,7 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
     // marker at boot, so the ONLY way the child can see it is the
     // spawn arm's forward. The var never leaks past this test: the
     // guard removes it at scope end.
-    std::env::set_var("PA_MARKER", &marker);
+    pa_types::env::set_var("PA_MARKER", &marker);
     let _marker_guard = RemoveEnvVarAtDrop("PA_MARKER");
     let children = SupervisorChildSessions::new(
         std::sync::Arc::new(SupervisorLink::new(socket.clone())),
@@ -570,11 +568,10 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
     let descriptor_dir = pa_daemon::descriptor::descriptor_dir(&agent_dir, &socket);
     let deadline = Instant::now() + Duration::from_secs(15);
     let environ = loop {
-        if let Some(pid) = child_descriptor_pid(&descriptor_dir, &handle.rlm_child_id) {
-            if let Ok(bytes) = std::fs::read(format!("/proc/{pid}/environ")) {
+        if let Some(pid) = child_descriptor_pid(&descriptor_dir, &handle.rlm_child_id)
+            && let Ok(bytes) = std::fs::read(format!("/proc/{pid}/environ")) {
                 break parse_environ(&bytes);
             }
-        }
         assert!(
             Instant::now() < deadline,
             "the child worker's env never became observable"

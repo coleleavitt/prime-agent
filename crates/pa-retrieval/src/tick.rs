@@ -215,8 +215,8 @@ fn sync_one_history(
                     }
                     // Admission-time novelty BEFORE the upsert — this
                     // scores against the index as it was, not after.
-                    if let Some(score) = handle.novelty_score(&combined) {
-                        if let Ok(entry) = serde_json::to_string(&NoveltyEntry {
+                    if let Some(score) = handle.novelty_score(&combined)
+                        && let Ok(entry) = serde_json::to_string(&NoveltyEntry {
                             timestamp: now_iso(),
                             memory_id: &edit.id,
                             action,
@@ -224,7 +224,6 @@ fn sync_one_history(
                         }) {
                             novelty_lines.push(entry);
                         }
-                    }
                     handle.record_memory_upsert(&edit.id, &combined);
                     applied += 1;
                 }

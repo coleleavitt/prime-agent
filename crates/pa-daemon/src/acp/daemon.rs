@@ -383,15 +383,13 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
                                 current.assistant_stop_reason = stop.stop_reason;
                             }
                             if event.get("type").and_then(Value::as_str) == Some("rlm_child_update")
-                            {
-                                if let Some(id) = event
+                                && let Some(id) = event
                                     .get("child")
                                     .and_then(|child| child.get("id"))
                                     .and_then(Value::as_str)
                                 {
                                     current.observed_children.insert(id.to_string());
                                 }
-                            }
                             let turn_id = current.producer.active_prompt_turn().await;
                             let context_window = current
                                 .config

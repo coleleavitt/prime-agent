@@ -195,8 +195,8 @@ impl Drop for FixtureEnvironment {
     fn drop(&mut self) {
         for (name, previous) in self.0.drain(..) {
             match previous {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
+                Some(value) => pa_types::env::set_var(name, value),
+                None => pa_types::env::remove_var(name),
             }
         }
     }
@@ -293,11 +293,11 @@ pub fn ca_bundle_env(env_var: &str, ca_pem: &str) -> CaBundleEnv {
         "ALL_PROXY",
         "all_proxy",
     ] {
-        std::env::remove_var(name);
+        pa_types::env::remove_var(name);
     }
-    std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
-    std::env::set_var("no_proxy", "127.0.0.1,localhost");
-    std::env::set_var(env_var, bundle.path());
+    pa_types::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+    pa_types::env::set_var("no_proxy", "127.0.0.1,localhost");
+    pa_types::env::set_var(env_var, bundle.path());
     CaBundleEnv {
         bundle,
         _environment: environment,

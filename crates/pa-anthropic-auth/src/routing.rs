@@ -244,8 +244,8 @@ impl SharedStoreSource {
         let spent =
             |quota: &QuotaSnapshot| exhausted(quota) || quota.model_scope_is_exhausted(model);
         let mut main_quota = main.and_then(|main| self.quota.snapshot(&main.id));
-        if let Some(main) = main {
-            if main_quota.as_ref().is_some_and(spent)
+        if let Some(main) = main
+            && main_quota.as_ref().is_some_and(spent)
                 && self.quota.is_stale(&main.id, model, Utc::now())
             {
                 // A stale spent reading is confirmed before the first is
@@ -253,7 +253,6 @@ impl SharedStoreSource {
                 self.queue_poll(&main.id, PollWait::Result);
                 main_quota = self.quota.snapshot(&main.id);
             }
-        }
         let main_spent = main.is_some_and(|main| {
             main_quota.as_ref().is_some_and(spent)
                 && !self.quota.is_stale(&main.id, model, Utc::now())
@@ -472,8 +471,8 @@ impl SharedStoreSource {
             self.counts.sticky_migrated.fetch_add(1, Ordering::SeqCst);
         }
         let quota = self.quota.snapshot(&resolution.account_id);
-        if fresh(quota.as_ref()) {
-            if let StickyQuotaFailureDecision::Hold { retry_after_secs } =
+        if fresh(quota.as_ref())
+            && let StickyQuotaFailureDecision::Hold { retry_after_secs } =
                 decide_sticky_quota_failure(quota.as_ref(), model, now)
             {
                 #[allow(clippy::cast_precision_loss)]
@@ -484,7 +483,6 @@ impl SharedStoreSource {
                     retry_after,
                 )));
             }
-        }
         Some(Route::Login(resolution.account_id))
     }
 

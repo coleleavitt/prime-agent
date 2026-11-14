@@ -1133,10 +1133,10 @@ impl SettingsManager {
                 IdleEviction::Off
             }
             Some(serde_json::Value::Number(number)) => {
-                if let Some(minutes) = number.as_u64() {
-                    if minutes > 0 {
-                        return IdleEviction::Minutes(minutes);
-                    }
+                if let Some(minutes) = number.as_u64()
+                    && minutes > 0
+                {
+                    return IdleEviction::Minutes(minutes);
                 }
                 IdleEviction::Minutes(DEFAULT_IDLE_EVICTION_MINUTES)
             }

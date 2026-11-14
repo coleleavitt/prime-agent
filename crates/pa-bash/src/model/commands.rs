@@ -230,26 +230,26 @@ impl Walker {
         command: &mut Pending<'_>,
         state: &mut State<'_>,
     ) -> Option<Next> {
-        if !self.expanding.contains(&word) {
-            if let Some(body) = state.aliases.get(&word).cloned() {
-                // Bash does not expand an alias inside its own expansion.
-                let rest = self.joined_code(&command.fields[1..], state, &command.call.pieces);
-                let feed = self.current_feed(&command.call);
-                self.expanding.push(word.clone());
-                let via = Via::Alias { name: word.clone() };
-                let expanded_only = state.expand_aliases;
-                self.code(
-                    &format!("{body} {rest}"),
-                    via,
-                    state,
-                    Share::Shared,
-                    Some(feed),
-                    None,
-                );
-                self.expanding.pop();
-                if expanded_only {
-                    return Some(Next::Done);
-                }
+        if !self.expanding.contains(&word)
+            && let Some(body) = state.aliases.get(&word).cloned()
+        {
+            // Bash does not expand an alias inside its own expansion.
+            let rest = self.joined_code(&command.fields[1..], state, &command.call.pieces);
+            let feed = self.current_feed(&command.call);
+            self.expanding.push(word.clone());
+            let via = Via::Alias { name: word.clone() };
+            let expanded_only = state.expand_aliases;
+            self.code(
+                &format!("{body} {rest}"),
+                via,
+                state,
+                Share::Shared,
+                Some(feed),
+                None,
+            );
+            self.expanding.pop();
+            if expanded_only {
+                return Some(Next::Done);
             }
         }
         if let Some(body) = state.functions.get(&word).cloned() {
@@ -784,12 +784,12 @@ impl Walker {
     fn field_subs(fields: &[Field<'_>], call: &Call) -> Vec<Range<usize>> {
         let mut out: Vec<Range<usize>> = Vec::new();
         for field in fields {
-            if let Some(word) = field.word {
-                if let Some(range) = call.word_subs.get(&(std::ptr::from_ref(word) as usize)) {
-                    if !range.is_empty() && !out.contains(range) {
-                        out.push(range.clone());
-                    }
-                }
+            if let Some(word) = field.word
+                && let Some(range) = call.word_subs.get(&(std::ptr::from_ref(word) as usize))
+                && !range.is_empty()
+                && !out.contains(range)
+            {
+                out.push(range.clone());
             }
         }
         out.extend(call.redirect_subs.iter().cloned());

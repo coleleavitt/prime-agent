@@ -508,15 +508,15 @@ pub fn mcp_login_eligibility(
             repair: true,
         };
     }
-    if let Some(McpServerConfig::Http { url, .. }) = config {
-        if concrete_oauth_endpoint(url) {
-            return McpLoginEligibility {
-                allowed: true,
-                endpoint: Some(url.clone()),
-                setup_hint: None,
-                repair: false,
-            };
-        }
+    if let Some(McpServerConfig::Http { url, .. }) = config
+        && concrete_oauth_endpoint(url)
+    {
+        return McpLoginEligibility {
+            allowed: true,
+            endpoint: Some(url.clone()),
+            setup_hint: None,
+            repair: false,
+        };
     }
     if let Some(service) = service {
         if fresh_mcp_login_allowed(service) {

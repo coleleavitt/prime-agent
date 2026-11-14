@@ -46,8 +46,8 @@ impl EnvOverride {
             .collect();
         for (key, value) in pairs {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                Some(value) => pa_types::env::set_var(key, value),
+                None => pa_types::env::remove_var(key),
             }
         }
         EnvOverride(saved)
@@ -58,8 +58,8 @@ impl Drop for EnvOverride {
     fn drop(&mut self) {
         for (key, value) in &self.0 {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                Some(value) => pa_types::env::set_var(key, value),
+                None => pa_types::env::remove_var(key),
             }
         }
     }

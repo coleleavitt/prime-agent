@@ -264,11 +264,10 @@ impl ConfigFile {
             .ok()
             .and_then(|metadata| Some((metadata.len(), metadata.modified().ok()?)));
         let mut memo = self.memo.lock_or_recover();
-        if let Some((known, config)) = memo.as_ref() {
-            if *known == stamp {
+        if let Some((known, config)) = memo.as_ref()
+            && *known == stamp {
                 return Arc::clone(config);
             }
-        }
         let config = Arc::new(match stamp {
             None => RoutingConfig::default(),
             Some(_) => read(path),

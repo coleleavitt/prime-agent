@@ -116,10 +116,10 @@ impl Settings {
 fn bundle_list(value: Option<&toml::Value>, mut kept: Vec<String>) -> Vec<String> {
     if let Some(entries) = value.and_then(toml::Value::as_array) {
         for entry in entries {
-            if let Some(entry) = entry.as_str() {
-                if !kept.iter().any(|existing| existing == entry) {
-                    kept.push(entry.to_string());
-                }
+            if let Some(entry) = entry.as_str()
+                && !kept.iter().any(|existing| existing == entry)
+            {
+                kept.push(entry.to_string());
             }
         }
     }

@@ -36,7 +36,7 @@ fn slow_status_git_dir(temp: &TempDirs) -> std::path::PathBuf {
 
 fn set_path(path: &str) {
     // Single-test binary: nothing else reads the environment concurrently.
-    std::env::set_var("PATH", path);
+    pa_types::env::set_var("PATH", path);
 }
 
 #[tokio::test]

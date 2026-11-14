@@ -45,12 +45,12 @@ impl SessionUi {
     /// The armed double-Escape action, taken once inside the window.
     pub(super) fn take_escape_repeat_action(&mut self) -> Option<&'static str> {
         let action = self.escape_repeat_action;
-        if let Some(until) = self.escape_repeat_until {
-            if Instant::now() < until {
-                self.escape_repeat_action = None;
-                self.escape_repeat_until = None;
-                return action;
-            }
+        if let Some(until) = self.escape_repeat_until
+            && Instant::now() < until
+        {
+            self.escape_repeat_action = None;
+            self.escape_repeat_until = None;
+            return action;
         }
         self.escape_repeat_action = None;
         self.escape_repeat_until = None;

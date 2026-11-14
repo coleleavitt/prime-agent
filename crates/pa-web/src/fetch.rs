@@ -378,15 +378,14 @@ fn classify(content_type: &str, body: &[u8]) -> ContentKind {
     if textual {
         return ContentKind::Text;
     }
-    if mime.is_empty() {
-        if let Ok(text) = std::str::from_utf8(&body[..body.len().min(4096)]) {
+    if mime.is_empty()
+        && let Ok(text) = std::str::from_utf8(&body[..body.len().min(4096)]) {
             let head = text.trim_start().to_lowercase();
             if head.starts_with("<!doctype html") || head.starts_with("<html") {
                 return ContentKind::Html;
             }
             return ContentKind::Text;
         }
-    }
     ContentKind::Binary
 }
 
@@ -535,11 +534,10 @@ impl Fetcher {
                 Err(FetchError::Transport(_)) => true,
                 Err(_) => false,
             };
-            if blocked {
-                if let Ok(outcome) = self.fetch_via_browser(&url, browser, cancel).await {
+            if blocked
+                && let Ok(outcome) = self.fetch_via_browser(&url, browser, cancel).await {
                     return Ok(outcome);
                 }
-            }
         }
         http
     }

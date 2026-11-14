@@ -290,10 +290,10 @@ pub fn set_autonomous_limits(state: &mut AutonomousRuntimeState, config: &AgentA
     state.limits.max_turns = normalize_limit(config.max_turns, state.limits.max_turns);
     state.limits.max_tokens = normalize_limit(config.max_tokens, state.limits.max_tokens);
     state.limits.timeout_ms = normalize_limit(config.timeout_ms, state.limits.timeout_ms);
-    if let Some(prompt) = config.continuation_prompt.as_deref().map(str::trim) {
-        if !prompt.is_empty() {
-            state.continuation_prompt = prompt.to_string();
-        }
+    if let Some(prompt) = config.continuation_prompt.as_deref().map(str::trim)
+        && !prompt.is_empty()
+    {
+        state.continuation_prompt = prompt.to_string();
     }
     if let Some(gates) = &config.gates {
         if let Some(commands) = &gates.commands {
@@ -391,10 +391,10 @@ pub fn autonomous_limit_reason_of_status(
     if status.tokens_used >= status.limits.max_tokens {
         return Some(AutonomousLimitReason::MaxTokens);
     }
-    if let Some(started_at) = status.started_at {
-        if now.saturating_sub(started_at) >= status.limits.timeout_ms {
-            return Some(AutonomousLimitReason::TimeoutMs);
-        }
+    if let Some(started_at) = status.started_at
+        && now.saturating_sub(started_at) >= status.limits.timeout_ms
+    {
+        return Some(AutonomousLimitReason::TimeoutMs);
     }
     None
 }
@@ -414,10 +414,10 @@ pub fn autonomous_limit_reason(
     if state.tokens_used >= state.limits.max_tokens {
         return Some(AutonomousLimitReason::MaxTokens);
     }
-    if let Some(started_at) = state.started_at {
-        if now.saturating_sub(started_at) >= state.limits.timeout_ms {
-            return Some(AutonomousLimitReason::TimeoutMs);
-        }
+    if let Some(started_at) = state.started_at
+        && now.saturating_sub(started_at) >= state.limits.timeout_ms
+    {
+        return Some(AutonomousLimitReason::TimeoutMs);
     }
     None
 }

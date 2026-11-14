@@ -622,10 +622,10 @@ impl AuthStorage {
             .candidate_memos
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((memo_key, candidate)) = memos.get(&memo_slot) {
-            if memo_key == &key {
-                return candidate.clone();
-            }
+        if let Some((memo_key, candidate)) = memos.get(&memo_slot)
+            && memo_key == &key
+        {
+            return candidate.clone();
         }
         let candidate = build();
         memos.insert(memo_slot, (key, candidate.clone()));

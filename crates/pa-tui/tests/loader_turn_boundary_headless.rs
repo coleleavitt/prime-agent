@@ -289,7 +289,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 /// Run one headless plan against the mock: the frames and the commands
 /// the client sent.
 fn run(steps: Vec<HeadlessStep>) -> (Vec<String>, Vec<String>) {
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let listener = UnixListener::bind(&socket).expect("bind mock socket");

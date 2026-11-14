@@ -184,14 +184,13 @@ impl UpdateFlags {
                     "--extension cannot be combined with a positional source".to_string()
                 });
             }
-        } else if let Some(source) = &options.source {
-            if !is_self_update_source(source) && (self.extensions_flag || self.self_flag) {
+        } else if let Some(source) = &options.source
+            && !is_self_update_source(source) && (self.extensions_flag || self.self_flag) {
                 options.conflicting_options.get_or_insert_with(|| {
                     "positional update targets cannot be combined with --self or --extensions"
                         .to_string()
                 });
             }
-        }
         let positional_source_not_self = options
             .source
             .as_deref()
@@ -481,11 +480,10 @@ pub fn handle_package_command(args: &[String]) -> PackageCommandOutcome {
 
     let mut manager = PackageManager::new(cwd, agent_dir, settings);
     manager.set_progress_callback(Box::new(|event: &ProgressEvent| {
-        if event.kind == ProgressEventKind::Start {
-            if let Some(message) = &event.message {
+        if event.kind == ProgressEventKind::Start
+            && let Some(message) = &event.message {
                 println!("{message}");
             }
-        }
     }));
 
     let scope = if options.local {

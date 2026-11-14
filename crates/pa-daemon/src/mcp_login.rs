@@ -47,14 +47,13 @@ impl McpLoginUi for WorkerMcpLoginUi {
         // fire-and-forget launch and keeps showing the URL on failure).
         pa_core::platform::browser::open_in_browser(url);
         eprintln!("pa-daemon: MCP login: {url} — {instructions}");
-        if let Some(path) = &self.auth_url_file {
-            if let Err(error) = std::fs::write(path, url) {
+        if let Some(path) = &self.auth_url_file
+            && let Err(error) = std::fs::write(path, url) {
                 eprintln!(
                     "pa-daemon: MCP login could not record the authorization URL at {}: {error}",
                     path.display()
                 );
             }
-        }
     }
 
     fn on_prompt(
@@ -184,14 +183,13 @@ mod tests {
 
         fn on_auth(&self, url: &str, _instructions: &str) {
             self.auth_urls.lock().unwrap().push(url.to_string());
-            if let Some(path) = &self.auth_url_file {
-                if let Err(error) = std::fs::write(path, url) {
+            if let Some(path) = &self.auth_url_file
+                && let Err(error) = std::fs::write(path, url) {
                     eprintln!(
                         "test MCP login could not record the authorization URL at {}: {error}",
                         path.display()
                     );
                 }
-            }
         }
 
         fn on_prompt(

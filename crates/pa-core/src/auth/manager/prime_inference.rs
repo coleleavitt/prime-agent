@@ -88,10 +88,10 @@ impl AuthStorage {
             let Some(AuthCredential::ApiKey { key, .. }) = existing else {
                 return None;
             };
-            if let Some(expected) = expected_api_key {
-                if key != expected {
-                    return None;
-                }
+            if let Some(expected) = expected_api_key
+                && key != expected
+            {
+                return None;
             }
             Some(AuthCredential::ApiKey {
                 key,

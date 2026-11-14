@@ -435,13 +435,11 @@ fn registered_host_requests() -> BTreeSet<String> {
             // argument is not the request type.
             for remainder in source.split(".register(").skip(1) {
                 let rest = remainder.trim_start();
-                if rest.starts_with('"') {
-                    if let Some(literal) = first_string_literal(rest) {
-                        if is_request_type_literal(&literal) {
+                if rest.starts_with('"')
+                    && let Some(literal) = first_string_literal(rest)
+                        && is_request_type_literal(&literal) {
                             found.insert(literal);
                         }
-                    }
-                }
             }
             // Loop tables: `for request_type in [ "a.b", ... ]`.
             for remainder in source.split("for request_type in").skip(1) {
@@ -480,11 +478,10 @@ fn feature_host_requests() -> BTreeSet<String> {
             if !line.starts_with("pub const ") || !line.contains(": &str = ") {
                 continue;
             }
-            if let Some(literal) = first_string_literal(line) {
-                if is_request_type_literal(&literal) {
+            if let Some(literal) = first_string_literal(line)
+                && is_request_type_literal(&literal) {
                     found.insert(literal);
                 }
-            }
         }
     }
     assert!(
@@ -562,11 +559,10 @@ fn python_skill_functions(package_path: &Path) -> Vec<String> {
                 let after = line
                     .strip_prefix("async def ")
                     .or_else(|| line.strip_prefix("def "));
-                if let Some(signature) = after {
-                    if let Some(name) = signature.split(['(', ':']).next() {
+                if let Some(signature) = after
+                    && let Some(name) = signature.split(['(', ':']).next() {
                         functions.push(name.trim().to_string());
                     }
-                }
             }
         }
     }

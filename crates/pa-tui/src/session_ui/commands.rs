@@ -106,11 +106,11 @@ impl SessionUi {
         }
         // `/effort ultracode [on|off]` switches the session's standing
         // ultracode mode (the `/ultracode` session command), not a level.
-        if resolved.name == "effort" {
-            if let Some(forwarded) = effort_picker::ultracode_session_command(&resolved.args) {
-                self.track_command_used(resolved.name);
-                return self.send_prompt(&forwarded, behavior, view);
-            }
+        if resolved.name == "effort"
+            && let Some(forwarded) = effort_picker::ultracode_session_command(&resolved.args)
+        {
+            self.track_command_used(resolved.name);
+            return self.send_prompt(&forwarded, behavior, view);
         }
         let command = registry
             .get(resolved.name)
@@ -152,11 +152,11 @@ impl SessionUi {
         text: &str,
         view: &mut AgentView,
     ) -> Result<()> {
-        if !resolved.args.is_empty() {
-            if let Some(refusal) = ArgumentRefusal::for_command(resolved.name) {
-                self.refuse_argument(refusal, resolved, text, view);
-                return Ok(());
-            }
+        if !resolved.args.is_empty()
+            && let Some(refusal) = ArgumentRefusal::for_command(resolved.name)
+        {
+            self.refuse_argument(refusal, resolved, text, view);
+            return Ok(());
         }
         match resolved.name {
             // `/clear` stays the no-argument alias of `/new`.
@@ -252,10 +252,10 @@ impl SessionUi {
             "plugins" => {
                 self.open_mcp_view("/plugins", view, "").await?;
                 let search = resolved.args.trim();
-                if !search.is_empty() {
-                    if let Some(mcp) = view.mcp_view.as_mut() {
-                        mcp.paste(search);
-                    }
+                if !search.is_empty()
+                    && let Some(mcp) = view.mcp_view.as_mut()
+                {
+                    mcp.paste(search);
                 }
             }
             // An explicit `.jsonl` path exports the current branch; anything else
@@ -406,16 +406,16 @@ impl SessionUi {
             }
         };
         self.start_new_session(view).await?;
-        if let Some(name) = options.name {
-            if !self.set_session_name(&name, view).await {
-                // TS parity (`handleClearCommand`'s catch): the
-                // rename failed after the session exists — the
-                // prompt restores into the editor and never submits.
-                if let Some(prompt) = options.prompt.as_deref() {
-                    view.editor.set_text(prompt);
-                }
-                return Ok(());
+        if let Some(name) = options.name
+            && !self.set_session_name(&name, view).await
+        {
+            // TS parity (`handleClearCommand`'s catch): the
+            // rename failed after the session exists — the
+            // prompt restores into the editor and never submits.
+            if let Some(prompt) = options.prompt.as_deref() {
+                view.editor.set_text(prompt);
             }
+            return Ok(());
         }
         if let Some(prompt) = options.prompt {
             view.editor.add_to_history(&prompt);

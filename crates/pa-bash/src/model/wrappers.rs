@@ -343,15 +343,14 @@ pub(crate) fn unwrap(name: &str, argv: &[Arg]) -> Option<Unwrapped> {
             index += 1;
             continue;
         }
-        if spec.assignments {
-            if let Some((variable, value)) = text.split_once('=') {
-                if is_name(variable) {
-                    out.assignments
-                        .push((variable.to_string(), Arg::Known(value.to_string())));
-                    index += 1;
-                    continue;
-                }
-            }
+        if spec.assignments
+            && let Some((variable, value)) = text.split_once('=')
+            && is_name(variable)
+        {
+            out.assignments
+                .push((variable.to_string(), Arg::Known(value.to_string())));
+            index += 1;
+            continue;
         }
         if leading > 0 {
             leading -= 1;

@@ -718,11 +718,10 @@ fn ipython_cell_title(code: &str) -> String {
         return "Python cell".to_string();
     };
     let mut title = first.trim().to_string();
-    if title.starts_with("%%") {
-        if let Some(next) = lines.get(1) {
+    if title.starts_with("%%")
+        && let Some(next) = lines.get(1) {
             title = format!("{title} \u{b7} {}", next.trim());
         }
-    }
     if title.chars().count() > CELL_TITLE_MAX_CHARS {
         title = title.chars().take(CELL_TITLE_MAX_CHARS - 1).collect();
         title.push('\u{2026}');

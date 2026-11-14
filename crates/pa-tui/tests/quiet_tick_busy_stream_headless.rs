@@ -188,7 +188,7 @@ fn options(socket: PathBuf) -> InteractiveOptions {
 /// Run one plan against the mock and return the rendered frames.
 fn run_plan(steps: Vec<HeadlessStep>) -> Vec<String> {
     // Scrub the ambient TMUX variable: its startup notice must not reach the frames.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let listener = UnixListener::bind(&socket).expect("bind mock socket");

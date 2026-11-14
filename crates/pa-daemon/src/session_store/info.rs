@@ -726,8 +726,8 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 .map(str::to_string);
         }
         "custom" => {
-            if entry.custom_type.as_deref() == Some(AI_TITLE_CUSTOM_TYPE) {
-                if let Some(title) = entry
+            if entry.custom_type.as_deref() == Some(AI_TITLE_CUSTOM_TYPE)
+                && let Some(title) = entry
                     .data
                     .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
                     .as_ref()
@@ -738,7 +738,6 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 {
                     acc.ai_title = Some(title.to_string());
                 }
-            }
         }
         "session_state" => {
             if let Some(status) = entry
@@ -785,19 +784,17 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                     role,
                     &crate::session_usage::discarded_usages(message.discarded_usage.as_deref()),
                 );
-                if role == Some("assistant") {
-                    if let (Some(provider), Some(model_id)) =
+                if role == Some("assistant")
+                    && let (Some(provider), Some(model_id)) =
                         (raw_string(message.provider), raw_string(message.model))
                     {
                         acc.model = Some((provider.to_string(), model_id.to_string()));
                     }
-                }
-                if matches!(role, Some("user" | "assistant")) {
-                    if let Some(timestamp) = raw_u64(message.timestamp) {
+                if matches!(role, Some("user" | "assistant"))
+                    && let Some(timestamp) = raw_u64(message.timestamp) {
                         acc.last_activity_ms =
                             Some(acc.last_activity_ms.unwrap_or(0).max(timestamp));
                     }
-                }
                 if (role == Some("user") && acc.first_message.is_empty())
                     || (matches!(role, Some("user" | "assistant"))
                         && acc.search_text_chars < SESSION_LIST_SEARCH_TEXT_MAX_CHARS)

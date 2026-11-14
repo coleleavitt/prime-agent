@@ -262,15 +262,14 @@ impl RpcClient {
             let _ = self.notify("exit", Value::Null);
         }
         let mut child = self.child.lock().await;
-        if let Some(process) = child.as_mut() {
-            if tokio::time::timeout_at(deadline, process.wait())
+        if let Some(process) = child.as_mut()
+            && tokio::time::timeout_at(deadline, process.wait())
                 .await
                 .is_err()
             {
                 let _ = process.start_kill();
                 let _ = process.wait().await;
             }
-        }
         *child = None;
         self.closed.cancel();
     }
@@ -376,11 +375,10 @@ where
             continue;
         }
         saw_header = true;
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("content-length") {
                 length = value.trim().parse().ok();
             }
-        }
     }
     let length = length
         .filter(|length| *length <= MAX_MESSAGE_BYTES)

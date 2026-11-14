@@ -254,7 +254,7 @@ fn run_plan(steps: Vec<HeadlessStep>, fullscreen_mouse: bool) -> Vec<String> {
     let _guard = run_lock();
     // The ambient TMUX variable shifts the paused-frame geometry the assertions reason about; scrub
     // it so the run is the same inside tmux and out.
-    std::env::remove_var("TMUX");
+    pa_types::env::remove_var("TMUX");
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("tui.sock");
     let supervisor = MockSupervisor::bind(&socket);

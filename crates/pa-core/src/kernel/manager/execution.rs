@@ -226,17 +226,17 @@ impl Inner {
             let stderr = std::mem::take(&mut buffers.stderr).finish(execution.max_chars);
             let mut result = buffers.result.take();
             let mut status = buffers.status;
-            if let Some(text) = &result {
-                if let Some((end, _)) = text.char_indices().nth(execution.max_chars) {
-                    // Match the Unicode-scalar limit used for stdout and stderr.
-                    let mut clipped = text[..end].to_string();
-                    let _ = write!(
-                        clipped,
-                        "\n[... output truncated at {} chars ...]",
-                        execution.max_chars
-                    );
-                    result = Some(clipped);
-                }
+            if let Some(text) = &result
+                && let Some((end, _)) = text.char_indices().nth(execution.max_chars)
+            {
+                // Match the Unicode-scalar limit used for stdout and stderr.
+                let mut clipped = text[..end].to_string();
+                let _ = write!(
+                    clipped,
+                    "\n[... output truncated at {} chars ...]",
+                    execution.max_chars
+                );
+                result = Some(clipped);
             }
             let user_aborted = execution
                 .opts

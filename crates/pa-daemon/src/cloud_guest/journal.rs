@@ -207,13 +207,12 @@ impl GuestCommandJournal {
     /// terminal, or the result payload is out of bounds, or an error when
     /// the durable transition fails.
     pub fn complete(&mut self, command_id: &str, result: Option<&str>) -> Result<()> {
-        if let Some(result) = result {
-            if result.is_empty() || result.chars().count() > CLOUD_MAX_RECEIPT_RESULT_CHARS {
+        if let Some(result) = result
+            && (result.is_empty() || result.chars().count() > CLOUD_MAX_RECEIPT_RESULT_CHARS) {
                 return Err(anyhow!(
                     "result must be a string of at most {CLOUD_MAX_RECEIPT_RESULT_CHARS} characters"
                 ));
             }
-        }
         self.transition(command_id, CloudCommandState::Completed, None, result)
     }
 
@@ -225,13 +224,12 @@ impl GuestCommandJournal {
     /// terminal, or the error string is out of bounds, or an error when
     /// the durable transition fails.
     pub fn fail(&mut self, command_id: &str, error: Option<&str>) -> Result<()> {
-        if let Some(error) = error {
-            if error.is_empty() || error.chars().count() > CLOUD_MAX_ERROR_CHARS {
+        if let Some(error) = error
+            && (error.is_empty() || error.chars().count() > CLOUD_MAX_ERROR_CHARS) {
                 return Err(anyhow!(
                     "failure error must be a string of at most {CLOUD_MAX_ERROR_CHARS} characters"
                 ));
             }
-        }
         self.transition(command_id, CloudCommandState::Failed, error, None)
     }
 
@@ -553,17 +551,15 @@ impl GuestCommandJournal {
             return Err(anyhow!("command journal transition record is corrupt"));
         };
         let error = record.get("error").and_then(Value::as_str);
-        if let Some(error) = error {
-            if error.is_empty() || error.chars().count() > CLOUD_MAX_ERROR_CHARS {
+        if let Some(error) = error
+            && (error.is_empty() || error.chars().count() > CLOUD_MAX_ERROR_CHARS) {
                 return Err(anyhow!("command journal transition record is corrupt"));
             }
-        }
         let result = record.get("result").and_then(Value::as_str);
-        if let Some(result) = result {
-            if result.is_empty() || result.chars().count() > CLOUD_MAX_RECEIPT_RESULT_CHARS {
+        if let Some(result) = result
+            && (result.is_empty() || result.chars().count() > CLOUD_MAX_RECEIPT_RESULT_CHARS) {
                 return Err(anyhow!("command journal transition record is corrupt"));
             }
-        }
         let Some(entry) = self.entries.get_mut(command_id) else {
             return Err(anyhow!(
                 "command journal transition record names an unknown command"
