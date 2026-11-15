@@ -353,8 +353,8 @@ pub async fn capture_git_worktree_snapshot(cwd: &Path) -> Option<GitWorktreeSnap
 /// One git invocation: `None` on any non-zero exit, timeout, or truncation.
 ///
 /// The snapshot describes `cwd`'s own worktree (the untracked hash joins status paths onto
-/// `cwd`), so an inherited repository selection (`GIT_DIR`, `GIT_WORK_TREE`, ...) is scrubbed,
-/// as in [`crate::workspace_snapshot`]. The gate commands themselves keep the full environment.
+/// `cwd`), so an inherited repository selection (`GIT_DIR`, `GIT_WORK_TREE`, ...) is scrubbed.
+/// The gate commands themselves keep the full environment.
 ///
 /// A promisor lazy fetch would run a repository-chosen transport (uploadpack,
 /// ssh or ext command, remote helper). `GIT_ALLOW_PROTOCOL` is a positive list
