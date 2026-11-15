@@ -318,8 +318,9 @@ fn force_quit() -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+
+    use super::*;
 
     /// A forced exit before the main-screen flush reprints the last frame
     /// (markers stripped, trailing blank rows dropped); once the flush

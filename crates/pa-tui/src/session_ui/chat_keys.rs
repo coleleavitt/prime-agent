@@ -486,12 +486,7 @@ impl SessionUi {
     /// `app.clear` (default ctrl+c) and `app.interrupt`: an open completion menu closes, a
     /// selection copies (`app.clear` only), and otherwise the press clears the editor (idle) or
     /// interrupts the running work.
-    fn handle_clear_press(
-        &mut self,
-        key: ChatKey,
-        view: &mut AgentView,
-        running: &mut bool,
-    ) {
+    fn handle_clear_press(&mut self, key: ChatKey, view: &mut AgentView, running: &mut bool) {
         let interrupt = key == ChatKey::Interrupt;
         if view.editor.is_showing_autocomplete() {
             view.editor.cancel_autocomplete();
