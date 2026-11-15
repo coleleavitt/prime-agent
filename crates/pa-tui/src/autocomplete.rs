@@ -998,22 +998,21 @@ impl AutocompleteProvider for CombinedAutocompleteProvider {
         // TS `applyCompletion` finds the item over its whole command list
         // (builtins and skills share one array), so a `skill:` item applies
         // through the slash path — the line keeps its leading `/`.
-        if let Some(context) = get_slash_command_context(lines, cursor_line, cursor_col) {
-            if context.kind == SlashKind::Name
-                && self
-                    .commands
-                    .iter()
-                    .chain(self.skill_commands.iter())
-                    .any(|command| command.name == item.value)
-            {
-                return self.apply_slash_completion(
-                    lines,
-                    cursor_line,
-                    cursor_col,
-                    item,
-                    &context.prefix,
-                );
-            }
+        if let Some(context) = get_slash_command_context(lines, cursor_line, cursor_col)
+            && context.kind == SlashKind::Name
+            && self
+                .commands
+                .iter()
+                .chain(self.skill_commands.iter())
+                .any(|command| command.name == item.value)
+        {
+            return self.apply_slash_completion(
+                lines,
+                cursor_line,
+                cursor_col,
+                item,
+                &context.prefix,
+            );
         }
         let path_prefix = extract_path_prefix(before, true).unwrap_or_default();
         apply_file_completion(lines, cursor_line, cursor_col, item, &path_prefix)
