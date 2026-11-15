@@ -653,13 +653,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // tree. Top-level sessions only: a child's writes are its own.
     if config.rlm_depth.unwrap_or(0) == 0
         && crate::file_history::checkpointing_enabled(file_checkpointing_setting)
+        && let Some(dir) = session_artifact_dir.as_deref()
     {
-        if let Some(dir) = session_artifact_dir.as_deref() {
-            crate::file_history::register_host_handlers(
-                &mut handlers,
-                &crate::file_history::FileHistory::for_artifact_dir(dir),
-            );
-        }
+        crate::file_history::register_host_handlers(
+            &mut handlers,
+            &crate::file_history::FileHistory::for_artifact_dir(dir),
+        );
     }
     // Installed features review every kernel host request (the kernel's
     // `bash()` included) before it is dispatched; later registrations keep
@@ -1000,12 +999,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         let settle_servers = generic_mcp_servers.clone();
         let settle_provisioner = provisioner.clone();
         tokio::spawn(async move {
-            if settle_provisioner.ensure(None, None).await.is_ok() {
-                if let Some(manager) = settle_provisioner.manager() {
-                    let _ = manager
-                        .mcp_tool_listing(&settle_servers, MCP_SETTLE_PER_SERVER_TIMEOUT_MS)
-                        .await;
-                }
+            if settle_provisioner.ensure(None, None).await.is_ok()
+                && let Some(manager) = settle_provisioner.manager()
+            {
+                let _ = manager
+                    .mcp_tool_listing(&settle_servers, MCP_SETTLE_PER_SERVER_TIMEOUT_MS)
+                    .await;
             }
         });
     }
@@ -1357,7 +1356,23 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             }
             .into_hook(),
         ),
-        should_stop_before_turn: config.queued_steering_probe.clone(),
+        should_stop_before_turn: steering_probe.clone().map(
+            |probe| -> pa_agent::agent_loop::ShouldStopBeforeTurnFn {
+                let fold_slot = std::sync::Arc::clone(&fold_admission);
+                std::sync::Arc::new(move || {
+                    // A queued steer ends the run only once the agent holds no
+                    // rows of its own: rows folded in by the after-turn hook
+                    // ride this run's next turn. Stranding them to the idle
+                    // pump starts a run the worker does not own, so the
+                    // worker's next prompt finds the agent busy.
+                    probe()
+                        && !fold_slot
+                            .get()
+                            .and_then(|admission| admission.agent.upgrade())
+                            .is_some_and(|agent| agent.has_queued_messages())
+                })
+            },
+        ),
         steering_mode: config.steering_mode,
         follow_up_mode: config.follow_up_mode,
         before_tool_call,

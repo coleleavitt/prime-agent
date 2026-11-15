@@ -159,8 +159,7 @@ impl AgentSessionEngine {
                                     pa_agent::types::Message::Assistant(assistant),
                                 ),
                         } = &event
-                        {
-                            if let Some(message) =
+                            && let Some(message) =
                                 json_round_trip::<_, pa_types::ai::AssistantMessage>(assistant)
                             {
                                 let mut state = autonomous_state.lock().await;
@@ -169,8 +168,8 @@ impl AgentSessionEngine {
                                 // completed turns spend the budget, and
                                 // every turn spends its discarded empty
                                 // attempts.
-                                if let Some(handles) = goal_runtime.as_ref() {
-                                    if let Some(usage) =
+                                if let Some(handles) = goal_runtime.as_ref()
+                                    && let Some(usage) =
                                         pa_core::session_engine::rlm_usage::chargeable_turn_usage(
                                             &message,
                                         )
@@ -202,9 +201,7 @@ impl AgentSessionEngine {
                                             }
                                         }
                                     }
-                                }
                             }
-                        }
                         match &event {
                             AgentEvent::MessageStart {
                                 message: agent_message,
@@ -214,14 +211,13 @@ impl AgentSessionEngine {
                                     pa_agent::types::AgentMessage::Standard(
                                         pa_agent::types::Message::Assistant(_)
                                     )
-                                ) {
-                                    if let Some(value) = session_wire_value(agent_message) {
+                                )
+                                    && let Some(value) = session_wire_value(agent_message) {
                                         let _ = tx.send(EngineEvent::AssistantUpdate {
                                             message: AssistantSnapshot::Wire(value),
                                             stream_event: Some(json!({ "type": "start" })),
                                         });
                                     }
-                                }
                             }
                             AgentEvent::MessageUpdate {
                                 message: agent_message,
@@ -438,6 +434,17 @@ impl AgentSessionEngine {
                                     images: row.images.clone(),
                                 })
                                 .collect(),
+                            // A pump-owned run (a terminal notice or
+                            // queued batch that missed the run's last
+                            // steering poll) can start between the
+                            // worker's idle check and this admission.
+                            // FollowUp lets the existing
+                            // `AgentBusyRefusal` handler queue the
+                            // prompt instead of surfacing the race as
+                            // "Agent is already processing".
+                            streaming_behavior: Some(
+                                pa_core::session_engine::StreamingBehavior::FollowUp,
+                            ),
                             ..Default::default()
                         };
                         engine

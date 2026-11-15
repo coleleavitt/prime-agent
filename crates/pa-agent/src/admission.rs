@@ -853,4 +853,90 @@ mod tests {
             "the preserved batch reached the run's next model boundary"
         );
     }
+
+    /// A pump-owned run (from a terminal notice that missed the run's final
+    /// steering poll) can race the worker's next Direct admission. Before
+    /// the fix, `admit_prompt_or_busy` failed with `AgentBusyRefusal`;
+    /// after the fix the worker uses `admit_or_enqueue` (via the `FollowUp`
+    /// streaming behavior) and the prompt is queued instead of refused.
+    ///
+    /// Regression test for the "Agent is already processing. Specify
+    /// streamingBehavior" error users see when typing while background
+    /// notices settle.
+    #[tokio::test]
+    async fn pump_run_from_queued_notice_does_not_strand_the_next_prompt() {
+        let (called_tx, called_rx) = tokio::sync::watch::channel(0u32);
+        let (gate_tx, _gate_rx) = tokio::sync::watch::channel(false);
+        let called = Arc::new(called_tx);
+        let gate = Arc::new(gate_tx);
+        let contexts = Arc::new(StdMutex::new(Vec::<LlmContext>::new()));
+        // Three gated model calls: the user prompt, the pump's notice run,
+        // and the queued second prompt that rides the pump's run.
+        let agent = agent_with_stream(gated_stream_fn(
+            vec![Ok("first"), Ok("notice-ack"), Ok("second-ack")],
+            Arc::clone(&called),
+            Arc::clone(&gate),
+            Arc::clone(&contexts),
+        ));
+
+        // 1. Start a run and let it finish immediately.
+        gate.send_replace(true);
+        agent
+            .prompt(AgentPromptInput::text("go"))
+            .await
+            .expect("first run completes");
+        assert!(!agent.state().await.is_streaming, "idle after first run");
+
+        // 2. Steer a notice directly into the agent's queue (simulates a
+        //    terminal notice that arrived after the run's last steering
+        //    poll and was enqueued by admit_or_enqueue).
+        agent.steer(AgentMessage::user("notice"));
+        assert!(
+            agent.has_queued_messages(),
+            "the notice sits in the agent's steering queue"
+        );
+
+        // 3. The pump's admit_queued_turn starts a self-driving run for it.
+        //    Gate the second model call so the pump's run stays active.
+        gate.send_replace(false);
+        let pump = agent.admit_queued_turn();
+        assert_eq!(
+            pump,
+            QueuedAdmission::Admitted,
+            "the pump admits the notice"
+        );
+        let mut calls = called_rx;
+        while *calls.borrow_and_update() < 2 {
+            calls.changed().await.expect("pump model call");
+        }
+
+        // 4. admit_prompt_or_busy FAILS — the pump's run owns the slot.
+        //    This is the bug the user hit ("Agent is already processing").
+        let refusal = agent.admit_prompt_or_busy(AgentPromptInput::text("second"));
+        assert!(
+            refusal
+                .expect_err("busy refusal")
+                .downcast_ref::<AgentBusyRefusal>()
+                .is_some(),
+            "admit_prompt_or_busy is refused by the pump's run"
+        );
+
+        // 5. admit_or_enqueue succeeds — the FollowUp path the fix takes.
+        assert_eq!(
+            agent.admit_or_enqueue(AgentMessage::user("second")),
+            AdmitStatus::Busy,
+            "admit_or_enqueue queues behind the pump's run"
+        );
+
+        // 6. Let the pump's run finish; the queued prompt runs next.
+        gate.send_replace(true);
+        agent.wait_for_idle().await;
+
+        // The transcript holds the user prompt, the notice, and the queued prompt.
+        let state = agent.state().await;
+        let t = transcript(&state);
+        assert!(t.contains(&("user", "go".to_string())));
+        assert!(t.contains(&("user", "notice".to_string())));
+        assert!(t.contains(&("user", "second".to_string())));
+    }
 }
