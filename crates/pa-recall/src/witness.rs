@@ -501,23 +501,25 @@ pub async fn witness_workspace(
     // still HEAD's blob.
     let mut tagged_matching_head = HashSet::new();
     if let Some(head) = &snapshot.state.head
-        && mark.state.head.as_ref() == Some(head) && mark.state.dirty_overflow == 0 {
-            let retagged: Vec<String> = snapshot
-                .state
-                .dirty
-                .iter()
-                .filter(|(path, digest)| {
-                    snapshot.tagged_paths.contains(path)
-                        && digest != RECALL_UNVERIFIABLE
-                        && *digest != *RECALL_ABSENT_DIGEST
-                        && mark.state.dirty_digest(path).is_none()
-                })
-                .map(|(path, _)| path.clone())
-                .collect();
-            if !retagged.is_empty() {
-                tagged_matching_head = paths_matching_commit(root, head, retagged).await;
-            }
+        && mark.state.head.as_ref() == Some(head)
+        && mark.state.dirty_overflow == 0
+    {
+        let retagged: Vec<String> = snapshot
+            .state
+            .dirty
+            .iter()
+            .filter(|(path, digest)| {
+                snapshot.tagged_paths.contains(path)
+                    && digest != RECALL_UNVERIFIABLE
+                    && *digest != *RECALL_ABSENT_DIGEST
+                    && mark.state.dirty_digest(path).is_none()
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        if !retagged.is_empty() {
+            tagged_matching_head = paths_matching_commit(root, head, retagged).await;
         }
+    }
     Ok(compare_workspace(&CompareWorkspaceInputs {
         mark,
         snapshot: &snapshot,

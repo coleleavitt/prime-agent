@@ -1001,9 +1001,10 @@ impl RlmSpawnLedger {
         let identity = file_identity(&self.path)?;
         let mut cache = self.cache.lock_or_recover();
         if let (Some(identity), Some(cached)) = (&identity, cache.as_ref())
-            && *identity == cached.identity {
-                return Ok(Arc::clone(&cached.state));
-            }
+            && *identity == cached.identity
+        {
+            return Ok(Arc::clone(&cached.state));
+        }
         let state = Arc::new(self.replay()?);
         if let Some(identity) = identity {
             *cache = Some(ReplaySnapshot {

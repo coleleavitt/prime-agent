@@ -396,9 +396,10 @@ impl Worker {
             }
         };
         if let Some(job) = &outcome
-            && !resume {
-                self.scheduled.remove_queued_heartbeat_follow_up(job);
-            }
+            && !resume
+        {
+            self.scheduled.remove_queued_heartbeat_follow_up(job);
+        }
         self.scheduled.wake().await;
         let heartbeat = outcome
             .and_then(|job| serde_json::to_value(&job).ok())

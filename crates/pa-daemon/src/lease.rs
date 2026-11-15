@@ -370,9 +370,10 @@ impl SessionLease {
         self.write_sidecars();
         let _ = with_lease_guard(&self.directory, GuardWait::Fast, || {
             if let Ok(Some(owner)) = read_owner(&self.directory)
-                && owner.token == self.token {
-                    reclaim_stale(&self.directory);
-                }
+                && owner.token == self.token
+            {
+                reclaim_stale(&self.directory);
+            }
             Ok(())
         });
     }

@@ -226,9 +226,10 @@ pub fn run_online_exploration(
             };
             let cells = interpret_policy(&options.policy, &view);
             if !cells.is_empty()
-                && let Err(error) = assert_legal_batch(&view, &cells) {
-                    panic!("illegal rollout batch: {error}");
-                }
+                && let Err(error) = assert_legal_batch(&view, &cells)
+            {
+                panic!("illegal rollout batch: {error}");
+            }
             cells
         };
         if cells.is_empty() {

@@ -94,9 +94,10 @@ fn a_cancel_before_the_run_registers_still_aborts_the_turn() {
             &|| turn_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2,
             &mut |event| {
                 if let EngineEvent::AssistantMessage(message) = &event
-                    && message["stopReason"] == json!("aborted") {
-                        aborted_rows += 1;
-                    }
+                    && message["stopReason"] == json!("aborted")
+                {
+                    aborted_rows += 1;
+                }
                 true
             },
         );

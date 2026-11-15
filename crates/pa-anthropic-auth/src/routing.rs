@@ -246,13 +246,13 @@ impl SharedStoreSource {
         let mut main_quota = main.and_then(|main| self.quota.snapshot(&main.id));
         if let Some(main) = main
             && main_quota.as_ref().is_some_and(spent)
-                && self.quota.is_stale(&main.id, model, Utc::now())
-            {
-                // A stale spent reading is confirmed before the first is
-                // passed over (the opencode plugin's synchronous re-check).
-                self.queue_poll(&main.id, PollWait::Result);
-                main_quota = self.quota.snapshot(&main.id);
-            }
+            && self.quota.is_stale(&main.id, model, Utc::now())
+        {
+            // A stale spent reading is confirmed before the first is
+            // passed over (the opencode plugin's synchronous re-check).
+            self.queue_poll(&main.id, PollWait::Result);
+            main_quota = self.quota.snapshot(&main.id);
+        }
         let main_spent = main.is_some_and(|main| {
             main_quota.as_ref().is_some_and(spent)
                 && !self.quota.is_stale(&main.id, model, Utc::now())
@@ -474,15 +474,15 @@ impl SharedStoreSource {
         if fresh(quota.as_ref())
             && let StickyQuotaFailureDecision::Hold { retry_after_secs } =
                 decide_sticky_quota_failure(quota.as_ref(), model, now)
-            {
-                #[allow(clippy::cast_precision_loss)]
-                // seconds until a reset within 15 minutes
-                let retry_after = sticky_retry_after_with_jitter(session, retry_after_secs as f64);
-                return Some(Route::Refuse(rate_limited(
-                    "Sticky OAuth account five-hour quota resets shortly; retaining session affinity.",
-                    retry_after,
-                )));
-            }
+        {
+            #[allow(clippy::cast_precision_loss)]
+            // seconds until a reset within 15 minutes
+            let retry_after = sticky_retry_after_with_jitter(session, retry_after_secs as f64);
+            return Some(Route::Refuse(rate_limited(
+                "Sticky OAuth account five-hour quota resets shortly; retaining session affinity.",
+                retry_after,
+            )));
+        }
         Some(Route::Login(resolution.account_id))
     }
 

@@ -239,9 +239,10 @@ async fn hooks_shape_a_session() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let stopped = loop {
         if let Ok(text) = std::fs::read_to_string(&stop_marker)
-            && !text.is_empty() {
-                break text;
-            }
+            && !text.is_empty()
+        {
+            break text;
+        }
         assert!(Instant::now() < deadline, "the Stop hook never ran");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };

@@ -99,9 +99,10 @@ pub(crate) async fn reap_predecessors(supervisor: &Arc<Supervisor>) {
     for (target, outcome) in outcomes {
         if let (Some(socket), ReapOutcome::Term | ReapOutcome::Kill) =
             (&target.worker_socket, outcome)
-            && is_unix_socket_file(socket) {
-                let _ = std::fs::remove_file(socket);
-            }
+            && is_unix_socket_file(socket)
+        {
+            let _ = std::fs::remove_file(socket);
+        }
     }
 }
 
@@ -162,9 +163,10 @@ pub(crate) async fn reap_abandoned_workers(supervisor: &Arc<Supervisor>, worker_
     for (target, outcome) in outcomes {
         if let (Some(socket), ReapOutcome::Term | ReapOutcome::Kill) =
             (&target.worker_socket, outcome)
-            && is_unix_socket_file(socket) {
-                let _ = std::fs::remove_file(socket);
-            }
+            && is_unix_socket_file(socket)
+        {
+            let _ = std::fs::remove_file(socket);
+        }
     }
 }
 
@@ -304,9 +306,10 @@ fn same_socket_worker_targets(
         let start_id = crate::lease::get_process_start_id(pid);
         // The abandoned-id filter: workers whose env names the given-up id; `None` = whole census.
         if let Some(active_session) = active_session
-            && !proc_environ_names_active_session(pid, active_session) {
-                continue;
-            }
+            && !proc_environ_names_active_session(pid, active_session)
+        {
+            continue;
+        }
         let Some(argv) = read_proc_argv(pid) else {
             continue;
         };

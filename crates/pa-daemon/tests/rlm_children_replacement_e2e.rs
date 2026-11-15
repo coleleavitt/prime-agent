@@ -445,7 +445,7 @@ fn new_session_closes_the_spawned_child_and_empties_the_roster() {
             .join("session-artifacts")
             .join(parent_session_id)
             .join(&child_id);
-        
+
         std::fs::read_dir(&child_dir)
             .expect("child session dir")
             .filter_map(std::result::Result::ok)

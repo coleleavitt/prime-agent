@@ -293,17 +293,18 @@ impl SupervisorChildSessionsInner {
                     (record.active_session_id.clone(), was_running)
                 };
                 if let Err(error) = self.kill_child(&active_session_id, reason).await
-                    && unknown_session(&error).is_none() {
-                        // The kill never landed: undo the pre-kill settle so
-                        // the still-live child is not reported cancelled, and
-                        // a later successful stop can still record its cancel
-                        // edge (the recorder's dedup never saw this attempt).
-                        if was_running {
-                            record.lock().await.settled_status = None;
-                        }
-                        close_error.get_or_insert(error);
-                        continue;
+                    && unknown_session(&error).is_none()
+                {
+                    // The kill never landed: undo the pre-kill settle so
+                    // the still-live child is not reported cancelled, and
+                    // a later successful stop can still record its cancel
+                    // edge (the recorder's dedup never saw this attempt).
+                    if was_running {
+                        record.lock().await.settled_status = None;
                     }
+                    close_error.get_or_insert(error);
+                    continue;
+                }
                 // A session-kill close of a live run is the parent's
                 // cancel (nano-rlm #202's killed-child gap): a killed
                 // child leaves a cancel line, not a clean disappearance.

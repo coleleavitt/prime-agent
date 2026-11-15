@@ -170,12 +170,13 @@ impl AgentSessionEngine {
         // boot when the runtime config carries no explicit flag: the pinned
         // level wins over the settings/medium default.
         if self.current_selection().thinking.is_none()
-            && let Some(level) = saved.thinking {
-                self.configure_model(EngineModelSelection {
-                    thinking: Some(level),
-                    ..Default::default()
-                });
-            }
+            && let Some(level) = saved.thinking
+        {
+            self.configure_model(EngineModelSelection {
+                thinking: Some(level),
+                ..Default::default()
+            });
+        }
         // An explicit create flag wins for the MODEL — the saved thinking
         // above still applies, and the restore skips the model's readiness
         // window entirely.

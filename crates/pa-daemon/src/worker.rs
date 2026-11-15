@@ -338,17 +338,20 @@ fn sender_parent_edge_is(
             .filter(|value| !value.is_empty())
     };
     if let Some(parent) = sender_parent("parentSessionId")
-        && own_session_id.is_some_and(|id| id == parent) {
-            return true;
-        }
+        && own_session_id.is_some_and(|id| id == parent)
+    {
+        return true;
+    }
     if let Some(parent) = sender_parent("parentActiveSessionId")
-        && parent == own_active_session_id {
-            return true;
-        }
+        && parent == own_active_session_id
+    {
+        return true;
+    }
     if let (Some(parent), Some(file)) = (sender_parent("parentSessionPath"), own_session_file)
-        && crate::agent_messaging::same_session_file(parent, &file.to_string_lossy()) {
-            return true;
-        }
+        && crate::agent_messaging::same_session_file(parent, &file.to_string_lossy())
+    {
+        return true;
+    }
     false
 }
 

@@ -225,9 +225,10 @@ impl EventCollector {
         self.flush_commentary();
         for item in &mut self.items {
             if let SearchItem::Search { query, .. } = item
-                && query.is_empty() {
-                    fallback_query.clone_into(query);
-                }
+                && query.is_empty()
+            {
+                fallback_query.clone_into(query);
+            }
         }
         self.items
     }
@@ -280,12 +281,13 @@ impl SearchBackend for AnthropicSearch {
                 .iter()
                 .any(|item| matches!(item, SearchItem::Search { .. } | SearchItem::Error(_)));
             if let Err(error) = result
-                && !searched {
-                    return Err(SearchError(format!(
-                        "Anthropic web search failed ({}/{}): {error}",
-                        model.model.provider, model.model.id
-                    )));
-                }
+                && !searched
+            {
+                return Err(SearchError(format!(
+                    "Anthropic web search failed ({}/{}): {error}",
+                    model.model.provider, model.model.id
+                )));
+            }
             Ok(SearchOutcome {
                 backend: "anthropic",
                 model: Some(format!("{}/{}", model.model.provider, model.model.id)),

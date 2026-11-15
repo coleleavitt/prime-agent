@@ -735,9 +735,9 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|title| !title.is_empty())
-                {
-                    acc.ai_title = Some(title.to_string());
-                }
+            {
+                acc.ai_title = Some(title.to_string());
+            }
         }
         "session_state" => {
             if let Some(status) = entry
@@ -787,14 +787,14 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 if role == Some("assistant")
                     && let (Some(provider), Some(model_id)) =
                         (raw_string(message.provider), raw_string(message.model))
-                    {
-                        acc.model = Some((provider.to_string(), model_id.to_string()));
-                    }
+                {
+                    acc.model = Some((provider.to_string(), model_id.to_string()));
+                }
                 if matches!(role, Some("user" | "assistant"))
-                    && let Some(timestamp) = raw_u64(message.timestamp) {
-                        acc.last_activity_ms =
-                            Some(acc.last_activity_ms.unwrap_or(0).max(timestamp));
-                    }
+                    && let Some(timestamp) = raw_u64(message.timestamp)
+                {
+                    acc.last_activity_ms = Some(acc.last_activity_ms.unwrap_or(0).max(timestamp));
+                }
                 if (role == Some("user") && acc.first_message.is_empty())
                     || (matches!(role, Some("user" | "assistant"))
                         && acc.search_text_chars < SESSION_LIST_SEARCH_TEXT_MAX_CHARS)

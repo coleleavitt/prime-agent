@@ -137,11 +137,10 @@ impl Worker {
         };
         if !name_persisted_by_fresh_arm
             && let Some(name) = request.name.filter(|n| !n.trim().is_empty())
-                && let Err(error) =
-                    store.persist_entry("session_info", json!({ "name": name.trim() }))
-                {
-                    return response_failure(None, "create", &error.to_string(), None);
-                }
+            && let Err(error) = store.persist_entry("session_info", json!({ "name": name.trim() }))
+        {
+            return response_failure(None, "create", &error.to_string(), None);
+        }
         // Restore the persisted queue snapshot (crash/respawn recovery) from
         // the worker recovery journal.
         let (steering, follow_up, restored_suspended) = {
@@ -201,9 +200,10 @@ impl Worker {
             // revived worker keeps the count its roster rows carried.
             core.tool_use_count = store.tool_call_count();
             if let Some(disclosure) = &interrupted_compaction
-                && !disclose_interrupted_compaction(&mut store, disclosure) {
-                    interrupted_compaction_persisted = false;
-                }
+                && !disclose_interrupted_compaction(&mut store, disclosure)
+            {
+                interrupted_compaction_persisted = false;
+            }
             core.store = Some(store);
             core.created = true;
             core.abort_requested = false;

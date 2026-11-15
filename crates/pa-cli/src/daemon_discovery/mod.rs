@@ -354,9 +354,10 @@ pub(crate) fn find_all_tracked_workers(agent_dir: &Path) -> Vec<TrackedWorker> {
         };
         for file in files.flatten() {
             if file.file_name().to_string_lossy().ends_with(".json")
-                && let Some(worker) = read_tracked_worker(&file.path()) {
-                    workers.push(worker);
-                }
+                && let Some(worker) = read_tracked_worker(&file.path())
+            {
+                workers.push(worker);
+            }
         }
     }
     workers
@@ -467,14 +468,15 @@ pub(crate) fn probe_daemon(socket_path: &Path) -> ProbeResult {
         rest: serde_json::Map::default(),
     };
     if let Ok(response) = client.request_with_timeout(list, timeout_ms)
-        && response.success {
-            probe.session_count = response
-                .data
-                .as_ref()
-                .and_then(|data| data.get("sessions"))
-                .and_then(serde_json::Value::as_array)
-                .map(|sessions| sessions.len() as u64);
-        }
+        && response.success
+    {
+        probe.session_count = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("sessions"))
+            .and_then(serde_json::Value::as_array)
+            .map(|sessions| sessions.len() as u64);
+    }
     probe
 }
 
@@ -510,9 +512,10 @@ pub(crate) fn verify_hello_supervisor_pid(
         Ok(false) | Err(_) => return None,
     }
     if let Some(expected) = expected_process_start_id
-        && pa_types::platform::process::process_start_id(pid).as_deref() != Some(expected) {
-            return None;
-        }
+        && pa_types::platform::process::process_start_id(pid).as_deref() != Some(expected)
+    {
+        return None;
+    }
     Some(pid)
 }
 

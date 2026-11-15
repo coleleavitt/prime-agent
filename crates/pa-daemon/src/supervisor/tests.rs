@@ -978,9 +978,10 @@ async fn a_saved_session_listing_reads_each_sessions_harness_store_once() {
     while let Some((bundle, _)) = frames.recv().await {
         for frame in bundle {
             if let Outbound::Line(line) = frame
-                && line["type"] == "session_list_item" {
-                    streamed.push(line["session"].clone());
-                }
+                && line["type"] == "session_list_item"
+            {
+                streamed.push(line["session"].clone());
+            }
         }
     }
     let sessions_served = lines[0]["data"]["sessions"].as_array().unwrap();

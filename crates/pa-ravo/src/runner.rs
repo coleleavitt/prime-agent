@@ -113,22 +113,23 @@ fn parse_outcome(
         };
     }
     if code == Some(3)
-        && let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
-            let (class, message) = body.split_once('\n').unwrap_or((body, ""));
-            let exception_class = class.trim().to_string();
-            let message = message.trim();
-            if !exception_class.is_empty() {
-                let detail = if message.is_empty() {
-                    trim_detail(&exception_class)
-                } else {
-                    trim_detail(&format!("{exception_class}: {message}"))
-                };
-                return ReplayOutcome::Raised {
-                    exception_class,
-                    detail,
-                };
-            }
+        && let Some(body) = stdout.strip_prefix(RAISED_MARKER)
+    {
+        let (class, message) = body.split_once('\n').unwrap_or((body, ""));
+        let exception_class = class.trim().to_string();
+        let message = message.trim();
+        if !exception_class.is_empty() {
+            let detail = if message.is_empty() {
+                trim_detail(&exception_class)
+            } else {
+                trim_detail(&format!("{exception_class}: {message}"))
+            };
+            return ReplayOutcome::Raised {
+                exception_class,
+                detail,
+            };
         }
+    }
     let reported = [trim_detail(stderr), trim_detail(stdout)]
         .into_iter()
         .find(|text| !text.is_empty());
@@ -181,9 +182,10 @@ fn replay_environment(
         .map(PathBuf::from)
         .collect();
     if environment == ReplayEnvironment::SkillImport
-        && let Some(host) = std::env::var_os("PYTHONPATH") {
-            roots.extend(std::env::split_paths(&host).filter(|root| !root.as_os_str().is_empty()));
-        }
+        && let Some(host) = std::env::var_os("PYTHONPATH")
+    {
+        roots.extend(std::env::split_paths(&host).filter(|root| !root.as_os_str().is_empty()));
+    }
     let mut resolved: Vec<PathBuf> = Vec::new();
     for root in roots {
         let absolute = std::path::absolute(&root).unwrap_or(root);
@@ -192,12 +194,13 @@ fn replay_environment(
         }
     }
     if let Ok(joined) = std::env::join_paths(&resolved)
-        && !resolved.is_empty() {
-            env.push((
-                "PYTHONPATH".to_string(),
-                joined.to_string_lossy().into_owned(),
-            ));
-        }
+        && !resolved.is_empty()
+    {
+        env.push((
+            "PYTHONPATH".to_string(),
+            joined.to_string_lossy().into_owned(),
+        ));
+    }
     env
 }
 

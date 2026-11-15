@@ -82,12 +82,13 @@ pub fn assert_legal_batch(
     }
     for cell in cells {
         if let Some(parent) = &cell.parent_id
-            && chosen.contains(&parent.as_str()) {
-                return Err(LegalBatchError(format!(
-                    "batch contains {} and its parent {parent}",
-                    cell.node_id
-                )));
-            }
+            && chosen.contains(&parent.as_str())
+        {
+            return Err(LegalBatchError(format!(
+                "batch contains {} and its parent {parent}",
+                cell.node_id
+            )));
+        }
     }
     Ok(())
 }
@@ -188,9 +189,10 @@ pub fn interpret_policy(policy: &ExplorationPolicy, view: &dyn ObservationView) 
             continue;
         }
         if let Some(parent) = &cell.parent_id
-            && chosen.iter().any(|picked| &picked.node_id == parent) {
-                continue;
-            }
+            && chosen.iter().any(|picked| &picked.node_id == parent)
+        {
+            continue;
+        }
         if chosen
             .iter()
             .any(|picked| picked.parent_id.as_deref() == Some(cell.node_id.as_str()))

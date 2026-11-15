@@ -298,28 +298,29 @@ impl SessionNavigation {
         let cwd =
             cwd_override.or_else(|| (!file.header.cwd.is_empty()).then(|| file.header.cwd.clone()));
         if let Some(cwd) = cwd.as_deref()
-            && !std::path::Path::new(cwd).is_dir() {
-                let fallback = {
-                    let core = self.core.lock_or_recover();
-                    core.cwd.clone()
-                };
-                // The typed error info lets clients render the TS missing-cwd prompt (the issue
-                // carries the fallback cwd).
-                return Err(response_failure(
-                    None,
-                    command,
-                    &format!(
-                        "Stored session working directory does not exist: {cwd}\nSession file: {path}\nCurrent working directory: {fallback}"
-                    ),
-                    Some(DaemonErrorInfo::MissingSessionCwd {
-                        issue: json!({
-                            "sessionFile": path,
-                            "sessionCwd": cwd,
-                            "fallbackCwd": fallback,
-                        }),
+            && !std::path::Path::new(cwd).is_dir()
+        {
+            let fallback = {
+                let core = self.core.lock_or_recover();
+                core.cwd.clone()
+            };
+            // The typed error info lets clients render the TS missing-cwd prompt (the issue
+            // carries the fallback cwd).
+            return Err(response_failure(
+                None,
+                command,
+                &format!(
+                    "Stored session working directory does not exist: {cwd}\nSession file: {path}\nCurrent working directory: {fallback}"
+                ),
+                Some(DaemonErrorInfo::MissingSessionCwd {
+                    issue: json!({
+                        "sessionFile": path,
+                        "sessionCwd": cwd,
+                        "fallbackCwd": fallback,
                     }),
-                ));
-            }
+                }),
+            ));
+        }
         Ok(PreparedReplacement {
             file,
             cwd,

@@ -288,9 +288,11 @@ impl ResolutionStore for FileResolutionStore {
         let modified = metadata.modified().ok();
         let size = metadata.len();
         if let Some(cached) = self.cache().as_ref()
-            && cached.modified == modified && cached.size == size {
-                return cached.records.clone();
-            }
+            && cached.modified == modified
+            && cached.size == size
+        {
+            return cached.records.clone();
+        }
         let records = self.read();
         *self.cache() = Some(Cached {
             modified,

@@ -189,9 +189,10 @@ fn await_receipt(receipt: &Path) -> String {
     let deadline = Instant::now() + Duration::from_mins(1);
     loop {
         if let Ok(content) = std::fs::read_to_string(receipt)
-            && !content.is_empty() {
-                return content;
-            }
+            && !content.is_empty()
+        {
+            return content;
+        }
         assert!(
             Instant::now() < deadline,
             "kernel cell receipt never appeared at {}",

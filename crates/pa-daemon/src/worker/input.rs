@@ -75,14 +75,15 @@ impl Worker {
         // The reserved child-status kinds are daemon provenance: a prompt row
         // claiming one is always a spoof — answered loudly, never parked.
         if let Some(row) = custom_message.as_ref()
-            && crate::child_status_notices::is_reserved_child_status_custom_type(row) {
-                return response_failure(
-                    None,
-                    "prompt",
-                    &crate::child_status_notices::reserved_intake_error(),
-                    None,
-                );
-            }
+            && crate::child_status_notices::is_reserved_child_status_custom_type(row)
+        {
+            return response_failure(
+                None,
+                "prompt",
+                &crate::child_status_notices::reserved_intake_error(),
+                None,
+            );
+        }
         // TS daemon prompts map `resumeIfIdle` to
         // `command.streamingBehavior !== undefined`: while the queued-input
         // suspension is set (post `abort`/manual `compact`), a plain prompt
@@ -124,14 +125,15 @@ impl Worker {
             // Hold the queue lock across this transition and enqueue so a
             // cancellation cannot mistake an accepted prompt for waiting.
             if let Some(id) = &admission_id
-                && !self.prompt_admissions.commit(id) {
-                    return response_failure(
-                        None,
-                        if wait { "prompt_and_wait" } else { "prompt" },
-                        "Prompt admission was cancelled.",
-                        None,
-                    );
-                }
+                && !self.prompt_admissions.commit(id)
+            {
+                return response_failure(
+                    None,
+                    if wait { "prompt_and_wait" } else { "prompt" },
+                    "Prompt admission was cancelled.",
+                    None,
+                );
+            }
             // An idle session runs the prompt immediately: the lane is the
             // work hand-off, not a queue, so the projection did not change
             // (TS prompt admission with queueIfBusy=false never queues).
@@ -221,19 +223,20 @@ impl Worker {
         // row claiming one is answered loudly, never parked. The daemon's own
         // notice injection rides this command with the one-shot capability.
         if let Some(row) = custom_message.as_ref()
-            && crate::child_status_notices::is_reserved_child_status_custom_type(row) {
-                let minted = crate::child_status_notices::consume(
-                    payload.get("rlmNoticeNonce").and_then(Value::as_str),
+            && crate::child_status_notices::is_reserved_child_status_custom_type(row)
+        {
+            let minted = crate::child_status_notices::consume(
+                payload.get("rlmNoticeNonce").and_then(Value::as_str),
+            );
+            if !minted {
+                return response_failure(
+                    None,
+                    lane.as_str(),
+                    &crate::child_status_notices::reserved_intake_error(),
+                    None,
                 );
-                if !minted {
-                    return response_failure(
-                        None,
-                        lane.as_str(),
-                        &crate::child_status_notices::reserved_intake_error(),
-                        None,
-                    );
-                }
             }
+        }
         let mut core = self.core.lock_or_recover();
         let images = parse_prompt_images(payload);
         let item = QueuedItem {

@@ -633,9 +633,10 @@ impl AgentSessionEngine {
                             .map(|window| window.entries().to_vec())
                     });
                 if let Some(entries) = scan
-                    && let Some(error) = pa_core::goals::stale_active_goal_failure(&entries) {
-                        stale_error = Some(error);
-                    }
+                    && let Some(error) = pa_core::goals::stale_active_goal_failure(&entries)
+                {
+                    stale_error = Some(error);
+                }
             }
             if let Some(error) = stale_error {
                 // The stale-row guard's adoption: the IN-MEMORY driver

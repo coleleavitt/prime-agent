@@ -61,9 +61,10 @@ pub(super) fn fold_child_usage_attributions(entries: &mut [SessionEntry]) {
         // assignment, not merge: a row without a `usage` field gets the
         // aggregate inserted, a row with one is overwritten.
         if let Some(message) = entries[row].fields.get_mut("message")
-            && let Some(object) = message.as_object_mut() {
-                object.insert("usage".to_string(), aggregate);
-            }
+            && let Some(object) = message.as_object_mut()
+        {
+            object.insert("usage".to_string(), aggregate);
+        }
     }
 }
 
@@ -235,8 +236,9 @@ impl SessionFile {
         // TS assigns `target.message.usage = cloneUsage(aggregate)`: insert
         // even when the row never carried a `usage` field.
         if let Some(message) = self.entries[row].fields.get_mut("message")
-            && let Some(object) = message.as_object_mut() {
-                object.insert("usage".to_string(), aggregate.clone());
-            }
+            && let Some(object) = message.as_object_mut()
+        {
+            object.insert("usage".to_string(), aggregate.clone());
+        }
     }
 }

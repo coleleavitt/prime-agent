@@ -390,12 +390,13 @@ pub fn proposal_artifact(proposal: &RefinementProposal) -> Value {
         "edits": edits,
     });
     if !addressed_union.is_empty()
-        && let Some(obj) = artifact.as_object_mut() {
-            obj.insert(
-                "addressedFingerprints".to_string(),
-                Value::Array(addressed_union.into_iter().map(Value::String).collect()),
-            );
-        }
+        && let Some(obj) = artifact.as_object_mut()
+    {
+        obj.insert(
+            "addressedFingerprints".to_string(),
+            Value::Array(addressed_union.into_iter().map(Value::String).collect()),
+        );
+    }
     artifact
 }
 

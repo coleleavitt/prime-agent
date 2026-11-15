@@ -1833,19 +1833,20 @@ impl ControllerHooks for RunHooks {
             proposal_id,
             certificate,
         } = event
-            && !certificate.committed {
-                *lock(&self.rejected_since_commit) += 1;
-                lock(&self.mirror)
-                    .evaluated_proposal_ids
-                    .push(proposal_id.clone());
-                let decision = decision_name(certificate);
-                self.log_outcome(
-                    proposal_id,
-                    decision,
-                    certificate,
-                    rejection_cause(decision, certificate),
-                );
-            }
+            && !certificate.committed
+        {
+            *lock(&self.rejected_since_commit) += 1;
+            lock(&self.mirror)
+                .evaluated_proposal_ids
+                .push(proposal_id.clone());
+            let decision = decision_name(certificate);
+            self.log_outcome(
+                proposal_id,
+                decision,
+                certificate,
+                rejection_cause(decision, certificate),
+            );
+        }
         let value = event_value(event);
         if let ProgressEvent::Stopped { .. } = event {
             self.service

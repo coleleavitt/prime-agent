@@ -156,9 +156,10 @@ impl Worker {
                 if refusal
                     .downcast_ref::<pa_core::models::ModelAllowlistRefusal>()
                     .is_some()
-                    && let Some(agent_engine) = &self.agent_engine {
-                        agent_engine.note_model_refused("cycle_model", &selector);
-                    }
+                    && let Some(agent_engine) = &self.agent_engine
+                {
+                    agent_engine.note_model_refused("cycle_model", &selector);
+                }
                 return response_failure(None, "cycle_model", &refusal.to_string(), None);
             }
         }
@@ -178,9 +179,10 @@ impl Worker {
             if let Some(level) = scoped_thinking
                 .as_deref()
                 .and_then(pa_ai::models::thinking_level_from_str)
-                && !engine.switch_thinking_level(level) {
-                    return None;
-                }
+                && !engine.switch_thinking_level(level)
+            {
+                return None;
+            }
             let cwd = {
                 let mut core = core.lock_or_recover();
                 if let Some(store) = core.store.as_mut() {
@@ -311,14 +313,14 @@ impl Worker {
                     .as_str()
                     .and_then(pa_ai::models::thinking_level_from_str)
                     .is_none()
-                {
-                    return response_failure(
-                        None,
-                        "set_scoped_models",
-                        "Invalid thinking level: expected one of off, minimal, low, medium, high, xhigh, max",
-                        None,
-                    );
-                }
+            {
+                return response_failure(
+                    None,
+                    "set_scoped_models",
+                    "Invalid thinking level: expected one of off, minimal, low, medium, high, xhigh, max",
+                    None,
+                );
+            }
         }
         self.core.lock_or_recover().scoped_models.clone_from(scoped);
         response_success(None, "set_scoped_models", None)

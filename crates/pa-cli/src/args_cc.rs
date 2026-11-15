@@ -457,26 +457,31 @@ pub fn validate(flags: &CcFlags, print: bool, worktree: bool, diagnostics: &mut 
         error("--tmux requires --worktree");
     }
     if let Some(mode) = &flags.permission_mode
-        && !PERMISSION_MODES.contains(&mode.as_str()) {
-            error(&format!(
-                "Invalid permission mode '{mode}'. Valid modes: {}",
-                PERMISSION_MODES.join(", ")
-            ));
-        }
+        && !PERMISSION_MODES.contains(&mode.as_str())
+    {
+        error(&format!(
+            "Invalid permission mode '{mode}'. Valid modes: {}",
+            PERMISSION_MODES.join(", ")
+        ));
+    }
     if let Some(id) = &flags.session_id
-        && uuid::Uuid::try_parse(id).is_err() {
-            error("Invalid session ID. Must be a valid UUID.");
-        }
+        && uuid::Uuid::try_parse(id).is_err()
+    {
+        error("Invalid session ID. Must be a valid UUID.");
+    }
     if let Some(sources) = &flags.setting_sources
-        && let Err(problem) = SettingSource::parse_list(sources) {
-            error(&problem);
-        }
+        && let Err(problem) = SettingSource::parse_list(sources)
+    {
+        error(&problem);
+    }
     if let Some(tool) = &flags.permission_prompt_tool
-        && tool != "stdio" && !tool.starts_with("mcp__") {
-            error(&format!(
-                "--permission-prompt-tool takes \"stdio\" or an MCP tool name (mcp__<server>__<tool>), not \"{tool}\""
-            ));
-        }
+        && tool != "stdio"
+        && !tool.starts_with("mcp__")
+    {
+        error(&format!(
+            "--permission-prompt-tool takes \"stdio\" or an MCP tool name (mcp__<server>__<tool>), not \"{tool}\""
+        ));
+    }
 }
 
 /// The session-wide flags as the launch layer: `--settings` (with

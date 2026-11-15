@@ -115,9 +115,10 @@ fn summarize(frames: &[Value]) -> (Vec<(String, Value, Value)>, Vec<String>) {
         .iter()
         .map(|frame| {
             if let Some(token) = frame.get("token").and_then(Value::as_str)
-                && !tokens.iter().any(|seen| seen == token) {
-                    tokens.push(token.to_string());
-                }
+                && !tokens.iter().any(|seen| seen == token)
+            {
+                tokens.push(token.to_string());
+            }
             (
                 frame["type"].as_str().unwrap_or_default().to_string(),
                 frame.get("enabled").cloned().unwrap_or(Value::Null),

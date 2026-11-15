@@ -258,25 +258,26 @@ impl Supervisor {
         // sibling, not this session. The source is local here, so its
         // scope is the empty host.
         if let Some(source_summary) = source_summary
-            && let Some(target_active) = target.active_session_id.as_deref() {
-                let source_id = source_summary
-                    .get("activeSessionId")
-                    .and_then(Value::as_str)
-                    .or_else(|| source_summary.get("id").and_then(Value::as_str))
-                    .unwrap_or_default();
-                let source_host = source_summary
-                    .get("remoteHost")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                if crate::remote_mesh::agent_mesh_identity(Some(source_host), source_id)
-                    == crate::remote_mesh::agent_mesh_identity(
-                        Some(&target.host.tailnet_host),
-                        target_active,
-                    )
-                {
-                    return Err("Agent messaging cannot target the sending session".to_string());
-                }
+            && let Some(target_active) = target.active_session_id.as_deref()
+        {
+            let source_id = source_summary
+                .get("activeSessionId")
+                .and_then(Value::as_str)
+                .or_else(|| source_summary.get("id").and_then(Value::as_str))
+                .unwrap_or_default();
+            let source_host = source_summary
+                .get("remoteHost")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if crate::remote_mesh::agent_mesh_identity(Some(source_host), source_id)
+                == crate::remote_mesh::agent_mesh_identity(
+                    Some(&target.host.tailnet_host),
+                    target_active,
+                )
+            {
+                return Err("Agent messaging cannot target the sending session".to_string());
             }
+        }
         Ok(Some(target))
     }
 
@@ -632,9 +633,10 @@ fn sender_endpoint_from_summary(summary: &Value, client_id: &str) -> Value {
         "clientId": client_id,
     });
     if let Some(name) = summary.get("sessionName").and_then(Value::as_str)
-        && !name.is_empty() {
-            sender["sessionName"] = json!(name);
-        }
+        && !name.is_empty()
+    {
+        sender["sessionName"] = json!(name);
+    }
     // The durable parent edge rides the supervisor-routed endpoint too, so
     // the receiving session can label the delivery by its TRUE relationship.
     for field in [

@@ -629,9 +629,11 @@ fn publish(state: &mut ReporterState) {
     // never-sent state (Herdr down) must re-queue, not silently dedup
     // against the pre-wire default.
     if let Some(last_state) = state.last_state
-        && next_state == last_state && next_message == state.last_message {
-            return;
-        }
+        && next_state == last_state
+        && next_message == state.last_message
+    {
+        return;
+    }
     queue_state(state, next_state, next_message);
 }
 
@@ -1392,16 +1394,17 @@ mod tests {
         loop {
             let frames = requests.lock().unwrap().clone();
             if let Some(last) = frames.last()
-                && last["params"]["state"] == "idle" {
-                    assert!(
-                        last["params"].get("message").is_none(),
-                        "the successor inherited the error message: {last}"
-                    );
-                    assert_eq!(last["params"]["agent_session_id"], "s8");
-                    assert!(frames.len() >= 3, "the frames: {frames:?}");
-                    server.abort();
-                    return;
-                }
+                && last["params"]["state"] == "idle"
+            {
+                assert!(
+                    last["params"].get("message").is_none(),
+                    "the successor inherited the error message: {last}"
+                );
+                assert_eq!(last["params"]["agent_session_id"], "s8");
+                assert!(frames.len() >= 3, "the frames: {frames:?}");
+                server.abort();
+                return;
+            }
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "the successor never reported idle: {frames:?}"

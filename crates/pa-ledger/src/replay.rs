@@ -263,9 +263,10 @@ pub fn normalize_replay_cases(value: Option<&Value>, legacy: Option<&Value>) -> 
     let mut cases = Vec::new();
     for item in legacy.into_iter().chain(listed) {
         if let Some(replay) = normalize_replay_case(item)
-            && replay_probe_of(&replay.source).is_some() {
-                cases = fold_replay_probe(&cases, replay);
-            }
+            && replay_probe_of(&replay.source).is_some()
+        {
+            cases = fold_replay_probe(&cases, replay);
+        }
     }
     cases
 }

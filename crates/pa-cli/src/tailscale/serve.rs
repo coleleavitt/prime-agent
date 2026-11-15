@@ -200,9 +200,9 @@ fn verify_served(parsed: &Value, port: u16) -> (bool, bool) {
             if let Some(forward) = entry.get("TCPForward").and_then(Value::as_str)
                 && (forward == format!("127.0.0.1:{tcp_port}")
                     || forward == format!("localhost:{tcp_port}"))
-                {
-                    served_exactly = true;
-                }
+            {
+                served_exactly = true;
+            }
         }
     }
     if let Some(web) = parsed.get("Web").and_then(Value::as_object) {

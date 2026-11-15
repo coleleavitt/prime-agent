@@ -109,12 +109,13 @@ pub fn handle_public_command(args: &[String]) -> PublicCommandResult {
     let args = rotate_global_flags_before_command(args, &public, &removed);
 
     if args.first().map(String::as_str) == Some("help")
-        && let Some(help_path) = extract_help_command_path(&args, 1) {
-            let help_path_ref: Vec<&str> = help_path.iter().map(String::as_str).collect();
-            if is_help_command_request(&help_path_ref) {
-                return print_requested_help(&help_path);
-            }
+        && let Some(help_path) = extract_help_command_path(&args, 1)
+    {
+        let help_path_ref: Vec<&str> = help_path.iter().map(String::as_str).collect();
+        if is_help_command_request(&help_path_ref) {
+            return print_requested_help(&help_path);
         }
+    }
 
     let Some(command) = args.first() else {
         return continue_with(args);
@@ -683,9 +684,10 @@ fn run_package(args: &[String]) -> PublicCommandResult {
             return fail(format!("Usage: {APP_NAME} package update [source]"), None);
         }
         if let Some(source) = rest.first()
-            && is_self_update_source(source) {
-                return fail("Use \"prime-agent update\" to update Prime Agent.", None);
-            }
+            && is_self_update_source(source)
+        {
+            return fail("Use \"prime-agent update\" to update Prime Agent.", None);
+        }
         let mut package_args: Vec<String> = vec!["update".to_string()];
         if rest.is_empty() {
             package_args.push("--extensions".to_string());
@@ -761,40 +763,39 @@ fn run_update_command(args: &[String]) -> PublicCommandResult {
     // `--rollback` and `--archive` on an installer install run the bundled
     // installer; any other binary stays on the managed-install flow.
     if (options.rollback || options.archive.is_some())
-        && let Some(prefix) = pa_core::update::installer::running_installer_prefix() {
-            if options.source.is_some() {
-                return fail(
-                    "--source only applies to managed installs.",
-                    Some(
-                        "An installer install keeps updating from its release channel.".to_string(),
-                    ),
-                );
-            }
-            if options.channel.is_some() {
-                return fail(
-                    "--nightly and --stable do not apply to --rollback or --archive.",
-                    Some(format!(
-                        "Switch channels with \"{APP_NAME} update --nightly\" or \"--stable\"."
-                    )),
-                );
-            }
-            // The CLI's --force is the nightly-switch confirmation skip;
-            // the installer's own forced daemon stop is a different flag
-            // the funnel never forwards either — so the local modes refuse
-            // it instead of silently dropping it.
-            if options.force {
-                return fail(
-                    "--force does not apply to --rollback or --archive.",
-                    Some(format!(
-                        "To stop busy daemons first, run \"{APP_NAME} shutdown --force\" and re-run."
-                    )),
-                );
-            }
-            return handled_with_exit(crate::installer_update::run_local(
-                &prefix,
-                options.archive.as_deref(),
-            ));
+        && let Some(prefix) = pa_core::update::installer::running_installer_prefix()
+    {
+        if options.source.is_some() {
+            return fail(
+                "--source only applies to managed installs.",
+                Some("An installer install keeps updating from its release channel.".to_string()),
+            );
         }
+        if options.channel.is_some() {
+            return fail(
+                "--nightly and --stable do not apply to --rollback or --archive.",
+                Some(format!(
+                    "Switch channels with \"{APP_NAME} update --nightly\" or \"--stable\"."
+                )),
+            );
+        }
+        // The CLI's --force is the nightly-switch confirmation skip;
+        // the installer's own forced daemon stop is a different flag
+        // the funnel never forwards either — so the local modes refuse
+        // it instead of silently dropping it.
+        if options.force {
+            return fail(
+                "--force does not apply to --rollback or --archive.",
+                Some(format!(
+                    "To stop busy daemons first, run \"{APP_NAME} shutdown --force\" and re-run."
+                )),
+            );
+        }
+        return handled_with_exit(crate::installer_update::run_local(
+            &prefix,
+            options.archive.as_deref(),
+        ));
+    }
     let persisted_wire = std::env::current_dir()
         .ok()
         .and_then(|cwd| {

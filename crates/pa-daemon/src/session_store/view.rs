@@ -275,13 +275,12 @@ impl SessionFile {
                     "message" => {
                         if let Some(message) = entry.fields.get("message").filter(|message| {
                             message.get("role").and_then(Value::as_str) == Some("assistant")
-                        })
-                            && let (Some(provider), Some(model)) = (
-                                message.get("provider").and_then(Value::as_str),
-                                message.get("model").and_then(Value::as_str),
-                            ) {
-                                context.model = Some((provider.to_owned(), model.to_owned()));
-                            }
+                        }) && let (Some(provider), Some(model)) = (
+                            message.get("provider").and_then(Value::as_str),
+                            message.get("model").and_then(Value::as_str),
+                        ) {
+                            context.model = Some((provider.to_owned(), model.to_owned()));
+                        }
                     }
                     "thinking_level_change" => {
                         if let Some(level) =
@@ -427,9 +426,10 @@ impl SessionFile {
         else {
             for entry in &branch {
                 if let Some(message) = entry_message(entry)
-                    && !visit(message) {
-                        return;
-                    }
+                    && !visit(message)
+                {
+                    return;
+                }
             }
             return;
         };
@@ -468,15 +468,17 @@ impl SessionFile {
             }
             if keeping
                 && let Some(message) = entry_message(entry)
-                    && !visit(message) {
-                        return;
-                    }
+                && !visit(message)
+            {
+                return;
+            }
         }
         for entry in &branch[compaction_position + 1..] {
             if let Some(message) = entry_message(entry)
-                && !visit(message) {
-                    return;
-                }
+                && !visit(message)
+            {
+                return;
+            }
         }
     }
 

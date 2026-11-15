@@ -76,9 +76,10 @@ pub(crate) fn run_session_command(
         .compaction
         .as_ref()
         .and_then(|compaction| compaction.ipython_state.as_ref())
-        && !emit(EngineEvent::CustomMessage(custom_message_value(message))) {
-            return None;
-        }
+        && !emit(EngineEvent::CustomMessage(custom_message_value(message)))
+    {
+        return None;
+    }
     // The settled `compaction_end` precedes any failure result row (TS `compact()` emits
     // the event before the queued-command catch arm appends `Command failed: ...`).
     if is_compact && !emit_compact_end(command, &execution, emit) {
@@ -91,15 +92,17 @@ pub(crate) fn run_session_command(
     }
     if let Some(refinement) = &execution.refinement
         && let Ok(result) = serde_json::to_value(refinement)
-            && !emit(EngineEvent::RefineComplete { result }) {
-                return None;
-            }
+        && !emit(EngineEvent::RefineComplete { result })
+    {
+        return None;
+    }
     if let Some(error) = &execution.refinement_failed
         && !emit(EngineEvent::RefineFailed {
             error: error.clone(),
-        }) {
-            return None;
-        }
+        })
+    {
+        return None;
+    }
     // The executor's first row is the echo (already emitted); the rest of
     // the durable rows follow in order.
     for message in execution.messages.iter().skip(1) {

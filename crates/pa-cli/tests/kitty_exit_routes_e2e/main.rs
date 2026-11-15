@@ -149,9 +149,10 @@ fn every_exit_route_restores_the_kitty_mode() {
         Route::ReplayPanic,
     ] {
         if let Some(name) = &only
-            && name != route.name() {
-                continue;
-            }
+            && name != route.name()
+        {
+            continue;
+        }
         run_route(route, true);
     }
     // The probed axis covers the query->answer->push flow once, and the

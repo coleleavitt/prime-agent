@@ -775,9 +775,10 @@ impl Harness {
             request_id += 1;
             self.prompt_and_wait(&format!("{label}-{request_id}"), session_id);
             if let Some(receipt) = self.read_receipt(label, receipt_name)
-                && done(&receipt) {
-                    return receipt;
-                }
+                && done(&receipt)
+            {
+                return receipt;
+            }
             assert!(
                 Instant::now() < deadline,
                 "the scenario never reached the expected state at {label}"
@@ -1776,9 +1777,10 @@ fn factory_run_interrupted_by_a_host_crash_resumes_on_the_restarted_host() {
         turn += 1;
         harness.prompt_tolerating_failure(&format!("{label}-{turn}"), &session_id);
         if let Some(status) = harness.read_receipt(label, "poll")
-            && matches!(status["state"].as_str(), Some("done" | "failed")) {
-                break status;
-            }
+            && matches!(status["state"].as_str(), Some("done" | "failed"))
+        {
+            break status;
+        }
         assert!(
             Instant::now() < deadline,
             "the run never finished after the host restart"

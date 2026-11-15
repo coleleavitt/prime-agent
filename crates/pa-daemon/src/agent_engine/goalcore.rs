@@ -57,9 +57,10 @@ impl AgentSessionEngine {
             && let Err(error) = manager.append_custom_entry(
                 "rlm_max_depth_state",
                 Some(json!({ "maxDepth": max_depth })),
-            ) {
-                eprintln!("pa-daemon: failed to flush pending rlm_max_depth_state: {error:#}");
-            }
+            )
+        {
+            eprintln!("pa-daemon: failed to flush pending rlm_max_depth_state: {error:#}");
+        }
     }
 
     /// Persist the create's agent definition as the session's durable

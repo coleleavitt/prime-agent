@@ -266,10 +266,10 @@ impl RpcClient {
             && tokio::time::timeout_at(deadline, process.wait())
                 .await
                 .is_err()
-            {
-                let _ = process.start_kill();
-                let _ = process.wait().await;
-            }
+        {
+            let _ = process.start_kill();
+            let _ = process.wait().await;
+        }
         *child = None;
         self.closed.cancel();
     }
@@ -376,9 +376,10 @@ where
         }
         saw_header = true;
         if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("content-length") {
-                length = value.trim().parse().ok();
-            }
+            && name.trim().eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse().ok();
+        }
     }
     let length = length
         .filter(|length| *length <= MAX_MESSAGE_BYTES)

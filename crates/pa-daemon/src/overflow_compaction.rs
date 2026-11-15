@@ -310,9 +310,10 @@ impl AgentSessionEngine {
                 if let Some(message) = &run.ipython_state
                     && !emit(EngineEvent::CustomMessage(
                         crate::session_commands::custom_message_value(message),
-                    )) {
-                        return OverflowAttempt::Cancelled;
-                    }
+                    ))
+                {
+                    return OverflowAttempt::Cancelled;
+                }
                 // The compaction arms the compact-trigger review; the
                 // retried turn's settled boundary services it.
                 self.mark_compact_auto_refine_pending();

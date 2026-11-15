@@ -221,9 +221,10 @@ fn sync_one_history(
                             memory_id: &edit.id,
                             action,
                             novelty_score: score,
-                        }) {
-                            novelty_lines.push(entry);
-                        }
+                        })
+                    {
+                        novelty_lines.push(entry);
+                    }
                     handle.record_memory_upsert(&edit.id, &combined);
                     applied += 1;
                 }

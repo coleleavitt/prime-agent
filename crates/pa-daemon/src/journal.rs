@@ -177,9 +177,10 @@ fn establish_private_journal_parent_inner(
                             // ancestor to a crash. Fail closed on the
                             // sync error.
                             if let Some(fail_first_mkdir_sync) = fail_first_mkdir_sync
-                                && fail_first_mkdir_sync.swap(false, Ordering::SeqCst) {
-                                    anyhow::bail!("injected ancestor sync failure after mkdirat");
-                                }
+                                && fail_first_mkdir_sync.swap(false, Ordering::SeqCst)
+                            {
+                                anyhow::bail!("injected ancestor sync failure after mkdirat");
+                            }
                             current
                                 .sync_all()
                                 .with_context(|| format!("sync ancestor {}", name.display()))?;
@@ -773,34 +774,35 @@ fn scan_worker_journal(path: &Path) -> Result<JournalScan> {
     // only its delimiter byte is KEPT (the repair rewrite re-delimits
     // it — the record is not lost); anything else is the torn tail.
     if let Some(fragment) = undelimited_tail
-        && !fragment.is_empty() {
-            let valid = std::str::from_utf8(fragment)
-                .ok()
-                .filter(|text| !matches!(classify_journal_line(text), ScannedLine::Malformed));
-            match valid {
-                Some(text) => {
-                    if malformed_seen
-                        || matches!(classify_journal_line(text), ScannedLine::UnsupportedVersion)
-                    {
-                        corruption = JournalCorruption::MidFile;
-                    } else {
-                        // A valid record on an unterminated boundary:
-                        // the file needs the delimiter repair before any
-                        // append can glue onto it.
-                        valid_line_text.push(text.to_string());
-                        lines.push(classify_journal_line(text));
-                        corruption = JournalCorruption::TornTail;
-                    }
+        && !fragment.is_empty()
+    {
+        let valid = std::str::from_utf8(fragment)
+            .ok()
+            .filter(|text| !matches!(classify_journal_line(text), ScannedLine::Malformed));
+        match valid {
+            Some(text) => {
+                if malformed_seen
+                    || matches!(classify_journal_line(text), ScannedLine::UnsupportedVersion)
+                {
+                    corruption = JournalCorruption::MidFile;
+                } else {
+                    // A valid record on an unterminated boundary:
+                    // the file needs the delimiter repair before any
+                    // append can glue onto it.
+                    valid_line_text.push(text.to_string());
+                    lines.push(classify_journal_line(text));
+                    corruption = JournalCorruption::TornTail;
                 }
-                None => {
-                    if malformed_seen {
-                        corruption = JournalCorruption::MidFile;
-                    } else {
-                        malformed_seen = true;
-                    }
+            }
+            None => {
+                if malformed_seen {
+                    corruption = JournalCorruption::MidFile;
+                } else {
+                    malformed_seen = true;
                 }
             }
         }
+    }
     if corruption == JournalCorruption::Clean && malformed_seen {
         corruption = JournalCorruption::TornTail;
     }
@@ -1383,11 +1385,11 @@ impl WorkerRecoveryJournal {
         self.require_writable()?;
         if let Some(previous) = self.latest.get(active_session_id)
             && previous.busy == busy
-                && previous.operation == operation
-                && previous.session_file.as_deref() == session_file
-            {
-                return Ok(());
-            }
+            && previous.operation == operation
+            && previous.session_file.as_deref() == session_file
+        {
+            return Ok(());
+        }
         let record = WorkerRecoveryRecord {
             active_session_id: active_session_id.to_string(),
             session_id: session_id.to_string(),

@@ -138,17 +138,18 @@ impl Worker {
             // anti-spoof): a restored row claiming one refuses the whole snapshot
             // before any action admits; only the recovery journal may park one.
             if let Some(row) = payload.get("customMessage")
-                && crate::child_status_notices::is_reserved_child_status_custom_type(row) {
-                    return response_failure(
-                        None,
-                        "restore_actions",
-                        &format!(
-                            "{} (action {id})",
-                            crate::child_status_notices::reserved_intake_error()
-                        ),
-                        None,
-                    );
-                }
+                && crate::child_status_notices::is_reserved_child_status_custom_type(row)
+            {
+                return response_failure(
+                    None,
+                    "restore_actions",
+                    &format!(
+                        "{} (action {id})",
+                        crate::child_status_notices::reserved_intake_error()
+                    ),
+                    None,
+                );
+            }
         }
         // Restore pass: each action lands in its delivery lane —
         // `next_turn_boundary` is the steering schedule, `when_run_idle` the follow-up one.

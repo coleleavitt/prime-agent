@@ -389,14 +389,15 @@ impl SessionServers {
         }
         for (evicted_uri, owner) in evicted {
             if let Some(owner) = self.server_named(&owner)
-                && owner.is_running().await {
-                    let _ = owner
-                        .notify(
-                            "textDocument/didClose",
-                            json!({"textDocument": {"uri": evicted_uri}}),
-                        )
-                        .await;
-                }
+                && owner.is_running().await
+            {
+                let _ = owner
+                    .notify(
+                        "textDocument/didClose",
+                        json!({"textDocument": {"uri": evicted_uri}}),
+                    )
+                    .await;
+            }
         }
         Ok(Ok(Synced {
             uri,

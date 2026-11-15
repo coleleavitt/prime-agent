@@ -144,13 +144,15 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                         && let (Some(provider), Some(model_id)) = (
                             message.get("provider").and_then(Value::as_str),
                             message.get("model").and_then(Value::as_str),
-                        ) {
-                            model = Some((provider.to_string(), model_id.to_string()));
-                        }
+                        )
+                    {
+                        model = Some((provider.to_string(), model_id.to_string()));
+                    }
                     if matches!(role, Some("user" | "assistant"))
-                        && let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
-                            last_activity_ms = Some(last_activity_ms.unwrap_or(0).max(timestamp));
-                        }
+                        && let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64)
+                    {
+                        last_activity_ms = Some(last_activity_ms.unwrap_or(0).max(timestamp));
+                    }
                     if (role == Some("user") && first_message.is_empty())
                         || (matches!(role, Some("user" | "assistant"))
                             && search_text_chars < SESSION_LIST_SEARCH_TEXT_MAX_CHARS)

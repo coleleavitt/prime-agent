@@ -443,10 +443,11 @@ impl Supervisor {
         };
         let rebound = rebound_to.is_some();
         if let (Ok(reply), Some(raw_out)) = (response.as_ref(), raw_out)
-            && splices(command, reply, rebound) {
-                self.relay_spliced(&route, &resident, reply, raw_out).await;
-                return (Vec::new(), false);
-            }
+            && splices(command, reply, rebound)
+        {
+            self.relay_spliced(&route, &resident, reply, raw_out).await;
+            return (Vec::new(), false);
+        }
         match response {
             Ok(reply) => {
                 self.typed_client_reply(
@@ -609,10 +610,9 @@ impl Supervisor {
         let DaemonCommand::Kill { rest, .. } = route.command else {
             return Ok(());
         };
-        if plain_kill
-            && let Err(error) = self.persist_stop_tombstone(resident).await {
-                return Err(route.fail(&format!("Failed to persist the session stop: {error:#}")));
-            }
+        if plain_kill && let Err(error) = self.persist_stop_tombstone(resident).await {
+            return Err(route.fail(&format!("Failed to persist the session stop: {error:#}")));
+        }
         let Some((reason, child_id)) = ledger_delete(rest) else {
             return Ok(());
         };
@@ -744,24 +744,26 @@ impl Supervisor {
                 .await;
         }
         if let DaemonCommand::Detach { .. } = route.command
-            && response.success {
-                self.note_daemon_event("detach", None);
-                // The retire removes the RESIDENT's active id — the id the attached list
-                // actually holds (the selector may be a durable-id alias). The registry
-                // entry goes first: delivery stops at the detach instant.
-                route
-                    .attached
-                    .detach(&self.session_subscribers, &resident.worker_id);
-            }
+            && response.success
+        {
+            self.note_daemon_event("detach", None);
+            // The retire removes the RESIDENT's active id — the id the attached list
+            // actually holds (the selector may be a durable-id alias). The registry
+            // entry goes first: delivery stops at the detach instant.
+            route
+                .attached
+                .detach(&self.session_subscribers, &resident.worker_id);
+        }
         if let DaemonCommand::Kill { rest, .. } = route.command {
             self.settle_kill(resident, rest, plain_kill, response.success, kill_deadline)
                 .await;
         }
         if let DaemonCommand::Rename { name, .. } | DaemonCommand::SetSessionName { name, .. } =
             route.command
-            && response.success {
-                self.record_child_rename(resident, name).await;
-            }
+            && response.success
+        {
+            self.record_child_rename(resident, name).await;
+        }
         (vec![response_line(&response)], false)
     }
 
@@ -873,9 +875,10 @@ impl Supervisor {
             return;
         };
         if let Ok(ledger) = self.rlm_spawn_ledger_for(None).await
-            && let Err(error) = ledger.append_rename_by_child_path(&session_file, name) {
-                self.log_line(&format!("failed to append RLM ledger rename: {error:#}"));
-            }
+            && let Err(error) = ledger.append_rename_by_child_path(&session_file, name)
+        {
+            self.log_line(&format!("failed to append RLM ledger rename: {error:#}"));
+        }
     }
 
     /// The saved-session wake for a passivated session (TS's tier-2 relaunch); a selector

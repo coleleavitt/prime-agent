@@ -33,7 +33,7 @@ mod winapi {
 
     type Handle = *mut c_void;
 
-    extern "system" {
+    unsafe extern "system" {
         fn GetStdHandle(which: i32) -> Handle;
         fn GetConsoleMode(handle: Handle, mode: *mut u32) -> i32;
         fn SetConsoleMode(handle: Handle, mode: u32) -> i32;

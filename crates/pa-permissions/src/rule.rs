@@ -326,22 +326,23 @@ fn validate_bash(rule: &RuleValue, content: &str, behavior: RuleBehavior) -> Opt
         ));
     }
     if behavior == RuleBehavior::Allow
-        && let Some(word) = wildcard_before_rest(content) {
-            let (git, example) = if word == "git" {
-                (
-                    " For git, options such as -c and --exec-path can run arbitrary commands.",
-                    " (for example Bash(git status *))",
-                )
-            } else {
-                ("", "")
-            };
-            return Some(Validation::Warning(format!(
-                "{rule} has a wildcard before the rest of the command, so it also matches any \
+        && let Some(word) = wildcard_before_rest(content)
+    {
+        let (git, example) = if word == "git" {
+            (
+                " For git, options such as -c and --exec-path can run arbitrary commands.",
+                " (for example Bash(git status *))",
+            )
+        } else {
+            ("", "")
+        };
+        return Some(Validation::Warning(format!(
+            "{rule} has a wildcard before the rest of the command, so it also matches any \
                  options inserted at that position and approves them without a prompt.{git} \
                  Replace that * with the exact value you mean, or only use * after the \
                  subcommand{example}."
-            )));
-        }
+        )));
+    }
     if let Some(prefix) = legacy_prefix(content).map(str::trim_end) {
         if has_unescaped_star(prefix) {
             return Some(Validation::Warning(format!(
@@ -396,9 +397,10 @@ pub fn validate(text: &str, behavior: RuleBehavior) -> Validation {
         return Validation::Valid;
     };
     if rule.tool == BASH_TOOL
-        && let Some(found) = validate_bash(&rule, content, behavior) {
-            return found;
-        }
+        && let Some(found) = validate_bash(&rule, content, behavior)
+    {
+        return found;
+    }
     if FILE_PATTERN_TOOLS.contains(&rule.tool.as_str()) && content.contains(":*") {
         return Validation::invalid(
             "The \":*\" syntax is only for Bash prefix rules",

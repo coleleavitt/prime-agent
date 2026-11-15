@@ -61,9 +61,10 @@ pub fn version() -> &'static str {
 /// `exe_dir_of`).
 fn package_dir() -> PathBuf {
     if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR")
-        && !env_dir.is_empty() {
-            return expand_tilde_path(&env_dir);
-        }
+        && !env_dir.is_empty()
+    {
+        return expand_tilde_path(&env_dir);
+    }
     std::env::current_exe()
         .ok()
         .and_then(|exe| pa_core::packages::exe_dir_of(&exe))

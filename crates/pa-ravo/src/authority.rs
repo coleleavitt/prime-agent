@@ -200,9 +200,10 @@ pub fn normalize_assisted_ravo_state(value: Option<&Value>) -> RavoState {
         && let Ok(state) = serde_json::from_value::<RavoState>(with_known_window_clocks(
             &Value::Object(record.clone()),
         ))
-            && ravo_w(&state) {
-                return state;
-            }
+        && ravo_w(&state)
+    {
+        return state;
+    }
     let legacy_criteria = record
         .get("evaluator")
         .and_then(|evaluator| evaluator.get("criteria"))

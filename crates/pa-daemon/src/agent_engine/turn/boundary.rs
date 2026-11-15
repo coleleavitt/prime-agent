@@ -78,9 +78,10 @@ impl AgentSessionEngine {
                     "requested",
                     pending.instructions.as_deref(),
                 ),
-            }) {
-                return BoundaryRun::Cancelled;
-            }
+            })
+        {
+            return BoundaryRun::Cancelled;
+        }
         // The requested run owns the abort slot for its duration: an
         // `abort_compaction` lands in the slot and cancels the in-flight
         // summarizer.
@@ -118,9 +119,10 @@ impl AgentSessionEngine {
                 if let Some(message) = &run.ipython_state
                     && !emit(EngineEvent::CustomMessage(
                         crate::session_commands::custom_message_value(message),
-                    )) {
-                        return BoundaryRun::Cancelled;
-                    }
+                    ))
+                {
+                    return BoundaryRun::Cancelled;
+                }
                 {
                     let guard = self.session.blocking_lock();
                     if let Some(telemetry) = guard
@@ -211,9 +213,10 @@ impl AgentSessionEngine {
                     }
                 }
                 if let Ok(result) = serde_json::to_value(&refinement)
-                    && !emit(EngineEvent::RefineComplete { result }) {
-                        return BoundaryRun::Cancelled;
-                    }
+                    && !emit(EngineEvent::RefineComplete { result })
+                {
+                    return BoundaryRun::Cancelled;
+                }
             }
             Some(Err(error)) => {
                 eprintln!("pa-daemon: requested refinement failed: {error:#}");
@@ -240,17 +243,17 @@ impl AgentSessionEngine {
             }
         };
         if let Some(outcome) = plan_mode
-            && let Some(mode) = outcome.permission_mode {
-                let command = pa_core::session_engine::slash_commands::SessionSlashCommand {
-                    name: "permissions",
-                    args: format!("mode {mode}"),
-                    text: format!("/permissions mode {mode}"),
-                };
-                if crate::session_commands::run_session_command(self, &command, &[], emit).is_none()
-                {
-                    return BoundaryRun::Cancelled;
-                }
+            && let Some(mode) = outcome.permission_mode
+        {
+            let command = pa_core::session_engine::slash_commands::SessionSlashCommand {
+                name: "permissions",
+                args: format!("mode {mode}"),
+                text: format!("/permissions mode {mode}"),
+            };
+            if crate::session_commands::run_session_command(self, &command, &[], emit).is_none() {
+                return BoundaryRun::Cancelled;
             }
+        }
         if stopped_for_compaction {
             BoundaryRun::StoppedForCompaction { compacted }
         } else {

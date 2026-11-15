@@ -79,9 +79,10 @@ impl Worker {
             if refusal
                 .downcast_ref::<pa_core::models::ModelAllowlistRefusal>()
                 .is_some()
-                && let Some(agent_engine) = &self.agent_engine {
-                    agent_engine.note_model_refused("set_model", &selector);
-                }
+                && let Some(agent_engine) = &self.agent_engine
+            {
+                agent_engine.note_model_refused("set_model", &selector);
+            }
             return response_failure(None, "set_model", &refusal.to_string(), None);
         }
         let engine = std::sync::Arc::clone(&self.engine);

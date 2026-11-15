@@ -124,18 +124,19 @@ fn status_indicator(
         });
     }
     if let Some(source) = status.source
-        && source != AuthSource::Stored {
-            return match auth_type {
-                AuthType::ApiKey => Some(AuthStatusIndicator {
-                    style: AuthStatusStyle::Success,
-                    label: api_key_source_label(source, status.label.as_deref()),
-                }),
-                AuthType::Oauth => Some(AuthStatusIndicator {
-                    style: AuthStatusStyle::Muted,
-                    label: "unconfigured".to_string(),
-                }),
-            };
-        }
+        && source != AuthSource::Stored
+    {
+        return match auth_type {
+            AuthType::ApiKey => Some(AuthStatusIndicator {
+                style: AuthStatusStyle::Success,
+                label: api_key_source_label(source, status.label.as_deref()),
+            }),
+            AuthType::Oauth => Some(AuthStatusIndicator {
+                style: AuthStatusStyle::Muted,
+                label: "unconfigured".to_string(),
+            }),
+        };
+    }
     if let Some(credential) = credential {
         let credential_type = match credential {
             AuthCredential::ApiKey { .. } | AuthCredential::McpStaticToken { .. } => {
@@ -231,9 +232,10 @@ impl ProviderAuth {
     fn anthropic_subscription_warning_blocking(&self) -> Option<&'static str> {
         let mut auth = self.auth_storage();
         if let Some(credential) = auth.get_all().credential("anthropic")
-            && matches!(credential, AuthCredential::Oauth { .. }) {
-                return Some(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
-            }
+            && matches!(credential, AuthCredential::Oauth { .. })
+        {
+            return Some(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
+        }
         auth.get_api_key("anthropic")
             .is_some_and(|key| key.starts_with("sk-ant-oat"))
             .then_some(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING)

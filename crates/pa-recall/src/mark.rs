@@ -765,9 +765,11 @@ pub async fn paths_matching_commit(
             let mut fields = meta.split(' ');
             if let (Some(mode), Some("blob"), Some(object)) =
                 (fields.next(), fields.next(), fields.next())
-                && REGULAR_FILE_MODES.contains(&mode) && !object.is_empty() {
-                    blobs.insert(path, object);
-                }
+                && REGULAR_FILE_MODES.contains(&mode)
+                && !object.is_empty()
+            {
+                blobs.insert(path, object);
+            }
         }
         for (path, hash) in batch.iter().zip(hashes) {
             if blobs.get(path.as_str()) == Some(&hash.trim()) {

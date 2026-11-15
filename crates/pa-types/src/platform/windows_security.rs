@@ -39,7 +39,7 @@ struct SecurityAttributes {
 }
 
 #[link(name = "advapi32")]
-extern "system" {
+unsafe extern "system" {
     fn OpenProcessToken(process: Handle, desired_access: u32, token: *mut Handle) -> i32;
     fn GetTokenInformation(
         token: Handle,
@@ -67,7 +67,7 @@ extern "system" {
     ) -> u32;
 }
 
-extern "system" {
+unsafe extern "system" {
     fn GetCurrentProcess() -> Handle;
     fn CloseHandle(handle: Handle) -> i32;
     fn LocalFree(memory: *mut c_void) -> *mut c_void;

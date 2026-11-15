@@ -103,9 +103,10 @@ fn diff_chat_child_mode() {
             None,
         ));
         if let Ok(view) = view
-            && let Some(link) = view.link {
-                link.close();
-            }
+            && let Some(link) = view.link
+        {
+            link.close();
+        }
     }
     quiet_child_epilogue();
 }
@@ -128,9 +129,10 @@ fn diff_view_child_mode() {
         None,
     ));
     if let Ok(view) = view
-        && let Some(link) = view.link {
-            link.close();
-        }
+        && let Some(link) = view.link
+    {
+        link.close();
+    }
     quiet_child_epilogue();
 }
 

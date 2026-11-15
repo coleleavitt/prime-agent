@@ -147,9 +147,10 @@ impl TurnEmitter {
         // wire alike.
         if core.send_now_cut
             && let EngineEvent::AssistantMessage(message) = &mut event
-                && message.get("stopReason").and_then(Value::as_str) == Some("aborted") {
-                    message["errorMessage"] = json!(SEND_NOW_CUT_MESSAGE);
-                }
+            && message.get("stopReason").and_then(Value::as_str) == Some("aborted")
+        {
+            message["errorMessage"] = json!(SEND_NOW_CUT_MESSAGE);
+        }
         if !persist_event(&mut core, &event) {
             return false;
         }
@@ -162,13 +163,14 @@ impl TurnEmitter {
         // after the row frames it follows; an unchanged projection
         // stays silent.
         if let Some(snapshot) = action_frame
-            && core.last_action_snapshot.as_ref() != Some(&snapshot) {
-                core.last_action_snapshot = Some(snapshot.clone());
-                frames.push(json!({
-                    "type": "session_action_update",
-                    "actions": snapshot,
-                }));
-            }
+            && core.last_action_snapshot.as_ref() != Some(&snapshot)
+        {
+            core.last_action_snapshot = Some(snapshot.clone());
+            frames.push(json!({
+                "type": "session_action_update",
+                "actions": snapshot,
+            }));
+        }
         context.send_frames(&mut core, frames);
         drop(core);
         // The waiting response must observe the frames'
@@ -335,16 +337,17 @@ impl EmitContext {
         // Streaming updates park in the coalescer; `park_update` only
         // returns false after the turn joined, which cannot race this closure.
         if std::env::var_os(EVENT_LOG_ENV).is_some()
-            && let Some(value) = message.clone().into_wire() {
-                let mut event = json!({
-                    "type": "message_update",
-                    "message": value,
-                });
-                if let Some(stream_event) = stream_event {
-                    event["assistantMessageEvent"] = stream_event.clone();
-                }
-                append_event_log(&[event]);
+            && let Some(value) = message.clone().into_wire()
+        {
+            let mut event = json!({
+                "type": "message_update",
+                "message": value,
+            });
+            if let Some(stream_event) = stream_event {
+                event["assistantMessageEvent"] = stream_event.clone();
             }
+            append_event_log(&[event]);
+        }
         let sequence = core.last_event_sequence + 1;
         core.last_event_sequence = sequence;
         let delta = stream_event
@@ -603,9 +606,10 @@ impl EmitState {
         );
         let outcome = crate::session_commands::custom_message_value(&outcome);
         if outcome.is_object()
-            && let Some(store) = core.store.as_mut() {
-                persist_custom_message(store, &outcome);
-            }
+            && let Some(store) = core.store.as_mut()
+        {
+            persist_custom_message(store, &outcome);
+        }
         vec![
             event,
             json!({ "type": "message_start", "message": outcome }),

@@ -302,9 +302,10 @@ fn child_descriptor_pid(descriptor_dir: &Path, child_id: &str) -> Option<u32> {
         if descriptor["sessionFile"]
             .as_str()
             .is_some_and(|file| file.contains(child_id))
-            && let Some(pid) = descriptor["pid"].as_u64().filter(|pid| *pid > 0) {
-                return u32::try_from(pid).ok();
-            }
+            && let Some(pid) = descriptor["pid"].as_u64().filter(|pid| *pid > 0)
+        {
+            return u32::try_from(pid).ok();
+        }
     }
     None
 }
@@ -569,9 +570,10 @@ async fn an_rlm_spawn_child_inherits_the_parent_worker_env() {
     let deadline = Instant::now() + Duration::from_secs(15);
     let environ = loop {
         if let Some(pid) = child_descriptor_pid(&descriptor_dir, &handle.rlm_child_id)
-            && let Ok(bytes) = std::fs::read(format!("/proc/{pid}/environ")) {
-                break parse_environ(&bytes);
-            }
+            && let Ok(bytes) = std::fs::read(format!("/proc/{pid}/environ"))
+        {
+            break parse_environ(&bytes);
+        }
         assert!(
             Instant::now() < deadline,
             "the child worker's env never became observable"

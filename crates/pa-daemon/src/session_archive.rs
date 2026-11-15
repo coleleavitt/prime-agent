@@ -57,18 +57,19 @@ pub fn plan_archive<'a>(
         }
     }
     if let Some(max_sessions) = policy.max_sessions
-        && candidates.len() > max_sessions {
-            // Keep the newest `max_sessions` files by mtime (ties by path
-            // for determinism); everything older archives unless protected.
-            let mut ranked: Vec<&SweepCandidate> = candidates.iter().collect();
-            ranked.sort_by(|left, right| {
-                right
-                    .modified
-                    .cmp(&left.modified)
-                    .then_with(|| left.path.cmp(&right.path))
-            });
-            doomed.extend(ranked[max_sessions..].iter().filter(|c| !c.protected));
-        }
+        && candidates.len() > max_sessions
+    {
+        // Keep the newest `max_sessions` files by mtime (ties by path
+        // for determinism); everything older archives unless protected.
+        let mut ranked: Vec<&SweepCandidate> = candidates.iter().collect();
+        ranked.sort_by(|left, right| {
+            right
+                .modified
+                .cmp(&left.modified)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        doomed.extend(ranked[max_sessions..].iter().filter(|c| !c.protected));
+    }
     doomed.sort_by(|left, right| {
         left.modified
             .cmp(&right.modified)

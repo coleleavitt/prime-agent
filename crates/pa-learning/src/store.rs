@@ -84,9 +84,12 @@ pub fn read_trajectory_index(agent_dir: &Path) -> Option<TrajectoryStoreFile> {
     };
     let (modified, size) = (metadata.modified().ok(), metadata.len());
     if let Some(cached) = cache().get(&path)
-        && cached.modified.is_some() && cached.modified == modified && cached.size == size {
-            return cached.file.clone();
-        }
+        && cached.modified.is_some()
+        && cached.modified == modified
+        && cached.size == size
+    {
+        return cached.file.clone();
+    }
     let file = if size > MAX_STORE_BYTES {
         tracing::warn!(target: LOG_TARGET, path = %path.display(), error = %format!("{size} bytes"), "trajectory store is larger than expected; ignoring it");
         None

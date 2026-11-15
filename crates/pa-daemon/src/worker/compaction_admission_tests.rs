@@ -47,9 +47,10 @@ fn session_events(
     let mut events = Vec::new();
     while let Ok(frame) = subscription.try_recv() {
         if frame.outbound_type == "session_event"
-            && let Ok(outbound) = serde_json::from_slice::<Value>(&frame.payload) {
-                events.push(outbound["event"].clone());
-            }
+            && let Ok(outbound) = serde_json::from_slice::<Value>(&frame.payload)
+        {
+            events.push(outbound["event"].clone());
+        }
     }
     events
 }

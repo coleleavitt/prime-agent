@@ -374,9 +374,9 @@ impl Supervisor {
                     && let Some(stem) = Path::new(&session_file)
                         .file_stem()
                         .map(|stem| stem.to_string_lossy().to_string())
-                    {
-                        self.restore.settle_adopted(&stem);
-                    }
+                {
+                    self.restore.settle_adopted(&stem);
+                }
                 self.log_line(&format!(
                     "adopted session worker {worker_id} (was alive: {alive})"
                 ));

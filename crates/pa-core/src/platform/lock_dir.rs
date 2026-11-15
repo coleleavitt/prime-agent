@@ -110,7 +110,7 @@ mod win32 {
 
     type Handle = *mut c_void;
 
-    extern "system" {
+    unsafe extern "system" {
         fn CreateFileW(
             filename: *const u16,
             desired_access: u32,

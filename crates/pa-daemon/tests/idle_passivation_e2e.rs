@@ -162,9 +162,10 @@ fn worker_pid(agent_dir: &Path, active_session_id: &str) -> Option<u64> {
             continue;
         };
         if let Ok(descriptor) = serde_json::from_str::<Value>(&content)
-            && let Some(pid) = descriptor.get("pid").and_then(Value::as_u64) {
-                return Some(pid);
-            }
+            && let Some(pid) = descriptor.get("pid").and_then(Value::as_u64)
+        {
+            return Some(pid);
+        }
     }
     None
 }
@@ -297,12 +298,13 @@ async fn a_settled_child_passivates_stays_listable_and_revives_by_agent_message(
     let child_active_session_id = loop {
         let roster = children.list_subagents().await.expect("child roster");
         if let Some(row) = roster.first()
-            && (row.status == "done" || row.status == "completed") {
-                break row
-                    .active_session_id
-                    .clone()
-                    .expect("the settled child's live id");
-            }
+            && (row.status == "done" || row.status == "completed")
+        {
+            break row
+                .active_session_id
+                .clone()
+                .expect("the settled child's live id");
+        }
         assert!(Instant::now() < deadline, "the child never settled done");
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
@@ -615,12 +617,13 @@ async fn a_parent_rename_after_a_revival_and_second_passivation_reaches_the_chil
     let child_active_session_id = loop {
         let roster = children.list_subagents().await.expect("child roster");
         if let Some(row) = roster.first()
-            && (row.status == "done" || row.status == "completed") {
-                break row
-                    .active_session_id
-                    .clone()
-                    .expect("the settled child's live id");
-            }
+            && (row.status == "done" || row.status == "completed")
+        {
+            break row
+                .active_session_id
+                .clone()
+                .expect("the settled child's live id");
+        }
         assert!(Instant::now() < deadline, "the child never settled done");
         tokio::time::sleep(Duration::from_millis(100)).await;
     };

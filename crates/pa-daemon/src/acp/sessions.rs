@@ -495,11 +495,11 @@ async fn admit_session(
     if !state.lock().await.mcp_server_names.is_empty()
         && let Err(error) =
             clear_connection_servers(link, &daemon_session_id, &binding.mcp_owner_id, state).await
-        {
-            state.lock().await.session_new_in_flight = false;
-            let _ = tx.send(super::internal_error(&id, &error.to_string()));
-            return false;
-        }
+    {
+        state.lock().await.session_new_in_flight = false;
+        let _ = tx.send(super::internal_error(&id, &error.to_string()));
+        return false;
+    }
     // MCP admission runs after the pending-clear retry: a rejected list
     // fails the request with the same error payloads.
     let resolved = match super::mcp::resolve_acp_mcp_servers(&params.mcp_servers, &actual_cwd) {

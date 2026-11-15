@@ -280,14 +280,14 @@ impl TreeNavigation {
                     Ok(summary_id) => {
                         if let Some(label) = &label
                             && let Err(error) = store.append_label_change(&summary_id, Some(label))
-                            {
-                                return response_failure(
-                                    None,
-                                    "navigate_tree",
-                                    &error.to_string(),
-                                    None,
-                                );
-                            }
+                        {
+                            return response_failure(
+                                None,
+                                "navigate_tree",
+                                &error.to_string(),
+                                None,
+                            );
+                        }
                         summary_entry = store.entry(&summary_id).map(session_tree::entry_json);
                     }
                     Err(error) => {
@@ -299,9 +299,10 @@ impl TreeNavigation {
                     return response_failure(None, "navigate_tree", &error.to_string(), None);
                 }
                 if let Some(label) = &label
-                    && let Err(error) = store.append_label_change(target_id, Some(label)) {
-                        return response_failure(None, "navigate_tree", &error.to_string(), None);
-                    }
+                    && let Err(error) = store.append_label_change(target_id, Some(label))
+                {
+                    return response_failure(None, "navigate_tree", &error.to_string(), None);
+                }
             }
             (store.branch_file_entries(), summary_entry)
         };

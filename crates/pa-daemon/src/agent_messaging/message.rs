@@ -430,9 +430,10 @@ fn child_member(
 ) -> AgentFamilyMember {
     let mut aliases = vec![child.rlm_child_id.clone()];
     if let Some(session_id) = &child.session_id
-        && !session_id.is_empty() {
-            aliases.push(session_id.clone());
-        }
+        && !session_id.is_empty()
+    {
+        aliases.push(session_id.clone());
+    }
     AgentFamilyMember {
         relationship: AgentFamilyRelationship::Child,
         id: child.active_session_id.clone(),

@@ -136,13 +136,14 @@ pub async fn plan(
         );
     }
     if let Ok(active_installation) = &active
-        && active_installation.target.release_dir != running.release_dir {
-            anyhow::bail!(
-                "The installation is inconsistent: the active launcher points at {} while this binary runs from {}. Repair the launcher before updating.",
-                active_installation.target.release_dir.display(),
-                running.release_dir.display()
-            );
-        }
+        && active_installation.target.release_dir != running.release_dir
+    {
+        anyhow::bail!(
+            "The installation is inconsistent: the active launcher points at {} while this binary runs from {}. Repair the launcher before updating.",
+            active_installation.target.release_dir.display(),
+            running.release_dir.display()
+        );
+    }
     let Some(release) = latest_release(
         running.version.as_str(),
         channel,

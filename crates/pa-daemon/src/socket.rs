@@ -138,10 +138,11 @@ impl SocketLease {
                 // path is a successor's, never ours to refresh.
                 if lock_state(&task_path, &held) == LockState::Missing
                     && let Ok(dir) = retake_lock_dir(&task_path)
-                        && let Ok(metadata) = dir.metadata() {
-                            *held = metadata_identity(&metadata);
-                            task_dir = dir;
-                        }
+                    && let Ok(metadata) = dir.metadata()
+                {
+                    *held = metadata_identity(&metadata);
+                    task_dir = dir;
+                }
                 if lock_state(&task_path, &held) != LockState::Held
                     || task_dir.set_modified(std::time::SystemTime::now()).is_err()
                     || lock_state(&task_path, &held) != LockState::Held
@@ -496,9 +497,10 @@ pub const BIND_CAPTURE_GAP_ENV: &str = "PA_DAEMON_BIND_CAPTURE_GAP_MS";
 pub async fn bind_capture_gap() {
     #[cfg(debug_assertions)]
     if let Ok(raw) = std::env::var(BIND_CAPTURE_GAP_ENV)
-        && let Ok(ms @ 1..=2_000) = raw.parse::<u64>() {
-            tokio::time::sleep(Duration::from_millis(ms)).await;
-        }
+        && let Ok(ms @ 1..=2_000) = raw.parse::<u64>()
+    {
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
 }
 
 #[cfg(all(test, unix))]

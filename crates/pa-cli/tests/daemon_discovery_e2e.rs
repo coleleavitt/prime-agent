@@ -756,9 +756,10 @@ impl Wire {
             let mut line = String::new();
             self.reader.read_line(&mut line).expect("read daemon line");
             if let Ok(value) = serde_json::from_str::<Value>(line.trim())
-                && value.get("id").and_then(Value::as_str) == Some(id) {
-                    return value;
-                }
+                && value.get("id").and_then(Value::as_str) == Some(id)
+            {
+                return value;
+            }
         }
     }
 }
@@ -827,9 +828,10 @@ fn worker_descriptors(agent_dir: &Path) -> Vec<Value> {
                 continue;
             }
             if let Ok(content) = std::fs::read_to_string(file.path())
-                && let Ok(descriptor) = serde_json::from_str::<Value>(&content) {
-                    descriptors.push(descriptor);
-                }
+                && let Ok(descriptor) = serde_json::from_str::<Value>(&content)
+            {
+                descriptors.push(descriptor);
+            }
         }
     }
     descriptors

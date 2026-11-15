@@ -257,13 +257,14 @@ impl Drop for RpcChild {
         pa_core::platform::process_tree::kill_child_tree(&mut self.child);
         let _ = self.child.wait();
         if self.drain_stderr_on_drop
-            && let Some(mut stderr) = self.spawn_stderr.take() {
-                let mut text = String::new();
-                let _ = stderr.read_to_string(&mut text);
-                if !text.is_empty() {
-                    eprintln!("RPC child stderr: {text}");
-                }
+            && let Some(mut stderr) = self.spawn_stderr.take()
+        {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text);
+            if !text.is_empty() {
+                eprintln!("RPC child stderr: {text}");
             }
+        }
     }
 }
 

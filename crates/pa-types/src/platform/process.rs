@@ -468,7 +468,7 @@ mod winapi {
 
     type Handle = *mut c_void;
 
-    extern "system" {
+    unsafe extern "system" {
         fn OpenProcess(access: u32, inherit_handle: i32, process_id: usize) -> Handle;
         fn CloseHandle(handle: Handle) -> i32;
         fn QueryFullProcessImageNameW(

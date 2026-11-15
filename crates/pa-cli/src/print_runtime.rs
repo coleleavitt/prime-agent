@@ -1535,9 +1535,10 @@ async fn run_prompts_and_emit(
                 eprintln!("{stderr}");
             }
             if exit_code == 0
-                && let Some(text) = primary.stdout_text() {
-                    println!("{text}");
-                }
+                && let Some(text) = primary.stdout_text()
+            {
+                println!("{text}");
+            }
         }
     }
     for outcome in result.compaction_outcomes {

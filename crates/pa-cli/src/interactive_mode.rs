@@ -690,21 +690,23 @@ fn build_tui_options(
     // changing cwd, and use the same project for client settings and the
     // daemon create config. Explicit --cwd and --fork retain their directory.
     let mut resolved_options = options.clone();
-    if !options.session.cwd_from_flag && options.session.fork.is_none()
-        && let SessionSelection::Resume(path) = &mut session {
-            *path = std::path::absolute(&*path)?;
-            if let Some(header) = pa_core::session::manager::read_session_header(path)
-                .filter(|header| !header.cwd.is_empty())
-            {
-                if !Path::new(&header.cwd).is_dir() {
-                    return Err(anyhow!(
-                        "Saved session directory is unavailable: {}. Supply --cwd to reopen elsewhere.",
-                        header.cwd
-                    ));
-                }
-                resolved_options.config.cwd = PathBuf::from(header.cwd);
+    if !options.session.cwd_from_flag
+        && options.session.fork.is_none()
+        && let SessionSelection::Resume(path) = &mut session
+    {
+        *path = std::path::absolute(&*path)?;
+        if let Some(header) = pa_core::session::manager::read_session_header(path)
+            .filter(|header| !header.cwd.is_empty())
+        {
+            if !Path::new(&header.cwd).is_dir() {
+                return Err(anyhow!(
+                    "Saved session directory is unavailable: {}. Supply --cwd to reopen elsewhere.",
+                    header.cwd
+                ));
             }
+            resolved_options.config.cwd = PathBuf::from(header.cwd);
         }
+    }
     let options = &resolved_options;
     let config = &options.config;
     let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);

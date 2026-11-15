@@ -224,12 +224,12 @@ impl Server {
                     } else if let Some(variable) = line.trim().strip_prefix("let ")
                         && let Some(Value::Array(children)) =
                             symbols.last_mut().map(|symbol| &mut symbol["children"])
-                        {
-                            children.push(json!({
+                    {
+                        children.push(json!({
                                 "name": variable.trim(), "kind": 13,
                                 "range": range(index, 2, line.len()), "selectionRange": range(index, 6, line.len()),
                             }));
-                        }
+                    }
                 }
                 Value::Array(symbols)
             }

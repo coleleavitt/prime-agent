@@ -67,7 +67,6 @@ async fn execute(
     manager: &ReplKernelManager,
     code: &str,
 ) -> pa_core::kernel::shared::ExecuteResult {
-    
     manager
         .execute(code, ExecuteOptions::default())
         .await

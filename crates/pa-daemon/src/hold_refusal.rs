@@ -89,9 +89,10 @@ fn classify_from(exe: Option<&Path>, own_exe: Option<&Path>) -> HolderFlavor {
         .map_or_else(|| exe.to_path_buf(), std::path::PathBuf::from);
     let exe = exe.as_path();
     if let Some(own) = own_exe
-        && exe == own {
-            return HolderFlavor::ThisBuild;
-        }
+        && exe == own
+    {
+        return HolderFlavor::ThisBuild;
+    }
     let components: Vec<String> = exe
         .components()
         .map(|component| component.as_os_str().to_string_lossy().to_lowercase())

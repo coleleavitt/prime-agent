@@ -346,10 +346,11 @@ impl SlowDrainHarness {
             let mut buffer = [0u8; 4096];
             let want = buffer.len().min(allowed.saturating_sub(drained));
             if want > 0
-                && let Ok(n) = self.master.file.read(&mut buffer[..want]) {
-                    self.master.output.extend_from_slice(&buffer[..n]);
-                    drained += n;
-                }
+                && let Ok(n) = self.master.file.read(&mut buffer[..want])
+            {
+                self.master.output.extend_from_slice(&buffer[..n]);
+                drained += n;
+            }
             std::thread::sleep(slice);
         }
     }

@@ -1127,13 +1127,13 @@ mod tests {
 
     #[test]
     fn directory_override_precedence_policy_wins_then_flag_then_user() {
-        let _env = crate::packages::test_support::lock_env();
         struct Policy(Option<PathBuf>);
         impl AutoMemoryPolicy for Policy {
             fn directory_override(&self) -> Option<PathBuf> {
                 self.0.clone()
             }
         }
+        let _env = crate::packages::test_support::lock_env();
         let tmp = tempfile::tempdir().unwrap();
         let agent = tmp.path().join("agent");
         let policy_dir = tmp.path().join("policy");
@@ -1141,9 +1141,7 @@ mod tests {
         let user_dir = tmp.path().join("user");
 
         // Env unset, user unset: None.
-        unsafe {
-            pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
-        }
+        pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, None),
             None,
@@ -1160,9 +1158,7 @@ mod tests {
             Some(agent.join("rel/subdir"))
         );
         // Flag beats user.
-        unsafe {
-            pa_types::env::set_var(DIRECTORY_FLAG_ENV, &flag_dir);
-        }
+        pa_types::env::set_var(DIRECTORY_FLAG_ENV, &flag_dir);
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, user_dir.to_str()),
             Some(flag_dir.clone())
@@ -1180,16 +1176,12 @@ mod tests {
             Some(flag_dir.clone())
         );
         // A relative flag is refused and the resolver falls to user.
-        unsafe {
-            pa_types::env::set_var(DIRECTORY_FLAG_ENV, "relative/path");
-        }
+        pa_types::env::set_var(DIRECTORY_FLAG_ENV, "relative/path");
         assert_eq!(
             resolve_auto_memory_directory(None, &agent, user_dir.to_str()),
             Some(user_dir.clone())
         );
-        unsafe {
-            pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
-        }
+        pa_types::env::remove_var(DIRECTORY_FLAG_ENV);
     }
 
     #[test]
@@ -1336,35 +1328,25 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let remote = tmp.path().join("remote");
         std::fs::create_dir_all(&remote).unwrap();
-        unsafe {
-            pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, &remote);
-        }
+        pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, &remote);
         let paths = crate::settings::claude_code::ClaudePaths::resolve(tmp.path());
         assert_eq!(paths.memory_root(), Some(remote.as_path()));
-        unsafe {
-            pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
-        }
+        pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
     }
 
     #[test]
     fn remote_memory_dir_env_refuses_relative_and_empty() {
         let _env = crate::packages::test_support::lock_env();
-        unsafe {
-            pa_types::env::set_var(
-                crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV,
-                "relative/path",
-            );
-        }
+        pa_types::env::set_var(
+            crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV,
+            "relative/path",
+        );
         let paths = crate::settings::claude_code::ClaudePaths::resolve(Path::new("/tmp"));
         // Relative value refused; falls back to claude_dir.
         assert_eq!(paths.memory_root(), paths.claude_dir.as_deref());
-        unsafe {
-            pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, "");
-        }
+        pa_types::env::set_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV, "");
         let paths = crate::settings::claude_code::ClaudePaths::resolve(Path::new("/tmp"));
         assert_eq!(paths.memory_root(), paths.claude_dir.as_deref());
-        unsafe {
-            pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
-        }
+        pa_types::env::remove_var(crate::settings::claude_code::REMOTE_MEMORY_DIR_ENV);
     }
 }

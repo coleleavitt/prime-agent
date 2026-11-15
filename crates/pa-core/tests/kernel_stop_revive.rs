@@ -366,9 +366,10 @@ async fn superseding_stop_after_kill_cannot_deadlock_the_revival_gate() {
     let progress: pa_core::kernel::bootstrap::KernelBootstrapProgressHandler =
         Arc::new(move |message| {
             if !message.starts_with("Waiting for the previous kernel to stop")
-                && let Some(tx) = stage_tx.lock().unwrap().take() {
-                    let _ = tx.send(());
-                }
+                && let Some(tx) = stage_tx.lock().unwrap().take()
+            {
+                let _ = tx.send(());
+            }
         });
     let doomed = tokio::spawn({
         let provisioner = provisioner.clone();

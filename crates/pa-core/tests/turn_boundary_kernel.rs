@@ -139,16 +139,17 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     );
     for step in &mut steps {
         if let ScriptStep::Event(event) = step
-            && let AssistantMessageEvent::Done { message, .. } = &mut **event {
-                message.usage = pa_agent::types::Usage {
-                    input: 100,
-                    output: 20,
-                    cache_read: 0,
-                    cache_write: 0,
-                    total_tokens: 120,
-                    cost: pa_agent::types::UsageCost::default(),
-                };
-            }
+            && let AssistantMessageEvent::Done { message, .. } = &mut **event
+        {
+            message.usage = pa_agent::types::Usage {
+                input: 100,
+                output: 20,
+                cache_read: 0,
+                cache_write: 0,
+                total_tokens: 120,
+                cost: pa_agent::types::UsageCost::default(),
+            };
+        }
     }
     provider.push_turn(ScriptedTurn::Events(steps));
     provider.push_text_turn("boundary reached");

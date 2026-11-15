@@ -52,6 +52,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_panicking_hook_returns_the_default_and_does_not_propagate() {
+        #[expect(clippy::unused_async, reason = "stands in for a hook future")]
         async fn boom() -> Option<String> {
             panic!("simulated hook panic");
         }
@@ -61,6 +62,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_well_behaved_hook_round_trips_its_output() {
+        #[expect(clippy::unused_async, reason = "stands in for a hook future")]
         async fn ok() -> Option<String> {
             Some("noted".to_string())
         }
@@ -70,9 +72,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_panicking_hook_does_not_poison_sibling_hooks_in_join_all() {
+        #[expect(clippy::unused_async, reason = "stands in for a hook future")]
         async fn boom() -> Option<String> {
             panic!("one hook panicked");
         }
+        #[expect(clippy::unused_async, reason = "stands in for a hook future")]
         async fn ok(name: &str) -> Option<String> {
             Some(name.to_string())
         }

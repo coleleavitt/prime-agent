@@ -237,9 +237,10 @@ fn await_receipt(receipt: &Path) -> String {
     let deadline = Instant::now() + Duration::from_mins(1);
     loop {
         if let Ok(content) = std::fs::read_to_string(receipt)
-            && !content.is_empty() {
-                return content;
-            }
+            && !content.is_empty()
+        {
+            return content;
+        }
         assert!(
             Instant::now() < deadline,
             "kernel cell receipt never appeared at {}",
@@ -452,7 +453,7 @@ fn sigkill_closes_the_spawned_child_and_passivates_the_row() {
             .join("session-artifacts")
             .join(parent_session_id)
             .join(&child_id);
-        
+
         std::fs::read_dir(&child_dir)
             .expect("child session dir")
             .filter_map(std::result::Result::ok)

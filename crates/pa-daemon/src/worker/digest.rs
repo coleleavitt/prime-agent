@@ -200,16 +200,17 @@ impl InboxState {
             } else if custom_type == AGENT_MESSAGE_INBOX_ENTRY_CUSTOM_TYPE
                 && let Ok(data) = serde_json::from_value::<InboxEntryData>(
                     entry.fields.get("data").cloned().unwrap_or(Value::Null),
-                ) {
-                    if data.message_id.is_empty() {
-                        continue;
-                    }
-                    pending.push(InboxRecord {
-                        id: entry.id.clone(),
-                        data,
-                        read: false,
-                    });
+                )
+            {
+                if data.message_id.is_empty() {
+                    continue;
                 }
+                pending.push(InboxRecord {
+                    id: entry.id.clone(),
+                    data,
+                    read: false,
+                });
+            }
         }
         for record in &mut pending {
             record.read = read_message_ids.contains(&record.data.message_id);
@@ -1372,13 +1373,15 @@ fn sender_is_parent_of(sender: &Value, core: &SessionCore) -> bool {
             .filter(|value| !value.is_empty())
     };
     if let Some(parent) = core.parent_session_id.as_deref()
-        && sender_id("sessionId") == Some(parent) {
-            return true;
-        }
+        && sender_id("sessionId") == Some(parent)
+    {
+        return true;
+    }
     if let Some(parent) = core.parent_active_session_id.as_deref()
-        && sender_id("activeSessionId") == Some(parent) {
-            return true;
-        }
+        && sender_id("activeSessionId") == Some(parent)
+    {
+        return true;
+    }
     false
 }
 

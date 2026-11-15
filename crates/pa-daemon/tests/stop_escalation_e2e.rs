@@ -281,9 +281,10 @@ fn session_state(session_file: &Path) -> String {
             continue;
         };
         if entry.get("type").and_then(Value::as_str) == Some("session_state")
-            && let Some(status) = entry["state"]["status"].as_str() {
-                state = status.to_string();
-            }
+            && let Some(status) = entry["state"]["status"].as_str()
+        {
+            state = status.to_string();
+        }
     }
     state
 }

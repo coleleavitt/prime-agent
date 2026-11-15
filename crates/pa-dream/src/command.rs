@@ -390,9 +390,10 @@ pub fn parse_dream_command_args(
         ));
     }
     if let Some(n) = options.n
-        && let Err(error) = resolve_task(options.task, Some(n)) {
-            return Err(usage(format!("--n: {}", error.0)));
-        }
+        && let Err(error) = resolve_task(options.task, Some(n))
+    {
+        return Err(usage(format!("--n: {}", error.0)));
+    }
     Ok(options)
 }
 

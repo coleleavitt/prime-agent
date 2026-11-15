@@ -101,9 +101,10 @@ mod seams {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Ok(text) = std::fs::read_to_string(path)
-                && let Ok(value) = serde_json::from_str(&text) {
-                    return value;
-                }
+                && let Ok(value) = serde_json::from_str(&text)
+            {
+                return value;
+            }
             assert!(
                 Instant::now() < deadline,
                 "no hook wrote {}",

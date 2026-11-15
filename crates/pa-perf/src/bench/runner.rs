@@ -588,12 +588,13 @@ impl Launch {
 impl Drop for Launch {
     fn drop(&mut self) {
         if !self.completed
-            && let Some(path) = &self.stream_dump {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(path, &self.child.output);
+            && let Some(path) = &self.stream_dump
+        {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
+            let _ = std::fs::write(path, &self.child.output);
+        }
         self.child.finish();
     }
 }

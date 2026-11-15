@@ -63,9 +63,10 @@ impl Supervisor {
     /// when no mesh source is configured.
     pub(crate) async fn refresh_remote_mesh(&self, wait: Duration) {
         if let Some(mesh) = self.remote_mesh.as_ref()
-            && mesh.enabled() {
-                mesh.refresh_awaiting(wait).await;
-            }
+            && mesh.enabled()
+        {
+            mesh.refresh_awaiting(wait).await;
+        }
     }
 
     /// Fresh depth-0 peer rows (TS `remotePeerSummaries`):
@@ -116,9 +117,10 @@ impl Supervisor {
             let supervisor = Arc::clone(self);
             tokio::spawn(async move {
                 if let Some(mesh) = supervisor.remote_mesh.as_ref()
-                    && mesh.enabled() {
-                        let _ = mesh.refresh_if_stale().await;
-                    }
+                    && mesh.enabled()
+                {
+                    let _ = mesh.refresh_if_stale().await;
+                }
             });
         }
         let mut roster = self.roster.lock_or_recover().entries();

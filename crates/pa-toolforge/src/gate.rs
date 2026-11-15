@@ -114,22 +114,23 @@ fn parse_outcome(
         };
     }
     if code == Some(3)
-        && let Some(body) = stdout.strip_prefix(RAISED_MARKER) {
-            let (class, message) = body.split_once('\n').unwrap_or((body, ""));
-            let class = class.trim();
-            let message = message.trim();
-            if !class.is_empty() {
-                let detail = if message.is_empty() {
-                    class.to_string()
-                } else {
-                    format!("{class}: {message}")
-                };
-                return RunOutcome {
-                    kind: OutcomeKind::Raised,
-                    detail: trim_detail(&detail),
-                };
-            }
+        && let Some(body) = stdout.strip_prefix(RAISED_MARKER)
+    {
+        let (class, message) = body.split_once('\n').unwrap_or((body, ""));
+        let class = class.trim();
+        let message = message.trim();
+        if !class.is_empty() {
+            let detail = if message.is_empty() {
+                class.to_string()
+            } else {
+                format!("{class}: {message}")
+            };
+            return RunOutcome {
+                kind: OutcomeKind::Raised,
+                detail: trim_detail(&detail),
+            };
         }
+    }
     let reported = Some(trim_detail(stderr))
         .filter(|detail| !detail.is_empty())
         .unwrap_or_else(|| trim_detail(stdout));

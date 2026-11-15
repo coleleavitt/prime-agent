@@ -97,20 +97,20 @@ impl Worker {
                 if mutation_type == "replace"
                     && let Some(target) =
                         wire_lane(mutation.get("lane")).filter(|target| *target != lane)
-                    {
-                        let item = match (lane, target) {
-                            (Lane::Steering, Lane::FollowUp) => core.steering.remove(index),
-                            (Lane::FollowUp, Lane::Steering) => core.follow_up.remove(index),
-                            _ => None,
+                {
+                    let item = match (lane, target) {
+                        (Lane::Steering, Lane::FollowUp) => core.steering.remove(index),
+                        (Lane::FollowUp, Lane::Steering) => core.follow_up.remove(index),
+                        _ => None,
+                    };
+                    if let Some(item) = item {
+                        let target_lane = match target {
+                            Lane::Steering => &mut core.steering,
+                            Lane::FollowUp => &mut core.follow_up,
                         };
-                        if let Some(item) = item {
-                            let target_lane = match target {
-                                Lane::Steering => &mut core.steering,
-                                Lane::FollowUp => &mut core.follow_up,
-                            };
-                            crate::worker::enqueue_priority(target_lane, item);
-                        }
+                        crate::worker::enqueue_priority(target_lane, item);
                     }
+                }
                 crate::worker::clear_withdrawn_progress_note(&core, self.engine.as_ref());
                 (status, true)
             } else {
@@ -170,9 +170,10 @@ fn mutate_lane(
     match mutation_type {
         "delete" => {
             if let Some(mut item) = lane.remove(index)
-                && let Some(done) = item.done.take() {
-                    let _ = done.send(TurnSettle::Withdrawn(deleted_message.to_string()));
-                }
+                && let Some(done) = item.done.take()
+            {
+                let _ = done.send(TurnSettle::Withdrawn(deleted_message.to_string()));
+            }
         }
         "move" => {
             let direction = mutation

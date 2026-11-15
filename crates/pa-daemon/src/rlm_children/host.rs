@@ -112,13 +112,15 @@ fn create_session_launch_env(model: &str) -> std::collections::BTreeMap<String, 
         .map_or(model, |(provider, _)| provider);
     if let Some(env_key) =
         pa_ai::env_api_keys::find_env_keys(provider).and_then(|keys| keys.first().cloned())
-        && let Ok(value) = std::env::var(&env_key) {
-            env.insert(env_key, value);
-        }
+        && let Ok(value) = std::env::var(&env_key)
+    {
+        env.insert(env_key, value);
+    }
     if provider == "prime-inference"
-        && let Ok(team) = std::env::var("PRIME_TEAM_ID") {
-            env.insert("PRIME_TEAM_ID".to_string(), team);
-        }
+        && let Ok(team) = std::env::var("PRIME_TEAM_ID")
+    {
+        env.insert("PRIME_TEAM_ID".to_string(), team);
+    }
     env
 }
 
@@ -380,18 +382,18 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     && let Err(error) = watcher_this
                         .prompt_child(&child_active_session_id, "/plan on", &[], None)
                         .await
-                    {
-                        let _ = watcher_this
-                            .kill_child(&child_active_session_id, ChildCloseReason::Killed)
-                            .await;
-                        watcher_this
-                            .settle_failed(
-                                &watcher_record,
-                                format!("could not start the child in plan mode: {error:#}"),
-                            )
-                            .await;
-                        return;
-                    }
+                {
+                    let _ = watcher_this
+                        .kill_child(&child_active_session_id, ChildCloseReason::Killed)
+                        .await;
+                    watcher_this
+                        .settle_failed(
+                            &watcher_record,
+                            format!("could not start the child in plan mode: {error:#}"),
+                        )
+                        .await;
+                    return;
+                }
                 if let Err(error) = watcher_this
                     .prompt_child(
                         &child_active_session_id,
@@ -990,11 +992,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 None
             };
             if let Some(record) = &record
-                && record.lock().await.closed_by_parent {
-                    bail!(
-                        "rlm.rename can only rename the current session or one of its direct children"
-                    );
-                }
+                && record.lock().await.closed_by_parent
+            {
+                bail!(
+                    "rlm.rename can only rename the current session or one of its direct children"
+                );
+            }
             // The rename itself is daemon-owned: the supervisor's live
             // rename route reserves the name, asserts sibling uniqueness
             // across the family, and appends the child's RLM ledger

@@ -111,9 +111,10 @@ fn diff_view_child_mode() {
         None,
     ));
     if let Ok(view) = view
-        && let Some(link) = view.link {
-            link.close();
-        }
+        && let Some(link) = view.link
+    {
+        link.close();
+    }
     harness::quiet_child_epilogue();
 }
 
@@ -156,9 +157,10 @@ fn assert_no_process_holds_the_pty(master: &std::fs::File, context: &str) {
         };
         for fd in fds.flatten() {
             if let Ok(link) = std::fs::read_link(fd.path())
-                && link == slave {
-                    holders.push(pid);
-                }
+                && link == slave
+            {
+                holders.push(pid);
+            }
         }
     }
     assert!(

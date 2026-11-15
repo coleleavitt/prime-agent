@@ -3362,9 +3362,11 @@ async fn tui_renames_session_through_slash_command() {
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         for line in content.lines() {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line)
-                && value["type"] == "session_info" && value["name"] == "my session" {
-                    saw_name = true;
-                }
+                && value["type"] == "session_info"
+                && value["name"] == "my session"
+            {
+                saw_name = true;
+            }
         }
     }
     assert!(
@@ -4074,9 +4076,10 @@ async fn tui_prompt_stash_survives_the_agents_view_handoff() {
     {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-            && let Ok(text) = std::fs::read_to_string(&path) {
-                persisted_with_image |= text.contains("image/png");
-            }
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            persisted_with_image |= text.contains("image/png");
+        }
     }
     assert!(
         persisted_with_image,
@@ -4223,10 +4226,11 @@ async fn tui_prompt_stash_restores_a_pasted_image_with_the_draft() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
             && let Ok(text) = std::fs::read_to_string(&path)
-                && text.contains("image/png") {
-                    persisted_with_image = text;
-                    break;
-                }
+            && text.contains("image/png")
+        {
+            persisted_with_image = text;
+            break;
+        }
     }
     assert!(
         !persisted_with_image.is_empty(),
@@ -4382,9 +4386,10 @@ async fn tui_ctrl_s_stashes_and_restores_the_prompt_draft() {
     {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-            && let Ok(text) = std::fs::read_to_string(&path) {
-                persisted_with_image |= text.contains("image/png");
-            }
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            persisted_with_image |= text.contains("image/png");
+        }
     }
     assert!(
         persisted_with_image,

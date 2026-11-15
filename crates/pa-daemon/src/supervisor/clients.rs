@@ -119,11 +119,12 @@ pub(crate) fn client_command_payload(
         }
         // Create carries its fields under `config`; the worker reads them flat.
         if let Some(config) = object.remove("config")
-            && let Some(config) = config.as_object() {
-                for (key, value) in config {
-                    object.insert(key.clone(), value.clone());
-                }
+            && let Some(config) = config.as_object()
+        {
+            for (key, value) in config {
+                object.insert(key.clone(), value.clone());
             }
+        }
     }
     Ok((type_name, payload))
 }
@@ -323,11 +324,11 @@ impl Supervisor {
         // from the handshake, not from accept, so a pre-ready client is
         // not closed before it ever saw the greeting).
         if let Some(deadline_tx) = tcp_deadline_tx.as_ref()
-            && !tcp_authenticated {
-                deadline_tx.send_replace(
-                    tokio::time::Instant::now() + crate::tcp::DAEMON_TCP_AUTH_TIMEOUT,
-                );
-            }
+            && !tcp_authenticated
+        {
+            deadline_tx
+                .send_replace(tokio::time::Instant::now() + crate::tcp::DAEMON_TCP_AUTH_TIMEOUT);
+        }
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
         let mut events = self.events.subscribe();
@@ -386,9 +387,11 @@ impl Supervisor {
             // re-arms them, so a dribbling peer cannot renew its
             // admission).
             if let Some(deadline_tx) = tcp_deadline_tx.as_mut()
-                && tcp_authenticated && saw_socket_traffic {
-                    deadline_tx.send_replace(tokio::time::Instant::now() + self.tcp_idle_timeout());
-                }
+                && tcp_authenticated
+                && saw_socket_traffic
+            {
+                deadline_tx.send_replace(tokio::time::Instant::now() + self.tcp_idle_timeout());
+            }
             saw_socket_traffic = false;
             // The deadline this iteration's client writes are bounded by:
             // the same watch value the expiry watchdog fires at, so a
@@ -874,19 +877,20 @@ impl Supervisor {
         );
         if !is_update_driver
             && let Some(state) = self.update_prepare.active_state()
-                && update_gate_refuses(state, &type_name) {
-                    return (
-                        vec![Outbound::Line(response_line(&response_failure(
-                            Some(&command_id),
-                            &type_name,
-                            UPDATE_PREPARING_MESSAGE,
-                            // The typed `update_restarting` info rides beside the plain message,
-                            // so clients can recognize the transient state and wait through it.
-                            Some(pa_types::daemon::DaemonErrorInfo::UpdateRestarting),
-                        )))],
-                        false,
-                    );
-                }
+            && update_gate_refuses(state, &type_name)
+        {
+            return (
+                vec![Outbound::Line(response_line(&response_failure(
+                    Some(&command_id),
+                    &type_name,
+                    UPDATE_PREPARING_MESSAGE,
+                    // The typed `update_restarting` info rides beside the plain message,
+                    // so clients can recognize the transient state and wait through it.
+                    Some(pa_types::daemon::DaemonErrorInfo::UpdateRestarting),
+                )))],
+                false,
+            );
+        }
         // Mutating commands count against the prepare transaction's drain.
         let mutating =
             !is_update_driver && pa_types::daemon::is_daemon_mutating_command(&type_name);

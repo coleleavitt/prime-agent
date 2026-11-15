@@ -677,10 +677,10 @@ fn open_leaf(
     let mut prefix = PathBuf::new();
     for component in &components[..components.len().saturating_sub(1)] {
         prefix.push(component);
-        if let Ok(metadata) = std::fs::symlink_metadata(root.join(&prefix)) {
-            if metadata.is_symlink() {
-                return Ok(OpenLeaf::AncestorSymlink);
-            }
+        if let Ok(metadata) = std::fs::symlink_metadata(root.join(&prefix))
+            && metadata.is_symlink()
+        {
+            return Ok(OpenLeaf::AncestorSymlink);
         }
     }
     let absolute = root.join(path);

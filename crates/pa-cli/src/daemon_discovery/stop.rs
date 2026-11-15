@@ -258,26 +258,24 @@ fn run_shutdown_converging(
         let socket_path = action.daemon.socket_path.display().to_string();
         let pid = action.daemon.pid;
         if let Some(pid) = pid
-            && handled_pids.contains(&pid) {
-                assert().map_err(|error| error.to_string())?;
-                remove_socket_file(&action.daemon.socket_path);
-                stopped.push((
-                    socket_path.clone(),
-                    format!("background service already stopped (pid {pid})"),
-                ));
-                if force {
-                    let reasons = force_stop_tracked_workers(
-                        &action.daemon.socket_path,
-                        &root.agent_dir,
-                        assert,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    for reason in reasons {
-                        failed.push((socket_path.clone(), reason));
-                    }
+            && handled_pids.contains(&pid)
+        {
+            assert().map_err(|error| error.to_string())?;
+            remove_socket_file(&action.daemon.socket_path);
+            stopped.push((
+                socket_path.clone(),
+                format!("background service already stopped (pid {pid})"),
+            ));
+            if force {
+                let reasons =
+                    force_stop_tracked_workers(&action.daemon.socket_path, &root.agent_dir, assert)
+                        .map_err(|error| error.to_string())?;
+                for reason in reasons {
+                    failed.push((socket_path.clone(), reason));
                 }
-                continue;
             }
+            continue;
+        }
         match action.kind {
             ReapActionKind::Skip => {
                 failed.push((socket_path.clone(), action.reason.unwrap_or_default()));

@@ -118,13 +118,15 @@ fn session_file_id(path: &str) -> Option<String> {
 /// id decides first, then the live active id, then the session-file alias.
 fn row_is_parent(row: &Value, identity: &FamilyIdentity) -> bool {
     if let Some(parent_id) = identity.parent_session_id.as_deref()
-        && row_str(row, "sessionId") == Some(parent_id) {
-            return true;
-        }
+        && row_str(row, "sessionId") == Some(parent_id)
+    {
+        return true;
+    }
     if let Some(parent_active) = identity.parent_active_session_id.as_deref()
-        && row_str(row, "activeSessionId").or_else(|| row_str(row, "id")) == Some(parent_active) {
-            return true;
-        }
+        && row_str(row, "activeSessionId").or_else(|| row_str(row, "id")) == Some(parent_active)
+    {
+        return true;
+    }
     if let Some(parent_path) = identity.parent_session_path.as_deref() {
         // The peers roster carries the session file under `sessionPath`;
         // the supervisor's own roster rows carry `sessionFile`.
@@ -177,19 +179,21 @@ fn row_is_sibling(row: &Value, identity: &FamilyIdentity) -> bool {
             && parent_binding(row).is_none();
     }
     if let Some(parent_id) = identity.parent_session_id.as_deref()
-        && row_str(row, "parentSessionId") == Some(parent_id) {
-            return true;
-        }
+        && row_str(row, "parentSessionId") == Some(parent_id)
+    {
+        return true;
+    }
     if let Some(parent_active) = identity.parent_active_session_id.as_deref()
-        && row_str(row, "parentActiveSessionId") == Some(parent_active) {
-            return true;
-        }
+        && row_str(row, "parentActiveSessionId") == Some(parent_active)
+    {
+        return true;
+    }
     if let Some(parent_path) = identity.parent_session_path.as_deref()
         && parent_binding(row).is_some_and(|path| same_session_file(path, parent_path))
-            && row_depth(row) == identity.rlm_depth
-        {
-            return true;
-        }
+        && row_depth(row) == identity.rlm_depth
+    {
+        return true;
+    }
     false
 }
 

@@ -387,9 +387,9 @@ pub async fn run_daemon_attached_acp_mode(options: DaemonAcpOptions) -> anyhow::
                                     .get("child")
                                     .and_then(|child| child.get("id"))
                                     .and_then(Value::as_str)
-                                {
-                                    current.observed_children.insert(id.to_string());
-                                }
+                            {
+                                current.observed_children.insert(id.to_string());
+                            }
                             let turn_id = current.producer.active_prompt_turn().await;
                             let context_window = current
                                 .config

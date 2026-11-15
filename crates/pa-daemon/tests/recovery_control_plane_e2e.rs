@@ -124,9 +124,10 @@ fn workers_registered_since(log_path: &Path, since: &str) -> Vec<String> {
                     ids.push(worker_id.to_string());
                 }
             } else if let Some((worker_id, tail)) = id.split_once(" registered (epoch")
-                && tail.contains(')') {
-                    ids.push(worker_id.to_string());
-                }
+                && tail.contains(')')
+            {
+                ids.push(worker_id.to_string());
+            }
         }
     }
     ids

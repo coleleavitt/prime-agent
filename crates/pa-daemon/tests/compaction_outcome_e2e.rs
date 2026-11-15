@@ -361,9 +361,10 @@ impl Client {
                 Ok(_) if line.trim().is_empty() => line.clear(),
                 Ok(_) => {
                     if let Ok(event) = serde_json::from_str::<Value>(line.trim())
-                        && event.get("type").and_then(Value::as_str) == Some("session_event") {
-                            self.events.push(event["event"].clone());
-                        }
+                        && event.get("type").and_then(Value::as_str) == Some("session_event")
+                    {
+                        self.events.push(event["event"].clone());
+                    }
                     line.clear();
                 }
                 Err(_) => {}

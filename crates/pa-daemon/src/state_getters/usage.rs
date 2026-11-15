@@ -131,9 +131,10 @@ pub(crate) fn compute_own_and_total_usage(
             continue;
         };
         if branch_assistant_ids.contains(target_id)
-            && let Some(child_usage) = entry.fields.get("childUsage") {
-                subtract_usage(&mut own, child_usage);
-            }
+            && let Some(child_usage) = entry.fields.get("childUsage")
+        {
+            subtract_usage(&mut own, child_usage);
+        }
     }
     (own, total)
 }

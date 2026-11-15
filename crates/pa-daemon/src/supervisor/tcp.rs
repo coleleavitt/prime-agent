@@ -157,9 +157,10 @@ impl Supervisor {
                 if let Err(error) = supervisor
                     .handle_client(Box::new(stream), ClientTrust::Remote { auth_token: token })
                     .await
-                    && !reporter.shutting_down.load(Ordering::SeqCst) {
-                        eprintln!("pa-daemon TCP client connection error: {error:#}");
-                    }
+                    && !reporter.shutting_down.load(Ordering::SeqCst)
+                {
+                    eprintln!("pa-daemon TCP client connection error: {error:#}");
+                }
             });
         }
         // Release the port: take the listener out of the supervisor (the
