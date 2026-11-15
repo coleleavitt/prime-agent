@@ -79,6 +79,8 @@ impl AgentSessionEngine {
             pa_core::autonomous::ShellAutonomousDriver::new(config.cwd.clone()),
         )
             as std::sync::Arc<dyn pa_core::autonomous::AutonomousDriver>);
+        let autonomous_defaults =
+            pa_core::autonomous::settings_default_limits(&config.cwd, &config.agent_dir);
         let cwd = std::sync::Arc::new(std::sync::RwLock::new(config.cwd.clone()));
         // The ACP MCP store (auth storage construction is blocking, off the hot async paths).
         let agent_dir = config.agent_dir.clone();
@@ -207,7 +209,10 @@ impl AgentSessionEngine {
             create_resources: std::sync::RwLock::default(),
             sandbox: std::sync::RwLock::default(),
             autonomous: std::sync::Arc::new(tokio::sync::Mutex::new(
-                pa_core::autonomous::create_autonomous_runtime_state(None, None),
+                pa_core::autonomous::create_autonomous_runtime_state(
+                    None,
+                    Some(&autonomous_defaults),
+                ),
             )),
             link,
             _ephemeral_child_dirs: crate::rlm_children::EphemeralChildDirs(children.clone()),

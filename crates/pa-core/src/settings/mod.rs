@@ -35,6 +35,7 @@ pub use storage::{
 };
 pub use types::{
     AutoRefineSettings,
+    AutonomousLimitSetting,
     AutonomousSettings,
     CompactionSettings,
     QueueModeSetting,

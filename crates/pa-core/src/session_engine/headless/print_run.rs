@@ -90,9 +90,13 @@ impl PrintRun {
         let goal_accounting = goal.wire_accounting(engine, engine.session.agent()).await;
         // The autonomous run: the CLI flags enable it, a no-flag session starts disabled and
         // `/autonomous` rewrites it live.
+        let autonomous_defaults =
+            crate::autonomous::settings_default_limits(&config.cwd, &config.agent_dir);
         let autonomous = std::sync::Arc::new(match config.autonomous.as_ref() {
-            Some(autonomous) => HeadlessAutonomous::from_config(autonomous, &config.cwd),
-            None => HeadlessAutonomous::disabled(&config.cwd),
+            Some(autonomous) => {
+                HeadlessAutonomous::from_config(autonomous, &autonomous_defaults, &config.cwd)
+            }
+            None => HeadlessAutonomous::disabled(&autonomous_defaults, &config.cwd),
         });
         let accounting = autonomous.wire_accounting(engine.session.agent()).await;
         // The composed natural-turn-end hook: the goal arm first (exclusive priority), the

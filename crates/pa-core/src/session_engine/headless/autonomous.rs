@@ -39,17 +39,22 @@ pub(crate) struct HeadlessAutonomous {
 }
 
 impl HeadlessAutonomous {
-    /// Build the run from an explicit config (the CLI flags'); the gates
-    /// run in the session cwd.
-    pub(crate) fn from_config(config: &AgentAutonomousConfig, cwd: impl Into<PathBuf>) -> Self {
-        let state = create_autonomous_runtime_state(Some(config), None);
+    /// Build the run from an explicit config (the CLI flags') over the
+    /// `defaults` limits; the gates run in the session cwd.
+    pub(crate) fn from_config(
+        config: &AgentAutonomousConfig,
+        defaults: &AgentAutonomousConfig,
+        cwd: impl Into<PathBuf>,
+    ) -> Self {
+        let state = create_autonomous_runtime_state(Some(config), Some(defaults));
         Self::from_state(state, cwd)
     }
 
     /// The session's default run: a print run without CLI flags starts
-    /// disabled, and `/autonomous on` rewrites it live.
-    pub(crate) fn disabled(cwd: impl Into<PathBuf>) -> Self {
-        let state = create_autonomous_runtime_state(None, None);
+    /// disabled with the `defaults` limits, and `/autonomous on` rewrites it
+    /// live.
+    pub(crate) fn disabled(defaults: &AgentAutonomousConfig, cwd: impl Into<PathBuf>) -> Self {
+        let state = create_autonomous_runtime_state(None, Some(defaults));
         Self::from_state(state, cwd)
     }
 

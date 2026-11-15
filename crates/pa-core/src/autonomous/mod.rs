@@ -6,6 +6,7 @@ mod driver;
 mod gates;
 
 use std::collections::HashMap;
+use std::path::Path;
 
 pub use driver::{
     AutonomousDriver,
@@ -177,6 +178,43 @@ fn normalize_subagent_keep_alive_ms(value: Option<u64>) -> u64 {
         return 0;
     }
     normalize_limit(value, DEFAULT_SUBAGENT_KEEP_ALIVE_MS).min(MAX_SUBAGENT_KEEP_ALIVE_MS)
+}
+
+/// The `autonomous` setting's limits (`maxContinuations`, `maxTurns`,
+/// `maxTokens`, `timeoutMs`: a positive number or `"unlimited"`), as the
+/// `default_limits` a session's runtime state starts from. Flags given to
+/// `--autonomous` or `/autonomous on` still win; an unset or invalid value
+/// falls through to the built-in default.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the number is finite and clamped to [1, UNLIMITED_AUTONOMOUS_LIMIT] before the cast"
+)]
+pub fn settings_default_limits(cwd: &Path, agent_dir: &Path) -> AgentAutonomousConfig {
+    use crate::settings::AutonomousLimitSetting;
+    let manager = crate::settings::SettingsManager::create(cwd, agent_dir);
+    let Some(settings) = manager.settings().autonomous.as_ref() else {
+        return AgentAutonomousConfig::default();
+    };
+    let limit = |value: &Option<AutonomousLimitSetting>| match value.as_ref()? {
+        AutonomousLimitSetting::Number(number) if number.is_finite() && *number >= 1.0 => {
+            Some(number.min(UNLIMITED_AUTONOMOUS_LIMIT as f64) as u64)
+        }
+        AutonomousLimitSetting::Unlimited(text)
+            if text.trim().eq_ignore_ascii_case("unlimited") =>
+        {
+            Some(UNLIMITED_AUTONOMOUS_LIMIT)
+        }
+        AutonomousLimitSetting::Number(_) | AutonomousLimitSetting::Unlimited(_) => None,
+    };
+    AgentAutonomousConfig {
+        max_continuations: limit(&settings.max_continuations),
+        max_turns: limit(&settings.max_turns),
+        max_tokens: limit(&settings.max_tokens),
+        timeout_ms: limit(&settings.timeout_ms),
+        ..AgentAutonomousConfig::default()
+    }
 }
 
 pub fn create_autonomous_runtime_state(
@@ -546,6 +584,32 @@ mod tests {
             cache_write: input,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_autonomous_setting_seeds_the_limits_and_flags_still_win() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"autonomous": {"maxContinuations": "unlimited", "maxTurns": 40, "maxTokens": 500000, "timeoutMs": "forever"}}"#,
+        )
+        .unwrap();
+        let defaults = settings_default_limits(tmp.path(), &agent_dir);
+        let flags = AgentAutonomousConfig {
+            max_turns: Some(5),
+            ..config(true)
+        };
+        assert_eq!(
+            create_autonomous_runtime_state(Some(&flags), Some(&defaults)).limits,
+            AutonomousLimits {
+                max_continuations: UNLIMITED_AUTONOMOUS_LIMIT,
+                max_turns: 5,
+                max_tokens: 500_000,
+                timeout_ms: DEFAULT_TIMEOUT_MS,
+            }
+        );
     }
 
     #[test]

@@ -319,7 +319,10 @@ mod tests {
         goal.seed_publish_baseline(&engine).await;
         let _accounting = goal.wire_accounting(&engine, engine.session.agent()).await;
         let run = Arc::new(
-            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(
+                &crate::autonomous::AgentAutonomousConfig::default(),
+                dir.path(),
+            ),
         );
         crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,

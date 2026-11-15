@@ -348,8 +348,15 @@ impl Worker {
         };
         *agent_engine.sandbox.write_or_recover() = crate::agent_engine::SandboxSlot::Unresolved;
         if let Some(autonomous) = &resources.autonomous {
+            let defaults = pa_core::autonomous::settings_default_limits(
+                &agent_engine.cwd(),
+                &agent_engine.config.agent_dir,
+            );
             *agent_engine.autonomous.lock().await =
-                pa_core::autonomous::create_autonomous_runtime_state(Some(autonomous), None);
+                pa_core::autonomous::create_autonomous_runtime_state(
+                    Some(autonomous),
+                    Some(&defaults),
+                );
         }
         *agent_engine.create_resources.write_or_recover() = resources;
     }

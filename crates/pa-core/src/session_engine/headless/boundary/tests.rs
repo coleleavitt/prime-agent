@@ -480,6 +480,7 @@ async fn autonomous_continuation_turns_cross_the_boundary_arms() {
                 max_continuations: Some(1),
                 ..Default::default()
             },
+            &crate::autonomous::AgentAutonomousConfig::default(),
             dir.path(),
         ),
     );

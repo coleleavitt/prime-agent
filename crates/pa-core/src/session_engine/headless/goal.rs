@@ -818,7 +818,10 @@ mod tests {
             .wire_accounting(&engine, engine.session.agent())
             .await;
         let autonomous_run = std::sync::Arc::new(
-            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(
+                &crate::autonomous::AgentAutonomousConfig::default(),
+                dir.path(),
+            ),
         );
         crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,
@@ -1405,7 +1408,10 @@ mod tests {
             .wire_accounting(&engine, engine.session.agent())
             .await;
         let autonomous_run = std::sync::Arc::new(
-            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(dir.path()),
+            crate::session_engine::headless::autonomous::HeadlessAutonomous::disabled(
+                &crate::autonomous::AgentAutonomousConfig::default(),
+                dir.path(),
+            ),
         );
         crate::session_engine::headless::continuation::wire_continuation_hook(
             &engine,
