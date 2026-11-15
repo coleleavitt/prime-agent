@@ -725,16 +725,15 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 .filter(|n| !n.is_empty())
                 .map(str::to_string);
         }
-        "custom" => {
-            if entry.custom_type.as_deref() == Some(AI_TITLE_CUSTOM_TYPE)
-                && let Some(title) = entry
-                    .data
-                    .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
-                    .as_ref()
-                    .and_then(|data| data.get("title"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|title| !title.is_empty())
+        "custom" if entry.custom_type.as_deref() == Some(AI_TITLE_CUSTOM_TYPE) => {
+            if let Some(title) = entry
+                .data
+                .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
+                .as_ref()
+                .and_then(|data| data.get("title"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
             {
                 acc.ai_title = Some(title.to_string());
             }

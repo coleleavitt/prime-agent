@@ -468,6 +468,30 @@ fn the_ai_title_is_the_newest_ai_title_row_and_other_custom_rows_leave_it() {
 }
 
 #[test]
+fn a_model_usage_row_bills_the_listed_session() {
+    let dir = test_dir();
+    let path = dir.join("billed.jsonl");
+    let usage = json!({"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"input":0.02,"output":0.01,"cacheRead":0,"cacheWrite":0,"total":0.03}});
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"u","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            json!({"type":"message","id":"m1","timestamp":"2026-09-23T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"provider":"p","model":"m","timestamp":1,"usage":usage}}),
+            json!({"type":"custom","id":"c1","parentId":"m1","timestamp":"2026-09-23T00:01:00.000Z","customType":"model_usage","data":{"source":"refine","provider":"p","modelId":"m","usage":usage}}),
+        ],
+    );
+    assert_fold_matches(&path);
+    assert_eq!(
+        read_session_info(&path).unwrap().usage,
+        Some(crate::session_usage::SessionUsageSummary {
+            input_tokens: 20,
+            output_tokens: 4,
+            cost: 0.06,
+        })
+    );
+}
+
+#[test]
 fn the_branch_is_the_newest_git_state_else_the_header() {
     let dir = test_dir();
     let path = dir.join("branch.jsonl");
