@@ -114,7 +114,7 @@ pub fn assistant_text_stalls(text: &str) -> bool {
     // permission-phrase + trailing-`?` rule caught 3 (8%); adding this one
     // raised it to 25 (69%). Safe here because this guard only sees genuinely
     // ended, tool-free turns — an announced action with no tool run is a stall.
-    if last_sentence_announces_action(trimmed) {
+    if assistant_announces_action(trimmed) || hands_off_on_a_word(&tail) {
         return true;
     }
 
@@ -128,6 +128,26 @@ pub fn assistant_text_stalls(text: &str) -> bool {
     // A trailing question mark is a weaker but real signal: the turn ended on
     // a question, which in a factory context is a request for direction.
     trimmed.ends_with('?')
+}
+
+/// Phrases that hand the next step to a one-word reply ("Say \"publish\" and I'll
+/// run them.", "Reply **\"go\"** and I'll run the 6 steps", "Your call.").
+const WORD_HANDOFF_PHRASES: &[&str] = &["say \"", "reply \"", "say the word", "your call"];
+
+/// Actions a self-continue must not take on the strength of a word handoff:
+/// they reach outside the machine or cannot be undone.
+const OUTWARD_ACTIONS: &[&str] = &["push", "publish", "deploy", "merge", "delete", "release"];
+
+/// True when the closing window asks for a one-word go-ahead and the step it
+/// gates stays on the machine. `tail` is [`lowercase_tail`]'s window.
+fn hands_off_on_a_word(tail: &str) -> bool {
+    let tail = tail.replace('*', "");
+    WORD_HANDOFF_PHRASES.iter().any(|p| tail.contains(p))
+        && !tail.split(|c: char| !c.is_alphanumeric()).any(|word| {
+            OUTWARD_ACTIONS
+                .iter()
+                .any(|action| word.starts_with(action))
+        })
 }
 
 /// The turn ended by dumping a markdown table or data block and stopping: the
@@ -168,6 +188,23 @@ pub fn assistant_announces_action(text: &str) -> bool {
     last_sentence_announces_action(trimmed)
         || announces_plan_list(trimmed)
         || ends_on_teed_up_colon(trimmed)
+        || ends_mid_sentence(trimmed)
+}
+
+/// Words a finished sentence never ends on: a reply that stops on one ("...I'll
+/// fan out independent audits for") was cut off, though the provider reported a
+/// normal stop.
+const DANGLING_WORDS: &[&str] = &[
+    "the", "a", "an", "for", "to", "of", "and", "with", "in", "on", "by", "from", "into", "at",
+    "or", "that",
+];
+
+fn ends_mid_sentence(text: &str) -> bool {
+    text.ends_with(|c: char| c.is_alphabetic())
+        && text
+            .split_whitespace()
+            .next_back()
+            .is_some_and(|word| DANGLING_WORDS.contains(&word.to_lowercase().as_str()))
 }
 
 /// True when the turn ends on a `:` that tees up content the model never wrote.
@@ -181,7 +218,9 @@ fn ends_on_teed_up_colon(text: &str) -> bool {
 /// waits and provider errors live. The cut snaps forward to a char boundary so a
 /// multi-byte char (an em-dash, an emoji) straddling it cannot panic the slice.
 fn lowercase_tail(text: &str, max_bytes: usize) -> String {
-    text[text.ceil_char_boundary(text.len().saturating_sub(max_bytes))..].to_lowercase()
+    text[text.ceil_char_boundary(text.len().saturating_sub(max_bytes))..]
+        .to_lowercase()
+        .replace('\u{2019}', "'")
 }
 
 /// The last non-empty sentence of `text`, lowercased.
@@ -191,13 +230,16 @@ fn last_sentence(text: &str) -> String {
         .find(|s| !s.is_empty())
         .unwrap_or("")
         .to_lowercase()
+        .replace('\u{2019}', "'")
 }
 
-/// "Next steps:" / numbered-plan ending with no action taken.
+/// "Next steps:" / "Next:" / numbered-plan ending with no action taken.
 fn announces_plan_list(text: &str) -> bool {
     let tl = text.trim_end();
     let tl = lowercase_tail(tl, 200);
-    tl.contains("next steps:") || tl.contains("remaining steps:") || tl.contains("plan:")
+    ["next steps:", "remaining steps:", "plan:", "next:"]
+        .iter()
+        .any(|marker| tl.contains(marker))
 }
 
 /// Near-future action leads: the model says it is *about to* do something.
@@ -273,15 +315,64 @@ const WAIT_MARKERS: &[&str] = &[
     "kicked off",
     "i'll check on",
     "check back",
+    "waiting on",
+    "i'll wait for",
+    "wait for the",
 ];
 
+/// The model handed a step to the user and waits for them to report back
+/// ("Let me know once you've done the DFU step and I'll check", "Run this
+/// yourself: ..."). Continuing cannot do the user's part.
+const USER_HANDOFF_MARKERS: &[&str] = &[
+    "let me know once you",
+    "let me know when you",
+    "tell me when you",
+    "run this yourself",
+    "once you've done",
+];
+
+/// Verbs that say a started job ended: "when it finishes", "once the build
+/// completes", "after the renamer merge lands", "when the monitor reports".
+const COMPLETION_WORDS: &[&str] = &[
+    "finish",
+    "finishes",
+    "complete",
+    "completes",
+    "land",
+    "lands",
+    "reports",
+    "arrives",
+    "returns",
+];
+
+/// True when the last sentence defers to a job's end: a "when"/"once"/"after"
+/// plus a completion verb, as whole words.
+fn last_sentence_awaits_completion(text: &str) -> bool {
+    let last = last_sentence(text);
+    let words: Vec<&str> = last.split(|c: char| !c.is_alphanumeric()).collect();
+    words
+        .iter()
+        .any(|w| matches!(*w, "when" | "once" | "after"))
+        && (words.iter().any(|w| COMPLETION_WORDS.contains(w))
+            || last.contains("is ready")
+            || last.contains("is done"))
+}
+
+fn has_wait_marker(text: &str) -> bool {
+    WAIT_MARKERS
+        .iter()
+        .chain(USER_HANDOFF_MARKERS)
+        .any(|m| text.contains(m))
+}
+
 /// True when the last sentence says the model is waiting on something it already
-/// started.
+/// started, or on a step it handed to the user.
 #[must_use]
 pub fn assistant_is_waiting(text: &str) -> bool {
     let trimmed = text.trim_end();
     let window = lowercase_tail(trimmed, 240);
-    if !WAIT_MARKERS.iter().any(|m| window.contains(m)) {
+    let awaits_completion = last_sentence_awaits_completion(trimmed);
+    if !has_wait_marker(&window) && !awaits_completion {
         return false;
     }
     // An action announced after the wait, or a `:` teeing one up, is a stall the
@@ -289,7 +380,7 @@ pub fn assistant_is_waiting(text: &str) -> bool {
     // some static recon." / "Let me start it in the background and open it:".
     let last = last_sentence(trimmed);
     let announces_after_wait =
-        last_sentence_announces_action(trimmed) && !WAIT_MARKERS.iter().any(|m| last.contains(m));
+        last_sentence_announces_action(trimmed) && !has_wait_marker(&last) && !awaits_completion;
     !(announces_after_wait || ends_on_teed_up_colon(trimmed))
 }
 
@@ -772,5 +863,55 @@ That is the full scan surface; nothing else is open."
         assert!(!assistant_announces_action("Notes:"));
         // A normal completion still does not stall.
         assert!(!assistant_announces_action("Done. All tests pass."));
+    }
+
+    // 2026-11-15 corpus: waits the guard pushed through before, each a real
+    // turn end that sat waiting on a job or on the user.
+    #[test]
+    fn waits_on_jobs_and_user_handoffs() {
+        let waits = [
+            "The release install is building in the background. I'll check its hash when it finishes.",
+            "Builds are running. I'll wait for the build-done notice.",
+            "I'll bump the version and run the publish dry run after the renamer merge lands.",
+            "Waiting on `vaarg-ssa`, then the final merge into `apple/all`.",
+            "Let me know once you've done the DFU step and I'll check if it's detected.",
+            "Full validation is still running. I\u{2019}ll continue when the monitor reports completion.",
+        ];
+        for s in waits {
+            assert!(assistant_is_waiting(s), "should wait: {s:?}");
+        }
+    }
+
+    // 2026-11-15 corpus: stalls the user resumed by hand ("continue", "keep
+    // going", "fix all of it") that neither mode caught.
+    #[test]
+    fn detects_the_2026_11_15_stall_shapes() {
+        let both_modes = [
+            "No harness hits on that query, moving on. Filesystem reconnaissance:",
+            "**Next:** implement the pairwise group fix in `claim.rs`.",
+            "The recovered names are written to the",
+            "I\u{2019}ll start with the parser.",
+        ];
+        for s in both_modes {
+            assert!(
+                assistant_announces_action(s),
+                "interactive should drive: {s:?}"
+            );
+            assert!(assistant_text_stalls(s), "autonomous should drive: {s:?}");
+        }
+        assert!(assistant_text_stalls(
+            "Say \"go\" and I'll run the decompiler over all 80 binaries."
+        ));
+        assert!(assistant_text_stalls(
+            "That no longer matches the export's display directly. Your call."
+        ));
+    }
+
+    #[test]
+    fn a_word_handoff_never_drives_an_outward_action() {
+        assert!(!assistant_text_stalls("Say \"publish\" and I'll run them."));
+        assert!(!assistant_text_stalls(
+            "Reply **\"go\"** and I'll deploy the new nginx site."
+        ));
     }
 }
