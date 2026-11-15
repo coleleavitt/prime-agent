@@ -804,9 +804,9 @@ mod tests {
         assert_eq!(list.positionals, args(&["-a"]));
     }
 
-    /// Upstream #902/#901: `help send` must list only options the `send` parser
-    /// accepts (it listed the retired `--steer`/`--follow-up`, which the parser
-    /// rejects as unknown options).
+    /// `help send` must list only options the `send` parser accepts (upstream
+    /// #902/#901: the help once listed `--steer`/`--follow-up` while the parser
+    /// rejected them; #3848 made the parser accept them).
     #[test]
     fn every_send_option_in_help_parses() {
         let spec = crate::command_registry::get_command_spec(&["send"]).expect("send spec");
@@ -848,6 +848,18 @@ mod tests {
 
         let no_target = parse_send_args(&args(&["--message", "text"]));
         assert!(no_target.is_err());
+    }
+
+    #[test]
+    fn send_steer_flag_requests_steer_delivery() {
+        let parsed = parse_send_args(&args(&["--steer", "target", "hello"])).unwrap();
+        assert_eq!(parsed.delivery_mode, Some("steer"));
+    }
+
+    #[test]
+    fn send_follow_up_flag_requests_follow_up_delivery() {
+        let parsed = parse_send_args(&args(&["target", "--follow-up", "hello"])).unwrap();
+        assert_eq!(parsed.delivery_mode, Some("follow_up"));
     }
 
     #[test]

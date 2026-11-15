@@ -94,15 +94,12 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     CommandSpec::new(
         &["send"],
         "send [--from <agent>] <agent> <message>",
-        "Send a steering message to an agent",
-    )
-    // Agent messages always steer (the `--steer`/`--follow-up` delivery
-    // flags were retired; the parser rejects them, upstream #901/#902).
-    .description(
-        "Messages always steer an active turn and are delivered at the next tool boundary.",
+        "Send a message to an agent",
     )
     .options(&[
         "--from <agent>  Identify the sending agent",
+        "--steer         Deliver as steering when the agent is busy",
+        "--follow-up     Queue the message after the current turn",
         "--json          Print JSON",
     ]),
     CommandSpec::new(
