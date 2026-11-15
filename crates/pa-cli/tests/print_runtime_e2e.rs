@@ -108,7 +108,13 @@ fn print_mode_reports_provider_errors_as_exit_one() {
 #[test]
 fn print_mode_json_exits_one_on_assistant_error_or_abort() {
     let cases = [
-        ("error", serde_json::json!({ "responses": [] })),
+        // A scripted provider error: a dry faux queue now fails as a logged
+        // provider stream failure (#3846), which this stdout/stderr check
+        // is not about.
+        (
+            "error",
+            serde_json::json!({ "responses": [{ "text": "", "stopReason": "error", "errorMessage": "boom" }] }),
+        ),
         (
             "aborted",
             serde_json::json!({ "responses": [{ "text": "partial", "stopReason": "aborted" }] }),
