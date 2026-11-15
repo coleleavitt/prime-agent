@@ -27,7 +27,8 @@ impl Drop for WorkerGuard {
 
 fn spawn_worker(dir: &Path, socket: &Path) -> WorkerGuard {
     std::fs::create_dir_all(dir.join("agent")).expect("agent dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+    let child = pa_types::platform::test_isolation::TestState::for_agent_dir(dir.join("agent"))
+        .apply(&mut Command::new(env!("CARGO_BIN_EXE_pa-daemon")))
         .arg("worker")
         .env(pa_daemon::worker::WORKER_ROLE_ENV, "1")
         .env(pa_daemon::worker::WORKER_TOKEN_ENV, TOKEN)
@@ -44,7 +45,10 @@ fn spawn_worker(dir: &Path, socket: &Path) -> WorkerGuard {
             pa_daemon::worker::WORKER_RECOVERY_JOURNAL_ENV,
             dir.join("recovery.jsonl"),
         )
+        .env(pa_daemon::worker::WORKER_CWD_ENV, dir)
         .env("PRIME_AGENT_CODING_AGENT_DIR", dir.join("agent"))
+        .env_remove("PRIME_AGENT_MODEL")
+        .env_remove("PRIME_AGENT_MODEL_PROVIDER")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
