@@ -68,6 +68,15 @@ fn run_request(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::TempDir::new().unwrap();
+    // The fork's output-limit recovery (on by default) continues a cut-off
+    // reply inside the loop before it can settle; off, the cut-off reply
+    // reaches the retry driver this file covers.
+    std::fs::create_dir_all(dir.path().join("agent")).unwrap();
+    std::fs::write(
+        dir.path().join("agent/settings.json"),
+        r#"{"lengthContinuations": 0}"#,
+    )
+    .unwrap();
     let engine = AgentSessionEngine::new(AgentEngineConfig {
         cwd: dir.path().to_path_buf(),
         agent_dir: dir.path().join("agent"),
@@ -82,6 +91,7 @@ fn run_request(
         telemetry_disabled: None,
         cron_store: None,
         queued_steering_probe: None,
+        steering_fold: None,
     })
     .unwrap();
     let engine = std::sync::Arc::new(engine);
@@ -116,47 +126,24 @@ fn agent_message_row(text: &str) -> serde_json::Value {
     })
 }
 
+// A silent reply (no visible text, no tool call, a normal stop) never
+// reaches the retry driver in the fork: the agent loop's empty-turn retry
+// (pa-agent, upstream #1896) re-requests it first and carries the discarded
+// attempt's spend as `discardedUsage`.
 #[test]
-fn a_silent_reply_to_a_user_prompt_retries_once_and_lands() {
+fn a_silent_reply_to_a_user_prompt_is_re_requested_by_the_loop() {
     let events = run_request(
         &json!({"engine": "faux", "responses": [thinking_only_stop(), {"text": "The answer, as text."}]}),
         "explain the slow query",
         None,
     );
     let assistants = assistant_rows(&events);
-    assert_eq!(assistants.len(), 2, "the silent reply plus its retry");
-    assert_eq!(text_of(&assistants[1]), "The answer, as text.");
-    assert_eq!(retry_events(&events), (1, vec![true]));
-    assert_eq!(events.last(), Some(&EngineEvent::Done(Ok(()))));
-}
-
-#[test]
-fn a_second_silent_reply_surfaces_the_turn_error() {
-    // A third queued reply would answer a second retry: the turn must end
-    // after exactly one.
-    let events = run_request(
-        &json!({"engine": "faux", "responses": [thinking_only_stop(), thinking_only_stop(), {"text": "never reached"}]}),
-        "explain the slow query",
-        None,
-    );
-    assert_eq!(assistant_rows(&events).len(), 2);
-    assert_eq!(retry_events(&events), (1, vec![false]));
+    assert_eq!(assistants.len(), 1, "the silent attempt is never settled");
+    assert_eq!(text_of(&assistants[0]), "The answer, as text.");
     assert_eq!(
-        events.last(),
-        Some(&EngineEvent::Done(Err(
-            "The model ended its reply with no visible answer".to_string()
-        )))
+        assistants[0]["discardedUsage"].as_array().map(Vec::len),
+        Some(1)
     );
-}
-
-#[test]
-fn a_silent_acknowledgement_of_an_agent_message_ends_the_turn() {
-    let events = run_request(
-        &json!({"engine": "faux", "responses": [thinking_only_stop(), {"text": "never reached"}]}),
-        "sibling update: the queue drained",
-        Some(agent_message_row("sibling update: the queue drained")),
-    );
-    assert_eq!(assistant_rows(&events).len(), 1);
     assert_eq!(retry_events(&events), (0, vec![]));
     assert_eq!(events.last(), Some(&EngineEvent::Done(Ok(()))));
 }
@@ -180,7 +167,7 @@ fn a_retry_after_tool_work_resumes_without_rerunning_the_tool() {
     let events = run_request(
         &json!({"engine": "faux", "responses": [
             {"content": [{"type": "toolCall", "id": "call-1", "name": "synthetic_missing_tool", "arguments": {}}]},
-            thinking_only_stop(),
+            cut_off_while_thinking(),
             {"text": "The task is complete."}
         ]}),
         "run the task",

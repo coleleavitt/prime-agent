@@ -568,6 +568,136 @@ mod tests {
             );
         }
         assert!(!is_permanent_provider_failure_kind(None, 0, None));
+        // An incomplete reply gets exactly one retry.
+        assert!(!is_permanent_provider_failure_kind(
+            Some(INCOMPLETE_REPLY_KIND),
+            0,
+            None
+        ));
+        assert!(is_permanent_provider_failure_kind(
+            Some(INCOMPLETE_REPLY_KIND),
+            1,
+            None
+        ));
+    }
+
+    const WINDOW: u64 = 128_000;
+
+    fn reply(stop_reason: StopReason, content: Vec<AssistantContent>) -> AssistantMessage {
+        AssistantMessage {
+            content,
+            stop_reason,
+            ..ok_message()
+        }
+    }
+
+    fn text(text: &str) -> AssistantContent {
+        AssistantContent::Text(TextContent {
+            text: text.to_string(),
+            text_signature: None,
+        })
+    }
+
+    fn thinking(thinking: &str) -> AssistantContent {
+        AssistantContent::Thinking(pa_agent::types::ThinkingContent {
+            thinking: thinking.to_string(),
+            thinking_signature: None,
+            redacted: None,
+        })
+    }
+
+    fn tool_call() -> AssistantContent {
+        AssistantContent::ToolCall(pa_agent::types::ToolCall {
+            id: "c".to_string(),
+            name: "python_repl".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        })
+    }
+
+    #[test]
+    fn a_reply_without_visible_text_cannot_end_a_turn_that_owes_an_answer() {
+        for content in [
+            vec![thinking("the answer is 42")],
+            vec![],
+            vec![thinking("planned"), text(" \n\t")],
+            vec![text("  ")],
+        ] {
+            let message = reply(StopReason::Stop, content.clone());
+            assert!(
+                incomplete_reply_reason(&message, true, WINDOW).is_some(),
+                "{content:?} owes an answer"
+            );
+            assert_eq!(
+                incomplete_reply_reason(&message, false, WINDOW),
+                None,
+                "{content:?} may end a turn that owes no answer"
+            );
+        }
+        for answer in [".", "4", "(no action)"] {
+            let message = reply(StopReason::Stop, vec![thinking("t"), text(answer)]);
+            assert_eq!(
+                incomplete_reply_reason(&message, true, WINDOW),
+                None,
+                "{answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reply_cut_off_at_the_output_limit_never_ends_a_turn() {
+        for content in [vec![thinking("still thinking")], vec![text("Half of the")]] {
+            let message = reply(StopReason::Length, content);
+            assert!(incomplete_reply_reason(&message, true, WINDOW).is_some());
+            assert!(incomplete_reply_reason(&message, false, WINDOW).is_some());
+        }
+    }
+
+    #[test]
+    fn tool_calls_and_failures_are_not_incomplete_replies() {
+        for stop_reason in [StopReason::ToolUse, StopReason::Length, StopReason::Stop] {
+            let message = reply(stop_reason, vec![thinking("t"), tool_call()]);
+            assert_eq!(incomplete_reply_reason(&message, true, WINDOW), None);
+        }
+        for stop_reason in [StopReason::Error, StopReason::Aborted] {
+            assert_eq!(
+                incomplete_reply_reason(&reply(stop_reason, Vec::new()), true, WINDOW),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_silent_overflow_stays_with_the_overflow_recovery() {
+        // The input alone overflowed the window: a clean stop past it, and
+        // a length stop with no output, are overflows, not incomplete replies.
+        let mut silent = reply(StopReason::Stop, Vec::new());
+        silent.usage.input = WINDOW + 1;
+        assert_eq!(incomplete_reply_reason(&silent, true, WINDOW), None);
+        let mut truncated = reply(StopReason::Length, Vec::new());
+        truncated.usage.input = WINDOW;
+        assert_eq!(incomplete_reply_reason(&truncated, true, WINDOW), None);
+    }
+
+    #[test]
+    fn an_incomplete_reply_failure_is_a_retryable_non_overflow_failure() {
+        let message = reply(StopReason::Length, vec![thinking("t")]);
+        let reason = incomplete_reply_reason(&message, true, WINDOW).expect("incomplete");
+        let failure = incomplete_reply_failure(message, reason);
+        assert_eq!(failure.stop_reason, StopReason::Error);
+        assert_eq!(failure.error_message.as_deref(), Some(reason));
+        assert_eq!(
+            provider_stream_failure_kind(&failure).as_deref(),
+            Some(INCOMPLETE_REPLY_KIND)
+        );
+        assert!(has_provider_stream_failure(&failure));
+        assert!(!is_context_overflow_failure(&failure, 128_000));
+        let silent = reply(StopReason::Stop, Vec::new());
+        let reason = incomplete_reply_reason(&silent, true, WINDOW).expect("incomplete");
+        assert!(!is_context_overflow_failure(
+            &incomplete_reply_failure(silent, reason),
+            128_000
+        ));
     }
 
     /// The stream-drop arc, end to end: the REAL provider against the
