@@ -556,7 +556,7 @@ async fn graceful_shutdown_flushes_the_final_snapshot() {
 
 /// Upstream #2528: `set_cwd` retargets a running kernel (namespace kept, no
 /// `os` name bound), a missing directory is refused with the kernel's
-/// error, and a restart starts in the retargeted directory.
+/// error, and a respawned kernel starts in the retargeted directory.
 #[tokio::test]
 async fn set_cwd_retargets_a_running_kernel_and_its_restarts() {
     let Some(options) = test_options(None) else {
@@ -579,8 +579,19 @@ async fn set_cwd_retargets_a_running_kernel_and_its_restarts() {
         .await
         .expect_err("a missing directory is refused");
     manager.set_cwd(&target).await.expect("the chdir succeeds");
-    manager.restart().await.expect("the kernel restarts");
-    let restarted = execute(&manager, "print(__import__('os').getcwd())").await;
+    // A corrupt protocol frame makes the protocol repair respawn the kernel
+    // (the runtime's protocol fd lives in the module that defines its stdout writer).
+    let _ = manager
+        .execute(
+            "import os, sys\nos.write(type(sys.stdout).write.__globals__['_protocol_fd'], b'not a frame\\n')",
+            ExecuteOptions::default(),
+        )
+        .await;
+    let restarted = execute(
+        &manager,
+        "print(__import__('os').getcwd())\n'x' in globals()",
+    )
+    .await;
     assert_eq!(
         (
             moved.stdout.trim().to_string(),
@@ -589,12 +600,14 @@ async fn set_cwd_retargets_a_running_kernel_and_its_restarts() {
                 .to_string()
                 .starts_with("Python kernel could not change directory: "),
             restarted.stdout.trim().to_string(),
+            restarted.result,
         ),
         (
             real.display().to_string(),
             Some("(False, 1)".to_string()),
             true,
             real.display().to_string(),
+            Some("False".to_string()),
         )
     );
     let _ = manager.shutdown(KernelShutdownOptions::default()).await;
