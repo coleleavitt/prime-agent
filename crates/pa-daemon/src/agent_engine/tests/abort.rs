@@ -25,7 +25,7 @@ fn a_cancel_before_the_run_registers_still_aborts_the_turn() {
         json!({
             "providers": {
                 "faux": {
-                    "api": "faux",
+                    "api": registration.api,
                     "baseUrl": "http://localhost:0",
                     "apiKey": "sk-faux",
                     "models": [{
