@@ -395,6 +395,8 @@ mod tests {
             "observer",
             #[cfg(feature = "advisor")]
             "advisor",
+            #[cfg(feature = "guards")]
+            "guards",
         ];
         assert_eq!(names, expected);
         // `cc-import` is not a session feature: it installs an external
