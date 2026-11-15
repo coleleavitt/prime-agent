@@ -6,6 +6,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
+use pa_types::platform::test_isolation::TestState;
+
 fn write_executable(path: &Path, content: &str) {
     std::fs::write(path, content).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -33,9 +35,10 @@ fn project_package_list_cannot_run_a_project_npm_command() {
         .to_string(),
     )
     .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_prime-agent"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    TestState::for_agent_dir(&agent_dir).apply(&mut command);
+    let output = command
         .args(["package", "list"])
-        .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
         .current_dir(&cwd)
         .output()
         .unwrap();
@@ -54,9 +57,10 @@ fn local_package_install_fails_before_writing_or_running_it() {
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&cwd).unwrap();
     std::fs::create_dir_all(&agent_dir).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_prime-agent"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    TestState::for_agent_dir(&agent_dir).apply(&mut command);
+    let output = command
         .args(["package", "install", "npm:attacker", "--local"])
-        .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
         .current_dir(&cwd)
         .output()
         .unwrap();
