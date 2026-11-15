@@ -834,7 +834,7 @@ impl AgentInner {
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.slot_taken(&run) {
+        if self.slot_taken(run.as_ref()) {
             return None;
         }
         // A user prompt's run: it folds any parked rows (TS `runLoop`).
@@ -845,7 +845,7 @@ impl AgentInner {
 
     /// Whether the run slot is unavailable to a new claim: a run is active,
     /// or an idle reservation ([`Agent::reserve_idle`]) holds the boundary.
-    fn slot_taken(&self, run: &Option<ActiveRun>) -> bool {
+    fn slot_taken(&self, run: Option<&ActiveRun>) -> bool {
         run.is_some() || self.idle_reserved.load(std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -876,7 +876,7 @@ impl AgentInner {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Under an idle reservation the batch waits as steering: the
         // reservation's release arms the idle-queued wake for it.
-        if self.slot_taken(&run) {
+        if self.slot_taken(run.as_ref()) {
             self.steering_queue
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -898,7 +898,7 @@ impl AgentInner {
             .run
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.slot_taken(&run) {
+        if self.slot_taken(run.as_ref()) {
             return QueuedClaim::Busy;
         }
         let parked = self

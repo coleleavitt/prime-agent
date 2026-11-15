@@ -763,7 +763,7 @@ impl Worker {
                 // The worker's refinement completion sink: the background
                 // run's durable rows and completion events surface here,
                 // generation-fenced, once the run settles.
-                *concrete.refinement_completion_sink.lock().unwrap() = Some(
+                *concrete.refinement_completion_sink.lock_or_recover() = Some(
                     refinement::completion_sink(Arc::clone(&core), Arc::clone(&events)),
                 );
                 // The kernel-notice wake seam (TS `_promptInjectedMessage`

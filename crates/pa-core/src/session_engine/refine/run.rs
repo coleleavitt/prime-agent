@@ -130,7 +130,9 @@ pub async fn execute_refinement_gated(
     agent_dir: Option<&Path>,
     gating: Option<RefinementGating>,
 ) -> anyhow::Result<CommittedRefinement> {
-    let ready = prepare_refinement(
+    // Boxed: the planning and commit futures are large, and every caller
+    // awaits this one.
+    let ready = Box::pin(prepare_refinement(
         session,
         agent_dir,
         transcript,
@@ -140,9 +142,9 @@ pub async fn execute_refinement_gated(
         source,
         refine_call,
         gating,
-    )
+    ))
     .await?;
-    commit_refinement(
+    Box::pin(commit_refinement(
         session,
         agent,
         ready,
@@ -150,7 +152,7 @@ pub async fn execute_refinement_gated(
         agent_dir,
         /*compaction_flight*/ None,
         &pa_agent::abort::AbortSignal::never(),
-    )
+    ))
     .await
 }
 

@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use pa_types::sync::MutexExt;
 use serde_json::json;
 
 use super::{
@@ -19,7 +20,7 @@ pub(super) fn completion_sink(
     let runtime = tokio::runtime::Handle::current();
     Arc::new(move |pending| {
         let origin = {
-            let core = core.lock().unwrap();
+            let core = core.lock_or_recover();
             core.store
                 .as_ref()
                 .map(|store| (store.session_id().to_string(), core.generation.clone()))

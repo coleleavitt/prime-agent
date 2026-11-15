@@ -5,6 +5,7 @@
 
 use pa_core::refinement::RefinementResult;
 use pa_core::session_engine::auto_refine_trigger::CompactAutoRefineSurface;
+use pa_types::sync::MutexExt;
 
 use crate::agent_engine::AgentSessionEngine;
 
@@ -15,7 +16,7 @@ impl AgentSessionEngine {
             anyhow::Result<pa_core::session_engine::refine::CommittedRefinement>,
         >,
     ) {
-        let sink = self.refinement_completion_sink.lock().unwrap().clone();
+        let sink = self.refinement_completion_sink.lock_or_recover().clone();
         if let Some(sink) = sink {
             sink(pending);
         } else {

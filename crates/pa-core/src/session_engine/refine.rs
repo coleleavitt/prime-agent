@@ -833,9 +833,15 @@ impl AgentSession {
             compact_auto_refine: std::sync::Arc::clone(&self.compact_auto_refine),
             review_switches: ReviewSwitches {
                 multi_vote: self.multi_vote_refine_enabled(),
-                recurrence_probe: self.auto_refine_recurrence_probe_enabled(),
-                recurrence_revert: self.auto_refine_recurrence_revert_enabled(),
-                recurrence_revert_apply: self.auto_refine_recurrence_revert_apply_enabled(),
+                recurrence: if self.auto_refine_recurrence_revert_apply_enabled() {
+                    RecurrenceStage::RevertApply
+                } else if self.auto_refine_recurrence_revert_enabled() {
+                    RecurrenceStage::Revert
+                } else if self.auto_refine_recurrence_probe_enabled() {
+                    RecurrenceStage::Probe
+                } else {
+                    RecurrenceStage::Off
+                },
             },
         }
     }
@@ -1130,9 +1136,19 @@ impl AgentSession {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReviewSwitches {
     multi_vote: bool,
-    recurrence_probe: bool,
-    recurrence_revert: bool,
-    recurrence_revert_apply: bool,
+    recurrence: RecurrenceStage,
+}
+
+/// How far the recurrence probe goes; each stage includes the ones before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RecurrenceStage {
+    Off,
+    /// Log each hit.
+    Probe,
+    /// Group the hits into rollback plans.
+    Revert,
+    /// Stage the plans for the next refinement to apply.
+    RevertApply,
 }
 
 impl RefinementRuntime {
@@ -1207,7 +1223,7 @@ impl RefinementRuntime {
             refinement_history: session_history,
         } = parts.await?;
         let history = crate::refinement::merge_refinement_history(&history, &session_history);
-        if self.review_switches.recurrence_probe {
+        if self.review_switches.recurrence >= RecurrenceStage::Probe {
             self.probe_recurrences(
                 &merged_state,
                 &history,
@@ -1269,11 +1285,11 @@ impl RefinementRuntime {
                 "recurrence after refinement",
             );
         }
-        if !self.review_switches.recurrence_revert || hits.is_empty() {
+        if self.review_switches.recurrence < RecurrenceStage::Revert || hits.is_empty() {
             return;
         }
         let plans = record_recurrence_revert_plans(merged_state, &hits, history, reason);
-        if !self.review_switches.recurrence_revert_apply {
+        if self.review_switches.recurrence < RecurrenceStage::RevertApply {
             return;
         }
         tracing::info!(
