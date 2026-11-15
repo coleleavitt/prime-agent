@@ -45,8 +45,13 @@ pub fn collect_launch_env(
 /// Collect the launch env from THIS process's environment. Entries that
 /// are not valid UTF-8 are skipped: the JSON wire cannot carry them,
 /// and `std::env::vars` would panic on them.
+///
+/// The forwarded env carries state paths (the agent and sessions dirs), so
+/// a libtest harness isolates its environment first: a test's client never
+/// hands a worker the real state its runner pointed at.
 #[must_use]
 pub fn collect_process_launch_env() -> BTreeMap<String, String> {
+    crate::platform::test_isolation::prepare();
     collect_launch_env(
         std::env::vars_os()
             .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))),
