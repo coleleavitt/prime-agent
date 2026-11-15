@@ -278,9 +278,10 @@ fn provider_headers_team_selection() {
         auth.get_api_key(PRIME_INFERENCE_PROVIDER_ID).as_deref(),
         Some("env-key")
     );
-    assert!(auth
-        .get_provider_headers(PRIME_INFERENCE_PROVIDER_ID)
-        .is_none());
+    assert!(
+        auth.get_provider_headers(PRIME_INFERENCE_PROVIDER_ID)
+            .is_none()
+    );
     // The env key with PRIME_TEAM_ID: the environment supplies both.
     let auth = storage_with_env(
         &stored_team_login,
@@ -303,9 +304,10 @@ fn provider_headers_team_selection() {
         auth.get_api_key(PRIME_INFERENCE_PROVIDER_ID).as_deref(),
         Some("runtime-key")
     );
-    assert!(auth
-        .get_provider_headers(PRIME_INFERENCE_PROVIDER_ID)
-        .is_none());
+    assert!(
+        auth.get_provider_headers(PRIME_INFERENCE_PROVIDER_ID)
+            .is_none()
+    );
     // PRIME_TEAM_ID env wins over the stored selection.
     let auth = storage_with_env(
         &serde_json::json!({

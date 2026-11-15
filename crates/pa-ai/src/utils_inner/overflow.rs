@@ -160,6 +160,8 @@ fn content_text(message: &AssistantMessage) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use serde_json::Map;
 
     use super::*;
@@ -169,7 +171,6 @@ mod tests {
         format_stream_failure_message,
         record_stream_failure,
     };
-    use std::collections::HashMap;
 
     fn message(
         stop_reason: StopReason,

@@ -1093,8 +1093,9 @@ fn session_file_carries_spawn_kickoff(session_file: Option<&str>, spawn_row_id: 
 
 #[cfg(test)]
 mod tests {
-    use super::create_session_launch_env;
     use std::collections::BTreeMap;
+
+    use super::create_session_launch_env;
 
     #[test]
     fn create_session_carries_the_parents_telemetry_opt_out() {

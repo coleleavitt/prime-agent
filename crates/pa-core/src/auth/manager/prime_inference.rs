@@ -248,7 +248,9 @@ impl AuthStorage {
             Some(team_id) => Some(team_id),
             None => match self.directory_selection() {
                 Some(directory) => directory.team_id.clone(),
-                None if self.get_auth_status(provider_id).source != Some(AuthSource::Stored) => None,
+                None if self.get_auth_status(provider_id).source != Some(AuthSource::Stored) => {
+                    None
+                }
                 None => match self.data.credential(provider_id) {
                     Some(AuthCredential::ApiKey { prime_team, .. }) => {
                         prime_team.map(|team| team.team_id)
