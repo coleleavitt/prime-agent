@@ -260,16 +260,18 @@ fn a_ctrl_c_that_closes_settings_never_arms_the_force_quit() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let mut harness = SlowDrainHarness::start();
+    let mut harness = SlowDrainHarness::start(SEED_MESSAGES);
 
     harness.wait_from_start(KITTY_QUERY, "the kitty capability query");
     harness.write(KITTY_ANSWER);
-    harness.wait_from_start(LAST_ROW, "the attach snapshot rendered");
+    harness.wait_from_start(&last_row(SEED_MESSAGES), "the attach snapshot rendered");
     harness.settle();
 
-    // One key at a time: typed as one burst, the doubled letter was lost (`/setings`).
+    // One key at a time: typed as one burst, the doubled letter was lost (`/setings`). Escape
+    // closes the completion menu first: the fork's `/settings` takes a `key=value` argument, so
+    // Enter on the open menu would only complete `/settings ` instead of submitting it.
     let mark = harness.mark();
-    for key in b"/settings\r" {
+    for key in b"/settings\x1b\r" {
         harness.write(&[*key]);
         harness.master.drain_until_quiet(1);
     }
