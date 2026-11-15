@@ -16,7 +16,8 @@ use pa_core::session_engine::side_ux;
 use super::AgentSessionEngine;
 use crate::engine::{SideUxOutcome, SideUxRequest};
 
-/// The provider api a scripted session runs on.
+/// The provider api a models.json faux model runs on (a scripted session's
+/// provider registers under an api of its own).
 const FAUX_API: &str = "faux";
 
 impl AgentSessionEngine {
@@ -25,7 +26,7 @@ impl AgentSessionEngine {
             Ok(model) => model,
             Err(error) => return SideUxOutcome::Failed(error.to_string()),
         };
-        if model.api == FAUX_API {
+        if self.config.faux_script.is_some() || model.api == FAUX_API {
             return SideUxOutcome::Unsupported;
         }
         let settings =
@@ -288,4 +289,22 @@ fn collect_tool_use_label_inputs(
         });
     }
     (calls, last_assistant_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent_engine::tests::faux_engine_with_settings;
+    use crate::engine::{SideUxOutcome, SideUxRequest};
+
+    /// A scripted session declines side calls whatever api its provider
+    /// registered under: a side call would consume the script's turns.
+    #[test]
+    fn a_scripted_session_declines_side_calls() {
+        let (engine, _dir) =
+            faux_engine_with_settings(&serde_json::json!({ "responses": ["the only reply"] }), 1);
+        assert!(matches!(
+            engine.side_ux(SideUxRequest::PromptSuggestion),
+            SideUxOutcome::Unsupported
+        ));
+    }
 }
