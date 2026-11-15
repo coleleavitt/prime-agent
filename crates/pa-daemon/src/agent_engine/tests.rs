@@ -17,6 +17,7 @@ mod goal;
 mod harness_dir;
 mod incomplete_reply;
 mod live_auth;
+mod mcp_settings;
 mod model_resolution;
 mod plan_mode;
 mod quota_park;

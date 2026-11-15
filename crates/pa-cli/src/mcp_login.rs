@@ -319,6 +319,45 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn cli_mcp_settings_stay_global_after_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("project");
+        let agent_dir = dir.path().join("agent");
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        let mut global: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pa-core/tests/fixtures/mcp/global-settings.json"
+        )))
+        .unwrap();
+        global["mcpCatalogSources"] = serde_json::json!([concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pa-core/tests/fixtures/mcp/global-services.json"
+        )]);
+        let mut project: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pa-core/tests/fixtures/mcp/project-settings.json"
+        )))
+        .unwrap();
+        project["mcpCatalogSources"] = serde_json::json!([concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pa-core/tests/fixtures/mcp/project-services.json"
+        )]);
+        std::fs::write(agent_dir.join("settings.json"), global.to_string()).unwrap();
+        std::fs::write(cwd.join(".prime/agent/settings.json"), project.to_string()).unwrap();
+        let mut manager = cli_mcp_manager(&cwd, &agent_dir);
+        for _ in 0..2 {
+            assert_eq!(
+                manager.get_enabled_persistent_generic_servers(),
+                vec!["user-server"]
+            );
+            assert!(manager.service_descriptor("user-catalog").is_some());
+            assert!(manager.service_descriptor("project-catalog").is_none());
+            manager.refresh();
+        }
+    }
+
     /// A scripted transport (exact URL -> response): a plain origin-level
     /// authorization server.
     struct ScriptedHttp(HashMap<String, pa_core::mcp::OAuthHttpResponse>);
