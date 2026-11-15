@@ -321,7 +321,7 @@ impl PrintRun {
                 }
                 // A refused or failed mint can still move the goal (a failed persist fails it).
                 GoalContinuationDecision::NotMinted { .. } => {
-                    goal.publish_goal_update(engine).await
+                    goal.publish_goal_update(engine).await;
                 }
                 GoalContinuationDecision::NotOwned
                 | GoalContinuationDecision::NothingOwed

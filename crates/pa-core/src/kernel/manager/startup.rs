@@ -251,15 +251,13 @@ impl Inner {
     ) -> anyhow::Result<()> {
         let result = self.spawn_and_handshake(options).await;
         slot.finish(result.as_ref().err().map(|e| anyhow!("{e:#}")));
-        if result.is_err() {
-            if let Some(Starting { start, .. }) = lock(&self.guarded).lifecycle.starting_mut() {
-                if start
-                    .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, slot))
-                {
-                    *start = None;
-                }
-            }
+        if result.is_err()
+            && let Some(Starting { start, .. }) = lock(&self.guarded).lifecycle.starting_mut()
+            && start
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, slot))
+        {
+            *start = None;
         }
         result
     }
