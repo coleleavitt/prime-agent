@@ -23,14 +23,6 @@ use pa_core::features::{
 
 use crate::{continuation, slop_guard};
 
-/// How aggressively to self-continue, from `PA_GUARDS_CONTINUE_MODE`.
-fn continue_mode() -> continuation::ContinueMode {
-    match std::env::var("PA_GUARDS_CONTINUE_MODE").as_deref() {
-        Ok("autonomous") => continuation::ContinueMode::Autonomous,
-        _ => continuation::ContinueMode::Interactive,
-    }
-}
-
 /// The source extensions the slop guard reads.
 fn is_source(path: &Path) -> bool {
     matches!(
@@ -111,11 +103,14 @@ impl SessionFeature for GuardsFeature {
 
     fn before_agent_stop(
         &self,
-        _context: &Arc<SessionFeatureContext>,
+        context: &Arc<SessionFeatureContext>,
         stop: &AgentStopObservation,
     ) -> FeatureFuture<Option<String>> {
         let text = stop.last_assistant_message.clone();
         let already = stop.continued;
+        let mode = pa_core::settings::SettingsManager::create(&context.cwd, &context.agent_dir)
+            .experimental()
+            .continue_mode;
         Box::pin(async move {
             if text.trim().is_empty()
                 || continuation::looks_like_provider_error(&text)
@@ -132,8 +127,7 @@ impl SessionFeature for GuardsFeature {
             {
                 return None;
             }
-            continue_mode()
-                .text_stalls(&text)
+            mode.text_stalls(&text)
                 .then(|| continuation::ContinueReason::Stalled.nudge())
         })
     }

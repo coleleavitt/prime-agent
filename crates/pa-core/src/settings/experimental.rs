@@ -20,7 +20,8 @@
 //!   "coordinatorMode": true, "coordinatorExtraTools": ["Bash"],
 //!   "coordinatorForceWorkerInheritModel": true, "coordinatorPropagateNestedMemory": true,
 //!   "coordinatorSkillGuidance": true,
-//!   "briefMode": true, "autocompactOffer": true
+//!   "briefMode": true, "autocompactOffer": true,
+//!   "continueMode": "autonomous"
 //! }
 //! ```
 //!
@@ -31,6 +32,8 @@
 //! [`Settings`]: super::types::Settings
 
 use serde_json::Value;
+
+use crate::continuation::ContinueMode;
 
 /// The settings key holding the object.
 pub const EXPERIMENTAL_KEY: &str = "experimental";
@@ -122,6 +125,9 @@ pub const PER_TURN_MEMORY_ENV: &str = "PRIME_AGENT_POST_TURN_MEMORY";
 /// (`["Baked","Brewed","Churned","Cogitated","Cooked","Crunched","Saut\u{00E9}ed","Worked"]`),
 /// duration since `turn_start`, and localised completion clock time.
 pub const SHOW_TURN_DURATION_ENV: &str = "PRIME_AGENT_SHOW_TURN_DURATION";
+
+/// Overrides `continueMode` (`interactive` / `autonomous`).
+pub const CONTINUE_MODE_ENV: &str = "PRIME_AGENT_CONTINUE_MODE";
 
 /// Claude Code's near-limit threshold on the five-hour window's utilization
 /// (`cS`).
@@ -215,6 +221,10 @@ pub struct ExperimentalSettings {
     /// Prime-agent matches the default; setting `showTurnDuration: false`
     /// or [`SHOW_TURN_DURATION_ENV`] `=0` suppresses the row.
     pub show_turn_duration: bool,
+    /// How hard the guards feature pushes a stalled turn on at agent stop:
+    /// `interactive` (default) treats a bare "want me to?" question as the
+    /// user's to answer, `autonomous` drives through it.
+    pub continue_mode: ContinueMode,
 }
 
 impl Default for ExperimentalSettings {
@@ -256,6 +266,7 @@ impl Default for ExperimentalSettings {
             auto_refine_recurrence_revert_apply: false,
             per_turn_memory: false,
             show_turn_duration: true,
+            continue_mode: ContinueMode::Interactive,
         }
     }
 }
@@ -391,6 +402,14 @@ impl ExperimentalSettings {
             ),
             per_turn_memory: flag("perTurnMemory", PER_TURN_MEMORY_ENV),
             show_turn_duration: flag_default_on("showTurnDuration", SHOW_TURN_DURATION_ENV),
+            continue_mode: env(CONTINUE_MODE_ENV)
+                .or_else(|| {
+                    get("continueMode")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .and_then(|raw| ContinueMode::from_setting(&raw))
+                .unwrap_or_default(),
         }
     }
 }
@@ -540,6 +559,7 @@ mod tests {
             "autoRefineRecurrenceRevert": true,
             "autoRefineRecurrenceRevertApply": true,
             "perTurnMemory": true,
+            "continueMode": "Autonomous",
         });
         assert_eq!(
             ExperimentalSettings::resolve(Some(&object), &env_of(&[])),
@@ -573,6 +593,7 @@ mod tests {
                 auto_refine_recurrence_revert_apply: true,
                 per_turn_memory: true,
                 show_turn_duration: true,
+                continue_mode: ContinueMode::Autonomous,
             }
         );
     }
@@ -603,7 +624,7 @@ mod tests {
 
     #[test]
     fn the_environment_wins_over_the_object() {
-        let object = serde_json::json!({ "observer": true, "goalEvaluator": false, "usageLimitWrapUpThreshold": 7 });
+        let object = serde_json::json!({ "observer": true, "goalEvaluator": false, "usageLimitWrapUpThreshold": 7, "continueMode": "autonomous" });
         let resolved = ExperimentalSettings::resolve(
             Some(&object),
             &env_of(&[
@@ -611,6 +632,7 @@ mod tests {
                 (GOAL_EVALUATOR_ENV, "on"),
                 (IDLE_COMPACTION_MIN_TOKENS_ENV, "300000"),
                 (ADVISOR_MODEL_ENV, "openai/gpt-x"),
+                (CONTINUE_MODE_ENV, "interactive"),
             ]),
         );
         assert_eq!(

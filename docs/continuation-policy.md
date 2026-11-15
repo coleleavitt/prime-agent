@@ -122,6 +122,9 @@ From the 2026-11-13 corpus of turns where the user typed `continue`:
 3. **One injection path.** Route both planes through the agent-loop hook; retire
    `pa-guards`' `steer_hidden_row` injection (the `before_agent_stop` seam stays
    for `pa-hooks`' Stop hooks). One cap.
-4. **One config.** A `continuation.mode` setting; `/autonomous` becomes an alias;
-   remove `PA_GUARDS_CONTINUE_MODE`. Add the `assisted` (model) and `peer`
-   (observer) leaves.
+4. **One config.** Done for the stall-text plane: `experimental.continueMode`
+   (`PRIME_AGENT_CONTINUE_MODE` overrides it) replaced `PA_GUARDS_CONTINUE_MODE`.
+   Still open: `/autonomous` as an alias of it. The `assisted` (model) leaf was
+   measured on 2026-11-14 and dropped: a Haiku judge seeing the user's request
+   and the final message caught 15 of 46 hand-typed "continue" stalls at a 9%
+   wrong-push rate on redirected question turns, no better than the text rules.

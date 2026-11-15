@@ -100,14 +100,7 @@ pub fn assistant_text_stalls(text: &str) -> bool {
     }
 
     // Inspect the closing window (last ~240 bytes) — stalls live at the end.
-    // The window start is a raw byte offset, so snap it forward to the next
-    // char boundary; otherwise a multi-byte char (e.g. an em-dash `—`) straddling
-    // the cut would panic the slice.
-    let mut tail_start = trimmed.len().saturating_sub(240);
-    while tail_start < trimmed.len() && !trimmed.is_char_boundary(tail_start) {
-        tail_start += 1;
-    }
-    let tail = trimmed[tail_start..].to_lowercase();
+    let tail = lowercase_tail(trimmed, 240);
 
     if STALL_PHRASES.iter().any(|p| tail.contains(p)) {
         return true;
@@ -184,10 +177,26 @@ fn ends_on_teed_up_colon(text: &str) -> bool {
     last.ends_with(':') && last.split_whitespace().count() >= 3
 }
 
+/// The last `max_bytes` of `text`, lowercased — the closing window where stalls,
+/// waits and provider errors live. The cut snaps forward to a char boundary so a
+/// multi-byte char (an em-dash, an emoji) straddling it cannot panic the slice.
+fn lowercase_tail(text: &str, max_bytes: usize) -> String {
+    text[text.ceil_char_boundary(text.len().saturating_sub(max_bytes))..].to_lowercase()
+}
+
+/// The last non-empty sentence of `text`, lowercased.
+fn last_sentence(text: &str) -> String {
+    text.rsplit(['.', '!', '?', '\n'])
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
 /// "Next steps:" / numbered-plan ending with no action taken.
 fn announces_plan_list(text: &str) -> bool {
     let tl = text.trim_end();
-    let tl = tl[tl.len().saturating_sub(200)..].to_lowercase();
+    let tl = lowercase_tail(tl, 200);
     tl.contains("next steps:") || tl.contains("remaining steps:") || tl.contains("plan:")
 }
 
@@ -218,12 +227,7 @@ const ACTION_CONNECTIVES: &[&str] = &[" so ", " then ", " first ", ", so ", ", t
 /// Checking only the last sentence keeps a mid-report "let me explain" from
 /// tripping it.
 fn last_sentence_announces_action(text: &str) -> bool {
-    let last = text
-        .rsplit(['.', '!', '?', '\n'])
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .unwrap_or("")
-        .to_lowercase();
+    let last = last_sentence(text);
     ACTION_LEADS.iter().any(|lead| {
         last.starts_with(lead)
             || last.contains(&format!("— {lead}"))
@@ -237,22 +241,18 @@ fn last_sentence_announces_action(text: &str) -> bool {
 /// Provider-degradation lines that render as ordinary assistant text. A
 /// self-continue here just re-runs the failing request — the user should retry
 /// or the host should back off. jfc's refusal gate does not cover these because
-/// they arrive with a normal stop reason, not `Refusal`.
-const PROVIDER_ERROR_MARKERS: &[&str] = &[
-    "overloaded",
-    "accounts exhausted",
-    "rate limit",
-    "content filtering",
-    "content filter",
-    "press ctrl+r",
-    "try again",
-];
+/// they arrive with a normal stop reason, not `Refusal`. prime-agent surfaces its
+/// own provider failures as `stopReason: "error"` with empty text, so only
+/// banner phrases stay here: "rate limit", "try again" and "content filter"
+/// matched 12 of 2,087 real turn-ends, all ordinary prose ("Try again: `-m ...`",
+/// "paced to avoid the site's rate limit:").
+const PROVIDER_ERROR_MARKERS: &[&str] = &["overloaded", "accounts exhausted", "press ctrl+r"];
 
 /// True when the assistant text is really a surfaced provider error.
 #[must_use]
 pub fn looks_like_provider_error(text: &str) -> bool {
     let tl = text.trim_end();
-    let tl = tl[tl.len().saturating_sub(300)..].to_lowercase();
+    let tl = lowercase_tail(tl, 300);
     PROVIDER_ERROR_MARKERS.iter().any(|m| tl.contains(m))
 }
 
@@ -279,9 +279,18 @@ const WAIT_MARKERS: &[&str] = &[
 /// started.
 #[must_use]
 pub fn assistant_is_waiting(text: &str) -> bool {
-    let tl = text.trim_end();
-    let tl = tl[tl.len().saturating_sub(240)..].to_lowercase();
-    WAIT_MARKERS.iter().any(|m| tl.contains(m))
+    let trimmed = text.trim_end();
+    let window = lowercase_tail(trimmed, 240);
+    if !WAIT_MARKERS.iter().any(|m| window.contains(m)) {
+        return false;
+    }
+    // An action announced after the wait, or a `:` teeing one up, is a stall the
+    // wait does not cover: "...running in the background. While it runs, I'll do
+    // some static recon." / "Let me start it in the background and open it:".
+    let last = last_sentence(trimmed);
+    let announces_after_wait =
+        last_sentence_announces_action(trimmed) && !WAIT_MARKERS.iter().any(|m| last.contains(m));
+    !(announces_after_wait || ends_on_teed_up_colon(trimmed))
 }
 
 /// How aggressively to self-continue.
@@ -301,6 +310,17 @@ pub enum ContinueMode {
 }
 
 impl ContinueMode {
+    /// The mode a `continueMode` setting names (`"interactive"` /
+    /// `"autonomous"`, any case); `None` for anything else.
+    #[must_use]
+    pub fn from_setting(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "interactive" => Some(Self::Interactive),
+            "autonomous" => Some(Self::Autonomous),
+            _ => None,
+        }
+    }
+
     /// Whether `text` is a stall this mode drives through — the one place that
     /// maps a mode to its signal leaf. `Interactive` takes only the strong
     /// announced-but-untaken-action signal; `Autonomous` takes any stall,
@@ -529,12 +549,23 @@ That is the full scan surface; nothing else is open."
         assert!(!assistant_text_stalls(&long));
     }
 
-    // Regression: an em-dash straddling the 240-byte window must not panic.
+    // Regression: an em-dash straddling any closing window (200, 240 or 300
+    // bytes) must not panic. 16 of 2,087 real turn-ends hit the 300-byte cut
+    // in `looks_like_provider_error`.
     #[test]
     fn multibyte_char_on_tail_boundary_does_not_panic() {
-        for pad in 230..250usize {
+        for pad in 180..320usize {
             let s = format!("{}— and that wraps it up.", "x".repeat(pad));
-            let _ = assistant_text_stalls(&s);
+            assert_eq!(
+                (
+                    assistant_text_stalls(&s),
+                    assistant_announces_action(&s),
+                    looks_like_provider_error(&s),
+                    assistant_is_waiting(&s),
+                ),
+                (false, false, false, false),
+                "pad {pad}"
+            );
         }
     }
 

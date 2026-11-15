@@ -16,7 +16,8 @@ Ported from the standalone `agent-guards` crate (extracted from jfc), whose
   trailing colon, or — in autonomous mode — asked a bare permission question) and
   return a reason that keeps it going. Suppresses provider errors and legitimate
   background waits. Two modes: `Interactive` (default, leaves a real question for
-  the user) and `Autonomous` (`PA_GUARDS_CONTINUE_MODE=autonomous`).
+  the user) and `Autonomous`, picked by the `experimental.continueMode` setting
+  (`"interactive"` / `"autonomous"`; `PRIME_AGENT_CONTINUE_MODE` overrides it).
 - **Scaffold gate** (`scaffold_detector` + `work_quality`): scan the added lines
   of a change for stub patterns, weighted by severity, and block completion over a
   threshold. Pure logic, **not wired** (see non-goals).
@@ -56,5 +57,6 @@ None yet. Findings reach the model inline via the tool result and the stop reaso
 
 ## Environment
 
-- `PA_GUARDS_CONTINUE_MODE=autonomous` — drive through bare questions too.
+- `PRIME_AGENT_CONTINUE_MODE=autonomous` — drive through bare questions too
+  (overrides `experimental.continueMode`).
 - `PA_GUARDS_CONTINUE_REPEAT=1` — allow a second continuation in one run.
