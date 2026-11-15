@@ -44,15 +44,16 @@ fn drawn_cases(goldens: &str) -> Vec<(String, String, Vec<String>)> {
 const LOVELY_GOLDENS: &str = include_str!("../../pa-tui/src/mermaid/render/goldens.json");
 
 /// Every lovely-mermaid case that draws renders its golden rows at the TUI's own widths
-/// (streaming, so no notice follows). The tab case is the one the transcript never feeds
-/// the renderer: markdown expands tabs before the hook runs.
+/// (streaming, so no notice follows). The tab and escape-sequence cases are the ones the
+/// transcript never feeds the renderer: markdown expands tabs and drops escape sequences
+/// before the hook runs (the renderer's own goldens test covers them).
 #[test]
 fn the_markdown_hook_draws_lovely_mermaid_rows() {
     let cases = drawn_cases(LOVELY_GOLDENS);
     assert!(cases.len() >= 70, "the corpus is loaded");
     let mut mismatches = Vec::new();
     for (name, src, plain) in cases {
-        if src.contains('\t') {
+        if src.contains(['\t', '\u{1b}']) {
             continue;
         }
         let rows = drawn_rows(&src, 2000, true);
