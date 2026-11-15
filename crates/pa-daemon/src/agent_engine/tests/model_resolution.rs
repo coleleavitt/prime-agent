@@ -1492,7 +1492,7 @@ fn failed_oauth_refresh_fails_the_turn_as_an_authentication_error() {
     assert_eq!(
         done,
         Some(Err(
-            "Authentication failed for \"battery\": the OAuth token refresh failed. Credentials may have expired or network is unavailable.\n\nRun /login to update credentials."
+            "Authentication failed for \"battery\": the stored credential could not be refreshed (battery has no token refresh).\n\nRun /login to update credentials."
                 .to_string()
         ))
     );
