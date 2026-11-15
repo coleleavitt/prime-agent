@@ -122,6 +122,7 @@ mod tests {
             response_id: None,
             diagnostics: None,
             usage: pa_agent::types::Usage::zero(),
+            discarded_usage: None,
             stop_reason: pa_agent::types::StopReason::Stop,
             stop_reason_raw: None,
             error_message: None,
