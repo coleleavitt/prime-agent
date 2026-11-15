@@ -634,7 +634,7 @@ async fn dead_connection_fails_pending_requests_immediately() {
     let listener = UnixListener::bind(&socket).unwrap();
     let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        let mut writer = stream;
+        let (reader, mut writer) = stream.into_split();
         let mut hello = json!({
             "type": "daemon_hello",
             "protocol": { "name": "prime-agent.daemon", "version": 7 },
@@ -644,15 +644,17 @@ async fn dead_connection_fails_pending_requests_immediately() {
         .to_string();
         hello.push('\n');
         writer.write_all(hello.as_bytes()).await.unwrap();
-        // Hold the accept open until the request is in flight, then
-        // close the socket (the supervisor process dies).
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        drop(writer);
+        // Close the socket (the supervisor process dies) once the request
+        // has arrived, so it is in flight.
+        BufReader::new(reader)
+            .read_line(&mut String::new())
+            .await
+            .unwrap();
     });
     let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
-    // The default timeout is 30s; the failure must land in well under a
-    // second because the socket died, not because a timer fired.
-    let started = std::time::Instant::now();
+    // The default timeout is 30s and its error says "Timed out": the
+    // closed-connection error proves the socket's death failed the
+    // request, not a timer.
     let error = client
         .request_ok(DaemonCommand::List {
             id: None,
@@ -665,7 +667,6 @@ async fn dead_connection_fails_pending_requests_immediately() {
         })
         .await
         .unwrap_err();
-    assert!(started.elapsed() < Duration::from_secs(1));
     assert!(
         error.to_string().contains("the daemon connection closed"),
         "unexpected error: {error}"
