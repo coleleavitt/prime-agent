@@ -595,6 +595,9 @@ async fn a_retry_after_a_lost_connection_relaunches_the_worker() {
     std::fs::create_dir_all(&agent_dir).unwrap();
     let supervisor = Arc::new(
         Supervisor::new(SupervisorOptions {
+            tcp_port: None,
+            tcp_bind_host: None,
+            remote_agent_mesh: None,
             socket_path: dir.path().join("daemon.sock"),
             agent_dir,
         })
