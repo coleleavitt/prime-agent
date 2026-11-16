@@ -360,16 +360,31 @@ impl AgentSessionEngine {
         self.resolve_model()
     }
 
-    /// The effective session thinking level: the create-config flag, then the
-    /// settings default, then "medium" — clamped to what the model supports; an
-    /// unresolvable model degrades to "off". Resolved once and cached.
+    /// The effective session thinking level: [`Self::requested_thinking`] clamped to what the
+    /// model supports; an unresolvable model degrades to "off". Resolved once and cached.
     pub(crate) fn effective_thinking(&self) -> pa_types::ai::ModelThinkingLevel {
         if let Some(level) = *self.effective_thinking.read_or_recover() {
             return level;
         }
         let model = self.resolve_model();
+        let requested = self.requested_thinking(model.as_ref().ok());
+        let resolved = match model {
+            Ok(model) => pa_ai::models::clamp_thinking_level(&model, requested),
+            Err(_) => pa_types::ai::ModelThinkingLevel::Off,
+        };
+        *self.effective_thinking.write_or_recover() = Some(resolved);
+        resolved
+    }
+
+    /// The session's requested thinking level before the model clamp: the selection's level (the
+    /// create flag or a later switch), then the startup scope entry of `model`, then the settings
+    /// default, then "medium". RLM children that name no level inherit it.
+    pub(crate) fn requested_thinking(
+        &self,
+        model: Option<&Model>,
+    ) -> pa_types::ai::ModelThinkingLevel {
         let selection = self.current_selection();
-        let requested = selection
+        selection
             .thinking
             .or_else(|| {
                 // An unflagged fresh session that starts on a scoped entry
@@ -388,7 +403,7 @@ impl AgentSessionEngine {
                     .scoped_models
                     .iter()
                     .find(|scoped| {
-                        model.as_ref().is_ok_and(|model| {
+                        model.is_some_and(|model| {
                             scoped.model.provider == model.provider && scoped.model.id == model.id
                         })
                     })?
@@ -407,13 +422,7 @@ impl AgentSessionEngine {
                     .map(pa_core::settings::ThinkingLevelSetting::model_level)
             })
             // TS `DEFAULT_THINKING_LEVEL`.
-            .unwrap_or(pa_types::ai::ModelThinkingLevel::Medium);
-        let resolved = match model {
-            Ok(model) => pa_ai::models::clamp_thinking_level(&model, requested),
-            Err(_) => pa_types::ai::ModelThinkingLevel::Off,
-        };
-        *self.effective_thinking.write_or_recover() = Some(resolved);
-        resolved
+            .unwrap_or(pa_types::ai::ModelThinkingLevel::Medium)
     }
 
     /// The full request-auth resolution: the registry's single lookup —

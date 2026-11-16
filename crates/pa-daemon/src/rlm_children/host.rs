@@ -216,7 +216,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     request.thinking.as_deref(),
                     &model,
                 )?;
-                let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
+                let thinking = request
+                    .thinking
+                    .clone()
+                    .or_else(|| this.inherited_thinking(&identity));
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
                 // `cwd=` or the child's worktree (relative to the parent's,
                 // canonicalized: project-context discovery walks its
@@ -250,7 +253,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         Some(&request.prompt),
                         identity.rlm_depth + 1,
                         &model,
-                        thinking,
+                        thinking.as_deref(),
                         &cwd,
                         &child_dir,
                         request.spawned_by_request_id.as_deref(),
@@ -486,7 +489,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let sessions_dir = crate::paths::sessions_dir(&this.agent_dir)?;
             std::fs::create_dir_all(&sessions_dir)
                 .with_context(|| format!("create sessions dir {}", sessions_dir.display()))?;
-            let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
+            let thinking = request
+                .thinking
+                .clone()
+                .or_else(|| this.inherited_thinking(&identity));
             let created = this
                 .launch_child(
                     "root",
@@ -494,7 +500,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     &request.prompt,
                     0,
                     &model,
-                    thinking,
+                    thinking.as_deref(),
                     &cwd.to_string_lossy(),
                     &sessions_dir,
                     None,

@@ -117,6 +117,8 @@ pub struct ParentIdentity {
     /// Persisted parent session id (keys the session-artifacts tree).
     pub session_id: Option<String>,
     pub session_file: Option<String>,
+    /// The parent's create-time thinking flag: children inherit it only when the parent engine
+    /// registered no live source ([`SupervisorChildSessions::set_parent_thinking_source`]).
     pub thinking: Option<String>,
     /// Verification seam: create children with a scripted engine file.
     pub child_script: Option<String>,
@@ -407,6 +409,9 @@ pub type DeleteNotifier = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
 pub(crate) type ChildUpdateSink = std::sync::Arc<dyn Fn(Value) + Send + Sync>;
 
+/// The parent engine's live requested thinking level.
+pub(crate) type ThinkingSource = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
 /// The parent worker's turn state as the detached child prompt tasks read it.
 #[derive(Debug, Clone, Copy, Default)]
 struct ParentTurn {
@@ -448,6 +453,9 @@ struct SupervisorChildSessionsInner {
     parent_turn: tokio::sync::watch::Sender<ParentTurn>,
     /// The parent engine's child-settle hook (goal continuation resume).
     settle_hook: std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// The parent engine's live requested thinking level, read at each spawn: a child that names
+    /// no level inherits the level the parent runs with now, not its create flag.
+    parent_thinking: std::sync::Mutex<Option<ThinkingSource>>,
     /// Whether any tracked child run is unsettled (the `any_running`
     /// verdict, re-read at every registry change): a sync read for the
     /// worker's session summary, and a change feed the worker turns into
@@ -515,6 +523,7 @@ impl SupervisorChildSessions {
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
                 parent_turn: tokio::sync::watch::Sender::new(ParentTurn::default()),
                 settle_hook: std::sync::Mutex::new(None),
+                parent_thinking: std::sync::Mutex::new(None),
                 running: tokio::sync::watch::Sender::new(false),
                 settle_notify: tokio::sync::Notify::new(),
                 model_refusal_telemetry,
@@ -574,6 +583,11 @@ impl SupervisorChildSessions {
     /// so an owed goal continuation re-evaluates.
     pub fn set_settle_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.inner.settle_hook.lock_or_recover() = Some(hook);
+    }
+
+    /// Register the parent engine's live thinking-level read (see `parent_thinking`).
+    pub(crate) fn set_parent_thinking_source(&self, source: ThinkingSource) {
+        *self.inner.parent_thinking.lock_or_recover() = Some(source);
     }
 
     /// Wire the engine's child-usage attribution producer.
@@ -678,6 +692,13 @@ impl SupervisorChildSessions {
     #[must_use]
     pub fn rlm_max_depth(&self) -> u32 {
         self.inner.identity.lock_or_recover().rlm_max_depth
+    }
+
+    /// Test-only read of the level a child that names none inherits (for the regression test).
+    #[cfg(test)]
+    pub(crate) fn inherited_thinking(&self) -> Option<String> {
+        let identity = self.inner.identity.lock_or_recover().clone();
+        self.inner.inherited_thinking(&identity)
     }
 
     /// Test-only read of the identity's model selector (for the regression test).
@@ -981,6 +1002,15 @@ impl SupervisorChildSessions {
 }
 
 impl SupervisorChildSessionsInner {
+    /// The thinking level a child that names none inherits: the parent engine's live requested
+    /// level, else the parent's create flag.
+    pub(crate) fn inherited_thinking(&self, identity: &ParentIdentity) -> Option<String> {
+        let source = self.parent_thinking.lock_or_recover().clone();
+        source
+            .and_then(|source| source())
+            .or_else(|| identity.thinking.clone())
+    }
+
     /// Fire the settle hook off-thread (the settle sites run inside
     /// watcher tasks; the hook owns its own scheduling). The funnel marks
     /// the record settled and wakes the barrier only after the terminal

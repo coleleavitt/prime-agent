@@ -62,9 +62,23 @@ impl AgentSessionEngine {
     }
 
     /// Register the engine's own arc (the weak the in-run continuation hook
-    /// upgrades): the worker calls this once after wrapping the engine.
+    /// and the children's thinking-level read upgrade): the worker calls this
+    /// once after wrapping the engine.
     pub fn register_arc(self: &Arc<Self>) {
         *self.self_weak.lock_or_recover() = Some(Arc::downgrade(self));
+        if let Some(children) = &self.children {
+            let weak = Arc::downgrade(self);
+            children.set_parent_thinking_source(Arc::new(move || {
+                let engine = weak.upgrade()?;
+                let model = engine.session_model().ok();
+                Some(
+                    engine
+                        .requested_thinking(model.as_ref())
+                        .wire_name()
+                        .to_string(),
+                )
+            }));
+        }
     }
 
     /// The hook's consult for one settled turn (TS `_getContinuationMessages`):

@@ -1104,6 +1104,47 @@ fn switch_model_propagates_the_new_model_to_the_child_identity() {
     );
 }
 
+/// Regression: a child spawned without `thinking=` inherits the level the parent runs with now.
+/// Before the fix it inherited only the parent's create flag, so a level picked mid-session
+/// (`/thinking`, shift+tab) never reached a child.
+#[test]
+fn a_thinking_switch_reaches_the_level_children_inherit() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent_dir = dir.path().join("agent");
+    write_thinking_pair_models_json(&agent_dir, "http://127.0.0.1:9");
+    let engine = std::sync::Arc::new(
+        AgentSessionEngine::new(AgentEngineConfig {
+            cwd: dir.path().to_path_buf(),
+            agent_dir,
+            provider: Some("battery".to_string()),
+            model: Some("mock-reason".to_string()),
+            api_key: None,
+            thinking: None,
+            session_dir: None,
+            session_file: None,
+            faux_script: None,
+            supervisor_link: Some(SupervisorLinkConfig {
+                socket_path: dir.path().join("absent-supervisor.sock"),
+                active_session_id: "parent-live".to_string(),
+                worker_token: "test-token".to_string(),
+            }),
+            telemetry_disabled: Some(true),
+            cron_store: None,
+            queued_steering_probe: None,
+            steering_fold: None,
+        })
+        .unwrap(),
+    );
+    engine.register_arc();
+    let children = engine
+        .children
+        .as_ref()
+        .expect("the supervisor link wires the children registry")
+        .clone();
+    assert!(engine.switch_thinking_level(pa_types::ai::ModelThinkingLevel::High));
+    assert_eq!(children.inherited_thinking().as_deref(), Some("high"));
+}
+
 #[test]
 fn configure_model_merges_only_present_fields() {
     let dir = tempfile::TempDir::new().unwrap();
