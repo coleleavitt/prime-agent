@@ -12,6 +12,7 @@ default = [
     "advisor",
     "anthropic-auth",
     "cc-import",
+    "context",
     "dream",
     "hooks",
     "guards",
@@ -91,6 +92,12 @@ recall = ["dep:pa-recall"]
 # outbound `anthropic` requests are scored for refusal probability and
 # filtered before sending. Inert while the setting is off (the default).
 refusal = ["dep:pa-refusal"]
+# The context manager (crates/pa-context, CortexKit magic-context's context
+# features): top-level sessions' requests carry stable §N§ tags, the model
+# drops spent outputs with `ctx.reduce`, a background historian folds old
+# history into decaying compartments, `ctx.expand` brings it back.
+# PRIME_AGENT_CONTEXT_MANAGER=0 turns it off.
+context = ["dep:pa-context"]
 # Learning memory retrieval (crates/pa-retrieval): daemon sessions order their
 # harness digest through a flyrag reranker that learns from the refinement
 # history and the transcripts' corrections (read through the ledger's
@@ -127,6 +134,7 @@ pa-workflow = { path = "../pa-workflow", optional = true }
 pa-recall = { path = "../pa-recall", optional = true }
 pa-refusal = { workspace = true, optional = true }
 pa-retrieval = { path = "../pa-retrieval", optional = true }
+pa-context = { path = "../pa-context", optional = true }
 pa-dream = { path = "../pa-dream", optional = true }
 pa-trace = { path = "../pa-trace", optional = true }
 pa-ledger = { path = "../pa-ledger", optional = true }

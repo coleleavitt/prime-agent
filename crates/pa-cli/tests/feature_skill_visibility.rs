@@ -120,16 +120,28 @@ async fn feature_skills_reach_only_sessions_that_can_run_them() {
             .collect::<Vec<_>>(),
         vec![vec!["dream", "ravo"], vec![], vec![]]
     );
-    // Only the feature skills and the native `refine` (withheld by the same
-    // rule, pa-core session_refine_visibility) differ: the other native
-    // skills stay bound.
+    // The context manager's `ctx` follows its own rule: every top-level
+    // session, stored or not, and no RLM child.
+    assert_eq!(
+        import_names
+            .iter()
+            .map(|names| names.iter().any(|name| name == "ctx"))
+            .collect::<Vec<_>>(),
+        [cfg!(feature = "context"), false, cfg!(feature = "context")]
+    );
+    // Only those and the native `refine` (withheld by the dream/ravo rule,
+    // pa-core session_refine_visibility) differ: the other native skills
+    // stay bound.
     let native = |names: &[String]| -> Vec<String> {
         names
             .iter()
-            .filter(|name| !FEATURE_SKILLS.contains(&name.as_str()) && *name != "refine")
+            .filter(|name| {
+                !FEATURE_SKILLS.contains(&name.as_str())
+                    && !["refine", "ctx"].contains(&name.as_str())
+            })
             .cloned()
             .collect()
     };
     assert_eq!(native(&import_names[0]), import_names[1]);
-    assert_eq!(import_names[1], import_names[2]);
+    assert_eq!(import_names[1], native(&import_names[2]));
 }

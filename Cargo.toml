@@ -36,6 +36,7 @@ members = [
     "crates/pa-cc-import",
     "crates/pa-perf",
     "crates/pa-retrieval",
+    "crates/pa-context",
 ]
 # Crossterm 0.28.1's kitty support check holds the process-wide event reader
 # for 2s on terminals that do not answer. Keep its parser/queued input intact,

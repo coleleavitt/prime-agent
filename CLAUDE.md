@@ -247,6 +247,9 @@ was deleted, tag `workflow-v2-dormant`), `pa-ledger`, `pa-ravo` (gate, referee, 
 needs `pa-ledger`; plus the brain, `docs/brain-design.md`: the `brain` skill's `brain.*` requests search every
 session's harness memories, every project's auto-memory files and CortexKit magic-context's DB read-only via
 `rusqlite`, with pins/excludes/supersession and synthesized per-project summaries in the digest),
+`pa-context` (magic-context's context features, `docs/context-manager-design.md`: `§N§` tags, `ctx.reduce` drops,
+a historian folding old history into decaying compartments, `ctx.expand`; on the generic
+`SessionFeature::request_context_hook` seam),
 `pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
 `pa-session-index`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
 `~/.anthropic-accounts` store via the vendored anthropic-rs SDK). The Claude Code parity port added `pa-web`,

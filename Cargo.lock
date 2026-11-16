@@ -2775,6 +2775,7 @@ dependencies = [
  "pa-anthropic-auth",
  "pa-bash",
  "pa-cc-import",
+ "pa-context",
  "pa-core",
  "pa-daemon",
  "pa-dream",
@@ -2836,6 +2837,21 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "zbus",
+]
+
+[[package]]
+name = "pa-context"
+version = "0.10.3"
+dependencies = [
+ "anyhow",
+ "pa-agent",
+ "pa-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

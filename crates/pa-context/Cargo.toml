@@ -1,0 +1,22 @@
+[package]
+name = "pa-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Context manager (CortexKit magic-context's context features): tagged messages, model-driven drops, a background historian that folds old history into decaying compartments, expand."
+
+[dependencies]
+pa-core = { path = "../pa-core" }
+pa-agent = { workspace = true }
+anyhow = { workspace = true }
+regex = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
