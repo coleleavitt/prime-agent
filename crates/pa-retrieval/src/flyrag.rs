@@ -189,6 +189,21 @@ impl FlyRagReranker {
         self.rag.doc_weights(fly::DocId(*doc))
     }
 
+    /// A memory's learned term over its own touched units, in `[-1, 1]`
+    /// (flyrag's readout: the mean of `use - skip` over the units, an
+    /// untouched bank reading the prior, scaled by `prior - floor`). Reads
+    /// the banks only: no offer is allocated, so a search can rank by it
+    /// without growing the feedback window. `0.0` for an unknown or
+    /// never-feedbacked memory.
+    #[must_use]
+    pub fn learned_prior(&self, memory_id: &str) -> f32 {
+        let Some(weights) = self.doc_weights(memory_id) else {
+            return 0.0;
+        };
+        let readout = self.rag.params().readout;
+        learned_from(&weights, readout.prior, readout.floor)
+    }
+
     /// Base retriever (BM25) read access.
     #[must_use]
     pub fn base(&self) -> &Bm25Index {
@@ -419,6 +434,27 @@ impl Reranker for FlyRagReranker {
     fn len(&self) -> usize {
         self.bm25.len()
     }
+}
+
+/// flyrag's learned term for the union of a document's touched units
+/// (`Banks::learned`, with the doc's own units as the query's).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a document touches at most a few hundred units"
+)]
+fn learned_from(weights: &::flyrag::DocWeights, prior: f32, floor: f32) -> f32 {
+    let mut units: std::collections::BTreeMap<u32, (f32, f32)> = std::collections::BTreeMap::new();
+    for &(unit, weight) in &weights.use_weights {
+        units.entry(unit).or_insert((prior, prior)).0 = weight;
+    }
+    for &(unit, weight) in &weights.skip_weights {
+        units.entry(unit).or_insert((prior, prior)).1 = weight;
+    }
+    if units.is_empty() || prior <= floor {
+        return 0.0;
+    }
+    let sum: f32 = units.values().map(|(use_w, skip_w)| use_w - skip_w).sum();
+    (sum / units.len() as f32 / (prior - floor)).clamp(-1.0, 1.0)
 }
 
 /// Run the base retriever and the learning reranker as a single call: the
@@ -719,5 +755,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("never.json");
         assert!(FlyRagReranker::load_from_file(&path).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod learned_prior_tests {
+    use super::learned_from;
+
+    #[test]
+    fn helped_reads_positive_and_misled_negative() {
+        let (prior, floor) = (0.5, 0.05);
+        let helped = ::flyrag::DocWeights {
+            use_weights: Vec::new(),
+            skip_weights: vec![(3, floor)],
+        };
+        assert!((learned_from(&helped, prior, floor) - 1.0).abs() < 1e-6);
+        let misled = ::flyrag::DocWeights {
+            use_weights: vec![(3, floor), (4, prior)],
+            skip_weights: Vec::new(),
+        };
+        assert!((learned_from(&misled, prior, floor) + 0.5).abs() < 1e-6);
+        let untouched = ::flyrag::DocWeights {
+            use_weights: Vec::new(),
+            skip_weights: Vec::new(),
+        };
+        assert!(learned_from(&untouched, prior, floor).abs() < f32::EPSILON);
     }
 }

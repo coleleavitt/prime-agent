@@ -244,7 +244,10 @@ The fork's TS-only features are ported as removable feature crates (`docs/fork-f
 `pa-recall`, `pa-toolforge`, `pa-dream` (standalone + in-session, `/dream`), `pa-workflow` (V1 host; the dormant V2
 was deleted, tag `workflow-v2-dormant`), `pa-ledger`, `pa-ravo` (gate, referee, trust windows, `ravo.run`, `/ravo`), `pa-learning`,
 `pa-retrieval` (flyrag learning rerank of daemon sessions' harness digest, fed by a tick at every agent stop;
-needs `pa-ledger`), `pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
+needs `pa-ledger`; plus the brain, `docs/brain-design.md`: the `brain` skill's `brain.*` requests search every
+session's harness memories, every project's auto-memory files and CortexKit magic-context's DB read-only via
+`rusqlite`, with pins/excludes/supersession and synthesized per-project summaries in the digest),
+`pa-refusal` (the `contentFilter` request hooks for the `anthropic` provider),
 `pa-session-index`, `pa-anthropic-auth` (the `anthropic` provider's OAuth from the shared
 `~/.anthropic-accounts` store via the vendored anthropic-rs SDK). The Claude Code parity port added `pa-web`,
 `pa-permissions`, `pa-observer`, `pa-advisor`, `pa-lsp` and `pa-cc-import` (all in pa-cli's default features;

@@ -10,9 +10,13 @@ anyhow = { workspace = true }
 pa-core = { path = "../pa-core" }
 pa-ledger = { path = "../pa-ledger" }
 regex = "1"
+# The brain's read-only magic-context source (docs/brain-design.md §8): a
+# synchronous driver, since the digest hook that reads it is synchronous.
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 # flyrag is the learning re-ranker (fly mushroom-body sparse codes + two
 # opposing readout banks, bounded updates, lazy decay); kenyon is its
@@ -24,6 +28,7 @@ flyrag = { git = "https://github.com/coleleavitt/flyrag.git", rev = "8043738cb22
 kenyon = { git = "https://github.com/coleleavitt/kenyon.git", rev = "e1dc0c2b05e586da237d5718f231405aac9dc2e5", features = ["serde"] }
 
 [dev-dependencies]
+pa-agent = { path = "../pa-agent" }
 tempfile = "3"
 
 [lints]

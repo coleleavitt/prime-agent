@@ -43,6 +43,7 @@
 
 mod backfill_targets;
 pub mod bm25;
+mod brain;
 mod correction_tap;
 mod feature;
 mod feedback_tap;

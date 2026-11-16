@@ -156,6 +156,16 @@ impl RerankerHandle {
         }
     }
 
+    /// The learned term of `memory_id` in `[-1, 1]` without allocating an
+    /// offer ([`FlyRagReranker::learned_prior`]).
+    #[must_use]
+    pub fn learned_prior(&self, memory_id: &str) -> f32 {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .learned_prior(memory_id)
+    }
+
     /// Live memory count (base retriever).
     #[must_use]
     pub fn len(&self) -> usize {

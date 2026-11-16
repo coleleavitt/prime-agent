@@ -1,22 +1,35 @@
 //! The session feature: daemon-worker sessions render their harness digest
 //! through the agent dir's shared reranker, and every agent stop runs the
-//! retrieval tick.
+//! retrieval tick. Every session also gets the brain (`docs/brain-design.md`):
+//! the `brain.*` host requests and skill, and the digest's pins, withheld
+//! superseded/excluded memories and synthesized summaries.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use pa_core::features::{SessionFeature, SessionFeatureContext};
+use pa_core::kernel::shared::HostRequestHandlers;
+use pa_core::refinement::prompt_hook::HarnessPromptHook;
 use pa_core::refinement::ranking::HarnessRerankHook;
 
+use crate::brain::{self, BRAIN_SKILL, BrainPromptHook, BrainSession, CachedState, SynthScope};
 use crate::handle::{RerankerHandle, shared_handle_for};
 
+/// How often an agent stop may scan whether a synthesis is due.
+const AUTO_SCAN_INTERVAL: Duration = Duration::from_mins(10);
+
 /// Learning memory retrieval as a session feature (installed by the
-/// composition root). It serves daemon-worker sessions only: daemonless
-/// (print-mode) sessions keep the native digest order and never write the
-/// retrieval state.
+/// composition root). Its reranker and tick serve daemon-worker sessions
+/// only: daemonless (print-mode) sessions keep the native digest order and
+/// never write the retrieval state.
 #[derive(Default)]
 pub struct RetrievalFeature {
     /// Serializes the ticks: each one advances the on-disk cursors.
     tick: Arc<Mutex<()>>,
+    /// The brain state the digest hook reads (mtime-cached).
+    brain_state: Arc<CachedState>,
+    /// When an agent stop last scanned for a due synthesis.
+    last_auto_scan: Mutex<Option<Instant>>,
 }
 
 impl RetrievalFeature {
@@ -45,6 +58,69 @@ fn session_reranker(context: &SessionFeatureContext) -> Option<RerankerHandle> {
         .ok()
 }
 
+impl RetrievalFeature {
+    /// Start the automatic synthesis of the session's project and of all
+    /// projects when due (top-level daemon sessions, at most one scan per
+    /// [`AUTO_SCAN_INTERVAL`], off with `PRIME_AGENT_BRAIN_AUTO_SYNTHESIZE=0`).
+    fn maybe_auto_synthesize(&self, context: &Arc<SessionFeatureContext>) {
+        if context.daemonless || context.rlm_depth > 0 || brain::auto_disabled() {
+            return;
+        }
+        {
+            let mut last = self
+                .last_auto_scan
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if last.is_some_and(|at| at.elapsed() < AUTO_SCAN_INTERVAL) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!(target: "pa_daemon::retrieval", "brain: no runtime for synthesis");
+            return;
+        };
+        let session = BrainSession::of(context);
+        runtime.spawn(async move {
+            let due = tokio::task::spawn_blocking({
+                let session = session.clone();
+                move || {
+                    [
+                        SynthScope::Project(brain::project_of(&session.cwd)),
+                        SynthScope::Global,
+                    ]
+                    .into_iter()
+                    .filter(|scope| {
+                        brain::due(
+                            &session.agent_dir,
+                            scope,
+                            brain::summary_of(&session.agent_dir, scope).as_ref(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                }
+            })
+            .await
+            .unwrap_or_default();
+            for scope in due {
+                match brain::synthesize(session.clone(), scope, false).await {
+                    Ok(summary) => tracing::info!(
+                        target: "pa_daemon::retrieval",
+                        lines = summary.lines.len(),
+                        sources = summary.source_count,
+                        "brain: synthesized"
+                    ),
+                    Err(error) => tracing::warn!(
+                        target: "pa_daemon::retrieval",
+                        error = %format!("{error:#}"),
+                        "brain: synthesis failed"
+                    ),
+                }
+            }
+        });
+    }
+}
+
 impl SessionFeature for RetrievalFeature {
     fn name(&self) -> &'static str {
         "retrieval"
@@ -57,6 +133,30 @@ impl SessionFeature for RetrievalFeature {
         session_reranker(context).map(|handle| handle.as_rerank_hook())
     }
 
+    fn harness_prompt_hook(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn HarnessPromptHook>> {
+        Some(Arc::new(BrainPromptHook {
+            agent_dir: context.agent_dir.clone(),
+            session_id: context.session_id.clone(),
+            project: brain::project_of(&context.cwd),
+            state: Arc::clone(&self.brain_state),
+        }))
+    }
+
+    fn register_host_handlers(
+        &self,
+        context: &SessionFeatureContext,
+        handlers: &mut HostRequestHandlers,
+    ) {
+        brain::register(&BrainSession::of(context), handlers);
+    }
+
+    fn bundled_skills(&self) -> Vec<&'static str> {
+        vec![BRAIN_SKILL]
+    }
+
     fn on_agent_stop(&self, context: &Arc<SessionFeatureContext>) {
         let Some(handle) = session_reranker(context) else {
             return;
@@ -66,14 +166,21 @@ impl SessionFeature for RetrievalFeature {
         let spawned = std::thread::Builder::new()
             .name("retrieval-tick".to_string())
             .spawn(move || {
-                let _serialized = tick
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _serialized = tick.lock().unwrap_or_else(PoisonError::into_inner);
+                let demoted = brain::demote_superseded(&agent_dir, &handle);
+                if demoted > 0 {
+                    tracing::info!(
+                        target: "pa_daemon::retrieval",
+                        demoted,
+                        "brain: superseded memories demoted"
+                    );
+                }
                 crate::tick::run(&agent_dir, &handle);
             });
         if let Err(err) = spawned {
             tracing::warn!(target: "pa_daemon::retrieval", %err, "retrieval tick not started");
         }
+        self.maybe_auto_synthesize(context);
     }
 }
 
