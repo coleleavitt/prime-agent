@@ -3,6 +3,13 @@
 //! - [`SessionFeature::after_tool_call`]: when a kernel cell reports files it
 //!   wrote (`fileWrites`), run the scoped slop guard over each and append the
 //!   findings to the result the model sees.
+//! - [`SessionFeature::after_tool_call`] also appends the steering
+//!   reminders of `crate::steer`: structural greps run through subprocess, blocked
+//!   fetches, `sed -i` on config or run-time file lists, unbounded bundle
+//!   greps, plain-Python writes to source; first match then every fifth.
+//! - With `PRIME_AGENT_SOURCE_WRITES=edit-only`,
+//!   [`SessionFeature::review_tool_call`] refuses a cell that writes project
+//!   source with plain Python before it runs.
 //! - [`SessionFeature::before_agent_stop`]: when a turn ends, decide whether the
 //!   agent stalled and, if so, return a reason that keeps it going.
 //!
@@ -10,17 +17,21 @@
 //! task state lives in a Python skill, not a native tool, so there is no
 //! tool-call seam to gate yet.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use pa_core::features::{
     AgentStopObservation,
     FeatureFuture,
+    FeatureVerdict,
     SessionFeature,
     SessionFeatureContext,
+    ToolCallObservation,
     ToolResultObservation,
 };
 
+use crate::steer::{self, Steer};
 use crate::{continuation, slop_guard};
 
 /// The source extensions the slop guard reads.
@@ -45,14 +56,82 @@ fn git_head_blob(cwd: &Path, path: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The guards feature. Stateless: the pure logic owns no per-session state.
+/// The guards feature. Its only state counts the steering matches per
+/// session, for the reminders' throttle.
 #[derive(Debug, Default)]
-pub struct GuardsFeature;
+pub struct GuardsFeature {
+    steer_counts: Mutex<HashMap<(String, Steer), u32>>,
+}
 
 impl GuardsFeature {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// The steering reminders one python cell's result earns now.
+    fn steering(
+        &self,
+        context: &SessionFeatureContext,
+        result: &ToolResultObservation,
+    ) -> Vec<String> {
+        if result.tool_name != "python_repl" {
+            return Vec::new();
+        }
+        let code = result
+            .args
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let strings = |field: &str, key: Option<&str>| -> Vec<String> {
+            result
+                .host_facts
+                .get(field)
+                .and_then(serde_json::Value::as_array)
+                .map(|records| {
+                    records
+                        .iter()
+                        .filter_map(|record| match key {
+                            Some(key) => record.get(key)?.as_str().map(str::to_string),
+                            None => record.as_str().map(str::to_string),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let commands = strings("bashCommands", Some("command"));
+        let writes = strings("fileWrites", None);
+        let output: String = result
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                pa_agent::types::ToolResultContent::Text(text) => Some(text.text.as_str()),
+                pa_agent::types::ToolResultContent::Image(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let found = steer::detect(&steer::Cell {
+            code,
+            commands: &commands,
+            output: &output,
+            writes: &writes,
+            project: &context.cwd,
+        });
+        let mut counts = self
+            .steer_counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        found
+            .into_iter()
+            .filter(|reminder| {
+                let count = counts
+                    .entry((context.session_id.clone(), reminder.habit))
+                    .or_insert(0);
+                *count += 1;
+                steer::due(*count)
+            })
+            .map(|reminder| reminder.text)
+            .collect()
     }
 }
 
@@ -78,8 +157,10 @@ impl SessionFeature for GuardsFeature {
                     .collect()
             })
             .unwrap_or_default();
+        let reminders = self.steering(context, result);
         if writes.is_empty() {
-            return Box::pin(async { None });
+            let text = (!reminders.is_empty()).then(|| reminders.join("\n"));
+            return Box::pin(async move { text });
         }
         let cwd = context.cwd.clone();
         Box::pin(async move {
@@ -97,8 +178,33 @@ impl SessionFeature for GuardsFeature {
                     out.push_str(&format!("{name}\n{body}"));
                 }
             }
-            (!out.is_empty()).then(|| format!("Slop Guard (scoped to your changes):\n{out}"))
+            let mut parts: Vec<String> = reminders;
+            if !out.is_empty() {
+                parts.push(format!("Slop Guard (scoped to your changes):\n{out}"));
+            }
+            (!parts.is_empty()).then(|| parts.join("\n"))
         })
+    }
+
+    fn review_tool_call(
+        &self,
+        _context: &Arc<SessionFeatureContext>,
+        call: &ToolCallObservation,
+    ) -> FeatureFuture<FeatureVerdict> {
+        let edit_only = std::env::var(steer::SOURCE_WRITES_ENV)
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("edit-only"));
+        let refusal = (call.tool_name == "python_repl")
+            .then(|| call.args.get("code").and_then(serde_json::Value::as_str))
+            .flatten()
+            .and_then(|code| steer::refuse_plain_source_write(code, edit_only));
+        Box::pin(async move { refusal.map_or(FeatureVerdict::Allow, FeatureVerdict::Block) })
+    }
+
+    fn on_session_end(&self, context: &Arc<SessionFeatureContext>, _reason: &str) {
+        self.steer_counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(session_id, _), _| *session_id != context.session_id);
     }
 
     fn before_agent_stop(

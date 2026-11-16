@@ -33,6 +33,7 @@ mod feature;
 mod rust_lex;
 pub mod scaffold_detector;
 pub mod slop_guard;
+mod steer;
 pub mod work_quality;
 
 pub use feature::GuardsFeature;

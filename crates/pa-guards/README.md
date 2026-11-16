@@ -18,6 +18,14 @@ Ported from the standalone `agent-guards` crate (extracted from jfc), whose
   background waits. Two modes: `Interactive` (default, leaves a real question for
   the user) and `Autonomous`, picked by the `experimental.continueMode` setting
   (`"interactive"` / `"autonomous"`; `PRIME_AGENT_CONTINUE_MODE` overrides it).
+- **Steering reminders** (`steer`): after a python cell, reminders for what the
+  `bash()` guards cannot refuse, over `pa_bash::search`: structural greps run through
+  `subprocess`/`os.system`, fetches blocked by bot protection (use `camoufox-browser`),
+  `sed -i` on non-source files or on run-time file lists, unbounded greps over minified
+  bundles, and plain-Python writes to project source (no /rewind checkpoint; use the
+  edit skill; `# pa: allow-write` marks a deliberate one). First match per session,
+  then every fifth. With `PRIME_AGENT_SOURCE_WRITES=edit-only` a cell that writes
+  source with plain Python is refused before it runs (`review_tool_call`).
 - **Scaffold gate** (`scaffold_detector` + `work_quality`): scan the added lines
   of a change for stub patterns, weighted by severity, and block completion over a
   threshold. Pure logic, **not wired** (see non-goals).
@@ -42,6 +50,8 @@ Ported from the standalone `agent-guards` crate (extracted from jfc), whose
 - `SessionFeature::after_tool_call` — reads the cell result's `fileWrites` host
   fact, runs the scoped slop guard over each source file (old = `git show HEAD:…`),
   and appends the findings to the result the model sees.
+- `SessionFeature::after_tool_call` also appends the steering reminders; the
+  `review_tool_call` refusal of plain source writes is opt-in.
 - `SessionFeature::before_agent_stop` — runs the continuation decision over
   `last_assistant_message`; `Some(reason)` keeps the agent going.
 
@@ -49,7 +59,7 @@ Installed only when `pa-cli` is built with `--features guards` (on by default).
 
 ## Files
 
-`src/{lib,feature,slop_guard,scaffold_detector,work_quality,continuation,rust_lex}.rs`.
+`src/{lib,feature,slop_guard,scaffold_detector,work_quality,continuation,rust_lex,steer}.rs`.
 
 ## Telemetry
 

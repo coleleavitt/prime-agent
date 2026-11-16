@@ -2956,6 +2956,8 @@ name = "pa-guards"
 version = "0.10.3"
 dependencies = [
  "ignore",
+ "pa-agent",
+ "pa-bash",
  "pa-core",
  "pa-types",
  "regex",

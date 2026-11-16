@@ -7,6 +7,8 @@ description = "Post-edit slop checks, the task-completion scaffold gate, and the
 
 [dependencies]
 pa-core = { path = "../pa-core" }
+pa-agent = { workspace = true }
+pa-bash = { path = "../pa-bash" }
 pa-types = { workspace = true }
 ignore = "0.4"
 regex = "1"
