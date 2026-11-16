@@ -285,6 +285,11 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "prune <session> [list|<index>…|biggest N|restore]",
         "Prune oversized entries (pasted images, giant text) from a saved session",
     ),
+    CommandSpec::new(
+        &["hook"],
+        "hook bash-guard",
+        "Claude Code PreToolUse hook: the kernel's grep and sed guards for Bash and Grep",
+    ),
     CommandSpec::new(&["config"], "config", "Configure package resources"),
     CommandSpec::new(
         &["trust"],
