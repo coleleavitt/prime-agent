@@ -27,6 +27,7 @@ mod notice;
 mod permission_request;
 mod policy;
 mod question;
+mod request_context;
 mod session_facts;
 mod status;
 
@@ -106,6 +107,7 @@ pub use question::{
     ask_question,
     pending_questions,
 };
+pub use request_context::RequestContextHook;
 pub use session_facts::{
     session_permission_mode,
     session_skill_hooks,
@@ -784,6 +786,18 @@ pub trait SessionFeature: Send + Sync {
         let _ = context;
         None
     }
+
+    /// The hook that rewrites the messages each model request of the session
+    /// sends (see [`RequestContextHook`]); `None`, the default, sends them
+    /// as stored. Called once, on the session-creation path; installed
+    /// features' hooks run in installation order.
+    fn request_context_hook(
+        &self,
+        context: &Arc<SessionFeatureContext>,
+    ) -> Option<Arc<dyn RequestContextHook>> {
+        let _ = context;
+        None
+    }
 }
 
 static INSTALLED: OnceLock<Vec<Arc<dyn SessionFeature>>> = OnceLock::new();
@@ -954,6 +968,18 @@ pub(crate) fn session_harness_prompt_hooks(
             .filter_map(|feature| feature.harness_prompt_hook(context))
             .collect(),
     )
+}
+
+/// The session's request-context transform: every installed feature's
+/// [`RequestContextHook`] in installation order (a pass-through when none
+/// offers one).
+pub(crate) fn session_request_transform(
+    features: &[Arc<dyn SessionFeature>],
+    context: &Arc<SessionFeatureContext>,
+) -> pa_agent::agent_loop::TransformContextFn {
+    request_context::transform_fn(request_context::session_request_context_hooks(
+        features, context,
+    ))
 }
 
 /// The first harness rerank hook `features` offer the session; `None` keeps

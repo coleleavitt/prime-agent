@@ -1334,11 +1334,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             std::sync::Arc::clone(&request_timing_wiring),
             super::refinement_gate::convert_to_llm(refinement_settings.reopen()),
         )),
-        // The Rust engine wires no transform, so the instrumented seam
-        // wraps a pass-through that marks the turn's dispatch moment.
+        // The installed features' request-context hooks (a pass-through
+        // without any), inside the instrumented seam that marks the turn's
+        // dispatch moment.
         transform_context: Some(super::request_timing::instrument_transform_context(
             std::sync::Arc::clone(&request_timing_wiring),
-            super::request_timing::pass_through_transform(),
+            crate::features::session_request_transform(
+                crate::features::installed(),
+                &feature_context,
+            ),
         )),
         should_stop_after_turn: Some(
             stop_after_turn::StopAfterTurn {
