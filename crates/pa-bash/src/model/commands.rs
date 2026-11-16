@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::builtins::{Builtin, relocate};
 use super::files::{expand, join, read_script};
-use super::value::{self, Arg, Lookup, Unknown};
+use super::value::{self, Arg, Lookup, Source, Unknown};
 use super::walker::{
     Call,
     Feed,
@@ -388,7 +388,7 @@ impl Walker {
         let input = Unknown {
             prefix: String::new(),
             written: format!("<arguments {name} reads from its stdin>"),
-            source: self.producer_text(),
+            source: Source::from(self.producer_text().as_str()),
             input: true,
         };
         command.fields.drain(..start);
@@ -429,7 +429,7 @@ impl Walker {
                 }));
             } else if text.contains(&token) {
                 let placeholder = spliced
-                    .get_or_insert_with(|| self.placeholder(input.source.clone()))
+                    .get_or_insert_with(|| self.placeholder(input.source.text()))
                     .clone();
                 *field = Field {
                     code: Some(text.replace(&token, &placeholder)),
@@ -952,7 +952,7 @@ impl Walker {
             let found = Unknown {
                 prefix: String::new(),
                 written: "{}".to_string(),
-                source: "the paths find matches".to_string(),
+                source: Source::from("the paths find matches"),
                 input: true,
             };
             let mut placeholder = false;

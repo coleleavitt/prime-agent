@@ -294,3 +294,18 @@ fn fanned_out_function_calls_are_bounded() {
             .any(|opaque| opaque.evidence.contains("chmod -R"));
     assert!(chmod_seen);
 }
+
+#[test]
+fn self_derived_values_keep_each_source_piece_once() {
+    // Each `if` or `case` may or may not change `x`, and the new value is
+    // built from the old one: the merged source holds the old pieces once,
+    // not once per branch (2^20 copies before).
+    let fixture = fixture();
+    let ifs = "if [ -n \"$2\" ]; then x=\"$x.\"; fi\n".repeat(20);
+    let cases = "case \"$2\" in a) x=\"$x a\" ;; *) x=\"$x b\" ;; esac\n".repeat(20);
+    for chain in [ifs, cases] {
+        let model = model(&fixture, &format!("x=$1\n{chain}echo \"$x\""));
+        let evidence = find(&model, "echo").argv[1].evidence();
+        assert!(evidence.len() < 200, "{} bytes: {evidence}", evidence.len());
+    }
+}

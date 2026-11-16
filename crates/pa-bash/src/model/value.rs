@@ -4,6 +4,7 @@
 //! starts with `offer/`).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::syntax::ast::{Part, Quoting, Word};
 
@@ -29,7 +30,7 @@ pub(crate) struct Unknown {
     pub written: String,
     /// The text the unknown value comes from (an assignment, a
     /// substitution's commands): what a check searches for evidence.
-    pub source: String,
+    pub source: Source,
     /// The value is data the command reads at run time (lines `xargs`
     /// reads, paths `find` matches), not text the script spells.
     pub input: bool,
@@ -81,8 +82,62 @@ impl Arg {
     pub(crate) fn evidence(&self) -> String {
         match self {
             Arg::Known(text) | Arg::Pattern(text) => text.clone(),
-            Arg::Unknown(unknown) => format!("{} {}", unknown.written, unknown.source),
+            Arg::Unknown(unknown) => format!("{} {}", unknown.written, unknown.source.text()),
         }
+    }
+
+    /// [`Arg::evidence`] as a source: the pieces an unknown value made of
+    /// this field comes from.
+    pub(crate) fn source(&self) -> Source {
+        match self {
+            Arg::Known(text) | Arg::Pattern(text) => Source::from(text.as_str()),
+            Arg::Unknown(unknown) => {
+                let mut source = Source::from(unknown.written.as_str());
+                source.extend(&unknown.source);
+                source
+            }
+        }
+    }
+}
+
+/// The script text an unknown value comes from: each distinct piece once,
+/// in the order first seen. A value built from its own earlier value
+/// (`x="$x."`, an `if` that may have changed it, a function passing it back
+/// to itself) keeps the earlier pieces once, so a source never outgrows the
+/// distinct text it comes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Source(Vec<Arc<str>>);
+
+impl Source {
+    pub(crate) fn push(&mut self, piece: &str) {
+        if !piece.is_empty() && !self.0.iter().any(|known| **known == *piece) {
+            self.0.push(Arc::from(piece));
+        }
+    }
+
+    pub(crate) fn extend(&mut self, other: &Source) {
+        for piece in &other.0 {
+            if !self
+                .0
+                .iter()
+                .any(|known| Arc::ptr_eq(known, piece) || known == piece)
+            {
+                self.0.push(Arc::clone(piece));
+            }
+        }
+    }
+
+    /// The pieces as one text, as the evidence checks read it.
+    pub(crate) fn text(&self) -> String {
+        self.0.join(" ")
+    }
+}
+
+impl From<&str> for Source {
+    fn from(piece: &str) -> Self {
+        let mut source = Self::default();
+        source.push(piece);
+        source
     }
 }
 
@@ -92,7 +147,7 @@ pub(crate) struct Var {
     /// The value, when it is fixed.
     pub value: Option<String>,
     /// The assignment's text (evidence when the value is not fixed).
-    pub source: String,
+    pub source: Source,
 }
 
 /// Variables the script has set so far, over the kernel environment.
@@ -129,7 +184,7 @@ impl<'e> Vars<'e> {
             None if name == "IFS" => Lookup::Value(" \t\n".to_string()),
             None => match self.env.get(name) {
                 Some(value) => Lookup::Value(value.clone()),
-                None if is_dynamic(name) => Lookup::Unknown(String::new()),
+                None if is_dynamic(name) => Lookup::Unknown(Source::default()),
                 None => Lookup::Unset,
             },
         }
@@ -162,7 +217,7 @@ impl<'e> Vars<'e> {
                 name.clone(),
                 Some(Var {
                     value: value.known().map(str::to_string),
-                    source: value.shown(),
+                    source: Source::from(value.shown().as_str()),
                 }),
             );
             self.exported.insert(name.clone());
@@ -235,18 +290,18 @@ impl<'e> Vars<'e> {
             if mine == Some(var) {
                 continue;
             }
-            let mut sources: Vec<String> = Vec::new();
+            let mut source = Source::default();
             for candidate in [mine.and_then(Option::as_ref), var.as_ref()]
                 .into_iter()
                 .flatten()
             {
-                sources.push(candidate.source.clone());
+                source.extend(&candidate.source);
             }
             self.set.insert(
                 name.clone(),
                 Some(Var {
                     value: None,
-                    source: sources.join(" "),
+                    source,
                 }),
             );
         }
@@ -291,7 +346,7 @@ fn is_dynamic(name: &str) -> bool {
 pub(crate) enum Lookup {
     Value(String),
     /// Set to something the text cannot fix; the assignment's text.
-    Unknown(String),
+    Unknown(Source),
     Unset,
 }
 
@@ -309,7 +364,7 @@ pub(crate) enum Piece {
     /// `"$@"`: one field per element.
     Fields(Vec<String>),
     /// Unknown, with the evidence text it comes from.
-    Unknown(String),
+    Unknown(Source),
 }
 
 /// Evaluate `word` into argv fields: brace expansion, tilde, parameter and
@@ -350,7 +405,7 @@ struct Builder<'w> {
     fields: Vec<Arg>,
     text: String,
     pattern: bool,
-    unknown: Option<(String, String)>,
+    unknown: Option<(String, Source)>,
     started: bool,
 }
 
@@ -386,14 +441,13 @@ impl<'w> Builder<'w> {
         }
     }
 
-    fn push_unknown(&mut self, source: &str) {
+    fn push_unknown(&mut self, source: Source) {
         self.started = true;
         if let Some((_, sources)) = &mut self.unknown {
-            sources.push(' ');
-            sources.push_str(source);
+            sources.extend(&source);
         } else {
             let prefix = unescape(&self.text);
-            self.unknown = Some((prefix, source.to_string()));
+            self.unknown = Some((prefix, source));
         }
     }
 
@@ -443,7 +497,7 @@ impl<'w> Builder<'w> {
                         tilde = format!("{home}{}", &text[end..]);
                         text = &tilde;
                     } else {
-                        self.push_unknown(&text[..end]);
+                        self.push_unknown(Source::from(&text[..end]));
                         text = &text[end..];
                     }
                 }
@@ -465,14 +519,14 @@ impl<'w> Builder<'w> {
                 self.piece(piece, split == Split::Yes && !quoted);
             }
             Part::Arithmetic(expression) => {
-                self.push_unknown(&expression.visible());
+                self.push_unknown(Source::from(expression.visible().as_str()));
             }
             Part::Process { .. } => {
                 let piece = resolve.command(part);
                 match piece {
                     Piece::Text(text) => self.push_literal(&text, false),
                     Piece::Fields(texts) => self.push_literal(&texts.join(" "), false),
-                    Piece::Unknown(source) => self.push_unknown(&source),
+                    Piece::Unknown(source) => self.push_unknown(source),
                 }
             }
         }
@@ -513,7 +567,7 @@ impl<'w> Builder<'w> {
                     }
                 }
             }
-            Piece::Unknown(source) => self.push_unknown(&source),
+            Piece::Unknown(source) => self.push_unknown(source),
         }
     }
 
@@ -886,7 +940,7 @@ mod tests {
         }
 
         fn command(&self, _part: &Part) -> Piece {
-            Piece::Unknown("cmd".to_string())
+            Piece::Unknown(Source::from("cmd"))
         }
     }
 
@@ -917,7 +971,7 @@ mod tests {
             "n",
             Var {
                 value: None,
-                source: "a b".to_string(),
+                source: Source::from("a b"),
             },
         );
         let args = argv("git push -u origin offer/$n", &vars);

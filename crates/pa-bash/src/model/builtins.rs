@@ -4,7 +4,7 @@
 
 use super::commands::Pending;
 use super::files::join;
-use super::value::{Arg, Lookup, Unknown, Var};
+use super::value::{Arg, Lookup, Source, Unknown, Var};
 use super::walker::{Feed, Field, Share, State, Walker};
 use super::{Cwd, Via, wrappers};
 
@@ -134,9 +134,11 @@ impl Walker {
     fn read(&self, name: &str, command: &Pending<'_>, state: &mut State<'_>) {
         let fields = &command.fields;
         let source = match &command.call.feed {
-            Some(Feed::Code(text) | Feed::Hidden(text) | Feed::Piped(text)) => text.clone(),
-            Some(Feed::File(path)) => path.evidence(),
-            Some(Feed::Kernel | Feed::Pipe) | None => self.producer_text(),
+            Some(Feed::Code(text) | Feed::Hidden(text) | Feed::Piped(text)) => {
+                Source::from(text.as_str())
+            }
+            Some(Feed::File(path)) => path.source(),
+            Some(Feed::Kernel | Feed::Pipe) | None => Source::from(self.producer_text().as_str()),
         };
         let mut skip = false;
         for field in &fields[1..] {
@@ -391,7 +393,7 @@ fn declare(field: &Field<'_>, state: &mut State<'_>, export: bool) {
                         name,
                         Var {
                             value: None,
-                            source: format!("{} {}", unknown.written, unknown.source),
+                            source: field.arg.source(),
                         },
                     );
                     if export {
@@ -412,7 +414,7 @@ fn declare(field: &Field<'_>, state: &mut State<'_>, export: bool) {
                 name,
                 Var {
                     value: (!append).then(|| value.to_string()),
-                    source: value.to_string(),
+                    source: Source::from(value),
                 },
             );
             if export {

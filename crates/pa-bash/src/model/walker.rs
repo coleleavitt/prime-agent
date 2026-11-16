@@ -9,7 +9,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use super::value::{self, Arg, Lookup, Piece, Resolve, Unknown, Var, Vars};
+use super::value::{self, Arg, Lookup, Piece, Resolve, Source, Unknown, Var, Vars};
 use super::{
     Capture,
     Cwd,
@@ -286,7 +286,7 @@ impl Resolver<'_, '_> {
         if let Ok(index) = name.parse::<usize>() {
             return match self.state.positional.get(index.wrapping_sub(1)) {
                 Some(Arg::Known(text)) => Lookup::Value(text.clone()),
-                Some(other) => Lookup::Unknown(other.evidence()),
+                Some(other) => Lookup::Unknown(other.source()),
                 None => Lookup::Unset,
             };
         }
@@ -300,7 +300,7 @@ impl Resolver<'_, '_> {
 impl Resolve for Resolver<'_, '_> {
     fn parameter(&self, name: &str, operator: Option<&Word>) -> Piece {
         if let Some(evidence) = self.fragments.get(name) {
-            return Piece::Unknown(evidence.clone());
+            return Piece::Unknown(Source::from(evidence.as_str()));
         }
         if matches!(name, "@" | "*") && operator.is_none() {
             let known: Option<Vec<String>> = self
@@ -312,14 +312,13 @@ impl Resolve for Resolver<'_, '_> {
             return match known {
                 Some(texts) if name == "@" => Piece::Fields(texts),
                 Some(texts) => Piece::Text(texts.join(" ")),
-                None => Piece::Unknown(
-                    self.state
-                        .positional
-                        .iter()
-                        .map(Arg::evidence)
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                ),
+                None => {
+                    let mut source = Source::default();
+                    for arg in &self.state.positional {
+                        source.extend(&arg.source());
+                    }
+                    Piece::Unknown(source)
+                }
             };
         }
         let lookup = self.lookup(name);
@@ -338,7 +337,9 @@ impl Resolve for Resolver<'_, '_> {
             .map(|prefix| prefix.len())
         else {
             // `${x#pat}`, `${x/a/b}`, `${#x}`, ...: derived from the value.
-            return Piece::Unknown(format!("{name} {}", operator.visible()));
+            return Piece::Unknown(Source::from(
+                format!("{name} {}", operator.visible()).as_str(),
+            ));
         };
         let empty = match &lookup {
             Lookup::Unset => Some(true),
@@ -349,21 +350,27 @@ impl Resolve for Resolver<'_, '_> {
         strip_prefix_chars(&mut tail, skip);
         let fallback = match value::single(&tail, self, self.home.as_deref()) {
             Arg::Known(text) => Piece::Text(text),
-            other => Piece::Unknown(other.evidence()),
+            other => Piece::Unknown(other.source()),
         };
         match (empty, current, fallback) {
             (Some(true), _, fallback) => fallback,
-            (None, Piece::Unknown(source), Piece::Text(text) | Piece::Unknown(text)) => {
-                Piece::Unknown(format!("{source} {text}"))
+            (None, Piece::Unknown(mut source), Piece::Text(text)) => {
+                source.push(&text);
+                Piece::Unknown(source)
+            }
+            (None, Piece::Unknown(mut source), Piece::Unknown(fallback)) => {
+                source.extend(&fallback);
+                Piece::Unknown(source)
             }
             (Some(false) | None, current, _) => current,
         }
     }
 
     fn command(&self, part: &Part) -> Piece {
-        self.pieces
-            .get(&address(part))
-            .map_or_else(|| Piece::Unknown(String::new()), |(piece, _)| piece.clone())
+        self.pieces.get(&address(part)).map_or_else(
+            || Piece::Unknown(Source::default()),
+            |(piece, _)| piece.clone(),
+        )
     }
 }
 
@@ -513,11 +520,10 @@ impl Walker {
                 redirects,
             } => {
                 let pushed = self.compound_redirects(redirects, state);
-                let mut source = String::new();
+                let mut source = Source::default();
                 for word in words.iter().flatten() {
                     self.walk_substitutions(word, state, &mut Pieces::new(), None);
-                    source.push_str(&word.visible());
-                    source.push(' ');
+                    source.push(&word.visible());
                 }
                 let before = state.clone();
                 state.vars.assign(
@@ -660,7 +666,7 @@ impl Walker {
                     let to = self.model.invocations.len();
                     let piece = match command_output(body, &child) {
                         Some(text) => Piece::Text(text),
-                        None => Piece::Unknown(body.visible()),
+                        None => Piece::Unknown(Source::from(body.visible().as_str())),
                     };
                     pieces.insert(address(part), (piece, from..to));
                 }
@@ -771,7 +777,7 @@ impl Walker {
                     Arg::Unknown(Unknown {
                         prefix: String::new(),
                         written: format!("({})", source.join(" ")),
-                        source: source.join(" "),
+                        source: Source::from(source.join(" ").as_str()),
                         input: false,
                     }),
                     source.join(" "),
@@ -781,9 +787,11 @@ impl Walker {
         let fixed = (!assignment.append)
             .then(|| value.known().map(str::to_string))
             .flatten();
+        let mut evidence = Source::from(source.as_str());
+        evidence.extend(&value.source());
         let var = Var {
             value: fixed,
-            source: format!("{} {}", source, value.evidence()),
+            source: evidence,
         };
         (value, var)
     }
@@ -885,12 +893,14 @@ impl Walker {
                 Part::Command { .. } | Part::Process { .. } => {
                     self.resolver(state, pieces).command(part)
                 }
-                Part::Arithmetic(expression) => Piece::Unknown(expression.visible()),
+                Part::Arithmetic(expression) => {
+                    Piece::Unknown(Source::from(expression.visible().as_str()))
+                }
             };
             match piece {
                 Piece::Text(text) => out.push_str(&text),
                 Piece::Fields(texts) => out.push_str(&texts.join(" ")),
-                Piece::Unknown(evidence) => out.push_str(&self.placeholder(evidence)),
+                Piece::Unknown(evidence) => out.push_str(&self.placeholder(evidence.text())),
             }
         }
         out
