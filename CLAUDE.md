@@ -79,6 +79,13 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   `bash.output` `sinceBytes`). Send-now (Ctrl+Enter) moves the running cell to the background (`detach`, protocol 6,
   daemon `detach_running_cell`) and interrupts only what cannot move. Factory runs notify on the follow-up lane
   (`task_notification` rows); the bundled `tasks` skill is the model's task list.
+- Code search and edits (2026-11-15 corpus study, 49,066 grep/rg/sed commands and 99,148 python cells):
+  pa-bash's `grep` guard refuses a grep/rg/ag/`git grep` whose every pattern is a definition or call site
+  over project source (`allow_grep=True` / `PI_BASH_ALLOW_GREP=1`), its `sed` guard refuses `sed -i` on a
+  project source file (`allow_sed=True` / `PI_BASH_ALLOW_SED=1`); one classifier, `pa_bash::search`, also
+  drives pa-guards' after-cell reminders (subprocess greps, `sed -i` on config, bundle greps, plain-Python
+  source writes; `PRIME_AGENT_SOURCE_WRITES=edit-only` refuses the latter) and Claude Code's `PreToolUse`
+  hook `prime-agent hook bash-guard` (Bash and Grep tools; `# allow-grep` / `# allow-sed`).
 - Waiting follows Claude Code 2.1.316, extended (`bcd200082`) with a polling-loop check CC itself lacks:
   pa-bash's `sleep` guard refuses a script whose first command is `sleep N`, N >= 25, AND any `for`/`while`
   (not `until`) reachable at the top level whose body waits with `sleep` and would hold the turn open the

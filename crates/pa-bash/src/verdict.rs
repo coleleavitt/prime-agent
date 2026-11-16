@@ -24,11 +24,17 @@ pub enum GuardKind {
     SelfMatch,
     /// A leading foreground `sleep` of 25 seconds or more.
     Sleep,
+    /// A grep for a definition or call site over project source (the
+    /// structural tools answer that).
+    Grep,
+    /// An in-place `sed` edit of a project source file (the edit skill
+    /// checkpoints it).
+    Sed,
 }
 
 impl GuardKind {
     /// Every guard, in pipeline order.
-    pub const ALL: [GuardKind; 8] = [
+    pub const ALL: [GuardKind; 10] = [
         GuardKind::DestructiveGit,
         GuardKind::DestructiveChmod,
         GuardKind::ForcePush,
@@ -37,6 +43,8 @@ impl GuardKind {
         GuardKind::Sudo,
         GuardKind::SelfMatch,
         GuardKind::Sleep,
+        GuardKind::Grep,
+        GuardKind::Sed,
     ];
 
     /// The guard's wire name (`destructive_git`, ..., `sudo`): the kernel's
@@ -52,6 +60,8 @@ impl GuardKind {
             GuardKind::Sudo => "sudo",
             GuardKind::SelfMatch => "self_match",
             GuardKind::Sleep => "sleep",
+            GuardKind::Grep => "grep",
+            GuardKind::Sed => "sed",
         }
     }
 
@@ -74,6 +84,8 @@ impl GuardKind {
             GuardKind::Sudo => "PrivilegeEscalationRefusalError",
             GuardKind::SelfMatch => "SelfMatchRefusalError",
             GuardKind::Sleep => "SleepRefusalError",
+            GuardKind::Grep => "GrepStructureRefusalError",
+            GuardKind::Sed => "SedInPlaceRefusalError",
         }
     }
 
@@ -90,6 +102,8 @@ impl GuardKind {
             GuardKind::Sudo => "PI_BASH_ALLOW_SUDO",
             GuardKind::SelfMatch => "PI_BASH_ALLOW_SELF_MATCH",
             GuardKind::Sleep => "PI_BASH_ALLOW_SLEEP",
+            GuardKind::Grep => "PI_BASH_ALLOW_GREP",
+            GuardKind::Sed => "PI_BASH_ALLOW_SED",
         }
     }
 
@@ -105,6 +119,8 @@ impl GuardKind {
             GuardKind::Sudo => "allow_sudo",
             GuardKind::SelfMatch => "allow_self_match",
             GuardKind::Sleep => "allow_sleep",
+            GuardKind::Grep => "allow_grep",
+            GuardKind::Sed => "allow_sed",
         }
     }
 }

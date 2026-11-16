@@ -1,7 +1,7 @@
 """Async-by-default shell execution: bash() spawns immediately and returns a live handle.
 
 The checks and the process live in the Prime Agent host (the `pa-bash` crate):
-the six refusal guards, process containment, the completion fence, the bounded
+the refusal guards, process containment, the completion fence, the bounded
 output buffer, progress events and the orphan-process journal. This module is
 the kernel's client of it. Inside a Prime Agent kernel the requests travel as
 kernel host requests; anywhere else (tests, scripts) they go to a
@@ -105,6 +105,16 @@ class SleepRefusalError(RuntimeError):
     """A command that starts with a long foreground ``sleep`` was refused."""
 
 
+class GrepStructureRefusalError(RuntimeError):
+    """A grep for a definition or call site over project source was refused
+    (use rlm.lsp / codeflow)."""
+
+
+class SedInPlaceRefusalError(RuntimeError):
+    """An in-place ``sed -i`` edit of a project source file was refused (use
+    the edit skill)."""
+
+
 BASH_DESTRUCTIVE_GIT_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_GIT"
 BASH_DESTRUCTIVE_CHMOD_BYPASS_ENV = "PI_BASH_ALLOW_DESTRUCTIVE_CHMOD"
 BASH_FORCE_PUSH_BYPASS_ENV = "PI_BASH_ALLOW_FORCE_PUSH"
@@ -113,6 +123,8 @@ BASH_PIPE_TO_SHELL_BYPASS_ENV = "PI_BASH_ALLOW_PIPE_TO_SHELL"
 BASH_SUDO_BYPASS_ENV = "PI_BASH_ALLOW_SUDO"
 BASH_SELF_MATCH_BYPASS_ENV = "PI_BASH_ALLOW_SELF_MATCH"
 BASH_SLEEP_BYPASS_ENV = "PI_BASH_ALLOW_SLEEP"
+BASH_GREP_BYPASS_ENV = "PI_BASH_ALLOW_GREP"
+BASH_SED_BYPASS_ENV = "PI_BASH_ALLOW_SED"
 
 
 GIT_STATUS_PORCELAIN_COMMAND = "git status --porcelain --untracked-files=all"
@@ -144,6 +156,8 @@ _PIPE_TO_SHELL_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH
 _SUDO_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SUDO_BYPASS_ENV))
 _SELF_MATCH_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SELF_MATCH_BYPASS_ENV))
 _SLEEP_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SLEEP_BYPASS_ENV))
+_GREP_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_GREP_BYPASS_ENV))
+_SED_BYPASS_AT_KERNEL_START = _is_truthy_env_value(os.environ.get(BASH_SED_BYPASS_ENV))
 
 _destructive_chmod_late_bypass_warned = False
 _force_push_late_bypass_warned = False
@@ -152,6 +166,8 @@ _pipe_to_shell_late_bypass_warned = False
 _sudo_late_bypass_warned = False
 _self_match_late_bypass_warned = False
 _sleep_late_bypass_warned = False
+_grep_late_bypass_warned = False
+_sed_late_bypass_warned = False
 
 # guard key -> (bash() kwarg, frozen launch flag, warn-once flag, refusal class)
 _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
@@ -193,6 +209,8 @@ _GUARDS: dict[str, tuple[str, str, str | None, type[RuntimeError]]] = {
         SelfMatchRefusalError,
     ),
     "sleep": ("allow_sleep", "_SLEEP_BYPASS_AT_KERNEL_START", "_sleep_late_bypass_warned", SleepRefusalError),
+    "grep": ("allow_grep", "_GREP_BYPASS_AT_KERNEL_START", "_grep_late_bypass_warned", GrepStructureRefusalError),
+    "sed": ("allow_sed", "_SED_BYPASS_AT_KERNEL_START", "_sed_late_bypass_warned", SedInPlaceRefusalError),
 }
 _REFUSALS = {error.__name__: (key, error) for key, (_, _, _, error) in _GUARDS.items()}
 _REFUSAL_ERRORS = tuple(error for _, _, _, error in _GUARDS.values())
@@ -1584,6 +1602,8 @@ def _run_kernel_bash_guards(
     allow_sudo: bool = False,
     allow_self_match: bool = False,
     allow_sleep: bool = False,
+    allow_grep: bool = False,
+    allow_sed: bool = False,
 ) -> None:
     """Run every kernel-bash refusal guard on the text the shell will run.
 
@@ -1602,6 +1622,8 @@ def _run_kernel_bash_guards(
         "sudo": allow_sudo,
         "self_match": allow_self_match,
         "sleep": allow_sleep,
+        "grep": allow_grep,
+        "sed": allow_sed,
     }
     _raise_for(
         _request(
@@ -1650,6 +1672,8 @@ def bash(
     allow_sudo: bool = False,
     allow_self_match: bool = False,
     allow_sleep: bool = False,
+    allow_grep: bool = False,
+    allow_sed: bool = False,
 ) -> BashHandle | PersistentShellHandle:
     """Start a shell command immediately; await the handle for the result.
 
@@ -1786,6 +1810,18 @@ def bash(
     turn. Loops, groups and later commands in the script do not count.
     Bypass deliberately with allow_sleep=True, or by starting the kernel with
     PI_BASH_ALLOW_SLEEP=1.
+
+    A grep, rg, ag or git grep whose every pattern is a definition (`fn x`,
+    `class X`) or a call site (`name(`) over project source is refused: use
+    rlm.lsp (definition, references, workspace_symbols) and codeflow.tree /
+    codeflow.cfg, and quote their file:line output. Pipe filters, counts and
+    file lists, plain text, logs and data still run. Bypass with
+    allow_grep=True or PI_BASH_ALLOW_GREP=1.
+
+    `sed -i` on a project source file is refused: edit it with the edit skill
+    (edit.run / edit.write), which checkpoints it for /rewind. Range reads
+    (`sed -n 'A,Bp'`), stream edits and config or scratch files still run.
+    Bypass with allow_sed=True or PI_BASH_ALLOW_SED=1.
     """
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
@@ -1807,6 +1843,8 @@ def bash(
         "sudo": allow_sudo,
         "self_match": allow_self_match,
         "sleep": allow_sleep,
+        "grep": allow_grep,
+        "sed": allow_sed,
     }
     if persistent:
         # A persistent shell runs detached host-side and outlives the kernel,
@@ -1825,6 +1863,8 @@ def bash(
             allow_sudo=allow_sudo,
             allow_self_match=allow_self_match,
             allow_sleep=allow_sleep,
+            allow_grep=allow_grep,
+            allow_sed=allow_sed,
         )
         shell = str(_raise_for(_request(_kernel_request("bash.shell", "", "", None)))["shell"])
         # persistent_shells.* are generic host requests: _request returns the

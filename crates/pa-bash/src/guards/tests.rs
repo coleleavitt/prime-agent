@@ -1555,3 +1555,82 @@ fn git_probes_execute_nothing_the_command_or_config_names() {
         .expect("dirty tree");
     assert!(message.contains("tracked.txt"), "{message}");
 }
+
+/// Definition and call-site greps over project source are refused (the
+/// 2026-11-15 corpus shapes); filters, lists, text, logs and dependencies
+/// pass.
+#[test]
+fn structural_greps_are_refused_and_text_searches_are_not() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Grep,
+        &[
+            "rg -n 'fn send_now' crates/",
+            "grep -rn 'class Session' src/",
+            "rg -n 'isolate_hook\\(' -t rust",
+            "rg -n '^pub fn check' src/pipeline.rs",
+            "sh -c \"rg -n 'fn x' src/\"",
+            "git grep -n 'impl Rule'",
+            "cd sub && rg -n 'struct Model|enum Arg' .",
+            "rg -l 'fn send_now' crates/",
+            "rg -n -w 'cluster_dobs' crates/",
+            "rg -n 'BOOK_REFRESH_CHAIN|refresh_book_chain|fn run_auto_resolve|auto_resolve\\(' src crates --type rust",
+            "rg -n 'str_array\\(|fn strings\\(|log_text::|inject_trace_context\\(' crates src | head",
+            // The live 2026-11-15 ers-rs miss: a definition and its uses.
+            "rg -n 'fn cluster_dobs|cluster_dobs.insert|cluster_dobs' src/cluster.rs | head -8",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Grep,
+        &[
+            "cargo test 2>&1 | grep 'fn x'",
+            "rg -c 'isolate_hook\\(' crates/",
+            "rg -n TODO crates/",
+            "rg -n 'fn x' /usr/lib/rustlib/src",
+            "grep -n 'connection refused' app.log",
+            "rg -n \"$PAT\" src",
+            "rg -n 'fn x' node_modules/pkg",
+            "grep -rn 'X-Request-Id' src/",
+            "rg -nw TODO crates/",
+            "rg -n 'parse_orion_instant|edited_since_watermark' crates/x.rs | head",
+        ],
+    );
+    let message = fixture
+        .refusal(GuardKind::Grep, "rg -n 'fn send_now' crates/")
+        .expect("refused");
+    assert!(message.contains("codeflow.tree") && message.contains("allow_grep=True"));
+}
+
+/// `sed -i` on project source is refused; range reads, stream edits,
+/// config, scratch and outside files pass.
+#[test]
+fn in_place_source_edits_are_refused() {
+    let fixture = Fixture::new();
+    refused(
+        &fixture,
+        GuardKind::Sed,
+        &[
+            "sed -i 's/a/b/' src/lib.rs",
+            "sed -i.bak -e 's/a/b/' main.py",
+            "sed -Ei 's/x/y/g' web/app.ts",
+            "bash -c \"sed --in-place 's/a/b/' cmd/main.go\"",
+        ],
+    );
+    allowed(
+        &fixture,
+        GuardKind::Sed,
+        &[
+            "sed -n '10,20p' src/lib.rs",
+            "cat src/lib.rs | sed 's/a/b/'",
+            "sed -i 's/a/b/' config.toml",
+            "sed -i 's/a/b/' /tmp/x.rs",
+            "sed -i 's/a/b/' /usr/share/x.c",
+        ],
+    );
+    let message = fixture
+        .refusal(GuardKind::Sed, "sed -i 's/a/b/' src/lib.rs")
+        .expect("refused");
+    assert!(message.contains("edit.run") && message.contains("allow_sed=True"));
+}

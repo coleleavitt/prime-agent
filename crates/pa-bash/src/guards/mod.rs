@@ -15,9 +15,11 @@ mod destructive_chmod;
 mod destructive_git;
 mod force_push;
 mod git;
+mod grep;
 mod opaque;
 mod pipe_to_shell;
 mod secret_echo;
+mod sed;
 mod self_match;
 mod sleep;
 mod sudo;
@@ -81,6 +83,8 @@ pub(crate) fn judge(guard: GuardKind, check: &Check<'_>) -> Verdict {
         GuardKind::Sudo => verdict::<sudo::Sudo>(check),
         GuardKind::SelfMatch => verdict::<self_match::SelfMatch>(check),
         GuardKind::Sleep => verdict::<sleep::Sleep>(check),
+        GuardKind::Grep => verdict::<grep::Grep>(check),
+        GuardKind::Sed => verdict::<sed::Sed>(check),
     }
 }
 

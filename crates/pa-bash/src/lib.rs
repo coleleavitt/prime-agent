@@ -9,6 +9,7 @@
 //! completion fence, the bounded output buffer, progress events, and the
 //! orphan-process journal.
 
+pub mod cc_hook;
 mod context;
 mod guards;
 mod model;
@@ -19,6 +20,7 @@ mod run;
 mod runner;
 mod sandbox;
 mod script;
+pub mod search;
 mod service;
 mod shell;
 mod sidecar;

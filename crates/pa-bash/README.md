@@ -29,10 +29,19 @@ through the `prime-agent --prime-agent-bash-host` sidecar (`serve_stdio`).
   (`destructive_chmod`), force-pushes to protected targets (`force_push`),
   secret echoes (`secret_echo`), downloads run by a shell (`pipe_to_shell`),
   sudo/doas (`sudo`), kills whose pattern matches the command's own shell
-  (`self_match`), and a leading foreground `sleep` of 25 seconds or more
-  (`sleep`). `pipeline` builds the model once and runs them in that
+  (`self_match`), a leading foreground `sleep` of 25 seconds or more
+  (`sleep`), a grep/rg/ag/`git grep` whose every pattern is a definition or call
+  site over project source (`grep`: use `rlm.lsp` / `codeflow`), and `sed -i` on a
+  project source file (`sed`: use the edit skill). `pipeline` builds the model once and runs them in that
   order; the first refusal wins (`Refusal`: guard, message, one-time
   late-bypass warning).
+- `search` (public): the classifier the `grep` and `sed` rules, pa-guards' steering
+  reminders and the Claude Code hook share: definition and call-site pattern shapes,
+  grep/rg/ag argument parsing, project-source targets, in-place sed, bundles. Shapes
+  and thresholds come from the 2026-11-15 corpus study (49,066 grep/rg/sed commands).
+- `cc_hook` (public): Claude Code's `PreToolUse` hook over the `grep` and `sed` rules for
+  its `Bash` and `Grep` tools (`prime-agent hook bash-guard`); `# allow-grep` /
+  `# allow-sed` in a command bypass it.
 - `probe`: the guards' read-only shell probes (`git status`, the upstream of
   the current branch) in the kernel's shell and environment, own process
   group, bounded wait and output read.
