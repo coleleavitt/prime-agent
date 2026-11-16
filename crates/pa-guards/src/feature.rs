@@ -196,7 +196,10 @@ impl SessionFeature for GuardsFeature {
         let refusal = (call.tool_name == "python_repl")
             .then(|| call.args.get("code").and_then(serde_json::Value::as_str))
             .flatten()
-            .and_then(|code| steer::refuse_plain_source_write(code, edit_only));
+            .and_then(|code| {
+                steer::refuse_plain_source_write(code, edit_only)
+                    .or_else(|| steer::refuse_text_definition_lookup(code))
+            });
         Box::pin(async move { refusal.map_or(FeatureVerdict::Allow, FeatureVerdict::Block) })
     }
 

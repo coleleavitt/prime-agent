@@ -20,12 +20,15 @@ Ported from the standalone `agent-guards` crate (extracted from jfc), whose
   (`"interactive"` / `"autonomous"`; `PRIME_AGENT_CONTINUE_MODE` overrides it).
 - **Steering reminders** (`steer`): after a python cell, reminders for what the
   `bash()` guards cannot refuse, over `pa_bash::search`: structural greps run through
-  `subprocess`/`os.system`, fetches blocked by bot protection (use `camoufox-browser`),
+  `subprocess`/`os.system` or past the guard (`allow_grep=True`), fetches blocked by bot protection (use `camoufox-browser`),
   `sed -i` on non-source files or on run-time file lists, unbounded greps over minified
   bundles, and plain-Python writes to project source (no /rewind checkpoint; use the
   edit skill; `# pa: allow-write` marks a deliberate one). First match per session,
   then every fifth. With `PRIME_AGENT_SOURCE_WRITES=edit-only` a cell that writes
-  source with plain Python is refused before it runs (`review_tool_call`).
+  source with plain Python is refused before it runs (`review_tool_call`). A cell that
+  looks up a definition by text (`src.find("fn x")` then a slice, `if "fn x" in line`,
+  `re.search(r"fn \w+")`) is always refused before it runs and pointed at
+  `codeflow.tree` / `codeflow.cfg` / `rlm.lsp`; `# pa: allow-text-search` lets one through.
 - **Scaffold gate** (`scaffold_detector` + `work_quality`): scan the added lines
   of a change for stub patterns, weighted by severity, and block completion over a
   threshold. Pure logic, **not wired** (see non-goals).

@@ -9,7 +9,15 @@
 //!   only known at run time (`find -exec`, `xargs`): not checkpointed;
 //! - a grep over minified bundles without bounded output;
 //! - plain-Python writes to project source (`write_text`, `open(.., "w")`):
-//!   no /rewind checkpoint, permission check or diff, unlike the edit skill.
+//!   no /rewind checkpoint, permission check or diff, unlike the edit skill;
+//! - a structural grep that ran past the `grep` guard (`allow_grep=True`).
+//!
+//! [`refuse_text_definition_lookup`] refuses, before the cell runs, a python
+//! cell that looks up a definition by text (`src.find("fn x")` then a slice,
+//! `if "fn x" in line`, `re.search(r"fn \w+")`): grep by another name. The
+//! 2026-11-16 corpus (100k cells) had 1,376 such cells, every one of 30
+//! sampled a definition lookup, and in 31% of the turns where the user asked
+//! for codeflow the agent read text instead and never called codeflow or lsp.
 //!
 //! Detection is pure over the cell's code, its finished `bash()` commands,
 //! its output and the files it wrote; the shapes come from
@@ -28,6 +36,12 @@ use pa_bash::search::{
     unbounded_bundle_grep,
 };
 use regex::Regex;
+
+/// Where the codeflow reminders and refusals point.
+const STRUCTURAL_TOOLS: &str = "Use codeflow.tree (callers, callees), codeflow.cfg (every path; level=\"mir\" for Rust) and rlm.lsp (definition, references, workspace_symbols: they give the file and line to read), and quote their file:line output. The user has asked for this repeatedly.";
+
+/// The marker a cell carries to look up code by text on purpose.
+pub(crate) const ALLOW_TEXT_SEARCH_MARKER: &str = "# pa: allow-text-search";
 
 /// The marker a cell carries to write source with plain Python on purpose.
 pub(crate) const ALLOW_WRITE_MARKER: &str = "# pa: allow-write";
@@ -304,6 +318,14 @@ fn uses_edit_skill(code: &str) -> bool {
         || code.contains("edit.notebook_edit(")
 }
 
+/// The first structural grep among `commands` (the pattern it looks up).
+fn first_structural_grep(commands: &[(String, Vec<String>, bool)]) -> Option<String> {
+    commands.iter().find_map(|(program, args, piped)| {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        structural_grep(program, &args, *piped).map(|found| found.pattern)
+    })
+}
+
 /// Project source files among `writes`.
 fn source_writes<'a>(writes: &'a [String], project: &Path) -> Vec<&'a str> {
     writes
@@ -386,15 +408,18 @@ pub(crate) fn detect(cell: &Cell<'_>) -> Vec<Reminder> {
     let subprocesses = subprocess_commands(cell.code);
     let ran = bash_commands(cell.commands);
 
-    let structural = subprocesses.iter().find_map(|(program, args, piped)| {
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        structural_grep(program, &args, *piped).map(|found| found.pattern)
-    });
-    if let Some(pattern) = structural {
+    if let Some(pattern) = first_structural_grep(&subprocesses) {
         out.push(reminder(
             Steer::Codeflow,
             format!(
-                "Reminder: this cell grepped project source for the code structure `{pattern}` through subprocess, which skips the bash() guards. Use rlm.lsp (definition, references, workspace_symbols) and codeflow.tree / codeflow.cfg, and quote their file:line output; grep only finds candidates. The user has asked for this repeatedly."
+                "Reminder: this cell grepped project source for the code structure `{pattern}` through subprocess, which skips the bash() guards. {STRUCTURAL_TOOLS}"
+            ),
+        ));
+    } else if let Some(pattern) = first_structural_grep(&ran) {
+        out.push(reminder(
+            Steer::Codeflow,
+            format!(
+                "Reminder: this cell ran the structural grep `{pattern}` past the grep guard (allow_grep=True is for strings, log text and config keys). {STRUCTURAL_TOOLS}"
             ),
         ));
     }
@@ -478,6 +503,42 @@ pub(crate) fn refuse_plain_source_write(code: &str, edit_only: bool) -> Option<S
     ))
 }
 
+/// A python lookup of a definition by text: `.find`/`.index`/`.rfind` of a
+/// definition literal (`"fn x"`, `"pub struct X"`, `"def x"`, `"class X"`), a
+/// membership test against one (`if "fn x" in line`), or a regex search whose
+/// pattern names a definition keyword (`re.search(r"fn \w+", ..)`).
+fn text_definition_lookup() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        let keyword = r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|def|class|struct|enum|impl|trait)\s";
+        Regex::new(&format!(
+            r#"\.(?:find|index|rfind)\(\s*[rbf]{{0,2}}["']\s*{keyword}|\bif\s+[rbf]{{0,2}}["']\s*{keyword}[^"'\n]*["']\s+in\s+\w+|\bre\.(?:search|findall|finditer|match)\(\s*[rbf]{{0,2}}["'](?:[^"'\n]*[^\w"'\n])?\^?(?:\\b)?(?:fn|def|class|struct|enum|impl|trait)(?:\s|\\s)"#
+        ))
+        .expect("the text definition lookup pattern is a valid regex")
+    })
+}
+
+/// The refusal of a python cell that looks up a definition by text, before
+/// it runs; [`ALLOW_TEXT_SEARCH_MARKER`] in the cell lets it through.
+pub(crate) fn refuse_text_definition_lookup(code: &str) -> Option<String> {
+    if code.contains(ALLOW_TEXT_SEARCH_MARKER) {
+        return None;
+    }
+    let found = text_definition_lookup().find(code)?;
+    let line_start = code[..found.start()].rfind('\n').map_or(0, |at| at + 1);
+    let line_end = code[found.end()..]
+        .find('\n')
+        .map_or(code.len(), |at| found.end() + at);
+    let line: String = code[line_start..line_end]
+        .trim()
+        .chars()
+        .take(120)
+        .collect();
+    Some(format!(
+        "Refused: this cell looks up code structure by text (`{line}`), which is grep by another name. {STRUCTURAL_TOOLS} Then read the lines they report. Add `{ALLOW_TEXT_SEARCH_MARKER}` to the cell for a deliberate text search."
+    ))
+}
+
 /// Whether the `count`-th match of a habit in a session reminds: the first,
 /// then every fifth.
 pub(crate) fn due(count: u32) -> bool {
@@ -531,6 +592,49 @@ mod tests {
             "print(open('a.rs').read())",
         ] {
             assert!(detect(&cell(code, &[], "", &[])).is_empty(), "{code}");
+        }
+    }
+
+    #[test]
+    fn a_structural_grep_past_the_guard_steers_to_the_structural_tools() {
+        let allowed = strings(&["rg -n 'fn send_now' crates/"]);
+        assert_eq!(
+            habits(&detect(&cell(
+                "await bash(cmd, allow_grep=True)",
+                &allowed,
+                "",
+                &[]
+            ))),
+            [Steer::Codeflow]
+        );
+        let plain = strings(&["rg -n 'TODO' crates/"]);
+        assert!(detect(&cell("await bash(cmd, allow_grep=True)", &plain, "", &[])).is_empty());
+    }
+
+    #[test]
+    fn text_definition_lookups_are_refused_before_the_cell_runs() {
+        for code in [
+            "i = src.index('fn classify'); print(src[i-1500:i+900])",
+            "k = sg.find(\"pub async fn run_all_checks\")",
+            "s = t.rfind('pub(crate) struct Cell')",
+            "i = t.index('class OutsideTheWorkspace')",
+            "i = next(n for n, l in enumerate(lines) if 'fn apply(&self' in l)",
+            "for l in lines:\n    if 'pub trait ProviderRequestHooks' in l: print(l)",
+            "hits = [l for l in lines if re.search(r'fn apply\\b', l)]",
+            "re.findall(r'^(mod |enum Commands|struct Args)', text)",
+            "re.search(r'\\bdef\\s+run', src)",
+        ] {
+            assert!(refuse_text_definition_lookup(code).is_some(), "{code}");
+        }
+        for code in [
+            "i = src.find('    let disabled_body_hash = body_sha256(&body);')",
+            "assert src.count(old) == 1",
+            "[l for l in lines if 'ERROR' in l]",
+            "re.findall(r'class=\"([^\"]+)\"', html)",
+            "print(text.splitlines()[10:40])",
+            "i = src.index('fn classify')  # pa: allow-text-search",
+        ] {
+            assert!(refuse_text_definition_lookup(code).is_none(), "{code}");
         }
     }
 

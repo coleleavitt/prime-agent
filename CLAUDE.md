@@ -83,8 +83,9 @@ callable surface; a unit test pins its protocol number to `REPL_PROTOCOL_VERSION
   pa-bash's `grep` guard refuses a grep/rg/ag/`git grep` whose every pattern is a definition or call site
   over project source (`allow_grep=True` / `PI_BASH_ALLOW_GREP=1`), its `sed` guard refuses `sed -i` on a
   project source file (`allow_sed=True` / `PI_BASH_ALLOW_SED=1`); one classifier, `pa_bash::search`, also
-  drives pa-guards' after-cell reminders (subprocess greps, `sed -i` on config, bundle greps, plain-Python
-  source writes; `PRIME_AGENT_SOURCE_WRITES=edit-only` refuses the latter) and Claude Code's `PreToolUse`
+  drives pa-guards' after-cell reminders (subprocess greps, greps past the guard, `sed -i` on config, bundle
+  greps, plain-Python source writes; a cell that looks up a definition by text, `src.find("fn x")` and kin,
+  is refused before it runs, `# pa: allow-text-search`; `PRIME_AGENT_SOURCE_WRITES=edit-only` refuses the latter) and Claude Code's `PreToolUse`
   hook `prime-agent hook bash-guard` (Bash and Grep tools; `# allow-grep` / `# allow-sed`).
 - Waiting follows Claude Code 2.1.316, extended (`bcd200082`) with a polling-loop check CC itself lacks:
   pa-bash's `sleep` guard refuses a script whose first command is `sleep N`, N >= 25, AND any `for`/`while`
