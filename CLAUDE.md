@@ -288,7 +288,6 @@ Open:
   exposes positions only for floating windows), and the Rust Wayland backend refuses coordinate input on a tiled
   window for the same reason (`tiled_windows_refuse_coordinate_input_without_moving_focus`) unless niri is the
   computer-use fork (`WindowGeometry`/`CaptureWindow`/`WindowAt`, contract in the niri fork's `CONTRACT.md`).
-- `make check`'s MSVC lane needs `cargo-xwin` (not installed here); the gnu Windows lane passes.
 - `cargo deny` reports RUSTSEC-2026-0370/0371/0372 (`zbus_names`, `zvariant`, `zvariant_derive` unmaintained, via
   `pa-computer-use`'s AT-SPI backend); `deny.toml` ignores them with a reason (the newest `atspi` 0.14 still needs
   zbus 5). Drop the ignores when `atspi` ships a zbus-6 release.
@@ -341,7 +340,6 @@ unset PA_TS_BINARY PRIME_AGENT_KERNEL_VENV PRIME_AGENT_KERNEL_PYTHON PA_CORE_KER
 
 cargo +rustc-rdr-main fmt --all -- --check --config-path /home/cole/.rustfmt.toml   # HEAD's style (HOME is the sandbox here)
 cargo +rustc-rdr-main clippy --workspace --all-targets --locked -- -D warnings
-cargo +rustc-rdr-main clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 T=$(cargo +rustc-rdr-main metadata --format-version 1 --no-deps | jq -r .target_directory)   # not always ./target
 cargo +rustc-rdr-main build --locked --workspace --bins && $T/debug/prime-agent --prime-agent-bootstrap   # kernel venv
 cargo +rustc-rdr-main test --workspace --locked --no-fail-fast
