@@ -85,7 +85,7 @@ pub(crate) fn search(session: &BrainSession, data: &Value) -> anyhow::Result<Val
     let scope = Scope::parse(scope_text).with_context(|| {
         format!(
             "brain.search scope must be one of all, project, global, session, files, \
-             magic-context (got {scope_text:?})"
+             magic-context, history (got {scope_text:?})"
         )
     })?;
     let limit = data

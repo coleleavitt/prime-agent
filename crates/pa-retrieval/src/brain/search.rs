@@ -47,6 +47,8 @@ pub(crate) enum Scope {
     Files,
     /// magic-context rows.
     MagicContext,
+    /// Compartments of every session's folded history.
+    History,
 }
 
 impl Scope {
@@ -59,6 +61,7 @@ impl Scope {
             "session" => Self::Session,
             "files" => Self::Files,
             "magic-context" | "magic_context" | "mc" => Self::MagicContext,
+            "history" | "compartments" => Self::History,
             _ => return None,
         })
     }
@@ -264,6 +267,7 @@ fn in_scope(doc: &BrainDoc, scope: Scope, context: &SearchContext<'_>) -> bool {
         Scope::Session => doc.session_id.as_deref() == Some(context.session_id),
         Scope::Files => matches!(doc.source, Source::ProjectFile | Source::Personal),
         Scope::MagicContext => doc.source == Source::MagicContext,
+        Scope::History => doc.source == Source::Compartment,
     }
 }
 

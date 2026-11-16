@@ -27,6 +27,9 @@ pub(crate) enum Source {
     Personal,
     /// An active magic-context row.
     MagicContext,
+    /// A compartment the context manager's historian folded a session's
+    /// older history into (`<agent dir>/session-artifacts/<id>/context/state.json`).
+    Compartment,
 }
 
 impl Source {
@@ -38,6 +41,7 @@ impl Source {
             Self::ProjectFile => "file",
             Self::Personal => "personal",
             Self::MagicContext => "magic-context",
+            Self::Compartment => "compartment",
         }
     }
 
@@ -48,6 +52,7 @@ impl Source {
             Self::Global => 1.3,
             Self::ProjectFile | Self::Personal => 1.25,
             Self::Session => 1.2,
+            Self::Compartment => 1.15,
             Self::MagicContext => 1.1,
         }
     }
@@ -166,6 +171,7 @@ enum FileKind {
     ProjectFile(String),
     Personal,
     MagicContext,
+    Compartments(String),
 }
 
 /// The cached corpus.
@@ -210,8 +216,13 @@ impl Corpus {
                 continue;
             }
             let docs = self.load(paths, &path, &kind);
+            // A file rewritten with the same memories (a context state
+            // gains tags every request) leaves the index as it is.
+            changed |= self
+                .files
+                .get(&path)
+                .is_none_or(|(_, _, cached)| *cached != docs);
             self.files.insert(path, (kind, current, docs));
-            changed = true;
         }
         if changed {
             self.generation += 1;
@@ -240,6 +251,13 @@ impl Corpus {
             }
             FileKind::ProjectFile(slug) => file_doc(path, Source::ProjectFile, Some(slug)),
             FileKind::Personal => file_doc(path, Source::Personal, None),
+            FileKind::Compartments(session_id) => {
+                let Some(compartments) = compartments_of(path) else {
+                    return Vec::new();
+                };
+                let (identity, slug) = self.session_project(&paths.agent_dir, session_id);
+                compartment_docs(&compartments, path, session_id, identity.as_deref(), &slug)
+            }
             FileKind::MagicContext => mc::load(path).unwrap_or_else(|error| {
                 tracing::debug!(
                     target: "pa_daemon::retrieval",
@@ -287,7 +305,11 @@ fn enumerate(paths: &BrainPaths) -> BTreeMap<PathBuf, FileKind> {
     for (session_id, dir) in subdirs(&agent_dir.join("session-artifacts")) {
         let file = dir.join("harness").join("harness_state.json");
         if file.is_file() {
-            out.insert(file, FileKind::SessionHarness(session_id));
+            out.insert(file, FileKind::SessionHarness(session_id.clone()));
+        }
+        let context = dir.join("context").join("state.json");
+        if context.is_file() {
+            out.insert(context, FileKind::Compartments(session_id));
         }
     }
     for (slug, dir) in subdirs(&agent_dir.join("projects")) {
@@ -327,6 +349,64 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
             path.is_file()
                 && path.extension().is_some_and(|ext| ext == "md")
                 && path.file_name().is_some_and(|name| name != "MEMORY.md")
+        })
+        .collect()
+}
+
+/// The `compartments` array of a context-manager state file (`pa-context`'s
+/// on-disk format, read without depending on the crate); `None` when it
+/// has none.
+fn compartments_of(path: &Path) -> Option<Vec<serde_json::Value>> {
+    let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let compartments = state.get("compartments")?.as_array()?.clone();
+    (!compartments.is_empty()).then_some(compartments)
+}
+
+/// A session's compartments as documents: the most detailed tier (P1) as
+/// the content, so another session can search what this one folded away.
+fn compartment_docs(
+    compartments: &[serde_json::Value],
+    path: &Path,
+    session_id: &str,
+    project: Option<&str>,
+    slug: &str,
+) -> Vec<BrainDoc> {
+    compartments
+        .iter()
+        .filter_map(|compartment| {
+            let tag = |name: &str| compartment.get(name).and_then(serde_json::Value::as_u64);
+            let (start, end) = (tag("startTag")?, tag("endTag")?);
+            let tiers = compartment.get("tiers")?.as_array()?;
+            let content = tiers
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .find(|text| !text.is_empty())?
+                .to_string();
+            Some(BrainDoc {
+                key: format!("fold:{session_id}:{start}-{end}"),
+                source: Source::Compartment,
+                memory_id: None,
+                session_id: Some(session_id.to_string()),
+                project: project.map(str::to_string),
+                slug: Some(slug.to_string()),
+                title: compartment
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("folded history")
+                    .to_string(),
+                content,
+                path: path.display().to_string(),
+                category: Some("compartment".to_string()),
+                // The publish time, not the file's: a context state is
+                // rewritten every request.
+                updated_at: compartment
+                    .get("createdMs")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(pa_ledger::iso_from_millis)
+                    .unwrap_or_default(),
+                declared_superseded_by: None,
+            })
         })
         .collect()
 }
@@ -509,6 +589,16 @@ pub(crate) mod tests {
         .unwrap();
         std::fs::create_dir_all(a.join("memory/personal")).unwrap();
         std::fs::write(a.join("memory/personal/preferences.md"), "terse replies\n").unwrap();
+        std::fs::create_dir_all(a.join("session-artifacts/s1/context")).unwrap();
+        std::fs::write(
+            a.join("session-artifacts/s1/context/state.json"),
+            serde_json::json!({"schema": 1, "lastTag": 40, "compartments": [{
+                "startKey": "u:1", "startTag": 3, "endTag": 30, "title": "Traced the lease",
+                "importance": 70, "tiers": ["I traced the writer lease to the shared XDG dir.", "", "", ""]
+            }]})
+            .to_string(),
+        )
+        .unwrap();
 
         let mut corpus = Corpus::default();
         assert!(corpus.refresh(&paths(a)));
@@ -518,6 +608,7 @@ pub(crate) mod tests {
             keys,
             [
                 "file:-work-repo/tooling",
+                "fold:s1:3-30",
                 "global:g1",
                 "personal:preferences",
                 "session:s1:l1"
@@ -537,12 +628,23 @@ pub(crate) mod tests {
             local.declared_superseded_by.as_deref(),
             Some("session:s1:l2")
         );
+        let fold = corpus.docs().find(|doc| doc.key == "fold:s1:3-30").unwrap();
+        assert_eq!(fold.source, Source::Compartment);
+        assert_eq!(fold.title, "Traced the lease");
+        assert!(fold.content.contains("shared XDG dir"));
         let generation = corpus.generation();
         assert!(
             !corpus.refresh(&paths(a)),
             "unchanged sources re-read nothing"
         );
         assert_eq!(corpus.generation(), generation);
+        // A state rewritten with new tags but the same compartments keeps the index.
+        let state_path = a.join("session-artifacts/s1/context/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        state["lastTag"] = serde_json::json!(41);
+        std::fs::write(&state_path, format!("{state}\n")).unwrap();
+        assert!(!corpus.refresh(&paths(a)), "same memories, same index");
         std::fs::remove_file(a.join("memory/personal/preferences.md")).unwrap();
         assert!(corpus.refresh(&paths(a)));
         assert!(corpus.docs().all(|doc| doc.key != "personal:preferences"));

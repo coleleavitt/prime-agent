@@ -1,14 +1,15 @@
 ---
 name: brain
-description: Search every memory the agent has, across all sessions and projects (global and session-local harness memories, auto-memory and personal files, magic-context memories), and curate them (pin, exclude, mark superseded, synthesize a summary). Use before re-investigating something a past session may already have learned, when the user refers to earlier work, or when the digest says memories were withheld.
+description: Search every memory the agent has, across all sessions and projects (global and session-local harness memories, auto-memory and personal files, magic-context memories, and the folded history (compartments) of every session), and curate them (pin, exclude, mark superseded, synthesize a summary). Use before re-investigating something a past session may already have learned, when the user refers to earlier work, or when the digest says memories were withheld.
 ---
 
 # Brain
 
 One searchable view over every memory store: this agent dir's global and
 session-local harness memories (every session's, not only this one's), the
-auto-memory files of every project, personal memory files, and CortexKit
-magic-context's memories. Results carry a `key` you can pass back.
+auto-memory files of every project, personal memory files, CortexKit
+magic-context's memories, and every session's folded history (the
+compartments `ctx` keeps). Results carry a `key` you can pass back.
 
 ```python
 hits = await brain.search("aft shim writer lease", scope="project", limit=5)
@@ -24,8 +25,10 @@ memory = await brain.get(hits[0]["key"])      # full content
   `project`, `sessionId`, `category`, `updatedAt`, `score`, `pinned`,
   `superseded`). `scope`: `all`, `project` (this repository's sessions, files
   and magic-context rows, plus global memories), `global`, `session` (this
-  session's own), `files`, `magic-context`. At most 25 results. Superseded
-  memories are left out unless `include_superseded=True`.
+  session's own), `files`, `magic-context`, `history` (the compartments the
+  context manager's historian folded any session's older history into). At
+  most 25 results. Superseded memories are left out unless
+  `include_superseded=True`.
 - `await brain.get(key) -> dict`: one memory in full, with `pinned`,
   `excluded` and `superseded`.
 - `await brain.pin(key)` / `await brain.unpin(key)`: a pinned memory leads the

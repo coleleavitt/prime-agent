@@ -13,7 +13,7 @@ from typing import Any
 
 from rlm import host_request
 
-_SCOPES = ("all", "project", "global", "session", "files", "magic-context")
+_SCOPES = ("all", "project", "global", "session", "files", "magic-context", "history")
 
 
 def _key(key: str) -> str:
@@ -30,7 +30,8 @@ async def search(
 ) -> list[dict[str, Any]]:
     """Ranked memories for `query` (at most 25), best first.
 
-    `scope` is one of all, project, global, session, files, magic-context.
+    `scope` is one of all, project, global, session, files, magic-context,
+    history (compartments of every session's folded history).
     Superseded memories are left out unless `include_superseded` is true.
     """
     if not isinstance(query, str) or not query.strip():
