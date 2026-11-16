@@ -499,16 +499,21 @@ pub fn load_refinement_history(
     crate::refinement::merge_refinement_history(&global, &session_entries)
 }
 
-/// The session's local harness state directory (under the session dir).
+/// The session's local harness state directory: `<session artifact dir>/harness`, the store
+/// the kernel's `rlm.harness` and the harness digest read (`RLM_HARNESS_STATE_DIR`). The session
+/// dir is shared by every session saved there, so only a session without an artifact dir (not
+/// persisted) keeps its store under it.
 ///
 /// # Panics
 ///
-/// The `expect` cannot fire: the mapping is total for `Some` session dirs.
+/// The `expect` cannot fire: the mapping is total for `Some` dirs.
 #[must_use]
 pub fn local_harness_state_dir(session: &SessionManager) -> PathBuf {
-    let session_dir = session.get_session_dir().to_path_buf();
-    crate::refinement::get_local_harness_state_dir(Some(&session_dir))
-        .expect("session dir always yields a local harness dir")
+    let dir = session
+        .get_session_artifact_dir()
+        .unwrap_or_else(|| session.get_session_dir().to_path_buf());
+    crate::refinement::get_local_harness_state_dir(Some(&dir))
+        .expect("a dir always yields a local harness dir")
 }
 
 /// Strip display-only `local:`/`global:`/`package:` prefixes from edit ids.
@@ -1895,9 +1900,10 @@ Reviewer instructions: record it"
             disabled.applied_edits[0].error.as_deref(),
             Some(crate::refinement::FACTORY_DISABLED_MESSAGE)
         );
-        let session_dir = session.lock().await.get_session_dir().to_path_buf();
-        let harness_dir =
-            crate::refinement::get_local_harness_state_dir(Some(&session_dir)).unwrap();
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
+        .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Factory].is_empty());
         // The user opts in: the same proposal applies, read live from the
@@ -1971,9 +1977,10 @@ Reviewer instructions: record it"
             turned_off.applied_edits[0].error.as_deref(),
             Some(crate::refinement::FACTORY_DISABLED_MESSAGE)
         );
-        let session_dir = session.lock().await.get_session_dir().to_path_buf();
-        let harness_dir =
-            crate::refinement::get_local_harness_state_dir(Some(&session_dir)).unwrap();
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
+        .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Factory].is_empty());
         // Authored while disabled; the request opts in.
@@ -2029,9 +2036,10 @@ Reviewer instructions: record it"
         assert!(result.applied_edits[0].applied);
         let state_path = Path::new(&result.harness_state_path);
         assert!(state_path.exists());
-        let session_dir = session.lock().await.get_session_dir().to_path_buf();
-        let harness_dir =
-            crate::refinement::get_local_harness_state_dir(Some(&session_dir)).unwrap();
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
+        .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m1"));
         let entries = session.lock().await.get_all_entries().to_vec();
@@ -2097,10 +2105,11 @@ Reviewer instructions: record it"
                 }]
             })
         );
-        // Nothing was written by the preview.
-        let harness_dir = crate::refinement::get_local_harness_state_dir(Some(
-            session.lock().await.get_session_dir(),
-        ))
+        // Nothing was written by the preview. The store the plan applies to is the one the
+        // kernel's `rlm.harness` and the digest read (`RLM_HARNESS_STATE_DIR`).
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
         .unwrap();
         assert!(
             load_harness_state(&harness_dir, HarnessScope::Local)
@@ -2220,9 +2229,9 @@ Reviewer instructions: record it"
             "{:?}",
             result.applied_edits
         );
-        let harness_dir = crate::refinement::get_local_harness_state_dir(Some(
-            session.lock().await.get_session_dir(),
-        ))
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
         .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert_eq!(
@@ -2271,9 +2280,10 @@ Reviewer instructions: record it"
             error.to_string().contains("audit:"),
             "the audit error surfaces after the durable writes: {error:#}"
         );
-        let session_dir = session.lock().await.get_session_dir().to_path_buf();
-        let harness_dir =
-            crate::refinement::get_local_harness_state_dir(Some(&session_dir)).unwrap();
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
+        .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m9"));
         let entries = session.lock().await.get_all_entries().to_vec();
@@ -2672,9 +2682,9 @@ Reviewer instructions: record it"
         )
         .await
         .unwrap();
-        let harness_dir = crate::refinement::get_local_harness_state_dir(Some(
-            session.lock().await.get_session_dir(),
-        ))
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
         .unwrap();
         let mut extensions = serde_json::Map::new();
         extensions.insert("stubReport".to_string(), json!("judged ok"));
@@ -2749,9 +2759,9 @@ Reviewer instructions: record it"
             result.extensions.get("stubReport"),
             Some(&json!("judged ok"))
         );
-        let harness_dir = crate::refinement::get_local_harness_state_dir(Some(
-            session.lock().await.get_session_dir(),
-        ))
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
         .unwrap();
         let state = load_harness_state(&harness_dir, HarnessScope::Local);
         assert!(state.entries[&crate::refinement::RefinementKind::Memory].contains_key("m1"));
@@ -2787,9 +2797,9 @@ Reviewer instructions: record it"
             .append_message(user_message("seed"))
             .unwrap();
         let global_dir = dir.path().join("harness");
-        let harness_dir = crate::refinement::get_local_harness_state_dir(Some(
-            session.lock().await.get_session_dir(),
-        ))
+        let harness_dir = crate::refinement::get_local_harness_state_dir(
+            session.lock().await.get_session_artifact_dir().as_deref(),
+        )
         .unwrap();
         let (held_tx, held_rx) = std::sync::mpsc::channel();
         let holder = {
