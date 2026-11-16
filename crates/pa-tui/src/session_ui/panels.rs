@@ -5,6 +5,7 @@ use super::{
     AgentView,
     BashActivityUpdate,
     CommandCatalogUpdate,
+    ContextStatsUpdate,
     DaemonCommand,
     DockFocusSource,
     FactoryUpdate,
@@ -29,6 +30,7 @@ pub(crate) struct ActivityUpdates {
     pub bash: mpsc::UnboundedSender<BashActivityUpdate>,
     pub factory: mpsc::UnboundedSender<FactoryUpdate>,
     pub commands: mpsc::UnboundedSender<CommandCatalogUpdate>,
+    pub context_stats: mpsc::UnboundedSender<ContextStatsUpdate>,
 }
 
 impl SessionUi {

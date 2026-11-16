@@ -544,6 +544,7 @@ impl SessionUi {
                 // (Ctrl+C interrupts it, the end watermark counts runs, the loader keeps its rows
                 // and clock), lasts until `agent_end`.
                 self.streaming_index = None;
+                self.context_refresh_due = true;
                 view.retry = None;
                 crate::snapshot::settle_pending_tool_cards(
                     view,

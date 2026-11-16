@@ -175,6 +175,8 @@ struct SessionSenders {
     /// Background slash-command-catalog refreshes (`get_commands`): the loop folds the session's
     /// skill commands into the autocomplete provider.
     commands: mpsc::UnboundedSender<crate::session_ui::CommandCatalogUpdate>,
+    /// Background `get_session_stats` reads taken mid-run: the loop folds them into the tray.
+    context_stats: mpsc::UnboundedSender<crate::session_ui::ContextStatsUpdate>,
     page: mpsc::UnboundedSender<crate::session_ui::TranscriptPageNote>,
 }
 
@@ -193,6 +195,7 @@ struct SessionReceivers {
     bash: mpsc::UnboundedReceiver<crate::session_ui::BashActivityUpdate>,
     factory: mpsc::UnboundedReceiver<crate::session_ui::FactoryUpdate>,
     commands: mpsc::UnboundedReceiver<crate::session_ui::CommandCatalogUpdate>,
+    context_stats: mpsc::UnboundedReceiver<crate::session_ui::ContextStatsUpdate>,
     page: mpsc::UnboundedReceiver<crate::session_ui::TranscriptPageNote>,
 }
 
@@ -210,6 +213,7 @@ fn session_channels() -> (SessionSenders, SessionReceivers) {
     let (bash, bash_rx) = mpsc::unbounded_channel();
     let (factory, factory_rx) = mpsc::unbounded_channel();
     let (commands, commands_rx) = mpsc::unbounded_channel();
+    let (context_stats, context_stats_rx) = mpsc::unbounded_channel();
     let (page, page_rx) = mpsc::unbounded_channel();
     (
         SessionSenders {
@@ -226,6 +230,7 @@ fn session_channels() -> (SessionSenders, SessionReceivers) {
             bash,
             factory,
             commands,
+            context_stats,
             page,
         },
         SessionReceivers {
@@ -242,6 +247,7 @@ fn session_channels() -> (SessionSenders, SessionReceivers) {
             bash: bash_rx,
             factory: factory_rx,
             commands: commands_rx,
+            context_stats: context_stats_rx,
             page: page_rx,
         },
     )
@@ -309,6 +315,7 @@ fn spawn_session_open(
                             bash: senders.bash,
                             factory: senders.factory,
                             commands: senders.commands,
+                            context_stats: senders.context_stats,
                         },
                         senders.page,
                     )
@@ -754,6 +761,9 @@ async fn run_interactive_surface(
             Some(update) = receivers.factory.recv() => session.apply_factory_update(update, &mut view),
             Some(update) = receivers.commands.recv() => {
                 session.apply_command_catalog(update, &mut view);
+            }
+            Some(update) = receivers.context_stats.recv() => {
+                session.apply_context_stats(&update, &mut view);
             }
             // Protocol corruption stays fatal exactly like the inline submit's ladder.
             Some(note) = receivers.prompt.recv() => session.apply_prompt_outcome(note, &mut view).await?,

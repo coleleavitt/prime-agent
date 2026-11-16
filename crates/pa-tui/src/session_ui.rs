@@ -50,6 +50,7 @@ pub(crate) use factory::FactoryUpdate;
 pub(crate) use heartbeats::HeartbeatsUpdate;
 use heartbeats::paused_heartbeat_count;
 use keys::SelectionAutoScroll;
+pub(crate) use lifecycle::ContextStatsUpdate;
 pub(crate) use model_picker::{ModelCatalogUpdate, picker_viewport_rows};
 use pa_types::daemon::{CycleDirection, DaemonCommand};
 use pa_types::slash_commands::{SlashCommandExecution, SlashCommandRegistry};
@@ -274,6 +275,10 @@ pub(crate) struct SessionUi {
     /// edited is never delivered mid-edit.
     queue_hold: Option<(String, String)>,
     context: Option<crate::chrome::ContextUsage>,
+    /// Monotonic id of the latest issued `get_session_stats` read; an older read's reply must
+    /// not overwrite a newer tray value.
+    stats_epoch: u64,
+    stats_updates: mpsc::UnboundedSender<ContextStatsUpdate>,
     list_rows: Vec<Value>,
     pub(crate) turn_active: bool,
     /// Completed runs observed on this connection (one per run, not per model
@@ -443,6 +448,9 @@ pub(crate) struct SessionUi {
     prompt_in_flight: usize,
     /// A compaction settled: the tray's context usage refreshes.
     pub(crate) compaction_settled: bool,
+    /// A model call of the running agent loop ended: the tray's context usage refreshes in the
+    /// background while the run goes on.
+    pub(crate) context_refresh_due: bool,
     pub(crate) window: window::TranscriptWindow,
     page_notes: mpsc::UnboundedSender<window::TranscriptPageNote>,
     /// Adoption telemetry (counted into `tui exit`); `None` drops events.

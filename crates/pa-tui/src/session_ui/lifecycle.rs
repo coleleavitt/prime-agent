@@ -1,6 +1,6 @@
 //! The open/attach/reattach pipeline (the session selection's open, the
 //! §10 reattach, the attach fold, and the transcript rebuild it feeds),
-//! the stats refresh, and the detach/exit request helpers.
+//! the stats refresh (inline and background), and the detach/exit request helpers.
 use super::{
     ActivityUpdates,
     AgentView,
@@ -43,6 +43,14 @@ use super::{
     reconstruct,
     resume_hint_from_stats,
 };
+
+/// A background `get_session_stats` read's tray value, tagged with the session it asked about
+/// and the read's epoch.
+pub(crate) struct ContextStatsUpdate {
+    session: String,
+    epoch: u64,
+    context: Option<crate::chrome::ContextUsage>,
+}
 
 impl SessionUi {
     /// Create/attach per the session selection and return the live state.
@@ -145,6 +153,8 @@ impl SessionUi {
             queue_selection: crate::queued::QueueSelection::default(),
             queue_hold: None,
             context: None,
+            stats_epoch: 0,
+            stats_updates: activity_updates.context_stats,
             list_rows: Vec::new(),
             turn_active: false,
             turn_ends_seen: 0,
@@ -225,6 +235,7 @@ impl SessionUi {
             input_submission_generation: 0,
             prompt_in_flight: 0,
             compaction_settled: false,
+            context_refresh_due: false,
             window: super::window::TranscriptWindow::default(),
             page_notes,
             telemetry: options.telemetry.clone(),
@@ -780,6 +791,8 @@ impl SessionUi {
     /// Refresh context usage from `get_session_stats`: tokens, context window,
     /// and percent. The title's spend comes from the roster pushes instead.
     pub(crate) async fn refresh_stats(&mut self) {
+        // A background read still in flight is older than this one.
+        self.stats_epoch += 1;
         let Ok(data) = self
             .bounded_request(
                 Duration::from_millis(UI_REQUEST_TIMEOUT_MS),
@@ -799,6 +812,47 @@ impl SessionUi {
             .get("contextUsage")
             .and_then(crate::chrome::ContextUsage::from_wire);
         self.dirty = true;
+    }
+
+    /// Refresh context usage without holding the event loop: a model call ended while the run
+    /// goes on, so the tray follows the context as it grows instead of waiting for the run's end.
+    pub(crate) fn spawn_stats_refresh(&mut self) {
+        self.stats_epoch += 1;
+        let epoch = self.stats_epoch;
+        let client = self.client.clone();
+        let session = self.active_session_id.clone();
+        let tx = self.stats_updates.clone();
+        tokio::spawn(async move {
+            if let Ok(data) = client
+                .request_ok(DaemonCommand::GetSessionStats {
+                    id: None,
+                    active_session_id: session.clone(),
+                    rest: Map::default(),
+                })
+                .await
+            {
+                let _ = tx.send(ContextStatsUpdate {
+                    session,
+                    epoch,
+                    context: data
+                        .get("contextUsage")
+                        .and_then(crate::chrome::ContextUsage::from_wire),
+                });
+            }
+        });
+    }
+
+    /// Land a background stats read: only the latest read for the attached session.
+    pub(crate) fn apply_context_stats(
+        &mut self,
+        update: &ContextStatsUpdate,
+        view: &mut AgentView,
+    ) {
+        if update.session != self.active_session_id || update.epoch != self.stats_epoch {
+            return;
+        }
+        self.context = update.context;
+        self.rebuild_tray(view);
     }
 
     /// Detach on the agents-view handoff without blocking it: a background task owns the connection
@@ -917,6 +971,7 @@ mod backfill_tests {
                 bash: mpsc::unbounded_channel().0,
                 factory: mpsc::unbounded_channel().0,
                 commands: mpsc::unbounded_channel().0,
+                context_stats: mpsc::unbounded_channel().0,
             },
             backfill_tx,
         )
@@ -1110,6 +1165,7 @@ mod backfill_tests {
                 bash: mpsc::unbounded_channel().0,
                 factory: mpsc::unbounded_channel().0,
                 commands: mpsc::unbounded_channel().0,
+                context_stats: mpsc::unbounded_channel().0,
             },
             mpsc::unbounded_channel().0,
         )

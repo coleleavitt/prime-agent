@@ -906,7 +906,8 @@ impl RunLoop {
 
 /// Fold a batch of session events: the first event plus every queued frame (a stream burst
 /// applies as one transcript pass instead of one full re-layout per frame), the tray's context
-/// refresh on a settled turn or compaction, and the rebind or resync the batch requested.
+/// refresh on a settled turn, a compaction, or a model call that ended mid-run, and the rebind or
+/// resync the batch requested.
 pub(super) async fn fold_session_events(
     first: DaemonClientEvent,
     events: &mut mpsc::UnboundedReceiver<DaemonClientEvent>,
@@ -918,11 +919,15 @@ pub(super) async fn fold_session_events(
     while let Ok(event) = events.try_recv() {
         session.apply_client_event(event, view);
     }
-    // A settled turn or compaction refreshes the tray's context usage.
+    // A settled turn or compaction refreshes the tray's context usage; a model call that ended
+    // inside a still-running turn refreshes it in the background.
     let compaction_settled = std::mem::take(&mut session.compaction_settled);
+    let context_refresh_due = std::mem::take(&mut session.context_refresh_due);
     if compaction_settled || (was_active && !session.turn_active) {
         session.refresh_stats().await;
         session.rebuild_tray(view);
+    } else if context_refresh_due && session.turn_active {
+        session.spawn_stats_refresh();
     }
     // A `session_binding` supersede notice: the session lives under a new active
     // id, so re-attach to it — the transcript rebuilds from the snapshot (silent,
