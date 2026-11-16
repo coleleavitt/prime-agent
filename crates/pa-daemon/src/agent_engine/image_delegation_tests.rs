@@ -370,11 +370,13 @@ impl ScriptedSupervisor {
         let captured: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured_thread = std::sync::Arc::clone(&captured);
+        let (bound_tx, bound_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async move {
                     use pa_types::platform::transport::bind_transport;
                     let listener = bind_transport(&socket).await.unwrap();
+                    bound_tx.send(()).unwrap();
                     loop {
                         let Ok(stream) = listener.accept().await else {
                             return;
@@ -426,6 +428,8 @@ impl ScriptedSupervisor {
                     }
                 });
         });
+        // The engine connects as soon as it runs: return once the socket is bound.
+        bound_rx.recv().unwrap();
         Self { captured }
     }
 }

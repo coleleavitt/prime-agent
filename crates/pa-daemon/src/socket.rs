@@ -857,6 +857,16 @@ mod tests {
             "a live backlogged successor must not be unlinked"
         );
         drop(successor);
+        // A sibling test's fork holds the inherited listener fd until its
+        // exec closes it (CLOEXEC): wait until the close is observable.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !pa_types::platform::transport::unix_listener_definitely_closed(&socket) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the successor's listener never closed"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         cleanup_socket_path_after_close(&socket, Some(poisoned));
         assert!(
             !socket.exists(),
